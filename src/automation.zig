@@ -11,6 +11,26 @@ const backend = @import("gtk_backend.zig");
 
 const G_SOURCE_REMOVE: c_int = 0;
 
+fn paramStr(params: ?std.json.Value, key: []const u8) ?[]const u8 {
+    const v = params orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .string => field.string,
+        else => null,
+    };
+}
+
+fn paramInt(params: ?std.json.Value, key: []const u8) ?i64 {
+    const v = params orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .integer => field.integer,
+        else => null,
+    };
+}
+
 /// The kinds of work a `UiJob` can carry. Real handlers land in Tasks 3-6;
 /// Task 2 only scaffolds the marshal-and-block plumbing.
 const JobKind = enum { get_tree, screenshot, click, wait_poll };
@@ -62,10 +82,82 @@ fn uiCallback(data: ?*anyopaque) callconv(.c) c_int {
 fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
         .get_tree => handleGetTree(job),
-        .screenshot, .click, .wait_poll => {
+        .screenshot => handleScreenshot(job),
+        .click, .wait_poll => {
             job.result_json = job.gpa.dupe(u8, "{\"ok\":true}") catch null;
         },
     }
+}
+
+const ScreenshotResult = struct { path: []const u8, width: i32, height: i32 };
+
+/// In-process GTK->GSK render of the window to a PNG at `job.path`. Primary
+/// route: `WidgetPaintable` (captures the whole widget directly, no
+/// parent/child juggling) snapshotted through the window's live renderer.
+fn handleScreenshot(job: *UiJob) void {
+    const path = job.path orelse {
+        job.err_code = -32602;
+        job.err_msg = "missing path";
+        return;
+    };
+    const win = backend.getWindow() orelse {
+        job.err_code = -32603;
+        job.err_msg = "no window";
+        return;
+    };
+    const win_widget = win.as(gtk.Widget);
+
+    const native = gtk.Widget.getNative(win_widget) orelse {
+        job.err_code = -32603;
+        job.err_msg = "widget has no native";
+        return;
+    };
+    var owned_renderer: ?*gsk.CairoRenderer = null;
+    const renderer: *gsk.Renderer = gtk.Native.getRenderer(native) orelse blk: {
+        // Fallback: realize a standalone cairo renderer against the native's surface.
+        const cairo_renderer = gsk.CairoRenderer.new();
+        owned_renderer = cairo_renderer;
+        const surface = gtk.Native.getSurface(native);
+        _ = gsk.Renderer.realize(cairo_renderer.as(gsk.Renderer), surface, null);
+        break :blk cairo_renderer.as(gsk.Renderer);
+    };
+    defer if (owned_renderer) |r| {
+        gsk.Renderer.unrealize(r.as(gsk.Renderer));
+        r.as(gsk.Renderer).unref();
+    };
+
+    const paintable = gtk.WidgetPaintable.new(win_widget);
+    defer paintable.unref();
+
+    const snapshot = gtk.Snapshot.new();
+    const width = gtk.Widget.getWidth(win_widget);
+    const height = gtk.Widget.getHeight(win_widget);
+    gdk.Paintable.snapshot(paintable.as(gdk.Paintable), snapshot.as(gdk.Snapshot), @floatFromInt(width), @floatFromInt(height));
+
+    const node = gtk.Snapshot.freeToNode(snapshot) orelse {
+        job.err_code = -32603;
+        job.err_msg = "empty snapshot";
+        return;
+    };
+    defer gsk.RenderNode.unref(node);
+
+    const texture = gsk.Renderer.renderTexture(renderer, node, null);
+    defer texture.unref();
+
+    const path_z = job.gpa.dupeZ(u8, path) catch {
+        job.err_code = -32603;
+        job.err_msg = "oom";
+        return;
+    };
+    defer job.gpa.free(path_z);
+    if (gdk.Texture.saveToPng(texture, path_z) == 0) {
+        job.err_code = -32603;
+        job.err_msg = "failed to save png";
+        return;
+    }
+
+    const result = ScreenshotResult{ .path = path, .width = gdk.Texture.getWidth(texture), .height = gdk.Texture.getHeight(texture) };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
 /// Owned tree-node JSON shape (matches the RPC surface contract exactly).
@@ -248,7 +340,23 @@ pub const Server = struct {
             return self.runJobAndEnvelope(&job, id);
         }
 
-        // Tasks 4-6 add screenshot/click/waitFor/stubs routing here.
+        if (std.mem.eql(u8, method, "screenshot")) {
+            const path = paramStr(parsed.value.params, "path") orelse {
+                return errorEnvelope(self.gpa, id, -32602, "missing params.path", null);
+            };
+            if (paramInt(parsed.value.params, "window")) |window_ref| {
+                const root_id = self.tree.rootId();
+                if (root_id == null or @as(u32, @intCast(window_ref)) != root_id.?) {
+                    return errorEnvelope(self.gpa, id, -32602, "unknown window ref", null);
+                }
+            }
+            const path_z = self.gpa.dupeZ(u8, path) catch return error.OutOfMemory;
+            defer self.gpa.free(path_z);
+            var job = UiJob{ .tree = self.tree, .kind = .screenshot, .gpa = self.gpa, .io = self.io, .path = path_z };
+            return self.runJobAndEnvelope(&job, id);
+        }
+
+        // Tasks 5-6 add click/waitFor/stubs routing here.
         return errorEnvelope(self.gpa, id, -32601, "method not found", null);
     }
 
