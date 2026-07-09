@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 
 export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "WebView";
-export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "webview";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView";
+export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview";
 
 export interface StyleProp {
   background?: string;
@@ -42,6 +42,7 @@ export namespace JSX {
     spinner: { spinning?: boolean; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; style?: StyleProp; key?: string | number | null; children?: ReactNode };
     tabview: { selectedIndex?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; style?: StyleProp; key?: string | number | null; children?: ReactNode };
     grid: { testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; style?: StyleProp; key?: string | number | null; children?: ReactNode };
+    listview: { items?: string[]; selectedIndex?: number; testID?: string; onRowActivated?: (e: { index: number }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; style?: StyleProp; key?: string | number | null; children?: ReactNode };
     webview: { url?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; style?: StyleProp; key?: string | number | null; children?: ReactNode };
   }
   export type Element = ReactNode;

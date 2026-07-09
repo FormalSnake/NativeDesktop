@@ -451,6 +451,21 @@ function genZigCreateBody(w: Widget): string {
   } else if (w.name === "Grid") {
     out += "        const grid = gtk.Grid.new();\n";
     out += "        return grid.as(gtk.Widget);\n";
+  } else if (w.name === "ListView") {
+    out += "        const model = gtk.StringList.new(null);\n";
+    out += "        if (propArray(props, \"items\")) |arr| {\n";
+    out += "            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }\n";
+    out += "        }\n";
+    out += "        const selection = gtk.SingleSelection.new(model.as(gio.ListModel)); // transfer-full: selection owns model\n";
+    out += `        const sel_idx = propInt(props, "selectedIndex") orelse ${dflt(w, "selectedIndex")};\n`;
+    out += "        if (sel_idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(sel_idx));\n";
+    out += "        const factory = gtk.SignalListItemFactory.new();\n";
+    out += "        _ = gobject.signalConnectData(asObject(factory), \"setup\", @ptrCast(&lvSetup), null, null, .{});\n";
+    out += "        _ = gobject.signalConnectData(asObject(factory), \"bind\", @ptrCast(&lvBind), null, null, .{});\n";
+    out += "        const list = gtk.ListView.new(selection.as(gtk.SelectionModel), factory.as(gtk.ListItemFactory)); // transfer-full: list owns selection+factory\n";
+    out += "        const sw = gtk.ScrolledWindow.new(); // M5c-D3: ListView needs a scroller\n";
+    out += "        gtk.ScrolledWindow.setChild(sw, list.as(gtk.Widget));\n";
+    out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "WebView") {
     out += "        std.debug.print(\"ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\\n\", .{});\n";
     out += "        const label = gtk.Label.new(\"WebView unavailable (v1 stub)\");\n";
@@ -543,6 +558,23 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| gtk.Notebook.setCurrentPage(@ptrCast(@alignCast(widget)), @intCast(idx));\n";
+    } else if (w.name === "ListView" && p.name === "items") {
+      out += "        if (propArray(props, \"items\")) |arr| {\n";
+      out += "            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));\n";
+      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));\n";
+      out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
+      out += "            const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));\n";
+      out += "            const n = gio.ListModel.getNItems(model.as(gio.ListModel));\n";
+      out += "            gtk.StringList.splice(model, 0, n, null); // clear\n";
+      out += "            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }\n";
+      out += "        }\n";
+    } else if (w.name === "ListView" && p.name === "selectedIndex") {
+      out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
+      out += "            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));\n";
+      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));\n";
+      out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
+      out += "            if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));\n";
+      out += "        }\n";
     } else {
       throw new Error(`no applyProps template for ${w.name}.${p.name} — add one when introducing it (M5b)`);
     }
@@ -550,7 +582,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -560,6 +592,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Radio.toggled":           { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
   "Select.selectionChanged": { signal: "notify::selected", target: "widget", cb: "cbDropDownSelected", suppress: true },
   "Slider.valueChanged":     { signal: "value-changed",    target: "widget", cb: "cbScaleValueChanged", suppress: true },
+  "ListView.rowActivated":   { signal: "activate",         target: "listview-inner", cb: "cbListActivate", suppress: false },
 };
 
 const CALLBACK_BODIES: Record<string, string> = {
@@ -615,7 +648,30 @@ fn cbDropDownSelected(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) c
     if (emit) |f| f(node_id, "valueChanged", .{ .value = gtk.Range.getValue(range) });
 }
 `,
+  cbListActivate: `// the ListView \`activate\` signal passes (list_view, position, user_data).
+fn cbListActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    _ = obj;
+    if (emit) |f| f(node_id, "rowActivated", .{ .index = @intCast(position) });
+}
+`,
 };
+
+// ListView's row-factory callbacks connect at create time (not via
+// connectEvents/SIGNALS — they wire the GtkSignalListItemFactory, not a
+// per-node event). Emitted unconditionally alongside the other callbacks.
+const LISTVIEW_CALLBACKS = `fn lvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
+    const label = gtk.Label.new(null);
+    gtk.ListItem.setChild(list_item, label.as(gtk.Widget));
+}
+fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
+    const child = gtk.ListItem.getChild(list_item) orelse return;
+    const label: *gtk.Label = @ptrCast(@alignCast(child));
+    const obj = gtk.ListItem.getItem(list_item) orelse return;
+    const so: *gtk.StringObject = @ptrCast(@alignCast(obj));
+    gtk.Label.setText(label, gtk.StringObject.getString(so));
+}
+`;
 
 /** Emits the signal-wiring table + callbacks. Throws on a schema event without
  *  a template (same fail-loud contract as the prop-template throws). */
@@ -629,6 +685,7 @@ function genZigEvents(s: Schema): string {
   }
 
   let out = "";
+  out += LISTVIEW_CALLBACKS + "\n";
   for (const cb of used) out += CALLBACK_BODIES[cb]! + "\n";
 
   out += "pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {\n";
@@ -648,6 +705,8 @@ function genZigEvents(s: Schema): string {
       const t = SIGNALS[`${w.name}.${e.name}`]!;
       const objExpr = t.target === "buffer"
         ? "asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(widget))))"
+        : t.target === "listview-inner"
+        ? "asObject(gtk.ScrolledWindow.getChild(@ptrCast(@alignCast(widget))).?)" // ListView's tracked widget is the ScrolledWindow (M5c-D3); connect on the inner GtkListView.
         : "asObject(widget)";
       const suffix = `${w.name}_${e.name}`;
       out += `        const obj_${suffix} = ${objExpr};\n`;

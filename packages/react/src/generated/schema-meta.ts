@@ -23,6 +23,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "Spinner": { role: "spinner", textFrom: null, childModel: null },
   "TabView": { role: "tablist", textFrom: null, childModel: "multi" },
   "Grid": { role: "grid", textFrom: null, childModel: "multi" },
+  "ListView": { role: "list", textFrom: null, childModel: null },
   "WebView": { role: "webview", textFrom: null, childModel: null },
 };
 
@@ -44,6 +45,7 @@ export const intrinsicToName: Record<string, string> = {
   "spinner": "Spinner",
   "tabview": "TabView",
   "grid": "Grid",
+  "listview": "ListView",
   "webview": "WebView",
 };
 
@@ -70,6 +72,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "spinner": [],
   "tabview": [],
   "grid": [],
+  "listview": [{ name: "rowActivated", handler: "onRowActivated", payload: "index" }],
   "webview": [],
 };
 
@@ -91,5 +94,6 @@ export const handlerPropNames: Record<string, string[]> = {
   "spinner": [],
   "tabview": [],
   "grid": [],
+  "listview": ["onRowActivated"],
   "webview": [],
 };

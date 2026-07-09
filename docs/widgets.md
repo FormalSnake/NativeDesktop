@@ -222,6 +222,20 @@ Attached props (set on children):
 
 Attached props are attach-time-only; changing them after mount is a no-op.
 
+## ListView (`<listview>`)
+
+Automation role: `list`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `items` | stringList | — | createAndUpdate |
+| `selectedIndex` | int | -1 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `rowActivated` | `onRowActivated` | index |
+
 ## WebView (`<webview>`)
 
 > **v1 stub** — renders a placeholder Label; see M5b-D7.

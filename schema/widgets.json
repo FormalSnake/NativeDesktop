@@ -254,6 +254,20 @@
       "automation": { "role": "grid", "textFrom": null }
     },
     {
+      "name": "ListView",
+      "intrinsic": "listview",
+      "container": null,
+      "props": [
+        { "name": "items", "type": "stringList", "appliesTo": "createAndUpdate" },
+        { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "index" }
+      ],
+      "automation": { "role": "list", "textFrom": null }
+    },
+    {
       "name": "WebView",
       "intrinsic": "webview",
       "container": null,

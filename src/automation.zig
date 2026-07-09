@@ -399,6 +399,9 @@ const JsonNode = struct {
     visible: bool,
     geometry: ?Geometry,
     children: []JsonNode,
+    /// ListView's row count (M5c-D4). Null for every widget that isn't
+    /// data-driven; never derived from walking GTK's recycled row widgets.
+    itemCount: ?u32 = null,
 };
 
 const GetTreeResult = struct {
@@ -456,6 +459,7 @@ fn buildNode(
     const widget_type = if (meta) |m| m.widget_type else "";
     const test_id = if (meta) |m| m.test_id else null;
     const text = if (meta) |m| m.text else null;
+    const item_count = if (meta) |m| m.item_count else null;
     const visible = gtk.Widget.getVisible(widget) != 0;
 
     var rect: graphene.Rect = undefined;
@@ -483,6 +487,7 @@ fn buildNode(
         .visible = visible,
         .geometry = geometry,
         .children = children.items,
+        .itemCount = item_count,
     };
 }
 

@@ -204,6 +204,21 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "Grid")) {
         const grid = gtk.Grid.new();
         return grid.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ListView")) {
+        const model = gtk.StringList.new(null);
+        if (propArray(props, "items")) |arr| {
+            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }
+        }
+        const selection = gtk.SingleSelection.new(model.as(gio.ListModel)); // transfer-full: selection owns model
+        const sel_idx = propInt(props, "selectedIndex") orelse -1;
+        if (sel_idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(sel_idx));
+        const factory = gtk.SignalListItemFactory.new();
+        _ = gobject.signalConnectData(asObject(factory), "setup", @ptrCast(&lvSetup), null, null, .{});
+        _ = gobject.signalConnectData(asObject(factory), "bind", @ptrCast(&lvBind), null, null, .{});
+        const list = gtk.ListView.new(selection.as(gtk.SelectionModel), factory.as(gtk.ListItemFactory)); // transfer-full: list owns selection+factory
+        const sw = gtk.ScrolledWindow.new(); // M5c-D3: ListView needs a scroller
+        gtk.ScrolledWindow.setChild(sw, list.as(gtk.Widget));
+        return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         std.debug.print("ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (v1 stub)");
@@ -300,7 +315,35 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propBool(props, "spinning")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));
     } else if (std.mem.eql(u8, kind, "TabView")) {
         if (propInt(props, "selectedIndex")) |idx| gtk.Notebook.setCurrentPage(@ptrCast(@alignCast(widget)), @intCast(idx));
+    } else if (std.mem.eql(u8, kind, "ListView")) {
+        if (propArray(props, "items")) |arr| {
+            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));
+            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
+            const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));
+            const n = gio.ListModel.getNItems(model.as(gio.ListModel));
+            gtk.StringList.splice(model, 0, n, null); // clear
+            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }
+        }
+        if (propInt(props, "selectedIndex")) |idx| {
+            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));
+            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
+            if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));
+        }
     }
+}
+
+fn lvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
+    const label = gtk.Label.new(null);
+    gtk.ListItem.setChild(list_item, label.as(gtk.Widget));
+}
+fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
+    const child = gtk.ListItem.getChild(list_item) orelse return;
+    const label: *gtk.Label = @ptrCast(@alignCast(child));
+    const obj = gtk.ListItem.getItem(list_item) orelse return;
+    const so: *gtk.StringObject = @ptrCast(@alignCast(obj));
+    gtk.Label.setText(label, gtk.StringObject.getString(so));
 }
 
 fn cbClicked(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -355,6 +398,13 @@ fn cbScaleValueChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) voi
     if (emit) |f| f(node_id, "valueChanged", .{ .value = gtk.Range.getValue(range) });
 }
 
+// the ListView `activate` signal passes (list_view, position, user_data).
+fn cbListActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    _ = obj;
+    if (emit) |f| f(node_id, "rowActivated", .{ .index = @intCast(position) });
+}
+
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Button")) {
@@ -388,6 +438,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_Slider_valueChanged = asObject(widget);
         const hid_Slider_valueChanged = gobject.signalConnectData(obj_Slider_valueChanged, "value-changed", @ptrCast(&cbScaleValueChanged), data, null, .{});
         noteSuppressible(obj_Slider_valueChanged, hid_Slider_valueChanged);
+    } else if (std.mem.eql(u8, kind, "ListView")) {
+        const obj_ListView_rowActivated = asObject(gtk.ScrolledWindow.getChild(@ptrCast(@alignCast(widget))).?);
+        const hid_ListView_rowActivated = gobject.signalConnectData(obj_ListView_rowActivated, "activate", @ptrCast(&cbListActivate), data, null, .{});
+        _ = hid_ListView_rowActivated;
     }
 }
 

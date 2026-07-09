@@ -15,6 +15,9 @@ pub const NodeMeta = struct {
     text: ?[]u8,
     parent: u32,
     attached: protocol.Attached = .{}, // tab_label duped/owned here
+    /// ListView's row count (M5c-D4): getTree reports this instead of
+    /// dumping the recycled row widgets. Null for every non-data-driven widget.
+    item_count: ?u32 = null,
 };
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -23,6 +26,18 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     const field = v.object.get(key) orelse return null;
     return switch (field) {
         .string => field.string,
+        else => null,
+    };
+}
+
+/// ListView's `itemCount` (M5c-D4) is derived from `items.len`, never from
+/// walking GTK's recycled row widgets.
+fn propArrayLen(props: ?std.json.Value, key: []const u8) ?u32 {
+    const v = props orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .array => @intCast(field.array.items.len),
         else => null,
     };
 }
@@ -98,6 +113,10 @@ pub const Tree = struct {
         if (self.meta.getPtr(id)) |m| m.parent = parent;
     }
 
+    pub fn setMetaItemCount(self: *Tree, id: u32, n: u32) void {
+        if (self.meta.getPtr(id)) |m| m.item_count = n;
+    }
+
     pub fn setMetaText(self: *Tree, id: u32, text: []const u8) void {
         const m = self.meta.getPtr(id) orelse return;
         if (m.text) |old| self.gpa.free(old);
@@ -144,6 +163,7 @@ pub const Tree = struct {
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
+                if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
                 applyStyleIfPresent(widget, op.id.?, op.props);
             } else if (std.mem.eql(u8, op.op, "append")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;
@@ -164,6 +184,7 @@ pub const Tree = struct {
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
                     self.setMetaText(op.id.?, t);
                 }
+                if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;
                 const child_widget = self.nodes.get(op.child.?) orelse continue;
