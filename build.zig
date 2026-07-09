@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
         .{ .name = "gobject", .module = gobject.module("gobject2") },
         .{ .name = "gio", .module = gobject.module("gio2") },
         .{ .name = "gtk", .module = gobject.module("gtk4") },
+        .{ .name = "gsk", .module = gobject.module("gsk4") },
+        .{ .name = "gdk", .module = gobject.module("gdk4") },
+        .{ .name = "graphene", .module = gobject.module("graphene1") },
     };
 
     const exe = b.addExecutable(.{

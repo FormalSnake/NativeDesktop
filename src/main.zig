@@ -5,6 +5,7 @@ const gio = @import("gio");
 const gtk = @import("gtk");
 const Tree = @import("tree.zig").Tree;
 const Runtime = @import("runtime.zig").Runtime;
+const automation = @import("automation.zig");
 
 pub const app_id = "dev.nativedesktop.hello";
 
@@ -54,10 +55,20 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     tree = Tree.init(gpa, app);
     // Hold the app alive with no window until the first commit presents one.
     gio.Application.hold(app.as(gio.Application));
-    _ = Runtime.start(gpa, app, &tree, global_environ_map.?, global_environ) catch |err| {
+    const rt = Runtime.start(gpa, app, &tree, global_environ_map.?, global_environ) catch |err| {
         std.debug.print("ND_RUNTIME_ERROR {any}\n", .{err});
         gio.Application.quit(app.as(gio.Application));
+        return;
     };
+
+    if (global_environ_map.?.get("NATIVE_AUTOMATION")) |v| {
+        if (std.mem.eql(u8, v, "1")) {
+            const runtime_dir = global_environ_map.?.get("XDG_RUNTIME_DIR") orelse "/tmp";
+            _ = automation.Server.start(gpa, rt.getIo(), &tree, runtime_dir) catch |err| {
+                std.debug.print("ND_AUTOMATION_ERROR {any}\n", .{err});
+            };
+        }
+    }
 }
 
 fn onClicked(_: *gtk.Button, _: ?*anyopaque) callconv(.c) void {

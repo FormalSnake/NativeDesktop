@@ -77,6 +77,10 @@ pub const Runtime = struct {
         return self;
     }
 
+    pub fn getIo(self: *Runtime) std.Io {
+        return self.io;
+    }
+
     fn sendEventStatic(node_id: u32) void {
         if (singleton) |self| self.sendEvent(node_id);
     }
