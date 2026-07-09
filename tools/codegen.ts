@@ -90,11 +90,13 @@ function genIntrinsics(s: Schema): string {
     for (const p of w.props) fields.push(`${p.name}?: ${tsTypeOf(p)}`);
     for (const e of w.events) fields.push(`${e.ndpName ?? e.name}?: ${tsHandlerType(e)}`);
     for (const ap of attached) fields.push(`${ap.name}?: ${tsTypeOf(ap)}`);
+    fields.push("key?: string | number | null");
     fields.push("children?: ReactNode");
     out += `    ${w.intrinsic}: { ${fields.join("; ")} };\n`;
   }
   out += "  }\n";
   out += "  export type Element = ReactNode;\n";
+  out += "  export interface IntrinsicAttributes {\n    key?: string | number | null;\n  }\n";
   out += "  export interface ElementChildrenAttribute {\n    children: {};\n  }\n";
   out += "}\n";
   return out;
