@@ -1,5 +1,29 @@
 {
   "schemaVersion": 1,
+  "style": {
+    "keys": {
+      "background": { "kind": "color", "css": "background-color" },
+      "color":      { "kind": "color", "css": "color" },
+      "font": {
+        "kind": "object",
+        "fields": {
+          "fontSize":   { "kind": "int",  "css": "font-size", "unit": "px" },
+          "fontWeight": { "kind": "enum", "css": "font-weight", "values": ["normal", "bold"] },
+          "fontFamily": { "kind": "string", "css": "font-family" }
+        }
+      },
+      "padding": { "kind": "spacing", "css": "padding", "unit": "px", "target": "css" },
+      "margin":  { "kind": "spacing", "target": "widget" },
+      "border": {
+        "kind": "object",
+        "fields": {
+          "borderWidth":  { "kind": "int",   "css": "border-width",  "unit": "px" },
+          "borderColor":  { "kind": "color", "css": "border-color" },
+          "borderRadius": { "kind": "int",   "css": "border-radius", "unit": "px" }
+        }
+      }
+    }
+  },
   "widgets": [
     {
       "name": "Window",

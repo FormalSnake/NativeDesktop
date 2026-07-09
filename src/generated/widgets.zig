@@ -447,3 +447,23 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }
 }
+
+pub const StyleTarget = enum { css, widget };
+pub const StyleKeyDef = struct { name: []const u8, css: ?[]const u8, target: StyleTarget, kind: []const u8, unit: ?[]const u8 };
+pub const style_keys = [_]StyleKeyDef{
+    .{ .name = "background", .css = "background-color", .target = .css, .kind = "color", .unit = null },
+    .{ .name = "color", .css = "color", .target = .css, .kind = "color", .unit = null },
+    .{ .name = "font", .css = null, .target = .css, .kind = "object", .unit = null },
+    .{ .name = "padding", .css = "padding", .target = .css, .kind = "spacing", .unit = "px" },
+    .{ .name = "margin", .css = null, .target = .widget, .kind = "spacing", .unit = null },
+    .{ .name = "border", .css = null, .target = .css, .kind = "object", .unit = null },
+};
+pub const StyleSubDef = struct { parent: []const u8, name: []const u8, css: []const u8, kind: []const u8, unit: ?[]const u8 };
+pub const style_subkeys = [_]StyleSubDef{
+    .{ .parent = "font", .name = "fontSize", .css = "font-size", .kind = "int", .unit = "px" },
+    .{ .parent = "font", .name = "fontWeight", .css = "font-weight", .kind = "enum", .unit = null },
+    .{ .parent = "font", .name = "fontFamily", .css = "font-family", .kind = "string", .unit = null },
+    .{ .parent = "border", .name = "borderWidth", .css = "border-width", .kind = "int", .unit = "px" },
+    .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
+    .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
+};

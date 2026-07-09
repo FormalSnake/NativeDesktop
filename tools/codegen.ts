@@ -34,7 +34,11 @@ interface Widget {
   events: Event[];
   automation: { role: string; textFrom: string | null };
 }
-interface Schema { schemaVersion: number; widgets: Widget[] }
+type StyleKeyKind = "color" | "int" | "enum" | "string" | "object" | "spacing";
+interface StyleField { kind: StyleKeyKind; css?: string; unit?: string; values?: string[] }
+interface StyleKey extends StyleField { fields?: Record<string, StyleField>; target?: "css" | "widget" }
+interface StyleDef { keys: Record<string, StyleKey> }
+interface Schema { schemaVersion: number; style?: StyleDef; widgets: Widget[] }
 
 function tsTypeOf(p: { type: PropType; values?: string[] }): string {
   switch (p.type) {
@@ -75,6 +79,34 @@ function zigLit(p: Prop): string {
   return JSON.stringify(String(p.default ?? "")); // string/enum default as a Zig string literal
 }
 
+// ---- style: shared StyleProp TS type + runtime valid-key manifest ----
+function tsStyleField(f: StyleField): string {
+  switch (f.kind) {
+    case "color": return "string";
+    case "string": return "string";
+    case "int": return "number";
+    case "enum": return (f.values ?? []).map((v) => JSON.stringify(v)).join(" | ");
+    case "spacing": return "number | { top?: number; right?: number; bottom?: number; left?: number }";
+    case "object": return "{ " + Object.entries(f.fields ?? {}).map(([k, v]) => `${k}?: ${tsStyleField(v)}`).join("; ") + " }";
+  }
+}
+
+function genStyleProp(s: Schema): string {
+  const style = s.style;
+  if (!style) return "export type StyleProp = Record<string, never>;\n";
+  let out = "export interface StyleProp {\n";
+  for (const [k, def] of Object.entries(style.keys)) out += `  ${k}?: ${tsStyleField(def)};\n`;
+  out += "}\n";
+  // Runtime manifest the validator consumes (nested keys included).
+  out += "export const styleKeySpec: Record<string, string[] | null> = {\n";
+  for (const [k, def] of Object.entries(style.keys)) {
+    const nested = def.kind === "object" ? Object.keys(def.fields ?? {}) : null;
+    out += `  ${JSON.stringify(k)}: ${nested ? JSON.stringify(nested) : "null"},\n`;
+  }
+  out += "};\n";
+  return out;
+}
+
 // ---- artifact (a): TS/JSX intrinsics ----
 function genIntrinsics(s: Schema): string {
   let out = HEADER_TS;
@@ -82,6 +114,8 @@ function genIntrinsics(s: Schema): string {
   out += "export { jsx, jsxs, Fragment } from \"react/jsx-runtime\";\n\n";
   out += "export type WidgetName = " + s.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n";
   out += "export type WidgetType = " + s.widgets.map((w) => JSON.stringify(w.intrinsic)).join(" | ") + ";\n\n";
+  out += genStyleProp(s);
+  out += "\n";
   out += "export namespace JSX {\n";
   out += "  export interface IntrinsicElements {\n";
   const attached = collectAttachedProps(s);
@@ -90,6 +124,7 @@ function genIntrinsics(s: Schema): string {
     for (const p of w.props) fields.push(`${p.name}?: ${tsTypeOf(p)}`);
     for (const e of w.events) fields.push(`${e.ndpName ?? e.name}?: ${tsHandlerType(e)}`);
     for (const ap of attached) fields.push(`${ap.name}?: ${tsTypeOf(ap)}`);
+    fields.push("style?: StyleProp");
     fields.push("key?: string | number | null");
     fields.push("children?: ReactNode");
     out += `    ${w.intrinsic}: { ${fields.join("; ")} };\n`;
@@ -267,6 +302,36 @@ function genZig(s: Schema): string {
   out += "}\n\n";
   out += genZigEvents(s);
   out += genZigStructural(s);
+  out += genZigStyleTable(s);
+  return out;
+}
+
+/// Data-only style-key tables `src/style.zig` walks to compile any `style`
+/// object with zero per-key Zig code (D6's spirit for the style surface).
+function genZigStyleTable(s: Schema): string {
+  const style = s.style;
+  if (!style) return "pub const style_keys = [_]StyleKeyDef{};\n";
+  let out = "\npub const StyleTarget = enum { css, widget };\n";
+  out += "pub const StyleKeyDef = struct { name: []const u8, css: ?[]const u8, target: StyleTarget, kind: []const u8, unit: ?[]const u8 };\n";
+  out += "pub const style_keys = [_]StyleKeyDef{\n";
+  for (const [k, def] of Object.entries(style.keys)) {
+    const target = def.target === "widget" ? ".widget" : ".css";
+    const css = def.css ? JSON.stringify(def.css) : "null";
+    const unit = def.unit ? JSON.stringify(def.unit) : "null";
+    out += `    .{ .name = ${JSON.stringify(k)}, .css = ${css}, .target = ${target}, .kind = ${JSON.stringify(def.kind)}, .unit = ${unit} },\n`;
+  }
+  out += "};\n";
+  // Nested object/border/font sub-fields, flattened for the compiler.
+  out += "pub const StyleSubDef = struct { parent: []const u8, name: []const u8, css: []const u8, kind: []const u8, unit: ?[]const u8 };\n";
+  out += "pub const style_subkeys = [_]StyleSubDef{\n";
+  for (const [k, def] of Object.entries(style.keys)) {
+    if (def.kind !== "object") continue;
+    for (const [sk, sf] of Object.entries(def.fields ?? {})) {
+      const unit = sf.unit ? JSON.stringify(sf.unit) : "null";
+      out += `    .{ .parent = ${JSON.stringify(k)}, .name = ${JSON.stringify(sk)}, .css = ${JSON.stringify(sf.css ?? sk)}, .kind = ${JSON.stringify(sf.kind)}, .unit = ${unit} },\n`;
+    }
+  }
+  out += "};\n";
   return out;
 }
 
@@ -744,6 +809,25 @@ function genDocs(s: Schema): string {
   return out;
 }
 
+// ---- artifact (e): styling reference ----
+function genStyleDocs(s: Schema): string {
+  let out = "<!-- GENERATED by tools/codegen.ts — do not edit -->\n\n";
+  out += "# Styling\n\n";
+  out += "`style` is an explicit, **non-web** prop on every widget. GTK styling is NOT web CSS: there is no `flex`, `grid`, `position`, `display`, or `justifyContent`. Layout comes from container widgets (`<box>`/`<grid>`), not from `style`. Unknown keys are rejected at the React renderer with a fix-it message and defensively rejected host-side.\n\n";
+  if (s.style) {
+    out += "## Valid keys\n\n| Key | Shape | Compiles to |\n|---|---|---|\n";
+    for (const [k, def] of Object.entries(s.style.keys)) {
+      const shape = def.kind === "object" ? "object (" + Object.keys(def.fields ?? {}).join(", ") + ")" : def.kind;
+      const to = def.target === "widget" ? "widget margin properties" : "GTK CSS (`" + (def.css ?? "nested") + "`)";
+      out += `| \`${k}\` | ${shape} | ${to} |\n`;
+    }
+    out += "\n";
+  }
+  out += "## Why `margin` differs from `padding`\n\nGTK widget **margins are widget properties** (`gtk_widget_set_margin_*`), not CSS — so `margin` compiles to `setMarginStart/End/Top/Bottom`. `padding` IS a GTK CSS property and stays in the generated `.nd-<id>` CSS block, alongside colors, fonts, and borders. (M5c-D2.)\n\n";
+  out += "## React item-templates for ListView\n\nDeferred (M5c-D-followup): `<listview>` renders native string rows in v1. Item-template components need the synchronous bind design from spec D10.\n";
+  return out;
+}
+
 async function writeIfChanged(rel: string, content: string): Promise<void> {
   const path = resolve(ROOT, rel);
   await Bun.write(path, content);
@@ -755,4 +839,5 @@ await writeIfChanged("packages/react/src/generated/intrinsics.ts", genIntrinsics
 await writeIfChanged("packages/react/src/generated/schema-meta.ts", genSchemaMeta(schema));
 await writeIfChanged("src/generated/widgets.zig", genZig(schema));
 await writeIfChanged("docs/widgets.md", genDocs(schema));
+await writeIfChanged("docs/styling.md", genStyleDocs(schema));
 console.log("codegen complete");

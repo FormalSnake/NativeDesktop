@@ -24,7 +24,8 @@ pub const ErrorFrame = struct {
 
 /// Typed event payload. Exactly one field is set per event name (see the
 /// schema's events[].payload): changed/activate -> text, toggled -> checked,
-/// valueChanged -> value, selectionChanged -> index, clicked -> none.
+/// valueChanged -> value, selectionChanged -> index, clicked -> none,
+/// styleError -> key (the offending style key, M5c-D7).
 /// Serialized with emit_null_optional_fields=false, so clicked still wires
 /// as "payload":{} — byte-compatible with M4.
 pub const EventPayload = struct {
@@ -32,6 +33,7 @@ pub const EventPayload = struct {
     checked: ?bool = null,
     value: ?f64 = null,
     index: ?i64 = null,
+    key: ?[]const u8 = null,
 };
 
 pub const Event = struct {
@@ -185,6 +187,17 @@ test "clicked event payload stays empty object (M4 byte-compat)" {
     const frame = try encodeFrameOpts(gpa, ev, .{ .emit_null_optional_fields = false });
     defer gpa.free(frame);
     try std.testing.expect(std.mem.indexOf(u8, frame[4..], "\"payload\":{}") != null);
+}
+
+test "styleError event payload serializes key-only, other fields still omitted" {
+    const gpa = std.testing.allocator;
+    const ev = Event{ .seq = 9, .nodeId = 5, .name = "styleError", .payload = .{ .key = "display" } };
+    const frame = try encodeFrameOpts(gpa, ev, .{ .emit_null_optional_fields = false });
+    defer gpa.free(frame);
+    const expected =
+        \\{"type":"event","seq":9,"priority":"discrete","nodeId":5,"name":"styleError","payload":{"key":"display"}}
+    ;
+    try std.testing.expectEqualStrings(expected, frame[4..]);
 }
 
 test "attached fromProps extracts grid and tab metadata" {
