@@ -27,6 +27,16 @@ export class Ndp {
   private inbox = new Uint8Array(0);
   private eventCb: ((e: EventMsg) => void) | null = null;
   private helloAckResolve: (() => void) | null = null;
+  // Outbound backpressure (Bun sockets don't buffer writes themselves —
+  // large frames, e.g. a 100k-row ListView `items` update, can exceed the
+  // OS send buffer in one `write()` call; the unwritten remainder must be
+  // queued here and flushed from the `drain` handler, or it is silently lost
+  // and the Zig reader hangs forever waiting for bytes that never arrive.
+  // A FIFO of whole frames (not just one pending buffer) so a second
+  // `send()` while an earlier large frame is still draining queues behind
+  // it instead of writing concurrently and corrupting frame ordering.
+  private outbox: Uint8Array[] = [];
+  private outboxOffset = 0;
 
   private constructor(socket: import("bun").Socket) {
     this.socket = socket;
@@ -45,10 +55,33 @@ export class Ndp {
         close() {
           process.exit(0);
         },
+        drain(sock) {
+          self.pump(sock);
+        },
       },
     });
     self = new Ndp(socket);
     return self;
+  }
+
+  /// Writes as much of the front-of-queue frame as the socket accepts;
+  /// advances to the next frame once the current one is fully written, and
+  /// keeps going while the socket keeps accepting bytes. Re-queues (via
+  /// `outboxOffset`) whatever remains for the next `drain` event otherwise.
+  private pump(sock: import("bun").Socket): void {
+    while (this.outbox.length > 0) {
+      const front = this.outbox[0]!;
+      const remaining = front.subarray(this.outboxOffset);
+      const n = sock.write(remaining);
+      if (n <= 0) return; // socket full again; wait for the next drain
+      this.outboxOffset += n;
+      if (this.outboxOffset >= front.length) {
+        this.outbox.shift();
+        this.outboxOffset = 0;
+      } else {
+        return; // partial write of the current frame; wait for drain
+      }
+    }
   }
 
   private onData(chunk: Uint8Array): void {
@@ -87,7 +120,12 @@ export class Ndp {
     new DataView(frame.buffer).setUint32(0, json.length, true);
     frame.set(json, 4);
     if (TRACE) console.error(">> " + new TextDecoder().decode(json)); // runtime->host = sent here
-    this.socket.write(frame);
+    const wasEmpty = this.outbox.length === 0;
+    this.outbox.push(frame);
+    // If nothing was already queued, try to write immediately (the common
+    // case: small frames complete in one write()); otherwise an earlier
+    // frame is still draining and this one waits its turn in the outbox.
+    if (wasEmpty) this.pump(this.socket);
   }
 
   async handshake(runtime: Runtime): Promise<void> {

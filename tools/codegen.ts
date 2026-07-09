@@ -224,6 +224,25 @@ fn propArray(props: ?std.json.Value, key: []const u8) ?std.json.Array {
 fn asObject(ptr: anytype) *gobject.Object {
     return @ptrCast(@alignCast(ptr));
 }
+
+/// Builds a NULL-terminated strv (\`?[*]const [*:0]const u8\`) from a JSON
+/// string array in ONE bulk allocation, for bulk GtkStringList construction
+/// (gtk_string_list_new/splice both deep-copy the strings, so the returned
+/// buffer only needs to live until that call returns — free it with
+/// \`std.heap.page_allocator.free(buf)\`). O(n), not the O(n^2) per-item
+/// StringList.append loop.
+fn buildStrv(arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) []?[*:0]const u8 {
+    const items = arr orelse std.json.Array.init(std.heap.page_allocator);
+    const buf = std.heap.page_allocator.alloc(?[*:0]const u8, items.items.len + 1) catch @panic("OOM building strv");
+    var n: usize = 0;
+    for (items.items) |item| {
+        if (item != .string) continue;
+        buf[n] = dupeZ(item.string);
+        n += 1;
+    }
+    buf[n] = null;
+    return buf[0 .. n + 1];
+}
 `;
 
 const ZIG_EVENT_STATE = `// ---- event wiring state (installed once by gtk_backend.setEventSink via
@@ -452,10 +471,9 @@ function genZigCreateBody(w: Widget): string {
     out += "        const grid = gtk.Grid.new();\n";
     out += "        return grid.as(gtk.Widget);\n";
   } else if (w.name === "ListView") {
-    out += "        const model = gtk.StringList.new(null);\n";
-    out += "        if (propArray(props, \"items\")) |arr| {\n";
-    out += "            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }\n";
-    out += "        }\n";
+    out += "        const strv = buildStrv(propArray(props, \"items\"), dupeZ); // O(n) bulk build, not per-item append\n";
+    out += "        defer std.heap.page_allocator.free(strv);\n";
+    out += "        const model = gtk.StringList.new(@ptrCast(strv.ptr));\n";
     out += "        const selection = gtk.SingleSelection.new(model.as(gio.ListModel)); // transfer-full: selection owns model\n";
     out += `        const sel_idx = propInt(props, "selectedIndex") orelse ${dflt(w, "selectedIndex")};\n`;
     out += "        if (sel_idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(sel_idx));\n";
@@ -559,14 +577,15 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| gtk.Notebook.setCurrentPage(@ptrCast(@alignCast(widget)), @intCast(idx));\n";
     } else if (w.name === "ListView" && p.name === "items") {
-      out += "        if (propArray(props, \"items\")) |arr| {\n";
+      out += "        {\n";
       out += "            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));\n";
       out += "            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));\n";
       out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
       out += "            const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));\n";
-      out += "            const n = gio.ListModel.getNItems(model.as(gio.ListModel));\n";
-      out += "            gtk.StringList.splice(model, 0, n, null); // clear\n";
-      out += "            for (arr.items) |item| { if (item == .string) gtk.StringList.append(model, dupeZ(item.string)); }\n";
+      out += "            const n_old = gio.ListModel.getNItems(model.as(gio.ListModel));\n";
+      out += "            const strv = buildStrv(propArray(props, \"items\"), dupeZ); // O(n) bulk build, not per-item append\n";
+      out += "            defer std.heap.page_allocator.free(strv);\n";
+      out += "            gtk.StringList.splice(model, 0, n_old, @ptrCast(strv.ptr)); // one call: replace-all\n";
       out += "        }\n";
     } else if (w.name === "ListView" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";

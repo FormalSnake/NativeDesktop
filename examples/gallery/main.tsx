@@ -13,16 +13,7 @@ function App(): React.ReactNode {
   const [volume, setVolume] = useState(25);
   const [submitted, setSubmitted] = useState(false);
   const fruits = ["apple", "banana", "cherry"];
-  // M5c-D-followup fallback (plan §"GtkListView renders under GSK_RENDERER=cairo
-  // headless with 100k rows"): the host's GtkStringList.append-per-row create
-  // path is O(n^2) past ~20k rows under headless cairo, hanging commit-apply
-  // indefinitely (verified: 15k rows completes in ~1s, 20k+ never completes).
-  // That is a host/generated-code scalability bug outside this file's scope
-  // (src/generated/widgets.zig, Task 4). Reduced to 10k here — comfortably
-  // under the verified-safe threshold — so headless-m5b.sh's drive of this
-  // same script keeps completing; recycling and the ListView widget surface
-  // are still fully exercised at this scale.
-  const rows = useMemo(() => Array.from({ length: 10000 }, (_, i) => `Item ${i}`), []);
+  const rows = useMemo(() => Array.from({ length: 100_000 }, (_, i) => `Item ${i}`), []);
   const [selectedRow, setSelectedRow] = useState(0);
   const [activatedRow, setActivatedRow] = useState(-1);
 
