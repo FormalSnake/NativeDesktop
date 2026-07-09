@@ -13,6 +13,10 @@ pub fn setEventSink(sink: EventSink) void {
     event_sink = sink;
 }
 
+pub fn getWindow() ?*gtk.Window {
+    return the_window;
+}
+
 fn dupeZ(s: []const u8) [:0]const u8 {
     return arena.dupeZ(u8, s) catch @panic("OOM in gtk_backend arena");
 }
