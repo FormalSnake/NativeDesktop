@@ -1,7 +1,9 @@
 const std = @import("std");
 const gtk = @import("gtk");
 const protocol = @import("protocol.zig");
-const backend = @import("gtk_backend.zig");
+const backend = @import("backend.zig").impl;
+
+const Widget = backend.Widget;
 
 /// Host-side node metadata: per-node type/testID/text/parent, independent of
 /// the live `*gtk.Widget`. Populated in `apply` alongside `nodes.put`; this is
@@ -27,7 +29,7 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
 pub const Tree = struct {
     gpa: std.mem.Allocator,
     app: ?*gtk.Application,
-    nodes: std.AutoHashMapUnmanaged(u32, *gtk.Widget) = .{},
+    nodes: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
     meta: std.AutoHashMapUnmanaged(u32, NodeMeta) = .{},
     generation: u32 = 0,
 
@@ -41,7 +43,7 @@ pub const Tree = struct {
         return .{ .gpa = gpa, .app = null };
     }
 
-    pub fn get(self: *Tree, id: u32) ?*gtk.Widget {
+    pub fn get(self: *Tree, id: u32) ?*Widget {
         return self.nodes.get(id);
     }
 
@@ -143,7 +145,7 @@ pub const Tree = struct {
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
                 const parent = self.nodes.get(op.parent.?) orelse continue;
                 const child = self.nodes.get(op.child.?) orelse continue;
-                const before: ?*gtk.Widget = if (op.before) |b| self.nodes.get(b) else null;
+                const before: ?*Widget = if (op.before) |b| self.nodes.get(b) else null;
                 backend.insertBefore(parent, child, before);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {

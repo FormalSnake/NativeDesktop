@@ -3,6 +3,8 @@ const gtk = @import("gtk");
 const glib = @import("glib");
 const generated = @import("generated/widgets.zig");
 
+pub const Widget = gtk.Widget;
+
 var event_sink: ?EventSink = null;
 var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const arena = arena_state.allocator();

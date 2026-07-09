@@ -9,6 +9,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const backend_kind = b.option([]const u8, "backend", "widget backend: gtk|null") orelse "gtk";
+    const build_opts = b.addOptions();
+    build_opts.addOption([]const u8, "backend", backend_kind);
+
     const gobject = b.dependency("gobject", .{
         .target = target,
         .optimize = optimize,
@@ -21,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "gsk", .module = gobject.module("gsk4") },
         .{ .name = "gdk", .module = gobject.module("gdk4") },
         .{ .name = "graphene", .module = gobject.module("graphene1") },
+        .{ .name = "build_options", .module = build_opts.createModule() },
     };
 
     const exe = b.addExecutable(.{
