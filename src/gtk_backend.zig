@@ -94,6 +94,37 @@ pub fn setText(widget: *gtk.Widget, text: []const u8) void {
     gtk.Label.setText(label, dupeZ(text));
 }
 
+pub fn removeChild(parent: *gtk.Widget, child: *gtk.Widget) void {
+    if (the_window) |win| {
+        if (parent == win.as(gtk.Widget)) {
+            gtk.Window.setChild(win, null);
+            return;
+        }
+    }
+    const box: *gtk.Box = @ptrCast(@alignCast(parent));
+    gtk.Box.remove(box, child);
+}
+
+pub fn insertBefore(parent: *gtk.Widget, child: *gtk.Widget, before: ?*gtk.Widget) void {
+    if (the_window) |win| {
+        if (parent == win.as(gtk.Widget)) {
+            gtk.Window.setChild(win, child);
+            return;
+        }
+    }
+    const box: *gtk.Box = @ptrCast(@alignCast(parent));
+    if (before) |b| {
+        const prev = gtk.Widget.getPrevSibling(b);
+        gtk.Box.insertChildAfter(box, child, prev); // prev == null => head
+    } else {
+        gtk.Box.append(box, child);
+    }
+}
+
+pub fn setVisible(widget: *gtk.Widget, visible: bool) void {
+    gtk.Widget.setVisible(widget, @intFromBool(visible));
+}
+
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value) void {
     if (std.mem.eql(u8, kind, "Box")) {
         if (propInt(props, "spacing")) |s| {

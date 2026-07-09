@@ -44,6 +44,8 @@ pub const Op = struct {
     child: ?u32 = null,
     // setText
     text: ?[]const u8 = null,
+    // insertBefore
+    before: ?u32 = null,
 };
 
 pub const CommitBatch = struct {
@@ -123,4 +125,29 @@ test "commitBatch with a create op decodes with field names verbatim" {
     try std.testing.expectEqualStrings("Window", parsed.value.ops[0].widget.?);
     try std.testing.expectEqual(@as(u32, 2), parsed.value.ops[2].child.?);
     try std.testing.expectEqualStrings("Clicks: 1", parsed.value.ops[4].text.?);
+}
+
+test "commitBatch with remove/insertBefore/hide/unhide decodes verbatim" {
+    const gpa = std.testing.allocator;
+    const doc =
+        \\{"type":"commitBatch","commitId":7,"generation":1,"ops":[
+        \\  {"op":"insertBefore","parent":2,"child":9,"before":3},
+        \\  {"op":"remove","id":4},
+        \\  {"op":"hide","id":5},
+        \\  {"op":"unhide","id":5}
+        \\]}
+    ;
+    const parsed = try std.json.parseFromSlice(CommitBatch, gpa, doc, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 1), parsed.value.generation);
+    try std.testing.expectEqual(@as(usize, 4), parsed.value.ops.len);
+    try std.testing.expectEqualStrings("insertBefore", parsed.value.ops[0].op);
+    try std.testing.expectEqual(@as(u32, 2), parsed.value.ops[0].parent.?);
+    try std.testing.expectEqual(@as(u32, 9), parsed.value.ops[0].child.?);
+    try std.testing.expectEqual(@as(u32, 3), parsed.value.ops[0].before.?);
+    try std.testing.expectEqualStrings("remove", parsed.value.ops[1].op);
+    try std.testing.expectEqual(@as(u32, 4), parsed.value.ops[1].id.?);
+    try std.testing.expectEqualStrings("hide", parsed.value.ops[2].op);
+    try std.testing.expectEqualStrings("unhide", parsed.value.ops[3].op);
+    try std.testing.expectEqual(@as(u32, 5), parsed.value.ops[3].id.?);
 }

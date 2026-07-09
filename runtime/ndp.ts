@@ -6,8 +6,12 @@ type Runtime = { name: string; version: string };
 type Op =
   | { op: "create"; id: number; widget: "Window" | "Box" | "Label" | "Button"; props: Record<string, unknown> }
   | { op: "append"; parent: number; child: number }
+  | { op: "insertBefore"; parent: number; child: number; before: number | null }
+  | { op: "remove"; id: number }
   | { op: "setText"; id: number; text: string }
-  | { op: "update"; id: number; props: Record<string, unknown> };
+  | { op: "update"; id: number; props: Record<string, unknown> }
+  | { op: "hide"; id: number }
+  | { op: "unhide"; id: number };
 type CommitBatch = { type: "commitBatch"; commitId: number; generation: number; ops: Op[] };
 type EventMsg = { type: "event"; seq: number; priority: string; nodeId: number; name: string; payload: object };
 type HelloAckMsg = { type: "helloAck"; ndpVersion: number; encodings: string[] };
