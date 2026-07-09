@@ -41,9 +41,25 @@ fn paramObj(params: ?std.json.Value, key: []const u8) ?std.json.Value {
     };
 }
 
-/// The kinds of work a `UiJob` can carry. Real handlers land in Tasks 3-6;
-/// Task 2 only scaffolds the marshal-and-block plumbing.
-const JobKind = enum { get_tree, screenshot, click, wait_poll };
+fn paramAny(params: ?std.json.Value, key: []const u8) ?std.json.Value {
+    const v = params orelse return null;
+    if (v != .object) return null;
+    return v.object.get(key);
+}
+
+fn paramFloat(params: ?std.json.Value, key: []const u8) ?f64 {
+    const v = params orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .float => field.float,
+        .integer => @floatFromInt(field.integer),
+        else => null,
+    };
+}
+
+/// The kinds of work a `UiJob` can carry.
+const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll };
 
 /// A request/response handoff between the automation thread and the GTK main
 /// thread. The mutex/condition here guard only this struct, never the tree —
@@ -57,6 +73,10 @@ const UiJob = struct {
     path: ?[:0]const u8 = null,
     text_contains: ?[]const u8 = null, // wait_poll: {"textContains":...}
     ref_visible: ?u32 = null, // wait_poll: {"refVisible":...}
+    value: ?std.json.Value = null, // set_value: params.value (string|bool|number per widget kind)
+    text: ?[]const u8 = null, // type_text: params.text
+    dx: ?f64 = null, // scroll: params.dx
+    dy: ?f64 = null, // scroll: params.dy
 
     // output (filled on the UI thread by `handleOnUi`)
     result_json: ?[]u8 = null, // owned by gpa; the automation thread frees
@@ -90,14 +110,16 @@ fn uiCallback(data: ?*anyopaque) callconv(.c) c_int {
 }
 
 /// Runs on the GTK main thread. Fills `result_json` on success, or
-/// `err_code`/`err_msg`/`err_data_json` on failure. Tasks 4-6 fill the
-/// remaining arms; `.get_tree` is implemented here (Task 3).
+/// `err_code`/`err_msg`/`err_data_json` on failure.
 fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
         .get_tree => handleGetTree(job),
         .screenshot => handleScreenshot(job),
         .click => handleClick(job),
         .wait_poll => handleWaitPoll(job),
+        .set_value => handleSetValue(job),
+        .type_text => handleType(job),
+        .scroll => handleScroll(job),
     }
 }
 
@@ -132,27 +154,29 @@ fn handleWaitPoll(job: *UiJob) void {
 
 const ClickResult = struct { ref: u32, dispatched: bool };
 
-/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds)
-/// before a semantic `clicked` dispatch — never click what a user couldn't
-/// reach (research gotcha; full z-order/overlap testing is deferred).
-fn handleClick(job: *UiJob) void {
+/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds),
+/// shared by `click` and the setValue/type/scroll automation actions — never
+/// act on what a user couldn't reach (research gotcha; full z-order/overlap
+/// testing is deferred). Fills `job.err_*` (-32001) and returns null on
+/// failure; same codes/reason strings as the original `handleClick` gates.
+fn checkActionable(job: *UiJob) ?*gtk.Widget {
     const widget = job.tree.get(job.ref) orelse {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{job.ref}) catch null;
-        return;
+        return null;
     };
     if (gtk.Widget.getVisible(widget) == 0) {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"invisible\"}}", .{job.ref}) catch null;
-        return;
+        return null;
     }
     if (gtk.Widget.getMapped(widget) == 0) {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unmapped\"}}", .{job.ref}) catch null;
-        return;
+        return null;
     }
     const win = backend.getWindow().?.as(gtk.Widget);
     var rect: graphene.Rect = undefined;
@@ -161,8 +185,24 @@ fn handleClick(job: *UiJob) void {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"offscreen\"}}", .{job.ref}) catch null;
-        return;
+        return null;
     }
+    return widget;
+}
+
+/// Sets `job.err_code = -32602` with a `{ref,type}` data payload — the wrong-
+/// widget-kind / bad-value-type error shape shared by setValue/type/scroll.
+fn jobInvalidParams(job: *UiJob, msg: []const u8) void {
+    job.err_code = -32602;
+    job.err_msg = msg;
+    job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d}}}", .{job.ref}) catch null;
+}
+
+/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds)
+/// before a semantic `clicked` dispatch — never click what a user couldn't
+/// reach (research gotcha; full z-order/overlap testing is deferred).
+fn handleClick(job: *UiJob) void {
+    const widget = checkActionable(job) orelse return;
 
     // Semantic dispatch: emit `clicked` directly. `gtk.Widget.activate` was
     // tried first but only re-emits `clicked` on the first call per main-loop
@@ -173,6 +213,107 @@ fn handleClick(job: *UiJob) void {
     gobject.signalEmitByName(@ptrCast(@alignCast(widget)), "clicked");
 
     const result = ClickResult{ .ref = job.ref, .dispatched = true };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+const SetValueResult = struct { ref: u32, applied: bool };
+
+/// setValue {ref,value}: kind-dispatched on the tracked widget_type. Sets the
+/// native value through the same widget-owning object the generated
+/// applyProps path uses, but WITHOUT the M5b-D2 echo-suppression wrapper —
+/// automation actions must flow to React exactly like real user input
+/// (plan judgment M5b-D2).
+fn handleSetValue(job: *UiJob) void {
+    const widget = checkActionable(job) orelse return;
+    const meta = job.tree.metaGet(job.ref) orelse return; // gate 1 in checkActionable already proved existence
+    const kind = meta.widget_type;
+    const v = job.value orelse return jobInvalidParams(job, "missing params.value");
+
+    if (std.mem.eql(u8, kind, "TextInput")) {
+        if (v != .string) return jobInvalidParams(job, "value must be a string for TextInput");
+        const z = job.gpa.dupeZ(u8, v.string) catch return;
+        defer job.gpa.free(z);
+        const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
+        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
+    } else if (std.mem.eql(u8, kind, "TextArea")) {
+        if (v != .string) return jobInvalidParams(job, "value must be a string for TextArea");
+        const z = job.gpa.dupeZ(u8, v.string) catch return;
+        defer job.gpa.free(z);
+        const view: *gtk.TextView = @ptrCast(@alignCast(widget));
+        gtk.TextBuffer.setText(gtk.TextView.getBuffer(view), z, -1);
+    } else if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Radio")) {
+        if (v != .bool) return jobInvalidParams(job, "value must be a bool for Checkbox/Radio");
+        gtk.CheckButton.setActive(@ptrCast(@alignCast(widget)), @intFromBool(v.bool));
+    } else if (std.mem.eql(u8, kind, "Slider")) {
+        const num: f64 = switch (v) {
+            .float => v.float,
+            .integer => @floatFromInt(v.integer),
+            else => return jobInvalidParams(job, "value must be a number for Slider"),
+        };
+        // GtkAdjustment-backed: Range.setValue drives the Scale's adjustment
+        // and clamps to [min, max]; fires "value-changed".
+        const range = @as(*gtk.Scale, @ptrCast(@alignCast(widget))).as(gtk.Range);
+        gtk.Range.setValue(range, num);
+    } else if (std.mem.eql(u8, kind, "Select")) {
+        if (v != .integer) return jobInvalidParams(job, "value must be an integer index for Select");
+        gtk.DropDown.setSelected(@ptrCast(@alignCast(widget)), @intCast(v.integer)); // fires notify::selected
+    } else {
+        return jobInvalidParams(job, "setValue unsupported for this widget type"); // data carries {ref}
+    }
+    const result = SetValueResult{ .ref = job.ref, .applied = true };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+const TypeResult = struct { ref: u32, text: []const u8 };
+
+/// type {ref,text}: TextInput only, semantic append through GtkEditable
+/// (never keysyms — spec §8). Appends at the end of the current text.
+fn handleType(job: *UiJob) void {
+    const widget = checkActionable(job) orelse return;
+    const meta = job.tree.metaGet(job.ref) orelse return;
+    if (!std.mem.eql(u8, meta.widget_type, "TextInput"))
+        return jobInvalidParams(job, "type supported only for TextInput");
+    const text = job.text orelse return jobInvalidParams(job, "missing params.text");
+    const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
+    const cur = std.mem.span(gtk.Editable.getText(editable));
+    // insertText position is in CHARACTERS; append = current codepoint count.
+    var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);
+    const z = job.gpa.dupeZ(u8, text) catch return;
+    defer job.gpa.free(z);
+    // Length param: bytes of `text` to insert. -1 (NUL-terminated) was
+    // confirmed against a live GtkEntry (throwaway drive script, M5b Task 7
+    // verification) to insert the full string correctly; kept as the
+    // primary idiom per the plan's verify-then-fallback note.
+    gtk.Editable.insertText(editable, z, -1, &pos); // fires "changed"
+    const full = std.mem.span(gtk.Editable.getText(editable));
+    const result = TypeResult{ .ref = job.ref, .text = full };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+const ScrollResult = struct { ref: u32, x: f64, y: f64 };
+
+/// scroll {ref,dx?,dy?}: ScrollView only, via its GtkAdjustments (spec §8
+/// semantic-scroll model). Deltas are added to the current adjustment value;
+/// `Adjustment.setValue` clamps to [lower, upper-page].
+fn handleScroll(job: *UiJob) void {
+    const widget = checkActionable(job) orelse return;
+    const meta = job.tree.metaGet(job.ref) orelse return;
+    if (!std.mem.eql(u8, meta.widget_type, "ScrollView"))
+        return jobInvalidParams(job, "scroll supported only for ScrollView");
+    const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+    if (job.dx) |dx| {
+        const h = gtk.ScrolledWindow.getHadjustment(sw);
+        gtk.Adjustment.setValue(h, gtk.Adjustment.getValue(h) + dx);
+    }
+    if (job.dy) |dy| {
+        const v = gtk.ScrolledWindow.getVadjustment(sw);
+        gtk.Adjustment.setValue(v, gtk.Adjustment.getValue(v) + dy);
+    }
+    const result = ScrollResult{
+        .ref = job.ref,
+        .x = gtk.Adjustment.getValue(gtk.ScrolledWindow.getHadjustment(sw)),
+        .y = gtk.Adjustment.getValue(gtk.ScrolledWindow.getVadjustment(sw)),
+    };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
@@ -455,12 +596,24 @@ pub const Server = struct {
             return self.dispatchWaitFor(id, parsed.value.params);
         }
 
-        // setValue/type/scroll: signatures are fixed now, but M4 has no
-        // widgets to act on until M5 — no UiJob is built (no widget touch).
-        if (std.mem.eql(u8, method, "setValue") or std.mem.eql(u8, method, "type") or std.mem.eql(u8, method, "scroll")) {
-            const data = std.fmt.allocPrint(self.gpa, "{{\"method\":\"{s}\"}}", .{method}) catch return error.OutOfMemory;
-            defer self.gpa.free(data);
-            return errorEnvelope(self.gpa, id, -32601, "not implemented until M5 widgets", data);
+        if (std.mem.eql(u8, method, "setValue")) {
+            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
+            const value = paramAny(parsed.value.params, "value") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.value", null);
+            var job = UiJob{ .tree = self.tree, .kind = .set_value, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .value = value };
+            return self.runJobAndEnvelope(&job, id);
+        }
+
+        if (std.mem.eql(u8, method, "type")) {
+            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
+            const text = paramStr(parsed.value.params, "text") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.text", null);
+            var job = UiJob{ .tree = self.tree, .kind = .type_text, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .text = text };
+            return self.runJobAndEnvelope(&job, id);
+        }
+
+        if (std.mem.eql(u8, method, "scroll")) {
+            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
+            var job = UiJob{ .tree = self.tree, .kind = .scroll, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .dx = paramFloat(parsed.value.params, "dx"), .dy = paramFloat(parsed.value.params, "dy") };
+            return self.runJobAndEnvelope(&job, id);
         }
 
         return errorEnvelope(self.gpa, id, -32601, "method not found", null);
