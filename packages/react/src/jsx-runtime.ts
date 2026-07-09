@@ -11,10 +11,10 @@ export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 // `JSX.IntrinsicElements` from here, with no HTML tags to collide with.
 export namespace JSX {
   export interface IntrinsicElements {
-    window: { title?: string; defaultWidth?: number; defaultHeight?: number; children?: ReactNode };
-    box: { orientation?: "vertical" | "horizontal"; spacing?: number; children?: ReactNode };
-    label: { text?: string; children?: ReactNode };
-    button: { label?: string; onClick?: () => void; children?: ReactNode };
+    window: { title?: string; defaultWidth?: number; defaultHeight?: number; testID?: string; children?: ReactNode };
+    box: { orientation?: "vertical" | "horizontal"; spacing?: number; testID?: string; children?: ReactNode };
+    label: { text?: string; testID?: string; children?: ReactNode };
+    button: { label?: string; onClick?: () => void; testID?: string; children?: ReactNode };
   }
   export type Element = ReactNode;
   export interface ElementChildrenAttribute {

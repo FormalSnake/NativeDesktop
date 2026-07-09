@@ -36,8 +36,8 @@ function App(): React.ReactNode {
   return (
     <window title="NativeDesktop M3 Counter" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Clicks: ${clicks}`} />
-        <button label="Increment" onClick={onClick} />
+        <label testID="clicks-label" text={`Clicks: ${clicks}`} />
+        <button testID="increment-button" label="Increment" onClick={onClick} />
         <label text={`Uptime: ${uptime}s`} />
         <label text={`Slow: ${slow}`} />
         <Suspense fallback={<label text="loading..." />}>
