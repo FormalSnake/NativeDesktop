@@ -3,15 +3,29 @@ import type { ReactNode } from "react";
 
 export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button";
-export type WidgetType = "window" | "box" | "label" | "button";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "WebView";
+export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "webview";
 
 export namespace JSX {
   export interface IntrinsicElements {
-    window: { title?: string; defaultWidth?: number; defaultHeight?: number; testID?: string; children?: ReactNode };
-    box: { orientation?: "vertical" | "horizontal"; spacing?: number; testID?: string; children?: ReactNode };
-    label: { text?: string; testID?: string; children?: ReactNode };
-    button: { label?: string; testID?: string; onClick?: () => void; children?: ReactNode };
+    window: { title?: string; defaultWidth?: number; defaultHeight?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    box: { orientation?: "vertical" | "horizontal"; spacing?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    label: { text?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    button: { label?: string; testID?: string; onClick?: () => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    textinput: { text?: string; placeholder?: string; editable?: boolean; testID?: string; onChanged?: (e: { text: string }) => void; onActivate?: (e: { text: string }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    textarea: { text?: string; testID?: string; onChanged?: (e: { text: string }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    checkbox: { checked?: boolean; label?: string; testID?: string; onToggled?: (e: { checked: boolean }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    radio: { group?: string; checked?: boolean; label?: string; testID?: string; onToggled?: (e: { checked: boolean }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    select: { options?: string[]; selectedIndex?: number; testID?: string; onSelectionChanged?: (e: { index: number }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    slider: { min?: number; max?: number; step?: number; value?: number; orientation?: "horizontal" | "vertical"; testID?: string; onValueChanged?: (e: { value: number }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    progressbar: { fraction?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    image: { path?: string; iconName?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    scrollview: { minContentHeight?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    separator: { orientation?: "horizontal" | "vertical"; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    spinner: { spinning?: boolean; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    tabview: { selectedIndex?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    grid: { testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
+    webview: { url?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; children?: ReactNode };
   }
   export type Element = ReactNode;
   export interface ElementChildrenAttribute {

@@ -49,6 +49,197 @@
         { "name": "clicked", "ndpName": "onClick" }
       ],
       "automation": { "role": "button", "textFrom": "label" }
+    },
+    {
+      "name": "TextInput",
+      "intrinsic": "textinput",
+      "container": null,
+      "props": [
+        { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "editable", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "changed", "ndpName": "onChanged", "payload": "text" },
+        { "name": "activate", "ndpName": "onActivate", "payload": "text" }
+      ],
+      "automation": { "role": "textbox", "textFrom": "text" }
+    },
+    {
+      "name": "TextArea",
+      "intrinsic": "textarea",
+      "container": null,
+      "props": [
+        { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "changed", "ndpName": "onChanged", "payload": "text" }
+      ],
+      "automation": { "role": "textbox", "textFrom": "text" }
+    },
+    {
+      "name": "Checkbox",
+      "intrinsic": "checkbox",
+      "container": null,
+      "props": [
+        { "name": "checked", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "checkbox", "textFrom": "label" }
+    },
+    {
+      "name": "Radio",
+      "intrinsic": "radio",
+      "container": null,
+      "props": [
+        { "name": "group", "type": "string", "required": true, "appliesTo": "create" },
+        { "name": "checked", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "radio", "textFrom": "label" }
+    },
+    {
+      "name": "Select",
+      "intrinsic": "select",
+      "container": null,
+      "props": [
+        { "name": "options", "type": "stringList", "appliesTo": "create" },
+        { "name": "selectedIndex", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "index" }
+      ],
+      "automation": { "role": "combobox", "textFrom": null }
+    },
+    {
+      "name": "Slider",
+      "intrinsic": "slider",
+      "container": null,
+      "props": [
+        { "name": "min", "type": "float", "default": 0, "appliesTo": "create" },
+        { "name": "max", "type": "float", "default": 100, "appliesTo": "create" },
+        { "name": "step", "type": "float", "default": 1, "appliesTo": "create" },
+        { "name": "value", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "orientation", "type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "valueChanged", "ndpName": "onValueChanged", "payload": "value" }
+      ],
+      "automation": { "role": "slider", "textFrom": null }
+    },
+    {
+      "name": "ProgressBar",
+      "intrinsic": "progressbar",
+      "container": null,
+      "props": [
+        { "name": "fraction", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "progressbar", "textFrom": null }
+    },
+    {
+      "name": "Image",
+      "intrinsic": "image",
+      "container": null,
+      "props": [
+        { "name": "path", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "image", "textFrom": null }
+    },
+    {
+      "name": "ScrollView",
+      "intrinsic": "scrollview",
+      "container": { "childModel": "single" },
+      "props": [
+        { "name": "minContentHeight", "type": "int", "default": 0, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "scrollarea", "textFrom": null }
+    },
+    {
+      "name": "Separator",
+      "intrinsic": "separator",
+      "container": null,
+      "props": [
+        { "name": "orientation", "type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "separator", "textFrom": null }
+    },
+    {
+      "name": "Spinner",
+      "intrinsic": "spinner",
+      "container": null,
+      "props": [
+        { "name": "spinning", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "spinner", "textFrom": null }
+    },
+    {
+      "name": "TabView",
+      "intrinsic": "tabview",
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "tabLabel", "type": "string", "default": "" }
+        ]
+      },
+      "props": [
+        { "name": "selectedIndex", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "tablist", "textFrom": null }
+    },
+    {
+      "name": "Grid",
+      "intrinsic": "grid",
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "gridRow", "type": "int", "default": 0 },
+          { "name": "gridColumn", "type": "int", "default": 0 },
+          { "name": "gridRowSpan", "type": "int", "default": 1 },
+          { "name": "gridColumnSpan", "type": "int", "default": 1 }
+        ]
+      },
+      "props": [
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "grid", "textFrom": null }
+    },
+    {
+      "name": "WebView",
+      "intrinsic": "webview",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "url", "type": "string", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "webview", "textFrom": null }
     }
   ]
 }

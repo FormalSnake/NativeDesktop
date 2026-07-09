@@ -43,5 +43,193 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string | Button | create |
 | `testID` | string | — | meta |
 
-Events: `clicked` (`onClick`).
+| Event | Handler | Payload |
+|---|---|---|
+| `clicked` | `onClick` | none |
+
+## TextInput (`<textinput>`)
+
+Automation role: `textbox`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `text` | string |  | createAndUpdate |
+| `placeholder` | string | — | createAndUpdate |
+| `editable` | bool | true | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `changed` | `onChanged` | text |
+| `activate` | `onActivate` | text |
+
+## TextArea (`<textarea>`)
+
+Automation role: `textbox`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `text` | string |  | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `changed` | `onChanged` | text |
+
+## Checkbox (`<checkbox>`)
+
+Automation role: `checkbox`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `checked` | bool | false | createAndUpdate |
+| `label` | string |  | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
+## Radio (`<radio>`)
+
+Automation role: `radio`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `group` | string | — | create |
+| `checked` | bool | false | createAndUpdate |
+| `label` | string |  | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
+## Select (`<select>`)
+
+Automation role: `combobox`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `options` | stringList | — | create |
+| `selectedIndex` | int | 0 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+
+`options` is create-only in v1.
+
+## Slider (`<slider>`)
+
+Automation role: `slider`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `min` | float | 0 | create |
+| `max` | float | 100 | create |
+| `step` | float | 1 | create |
+| `value` | float | 0 | createAndUpdate |
+| `orientation` | horizontal \| vertical | horizontal | create |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `valueChanged` | `onValueChanged` | value |
+
+## ProgressBar (`<progressbar>`)
+
+Automation role: `progressbar`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `fraction` | float | 0 | createAndUpdate |
+| `testID` | string | — | meta |
+
+## Image (`<image>`)
+
+Automation role: `image`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `path` | string | — | createAndUpdate |
+| `iconName` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+## ScrollView (`<scrollview>`)
+
+Automation role: `scrollarea`. Text source: none. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `minContentHeight` | int | 0 | create |
+| `testID` | string | — | meta |
+
+## Separator (`<separator>`)
+
+Automation role: `separator`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `orientation` | horizontal \| vertical | horizontal | create |
+| `testID` | string | — | meta |
+
+## Spinner (`<spinner>`)
+
+Automation role: `spinner`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `spinning` | bool | true | createAndUpdate |
+| `testID` | string | — | meta |
+
+## TabView (`<tabview>`)
+
+Automation role: `tablist`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `selectedIndex` | int | 0 | createAndUpdate |
+| `testID` | string | — | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `tabLabel` | string |  |
+
+Attached props are attach-time-only; changing them after mount is a no-op.
+
+`selectedIndex` takes effect on update; initial page is 0.
+
+## Grid (`<grid>`)
+
+Automation role: `grid`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `testID` | string | — | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `gridRow` | int | 0 |
+| `gridColumn` | int | 0 |
+| `gridRowSpan` | int | 1 |
+| `gridColumnSpan` | int | 1 |
+
+Attached props are attach-time-only; changing them after mount is a no-op.
+
+## WebView (`<webview>`)
+
+> **v1 stub** — renders a placeholder Label; see M5b-D7.
+
+Automation role: `webview`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `url` | string | — | create |
+| `testID` | string | — | meta |
 
