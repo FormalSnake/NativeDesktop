@@ -1,0 +1,8 @@
+.{
+    .name = .nativedesktop,
+    .version = "0.0.1",
+    .fingerprint = 0xa420709a4ae48296,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{},
+}
