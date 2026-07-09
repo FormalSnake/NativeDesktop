@@ -1,0 +1,11 @@
+{
+  "name": "@nativedesktop/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "nd-mcp": "src/index.ts" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  }
+}
