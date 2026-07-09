@@ -3,6 +3,7 @@ const gtk = @import("gtk");
 const glib = @import("glib");
 const protocol = @import("protocol.zig");
 const generated = @import("generated/widgets.zig");
+const style = @import("style.zig");
 
 pub const Widget = gtk.Widget;
 
@@ -58,4 +59,12 @@ pub fn setVisible(widget: *gtk.Widget, visible: bool) void {
 
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value) void {
     generated.applyProps(widget, kind, props, &dupeZ);
+}
+
+pub fn initStyle(sink_err: style.StyleErrorFn) void {
+    style.init(arena, sink_err);
+}
+
+pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value) void {
+    style.applyStyle(widget, node_id, style_value);
 }

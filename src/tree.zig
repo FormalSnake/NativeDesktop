@@ -27,6 +27,15 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     };
 }
 
+/// Invoked from both the create and update arms of `apply` — style is only
+/// compiled when `props.style` is present (regression contract: no style =
+/// zero CSS provider, zero margin call, byte-identical to M5b).
+fn applyStyleIfPresent(widget: *Widget, id: u32, props: ?std.json.Value) void {
+    const v = props orelse return;
+    if (v != .object) return;
+    if (v.object.get("style")) |st| backend.applyStyle(widget, id, st);
+}
+
 pub const Tree = struct {
     gpa: std.mem.Allocator,
     app: ?*gtk.Application,
@@ -135,6 +144,7 @@ pub const Tree = struct {
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
+                applyStyleIfPresent(widget, op.id.?, op.props);
             } else if (std.mem.eql(u8, op.op, "append")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;
                 const child_widget = self.nodes.get(op.child.?) orelse continue;
@@ -149,6 +159,7 @@ pub const Tree = struct {
             } else if (std.mem.eql(u8, op.op, "update")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
                 backend.applyProps(widget, op.widget orelse "", op.props);
+                applyStyleIfPresent(widget, op.id.?, op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
                     self.setMetaText(op.id.?, t);

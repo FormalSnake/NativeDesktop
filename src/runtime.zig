@@ -72,6 +72,7 @@ pub const Runtime = struct {
 
         singleton = self;
         backend.setEventSink(&sendEventStatic);
+        backend.initStyle(&sendStyleErrorStatic);
 
         _ = try std.Thread.spawn(.{}, readerLoop, .{self});
         return self;
@@ -83,6 +84,13 @@ pub const Runtime = struct {
 
     fn sendEventStatic(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         if (singleton) |self| self.sendEvent(node_id, name, payload);
+    }
+
+    /// Host-side defensive layer (M5c-D7): an unknown style key never crashes
+    /// or drops silently — it fires a structured `styleError` event alongside
+    /// the ND_WARN stderr line style.zig already printed.
+    fn sendStyleErrorStatic(node_id: u32, key: []const u8) void {
+        if (singleton) |self| self.sendEvent(node_id, "styleError", .{ .key = key });
     }
 
     pub fn sendEvent(self: *Runtime, node_id: u32, name: []const u8, payload: protocol.EventPayload) void {

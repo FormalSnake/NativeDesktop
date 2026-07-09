@@ -180,3 +180,8 @@ pub fn setText(widget: *Node, text: []const u8) void {
 pub fn setVisible(widget: *Node, visible: bool) void {
     widget.visible = visible;
 }
+
+// Keeps the backend interface uniform with gtk_backend.zig; the null backend
+// has no display to install a CSS provider on. Conformance asserts `style`
+// rides create/update props generically (Task 6) instead.
+pub fn applyStyle(_: *Node, _: u32, _: std.json.Value) void {}
