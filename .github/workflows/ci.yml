@@ -12,6 +12,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@v8
       - name: unit tests
         run: nix develop -c zig build test
+      - name: codegen freshness
+        run: |
+          nix develop -c bun tools/codegen.ts
+          git diff --exit-code -- schema packages/react/src/generated src/generated docs/widgets.md
       - name: build
         run: nix develop -c zig build
       - name: headless smoke
