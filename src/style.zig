@@ -55,12 +55,13 @@ fn applyMarginSpacing(widget: *gtk.Widget, value: std.json.Value) void {
     }
 }
 
-/// `{css_name}: {value}{unit};` — colors/strings verbatim (cheap sanity check:
-/// must start with '#' or "rgb"), ints/floats get the unit suffix if any.
-fn emitScalarCss(list: *std.ArrayList(u8), allocator: std.mem.Allocator, css_name: []const u8, value: std.json.Value, unit: ?[]const u8) void {
+/// `{css_name}: {value}{unit};` — the hex/rgb sanity check applies only to
+/// `kind == "color"` keys (background/color/borderColor); other string-valued
+/// keys (fontWeight enum, fontFamily string, …) pass through verbatim.
+fn emitScalarCss(list: *std.ArrayList(u8), allocator: std.mem.Allocator, css_name: []const u8, value: std.json.Value, unit: ?[]const u8, kind: []const u8) void {
     switch (value) {
         .string => |s| {
-            if (s.len == 0 or !(s[0] == '#' or std.mem.startsWith(u8, s, "rgb"))) {
+            if (std.mem.eql(u8, kind, "color") and (s.len == 0 or !(s[0] == '#' or std.mem.startsWith(u8, s, "rgb")))) {
                 std.debug.print("ND_WARN style color value \"{s}\" is not a hex/rgb string (GTK is not web CSS)\n", .{s});
                 return;
             }
@@ -97,7 +98,7 @@ fn emitNested(list: *std.ArrayList(u8), allocator: std.mem.Allocator, value: std
     for (generated.style_subkeys) |sub| {
         if (!std.mem.eql(u8, sub.parent, parent)) continue;
         const field = value.object.get(sub.name) orelse continue;
-        emitScalarCss(list, allocator, sub.css, field, sub.unit);
+        emitScalarCss(list, allocator, sub.css, field, sub.unit, sub.kind);
         emitted = true;
     }
     return emitted;
@@ -125,7 +126,7 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
             } else if (std.mem.eql(u8, def.kind, "spacing")) {
                 emitSpacingCss(&list, allocator, def.css.?, entry.value_ptr.*);
             } else if (def.css) |css_name| {
-                emitScalarCss(&list, allocator, css_name, entry.value_ptr.*, def.unit);
+                emitScalarCss(&list, allocator, css_name, entry.value_ptr.*, def.unit, def.kind);
             }
         }
         if (border_present) try list.appendSlice(allocator, "border-style: solid;");
@@ -184,6 +185,22 @@ test "compileCss emits scoped block, splits margin out, rejects unknown key" {
     try std.testing.expect(std.mem.indexOf(u8, css, "background-color: #fff;") != null);
     try std.testing.expect(std.mem.indexOf(u8, css, "padding: 8px;") != null);
     try std.testing.expect(std.mem.indexOf(u8, css, "margin") == null); // margin is a widget prop, not CSS
+}
+
+test "compileCss: fontWeight bold emits font-weight: bold with no color-check rejection" {
+    // Regression test: the hex/rgb color sanity check in emitScalarCss was
+    // being applied to ALL string-valued style sub-keys, not just kind ==
+    // "color" ones. fontWeight is kind "enum" ("normal"|"bold"), so "bold"
+    // failed the "#"/"rgb" check and was silently dropped (plus a bogus
+    // ND_WARN style color value "bold" is not a hex/rgb string).
+    const talloc = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, talloc,
+        \\{"font":{"fontWeight":"bold"}}
+    , .{});
+    defer parsed.deinit();
+    const css = try compileCss(talloc, 9, parsed.value);
+    defer talloc.free(css);
+    try std.testing.expect(std.mem.indexOf(u8, css, "font-weight: bold;") != null);
 }
 
 test "compileCss emits nested font/border fields with implied border-style" {

@@ -74,6 +74,19 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(tree_tests).step);
 
+    // `test` declarations are only collected from a file's own addTest root,
+    // never transitively through @import (Zig 0.16) — style.zig's compileCss
+    // unit tests need their own root, or `zig build test` silently skips them.
+    const style_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/style.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &gtk_imports,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(style_tests).step);
+
     // `@embedFile` cannot cross a module's package-path boundary (the directory
     // of its root_source_file), so schema/widgets.json — a sibling of src/, not
     // a descendant — can't be embedded directly from src/conformance.zig. Read
