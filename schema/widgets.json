@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "widgets": [
+    {
+      "name": "Window",
+      "intrinsic": "window",
+      "container": { "childModel": "single" },
+      "props": [
+        { "name": "title", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "defaultWidth", "type": "int", "default": 480, "appliesTo": "create" },
+        { "name": "defaultHeight", "type": "int", "default": 320, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "window", "textFrom": "title" }
+    },
+    {
+      "name": "Box",
+      "intrinsic": "box",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "orientation", "type": "enum", "values": ["vertical", "horizontal"], "default": "vertical", "appliesTo": "create" },
+        { "name": "spacing", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "Label",
+      "intrinsic": "label",
+      "container": null,
+      "props": [
+        { "name": "text", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "label", "textFrom": "text" }
+    },
+    {
+      "name": "Button",
+      "intrinsic": "button",
+      "container": null,
+      "props": [
+        { "name": "label", "type": "string", "default": "Button", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "clicked", "ndpName": "onClick" }
+      ],
+      "automation": { "role": "button", "textFrom": "label" }
+    }
+  ]
+}
