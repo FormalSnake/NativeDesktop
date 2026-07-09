@@ -29,6 +29,8 @@
               libadwaita
               glib
               gobject-introspection
+              libxslt      # provides xsltproc for zig-gobject codegen
+              weston       # headless wayland compositor for CI/agent runs
             ];
           };
         });
