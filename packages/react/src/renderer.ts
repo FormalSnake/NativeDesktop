@@ -25,8 +25,7 @@ export async function render(element: ReactNode): Promise<void> {
 
   ndp.onEvent((e: EventMsg) => {
     setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete");
-    const rec = registry.get(e.nodeId);
-    if (e.name === "clicked") rec?.onClick?.();
+    registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
   });
 
   const Reconciler = (ReconcilerFactory as unknown as (c: typeof configWithFlush) => {

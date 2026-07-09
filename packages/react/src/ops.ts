@@ -7,13 +7,13 @@ export class Batch {
   get length(): number { return this.ops.length; }
 }
 
-export type Handler = () => void;
+export type Handler = (payload?: unknown) => void;
 
 export interface NodeRecord {
   id: number;
   type: string;
   props: Record<string, unknown>;
-  onClick?: Handler;
+  handlers: Record<string, Handler>; // event name -> latest render's handler
 }
 
 export class NodeRegistry {

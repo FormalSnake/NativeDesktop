@@ -1,11 +1,10 @@
 import { DiscreteEventPriority, ContinuousEventPriority, DefaultEventPriority } from "react-reconciler/constants";
 import { nextNodeId } from "./ids.ts";
-import { Batch, NodeRegistry } from "./ops.ts";
+import { Batch, NodeRegistry, type Handler } from "./ops.ts";
+import { intrinsicToName, widgetEvents, handlerPropNames } from "./generated/schema-meta.ts";
+import type { WidgetType } from "./generated/intrinsics.ts";
 
-export type WidgetType = "window" | "box" | "label" | "button";
-const WIDGET: Record<WidgetType, "Window" | "Box" | "Label" | "Button"> = {
-  window: "Window", box: "Box", label: "Label", button: "Button",
-};
+export type { WidgetType };
 
 export interface Instance {
   id: number;
@@ -32,6 +31,15 @@ function textOf(children: unknown): string | undefined {
   return undefined;
 }
 
+function collectHandlers(type: string, props: Record<string, unknown>): Record<string, Handler> {
+  const out: Record<string, Handler> = {};
+  for (const ev of widgetEvents[type] ?? []) {
+    const h = props[ev.handler];
+    if (typeof h === "function") out[ev.name] = h as Handler;
+  }
+  return out;
+}
+
 export interface Container { rootId: number | null }
 
 // React only calls appendChild/appendChildToContainer for the TOP of a
@@ -46,9 +54,9 @@ function emitCreateIfNew(inst: Instance): void {
   const text = textOf(props.children);
   if (inst.type === "label" && text !== undefined) props.text = text;
   delete props.children;
-  delete props.onClick;
-  activeBatch.push({ op: "create", id: inst.id, widget: WIDGET[inst.type], props });
-  registry.register({ id: inst.id, type: inst.type, props: inst.props, onClick: inst.props.onClick as (() => void) | undefined });
+  for (const h of handlerPropNames[inst.type] ?? []) delete props[h];
+  activeBatch.push({ op: "create", id: inst.id, widget: intrinsicToName[inst.type] as "Window" | "Box" | "Label" | "Button", props });
+  registry.register({ id: inst.id, type: inst.type, props: inst.props, handlers: collectHandlers(inst.type, inst.props) });
   for (const child of inst.children) {
     emitCreateIfNew(child);
     activeBatch.push({ op: "append", parent: inst.id, child: child.id });
@@ -122,17 +130,18 @@ export const hostConfig = {
       const old = textOf(oldProps.children) ?? (oldProps.text as string | undefined);
       if (t !== undefined && t !== old) activeBatch.push({ op: "setText", id: inst.id, text: t });
     }
+    const skip = handlerPropNames[type] ?? [];
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(newProps)) {
-      if (k === "children" || k === "onClick") continue;
+      if (k === "children" || skip.includes(k)) continue;
       if (type === "label" && k === "text") continue; // routed through setText above
       if (newProps[k] !== oldProps[k]) changed[k] = newProps[k];
     }
     if (Object.keys(changed).length) activeBatch.push({ op: "update", id: inst.id, props: changed });
     inst.props = newProps;
-    // Re-register handler so events route to the latest closure.
+    // Re-register handlers so events route to the latest closures.
     const rec = registry.get(inst.id);
-    if (rec) rec.onClick = newProps.onClick as (() => void) | undefined;
+    if (rec) rec.handlers = collectHandlers(type, newProps);
   },
   commitTextUpdate() {}, // labels handle their own text via commitUpdate
 
