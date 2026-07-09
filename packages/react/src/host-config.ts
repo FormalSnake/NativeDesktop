@@ -11,6 +11,10 @@ export interface Instance {
   id: number;
   type: WidgetType;
   props: Record<string, unknown>;
+  /** Populated by appendInitialChild during render; only meaningful until the
+   *  instance's first commit-time attach, at which point emitCreateIfNew
+   *  flushes it into create+append ops (see note below). */
+  children: Instance[];
 }
 
 // Set by the renderer immediately before updateContainer / on each commit.
@@ -30,6 +34,12 @@ function textOf(children: unknown): string | undefined {
 
 export interface Container { rootId: number | null }
 
+// React only calls appendChild/appendChildToContainer for the TOP of a
+// freshly-built subtree — a brand-new parent's own children were already
+// linked in memory via appendInitialChild during render, with no further
+// commit-phase callback per descendant. So a first-time attach must walk
+// inst.children recursively, emitting `create` + `append` for every
+// not-yet-registered descendant, not just `inst` itself.
 function emitCreateIfNew(inst: Instance): void {
   if (registry.get(inst.id)) return;
   const props: Record<string, unknown> = { ...inst.props };
@@ -39,6 +49,10 @@ function emitCreateIfNew(inst: Instance): void {
   delete props.onClick;
   activeBatch.push({ op: "create", id: inst.id, widget: WIDGET[inst.type], props });
   registry.register({ id: inst.id, type: inst.type, props: inst.props, onClick: inst.props.onClick as (() => void) | undefined });
+  for (const child of inst.children) {
+    emitCreateIfNew(child);
+    activeBatch.push({ op: "append", parent: inst.id, child: child.id });
+  }
 }
 
 export function setPriorityFor(kind: "discrete" | "continuous" | "default"): void {
@@ -53,6 +67,8 @@ export const hostConfig = {
   noTimeout: -1 as const,
   supportsMicrotasks: true,
   scheduleMicrotask: (fn: () => void) => queueMicrotask(fn),
+  scheduleTimeout: (fn: (...args: unknown[]) => void, delay?: number) => setTimeout(fn, delay),
+  cancelTimeout: (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
 
   getRootHostContext: () => ({ root: true }), // non-null sentinel
   getChildHostContext: (parent: unknown) => parent, // non-null (parent is non-null)
@@ -63,13 +79,16 @@ export const hostConfig = {
   // ---- render phase: PURE, no socket, no host widgets ----
   createInstance(type: WidgetType, props: Record<string, unknown>): Instance {
     const id = nextNodeId();
-    return { id, type, props };
+    return { id, type, props, children: [] };
   },
   createTextInstance(text: string): { text: string } {
     return { text }; // folded into the parent label's text; see shouldSetTextContent
   },
   shouldSetTextContent: (type: WidgetType) => type === "label",
-  appendInitialChild() {}, // pure: structure recorded at commit
+  // Pure: no ops emitted, but the parent-child link must be recorded here —
+  // for a freshly-built subtree this is the ONLY callback informing us of
+  // structure; emitCreateIfNew replays it into ops at first commit-time attach.
+  appendInitialChild(parent: Instance, child: Instance) { parent.children.push(child); },
   finalizeInitialChildren: () => false,
 
   // ---- commit phase: emit ops into activeBatch ----
@@ -106,6 +125,7 @@ export const hostConfig = {
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(newProps)) {
       if (k === "children" || k === "onClick") continue;
+      if (type === "label" && k === "text") continue; // routed through setText above
       if (newProps[k] !== oldProps[k]) changed[k] = newProps[k];
     }
     if (Object.keys(changed).length) activeBatch.push({ op: "update", id: inst.id, props: changed });

@@ -1,16 +1,20 @@
 import { render } from "@nativedesktop/react";
-import { Suspense, use, useState, useTransition, useMemo } from "react";
+import { Suspense, use, useState, useTransition, useMemo, memo } from "react";
 
-// A promise that resolves after ~1s, memoized so it isn't recreated each render.
-function useOneShot<T>(value: T, ms: number): Promise<T> {
-  return useMemo(() => new Promise<T>((r) => setTimeout(() => r(value), ms)), [value, ms]);
-}
+// Module-scoped (not useMemo'd): the uptime interval re-renders App every
+// 500ms, and a concurrent render can discard an in-progress suspended fiber
+// before it commits, resetting any hook-level cache (useMemo included) tied
+// to that fiber. A promise created once at module load survives every
+// discarded attempt, so `use()` keeps resolving against the same promise
+// until it settles ~1s after the process starts.
+const delayedBadgePromise = new Promise<string>((r) => setTimeout(() => r("ready:suspense-resolved"), 1000));
 
-function DelayedBadge(): React.ReactNode {
-  const promise = useOneShot("ready:suspense-resolved", 1000);
-  const text = use(promise); // suspends until resolved -> fallback shown, then unhidden
+// memo: DelayedBadge takes no props, so its fiber need not be torn down by
+// the unrelated uptime-interval re-renders of App every 500ms.
+const DelayedBadge = memo(function DelayedBadge(): React.ReactNode {
+  const text = use(delayedBadgePromise); // suspends until resolved -> fallback shown, then unhidden
   return <label text={text} />;
-}
+});
 
 function App(): React.ReactNode {
   const [clicks, setClicks] = useState(0);
