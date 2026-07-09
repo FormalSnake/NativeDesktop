@@ -83,10 +83,52 @@ fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
         .get_tree => handleGetTree(job),
         .screenshot => handleScreenshot(job),
-        .click, .wait_poll => {
+        .click => handleClick(job),
+        .wait_poll => {
             job.result_json = job.gpa.dupe(u8, "{\"ok\":true}") catch null;
         },
     }
+}
+
+const ClickResult = struct { ref: u32, dispatched: bool };
+
+/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds)
+/// before a semantic `clicked` dispatch — never click what a user couldn't
+/// reach (research gotcha; full z-order/overlap testing is deferred).
+fn handleClick(job: *UiJob) void {
+    const widget = job.tree.get(job.ref) orelse {
+        job.err_code = -32001;
+        job.err_msg = "not actionable";
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{job.ref}) catch null;
+        return;
+    };
+    if (gtk.Widget.getVisible(widget) == 0) {
+        job.err_code = -32001;
+        job.err_msg = "not actionable";
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"invisible\"}}", .{job.ref}) catch null;
+        return;
+    }
+    if (gtk.Widget.getMapped(widget) == 0) {
+        job.err_code = -32001;
+        job.err_msg = "not actionable";
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unmapped\"}}", .{job.ref}) catch null;
+        return;
+    }
+    const win = backend.getWindow().?.as(gtk.Widget);
+    var rect: graphene.Rect = undefined;
+    const has_bounds = gtk.Widget.computeBounds(widget, win, &rect) != 0;
+    if (!has_bounds or rect.f_size.f_width <= 0 or rect.f_size.f_height <= 0) {
+        job.err_code = -32001;
+        job.err_msg = "not actionable";
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"offscreen\"}}", .{job.ref}) catch null;
+        return;
+    }
+
+    // Semantic dispatch: `activate` emits `clicked` for a GtkButton.
+    _ = gtk.Widget.activate(widget);
+
+    const result = ClickResult{ .ref = job.ref, .dispatched = true };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
 const ScreenshotResult = struct { path: []const u8, width: i32, height: i32 };
@@ -356,7 +398,15 @@ pub const Server = struct {
             return self.runJobAndEnvelope(&job, id);
         }
 
-        // Tasks 5-6 add click/waitFor/stubs routing here.
+        if (std.mem.eql(u8, method, "click")) {
+            const ref = paramInt(parsed.value.params, "ref") orelse {
+                return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
+            };
+            var job = UiJob{ .tree = self.tree, .kind = .click, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref) };
+            return self.runJobAndEnvelope(&job, id);
+        }
+
+        // Task 6 adds waitFor/stubs routing here.
         return errorEnvelope(self.gpa, id, -32601, "method not found", null);
     }
 
