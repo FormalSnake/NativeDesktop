@@ -1,1 +1,3 @@
-export const version = "0.0.0";
+import "./jsx.d.ts";
+export { render } from "./renderer.ts";
+export type { Instance } from "./host-config.ts";
