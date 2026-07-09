@@ -473,12 +473,7 @@ fn buildNode(
         null;
 
     var children: std.ArrayList(JsonNode) = .empty;
-    var maybe_child = gtk.Widget.getFirstChild(widget);
-    while (maybe_child) |child| : (maybe_child = gtk.Widget.getNextSibling(child)) {
-        const child_id = reverse.get(child) orelse continue;
-        const child_node = try buildNode(arena, tree, reverse, window_widget, child, child_id);
-        try children.append(arena, child_node);
-    }
+    try collectTrackedChildren(arena, tree, reverse, window_widget, widget, &children, 0);
 
     return .{
         .ref = id,
@@ -489,6 +484,36 @@ fn buildNode(
         .geometry = geometry,
         .children = children.items,
     };
+}
+
+/// Child walk for `buildNode`: tracked GTK children become snapshot nodes;
+/// untracked ones (GTK-internal wrappers — the GtkViewport that
+/// `ScrolledWindow.setChild` auto-inserts around non-Scrollable children,
+/// GtkNotebook's header/tab machinery) are recursed through transparently so
+/// tracked descendants attach to the nearest tracked ancestor. Untracked
+/// widgets never appear as nodes themselves.
+fn collectTrackedChildren(
+    arena: std.mem.Allocator,
+    tree: *Tree,
+    reverse: *std.AutoHashMapUnmanaged(*gtk.Widget, u32),
+    window_widget: *gtk.Widget,
+    widget: *gtk.Widget,
+    children: *std.ArrayList(JsonNode),
+    depth: u32,
+) std.mem.Allocator.Error!void {
+    if (depth > 32) {
+        std.debug.print("ND_WARN getTree wrapper recursion depth cap hit; subtree truncated\n", .{});
+        return;
+    }
+    var maybe_child = gtk.Widget.getFirstChild(widget);
+    while (maybe_child) |child| : (maybe_child = gtk.Widget.getNextSibling(child)) {
+        if (reverse.get(child)) |child_id| {
+            const child_node = try buildNode(arena, tree, reverse, window_widget, child, child_id);
+            try children.append(arena, child_node);
+        } else {
+            try collectTrackedChildren(arena, tree, reverse, window_widget, child, children, depth + 1);
+        }
+    }
 }
 
 pub const Server = struct {
