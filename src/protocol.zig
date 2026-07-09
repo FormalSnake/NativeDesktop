@@ -22,13 +22,50 @@ pub const ErrorFrame = struct {
     got: u32,
 };
 
+/// Typed event payload. Exactly one field is set per event name (see the
+/// schema's events[].payload): changed/activate -> text, toggled -> checked,
+/// valueChanged -> value, selectionChanged -> index, clicked -> none.
+/// Serialized with emit_null_optional_fields=false, so clicked still wires
+/// as "payload":{} — byte-compatible with M4.
+pub const EventPayload = struct {
+    text: ?[]const u8 = null,
+    checked: ?bool = null,
+    value: ?f64 = null,
+    index: ?i64 = null,
+};
+
 pub const Event = struct {
     type: []const u8 = "event",
     seq: u64,
     priority: []const u8 = "discrete",
     nodeId: u32,
-    name: []const u8,
-    payload: struct {} = .{},
+    name: []const u8, // clicked | changed | activate | toggled | valueChanged | selectionChanged
+    payload: EventPayload = .{},
+};
+
+/// Container attach metadata, extracted host-side from a child's create-op
+/// props (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel — the
+/// schema's container.attachedProps). Not a wire frame itself; it rides
+/// inside create-op props and is stashed in tree.NodeMeta.
+/// `tab_label` is NOT owned here — tree.putMeta dupes it.
+pub const Attached = struct {
+    grid_row: i64 = 0,
+    grid_column: i64 = 0,
+    grid_row_span: i64 = 1,
+    grid_column_span: i64 = 1,
+    tab_label: ?[]const u8 = null,
+
+    pub fn fromProps(props: ?std.json.Value) Attached {
+        var a = Attached{};
+        const v = props orelse return a;
+        if (v != .object) return a;
+        if (v.object.get("gridRow")) |f| { if (f == .integer) a.grid_row = f.integer; }
+        if (v.object.get("gridColumn")) |f| { if (f == .integer) a.grid_column = f.integer; }
+        if (v.object.get("gridRowSpan")) |f| { if (f == .integer) a.grid_row_span = f.integer; }
+        if (v.object.get("gridColumnSpan")) |f| { if (f == .integer) a.grid_column_span = f.integer; }
+        if (v.object.get("tabLabel")) |f| { if (f == .string) a.tab_label = f.string; }
+        return a;
+    }
 };
 
 /// One of create|append|setText|update. Decoded with a permissive struct:
@@ -56,13 +93,17 @@ pub const CommitBatch = struct {
 };
 
 /// u32 LE length prefix + UTF-8 JSON. Caller frees the returned slice.
-pub fn encodeFrame(gpa: std.mem.Allocator, value: anytype) ![]u8 {
-    const json = try std.json.Stringify.valueAlloc(gpa, value, .{});
+pub fn encodeFrameOpts(gpa: std.mem.Allocator, value: anytype, options: std.json.Stringify.Options) ![]u8 {
+    const json = try std.json.Stringify.valueAlloc(gpa, value, options);
     defer gpa.free(json);
     const frame = try gpa.alloc(u8, 4 + json.len);
     std.mem.writeInt(u32, frame[0..4], @intCast(json.len), .little);
     @memcpy(frame[4..], json);
     return frame;
+}
+
+pub fn encodeFrame(gpa: std.mem.Allocator, value: anytype) ![]u8 {
+    return encodeFrameOpts(gpa, value, .{});
 }
 
 /// Reads only the "type" field so the reader can route without a full union parse.
@@ -125,6 +166,38 @@ test "commitBatch with a create op decodes with field names verbatim" {
     try std.testing.expectEqualStrings("Window", parsed.value.ops[0].widget.?);
     try std.testing.expectEqual(@as(u32, 2), parsed.value.ops[2].child.?);
     try std.testing.expectEqualStrings("Clicks: 1", parsed.value.ops[4].text.?);
+}
+
+test "event frame with payload omits null payload fields" {
+    const gpa = std.testing.allocator;
+    const ev = Event{ .seq = 7, .nodeId = 12, .name = "changed", .payload = .{ .text = "hi" } };
+    const frame = try encodeFrameOpts(gpa, ev, .{ .emit_null_optional_fields = false });
+    defer gpa.free(frame);
+    const expected =
+        \\{"type":"event","seq":7,"priority":"discrete","nodeId":12,"name":"changed","payload":{"text":"hi"}}
+    ;
+    try std.testing.expectEqualStrings(expected, frame[4..]);
+}
+
+test "clicked event payload stays empty object (M4 byte-compat)" {
+    const gpa = std.testing.allocator;
+    const ev = Event{ .seq = 1, .nodeId = 3, .name = "clicked" };
+    const frame = try encodeFrameOpts(gpa, ev, .{ .emit_null_optional_fields = false });
+    defer gpa.free(frame);
+    try std.testing.expect(std.mem.indexOf(u8, frame[4..], "\"payload\":{}") != null);
+}
+
+test "attached fromProps extracts grid and tab metadata" {
+    const gpa = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa,
+        "{\"gridRow\":2,\"gridColumn\":1,\"gridColumnSpan\":3,\"tabLabel\":\"Form\"}", .{});
+    defer parsed.deinit();
+    const a = Attached.fromProps(parsed.value);
+    try std.testing.expectEqual(@as(i64, 2), a.grid_row);
+    try std.testing.expectEqual(@as(i64, 1), a.grid_column);
+    try std.testing.expectEqual(@as(i64, 1), a.grid_row_span);
+    try std.testing.expectEqual(@as(i64, 3), a.grid_column_span);
+    try std.testing.expectEqualStrings("Form", a.tab_label.?);
 }
 
 test "commitBatch with remove/insertBefore/hide/unhide decodes verbatim" {
