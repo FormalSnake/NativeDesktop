@@ -9,12 +9,24 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const gobject = b.dependency("gobject", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const gtk_imports = [_]std.Build.Module.Import{
+        .{ .name = "glib", .module = gobject.module("glib2") },
+        .{ .name = "gobject", .module = gobject.module("gobject2") },
+        .{ .name = "gio", .module = gobject.module("gio2") },
+        .{ .name = "gtk", .module = gobject.module("gtk4") },
+    };
+
     const exe = b.addExecutable(.{
         .name = "nd-hello",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &gtk_imports,
         }),
     });
     b.installArtifact(exe);
@@ -29,6 +41,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &gtk_imports,
         }),
     });
     const test_step = b.step("test", "Run unit tests");

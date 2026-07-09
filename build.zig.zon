@@ -4,5 +4,9 @@
     .fingerprint = 0xa420709a4ae48296,
     .minimum_zig_version = "0.16.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
-    .dependencies = .{},
+    .dependencies = .{
+        // Generated from ianprime0509/zig-gobject@97caf8b (Zig 0.16.0);
+        // regenerate with scripts/regen-bindings.sh.
+        .gobject = .{ .path = "vendor/gobject-bindings" },
+    },
 }
