@@ -31,6 +31,16 @@ fn paramInt(params: ?std.json.Value, key: []const u8) ?i64 {
     };
 }
 
+fn paramObj(params: ?std.json.Value, key: []const u8) ?std.json.Value {
+    const v = params orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .object => field,
+        else => null,
+    };
+}
+
 /// The kinds of work a `UiJob` can carry. Real handlers land in Tasks 3-6;
 /// Task 2 only scaffolds the marshal-and-block plumbing.
 const JobKind = enum { get_tree, screenshot, click, wait_poll };
@@ -45,9 +55,12 @@ const UiJob = struct {
     // input (tagged by kind)
     ref: u32 = 0,
     path: ?[:0]const u8 = null,
+    text_contains: ?[]const u8 = null, // wait_poll: {"textContains":...}
+    ref_visible: ?u32 = null, // wait_poll: {"refVisible":...}
 
     // output (filled on the UI thread by `handleOnUi`)
     result_json: ?[]u8 = null, // owned by gpa; the automation thread frees
+    matched: bool = false, // wait_poll only
     err_code: i32 = 0,
     err_msg: ?[]const u8 = null,
     err_data_json: ?[]u8 = null, // pre-serialized `data` object, owned by gpa
@@ -84,10 +97,37 @@ fn handleOnUi(job: *UiJob) void {
         .get_tree => handleGetTree(job),
         .screenshot => handleScreenshot(job),
         .click => handleClick(job),
-        .wait_poll => {
-            job.result_json = job.gpa.dupe(u8, "{\"ok\":true}") catch null;
-        },
+        .wait_poll => handleWaitPoll(job),
     }
+}
+
+/// Evaluates one `waitFor` condition against the live tree. Called once per
+/// poll from `runOnUi` (each poll is a separate marshaled UI-thread read);
+/// the sleep/deadline bookkeeping lives on the automation thread (Task 6
+/// `dispatchWaitFor`), keeping all tree access UI-thread-only.
+fn handleWaitPoll(job: *UiJob) void {
+    if (job.text_contains) |needle| {
+        var it = job.tree.meta.valueIterator();
+        while (it.next()) |m| {
+            if (m.text) |t| {
+                if (std.mem.indexOf(u8, t, needle) != null) {
+                    job.matched = true;
+                    return;
+                }
+            }
+        }
+        job.matched = false;
+        return;
+    }
+    if (job.ref_visible) |ref| {
+        const widget = job.tree.get(ref) orelse {
+            job.matched = false;
+            return;
+        };
+        job.matched = gtk.Widget.getVisible(widget) != 0;
+        return;
+    }
+    job.matched = false;
 }
 
 const ClickResult = struct { ref: u32, dispatched: bool };
@@ -124,8 +164,13 @@ fn handleClick(job: *UiJob) void {
         return;
     }
 
-    // Semantic dispatch: `activate` emits `clicked` for a GtkButton.
-    _ = gtk.Widget.activate(widget);
+    // Semantic dispatch: emit `clicked` directly. `gtk.Widget.activate` was
+    // tried first but only re-emits `clicked` on the first call per main-loop
+    // settle under weston headless — rapid successive activate() calls (the
+    // exact pattern the Task 9 driver uses) silently drop clicks 2+. Emitting
+    // the signal directly bypasses GTK's activate/gesture state machine and
+    // fires reliably on every call (verified: three rapid clicks -> Clicks: 3).
+    gobject.signalEmitByName(@ptrCast(@alignCast(widget)), "clicked");
 
     const result = ClickResult{ .ref = job.ref, .dispatched = true };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
@@ -406,8 +451,62 @@ pub const Server = struct {
             return self.runJobAndEnvelope(&job, id);
         }
 
-        // Task 6 adds waitFor/stubs routing here.
+        if (std.mem.eql(u8, method, "waitFor")) {
+            return self.dispatchWaitFor(id, parsed.value.params);
+        }
+
+        // setValue/type/scroll: signatures are fixed now, but M4 has no
+        // widgets to act on until M5 — no UiJob is built (no widget touch).
+        if (std.mem.eql(u8, method, "setValue") or std.mem.eql(u8, method, "type") or std.mem.eql(u8, method, "scroll")) {
+            const data = std.fmt.allocPrint(self.gpa, "{{\"method\":\"{s}\"}}", .{method}) catch return error.OutOfMemory;
+            defer self.gpa.free(data);
+            return errorEnvelope(self.gpa, id, -32601, "not implemented until M5 widgets", data);
+        }
+
         return errorEnvelope(self.gpa, id, -32601, "method not found", null);
+    }
+
+    /// Polls the tree on the UI thread at ~50ms until the condition holds or
+    /// `timeoutMs` elapses. Each poll is a separate marshaled UI-thread read
+    /// (`handleWaitPoll`); the sleep/deadline live here on the automation
+    /// thread so tree access stays UI-thread-only.
+    fn dispatchWaitFor(self: *Server, id: std.json.Value, params: ?std.json.Value) ![]u8 {
+        const condition = paramObj(params, "condition") orelse {
+            return errorEnvelope(self.gpa, id, -32602, "missing params.condition", null);
+        };
+        const timeout_ms: i64 = paramInt(params, "timeoutMs") orelse 2000;
+        const text_contains = paramStr(condition, "textContains");
+        const ref_visible = paramInt(condition, "refVisible");
+        if (text_contains == null and ref_visible == null) {
+            return errorEnvelope(self.gpa, id, -32602, "condition must have textContains or refVisible", null);
+        }
+
+        const poll_interval_ms = 50;
+        const max_polls = @max(1, @divTrunc(timeout_ms, poll_interval_ms) + 1);
+        var polls: i64 = 0;
+        while (true) {
+            var job = UiJob{
+                .tree = self.tree,
+                .kind = .wait_poll,
+                .gpa = self.gpa,
+                .io = self.io,
+                .text_contains = text_contains,
+                .ref_visible = if (ref_visible) |r| @intCast(r) else null,
+            };
+            runOnUi(&job);
+            if (job.matched) {
+                return resultEnvelope(self.gpa, id, "{\"matched\":true}");
+            }
+            polls += 1;
+            if (polls >= max_polls) {
+                const data = try std.fmt.allocPrint(self.gpa, "{{\"timeoutMs\":{d}}}", .{timeout_ms});
+                defer self.gpa.free(data);
+                return errorEnvelope(self.gpa, id, -32002, "waitFor timeout", data);
+            }
+            // Sleeps the automation thread only (never the UI thread); `.awake`
+            // is the monotonic clock, unaffected by wall-clock adjustments.
+            std.Io.sleep(self.io, .fromMilliseconds(poll_interval_ms), .awake) catch {};
+        }
     }
 
     /// Runs `job` on the UI thread and wraps the outcome as a JSON-RPC envelope.
