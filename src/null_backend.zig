@@ -13,6 +13,7 @@ pub const Node = struct {
     title: ?[]const u8 = null,
     children: std.ArrayList(*Node) = .empty,
     clicked_connected: bool = false,
+    attached: protocol.Attached = .{},
 };
 
 // The tree stores `*Widget`; for the null backend `Widget` == `Node`.
@@ -93,7 +94,10 @@ pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
     node.clicked_connected = true;
 }
 
-pub fn appendChild(parent: *Node, child: *Node) void {
+pub fn appendChild(parent: *Node, parent_kind: []const u8, child: *Node, attached: protocol.Attached) void {
+    child.attached = attached;
+    const single = std.mem.eql(u8, parent_kind, "Window") or std.mem.eql(u8, parent_kind, "ScrollView");
+    if (single) parent.children.clearRetainingCapacity();
     parent.children.append(gpa, child) catch {};
 }
 
@@ -101,7 +105,8 @@ pub fn setText(widget: *Node, text: []const u8) void {
     widget.text = text;
 }
 
-pub fn removeChild(parent: *Node, child: *Node) void {
+pub fn removeChild(parent: *Node, parent_kind: []const u8, child: *Node) void {
+    _ = parent_kind;
     for (parent.children.items, 0..) |c, i| {
         if (c == child) {
             _ = parent.children.orderedRemove(i);
@@ -110,7 +115,14 @@ pub fn removeChild(parent: *Node, child: *Node) void {
     }
 }
 
-pub fn insertBefore(parent: *Node, child: *Node, before: ?*Node) void {
+pub fn insertBefore(parent: *Node, parent_kind: []const u8, child: *Node, before: ?*Node, attached: protocol.Attached) void {
+    child.attached = attached;
+    const single = std.mem.eql(u8, parent_kind, "Window") or std.mem.eql(u8, parent_kind, "ScrollView");
+    if (single) {
+        parent.children.clearRetainingCapacity();
+        parent.children.append(gpa, child) catch {};
+        return;
+    }
     if (before) |b| {
         for (parent.children.items, 0..) |c, i| {
             if (c == b) {

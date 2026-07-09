@@ -73,15 +73,15 @@ test "container append/insertBefore/remove ordering" {
     const b = try nb.createWidget(dummyApp(), "Label", null);
     const c = try nb.createWidget(dummyApp(), "Label", null);
 
-    nb.appendChild(box, a);
-    nb.appendChild(box, c);
-    nb.insertBefore(box, b, c); // -> [a, b, c]
+    nb.appendChild(box, "Box", a, .{});
+    nb.appendChild(box, "Box", c, .{});
+    nb.insertBefore(box, "Box", b, c, .{}); // -> [a, b, c]
     try std.testing.expectEqual(@as(usize, 3), box.children.items.len);
     try std.testing.expect(box.children.items[0] == a);
     try std.testing.expect(box.children.items[1] == b);
     try std.testing.expect(box.children.items[2] == c);
 
-    nb.removeChild(box, b); // -> [a, c]
+    nb.removeChild(box, "Box", b); // -> [a, c]
     try std.testing.expectEqual(@as(usize, 2), box.children.items.len);
     try std.testing.expect(box.children.items[0] == a);
     try std.testing.expect(box.children.items[1] == c);

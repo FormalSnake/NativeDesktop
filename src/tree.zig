@@ -14,6 +14,7 @@ pub const NodeMeta = struct {
     test_id: ?[]u8,
     text: ?[]u8,
     parent: u32,
+    attached: protocol.Attached = .{}, // tab_label duped/owned here
 };
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -65,18 +66,22 @@ pub const Tree = struct {
         return try self.gpa.dupe(u8, v);
     }
 
-    pub fn putMeta(self: *Tree, id: u32, widget_type: []const u8, test_id: ?[]const u8, text: ?[]const u8, parent: u32) !void {
+    pub fn putMeta(self: *Tree, id: u32, widget_type: []const u8, test_id: ?[]const u8, text: ?[]const u8, parent: u32, attached: protocol.Attached) !void {
         const owned_type = try self.gpa.dupe(u8, widget_type);
         errdefer self.gpa.free(owned_type);
         const owned_test_id = try self.dupeOpt(test_id);
         errdefer if (owned_test_id) |v| self.gpa.free(v);
         const owned_text = try self.dupeOpt(text);
         errdefer if (owned_text) |v| self.gpa.free(v);
+        var owned_attached = attached;
+        owned_attached.tab_label = try self.dupeOpt(attached.tab_label);
+        errdefer if (owned_attached.tab_label) |v| self.gpa.free(v);
         try self.meta.put(self.gpa, id, .{
             .widget_type = owned_type,
             .test_id = owned_test_id,
             .text = owned_text,
             .parent = parent,
+            .attached = owned_attached,
         });
     }
 
@@ -101,6 +106,7 @@ pub const Tree = struct {
         self.gpa.free(kv.value.widget_type);
         if (kv.value.test_id) |v| self.gpa.free(v);
         if (kv.value.text) |v| self.gpa.free(v);
+        if (kv.value.attached.tab_label) |v| self.gpa.free(v);
     }
 
     pub fn deinitMeta(self: *Tree) void {
@@ -109,6 +115,7 @@ pub const Tree = struct {
             self.gpa.free(entry.value_ptr.widget_type);
             if (entry.value_ptr.test_id) |v| self.gpa.free(v);
             if (entry.value_ptr.text) |v| self.gpa.free(v);
+            if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
         }
         self.meta.deinit(self.gpa);
     }
@@ -126,11 +133,14 @@ pub const Tree = struct {
                 // never applied to the GTK widget itself.
                 const test_id = propStr(op.props, "testID");
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
-                self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0) catch {};
+                const attached = protocol.Attached.fromProps(op.props);
+                self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
             } else if (std.mem.eql(u8, op.op, "append")) {
-                const parent = self.nodes.get(op.parent.?) orelse continue;
-                const child = self.nodes.get(op.child.?) orelse continue;
-                backend.appendChild(parent, child);
+                const parent_widget = self.nodes.get(op.parent.?) orelse continue;
+                const child_widget = self.nodes.get(op.child.?) orelse continue;
+                const pmeta = self.metaGet(op.parent.?) orelse continue;
+                const cmeta = self.metaGet(op.child.?) orelse continue;
+                backend.appendChild(parent_widget, pmeta.widget_type, child_widget, cmeta.attached);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "setText")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
@@ -140,15 +150,26 @@ pub const Tree = struct {
                 const widget = self.nodes.get(op.id.?) orelse continue;
                 backend.applyProps(widget, op.widget orelse "", op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
+                if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
+                    self.setMetaText(op.id.?, t);
+                }
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
-                const parent = self.nodes.get(op.parent.?) orelse continue;
-                const child = self.nodes.get(op.child.?) orelse continue;
+                const parent_widget = self.nodes.get(op.parent.?) orelse continue;
+                const child_widget = self.nodes.get(op.child.?) orelse continue;
                 const before: ?*Widget = if (op.before) |b| self.nodes.get(b) else null;
-                backend.insertBefore(parent, child, before);
+                const pmeta = self.metaGet(op.parent.?) orelse continue;
+                const cmeta = self.metaGet(op.child.?) orelse continue;
+                backend.insertBefore(parent_widget, pmeta.widget_type, child_widget, before, cmeta.attached);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {
                 const child = self.nodes.get(op.id.?) orelse continue;
-                if (child.getParent()) |parent| backend.removeChild(parent, child);
+                if (child.getParent()) |parent| {
+                    const parent_kind = if (self.metaGet(op.id.?)) |cmeta|
+                        (if (self.metaGet(cmeta.parent)) |pmeta| pmeta.widget_type else "")
+                    else
+                        "";
+                    backend.removeChild(parent, parent_kind, child);
+                }
                 _ = self.nodes.remove(op.id.?);
                 self.removeMeta(op.id.?);
                 std.debug.print("ND_REMOVE id={d}\n", .{op.id.?});
@@ -172,7 +193,7 @@ test "node meta stores type/testID/text and frees on remove" {
     const gpa = std.testing.allocator;
     var t = Tree.initBare(gpa);
     defer t.deinitMeta();
-    try t.putMeta(1, "Button", "increment-button", "Increment", 0);
+    try t.putMeta(1, "Button", "increment-button", "Increment", 0, .{});
     const m = t.metaGet(1).?;
     try std.testing.expectEqualStrings("Button", m.widget_type);
     try std.testing.expectEqualStrings("increment-button", m.test_id.?);

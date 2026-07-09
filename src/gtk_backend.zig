@@ -35,15 +35,8 @@ pub fn createWidget(app: *gtk.Application, kind: []const u8, props: ?std.json.Va
     return generated.create(app, kind, props, &dupeZ, &the_window);
 }
 
-pub fn appendChild(parent: *gtk.Widget, child: *gtk.Widget) void {
-    if (the_window) |win| {
-        if (parent == win.as(gtk.Widget)) {
-            gtk.Window.setChild(win, child);
-            return;
-        }
-    }
-    const box: *gtk.Box = @ptrCast(@alignCast(parent));
-    gtk.Box.append(box, child);
+pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, attached: protocol.Attached) void {
+    generated.appendChild(parent, parent_kind, child, attached, &dupeZ);
 }
 
 pub fn setText(widget: *gtk.Widget, text: []const u8) void {
@@ -51,31 +44,12 @@ pub fn setText(widget: *gtk.Widget, text: []const u8) void {
     gtk.Label.setText(label, dupeZ(text));
 }
 
-pub fn removeChild(parent: *gtk.Widget, child: *gtk.Widget) void {
-    if (the_window) |win| {
-        if (parent == win.as(gtk.Widget)) {
-            gtk.Window.setChild(win, null);
-            return;
-        }
-    }
-    const box: *gtk.Box = @ptrCast(@alignCast(parent));
-    gtk.Box.remove(box, child);
+pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget) void {
+    generated.removeChild(parent, parent_kind, child);
 }
 
-pub fn insertBefore(parent: *gtk.Widget, child: *gtk.Widget, before: ?*gtk.Widget) void {
-    if (the_window) |win| {
-        if (parent == win.as(gtk.Widget)) {
-            gtk.Window.setChild(win, child);
-            return;
-        }
-    }
-    const box: *gtk.Box = @ptrCast(@alignCast(parent));
-    if (before) |b| {
-        const prev = gtk.Widget.getPrevSibling(b);
-        gtk.Box.insertChildAfter(box, child, prev); // prev == null => head
-    } else {
-        gtk.Box.append(box, child);
-    }
+pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, before: ?*gtk.Widget, attached: protocol.Attached) void {
+    generated.insertBefore(parent, parent_kind, child, before, attached, &dupeZ);
 }
 
 pub fn setVisible(widget: *gtk.Widget, visible: bool) void {
