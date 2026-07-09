@@ -1,39 +1,67 @@
 const std = @import("std");
 const protocol = @import("protocol.zig");
 
-// The null backend models a widget as an index into `nodes`. `tree.zig` holds
-// `*Widget` pointers; we hand out `*Node` cast to the opaque widget pointer the
-// tree stores. All state is inspectable for the conformance suite.
+/// Schema-driven in-memory backend. `init(gpa, schema_json)` parses the widget
+/// schema once; `createWidget`/`applyProps` record canonical-stringified prop
+/// values generically (keyed by schema prop name), so conformance covers every
+/// schema widget with zero per-widget code here. Structural ops honor the
+/// schema's `container.childModel` (single/multi); event connection honors
+/// `events[]`. All state is inspectable for the conformance suite.
 pub const Node = struct {
-    kind: []const u8,
+    kind: []const u8, // points into the parsed schema (stable until deinitAll)
+    props: std.StringArrayHashMapUnmanaged([]const u8) = .empty, // name -> canonical JSON string, gpa-owned
     text: ?[]const u8 = null,
     visible: bool = true,
-    spacing: i64 = 0,
-    orientation: []const u8 = "vertical",
-    title: ?[]const u8 = null,
-    children: std.ArrayList(*Node) = .empty,
-    clicked_connected: bool = false,
     attached: protocol.Attached = .{},
+    children: std.ArrayList(*Node) = .empty,
+    events: std.ArrayList([]const u8) = .empty, // connected event names, schema order
 };
 
 // The tree stores `*Widget`; for the null backend `Widget` == `Node`.
 pub const Widget = Node;
 
+const ChildModel = enum { none, single, multi };
+
+const WidgetDef = struct {
+    name: []const u8,
+    child_model: ChildModel,
+    // events + props are read straight from the retained parsed schema Value.
+    json: std.json.Value,
+};
+
 var gpa: std.mem.Allocator = undefined;
-var initialized = false;
+var parsed_schema: ?std.json.Parsed(std.json.Value) = null;
+var defs: std.StringArrayHashMapUnmanaged(WidgetDef) = .empty;
 pub var nodes: std.ArrayList(*Node) = .empty;
 pub var last_window: ?*Node = null;
 
-pub fn init(allocator: std.mem.Allocator) void {
+pub fn init(allocator: std.mem.Allocator, schema_json: []const u8) !void {
     gpa = allocator;
-    initialized = true;
-    nodes = .empty;
-    last_window = null;
+    parsed_schema = try std.json.parseFromSlice(std.json.Value, gpa, schema_json, .{});
+    const widgets = parsed_schema.?.value.object.get("widgets").?.array;
+    for (widgets.items) |w| {
+        const name = w.object.get("name").?.string;
+        const container = w.object.get("container").?;
+        const cm: ChildModel = if (container == .null)
+            .none
+        else if (std.mem.eql(u8, container.object.get("childModel").?.string, "single"))
+            .single
+        else
+            .multi;
+        try defs.put(gpa, name, .{ .name = name, .child_model = cm, .json = w });
+    }
 }
 
+/// Frees every node's owned allocations (canonical prop strings, children and
+/// events lists) and the nodes themselves. Keeps `defs`/`parsed_schema` alive
+/// so repeated init+reset in the same test binary is not required.
 pub fn reset() void {
     for (nodes.items) |n| {
+        var it = n.props.iterator();
+        while (it.next()) |kv| gpa.free(kv.value_ptr.*);
+        n.props.deinit(gpa);
         n.children.deinit(gpa);
+        n.events.deinit(gpa);
         gpa.destroy(n);
     }
     nodes.deinit(gpa);
@@ -41,23 +69,18 @@ pub fn reset() void {
     last_window = null;
 }
 
-fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
-    const v = props orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .string => field.string,
-        else => null,
-    };
+/// Full teardown: `reset()` plus the schema-derived state. Call from test
+/// teardown once no further `init` calls are expected on this backend.
+pub fn deinitAll() void {
+    reset();
+    defs.deinit(gpa);
+    defs = .empty;
+    if (parsed_schema) |*p| p.deinit();
+    parsed_schema = null;
 }
-fn propInt(props: ?std.json.Value, key: []const u8) ?i64 {
-    const v = props orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .integer => field.integer,
-        else => null,
-    };
+
+fn canon(value: std.json.Value) ![]const u8 {
+    return std.json.Stringify.valueAlloc(gpa, value, .{});
 }
 
 pub fn setEventSink(_: *const fn (u32, []const u8, protocol.EventPayload) void) void {}
@@ -68,57 +91,63 @@ pub fn getWindow() ?*Node {
 // Signature-parallel to gtk_backend.createWidget: same (app, kind, props) shape.
 // `app` is unused (opaque *anyopaque so callers pass whatever they hold).
 pub fn createWidget(_: *anyopaque, kind: []const u8, props: ?std.json.Value) !*Node {
+    const def = defs.get(kind) orelse return error.UnknownWidget;
     const node = try gpa.create(Node);
-    node.* = .{ .kind = kind };
-    if (std.mem.eql(u8, kind, "Window")) {
-        node.title = propStr(props, "title");
-        last_window = node;
-    } else if (std.mem.eql(u8, kind, "Box")) {
-        node.orientation = propStr(props, "orientation") orelse "vertical";
-        node.spacing = propInt(props, "spacing") orelse 0;
-    } else if (std.mem.eql(u8, kind, "Label")) {
-        node.text = propStr(props, "text") orelse "";
-    } else if (std.mem.eql(u8, kind, "Button")) {
-        node.text = propStr(props, "label") orelse "Button";
-    } else {
-        gpa.destroy(node);
-        return error.UnknownWidget;
+    node.* = .{ .kind = def.name };
+    // Record every schema-declared non-meta prop: explicit value, else schema default.
+    const sprops = def.json.object.get("props").?.array;
+    for (sprops.items) |sp| {
+        const pname = sp.object.get("name").?.string;
+        const applies = sp.object.get("appliesTo").?.string;
+        if (std.mem.eql(u8, applies, "meta")) continue;
+        if (props != null and props.? == .object) {
+            if (props.?.object.get(pname)) |v| {
+                try node.props.put(gpa, pname, try canon(v));
+                continue;
+            }
+        }
+        if (sp.object.get("default")) |d| try node.props.put(gpa, pname, try canon(d));
     }
+    if (std.mem.eql(u8, kind, "Window")) last_window = node;
     try nodes.append(gpa, node);
     return node;
 }
 
-pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
-    _ = kind;
-    _ = node_id;
-    node.clicked_connected = true;
-}
-
-pub fn appendChild(parent: *Node, parent_kind: []const u8, child: *Node, attached: protocol.Attached) void {
-    child.attached = attached;
-    const single = std.mem.eql(u8, parent_kind, "Window") or std.mem.eql(u8, parent_kind, "ScrollView");
-    if (single) parent.children.clearRetainingCapacity();
-    parent.children.append(gpa, child) catch {};
-}
-
-pub fn setText(widget: *Node, text: []const u8) void {
-    widget.text = text;
-}
-
-pub fn removeChild(parent: *Node, parent_kind: []const u8, child: *Node) void {
-    _ = parent_kind;
-    for (parent.children.items, 0..) |c, i| {
-        if (c == child) {
-            _ = parent.children.orderedRemove(i);
-            return;
+pub fn applyProps(widget: *Node, kind: []const u8, props: ?std.json.Value) void {
+    const def = defs.get(kind) orelse return;
+    const v = props orelse return;
+    if (v != .object) return;
+    const sprops = def.json.object.get("props").?.array;
+    for (sprops.items) |sp| {
+        const pname = sp.object.get("name").?.string;
+        if (!std.mem.eql(u8, sp.object.get("appliesTo").?.string, "createAndUpdate")) continue;
+        if (v.object.get(pname)) |pv| {
+            const c = canon(pv) catch continue;
+            if (widget.props.fetchPut(gpa, pname, c) catch null) |old| gpa.free(old.value);
         }
     }
 }
 
+pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
+    _ = node_id;
+    const def = defs.get(kind) orelse return;
+    const sevents = def.json.object.get("events").?.array;
+    for (sevents.items) |se| {
+        node.events.append(gpa, se.object.get("name").?.string) catch {};
+    }
+}
+
+pub fn appendChild(parent: *Node, parent_kind: []const u8, child: *Node, attached: protocol.Attached) void {
+    child.attached = attached;
+    const def = defs.get(parent_kind) orelse return;
+    if (def.child_model == .single) parent.children.clearRetainingCapacity();
+    parent.children.append(gpa, child) catch {};
+}
+
 pub fn insertBefore(parent: *Node, parent_kind: []const u8, child: *Node, before: ?*Node, attached: protocol.Attached) void {
     child.attached = attached;
-    const single = std.mem.eql(u8, parent_kind, "Window") or std.mem.eql(u8, parent_kind, "ScrollView");
-    if (single) {
+    const def = defs.get(parent_kind) orelse return;
+    if (def.child_model == .single) {
         parent.children.clearRetainingCapacity();
         parent.children.append(gpa, child) catch {};
         return;
@@ -134,14 +163,20 @@ pub fn insertBefore(parent: *Node, parent_kind: []const u8, child: *Node, before
     parent.children.append(gpa, child) catch {};
 }
 
-pub fn setVisible(widget: *Node, visible: bool) void {
-    widget.visible = visible;
+pub fn removeChild(parent: *Node, parent_kind: []const u8, child: *Node) void {
+    _ = parent_kind;
+    for (parent.children.items, 0..) |c, i| {
+        if (c == child) {
+            _ = parent.children.orderedRemove(i);
+            return;
+        }
+    }
 }
 
-pub fn applyProps(widget: *Node, kind: []const u8, props: ?std.json.Value) void {
-    if (std.mem.eql(u8, kind, "Box")) {
-        if (propInt(props, "spacing")) |s| widget.spacing = s;
-    } else if (std.mem.eql(u8, kind, "Window")) {
-        if (propStr(props, "title")) |t| widget.title = t;
-    }
+pub fn setText(widget: *Node, text: []const u8) void {
+    widget.text = text;
+}
+
+pub fn setVisible(widget: *Node, visible: bool) void {
+    widget.visible = visible;
 }
