@@ -20,3 +20,7 @@ jobs:
         run: nix develop -c ./scripts/headless-m2.sh
       - name: kill -9 crash isolation
         run: nix develop -c ./scripts/kill9-test.sh
+      - name: bun install (workspace)
+        run: nix develop -c bun install --frozen-lockfile
+      - name: headless m3
+        run: nix develop -c ./scripts/headless-m3.sh
