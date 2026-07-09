@@ -3,6 +3,7 @@ import { nextNodeId } from "./ids.ts";
 import { Batch, NodeRegistry, type Handler } from "./ops.ts";
 import { intrinsicToName, widgetEvents, handlerPropNames } from "./generated/schema-meta.ts";
 import type { WidgetType } from "./generated/intrinsics.ts";
+import { validateStyle } from "./style-validate.ts";
 
 export type { WidgetType };
 
@@ -51,6 +52,7 @@ export interface Container { rootId: number | null }
 function emitCreateIfNew(inst: Instance): void {
   if (registry.get(inst.id)) return;
   const props: Record<string, unknown> = { ...inst.props };
+  if ("style" in props) validateStyle(props.style);
   const text = textOf(props.children);
   if (inst.type === "label" && text !== undefined) props.text = text;
   delete props.children;
@@ -124,6 +126,7 @@ export const hostConfig = {
   },
 
   commitUpdate(inst: Instance, type: WidgetType, oldProps: Record<string, unknown>, newProps: Record<string, unknown>) {
+    if ("style" in newProps) validateStyle(newProps.style);
     // React 19: no prepareUpdate — diff here.
     if (type === "label") {
       const t = textOf(newProps.children) ?? (newProps.text as string | undefined);
