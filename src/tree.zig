@@ -120,9 +120,7 @@ pub const Tree = struct {
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
                 const widget = backend.createWidget(app, op.widget.?, op.props) catch continue;
-                if (std.mem.eql(u8, op.widget.?, "Button")) {
-                    backend.connectButtonClick(@ptrCast(@alignCast(widget)), op.id.?);
-                }
+                backend.connectEvents(widget, op.widget.?, op.id.?);
                 self.nodes.put(self.gpa, op.id.?, widget) catch continue;
                 // testID is stored here for the automation getTree RPC (M4) and is
                 // never applied to the GTK widget itself.

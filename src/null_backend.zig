@@ -1,4 +1,5 @@
 const std = @import("std");
+const protocol = @import("protocol.zig");
 
 // The null backend models a widget as an index into `nodes`. `tree.zig` holds
 // `*Widget` pointers; we hand out `*Node` cast to the opaque widget pointer the
@@ -58,7 +59,7 @@ fn propInt(props: ?std.json.Value, key: []const u8) ?i64 {
     };
 }
 
-pub fn setEventSink(_: *const fn (node_id: u32) void) void {}
+pub fn setEventSink(_: *const fn (u32, []const u8, protocol.EventPayload) void) void {}
 pub fn getWindow() ?*Node {
     return last_window;
 }
@@ -86,8 +87,10 @@ pub fn createWidget(_: *anyopaque, kind: []const u8, props: ?std.json.Value) !*N
     return node;
 }
 
-pub fn connectButtonClick(button: *Node, _: u32) void {
-    button.clicked_connected = true;
+pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
+    _ = kind;
+    _ = node_id;
+    node.clicked_connected = true;
 }
 
 pub fn appendChild(parent: *Node, child: *Node) void {

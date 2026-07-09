@@ -81,18 +81,22 @@ pub const Runtime = struct {
         return self.io;
     }
 
-    fn sendEventStatic(node_id: u32) void {
-        if (singleton) |self| self.sendEvent(node_id);
+    fn sendEventStatic(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
+        if (singleton) |self| self.sendEvent(node_id, name, payload);
     }
 
-    pub fn sendEvent(self: *Runtime, node_id: u32) void {
+    pub fn sendEvent(self: *Runtime, node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         self.seq += 1;
-        const ev = protocol.Event{ .seq = self.seq, .nodeId = node_id, .name = "clicked" };
-        self.writeFrame(ev);
+        const ev = protocol.Event{ .seq = self.seq, .nodeId = node_id, .name = name, .payload = payload };
+        self.writeFrameOpts(ev, .{ .emit_null_optional_fields = false });
     }
 
     fn writeFrame(self: *Runtime, value: anytype) void {
-        const frame = protocol.encodeFrame(self.gpa, value) catch return;
+        self.writeFrameOpts(value, .{});
+    }
+
+    fn writeFrameOpts(self: *Runtime, value: anytype, options: std.json.Stringify.Options) void {
+        const frame = protocol.encodeFrameOpts(self.gpa, value, options) catch return;
         defer self.gpa.free(frame);
         if (trace) std.debug.print("<< {s}\n", .{frame[4..]});
         self.writer_mutex.lockUncancelable(self.io);

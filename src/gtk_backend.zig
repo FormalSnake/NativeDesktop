@@ -1,19 +1,26 @@
 const std = @import("std");
 const gtk = @import("gtk");
 const glib = @import("glib");
+const protocol = @import("protocol.zig");
 const generated = @import("generated/widgets.zig");
 
 pub const Widget = gtk.Widget;
 
-var event_sink: ?EventSink = null;
 var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const arena = arena_state.allocator();
 var the_window: ?*gtk.Window = null;
 
-pub const EventSink = *const fn (node_id: u32) void;
+pub const EventSink = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
 pub fn setEventSink(sink: EventSink) void {
-    event_sink = sink;
+    // Generated module owns all signal wiring + echo suppression (M5b-D5).
+    // The arena outlives every widget; runtime installs the sink before the
+    // NDP socket accepts, so this always precedes the first create.
+    generated.initEvents(arena, sink);
+}
+
+pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
+    generated.connectEvents(widget, kind, node_id);
 }
 
 pub fn getWindow() ?*gtk.Window {
@@ -26,17 +33,6 @@ fn dupeZ(s: []const u8) [:0]const u8 {
 
 pub fn createWidget(app: *gtk.Application, kind: []const u8, props: ?std.json.Value) !*gtk.Widget {
     return generated.create(app, kind, props, &dupeZ, &the_window);
-}
-
-/// The clicked-signal user-data is the node id, packed into the pointer slot.
-pub fn connectButtonClick(button: *gtk.Button, node_id: u32) void {
-    const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
-    _ = gtk.Button.signals.clicked.connect(button, ?*anyopaque, &onClicked, data, .{});
-}
-
-fn onClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
-    const node_id: u32 = @intCast(@intFromPtr(data));
-    if (event_sink) |sink| sink(node_id);
 }
 
 pub fn appendChild(parent: *gtk.Widget, child: *gtk.Widget) void {
