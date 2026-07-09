@@ -16,3 +16,7 @@ jobs:
         run: nix develop -c zig build
       - name: headless smoke
         run: nix develop -c ./scripts/headless-smoke.sh
+      - name: headless m2
+        run: nix develop -c ./scripts/headless-m2.sh
+      - name: kill -9 crash isolation
+        run: nix develop -c ./scripts/kill9-test.sh
