@@ -73,6 +73,25 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_step.dependOn(&b.addRunArtifact(tree_tests).step);
+
+    // `@embedFile` cannot cross a module's package-path boundary (the directory
+    // of its root_source_file), so schema/widgets.json — a sibling of src/, not
+    // a descendant — can't be embedded directly from src/conformance.zig. Read
+    // it here at build.zig time and hand it to the module as a build option.
+    const schema_contents = b.build_root.handle.readFileAlloc(b.graph.io, "schema/widgets.json", b.allocator, .limited(1 << 20)) catch @panic("failed to read schema/widgets.json");
+    const conformance_opts = b.addOptions();
+    conformance_opts.addOption([]const u8, "schema_json", schema_contents);
+    const conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/conformance.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = conformance_opts.createModule() },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(conformance_tests).step);
 }
 
 fn checkZigVersion() void {

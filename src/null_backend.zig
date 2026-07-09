@@ -34,7 +34,8 @@ pub fn reset() void {
         n.children.deinit(gpa);
         gpa.destroy(n);
     }
-    nodes.clearRetainingCapacity();
+    nodes.deinit(gpa);
+    nodes = .empty;
     last_window = null;
 }
 
