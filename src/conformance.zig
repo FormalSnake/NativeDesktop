@@ -214,3 +214,43 @@ test "unknown widget fails loudly" {
 
     try std.testing.expectError(error.UnknownWidget, nb.createWidget(dummyApp(), "Bogus", null));
 }
+
+test "style prop rides create props (null backend round-trip)" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, "{\"style\":{\"background\":\"#fff\",\"padding\":8}}", .{});
+    defer parsed.deinit();
+    const node = try nb.createWidget(dummyApp(), "Label", parsed.value);
+    try std.testing.expect(node.props.get("style") != null);
+}
+
+test "style prop rides update props (null backend round-trip)" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const node = try nb.createWidget(dummyApp(), "Label", null);
+    try std.testing.expect(node.props.get("style") == null);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, "{\"style\":{\"color\":\"#000\"}}", .{});
+    defer parsed.deinit();
+    nb.applyProps(node, "Label", parsed.value);
+    try std.testing.expect(node.props.get("style") != null);
+}
+
+test "ListView is schema-driven with items + rowActivated event" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const node = try nb.createWidget(dummyApp(), "ListView", null);
+    nb.connectEvents(node, "ListView", 0);
+
+    var found = false;
+    for (node.events.items) |ev| {
+        if (std.mem.eql(u8, ev, "rowActivated")) found = true;
+    }
+    try std.testing.expect(found);
+}

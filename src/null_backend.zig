@@ -108,6 +108,12 @@ pub fn createWidget(_: *anyopaque, kind: []const u8, props: ?std.json.Value) !*N
         }
         if (sp.object.get("default")) |d| try node.props.put(gpa, pname, try canon(d));
     }
+    // `style` is a cross-cutting prop injected into every intrinsic by codegen
+    // (not a per-widget schema entry, mirrors tree.zig's applyStyleIfPresent),
+    // so it's recorded generically here rather than via the schema prop loop.
+    if (props != null and props.? == .object) {
+        if (props.?.object.get("style")) |st| try node.props.put(gpa, "style", try canon(st));
+    }
     if (std.mem.eql(u8, kind, "Window")) last_window = node;
     try nodes.append(gpa, node);
     return node;
@@ -125,6 +131,10 @@ pub fn applyProps(widget: *Node, kind: []const u8, props: ?std.json.Value) void 
             const c = canon(pv) catch continue;
             if (widget.props.fetchPut(gpa, pname, c) catch null) |old| gpa.free(old.value);
         }
+    }
+    if (v.object.get("style")) |st| {
+        const c = canon(st) catch return;
+        if (widget.props.fetchPut(gpa, "style", c) catch null) |old| gpa.free(old.value);
     }
 }
 
