@@ -1,0 +1,19 @@
+{
+  "name": "@nativedesktop/react",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./jsx-runtime": "./src/jsx-runtime.ts"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-reconciler": "0.33.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-reconciler": "0.33.0"
+  }
+}

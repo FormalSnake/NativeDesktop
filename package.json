@@ -1,0 +1,8 @@
+{
+  "name": "nativedesktop-monorepo",
+  "private": true,
+  "workspaces": ["packages/*", "examples/*"],
+  "devDependencies": {
+    "@types/bun": "1.3.13"
+  }
+}
