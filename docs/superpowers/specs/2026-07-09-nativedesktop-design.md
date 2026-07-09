@@ -128,6 +128,8 @@ Accessibility mirroring: native widgets give AT-SPI2/NSAccessibility/UIA trees n
 
 **Headless CI:** Linux — `weston --backend=headless` + `GSK_RENDERER=cairo` (explicitly not Broadway or X11: both deprecated for removal in GTK 5); proven in **Milestone 1**, before anything is built on top. macOS/Windows — no true headless exists; stock GitHub Actions runners work headful because the in-process design needs zero TCC/permissions.
 
+**v1 transport deviation (M4):** M4 ships the JSON-RPC surface above over a second **framed unix socket** (the same u32-length-prefixed JSON framing as the NDP protocol), not the WebSocket + stdio named above. WebSocket support is deferred to a later milestone. The first-party MCP wrapper (`packages/mcp`) still provides the stdio+MCP half of the surface for agents — it speaks stdio MCP outward and bridges to the framed unix socket inward — so this is a wire-level substitution, not a scope cut.
+
 ## 9. Extensibility & security
 
 Three plugin tiers crossing the same audited boundaries:

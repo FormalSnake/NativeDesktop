@@ -24,3 +24,5 @@ jobs:
         run: nix develop -c bun install --frozen-lockfile
       - name: headless m3
         run: nix develop -c ./scripts/headless-m3.sh
+      - name: headless m4
+        run: nix develop -c ./scripts/headless-m4.sh
