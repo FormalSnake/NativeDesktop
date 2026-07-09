@@ -57,14 +57,118 @@ fn uiCallback(data: ?*anyopaque) callconv(.c) c_int {
 }
 
 /// Runs on the GTK main thread. Fills `result_json` on success, or
-/// `err_code`/`err_msg`/`err_data_json` on failure. Tasks 3-6 fill each arm;
-/// Task 2 only wires the switch and a stub result so dispatch is exercisable.
+/// `err_code`/`err_msg`/`err_data_json` on failure. Tasks 4-6 fill the
+/// remaining arms; `.get_tree` is implemented here (Task 3).
 fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
-        .get_tree, .screenshot, .click, .wait_poll => {
+        .get_tree => handleGetTree(job),
+        .screenshot, .click, .wait_poll => {
             job.result_json = job.gpa.dupe(u8, "{\"ok\":true}") catch null;
         },
     }
+}
+
+/// Owned tree-node JSON shape (matches the RPC surface contract exactly).
+const Geometry = struct { x: i32, y: i32, w: i32, h: i32 };
+
+const JsonNode = struct {
+    ref: u32,
+    type: []const u8,
+    testID: ?[]const u8,
+    text: ?[]const u8,
+    visible: bool,
+    geometry: ?Geometry,
+    children: []JsonNode,
+};
+
+const GetTreeResult = struct {
+    coordinateSpace: []const u8 = "logical-window-topleft",
+    root: JsonNode,
+};
+
+/// Builds the nested snapshot on the UI thread: walks live GTK children
+/// (`getFirstChild`/`getNextSibling`) for true visual order, mapping each
+/// live widget back to its id via a reverse lookup built once per call.
+fn handleGetTree(job: *UiJob) void {
+    const tree = job.tree;
+    const root_id = tree.rootId() orelse {
+        job.err_code = -32603;
+        job.err_msg = "no root";
+        return;
+    };
+    const window_widget = backend.getWindow().?.as(gtk.Widget);
+
+    var arena_state = std.heap.ArenaAllocator.init(job.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // widget -> id reverse lookup, built once per call.
+    var reverse = std.AutoHashMapUnmanaged(*gtk.Widget, u32){};
+    var it = tree.nodes.iterator();
+    while (it.next()) |entry| {
+        reverse.put(arena, entry.value_ptr.*, entry.key_ptr.*) catch {};
+    }
+
+    const root_widget = tree.get(root_id) orelse {
+        job.err_code = -32603;
+        job.err_msg = "root widget missing";
+        return;
+    };
+    const root_node = buildNode(arena, tree, &reverse, window_widget, root_widget, root_id) catch {
+        job.err_code = -32603;
+        job.err_msg = "failed to build tree";
+        return;
+    };
+
+    const result = GetTreeResult{ .root = root_node };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+fn buildNode(
+    arena: std.mem.Allocator,
+    tree: *Tree,
+    reverse: *std.AutoHashMapUnmanaged(*gtk.Widget, u32),
+    window_widget: *gtk.Widget,
+    widget: *gtk.Widget,
+    id: u32,
+) !JsonNode {
+    const meta = tree.metaGet(id);
+    const widget_type = if (meta) |m| m.widget_type else "";
+    const test_id = if (meta) |m| m.test_id else null;
+    const text = if (meta) |m| m.text else null;
+    const visible = gtk.Widget.getVisible(widget) != 0;
+
+    var rect: graphene.Rect = undefined;
+    const has_bounds = gtk.Widget.computeBounds(widget, window_widget, &rect) != 0;
+    const geometry: ?Geometry = if (has_bounds)
+        .{
+            .x = @intFromFloat(rect.f_origin.f_x),
+            .y = @intFromFloat(rect.f_origin.f_y),
+            .w = @intFromFloat(rect.f_size.f_width),
+            .h = @intFromFloat(rect.f_size.f_height),
+        }
+    else if (visible)
+        .{ .x = 0, .y = 0, .w = gtk.Widget.getWidth(widget), .h = gtk.Widget.getHeight(widget) }
+    else
+        null;
+
+    var children: std.ArrayList(JsonNode) = .empty;
+    var maybe_child = gtk.Widget.getFirstChild(widget);
+    while (maybe_child) |child| : (maybe_child = gtk.Widget.getNextSibling(child)) {
+        const child_id = reverse.get(child) orelse continue;
+        const child_node = try buildNode(arena, tree, reverse, window_widget, child, child_id);
+        try children.append(arena, child_node);
+    }
+
+    return .{
+        .ref = id,
+        .type = widget_type,
+        .testID = test_id,
+        .text = text,
+        .visible = visible,
+        .geometry = geometry,
+        .children = children.items,
+    };
 }
 
 pub const Server = struct {
@@ -139,12 +243,20 @@ pub const Server = struct {
         const method = parsed.value.method;
         std.debug.print("ND_RPC method={s} id={any}\n", .{ method, id });
 
-        // Task 3-6 fill in the real per-method routing; Task 2 stubs all of them.
-        std.debug.print("ND_RPC_STUB method={s}\n", .{method});
-        var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io };
-        _ = parsed.value.params;
-        runOnUi(&job);
+        if (std.mem.eql(u8, method, "getTree")) {
+            var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io };
+            return self.runJobAndEnvelope(&job, id);
+        }
+
+        // Tasks 4-6 add screenshot/click/waitFor/stubs routing here.
+        return errorEnvelope(self.gpa, id, -32601, "method not found", null);
+    }
+
+    /// Runs `job` on the UI thread and wraps the outcome as a JSON-RPC envelope.
+    fn runJobAndEnvelope(self: *Server, job: *UiJob, id: std.json.Value) ![]u8 {
+        runOnUi(job);
         defer if (job.result_json) |r| self.gpa.free(r);
+        defer if (job.err_data_json) |d| self.gpa.free(d);
         if (job.result_json) |result| {
             return resultEnvelope(self.gpa, id, result);
         }
