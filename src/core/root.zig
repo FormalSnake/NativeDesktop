@@ -15,6 +15,23 @@
 // `src/abi.zig`'s module.
 pub const abi = @import("abi");
 
+// Force retention of the `export fn` C-ABI symbols in `libnd.a`: Zig's
+// lazy compilation only emits code reachable from something the compiler
+// keeps, and a static-lib artifact has no "keep everything exported"
+// default the way an exe's `main` call graph provides — `refAllDecls`
+// inside a `test {}` block doesn't help here (never runs/analyzes for a
+// plain `build-lib`, only under `zig build test`). Comptime-referencing
+// each export's address is enough to force analysis + emission without
+// calling anything at runtime.
+comptime {
+    _ = &abi.nd_init;
+    _ = &abi.nd_register_backend;
+    _ = &abi.nd_start_runtime;
+    _ = &abi.nd_start_automation;
+    _ = &abi.nd_emit_event;
+    _ = &abi.nd_free;
+}
+
 test {
     @import("std").testing.refAllDecls(@This());
 }
