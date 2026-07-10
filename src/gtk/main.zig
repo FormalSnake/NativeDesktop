@@ -3,26 +3,25 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gio = @import("gio");
 const gtk = @import("gtk");
-const Tree = @import("tree.zig").Tree;
-const Runtime = @import("runtime.zig").Runtime;
-const automation = @import("automation.zig");
+const abi = @import("../abi.zig");
+const backend = @import("backend.zig");
 
 pub const app_id = "dev.nativedesktop.hello";
 
 var smoke = false;
 var global_app: ?*gtk.Application = null;
 var global_environ_map: ?*std.process.Environ.Map = null;
-var global_environ: std.process.Environ = undefined;
-var global_gpa: std.mem.Allocator = undefined;
-var tree: Tree = undefined;
+// Must outlive `onActivate`'s stack frame — `nd_register_backend` stores a
+// pointer to this, and the core calls through it for the rest of the
+// process's life (every commit-apply/marshal_async/etc.). A stack-local
+// here segfaults on the first vtable call after onActivate returns.
+var the_vtable: abi.NdBackend = undefined;
 
 pub fn main(init: std.process.Init) void {
     for (init.minimal.args.vector) |arg| {
         if (std.mem.eql(u8, std.mem.span(arg), "--smoke")) smoke = true;
     }
     global_environ_map = init.environ_map;
-    global_environ = init.minimal.environ;
-    global_gpa = init.gpa;
 
     var app = gtk.Application.new(app_id, .{});
     defer app.unref();
@@ -50,23 +49,38 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         gtk.Window.present(win);
         return;
     }
-    // M2: the child builds the tree over NDP.
-    const gpa = global_gpa;
-    tree = Tree.init(gpa, app);
-    // Hold the app alive with no window until the first commit presents one.
-    gio.Application.hold(app.as(gio.Application));
-    const rt = Runtime.start(gpa, app, &tree, global_environ_map.?, global_environ) catch |err| {
-        std.debug.print("ND_RUNTIME_ERROR {any}\n", .{err});
+
+    // M6a: the embedder crosses the C ABI instead of building the Tree/
+    // Runtime/automation.Server directly (M2-M5c called those Zig types by
+    // hand; the core now owns them behind nd_init/nd_register_backend/
+    // nd_start_runtime/nd_start_automation).
+    backend.setApp(app);
+    const ctx = abi.nd_init() orelse {
+        std.debug.print("ND_RUNTIME_ERROR nd_init failed\n", .{});
         gio.Application.quit(app.as(gio.Application));
         return;
     };
+    backend.setCtx(ctx);
+    backend.initEventsAndStyle();
+
+    // Hold the app alive with no window until the first commit presents one.
+    gio.Application.hold(app.as(gio.Application));
+
+    the_vtable = backend.ndBackend();
+    abi.nd_register_backend(ctx, &the_vtable);
+
+    if (abi.nd_start_runtime(ctx) != 0) {
+        std.debug.print("ND_RUNTIME_ERROR nd_start_runtime failed\n", .{});
+        gio.Application.quit(app.as(gio.Application));
+        return;
+    }
+    backend.setTree(&ctx.tree); // nd_start_runtime just initialized ctx.tree
 
     if (global_environ_map.?.get("NATIVE_AUTOMATION")) |v| {
         if (std.mem.eql(u8, v, "1")) {
-            const runtime_dir = global_environ_map.?.get("XDG_RUNTIME_DIR") orelse "/tmp";
-            _ = automation.Server.start(gpa, rt.getIo(), &tree, runtime_dir) catch |err| {
-                std.debug.print("ND_AUTOMATION_ERROR {any}\n", .{err});
-            };
+            if (abi.nd_start_automation(ctx) != 0) {
+                std.debug.print("ND_AUTOMATION_ERROR nd_start_automation failed\n", .{});
+            }
         }
     }
 }

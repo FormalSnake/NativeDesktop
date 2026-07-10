@@ -71,13 +71,13 @@ comptime {
     std.debug.assert(@sizeOf(NdRect) == 16);
 }
 
-export fn nd_init() callconv(.c) ?*NdContext {
+pub export fn nd_init() callconv(.c) ?*NdContext {
     const gpa = std.heap.page_allocator;
     const self = gpa.create(NdContext) catch return null;
     self.* = .{ .gpa = gpa, .vtable = undefined };
     return self;
 }
-export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callconv(.c) void {
+pub export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callconv(.c) void {
     self.vtable = vt;
     abi_backend.bind(self.gpa, self, vt);
 }
@@ -88,7 +88,7 @@ export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callconv(.
 /// needs (`ND_SCRIPT`/`ND_DEV`/`XDG_RUNTIME_DIR`/PATH for `bun` lookup) comes
 /// from the core reading its own process environment via `currentEnviron`,
 /// exactly as a plain `main(std.process.Init)` would have received it.
-export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
+pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     const real_environ = currentEnviron();
     var parent_env = std.process.Environ.createMap(real_environ, self.gpa) catch return -1;
     defer parent_env.deinit();
@@ -106,7 +106,7 @@ export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
 }
 
 /// Opens the automation socket + thread (lifted from `automation.Server.start`).
-export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
+pub export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
     const rt = self.runtime orelse return -1;
     const real_environ = currentEnviron();
     var parent_env = std.process.Environ.createMap(real_environ, self.gpa) catch return -1;
@@ -122,7 +122,7 @@ export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
 /// this with `node_id=0` instead of a normal NDP event (the child is dead —
 /// there is nothing to forward a real event to), so it routes to
 /// `Runtime.restart` instead of `Runtime.emitEvent`.
-export fn nd_emit_event(_: *NdContext, node_id: u32, name: [*:0]const u8, payload_json: [*:0]const u8) callconv(.c) void {
+pub export fn nd_emit_event(_: *NdContext, node_id: u32, name: [*:0]const u8, payload_json: [*:0]const u8) callconv(.c) void {
     const name_s = std.mem.span(name);
     if (std.mem.eql(u8, name_s, "restart")) {
         Runtime.restart();

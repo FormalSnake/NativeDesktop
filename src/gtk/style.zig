@@ -2,8 +2,7 @@ const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
 const gobject = @import("gobject");
-const generated = @import("generated/widgets.zig");
-const protocol = @import("protocol.zig");
+const generated = @import("generated");
 
 // ---- M5c-D1: one GtkCssProvider per styled node, unique class `nd-<id>`,
 // installed once at display level; update = replace provider content. ----

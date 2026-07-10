@@ -9,9 +9,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const backend_kind = b.option([]const u8, "backend", "widget backend: gtk|null") orelse "gtk";
+    // M6a-D5: the comptime seam is `null` (in-process conformance backend)
+    // or `abi` (the C-ABI vtable seam every real embedder — GTK included —
+    // routes through). The bare `gtk` string is retired: GTK-ness now lives
+    // in the embedder (src/gtk/), not the seam.
+    const backend_kind = b.option([]const u8, "backend", "widget backend: abi|null") orelse "abi";
     const build_opts = b.addOptions();
     build_opts.addOption([]const u8, "backend", backend_kind);
+    const build_options_mod = build_opts.createModule();
 
     const gobject = b.dependency("gobject", .{
         .target = target,
@@ -25,18 +30,60 @@ pub fn build(b: *std.Build) void {
         .{ .name = "gsk", .module = gobject.module("gsk4") },
         .{ .name = "gdk", .module = gobject.module("gdk4") },
         .{ .name = "graphene", .module = gobject.module("graphene1") },
-        .{ .name = "build_options", .module = build_opts.createModule() },
+        .{ .name = "build_options", .module = build_options_mod },
     };
 
-    const exe = b.addExecutable(.{
-        .name = "nd-hello",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &gtk_imports,
-        }),
+    // ---- The core (M6a-D4): `src/abi.zig` transitively reaches every other
+    // GTK-free core file via ordinary same-directory relative imports (abi
+    // -> {abi_backend, tree, runtime, automation, protocol}; tree/runtime/
+    // automation -> backend.zig -> {null_backend, abi_backend}) — so it is
+    // the one module root that covers the whole core surface. No gobject
+    // imports anywhere in this module; `-lc` is needed for `std.c.environ`
+    // (abi.zig's `currentEnviron`, Task 3).
+    const abi_mod = b.createModule(.{
+        .root_source_file = b.path("src/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "build_options", .module = build_options_mod }},
     });
+
+    // `src/core/root.zig` is `libnd`'s module root — it lives in a
+    // subdirectory, so it reaches `abi.zig` (which stays flat under `src/`)
+    // via a named import rather than a relative `@import("../abi.zig")`
+    // (Zig 0.16 forbids a module's `@import` escaping its root directory).
+    const core_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "abi", .module = abi_mod }},
+    });
+
+    // ---- Linux exe: rooted at `src/nd_hello_root.zig`, not `src/gtk/main.zig`
+    // directly (see that file's doc comment) — `src/gtk/*.zig` reach
+    // `abi.zig`/`tree.zig`/etc. via `../` relative imports, which needs the
+    // module's root directory to be `src/` (an ancestor of `src/gtk/`),
+    // achieved only by the shim — Zig 0.16 forbids a module's `@import`
+    // escaping ITS root directory, and rooting directly at
+    // `src/gtk/main.zig` makes `src/gtk/` that boundary instead.
+    //
+    // `nd_hello_root.zig` also re-exports `generated/widgets.zig`'s public
+    // surface at its own top level, and its module self-aliases under the
+    // name "generated" (`addImport("generated", <itself>)`) — `style.zig`/
+    // `backend.zig` use `@import("generated")` uniformly (they must resolve
+    // to ONE shared type identity, and Zig 0.16 forbids two separately-
+    // constructed modules from both reaching the same file, so a second,
+    // independently-built `generated_shim`-rooted module cannot coexist
+    // here with the exe's own `src/`-rooted tree, which already reaches
+    // `src/protocol.zig` directly).
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/nd_hello_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &gtk_imports,
+    });
+    exe_mod.addImport("generated", exe_mod);
+    const exe = b.addExecutable(.{ .name = "nd-hello", .root_module = exe_mod });
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run nd-hello");
@@ -44,14 +91,14 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     run_step.dependOn(&run_cmd.step);
 
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &gtk_imports,
-        }),
+    const tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/nd_hello_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &gtk_imports,
     });
+    tests_mod.addImport("generated", tests_mod);
+    const tests = b.addTest(.{ .root_module = tests_mod });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
@@ -77,12 +124,30 @@ pub fn build(b: *std.Build) void {
     // `test` declarations are only collected from a file's own addTest root,
     // never transitively through @import (Zig 0.16) — style.zig's compileCss
     // unit tests need their own root, or `zig build test` silently skips them.
+    // Its test module's root directory is `src/gtk/` (root_source_file =
+    // src/gtk/style.zig), which cannot reach `src/generated/widgets.zig` via
+    // `../` (outside that root — Zig 0.16 forbids a module's `@import`
+    // escaping its own root directory). This is a wholly separate artifact
+    // from the exe/tests above, so a dedicated `generated_shim`-rooted
+    // module (reaching `src/protocol.zig` on its own) causes no cross-
+    // module file-ownership conflict here — unlike inside the exe's own
+    // artifact, where the same trick would collide with the exe's direct
+    // access to `src/protocol.zig` (hence that context uses a self-alias
+    // instead, see `exe_mod`/`tests_mod` above).
+    const style_test_generated_mod = b.createModule(.{
+        .root_source_file = b.path("src/generated_shim.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &gtk_imports,
+    });
     const style_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/style.zig"),
+            .root_source_file = b.path("src/gtk/style.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &gtk_imports,
+            .imports = &(gtk_imports ++ [_]std.Build.Module.Import{
+                .{ .name = "generated", .module = style_test_generated_mod },
+            }),
         }),
     });
     test_step.dependOn(&b.addRunArtifact(style_tests).step);
@@ -109,10 +174,7 @@ pub fn build(b: *std.Build) void {
     // Header-conformance test (Task 1): `abi.zig`'s comptime layout asserts
     // run under `zig build test` so header/struct drift fails immediately.
     // No gobject imports — this is the ABI-only test root proving `libnd`'s
-    // Zig side compiles without GTK. `build_options` is needed transitively
-    // (abi -> tree -> backend); `-lc` is needed for `std.c.environ`
-    // (abi.zig's `currentEnviron`, Task 3 — the core reads its own process
-    // environment since `nd_init(void)` takes no parameters).
+    // Zig side compiles without GTK.
     const abi_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/abi.zig"),
@@ -125,6 +187,17 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_step.dependOn(&b.addRunArtifact(abi_tests).step);
+
+    // ---- libnd.a (M6a-D4): the static lib for the Mac, rooted at the same
+    // GTK-free core, `-Dbackend=abi`, no gobject imports at all.
+    const libnd = b.addLibrary(.{
+        .name = "nd",
+        .linkage = .static,
+        .root_module = core_mod,
+    });
+    const libnd_step = b.step("libnd", "Build libnd.a (static, GTK-free, -Dbackend=abi)");
+    libnd_step.dependOn(&b.addInstallArtifact(libnd, .{}).step);
+    libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
 }
 
 fn checkZigVersion() void {

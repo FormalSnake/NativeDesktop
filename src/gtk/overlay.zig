@@ -9,7 +9,7 @@ const std = @import("std");
 const gtk = @import("gtk");
 const gobject = @import("gobject");
 const glib = @import("glib");
-const tree_mod = @import("tree.zig");
+const tree_mod = @import("../tree.zig");
 const Tree = tree_mod.Tree;
 const OVERLAY_GENERATION = tree_mod.OVERLAY_GENERATION;
 

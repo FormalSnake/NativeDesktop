@@ -247,13 +247,30 @@ fn handleSemanticAction(job: *UiJob, action: []const u8) void {
 
 const ScreenshotResult = struct { path: []const u8, width: i32, height: i32 };
 
+/// Reads width/height straight from the PNG's IHDR chunk (portable, no GTK):
+/// an 8-byte signature, then a 4-byte chunk length, 4-byte "IHDR" tag, then
+/// width/height as big-endian u32 — a fixed layout every PNG encoder
+/// (including GTK's `gdk.Texture.saveToPng` and any future AppKit encoder)
+/// produces identically. `vtable.snapshot` only returns success/failure
+/// (M6a-D3); the core reads the file it just asked the embedder to write
+/// rather than growing the ABI for width/height.
+fn readPngDimensions(io: std.Io, path: [:0]const u8) ?struct { w: i32, h: i32 } {
+    const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return null;
+    defer file.close(io);
+    var read_buf: [24]u8 = undefined;
+    var r = file.reader(io, &read_buf);
+    var header: [24]u8 = undefined;
+    r.interface.readSliceAll(&header) catch return null;
+    if (!std.mem.eql(u8, header[0..8], &.{ 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' })) return null;
+    if (!std.mem.eql(u8, header[12..16], "IHDR")) return null;
+    const w = std.mem.readInt(u32, header[16..20], .big);
+    const h = std.mem.readInt(u32, header[20..24], .big);
+    return .{ .w = @intCast(w), .h = @intCast(h) };
+}
+
 /// In-process render of the window to a PNG at `job.path`, via
 /// `vtable.snapshot` (M6a-D3 — GTK fills this with today's WidgetPaintable
-/// code verbatim; Mac supplies the fidelity-ladder solution in M6b). Width/
-/// height are not reported by the vtable call itself (the embedder writes
-/// the PNG directly) — 0 here is a placeholder the embedder-specific size
-/// isn't threaded back across the ABI for v1; scripts assert file presence
-/// and content, not these fields.
+/// code verbatim; Mac supplies the fidelity-ladder solution in M6b).
 fn handleScreenshot(job: *UiJob) void {
     const path = job.path orelse {
         job.err_code = -32602;
@@ -265,7 +282,12 @@ fn handleScreenshot(job: *UiJob) void {
         job.err_msg = "failed to save png";
         return;
     }
-    const result = ScreenshotResult{ .path = path, .width = 0, .height = 0 };
+    const dims = readPngDimensions(job.io, path) orelse {
+        job.err_code = -32603;
+        job.err_msg = "failed to read png dimensions";
+        return;
+    };
+    const result = ScreenshotResult{ .path = path, .width = dims.w, .height = dims.h };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
@@ -312,24 +334,29 @@ fn handleGetTree(job: *UiJob) void {
 
     // id -> children ids, insertion order, built once per call from the
     // meta map's `parent` field (portable — replaces the old live-widget
-    // getFirstChild/getNextSibling walk).
+    // getFirstChild/getNextSibling walk). `parent == 0` is the overlay's
+    // "flat, not nested" sentinel (M8-D5, overlay.zig's registerOverlayNode
+    // — the crash-panel chrome is a real GTK child of the window but
+    // deliberately untracked in the parent/child sense) — attach those
+    // under the tree root so getTree still surfaces them, matching the old
+    // live-GTK walk's behaviour (the panel box IS a real descendant of the
+    // window widget there).
     var children_of: std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)) = .empty;
     var meta_it = tree.meta.iterator();
     while (meta_it.next()) |entry| {
         const id = entry.key_ptr.*;
         if (id == root_id) continue;
-        const parent = entry.value_ptr.parent;
+        const parent = if (entry.value_ptr.parent == 0) root_id else entry.value_ptr.parent;
         const gop = children_of.getOrPut(arena, parent) catch continue;
         if (!gop.found_existing) gop.value_ptr.* = .empty;
         gop.value_ptr.append(arena, id) catch {};
     }
 
-    const root_widget = tree.get(root_id) orelse {
+    if (tree.get(root_id) == null) {
         job.err_code = -32603;
         job.err_msg = "root widget missing";
         return;
-    };
-    _ = root_widget;
+    }
     const root_node = buildNode(arena, tree, &children_of, root_id) catch {
         job.err_code = -32603;
         job.err_msg = "failed to build tree";
