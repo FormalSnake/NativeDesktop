@@ -45,6 +45,8 @@ pub const Runtime = struct {
         self.tree = tree;
         self.writer_mutex = .init;
         self.seq = 0;
+        self.last_error_message = null;
+        self.last_error_stack = null;
 
         // `real_environ` (the process's actual environment block) is required so the
         // Threaded backend's PATH resolution for `std.process.spawn("bun", ...)` sees

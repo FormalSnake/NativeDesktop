@@ -7,6 +7,8 @@
 // re-eval reuses the live Ndp/root instead of double-connecting.
 
 import type { Ndp } from "../../../runtime/ndp.ts";
+import * as RefreshRuntime from "react-refresh/runtime";
+import { newGeneration } from "./ids.ts";
 
 export interface HmrState {
   ndp: Ndp;
@@ -49,5 +51,66 @@ export function installErrorReporting(ndp: Ndp): void {
   });
 }
 
-/** No-op placeholder; Task 2 replaces this with the react-refresh wiring. */
-export function setupRefresh(_reconciler: unknown): void {}
+interface RefreshableReconciler {
+  setRefreshHandler?: (h: unknown) => void;
+  // Registers the reconciler's commit/schedule hooks with the object at
+  // globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__ (installed by
+  // injectIntoGlobalHook below). Without this call, react-refresh's
+  // `mountedRoots` stays empty and performReactRefresh() is a silent no-op —
+  // verified empirically this session (a probe with everything else wired
+  // produced updatedFamilies.size === 1 but no re-render without this call).
+  injectIntoDevTools?: () => unknown;
+}
+
+let refreshReady = false;
+
+/** Wires react-refresh's runtime into the reconciler (M8-D2 primary path).
+ *  `injectIntoGlobalHook`/`injectIntoDevTools`/`setRefreshHandler`/manual
+ *  `$RefreshReg$`/`$RefreshSig$` must all be installed before any app React
+ *  code runs — render() calls this before createContainer, and the app
+ *  module's import of @nativedesktop/react runs this module first, so
+ *  ordering holds. Bun's `--hot` does NOT inject `$RefreshReg$`/`$RefreshSig$`
+ *  (verified this session), so they are installed manually here. */
+export function setupRefresh(reconciler: RefreshableReconciler): void {
+  if (refreshReady) return;
+  // The upstream type targets a browser `Window`; react-refresh's runtime
+  // only reads/writes a hook property on whatever object it's given, so a
+  // Bun `globalThis` works identically at runtime.
+  RefreshRuntime.injectIntoGlobalHook(globalThis as unknown as Window);
+  (globalThis as Record<string, unknown>).$RefreshReg$ = (type: unknown, id: string): void => {
+    RefreshRuntime.register(type, id);
+  };
+  (globalThis as Record<string, unknown>).$RefreshSig$ = (): unknown =>
+    RefreshRuntime.createSignatureFunctionForTransform();
+  reconciler.setRefreshHandler?.((type: unknown) => RefreshRuntime.getFamilyByType(type));
+  // Must run AFTER injectIntoGlobalHook (the devtools hook must exist first)
+  // and AFTER setRefreshHandler (injectIntoDevTools snapshots scheduleRefresh
+  // etc. into the internals object it hands to the hook's inject()).
+  reconciler.injectIntoDevTools?.();
+  refreshReady = true;
+}
+
+/** Call from the app entry after a hot re-eval re-runs its modules. */
+export function performRefresh(): void {
+  RefreshRuntime.performReactRefresh();
+}
+
+/** Registers a module's exported components by name — the babel Fast Refresh
+ *  transform's job, done manually because Bun's `--hot` does not run it
+ *  (M8-D2 / verified finding). Call once per hot re-eval, before
+ *  performRefresh(). */
+export function registerExports(mod: Record<string, unknown>, moduleId: string): void {
+  for (const [name, val] of Object.entries(mod)) {
+    if (typeof val === "function" && /^[A-Z]/.test(name)) {
+      RefreshRuntime.register(val, `${moduleId} ${name}`);
+    }
+  }
+}
+
+/** Bumps the generation counter (ids.ts) so the next commit's CommitBatch
+ *  carries a higher generation, triggering the host's generation GC (Task 3)
+ *  of orphaned widgets. Used for structural / non-refreshable edits that
+ *  react-refresh cannot preserve state across. */
+export function fullReload(): void {
+  newGeneration();
+}

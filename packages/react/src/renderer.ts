@@ -11,6 +11,7 @@ type ReconcilerInstance = {
   createContainer: (...a: unknown[]) => unknown;
   updateContainer: (...a: unknown[]) => void;
   setRefreshHandler?: (h: unknown) => void;
+  injectIntoDevTools?: () => unknown;
 };
 
 // `bun --hot` re-runs this module's top-level statements (render()'s caller,
