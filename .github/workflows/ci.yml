@@ -32,3 +32,5 @@ jobs:
         run: nix develop -c ./scripts/headless-m4.sh
       - name: headless m5b
         run: nix develop -c ./scripts/headless-m5b.sh
+      - name: headless m5c
+        run: nix develop -c ./scripts/headless-m5c.sh
