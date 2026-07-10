@@ -15,62 +15,14 @@ export NATIVE_AUTOMATION=1 ND_DEV=1
 # untracked and removed by the EXIT trap; never staged/committed.
 APPDIR=$(mktemp -d -p "$(pwd)" .m8-drive-XXXXXX)
 
-# Fixture note (M8-D2 fallback, recorded honestly): examples/counter's App
-# uses `useState`. Verified empirically this session: `bun --hot` gives every
-# module in the re-evaluated graph (including `react` and `react-reconciler`,
-# not just the edited file) a FRESH module instance on each edit, while the
-# surviving globalThis-held HMR state (packages/react/src/hmr.ts) still
-# references the OLD reconciler/root. Re-rendering the OLD reconciler against
-# a NEW `<App/>` whose `useState` resolves against the NEW react module's
-# internals throws "Invalid hook call" (reproduced directly against
-# examples/counter and template/'s fixtures, both hook-based) -- the child
-# then reports runtimeError and exits, which is exactly the disconnect path
-# the HMR leg must NOT hit. This is the M8-D2 "manual family registration
-# proves too fragile" case, so this script uses the documented bounded
-# fallback instead: a globalThis-backed store (no hooks at all), which
-# sidesteps the cross-module-instance dispatcher mismatch entirely. The
-# fixture below is intentionally minimal and lives only in this script (no
-# repo file is added or edited) -- see the M8 plan's Task 8 fallback note.
-cat >"$APPDIR/main.tsx" <<'EOF'
-import { render } from "@nativedesktop/react";
-
-declare global {
-  var __nd_clicks: number | undefined;
-}
-globalThis.__nd_clicks = globalThis.__nd_clicks ?? 0;
-
-function App(): React.ReactNode {
-  const clicks = globalThis.__nd_clicks!;
-  return (
-    <window title="NativeDesktop M8 HMR fixture" defaultWidth={480} defaultHeight={320}>
-      <box orientation="vertical" spacing={8}>
-        <label testID="clicks-label" text={`Clicks: ${clicks}`} />
-        <button
-          testID="increment-button"
-          label="Increment"
-          onClick={() => {
-            globalThis.__nd_clicks!++;
-            render(<App />);
-          }}
-        />
-      </box>
-    </window>
-  );
-}
-
-await render(<App />);
-EOF
-cat >"$APPDIR/package.json" <<'EOF'
-{
-  "name": "m8-hmr-fixture",
-  "private": true,
-  "type": "module",
-  "dependencies": { "@nativedesktop/react": "workspace:*", "react": "19.2.7" }
-}
-EOF
-cat >"$APPDIR/tsconfig.json" <<'EOF'
-{ "extends": "../../tsconfig.base.json" }
-EOF
+# Real hook-based app (M8 fix landed): examples/counter's App uses
+# `useState`/`useTransition`/`use`/Suspense, imported from
+# `@nativedesktop/react` (not `react` directly -- see dev-react.ts). Copy it
+# into the temp dir so the HMR leg edits a COPY, never the repo, per the
+# owner mandate above.
+cp examples/counter/main.tsx "$APPDIR/main.tsx"
+cp examples/counter/package.json "$APPDIR/package.json"
+cp examples/counter/tsconfig.json "$APPDIR/tsconfig.json"
 # Reuse the workspace's already-resolved node_modules (examples/counter's
 # symlinks are anchored relative to the repo, so they must be referenced,
 # not copied -- copying `node_modules` breaks its relative symlinks).

@@ -8,7 +8,10 @@ Three load-bearing rules:
 1. **Run with `ND_DEV=1` for hot reload + the crash-restart overlay.** `ND_DEV=1 ND_SCRIPT=src/main.tsx
    <path-to-nd-host-binary>` — see `docs/agents/README.md` for the marker vocabulary and what `ND_DEV`
    actually changes. (A packaged `nd dev` command that wraps this invocation ships in a later milestone;
-   today `ND_DEV=1` on the host binary is the whole mechanism.)
+   today `ND_DEV=1` on the host binary is the whole mechanism.) **Import hooks from
+   `@nativedesktop/react`, not `react`** (`import { useState } from "@nativedesktop/react"`) — this is
+   what makes a hot edit preserve state instead of crashing or resetting; see `docs/agents/README.md`'s
+   HMR section for why.
 2. **Styling is not web CSS.** No `flex`/`grid`/`position`/`display`/`justifyContent`. See
    `docs/agents/styling.md`.
 3. **Zig idiom in this framework is 0.16, not the pre-2025 APIs most training data assumes.** If you touch

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState } from "@nativedesktop/react";
 
 export function App(): React.ReactNode {
   const [clicks, setClicks] = useState(0);

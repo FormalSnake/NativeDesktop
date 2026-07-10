@@ -28,32 +28,60 @@ print to stderr — capture `2>&1`):
 | `ND_COMMIT_APPLIED commitId=…` | a CommitBatch was applied to the retained tree | landed |
 | `ND_AUTOMATION_LISTENING path=…` | the automation RPC socket is ready | landed |
 | `ND_CHILD_EXITED` | the child disconnected (crash, `kill -9`, or clean exit) | landed |
-| `ND_OVERLAY_SHOWN dev=…` | the host painted the crash overlay | **lands with the M8 overlay task** |
-| `ND_GC_SWEEP gen=… removed=…` | generation GC swept orphaned widgets after a reload | **lands with the M8 overlay task** |
-| `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported an uncaught error before dying | **lands with the M8 overlay task** |
+| `ND_OVERLAY_SHOWN dev=…` | the host painted the crash overlay | landed |
+| `ND_GC_SWEEP gen=… removed=…` | generation GC swept orphaned widgets after a reload | landed |
+| `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported an uncaught error before dying | landed |
 
 `NDP_TRACE=1` (env var on the host) enables verbose per-frame NDP tracing — landed, useful when a
 commit isn't showing up as expected.
 
-`ND_DEV=1` is the documented **future** entry point for hot reload + the crash-restart button
-(M8-D1): it is not yet read by the host. A packaged `nd dev` command that wraps `ND_DEV=1` plus
-toolchain discovery is **M9 scope** (packaging), not M8 — do not attempt to build an `nd` CLI binary
-against this doc set.
+`ND_DEV=1` (env var on the host) selects `bun --hot` for the child process and enables the
+crash-overlay's Restart button. A packaged `nd dev` command that wraps `ND_DEV=1` plus toolchain
+discovery is **M9 scope** (packaging), not M8 — do not attempt to build an `nd` CLI binary against
+this doc set.
 
 ## HMR: what actually preserves state
 
-**Not yet landed.** The M8 plan's design (see `docs/superpowers/plans/2026-07-10-m8-dx.md`) is:
+**Landed, with one required convention: import hooks from `@nativedesktop/react`, not `react`.**
 `ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and socket across
-an edit (verified empirically against Bun 1.3.13: same pid, `globalThis` state survives, but the
-entry's top-level statements re-run on every graph edit — so `render()` needs a `globalThis`-keyed
-singleton guard to stay idempotent). React's hook-state preservation across an edit is meant to be
-wired through `react-reconciler`'s `setRefreshHandler` plus `react-refresh`'s runtime, manually
-registered (Bun's `--hot` does **not** auto-inject `$RefreshReg$`/`$RefreshSig$` the way a
-babel-based toolchain would). A bounded `globalThis`-backed-store fallback is defined if manual
-family registration proves too fragile. **Until this lands, every edit under this framework is a
-full process restart** — there is no partial reload today. Re-read this section once the HMR task
-ships; it will name which of the two mechanisms (react-refresh proper, or the store fallback)
-actually shipped.
+an edit, but re-evaluates the *entire* module graph on every edit — `react`, `react-reconciler`,
+and `@nativedesktop/react` included (verified empirically against Bun 1.3.13 with a
+`globalThis`-identity probe). Two mechanisms were tried and rejected before landing on the one
+below — recorded here so nobody re-attempts them:
+
+- **Bun-level module aliasing** (`Bun.plugin`'s `builder.module()`, loaded via
+  `bun --hot --preload <script>`) can genuinely intercept bare specifiers like `"react"` and
+  `"react-reconciler"` and survives re-evals (the preload script itself runs once per process, not
+  per edit) — but Bun 1.3.13 throws `Requested module is already fetched` the moment an aliased
+  specifier is touched by both an ESM `import` and a CJS `require()` anywhere in the process.
+  `react-reconciler`'s bundled cjs does `require("react")` internally while this codebase and every
+  app entry use genuine ESM `import` — that combination is unavoidable, so this mechanism cannot
+  work without rewriting every consumer to `require()`.
+- **`react-refresh`'s family-registration machinery**, wired through `reconciler.setRefreshHandler`
+  (`packages/react/src/hmr.ts`), needs its own module instance pinned across re-evals too (it keeps
+  its family/root registries in module-local closures, not on any object it hands out) — this part
+  *does* work (react-refresh has no internal `require()`s of its own, so a `globalThis` stash is
+  sufficient, no Bun-level aliasing needed) and is what actually makes a hot edit state-preserving:
+  `render()` registers the root component under a fixed family key on first boot, and on every
+  hot re-eval calls `hotUpdateRoot()` (not `updateContainer` again — a fresh `<App/>` element's
+  `.type` is a new function reference every re-eval, which the reconciler would otherwise treat as
+  a type change and fully remount) to re-register the new type under the same family and ask
+  react-refresh to patch the live fiber tree in place.
+
+What ships: `packages/react/src/dev-react.ts` stashes the **first-eval** `react` module instance in
+`globalThis` and re-exports its hooks (`useState`, `useEffect`, `useMemo`, `use`, `Suspense`, etc.)
+through wrapper functions that always dispatch to that stashed instance. The reconciler created on
+first boot (`renderer.ts`, guarded by the existing `globalThis`-keyed singleton) already closes over
+that same first-eval `react` instance internally, so a hook resolved through
+`@nativedesktop/react` always talks to the dispatcher the live reconciler actually drives. A hook
+imported from `react` directly would resolve against a fresh, re-evaluated instance whose
+dispatcher is never attached to any reconciler — that's the `Invalid hook call:
+resolveDispatcher().useState` crash this convention avoids. **Convention:** app code must write
+`import { useState } from "@nativedesktop/react"`, not `from "react"` — `examples/counter` and
+`template/` both follow this; `scripts/headless-m8.sh`'s HMR leg exercises the real
+`examples/counter` app (not a synthetic fixture) end to end: click to a known state, edit a label
+string in a temp copy, and assert the label changed, the click count survived, and the child never
+disconnected.
 
 ## React Compiler: honest status (M8-D7)
 

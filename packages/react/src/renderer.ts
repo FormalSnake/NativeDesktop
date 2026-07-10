@@ -5,7 +5,15 @@ import { Ndp, type EventMsg } from "../../../runtime/ndp.ts";
 import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from "./host-config.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
-import { getHmrState, setHmrState, isHot, installErrorReporting, setupRefresh } from "./hmr.ts";
+import {
+  getHmrState,
+  setHmrState,
+  isHot,
+  installErrorReporting,
+  setupRefresh,
+  registerRoot,
+  hotUpdateRoot,
+} from "./hmr.ts";
 
 type ReconcilerInstance = {
   createContainer: (...a: unknown[]) => unknown;
@@ -66,7 +74,27 @@ export async function render(element: ReactNode): Promise<void> {
   }
 
   state.bootCount += 1;
-  state.reconciler.updateContainer(element, state.root, null, () => {});
+  if (state.bootCount === 1) {
+    // registerRoot before the first commit so hotUpdateRoot's re-registration
+    // on the NEXT eval has an existing family to match against (react-refresh
+    // treats a register() with no prior entry for that id as a fresh
+    // mount, not an update — see hmr.ts).
+    if (isHot()) registerRoot((element as { type: unknown }).type);
+    state.reconciler.updateContainer(element, state.root, null, () => {});
+  } else if (isHot()) {
+    // A hot re-eval must NOT call updateContainer with the new element
+    // directly: `element.type` is a fresh function reference every re-eval,
+    // so the reconciler would see a type change at the root and fully
+    // remount (all hook state reset) instead of updating — verified
+    // empirically this session against the real examples/counter app.
+    // hotUpdateRoot() registers the new type under the SAME react-refresh
+    // family as the previous eval's root and asks react-refresh to patch
+    // the live fiber in place, which is what actually preserves state.
+    hotUpdateRoot((element as { type: unknown }).type);
+  } else {
+    // Non-hot re-render call (not a --hot re-eval): a normal update.
+    state.reconciler.updateContainer(element, state.root, null, () => {});
+  }
 
   // Keep the process alive so the reconciler's scheduler + event stream run.
   // Only the first boot awaits this — a hot re-eval must return so the

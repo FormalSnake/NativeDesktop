@@ -1,5 +1,4 @@
-import { render } from "@nativedesktop/react";
-import { Suspense, use, useState, useTransition, useMemo, memo } from "react";
+import { render, Suspense, use, useState, useTransition, useMemo, memo } from "@nativedesktop/react";
 
 // Module-scoped (not useMemo'd): the uptime interval re-renders App every
 // 500ms, and a concurrent render can discard an in-progress suspended fiber
