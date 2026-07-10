@@ -105,6 +105,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_step.dependOn(&b.addRunArtifact(conformance_tests).step);
+
+    // Header-conformance test (Task 1): `abi.zig`'s comptime layout asserts
+    // run under `zig build test` so header/struct drift fails immediately.
+    // Pure Zig, no gobject imports — this is the first ABI-only test root.
+    const abi_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/abi.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(abi_tests).step);
 }
 
 fn checkZigVersion() void {
