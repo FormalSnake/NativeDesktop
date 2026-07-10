@@ -32,6 +32,16 @@ typedef struct nd_backend {
   void (*unparent)(nd_context*, nd_widget);
   nd_widget (*get_window)(nd_context*);
 
+  /* embedder UI-thread marshal + host chrome (M6a Task 3): the core's
+     commit-apply/child-exit/overlay paint call up through these instead of
+     importing glib/gio directly. GTK fills marshal_async with
+     g_main_context_invoke_full; the Mac shell fills it with
+     dispatch_async_f. `show_overlay("")` (empty message) is the clear
+     sentinel — the core calls it that way from its dev-mode Restart/respawn
+     path instead of a dedicated clear-overlay vtable field. */
+  void (*marshal_async)(nd_context*, void (*fn)(void*), void* data);
+  void (*show_overlay)(nd_context*, const char* message);
+
   /* automation backend half (M6a-D3) */
   bool (*node_visible)(nd_context*, nd_widget);
   bool (*node_bounds)(nd_context*, nd_widget, nd_rect* out);   /* false = no bounds */

@@ -1,13 +1,12 @@
 const std = @import("std");
-const glib = @import("glib");
-const gio = @import("gio");
-const gtk = @import("gtk");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
-const backend = @import("gtk_backend.zig");
-const overlay = @import("overlay.zig");
-
-const G_SOURCE_REMOVE: c_int = 0;
+const backend = @import("backend.zig").impl;
+// The UI-thread marshal + crash-overlay chrome are vtable-only concerns (not
+// part of the comptime null|abi seam every backend implements) — the core
+// calls them straight through the registered C vtable (M6a Task 3), the same
+// object `abi_backend.bind` already wired for the structural seam calls.
+const abi_backend = @import("abi_backend.zig");
 
 var trace: bool = false;
 
@@ -40,12 +39,12 @@ pub const Runtime = struct {
 
     pub fn start(
         gpa: std.mem.Allocator,
-        app: *gtk.Application,
+        app: ?*anyopaque,
         tree: *Tree,
         parent_env: *const std.process.Environ.Map,
         real_environ: std.process.Environ,
     ) !*Runtime {
-        _ = app; // window is owned by the child's `create Window` op via gtk_backend/tree
+        _ = app; // window is owned by the child's `create Window` op via the embedder/tree
         trace = parent_env.get("NDP_TRACE") != null;
 
         const self = try gpa.create(Runtime);
@@ -78,8 +77,6 @@ pub const Runtime = struct {
         try self.spawnChild();
 
         singleton = self;
-        backend.setEventSink(&sendEventStatic);
-        backend.initStyle(&sendStyleErrorStatic);
 
         _ = try std.Thread.spawn(.{}, readerLoop, .{self});
         return self;
@@ -113,15 +110,14 @@ pub const Runtime = struct {
         return self.io;
     }
 
-    fn sendEventStatic(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
+    /// `nd_emit_event`'s body (abi.zig) routes here — the embedder->core
+    /// event channel (M6a-D2). There is no more core-installed sink function
+    /// pointer (M5c's `setEventSink`/`initStyle` are gone — the embedder
+    /// calls `nd_emit_event` directly for every native signal, including its
+    /// own style-error reports). A no-op before `start` has run (no window
+    /// mounted yet, nothing to report to).
+    pub fn emitEvent(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         if (singleton) |self| self.sendEvent(node_id, name, payload);
-    }
-
-    /// Host-side defensive layer (M5c-D7): an unknown style key never crashes
-    /// or drops silently — it fires a structured `styleError` event alongside
-    /// the ND_WARN stderr line style.zig already printed.
-    fn sendStyleErrorStatic(node_id: u32, key: []const u8) void {
-        if (singleton) |self| self.sendEvent(node_id, "styleError", .{ .key = key });
     }
 
     pub fn sendEvent(self: *Runtime, node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
@@ -250,10 +246,10 @@ pub const Runtime = struct {
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
         const job = self.gpa.create(OverlayJob) catch return;
         job.* = .{ .rt = self, .msg = self.gpa.dupe(u8, msg) catch msg };
-        _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &showOverlayOnUi, job, null);
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &showOverlayOnUi, job);
     }
 
-    fn showOverlayOnUi(data: ?*anyopaque) callconv(.c) c_int {
+    fn showOverlayOnUi(data: ?*anyopaque) callconv(.c) void {
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
         const job: *OverlayJob = @ptrCast(@alignCast(data.?));
         defer {
@@ -261,17 +257,20 @@ pub const Runtime = struct {
             job.rt.gpa.destroy(job);
         }
         const self = job.rt;
-        const window = backend.getWindow() orelse return G_SOURCE_REMOVE; // no window yet (child never mounted)
         self.overlay_shown = true;
-        overlay.show(self.tree, window, job.msg, self.dev, &respawnStatic);
-        return G_SOURCE_REMOVE;
+        const msg_z = self.gpa.dupeZ(u8, job.msg) catch return;
+        defer self.gpa.free(msg_z);
+        abi_backend.vtable.show_overlay(abi_backend.ctx, msg_z);
     }
 
-    /// Restart button trampoline (dev-mode only — overlay.show only wires
-    /// this when `dev` is true). Runs via glib.idleAdd from the click
-    /// handler (overlay.zig) to avoid re-entrancy into the GTK signal
-    /// dispatch that is still on the stack.
-    fn respawnStatic() void {
+    /// Restart trampoline: the embedder's crash-overlay Restart button (dev-
+    /// mode only — the embedder gates this on its own `ND_DEV` read, since
+    /// `show_overlay`'s ABI carries only the message, M6a Task 3) calls
+    /// `nd_emit_event(ctx, 0, "restart", "{}")`; `nd_emit_event`'s body
+    /// (abi.zig) intercepts that reserved name and routes here instead of
+    /// forwarding it as a normal NDP event (the child is dead — there is
+    /// nothing to forward it to).
+    pub fn restart() void {
         if (singleton) |self| self.respawn();
     }
 
@@ -281,7 +280,10 @@ pub const Runtime = struct {
     /// never sent a higher-generation CommitBatch), every non-overlay node
     /// is cleared here so the fresh mount rebuilds from an empty tree.
     fn respawn(self: *Runtime) void {
-        if (backend.getWindow()) |window| overlay.clear(self.tree, window);
+        // Empty message is the clear sentinel (M6a Task 3): `show_overlay`'s
+        // ABI carries only one string param, so "" means "take the overlay
+        // down" rather than adding a second vtable field for one call site.
+        abi_backend.vtable.show_overlay(abi_backend.ctx, "");
         self.tree.clearAppNodes();
         self.overlay_shown = false;
         if (self.last_error_message) |m| {
@@ -310,21 +312,20 @@ pub const Runtime = struct {
             return;
         };
         job.* = .{ .rt = self, .bytes = bytes };
-        _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &applyOnUi, job, null);
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &applyOnUi, job);
     }
 
-    fn applyOnUi(data: ?*anyopaque) callconv(.c) c_int {
+    fn applyOnUi(data: ?*anyopaque) callconv(.c) void {
         const job: *CommitJob = @ptrCast(@alignCast(data.?));
         const self = job.rt;
         const parsed = std.json.parseFromSlice(protocol.CommitBatch, self.gpa, job.bytes, .{ .ignore_unknown_fields = true }) catch {
             self.gpa.free(job.bytes);
             self.gpa.destroy(job);
-            return G_SOURCE_REMOVE;
+            return;
         };
         defer parsed.deinit();
         self.tree.apply(parsed.value);
         self.gpa.free(job.bytes);
         self.gpa.destroy(job);
-        return G_SOURCE_REMOVE;
     }
 };

@@ -1,12 +1,11 @@
 const std = @import("std");
-const gtk = @import("gtk");
 const protocol = @import("protocol.zig");
 const backend = @import("backend.zig").impl;
 
 const Widget = backend.Widget;
 
 /// Host-side node metadata: per-node type/testID/text/parent, independent of
-/// the live `*gtk.Widget`. Populated in `apply` alongside `nodes.put`; this is
+/// the live widget handle. Populated in `apply` alongside `nodes.put`; this is
 /// the snapshot source of truth for the automation `getTree` RPC (M4) — it is
 /// never re-derived from props at query time.
 pub const NodeMeta = struct {
@@ -68,17 +67,20 @@ fn genOf(id: u32) u32 {
 
 pub const Tree = struct {
     gpa: std.mem.Allocator,
-    app: ?*gtk.Application,
+    // Opaque embedder-app handle (GtkApplication* / NSApplication instance);
+    // the core never dereferences it — it only threads through to
+    // `backend.createWidget`'s first (embedder-defined) argument.
+    app: ?*anyopaque,
     nodes: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
     meta: std.AutoHashMapUnmanaged(u32, NodeMeta) = .{},
     generation: u32 = 0,
 
-    pub fn init(gpa: std.mem.Allocator, app: *gtk.Application) Tree {
+    pub fn init(gpa: std.mem.Allocator, app: *anyopaque) Tree {
         return .{ .gpa = gpa, .app = app };
     }
 
-    /// A ctor that skips the `*gtk.Application` for pure-meta unit tests
-    /// (no real GTK app needed to exercise the meta map in isolation).
+    /// A ctor that skips the embedder app handle for pure-meta unit tests
+    /// (no real embedder app needed to exercise the meta map in isolation).
     pub fn initBare(gpa: std.mem.Allocator) Tree {
         return .{ .gpa = gpa, .app = null };
     }
@@ -173,14 +175,14 @@ pub const Tree = struct {
                 // M8-D9a: a post-crash respawn mounts a brand-new reconciler
                 // root, whose first commit re-emits a `create Window` op —
                 // but the generated Window arm unconditionally constructs a
-                // new gtk.ApplicationWindow. Bind to the surviving
-                // `the_window` instead of opening a second OS window; this
-                // is the only Window `create` this branch ever sees post-
-                // crash (a live --hot edit never re-creates the window at
-                // all, since the reconciler root/container survive — see
-                // hmr.ts's globalThis singleton guard).
+                // new native window. Bind to the surviving window widget
+                // instead of opening a second OS window; this is the only
+                // Window `create` this branch ever sees post-crash (a live
+                // --hot edit never re-creates the window at all, since the
+                // reconciler root/container survive — see hmr.ts's
+                // globalThis singleton guard).
                 const widget = if (std.mem.eql(u8, op.widget.?, "Window") and backend.getWindow() != null)
-                    backend.getWindow().?.as(gtk.Widget)
+                    backend.getWindow().?
                 else
                     backend.createWidget(app, op.widget.?, op.props) catch continue;
                 backend.connectEvents(widget, op.widget.?, op.id.?);
@@ -223,12 +225,18 @@ pub const Tree = struct {
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {
                 const child = self.nodes.get(op.id.?) orelse continue;
-                if (child.getParent()) |parent| {
-                    const parent_kind = if (self.metaGet(op.id.?)) |cmeta|
-                        (if (self.metaGet(cmeta.parent)) |pmeta| pmeta.widget_type else "")
-                    else
-                        "";
-                    backend.removeChild(parent, parent_kind, child);
+                // Portable parent lookup (Task 3): the meta map already tracks
+                // each child's parent id (set by append/insertBefore), so the
+                // live parent widget comes from `self.nodes`, not a backend
+                // "get live GTK parent" call. `backend.hasParent` still guards
+                // against double-remove (mirrors gcOldGenerations/clearAppNodes).
+                if (backend.hasParent(child)) {
+                    if (self.metaGet(op.id.?)) |cmeta| {
+                        if (self.nodes.get(cmeta.parent)) |parent| {
+                            const parent_kind = if (self.metaGet(cmeta.parent)) |pmeta| pmeta.widget_type else "";
+                            backend.removeChild(parent, parent_kind, child);
+                        }
+                    }
                 }
                 _ = self.nodes.remove(op.id.?);
                 self.removeMeta(op.id.?);
@@ -260,8 +268,8 @@ pub const Tree = struct {
 
     /// Sweeps every tracked node whose id-encoded generation is strictly less
     /// than `new_gen`, except the reserved overlay generation and the sole
-    /// Window node (kept per M8-D9a — the host reuses the existing
-    /// `gtk.Window`, replacing only its content, rather than opening a
+    /// Window node (kept per M8-D9a — the host reuses the existing native
+    /// window widget, replacing only its content, rather than opening a
     /// second OS window). Collect-then-remove: never mutate `nodes`/`meta`
     /// while iterating them.
     fn gcOldGenerations(self: *Tree, new_gen: u32) void {

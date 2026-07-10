@@ -108,12 +108,20 @@ pub fn build(b: *std.Build) void {
 
     // Header-conformance test (Task 1): `abi.zig`'s comptime layout asserts
     // run under `zig build test` so header/struct drift fails immediately.
-    // Pure Zig, no gobject imports — this is the first ABI-only test root.
+    // No gobject imports — this is the ABI-only test root proving `libnd`'s
+    // Zig side compiles without GTK. `build_options` is needed transitively
+    // (abi -> tree -> backend); `-lc` is needed for `std.c.environ`
+    // (abi.zig's `currentEnviron`, Task 3 — the core reads its own process
+    // environment since `nd_init(void)` takes no parameters).
     const abi_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/abi.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "build_options", .module = build_opts.createModule() },
+            },
         }),
     });
     test_step.dependOn(&b.addRunArtifact(abi_tests).step);
