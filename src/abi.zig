@@ -3,10 +3,7 @@ const abi_backend = @import("abi_backend.zig");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const Runtime = @import("runtime.zig").Runtime;
-// NOTE: no `automation.zig` import here yet — it still imports gtk directly
-// until Task 4 severs it; deferring this import keeps `abi.zig`'s
-// standalone (no-gtk) test module compiling at Task 3. `nd_start_automation`
-// stays a stub until Task 4 wires it.
+const automation = @import("automation.zig");
 
 // Mirrors include/nd.h exactly. Layout asserts below catch header/Zig drift
 // at `zig build test` time — this is the compile-time contract Task 1 pins
@@ -40,15 +37,16 @@ pub const NdBackend = extern struct {
 };
 
 // The core instance: owns the Tree and the Runtime (once nd_start_runtime
-// succeeds), plus the registered vtable. `app` is the opaque embedder-app
-// handle (GtkApplication* / NSApplication) threaded straight to `Tree.init`
-// — the core never dereferences it (M6a Task 3). The automation Server
-// pointer is added in Task 4, once `automation.zig` is GTK-free.
+// succeeds), and the automation Server (once nd_start_automation succeeds),
+// plus the registered vtable. `app` is the opaque embedder-app handle
+// (GtkApplication* / NSApplication) threaded straight to `Tree.init` — the
+// core never dereferences it (M6a Task 3).
 pub const NdContext = struct {
     gpa: std.mem.Allocator,
     vtable: *const NdBackend,
     tree: Tree = undefined,
     runtime: ?*Runtime = null,
+    automation_server: ?*automation.Server = null,
 };
 
 /// Builds an `Environ`/`Environ.Map` pair from the process's own `environ`
@@ -107,8 +105,16 @@ export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     return 0;
 }
 
-export fn nd_start_automation(_: *NdContext) callconv(.c) i32 {
-    @panic("M6a Task 4");
+/// Opens the automation socket + thread (lifted from `automation.Server.start`).
+export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
+    const rt = self.runtime orelse return -1;
+    const real_environ = currentEnviron();
+    var parent_env = std.process.Environ.createMap(real_environ, self.gpa) catch return -1;
+    defer parent_env.deinit();
+    const runtime_dir = parent_env.get("XDG_RUNTIME_DIR") orelse "/tmp";
+    const server = automation.Server.start(self.gpa, rt.getIo(), &self.tree, runtime_dir) catch return -1;
+    self.automation_server = server;
+    return 0;
 }
 
 /// Embedder -> core event channel (M6a-D2). `name == "restart"` is a
@@ -136,4 +142,11 @@ fn parseEventPayload(payload_json: [*:0]const u8) protocol.EventPayload {
     return parsed.value;
 }
 
-export fn nd_free(_: ?*anyopaque) callconv(.c) void {}
+/// Frees a string the embedder allocated and handed back across the ABI
+/// (e.g. `semantic_action`'s `result_json_out`/`err_json_out`, M6a Task 4).
+/// The convention is the portable-C one: the embedder allocates with
+/// `malloc`/`strdup`, the core frees with `free` — this is what makes
+/// `nd_free` callable uniformly from a Zig, C, or Swift embedder.
+pub export fn nd_free(p: ?*anyopaque) callconv(.c) void {
+    std.c.free(p);
+}

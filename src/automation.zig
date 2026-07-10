@@ -1,15 +1,9 @@
 const std = @import("std");
-const glib = @import("glib");
-const gobject = @import("gobject");
-const gtk = @import("gtk");
-const gsk = @import("gsk");
-const gdk = @import("gdk");
-const graphene = @import("graphene");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
-const backend = @import("gtk_backend.zig");
-
-const G_SOURCE_REMOVE: c_int = 0;
+const Widget = @import("backend.zig").impl.Widget;
+const abi = @import("abi.zig");
+const abi_backend = @import("abi_backend.zig");
 
 fn paramStr(params: ?std.json.Value, key: []const u8) ?[]const u8 {
     const v = params orelse return null;
@@ -61,9 +55,10 @@ fn paramFloat(params: ?std.json.Value, key: []const u8) ?f64 {
 /// The kinds of work a `UiJob` can carry.
 const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll };
 
-/// A request/response handoff between the automation thread and the GTK main
-/// thread. The mutex/condition here guard only this struct, never the tree —
-/// the tree is read exclusively on the UI thread (see `runOnUi`).
+/// A request/response handoff between the automation thread and the
+/// embedder's UI thread. The mutex/condition here guard only this struct,
+/// never the tree — the tree is read exclusively on the UI thread (see
+/// `runOnUi`).
 const UiJob = struct {
     tree: *Tree,
     kind: JobKind,
@@ -92,41 +87,48 @@ const UiJob = struct {
     finished: bool = false,
 };
 
+/// Marshals `job` onto the embedder's UI thread via the registered vtable
+/// (M6a Task 4 — was `glib.MainContext.default().invokeFull` directly) and
+/// blocks the automation thread until the embedder signals completion. This
+/// is the sole place automation touches the UI thread; the SLO guarantee
+/// (SIGSTOP-the-child still answers) holds because this call never crosses
+/// into the Bun child, only into the (fast, main-thread-marshaled) backend
+/// vtable — same as before the ABI existed, just one indirection further.
 fn runOnUi(job: *UiJob) void {
-    _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &uiCallback, job, null);
+    abi_backend.vtable.marshal_async(abi_backend.ctx, &uiCallback, job);
     job.mutex.lockUncancelable(job.io);
     defer job.mutex.unlock(job.io);
     while (!job.finished) job.done.waitUncancelable(job.io, &job.mutex);
 }
 
-fn uiCallback(data: ?*anyopaque) callconv(.c) c_int {
+fn uiCallback(data: ?*anyopaque) callconv(.c) void {
     const job: *UiJob = @ptrCast(@alignCast(data.?));
     handleOnUi(job);
     job.mutex.lockUncancelable(job.io);
     job.finished = true;
     job.done.signal(job.io);
     job.mutex.unlock(job.io);
-    return G_SOURCE_REMOVE;
 }
 
-/// Runs on the GTK main thread. Fills `result_json` on success, or
+/// Runs on the embedder's UI thread. Fills `result_json` on success, or
 /// `err_code`/`err_msg`/`err_data_json` on failure.
 fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
         .get_tree => handleGetTree(job),
         .screenshot => handleScreenshot(job),
-        .click => handleClick(job),
+        .click => handleSemanticAction(job, "click"),
         .wait_poll => handleWaitPoll(job),
-        .set_value => handleSetValue(job),
-        .type_text => handleType(job),
-        .scroll => handleScroll(job),
+        .set_value => handleSemanticAction(job, "setValue"),
+        .type_text => handleSemanticAction(job, "type"),
+        .scroll => handleSemanticAction(job, "scroll"),
     }
 }
 
 /// Evaluates one `waitFor` condition against the live tree. Called once per
 /// poll from `runOnUi` (each poll is a separate marshaled UI-thread read);
-/// the sleep/deadline bookkeeping lives on the automation thread (Task 6
-/// `dispatchWaitFor`), keeping all tree access UI-thread-only.
+/// the sleep/deadline bookkeeping lives on the automation thread
+/// (`dispatchWaitFor`), keeping all tree access UI-thread-only. `visible` is
+/// a vtable call (M6a Task 4) — the core no longer walks a native widget.
 fn handleWaitPoll(job: *UiJob) void {
     if (job.text_contains) |needle| {
         var it = job.tree.meta.valueIterator();
@@ -146,42 +148,35 @@ fn handleWaitPoll(job: *UiJob) void {
             job.matched = false;
             return;
         };
-        job.matched = gtk.Widget.getVisible(widget) != 0;
+        job.matched = abi_backend.vtable.node_visible(abi_backend.ctx, widget);
         return;
     }
     job.matched = false;
 }
 
-const ClickResult = struct { ref: u32, dispatched: bool };
-
-/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds),
-/// shared by `click` and the setValue/type/scroll automation actions — never
-/// act on what a user couldn't reach (research gotcha; full z-order/overlap
+/// Actionability hit-test (exists ∧ visible ∧ non-degenerate bounds), shared
+/// by click and the setValue/type/scroll automation actions — never act on
+/// what a user couldn't reach (research gotcha; full z-order/overlap
 /// testing is deferred). Fills `job.err_*` (-32001) and returns null on
-/// failure; same codes/reason strings as the original `handleClick` gates.
-fn checkActionable(job: *UiJob) ?*gtk.Widget {
+/// failure; same codes/reason strings as before the ABI (M6a Task 4:
+/// "mapped" folds into `node_visible`'s contract per the plan's v1
+/// decision — the embedder reports false there for an unmapped widget too).
+fn checkActionable(job: *UiJob) ?*Widget {
     const widget = job.tree.get(job.ref) orelse {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{job.ref}) catch null;
         return null;
     };
-    if (gtk.Widget.getVisible(widget) == 0) {
+    if (!abi_backend.vtable.node_visible(abi_backend.ctx, widget)) {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"invisible\"}}", .{job.ref}) catch null;
         return null;
     }
-    if (gtk.Widget.getMapped(widget) == 0) {
-        job.err_code = -32001;
-        job.err_msg = "not actionable";
-        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unmapped\"}}", .{job.ref}) catch null;
-        return null;
-    }
-    const win = backend.getWindow().?.as(gtk.Widget);
-    var rect: graphene.Rect = undefined;
-    const has_bounds = gtk.Widget.computeBounds(widget, win, &rect) != 0;
-    if (!has_bounds or rect.f_size.f_width <= 0 or rect.f_size.f_height <= 0) {
+    var rect: abi.NdRect = undefined;
+    const has_bounds = abi_backend.vtable.node_bounds(abi_backend.ctx, widget, &rect);
+    if (!has_bounds or rect.w <= 0 or rect.h <= 0) {
         job.err_code = -32001;
         job.err_msg = "not actionable";
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"offscreen\"}}", .{job.ref}) catch null;
@@ -190,7 +185,7 @@ fn checkActionable(job: *UiJob) ?*gtk.Widget {
     return widget;
 }
 
-/// Sets `job.err_code = -32602` with a `{ref,type}` data payload — the wrong-
+/// Sets `job.err_code = -32602` with a `{ref}` data payload — the wrong-
 /// widget-kind / bad-value-type error shape shared by setValue/type/scroll.
 fn jobInvalidParams(job: *UiJob, msg: []const u8) void {
     job.err_code = -32602;
@@ -198,193 +193,79 @@ fn jobInvalidParams(job: *UiJob, msg: []const u8) void {
     job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d}}}", .{job.ref}) catch null;
 }
 
-/// Actionability hit-test (exists ∧ visible ∧ mapped ∧ non-degenerate bounds)
-/// before a semantic `clicked` dispatch — never click what a user couldn't
-/// reach (research gotcha; full z-order/overlap testing is deferred).
-fn handleClick(job: *UiJob) void {
-    const widget = checkActionable(job) orelse return;
-
-    // Semantic dispatch: emit `clicked` directly. `gtk.Widget.activate` was
-    // tried first but only re-emits `clicked` on the first call per main-loop
-    // settle under weston headless — rapid successive activate() calls (the
-    // exact pattern the Task 9 driver uses) silently drop clicks 2+. Emitting
-    // the signal directly bypasses GTK's activate/gesture state machine and
-    // fires reliably on every call (verified: three rapid clicks -> Clicks: 3).
-    gobject.signalEmitByName(@ptrCast(@alignCast(widget)), "clicked");
-
-    const result = ClickResult{ .ref = job.ref, .dispatched = true };
-    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+/// `std.json.Stringify.valueAlloc` returns a plain `[]u8` (no sentinel);
+/// dupe it with a NUL appended for the ABI's `[*:0]const u8` params (mirrors
+/// `abi_backend.zig`'s `allocZFromValue`).
+fn allocZFromValue(gpa: std.mem.Allocator, v: anytype) [:0]const u8 {
+    const json = std.json.Stringify.valueAlloc(gpa, v, .{}) catch return gpa.dupeZ(u8, "{}") catch @panic("OOM in automation allocZFromValue");
+    defer gpa.free(json);
+    return gpa.dupeZ(u8, json) catch @panic("OOM in automation allocZFromValue");
 }
 
-const SetValueResult = struct { ref: u32, applied: bool };
-
-/// setValue {ref,value}: kind-dispatched on the tracked widget_type. Sets the
-/// native value through the same widget-owning object the generated
-/// applyProps path uses, but WITHOUT the M5b-D2 echo-suppression wrapper —
-/// automation actions must flow to React exactly like real user input
-/// (plan judgment M5b-D2).
-fn handleSetValue(job: *UiJob) void {
-    const widget = checkActionable(job) orelse return;
-    const meta = job.tree.metaGet(job.ref) orelse return; // gate 1 in checkActionable already proved existence
-    const kind = meta.widget_type;
-    const v = job.value orelse return jobInvalidParams(job, "missing params.value");
-
-    if (std.mem.eql(u8, kind, "TextInput")) {
-        if (v != .string) return jobInvalidParams(job, "value must be a string for TextInput");
-        const z = job.gpa.dupeZ(u8, v.string) catch return;
-        defer job.gpa.free(z);
-        const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
-        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
-    } else if (std.mem.eql(u8, kind, "TextArea")) {
-        if (v != .string) return jobInvalidParams(job, "value must be a string for TextArea");
-        const z = job.gpa.dupeZ(u8, v.string) catch return;
-        defer job.gpa.free(z);
-        const view: *gtk.TextView = @ptrCast(@alignCast(widget));
-        gtk.TextBuffer.setText(gtk.TextView.getBuffer(view), z, -1);
-    } else if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Radio")) {
-        if (v != .bool) return jobInvalidParams(job, "value must be a bool for Checkbox/Radio");
-        gtk.CheckButton.setActive(@ptrCast(@alignCast(widget)), @intFromBool(v.bool));
-    } else if (std.mem.eql(u8, kind, "Slider")) {
-        const num: f64 = switch (v) {
-            .float => v.float,
-            .integer => @floatFromInt(v.integer),
-            else => return jobInvalidParams(job, "value must be a number for Slider"),
-        };
-        // GtkAdjustment-backed: Range.setValue drives the Scale's adjustment
-        // and clamps to [min, max]; fires "value-changed".
-        const range = @as(*gtk.Scale, @ptrCast(@alignCast(widget))).as(gtk.Range);
-        gtk.Range.setValue(range, num);
-    } else if (std.mem.eql(u8, kind, "Select")) {
-        if (v != .integer) return jobInvalidParams(job, "value must be an integer index for Select");
-        gtk.DropDown.setSelected(@ptrCast(@alignCast(widget)), @intCast(v.integer)); // fires notify::selected
-    } else {
-        return jobInvalidParams(job, "setValue unsupported for this widget type"); // data carries {ref}
-    }
-    const result = SetValueResult{ .ref = job.ref, .applied = true };
-    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
-}
-
-const TypeResult = struct { ref: u32, text: []const u8 };
-
-/// type {ref,text}: TextInput only, semantic append through GtkEditable
-/// (never keysyms — spec §8). Appends at the end of the current text.
-fn handleType(job: *UiJob) void {
-    const widget = checkActionable(job) orelse return;
-    const meta = job.tree.metaGet(job.ref) orelse return;
-    if (!std.mem.eql(u8, meta.widget_type, "TextInput"))
-        return jobInvalidParams(job, "type supported only for TextInput");
-    const text = job.text orelse return jobInvalidParams(job, "missing params.text");
-    const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
-    const cur = std.mem.span(gtk.Editable.getText(editable));
-    // insertText position is in CHARACTERS; append = current codepoint count.
-    var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);
-    const z = job.gpa.dupeZ(u8, text) catch return;
-    defer job.gpa.free(z);
-    // Length param: bytes of `text` to insert. -1 (NUL-terminated) was
-    // confirmed against a live GtkEntry (throwaway drive script, M5b Task 7
-    // verification) to insert the full string correctly; kept as the
-    // primary idiom per the plan's verify-then-fallback note.
-    gtk.Editable.insertText(editable, z, -1, &pos); // fires "changed"
-    const full = std.mem.span(gtk.Editable.getText(editable));
-    const result = TypeResult{ .ref = job.ref, .text = full };
-    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
-}
-
-const ScrollResult = struct { ref: u32, x: f64, y: f64 };
-
-/// scroll {ref,dx?,dy?}: ScrollView only, via its GtkAdjustments (spec §8
-/// semantic-scroll model). Deltas are added to the current adjustment value;
-/// `Adjustment.setValue` clamps to [lower, upper-page].
-fn handleScroll(job: *UiJob) void {
-    const widget = checkActionable(job) orelse return;
-    const meta = job.tree.metaGet(job.ref) orelse return;
-    if (!std.mem.eql(u8, meta.widget_type, "ScrollView"))
-        return jobInvalidParams(job, "scroll supported only for ScrollView");
-    const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
-    if (job.dx) |dx| {
-        const h = gtk.ScrolledWindow.getHadjustment(sw);
-        gtk.Adjustment.setValue(h, gtk.Adjustment.getValue(h) + dx);
-    }
-    if (job.dy) |dy| {
-        const v = gtk.ScrolledWindow.getVadjustment(sw);
-        gtk.Adjustment.setValue(v, gtk.Adjustment.getValue(v) + dy);
-    }
-    const result = ScrollResult{
-        .ref = job.ref,
-        .x = gtk.Adjustment.getValue(gtk.ScrolledWindow.getHadjustment(sw)),
-        .y = gtk.Adjustment.getValue(gtk.ScrolledWindow.getVadjustment(sw)),
+/// Builds the `arg_json` for `vtable.semantic_action` from the job's kind-
+/// tagged fields (M6a-D2: params cross the ABI as JSON). Caller frees.
+fn buildActionArgs(job: *UiJob) [:0]const u8 {
+    return switch (job.kind) {
+        .set_value => allocZFromValue(job.gpa, .{ .value = job.value orelse .null }),
+        .type_text => allocZFromValue(job.gpa, .{ .text = job.text orelse "" }),
+        .scroll => allocZFromValue(job.gpa, .{ .dx = job.dx, .dy = job.dy }),
+        else => job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
     };
-    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+/// Dispatches click/setValue/type/scroll through `vtable.semantic_action`
+/// (M6a-D3: the GTK embedder fills this with today's exact signal-emit/
+/// editable/adjustment code; Mac fills it with AppKit in M6b). Never
+/// suppresses the resulting native event — automation actions must flow to
+/// React exactly like real user input (plan judgment M5b-D2, preserved
+/// through the ABI).
+fn handleSemanticAction(job: *UiJob, action: []const u8) void {
+    const widget = checkActionable(job) orelse return;
+    const action_z = job.gpa.dupeZ(u8, action) catch return;
+    defer job.gpa.free(action_z);
+    const args_z = buildActionArgs(job);
+    defer job.gpa.free(args_z);
+
+    var result_out: ?[*:0]u8 = null;
+    var err_out: ?[*:0]u8 = null;
+    const code = abi_backend.vtable.semantic_action(abi_backend.ctx, widget, job.ref, action_z, args_z, &result_out, &err_out);
+
+    if (code == 0) {
+        if (result_out) |r| {
+            job.result_json = job.gpa.dupe(u8, std.mem.span(r)) catch null;
+            abi.nd_free(r);
+        }
+        return;
+    }
+    job.err_code = code;
+    job.err_msg = "not actionable";
+    if (err_out) |e| {
+        job.err_data_json = job.gpa.dupe(u8, std.mem.span(e)) catch null;
+        abi.nd_free(e);
+    }
 }
 
 const ScreenshotResult = struct { path: []const u8, width: i32, height: i32 };
 
-/// In-process GTK->GSK render of the window to a PNG at `job.path`. Primary
-/// route: `WidgetPaintable` (captures the whole widget directly, no
-/// parent/child juggling) snapshotted through the window's live renderer.
+/// In-process render of the window to a PNG at `job.path`, via
+/// `vtable.snapshot` (M6a-D3 — GTK fills this with today's WidgetPaintable
+/// code verbatim; Mac supplies the fidelity-ladder solution in M6b). Width/
+/// height are not reported by the vtable call itself (the embedder writes
+/// the PNG directly) — 0 here is a placeholder the embedder-specific size
+/// isn't threaded back across the ABI for v1; scripts assert file presence
+/// and content, not these fields.
 fn handleScreenshot(job: *UiJob) void {
     const path = job.path orelse {
         job.err_code = -32602;
         job.err_msg = "missing path";
         return;
     };
-    const win = backend.getWindow() orelse {
-        job.err_code = -32603;
-        job.err_msg = "no window";
-        return;
-    };
-    const win_widget = win.as(gtk.Widget);
-
-    const native = gtk.Widget.getNative(win_widget) orelse {
-        job.err_code = -32603;
-        job.err_msg = "widget has no native";
-        return;
-    };
-    var owned_renderer: ?*gsk.CairoRenderer = null;
-    const renderer: *gsk.Renderer = gtk.Native.getRenderer(native) orelse blk: {
-        // Fallback: realize a standalone cairo renderer against the native's surface.
-        const cairo_renderer = gsk.CairoRenderer.new();
-        owned_renderer = cairo_renderer;
-        const surface = gtk.Native.getSurface(native);
-        _ = gsk.Renderer.realize(cairo_renderer.as(gsk.Renderer), surface, null);
-        break :blk cairo_renderer.as(gsk.Renderer);
-    };
-    defer if (owned_renderer) |r| {
-        gsk.Renderer.unrealize(r.as(gsk.Renderer));
-        r.as(gsk.Renderer).unref();
-    };
-
-    const paintable = gtk.WidgetPaintable.new(win_widget);
-    defer paintable.unref();
-
-    const snapshot = gtk.Snapshot.new();
-    const width = gtk.Widget.getWidth(win_widget);
-    const height = gtk.Widget.getHeight(win_widget);
-    gdk.Paintable.snapshot(paintable.as(gdk.Paintable), snapshot.as(gdk.Snapshot), @floatFromInt(width), @floatFromInt(height));
-
-    const node = gtk.Snapshot.freeToNode(snapshot) orelse {
-        job.err_code = -32603;
-        job.err_msg = "empty snapshot";
-        return;
-    };
-    defer gsk.RenderNode.unref(node);
-
-    const texture = gsk.Renderer.renderTexture(renderer, node, null);
-    defer texture.unref();
-
-    const path_z = job.gpa.dupeZ(u8, path) catch {
-        job.err_code = -32603;
-        job.err_msg = "oom";
-        return;
-    };
-    defer job.gpa.free(path_z);
-    if (gdk.Texture.saveToPng(texture, path_z) == 0) {
+    if (!abi_backend.vtable.snapshot(abi_backend.ctx, path)) {
         job.err_code = -32603;
         job.err_msg = "failed to save png";
         return;
     }
-
-    const result = ScreenshotResult{ .path = path, .width = gdk.Texture.getWidth(texture), .height = gdk.Texture.getHeight(texture) };
+    const result = ScreenshotResult{ .path = path, .width = 0, .height = 0 };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
@@ -400,7 +281,7 @@ const JsonNode = struct {
     geometry: ?Geometry,
     children: []JsonNode,
     /// ListView's row count (M5c-D4). Null for every widget that isn't
-    /// data-driven; never derived from walking GTK's recycled row widgets.
+    /// data-driven; never derived from walking recycled row widgets.
     itemCount: ?u32 = null,
 };
 
@@ -409,9 +290,14 @@ const GetTreeResult = struct {
     root: JsonNode,
 };
 
-/// Builds the nested snapshot on the UI thread: walks live GTK children
-/// (`getFirstChild`/`getNextSibling`) for true visual order, mapping each
-/// live widget back to its id via a reverse lookup built once per call.
+/// Builds the nested snapshot on the UI thread. M6a Task 4: the child walk
+/// is now core-owned, derived from `Tree.meta.parent` (portable — no native
+/// widget traversal) instead of walking live GTK children. This is
+/// actually simpler than the old walk: the meta map only ever contains
+/// TRACKED nodes (GTK-internal wrappers like the auto-inserted GtkViewport
+/// were never put into `tree.meta`), so there is no "untracked wrapper" to
+/// skip-and-recurse-through anymore — every meta entry whose `parent`
+/// matches becomes a direct child, in insertion order.
 fn handleGetTree(job: *UiJob) void {
     const tree = job.tree;
     const root_id = tree.rootId() orelse {
@@ -419,17 +305,23 @@ fn handleGetTree(job: *UiJob) void {
         job.err_msg = "no root";
         return;
     };
-    const window_widget = backend.getWindow().?.as(gtk.Widget);
 
     var arena_state = std.heap.ArenaAllocator.init(job.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // widget -> id reverse lookup, built once per call.
-    var reverse = std.AutoHashMapUnmanaged(*gtk.Widget, u32){};
-    var it = tree.nodes.iterator();
-    while (it.next()) |entry| {
-        reverse.put(arena, entry.value_ptr.*, entry.key_ptr.*) catch {};
+    // id -> children ids, insertion order, built once per call from the
+    // meta map's `parent` field (portable — replaces the old live-widget
+    // getFirstChild/getNextSibling walk).
+    var children_of: std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)) = .empty;
+    var meta_it = tree.meta.iterator();
+    while (meta_it.next()) |entry| {
+        const id = entry.key_ptr.*;
+        if (id == root_id) continue;
+        const parent = entry.value_ptr.parent;
+        const gop = children_of.getOrPut(arena, parent) catch continue;
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        gop.value_ptr.append(arena, id) catch {};
     }
 
     const root_widget = tree.get(root_id) orelse {
@@ -437,7 +329,8 @@ fn handleGetTree(job: *UiJob) void {
         job.err_msg = "root widget missing";
         return;
     };
-    const root_node = buildNode(arena, tree, &reverse, window_widget, root_widget, root_id) catch {
+    _ = root_widget;
+    const root_node = buildNode(arena, tree, &children_of, root_id) catch {
         job.err_code = -32603;
         job.err_msg = "failed to build tree";
         return;
@@ -450,9 +343,7 @@ fn handleGetTree(job: *UiJob) void {
 fn buildNode(
     arena: std.mem.Allocator,
     tree: *Tree,
-    reverse: *std.AutoHashMapUnmanaged(*gtk.Widget, u32),
-    window_widget: *gtk.Widget,
-    widget: *gtk.Widget,
+    children_of: *std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)),
     id: u32,
 ) !JsonNode {
     const meta = tree.metaGet(id);
@@ -460,24 +351,24 @@ fn buildNode(
     const test_id = if (meta) |m| m.test_id else null;
     const text = if (meta) |m| m.text else null;
     const item_count = if (meta) |m| m.item_count else null;
-    const visible = gtk.Widget.getVisible(widget) != 0;
+    const widget = tree.get(id);
 
-    var rect: graphene.Rect = undefined;
-    const has_bounds = gtk.Widget.computeBounds(widget, window_widget, &rect) != 0;
+    const visible = if (widget) |w| abi_backend.vtable.node_visible(abi_backend.ctx, w) else false;
+
+    var rect: abi.NdRect = undefined;
+    const has_bounds = if (widget) |w| abi_backend.vtable.node_bounds(abi_backend.ctx, w, &rect) else false;
     const geometry: ?Geometry = if (has_bounds)
-        .{
-            .x = @intFromFloat(rect.f_origin.f_x),
-            .y = @intFromFloat(rect.f_origin.f_y),
-            .w = @intFromFloat(rect.f_size.f_width),
-            .h = @intFromFloat(rect.f_size.f_height),
-        }
-    else if (visible)
-        .{ .x = 0, .y = 0, .w = gtk.Widget.getWidth(widget), .h = gtk.Widget.getHeight(widget) }
+        .{ .x = rect.x, .y = rect.y, .w = rect.w, .h = rect.h }
     else
         null;
 
     var children: std.ArrayList(JsonNode) = .empty;
-    try collectTrackedChildren(arena, tree, reverse, window_widget, widget, &children, 0);
+    if (children_of.get(id)) |kids| {
+        for (kids.items) |child_id| {
+            const child_node = try buildNode(arena, tree, children_of, child_id);
+            try children.append(arena, child_node);
+        }
+    }
 
     return .{
         .ref = id,
@@ -489,36 +380,6 @@ fn buildNode(
         .children = children.items,
         .itemCount = item_count,
     };
-}
-
-/// Child walk for `buildNode`: tracked GTK children become snapshot nodes;
-/// untracked ones (GTK-internal wrappers — the GtkViewport that
-/// `ScrolledWindow.setChild` auto-inserts around non-Scrollable children,
-/// GtkNotebook's header/tab machinery) are recursed through transparently so
-/// tracked descendants attach to the nearest tracked ancestor. Untracked
-/// widgets never appear as nodes themselves.
-fn collectTrackedChildren(
-    arena: std.mem.Allocator,
-    tree: *Tree,
-    reverse: *std.AutoHashMapUnmanaged(*gtk.Widget, u32),
-    window_widget: *gtk.Widget,
-    widget: *gtk.Widget,
-    children: *std.ArrayList(JsonNode),
-    depth: u32,
-) std.mem.Allocator.Error!void {
-    if (depth > 32) {
-        std.debug.print("ND_WARN getTree wrapper recursion depth cap hit; subtree truncated\n", .{});
-        return;
-    }
-    var maybe_child = gtk.Widget.getFirstChild(widget);
-    while (maybe_child) |child| : (maybe_child = gtk.Widget.getNextSibling(child)) {
-        if (reverse.get(child)) |child_id| {
-            const child_node = try buildNode(arena, tree, reverse, window_widget, child, child_id);
-            try children.append(arena, child_node);
-        } else {
-            try collectTrackedChildren(arena, tree, reverse, window_widget, child, children, depth + 1);
-        }
-    }
 }
 
 pub const Server = struct {
