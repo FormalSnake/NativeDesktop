@@ -180,7 +180,7 @@ Each milestone is independently demoable; detailed bite-sized plans are written 
 - **M3 — React renderer.** `@nativedesktop/react` (react@19.2.x + react-reconciler@0.33.0, mutation mode); counter app with useState, Suspense, startTransition against live GTK. Binary command-buffer spec document written now (D4).
 - **M4 — Automation layer v1.** JSON-RPC server + MCP wrapper; getTree/screenshot/semantic input/waitFor; agent-drives-the-counter-app-headless demo; automation SLO test.
 - **M5 — Widget schema + codegen + styling.** ~20 widgets on GTK; GtkListView 100k-row recycling; style validation rejecting web CSS; null-backend conformance suite.
-- **M6 — macOS backend.** Swift shell + Zig static lib (Ghostty pattern); TCC-free automation (cacheDisplay, postEvent, accessibilityIdentifier); same apps + MCP drive in CI.
+- **M6 — macOS backend.** Swift shell + Zig static lib (Ghostty pattern); TCC-free automation (cacheDisplay, postEvent, accessibilityIdentifier); same apps + MCP drive in CI. Dev loop uses a real Apple-silicon Mac over `ssh macbook` (logged-in, nix devshell): build, run, and in-process screenshot the backend directly over SSH — `cacheDisplay` needs no TCC/GUI-capture grant, so an SSH session captures fine without a headful capture session.
 - **M7 — Windows backend.** zigwin32 + D2D Fluent widgets with UIA providers/AutomationId; PrintWindow screenshots; validate sync-channel named-pipe semantics; inspectable by Accessibility Insights.
 - **M8 — DX.** HMR + react-refresh with generation GC; host error overlay; `bun create nativedesktop`; agent docs (current-idiom Zig/GTK snippets, lint rules).
 - **M9 — Packaging + updates.** Signed/notarized/auto-updating gallery app on all three platforms from one CI workflow.
