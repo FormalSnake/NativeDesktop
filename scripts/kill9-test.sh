@@ -43,6 +43,13 @@ grep -q "ND_CHILD_EXITED" "$LOG" || { echo "FAIL: host did not report child exit
 sleep 3
 kill -0 "$HOST_PID" 2>/dev/null || { echo "FAIL: host died with the child"; cat "$LOG"; exit 1; }
 
+# The crash overlay is NOT dev-gated (M8-D4) -- this script never sets
+# ND_DEV, so a production crash must still paint the overlay (message-only,
+# no Restart button). This is the permanent regression test for that
+# contract.
+for _ in $(seq 1 30); do grep -q "ND_OVERLAY_SHOWN" "$LOG" && break; sleep 0.1; done
+grep -q "ND_OVERLAY_SHOWN" "$LOG" || { echo "FAIL: no overlay after child death"; cat "$LOG"; exit 1; }
+
 # Clean shutdown on SIGTERM.
 kill -TERM "$HOST_PID"
 wait "$HOST_PID" 2>/dev/null || true
