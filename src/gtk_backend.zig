@@ -68,3 +68,13 @@ pub fn initStyle(sink_err: style.StyleErrorFn) void {
 pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value) void {
     style.applyStyle(widget, node_id, style_value);
 }
+
+/// Generation GC helpers (M8-D9): detach a swept widget from its parent
+/// without destroying the parent or siblings.
+pub fn hasParent(widget: *gtk.Widget) bool {
+    return gtk.Widget.getParent(widget) != null;
+}
+
+pub fn unparentWidget(widget: *gtk.Widget) void {
+    gtk.Widget.unparent(widget);
+}

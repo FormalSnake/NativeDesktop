@@ -195,3 +195,12 @@ pub fn setVisible(widget: *Node, visible: bool) void {
 // has no display to install a CSS provider on. Conformance asserts `style`
 // rides create/update props generically (Task 6) instead.
 pub fn applyStyle(_: *Node, _: u32, _: std.json.Value) void {}
+
+// Generation GC helpers (M8-D9): the null backend has no real widget tree to
+// unparent from — conformance for gcOldGenerations exercises tree.zig's meta
+// map directly (see the "generation bump" test in tree.zig), so these are
+// no-ops that keep the backend interface uniform.
+pub fn hasParent(_: *Node) bool {
+    return false;
+}
+pub fn unparentWidget(_: *Node) void {}

@@ -51,6 +51,15 @@ fn applyStyleIfPresent(widget: *Widget, id: u32, props: ?std.json.Value) void {
     if (v.object.get("style")) |st| backend.applyStyle(widget, id, st);
 }
 
+/// Reserved generation for host-created overlay chrome (M8-D5): never swept
+/// by gcOldGenerations (an incoming app generation is never 0xFFFF).
+pub const OVERLAY_GENERATION: u32 = 0xFFFF;
+
+/// Node ids are (generation << 24) | (seq & 0xFFFFFF) — see packages/react/src/ids.ts.
+fn genOf(id: u32) u32 {
+    return id >> 24;
+}
+
 pub const Tree = struct {
     gpa: std.mem.Allocator,
     app: ?*gtk.Application,
@@ -150,6 +159,7 @@ pub const Tree = struct {
 
     /// UI-thread only. Applies an entire commit batch as one unit.
     pub fn apply(self: *Tree, batch: protocol.CommitBatch) void {
+        const previous_gen = self.generation;
         self.generation = batch.generation;
         for (batch.ops) |op| {
             if (std.mem.eql(u8, op.op, "create")) {
@@ -217,7 +227,45 @@ pub const Tree = struct {
                 std.debug.print("ND_WARN unknown op={s}\n", .{op.op});
             }
         }
+        // M8-D9: a higher-generation CommitBatch means a hot reload landed a
+        // fresh tree — sweep the previous generation's orphaned widgets
+        // *after* applying the new ops (so the new generation's widgets
+        // exist before the old ones are removed, avoiding a blank frame).
+        // Skipped when `previous_gen == OVERLAY_GENERATION` (never true for
+        // a real app commit) and on the steady state (batch.generation ==
+        // previous_gen, the common case — zero cost, byte-identical to M5c).
+        if (batch.generation > previous_gen and previous_gen != OVERLAY_GENERATION) {
+            self.gcOldGenerations(batch.generation);
+        }
         std.debug.print("ND_COMMIT_APPLIED commitId={d}\n", .{batch.commitId});
+    }
+
+    /// Sweeps every tracked node whose id-encoded generation is strictly less
+    /// than `new_gen`, except the reserved overlay generation and the sole
+    /// Window node (kept per M8-D9a — the host reuses the existing
+    /// `gtk.Window`, replacing only its content, rather than opening a
+    /// second OS window). Collect-then-remove: never mutate `nodes`/`meta`
+    /// while iterating them.
+    fn gcOldGenerations(self: *Tree, new_gen: u32) void {
+        var doomed: std.ArrayList(u32) = .empty;
+        defer doomed.deinit(self.gpa);
+        var it = self.meta.iterator();
+        while (it.next()) |entry| {
+            const id = entry.key_ptr.*;
+            if (genOf(id) >= new_gen or genOf(id) == OVERLAY_GENERATION) continue;
+            if (std.mem.eql(u8, entry.value_ptr.widget_type, "Window")) continue; // keep the window (M8-D9a)
+            doomed.append(self.gpa, id) catch continue;
+        }
+        var swept: u32 = 0;
+        for (doomed.items) |id| {
+            if (self.nodes.get(id)) |w| {
+                if (backend.hasParent(w)) backend.unparentWidget(w);
+            }
+            _ = self.nodes.remove(id);
+            self.removeMeta(id);
+            swept += 1;
+        }
+        std.debug.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
     }
 };
 
@@ -232,4 +280,23 @@ test "node meta stores type/testID/text and frees on remove" {
     try std.testing.expectEqualStrings("Increment", m.text.?);
     t.removeMeta(1);
     try std.testing.expect(t.metaGet(1) == null);
+}
+
+test "generation bump sweeps old-generation nodes, keeps window and overlay" {
+    const gpa = std.testing.allocator;
+    var t = Tree.initBare(gpa);
+    defer t.deinitMeta();
+    // gen 0: window(0x000001), box(0x000002), label(0x000003).
+    try t.putMeta(0x000001, "Window", null, null, 0, .{});
+    try t.putMeta(0x000002, "Box", null, null, 0x000001, .{});
+    try t.putMeta(0x000003, "Label", null, "old", 0x000002, .{});
+    // The reserved overlay generation must survive any sweep too.
+    const overlay_id: u32 = (OVERLAY_GENERATION << 24) | 1;
+    try t.putMeta(overlay_id, "Label", "nd-overlay-error", "boom", 0, .{});
+
+    t.gcOldGenerations(1); // simulate a gen-1 CommitBatch having just landed
+    try std.testing.expect(t.metaGet(0x000002) == null); // box swept
+    try std.testing.expect(t.metaGet(0x000003) == null); // label swept
+    try std.testing.expect(t.metaGet(0x000001) != null); // window kept
+    try std.testing.expect(t.metaGet(overlay_id) != null); // overlay kept
 }
