@@ -1,4 +1,5 @@
 const std = @import("std");
+const abi_backend = @import("abi_backend.zig");
 
 // Mirrors include/nd.h exactly. Layout asserts below catch header/Zig drift
 // at `zig build test` time — this is the compile-time contract Task 1 pins
@@ -25,7 +26,13 @@ pub const NdBackend = extern struct {
     semantic_action: *const fn (*NdContext, ?*anyopaque, u32, [*:0]const u8, [*:0]const u8, *?[*:0]u8, *?[*:0]u8) callconv(.c) i32,
 };
 
-pub const NdContext = opaque {};
+// The core instance. Task 2 gives it just enough to bind the vtable seam;
+// Task 3 adds the Tree/Runtime/automation-Server fields once those modules
+// are GTK-free and can be owned here.
+pub const NdContext = struct {
+    gpa: std.mem.Allocator,
+    vtable: *const NdBackend,
+};
 
 comptime {
     // 16 function pointers + no padding on a 64-bit target.
@@ -38,10 +45,14 @@ comptime {
 // Bodies are filled by later tasks; here they @panic("unimplemented") — the
 // point of Task 1 is the SHAPE compiles and the layout is pinned.
 export fn nd_init() callconv(.c) ?*NdContext {
-    @panic("M6a Task 2");
+    const gpa = std.heap.page_allocator;
+    const self = gpa.create(NdContext) catch return null;
+    self.* = .{ .gpa = gpa, .vtable = undefined };
+    return self;
 }
-export fn nd_register_backend(_: *NdContext, _: *const NdBackend) callconv(.c) void {
-    @panic("M6a Task 2");
+export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callconv(.c) void {
+    self.vtable = vt;
+    abi_backend.bind(self.gpa, self, vt);
 }
 export fn nd_start_runtime(_: *NdContext) callconv(.c) i32 {
     @panic("M6a Task 3");
