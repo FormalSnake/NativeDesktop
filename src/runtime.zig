@@ -5,6 +5,7 @@ const gtk = @import("gtk");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const backend = @import("gtk_backend.zig");
+const overlay = @import("overlay.zig");
 
 const G_SOURCE_REMOVE: c_int = 0;
 
@@ -22,10 +23,18 @@ pub const Runtime = struct {
     write_buf: [4096]u8 = undefined,
     seq: u64 = 0,
     sock_path: [:0]u8,
+    // ND_DEV=1 (M8-D4): gates the `--hot` spawn flag and the overlay's
+    // Restart button ONLY. The overlay itself paints regardless.
+    dev: bool = false,
+    parent_env: *const std.process.Environ.Map = undefined,
+    real_environ: std.process.Environ = undefined,
     // Stashed by the `runtimeError` reader arm; consumed by the crash overlay
     // (M8) when the imminent disconnect fires. Freed/replaced on each report.
     last_error_message: ?[]u8 = null,
     last_error_stack: ?[]u8 = null,
+    // Set once the reader loop has painted the overlay for the current
+    // child's exit, so a stalled/aborted handshake doesn't paint twice.
+    overlay_shown: bool = false,
 
     var singleton: ?*Runtime = null;
 
@@ -47,6 +56,10 @@ pub const Runtime = struct {
         self.seq = 0;
         self.last_error_message = null;
         self.last_error_stack = null;
+        self.overlay_shown = false;
+        self.parent_env = parent_env;
+        self.real_environ = real_environ;
+        self.dev = if (parent_env.get("ND_DEV")) |v| std.mem.eql(u8, v, "1") else false;
 
         // `real_environ` (the process's actual environment block) is required so the
         // Threaded backend's PATH resolution for `std.process.spawn("bun", ...)` sees
@@ -62,19 +75,7 @@ pub const Runtime = struct {
         const addr = try std.Io.net.UnixAddress.init(self.sock_path);
         self.server = try addr.listen(self.io, .{});
 
-        // Build the child's environment: inherit the parent's, then overlay ND_SOCKET.
-        var env = std.process.Environ.Map.init(gpa);
-        for (parent_env.keys(), parent_env.values()) |k, v| try env.put(k, v);
-        try env.put("ND_SOCKET", self.sock_path);
-        const script = parent_env.get("ND_SCRIPT") orelse "runtime/m2-demo.ts";
-        self.child = try std.process.spawn(self.io, .{
-            .argv = &.{ "bun", script },
-            .environ_map = &env,
-            .stdin = .inherit,
-            .stdout = .inherit,
-            .stderr = .inherit,
-        });
-        env.deinit();
+        try self.spawnChild();
 
         singleton = self;
         backend.setEventSink(&sendEventStatic);
@@ -82,6 +83,30 @@ pub const Runtime = struct {
 
         _ = try std.Thread.spawn(.{}, readerLoop, .{self});
         return self;
+    }
+
+    /// Spawns the bun child. `dev` selects `bun --hot <script>` over
+    /// `bun <script>` (M8-D4) — everything else about the spawn is
+    /// unchanged, so a non-dev run stays byte-identical to M5c. Factored out
+    /// so a dev-mode Restart can respawn a fresh child against the same
+    /// listening socket.
+    fn spawnChild(self: *Runtime) !void {
+        var env = std.process.Environ.Map.init(self.gpa);
+        defer env.deinit();
+        for (self.parent_env.keys(), self.parent_env.values()) |k, v| try env.put(k, v);
+        try env.put("ND_SOCKET", self.sock_path);
+        const script = self.parent_env.get("ND_SCRIPT") orelse "runtime/m2-demo.ts";
+        const argv: []const []const u8 = if (self.dev)
+            &.{ "bun", "--hot", script }
+        else
+            &.{ "bun", script };
+        self.child = try std.process.spawn(self.io, .{
+            .argv = argv,
+            .environ_map = &env,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
     }
 
     pub fn getIo(self: *Runtime) std.Io {
@@ -123,7 +148,7 @@ pub const Runtime = struct {
 
     fn readerLoop(self: *Runtime) void {
         const stream = self.server.accept(self.io) catch {
-            std.debug.print("ND_CHILD_EXITED\n", .{});
+            self.onChildExit();
             return;
         };
         self.stream = stream;
@@ -134,13 +159,13 @@ pub const Runtime = struct {
 
         // Handshake.
         const first = readFrame(self, &r.interface) catch {
-            std.debug.print("ND_CHILD_EXITED\n", .{});
+            self.onChildExit();
             return;
         };
         defer self.gpa.free(first);
         {
             const parsed = std.json.parseFromSlice(protocol.Hello, self.gpa, first, .{ .ignore_unknown_fields = true }) catch {
-                std.debug.print("ND_CHILD_EXITED\n", .{});
+                self.onChildExit();
                 return;
             };
             defer parsed.deinit();
@@ -151,7 +176,7 @@ pub const Runtime = struct {
                     .got = parsed.value.ndpVersion,
                 });
                 self.child.kill(self.io);
-                std.debug.print("ND_CHILD_EXITED\n", .{});
+                self.onChildExit();
                 return;
             }
         }
@@ -161,7 +186,7 @@ pub const Runtime = struct {
         // Frame loop.
         while (true) {
             const bytes = readFrame(self, &r.interface) catch {
-                std.debug.print("ND_CHILD_EXITED\n", .{});
+                self.onChildExit();
                 return;
             };
             const kind = protocol.peekType(self.gpa, bytes) catch {
@@ -210,6 +235,71 @@ pub const Runtime = struct {
         self.last_error_message = self.gpa.dupe(u8, parsed.value.message) catch null;
         self.last_error_stack = self.gpa.dupe(u8, parsed.value.stack) catch null;
         std.debug.print("ND_RUNTIME_ERROR_REPORTED {s}\n", .{parsed.value.message});
+    }
+
+    /// Called from the reader-loop thread on every disconnect path (M8-D3:
+    /// a dead `bytes` read = the child actually exited — crash, kill -9, or
+    /// process.exit — never a `--hot` edit, which keeps the same socket).
+    /// Prints the existing marker, then marshals the overlay paint onto the
+    /// UI thread with whatever error text was last reported (or a generic
+    /// fallback if the child died silently).
+    fn onChildExit(self: *Runtime) void {
+        std.debug.print("ND_CHILD_EXITED\n", .{});
+        if (self.overlay_shown) return; // already painted for this child's exit
+        const msg = self.last_error_message orelse "Runtime disconnected";
+        const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
+        const job = self.gpa.create(OverlayJob) catch return;
+        job.* = .{ .rt = self, .msg = self.gpa.dupe(u8, msg) catch msg };
+        _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &showOverlayOnUi, job, null);
+    }
+
+    fn showOverlayOnUi(data: ?*anyopaque) callconv(.c) c_int {
+        const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
+        const job: *OverlayJob = @ptrCast(@alignCast(data.?));
+        defer {
+            job.rt.gpa.free(job.msg);
+            job.rt.gpa.destroy(job);
+        }
+        const self = job.rt;
+        const window = backend.getWindow() orelse return G_SOURCE_REMOVE; // no window yet (child never mounted)
+        self.overlay_shown = true;
+        overlay.show(self.tree, window, job.msg, self.dev, &respawnStatic);
+        return G_SOURCE_REMOVE;
+    }
+
+    /// Restart button trampoline (dev-mode only — overlay.show only wires
+    /// this when `dev` is true). Runs via glib.idleAdd from the click
+    /// handler (overlay.zig) to avoid re-entrancy into the GTK signal
+    /// dispatch that is still on the stack.
+    fn respawnStatic() void {
+        if (singleton) |self| self.respawn();
+    }
+
+    /// Clears the crash overlay and spawns a fresh child against the same
+    /// listening socket. The respawned child starts at generation 0 again;
+    /// since the dead child's nodes were never GC'd (the process died, it
+    /// never sent a higher-generation CommitBatch), every non-overlay node
+    /// is cleared here so the fresh mount rebuilds from an empty tree.
+    fn respawn(self: *Runtime) void {
+        if (backend.getWindow()) |window| overlay.clear(self.tree, window);
+        self.tree.clearAppNodes();
+        self.overlay_shown = false;
+        if (self.last_error_message) |m| {
+            self.gpa.free(m);
+            self.last_error_message = null;
+        }
+        if (self.last_error_stack) |s| {
+            self.gpa.free(s);
+            self.last_error_stack = null;
+        }
+        self.spawnChild() catch |err| {
+            std.debug.print("ND_RESPAWN_ERROR {any}\n", .{err});
+            return;
+        };
+        std.debug.print("ND_RESPAWNED\n", .{});
+        _ = std.Thread.spawn(.{}, readerLoop, .{self}) catch |err| {
+            std.debug.print("ND_RESPAWN_ERROR {any}\n", .{err});
+        };
     }
 
     const CommitJob = struct { rt: *Runtime, bytes: []u8 };

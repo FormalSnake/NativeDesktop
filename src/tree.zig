@@ -52,8 +52,14 @@ fn applyStyleIfPresent(widget: *Widget, id: u32, props: ?std.json.Value) void {
 }
 
 /// Reserved generation for host-created overlay chrome (M8-D5): never swept
-/// by gcOldGenerations (an incoming app generation is never 0xFFFF).
-pub const OVERLAY_GENERATION: u32 = 0xFFFF;
+/// by gcOldGenerations (an incoming app generation reaches 0xFF only after
+/// 255 hot-reloads — reserved in practice). NOTE: ids are
+/// `(generation << 24) | (seq & 0xFFFFFF)` (see packages/react/src/ids.ts),
+/// an 8-bit generation field — 0xFFFF (16 bits) would silently truncate to
+/// 0xFF00 through `u32` shift overflow, corrupting the reserved-generation
+/// check (caught this session: `gcOldGenerations`/`clearAppNodes` never
+/// matched overlay-tagged ids with a wider constant).
+pub const OVERLAY_GENERATION: u32 = 0xFF;
 
 /// Node ids are (generation << 24) | (seq & 0xFFFFFF) — see packages/react/src/ids.ts.
 fn genOf(id: u32) u32 {
@@ -164,7 +170,19 @@ pub const Tree = struct {
         for (batch.ops) |op| {
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
-                const widget = backend.createWidget(app, op.widget.?, op.props) catch continue;
+                // M8-D9a: a post-crash respawn mounts a brand-new reconciler
+                // root, whose first commit re-emits a `create Window` op —
+                // but the generated Window arm unconditionally constructs a
+                // new gtk.ApplicationWindow. Bind to the surviving
+                // `the_window` instead of opening a second OS window; this
+                // is the only Window `create` this branch ever sees post-
+                // crash (a live --hot edit never re-creates the window at
+                // all, since the reconciler root/container survive — see
+                // hmr.ts's globalThis singleton guard).
+                const widget = if (std.mem.eql(u8, op.widget.?, "Window") and backend.getWindow() != null)
+                    backend.getWindow().?.as(gtk.Widget)
+                else
+                    backend.createWidget(app, op.widget.?, op.props) catch continue;
                 backend.connectEvents(widget, op.widget.?, op.id.?);
                 self.nodes.put(self.gpa, op.id.?, widget) catch continue;
                 // testID is stored here for the automation getTree RPC (M4) and is
@@ -249,23 +267,75 @@ pub const Tree = struct {
     fn gcOldGenerations(self: *Tree, new_gen: u32) void {
         var doomed: std.ArrayList(u32) = .empty;
         defer doomed.deinit(self.gpa);
+        var doomed_set: std.AutoHashMapUnmanaged(u32, void) = .empty;
+        defer doomed_set.deinit(self.gpa);
         var it = self.meta.iterator();
         while (it.next()) |entry| {
             const id = entry.key_ptr.*;
             if (genOf(id) >= new_gen or genOf(id) == OVERLAY_GENERATION) continue;
             if (std.mem.eql(u8, entry.value_ptr.widget_type, "Window")) continue; // keep the window (M8-D9a)
             doomed.append(self.gpa, id) catch continue;
+            doomed_set.put(self.gpa, id, {}) catch {};
         }
         var swept: u32 = 0;
         for (doomed.items) |id| {
-            if (self.nodes.get(id)) |w| {
-                if (backend.hasParent(w)) backend.unparentWidget(w);
+            // Only unparent a "root" of the swept subtree (see clearAppNodes
+            // for the full rationale) — unparenting an interior widget
+            // cascades GTK's own destruction of its children, so touching
+            // those children afterward would be a use-after-free.
+            const parent_also_doomed = if (self.metaGet(id)) |m| doomed_set.contains(m.parent) else false;
+            if (!parent_also_doomed) {
+                if (self.nodes.get(id)) |w| {
+                    if (backend.hasParent(w)) backend.unparentWidget(w);
+                }
             }
             _ = self.nodes.remove(id);
             self.removeMeta(id);
             swept += 1;
         }
         std.debug.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
+    }
+
+    /// Clears every non-overlay node's bookkeeping (M8 dev-mode Restart):
+    /// a respawned child mounts a brand-new reconciler root at generation 0,
+    /// which collides with the dead child's stale gen-0 ids, so the dead
+    /// tree's entries must be dropped before the fresh mount rebuilds. The
+    /// Window widget itself is NOT unparented/destroyed here — `apply`'s
+    /// create-op arm rebinds the next Window `create` op to the surviving
+    /// widget by identity (M8-D9a); only its now-stale meta entry is
+    /// dropped here, same as every other non-overlay node.
+    pub fn clearAppNodes(self: *Tree) void {
+        var doomed: std.ArrayList(u32) = .empty;
+        defer doomed.deinit(self.gpa);
+        var doomed_set: std.AutoHashMapUnmanaged(u32, void) = .empty;
+        defer doomed_set.deinit(self.gpa);
+        var it = self.meta.iterator();
+        while (it.next()) |entry| {
+            const id = entry.key_ptr.*;
+            if (genOf(id) == OVERLAY_GENERATION) continue;
+            doomed.append(self.gpa, id) catch continue;
+            doomed_set.put(self.gpa, id, {}) catch {};
+        }
+        for (doomed.items) |id| {
+            const m = self.metaGet(id) orelse continue;
+            const is_window = std.mem.eql(u8, m.widget_type, "Window");
+            // Only unparent a "root" of the doomed subtree — a node whose
+            // parent is NOT itself being cleared this pass. Unparenting an
+            // interior node (e.g. a Box) destroys it and, via GTK's own
+            // container teardown, its children too; unparenting those
+            // children afterward would be a use-after-free (verified this
+            // session — the identical bug the overlay's `clear()` hit).
+            const parent_also_doomed = doomed_set.contains(m.parent);
+            if (!is_window and !parent_also_doomed) {
+                if (self.nodes.get(id)) |w| {
+                    if (backend.hasParent(w)) backend.unparentWidget(w);
+                }
+            }
+            _ = self.nodes.remove(id);
+            self.removeMeta(id);
+        }
+        self.generation = 0;
+        std.debug.print("ND_CLEAR_APP_NODES removed={d}\n", .{doomed.items.len});
     }
 };
 
