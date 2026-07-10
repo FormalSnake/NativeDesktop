@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "echo 'run via the dev host: ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to>/nd-hello'",
+    "compile": "babel src --out-dir dist --config-file ./babel.config.json --extensions .ts,.tsx --keep-file-extension",
     "postinstall": "bun scripts/dedupe-react.mjs"
   },
   "dependencies": {
@@ -11,7 +12,12 @@
     "react": "19.2.7"
   },
   "devDependencies": {
+    "@babel/cli": "8.0.4",
+    "@babel/core": "8.0.1",
+    "@babel/plugin-transform-react-jsx": "8.0.1",
+    "@babel/preset-typescript": "8.0.1",
     "@types/bun": "1.3.13",
-    "@types/react": "19.2.17"
+    "@types/react": "19.2.17",
+    "babel-plugin-react-compiler": "1.0.0"
   }
 }

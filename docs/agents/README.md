@@ -55,6 +55,28 @@ full process restart** — there is no partial reload today. Re-read this sectio
 ships; it will name which of the two mechanisms (react-refresh proper, or the store fallback)
 actually shipped.
 
+## React Compiler: honest status (M8-D7)
+
+**Opt-in, working, off by default.** `babel-plugin-react-compiler@1.0.0` runs cleanly as a build
+pre-pass over the template's `src/` and the compiled output runs correctly against
+`@nativedesktop/react` — verified headless (3 clicks, label updated, screenshot captured) this
+session. It is a pre-pass, not inline, because Bun's runtime transpiler does not run babel plugins
+and `bun --hot` re-evaluates modules through Bun's own transpiler only. The template's `bun run
+compile` script (`template/package.json`) runs two babel plugins in one pass:
+`babel-plugin-react-compiler` (the memoization transform) plus
+`@babel/plugin-transform-react-jsx` (JSX to `@nativedesktop/react/jsx-runtime` calls — chosen
+deliberately so the compiled output contains no JSX syntax left for Bun to pragma-select on, since
+Bun's dev-vs-prod jsx-runtime selection is undocumented and version-fragile: it depends on
+`NODE_ENV=production`, which is not honored consistently by `bun run` across 1.3.x). Fixed
+alongside this: `packages/react/src/jsx-runtime.ts` re-exported the type-only `JSX` namespace as a
+value (`export { …, JSX }`), which crashed any hand-authored `import … from
+"@nativedesktop/react/jsx-runtime"` (exactly what the babel JSX transform emits) with `export 'JSX'
+not found` — Bun's own automatic-JSX-runtime injection happened to elide it, masking the bug until
+a real consumer imported the path directly. Changed to `export type { JSX }`. Not enabled by
+default: `bun run dev` (`ND_DEV=1` + `--hot`) still points at uncompiled `src/`, so hot reload and
+react-refresh are unaffected; use `bun run compile && ND_SCRIPT=dist/main.tsx <host-binary>` for a
+compiled run.
+
 ## MCP tools
 
 `packages/mcp` is a stdio MCP server that bridges to the host's automation socket. Four tools,

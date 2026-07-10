@@ -34,8 +34,24 @@ in-window crash-restart button. Leaving it unset runs the clean/production path.
 
 ## React Compiler
 
-Not enabled in this template — see `docs/agents/README.md` for the current honest state (React
-Compiler under Bun requires a babel pre-pass; it isn't wired here yet).
+**Opt-in, working, off by default.** Verified this session: `babel-plugin-react-compiler@1.0.0`
+runs cleanly as a build pre-pass over `src/` and the compiled output runs correctly against
+`@nativedesktop/react` (headless-driven: 3 clicks, label updated, screenshot captured — see
+`docs/agents/README.md`). It is a pre-pass, not inline, because Bun's runtime transpiler does not
+run babel plugins — `bun --hot` re-evaluates modules through Bun's own transpiler only (see the M8
+`--hot` findings). Run it with:
+
+```
+bun run compile   # babel src -> dist, react-compiler pass + JSX-to-calls, then run dist/main.tsx
+```
+
+`babel.config.json` runs two plugins in one pass: `babel-plugin-react-compiler` (the memoization
+transform) and `@babel/plugin-transform-react-jsx` (JSX to `@nativedesktop/react/jsx-runtime` calls
+— this avoids Bun's undocumented, version-fragile dev-vs-prod jsx-runtime pragma selection
+entirely, since the compiled output contains no JSX syntax left for Bun to transform). `dist/` is
+not part of the dev loop — `bun run dev` (`ND_DEV=1` + `--hot`) still points at `src/`, uncompiled,
+so hot reload and react-refresh are unaffected. Use `bun run compile && ND_SCRIPT=dist/main.tsx
+<path-to-nd-host-binary>` for a compiled production run.
 
 ## `bun create` vs `scripts/new-app.sh`
 
