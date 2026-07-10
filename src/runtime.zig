@@ -22,6 +22,10 @@ pub const Runtime = struct {
     write_buf: [4096]u8 = undefined,
     seq: u64 = 0,
     sock_path: [:0]u8,
+    // Stashed by the `runtimeError` reader arm; consumed by the crash overlay
+    // (M8) when the imminent disconnect fires. Freed/replaced on each report.
+    last_error_message: ?[]u8 = null,
+    last_error_stack: ?[]u8 = null,
 
     var singleton: ?*Runtime = null;
 
@@ -170,6 +174,8 @@ pub const Runtime = struct {
             } else if (std.mem.eql(u8, kind, "ping")) {
                 self.gpa.free(bytes);
                 self.writeFrame(.{ .type = "pong" });
+            } else if (std.mem.eql(u8, kind, "runtimeError")) {
+                self.stashRuntimeError(bytes);
             } else {
                 self.gpa.free(bytes);
             }
@@ -186,6 +192,22 @@ pub const Runtime = struct {
         try r.readSliceAll(payload);
         if (trace) std.debug.print(">> {s}\n", .{payload});
         return payload;
+    }
+
+    /// Parses a `runtimeError {message, stack}` frame and stashes both into
+    /// `last_error_message`/`last_error_stack` (M8) — the crash overlay reads
+    /// these when the imminent disconnect triggers `onChildExit`. Best-effort:
+    /// a malformed frame is dropped, never crashes the reader loop.
+    fn stashRuntimeError(self: *Runtime, bytes: []u8) void {
+        defer self.gpa.free(bytes);
+        const RE = struct { message: []const u8 = "", stack: []const u8 = "" };
+        const parsed = std.json.parseFromSlice(RE, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch return;
+        defer parsed.deinit();
+        if (self.last_error_message) |m| self.gpa.free(m);
+        if (self.last_error_stack) |s| self.gpa.free(s);
+        self.last_error_message = self.gpa.dupe(u8, parsed.value.message) catch null;
+        self.last_error_stack = self.gpa.dupe(u8, parsed.value.stack) catch null;
+        std.debug.print("ND_RUNTIME_ERROR_REPORTED {s}\n", .{parsed.value.message});
     }
 
     const CommitJob = struct { rt: *Runtime, bytes: []u8 };

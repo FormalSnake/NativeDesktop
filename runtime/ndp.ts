@@ -1,6 +1,11 @@
 // NativeDesktop Protocol (NDP) client library for the Bun runtime child.
 // Wire format: u32 LE length prefix + UTF-8 JSON, one frame per message.
 // Field names below are a contract with the Zig host (src/protocol.zig) — verbatim, no renaming.
+//
+// runtime->host families: hello, commitBatch, event, ping, and (M8)
+// runtimeError { message, stack } — a best-effort report of an uncaught
+// exception / unhandled rejection sent before the process exits, so the
+// host's crash overlay shows the real error instead of a bare disconnect.
 
 type Runtime = { name: string; version: string };
 type Op =
@@ -144,6 +149,14 @@ export class Ndp {
 
   ping(): void {
     this.send({ type: "ping" });
+  }
+
+  /// Best-effort report of an uncaught exception / unhandled rejection,
+  /// flushed through the same outbox as commits — sent before the process
+  /// dies so the host's overlay (M8) shows the real error, not a bare
+  /// disconnect.
+  sendRuntimeError(message: string, stack: string): void {
+    this.send({ type: "runtimeError", message, stack });
   }
 }
 
