@@ -153,7 +153,12 @@ final class EventDispatcher: NSObject {
 
     /// Fired by `TextFieldEventBridge`/`TextViewEventBridge` for continuous
     /// edits (`changed`), which have no NSControl target/action equivalent.
-    fileprivate func fireChanged(_ view: NSView, text: String) {
+    /// Also called directly by `Automation.swift`'s `semanticSetValue`/
+    /// `semanticType`: AppKit does not fire change notifications for
+    /// programmatic `stringValue`/`string` writes (unlike GTK's
+    /// `Editable.setText`/`TextBuffer.setText`, which fire "changed" as a
+    /// side effect), so semantic input must replay this emit path itself.
+    func fireChanged(_ view: NSView, text: String) {
         emit(view, name: "changed", json: jsonObject(["text": .string(text)]))
     }
 }

@@ -38,6 +38,8 @@ func buildVTable() -> nd_backend {
         let propsStr = cstr(propsJson)
         let bits: Int? = MainActor.assumeIsolated {
             guard let v = ndCreate(kindStr, propsStr) else { return nil }
+            ndApplyTestID(v, propsStr)
+            ndRecordButtonKind(v, kindStr)
             return Int(bitPattern: Unmanaged.passRetained(v).toOpaque())
         }
         guard let bits else { return nil }
@@ -50,7 +52,9 @@ func buildVTable() -> nd_backend {
         let propsStr = cstr(propsJson)
         MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
-            ndApplyProps(viewFrom(widgetPtr), kindStr, propsStr)
+            let view = viewFrom(widgetPtr)
+            ndApplyProps(view, kindStr, propsStr)
+            ndApplyTestID(view, propsStr)
         }
     }
 
@@ -167,17 +171,67 @@ func buildVTable() -> nd_backend {
         }
     }
 
-    // node_visible / node_bounds / snapshot / semantic_action: Task 5's
-    // scope. Safe stubs here so the vtable has no null fn-ptr (every field
-    // the core's Tree.apply/automation server may call unconditionally must
-    // be non-null, same T1 lesson) — automation calls fail cleanly rather
-    // than crashing until T5 lands.
-    vt.node_visible = { _, _ in false }
-    vt.node_bounds = { _, _, _ in false }
-    vt.snapshot = { _, _ in false }
-    vt.semantic_action = { _, _, _, _, _, _, _ in -32601 } // JSON-RPC "method not found"
+    // node_visible / node_bounds / snapshot / semantic_action (Task 5): the
+    // automation half of the vtable, implemented in Automation.swift —
+    // AppKit peers of src/gtk/backend.zig's vtNodeVisible/vtNodeBounds/
+    // vtSnapshot/vtSemanticAction.
+    vt.node_visible = { _, w in
+        let widgetBits = Int(bitPattern: w)
+        return MainActor.assumeIsolated {
+            guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return false }
+            return ndNodeVisible(viewFrom(widgetPtr))
+        }
+    }
+
+    vt.node_bounds = { _, w, out in
+        let widgetBits = Int(bitPattern: w)
+        let outBits = Int(bitPattern: out)
+        return MainActor.assumeIsolated {
+            guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits),
+                  let outPtr = UnsafeMutableRawPointer(bitPattern: outBits) else { return false }
+            var rect = nd_rect()
+            guard ndNodeBounds(viewFrom(widgetPtr), &rect) else { return false }
+            outPtr.assumingMemoryBound(to: nd_rect.self).pointee = rect
+            return true
+        }
+    }
+
+    vt.snapshot = { _, pngPath in
+        let pathStr = cstr(pngPath)
+        return MainActor.assumeIsolated {
+            ndSnapshot(pathStr)
+        }
+    }
+
+    vt.semantic_action = { _, w, nodeID, action, argJson, resultOut, errOut in
+        let widgetBits = Int(bitPattern: w)
+        let actionStr = cstr(action)
+        let argStr = cstr(argJson)
+        let resultOutBits = Int(bitPattern: resultOut)
+        let errOutBits = Int(bitPattern: errOut)
+        return MainActor.assumeIsolated {
+            guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return -32601 }
+            let resultOutPtr = UnsafeMutableRawPointer(bitPattern: resultOutBits)?
+                .assumingMemoryBound(to: UnsafeMutablePointer<CChar>?.self)
+            let errOutPtr = UnsafeMutableRawPointer(bitPattern: errOutBits)?
+                .assumingMemoryBound(to: UnsafeMutablePointer<CChar>?.self)
+            return ndSemanticAction(viewFrom(widgetPtr), nodeID, actionStr, argStr, resultOutPtr, errOutPtr)
+        }
+    }
 
     return vt
+}
+
+/// testIDs (Task 5): mirrors the tracked `testID` prop onto AppKit's own
+/// accessibility identifier for real-user/VoiceOver parity. This is NOT the
+/// getTree `testID` source — that flows from core-owned `Tree.meta`
+/// (src/tree.zig) independent of AppKit entirely — so a missing/absent
+/// testID here is a no-op, never an error. Called from both `create` (after
+/// the initial build) and `apply_props` (testID can arrive/change on any
+/// update, same as every other prop).
+func ndApplyTestID(_ view: NSView, _ propsJson: String) {
+    guard let testID = propStr(parseProps(propsJson), "testID") else { return }
+    view.setAccessibilityIdentifier(testID)
 }
 
 /// `ndApplyStyle` (peer of GTK's `style.applyStyle`; AppKit styling is
