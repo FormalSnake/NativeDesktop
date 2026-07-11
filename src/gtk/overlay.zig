@@ -55,12 +55,12 @@ fn registerOverlayNode(tree: *Tree, widget: *gtk.Widget, widget_type: []const u8
 }
 
 fn onRestartClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
-    const restart: RestartFn = @ptrCast(data.?);
+    const restart: RestartFn = @ptrCast(@alignCast(data.?));
     // Defer off the click signal's call stack (re-entrancy: the click
     // handler runs from inside the same GTK main-loop dispatch that would
     // be tearing down/rebuilding the widget tree the button lives in).
     const Ctx = struct { fn call(fn_data: ?*anyopaque) callconv(.c) c_int {
-        const f: RestartFn = @ptrCast(fn_data.?);
+        const f: RestartFn = @ptrCast(@alignCast(fn_data.?));
         f();
         return 0; // G_SOURCE_REMOVE
     } };
