@@ -750,11 +750,35 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     remove: () => "        gtk.Window.setChild(@ptrCast(@alignCast(parent)), null);\n",
   },
   Box: {
-    append: () => "        gtk.Box.append(@ptrCast(@alignCast(parent)), child);\n",
+    append: () => {
+      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            // Moving an already-mounted child to the end (e.g. `insertBefore`\n";
+      s += "            // degenerating here because `before` was null — see insertBefore\n";
+      s += "            // below): `gtk_box_append` asserts the child has no parent, same\n";
+      s += "            // constraint as `insertChildAfter`. `reorderChildAfter` anchored\n";
+      s += "            // on the current last child is GTK's move-to-end primitive.\n";
+      s += "            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent));\n";
+      s += "        } else {\n";
+      s += "            gtk.Box.append(box, child);\n";
+      s += "        }\n";
+      return s;
+    },
     insertBefore: () => {
       let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
       s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
-      s += "        gtk.Box.insertChildAfter(box, child, prev);\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            // Reordering an already-mounted child (e.g. a pin-sort), not a\n";
+      s += "            // fresh insert: `gtk_box_insert_child_after` asserts the child\n";
+      s += "            // has no parent and would silently no-op (Gtk-CRITICAL) here.\n";
+      s += "            // `reorderChildAfter` is GTK's dedicated move primitive — it\n";
+      s += "            // repositions the child in place with no unparent, so it can't\n";
+      s += "            // cascade-destroy the moved child's own children (the M8 GC\n";
+      s += "            // lesson: unparenting an interior node destroys its subtree).\n";
+      s += "            gtk.Box.reorderChildAfter(box, child, prev);\n";
+      s += "        } else {\n";
+      s += "            gtk.Box.insertChildAfter(box, child, prev);\n";
+      s += "        }\n";
       return s;
     },
     remove: () => "        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);\n",
