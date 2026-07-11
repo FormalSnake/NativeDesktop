@@ -1,0 +1,54 @@
+name: package
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  linux-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: build + install workspace
+        run: |
+          nix develop -c zig build
+          nix develop -c zig build update-verify
+          nix develop -c bun install --frozen-lockfile
+      - name: package + update-flow gate (AppImage + verify/stage, zero-network)
+        run: nix develop -c ./scripts/headless-m9.sh
+      - name: flatpak manifest lint (build is real-runner-only, M9-D4)
+        run: nix develop -c flatpak-builder --show-manifest packaging/flatpak/com.nativedesktop.gallery.yml >/dev/null
+
+  # STRETCH, non-blocking (M9-D3): a red mac job must never block a merge.
+  # First live run deferred (no GitHub push access from the authoring session).
+  macos-package:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -sL https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz | tar xJ
+          echo "$PWD/zig-aarch64-macos-0.16.0" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.13 }
+      - name: minisign (for update signing)
+        run: brew install minisign
+      - name: Build libnd.a (+ repack for Apple ld) + Swift shell
+        run: |
+          zig build libnd -Dbackend=abi
+          workdir="$(mktemp -d)"
+          ( cd "$workdir" && ar x "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" && chmod 644 *.o && libtool -static -o "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" *.o )
+          rm -rf "$workdir"
+          (cd swift && swift build -c release)
+          zig build update-verify
+      - name: bun install (workspace)
+        run: bun install --frozen-lockfile
+      - name: nd package mac (ad-hoc sign; notarize skipped — no creds)
+        run: |
+          ND_APP_VERSION=0.9.0 bun tools/package.ts mac
+          codesign --verify dist/mac/Gallery.app && echo "CI_MAC_CODESIGN_OK"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mac-gallery-app, path: dist/mac/Gallery.app }
