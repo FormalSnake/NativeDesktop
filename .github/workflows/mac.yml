@@ -43,3 +43,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: mac-counter-shot, path: /tmp/ci-shot.png }
+      - name: M11 native chrome drive (notes)
+        run: ./scripts/mac/mac-m11-body.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mac-m11-shots, path: /tmp/notes-*.png }
