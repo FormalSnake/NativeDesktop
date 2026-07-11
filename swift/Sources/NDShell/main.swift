@@ -29,6 +29,17 @@ gCtx = ctx
 gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
 
+// M10: opt-in capability ACL + native plugin. Absent env = safe default
+// (core UI ops granted), byte-identical to pre-M10 behavior.
+if let grants = ProcessInfo.processInfo.environment["ND_ACL_GRANTS"] {
+    grants.withCString { nd_set_acl(ctx, $0) }
+}
+if ProcessInfo.processInfo.environment["ND_PLUGINS"] == "1",
+   let pluginPath = ProcessInfo.processInfo.environment["ND_PLUGIN_PATH"] {
+    let rc = pluginPath.withCString { nd_load_plugin(ctx, $0) }
+    if rc != 0 { FileHandle.standardError.write("ND_PLUGIN_LOAD_FAILED rc=\(rc)\n".data(using: .utf8)!) }
+}
+
 if nd_start_runtime(ctx) != 0 {
     FileHandle.standardError.write("ND_RUNTIME_ERROR nd_start_runtime failed\n".data(using: .utf8)!)
     exit(1)
