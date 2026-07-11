@@ -19,6 +19,13 @@ workdir="$(mktemp -d)"; ( cd "$workdir" && ar x ~/nd/zig-out/lib/libnd.a && chmo
 zig build update-verify >/dev/null 2>&1
 bun install --frozen-lockfile >/dev/null 2>&1
 
+# packageMac() assembles into dist/mac/Gallery.app without cleaning it first
+# (not idempotent against a leftover .app from a prior run) — cpSync then
+# throws "src and dest cannot be the same". dist/ is gitignored, ephemeral
+# build output; start every gate run from a clean slate (same fix as the
+# Linux leg, scripts/headless-m9.sh).
+rm -rf dist
+
 # 1. Package + deep-sign the .app (ad-hoc; notarize skipped — no creds here).
 ND_APP_VERSION=0.9.0 bun tools/package.ts mac >/tmp/mac-pkg.log 2>&1 || { echo "FAIL package"; cat /tmp/mac-pkg.log; exit 1; }
 cat /tmp/mac-pkg.log
