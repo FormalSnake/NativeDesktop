@@ -54,7 +54,7 @@ pub const Acl = struct {
                 for (g.array.items) |grant| {
                     if (grant != .object) continue;
                     const win: u32 = if (grant.object.get("window")) |w|
-                        (if (w == .integer) @intCast(w.integer) else 0)
+                        (if (w == .integer) (std.math.cast(u32, w.integer) orelse continue) else 0)
                     else
                         0;
                     const perms = grant.object.get("permissions") orelse continue;
@@ -145,6 +145,23 @@ test "wildcard-shaped literal permission strings are not pattern-matched" {
     defer acl.deinit();
     try std.testing.expect(acl.isAllowed(0, "plugin:*"));
     try std.testing.expect(!acl.isAllowed(0, "plugin:hello.greet"));
+}
+
+test "out-of-range window values in a grant degrade to 'grant ignored' rather than panicking" {
+    // A negative or huge `window` can't be narrowed to u32; the malformed
+    // grant must be skipped (module contract: never breaks, falls back),
+    // not trigger an @intCast overflow panic.
+    const json =
+        \\{"grants":[{"window":-1,"permissions":["plugin:neg.window"]},
+        \\           {"window":5000000000,"permissions":["plugin:huge.window"]},
+        \\           {"window":0,"permissions":["plugin:ok.window"]}]}
+    ;
+    var acl = try Acl.parse(std.testing.allocator, json);
+    defer acl.deinit();
+    try std.testing.expect(!acl.isAllowed(0, "plugin:neg.window"));
+    try std.testing.expect(!acl.isAllowed(0, "plugin:huge.window"));
+    try std.testing.expect(acl.isAllowed(0, "plugin:ok.window")); // later valid grants still apply
+    try std.testing.expect(acl.isAllowed(0, "core:commit")); // safe default intact
 }
 
 test "deny precedence: absence of a grant always denies, and window-0 grants apply to all windows" {
