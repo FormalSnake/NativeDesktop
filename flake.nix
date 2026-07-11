@@ -24,6 +24,8 @@
               zls
               bun
               pkg-config
+              minisign     # M9: sign/verify update manifests + archives
+              zstd         # M9: .tar.zst full-archive updates (Linux)
             ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               gtk4
               libadwaita
@@ -31,6 +33,8 @@
               gobject-introspection
               libxslt      # provides xsltproc for zig-gobject codegen
               weston       # headless wayland compositor for CI/agent runs
+              squashfsTools    # M9: AppImage assembly (mksquashfs)
+              flatpak-builder  # M9: Flatpak manifest lint (--show-manifest)
             ];
           };
         });

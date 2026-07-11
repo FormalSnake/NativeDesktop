@@ -188,6 +188,30 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(abi_tests).step);
 
+    // Update-verification core (M9): its own addTest root — Zig 0.16 does not
+    // collect `test {}` blocks transitively through @import, so without this
+    // update.zig's minisign tests are silently skipped.
+    const update_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/core/update.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(update_tests).step);
+
+    // `nd-update-verify` (M9): bytes-in → exit 0/1 CLI wrapping verifyMinisign,
+    // used by scripts/m9-drive.ts to run the non-disableable signature check.
+    const update_verify_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/update_verify_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const update_verify_exe = b.addExecutable(.{ .name = "nd-update-verify", .root_module = update_verify_mod });
+    const update_verify_step = b.step("update-verify", "Build nd-update-verify (minisign check CLI)");
+    update_verify_step.dependOn(&b.addInstallArtifact(update_verify_exe, .{}).step);
+    b.installArtifact(update_verify_exe);
+
     // ---- libnd.a (M6a-D4): the static lib for the Mac, rooted at the same
     // GTK-free core, `-Dbackend=abi`, no gobject imports at all.
     const libnd = b.addLibrary(.{
