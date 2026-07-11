@@ -195,6 +195,13 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .root_module = core_mod,
     });
+    // Bundle Zig's compiler-rt (f128 soft-float builtins: __divtf3 etc., pulled
+    // in by std.fmt.parse_float / std.json) into the archive itself. Without
+    // this, `libnd.a` links fine with `zig build`'s own driver (which supplies
+    // compiler-rt implicitly) but fails with undefined symbols under any other
+    // linker driver (e.g. swiftc/SwiftPM) that doesn't know about Zig's runtime
+    // support code. Self-contained archive, no downstream linker flags needed.
+    libnd.bundle_compiler_rt = true;
     const libnd_step = b.step("libnd", "Build libnd.a (static, GTK-free, -Dbackend=abi)");
     libnd_step.dependOn(&b.addInstallArtifact(libnd, .{}).step);
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
