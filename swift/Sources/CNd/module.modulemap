@@ -1,0 +1,4 @@
+module CNd {
+    header "shim.h"
+    export *
+}
