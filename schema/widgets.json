@@ -24,6 +24,16 @@
       }
     }
   },
+  "cssClasses": [
+    "suggested-action", "destructive-action", "flat", "raised", "circular", "pill",
+    "linked", "toolbar", "spacer",
+    "title-1", "title-2", "title-3", "title-4", "heading", "document", "body",
+    "caption-heading", "caption", "monospace", "numeric",
+    "accent", "success", "warning", "error",
+    "boxed-list", "boxed-list-separate", "card", "activatable",
+    "navigation-sidebar", "selection-mode", "osd",
+    "dimmed", "background", "view", "frame", "compact", "menu", "inline"
+  ],
   "widgets": [
     {
       "name": "Window",

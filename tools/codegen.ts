@@ -38,7 +38,7 @@ type StyleKeyKind = "color" | "int" | "enum" | "string" | "object" | "spacing";
 interface StyleField { kind: StyleKeyKind; css?: string; unit?: string; values?: string[] }
 interface StyleKey extends StyleField { fields?: Record<string, StyleField>; target?: "css" | "widget" }
 interface StyleDef { keys: Record<string, StyleKey> }
-interface Schema { schemaVersion: number; style?: StyleDef; widgets: Widget[] }
+interface Schema { schemaVersion: number; style?: StyleDef; cssClasses?: string[]; widgets: Widget[] }
 
 function tsTypeOf(p: { type: PropType; values?: string[] }): string {
   switch (p.type) {
@@ -107,6 +107,11 @@ function genStyleProp(s: Schema): string {
   return out;
 }
 
+function genCssClassSpec(s: Schema): string {
+  const classes = s.cssClasses ?? [];
+  return `export const cssClassSpec: string[] = ${JSON.stringify(classes)};\n`;
+}
+
 // ---- artifact (a): TS/JSX intrinsics ----
 function genIntrinsics(s: Schema): string {
   let out = HEADER_TS;
@@ -115,6 +120,7 @@ function genIntrinsics(s: Schema): string {
   out += "export type WidgetName = " + s.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n";
   out += "export type WidgetType = " + s.widgets.map((w) => JSON.stringify(w.intrinsic)).join(" | ") + ";\n\n";
   out += genStyleProp(s);
+  out += genCssClassSpec(s);
   out += "\n";
   out += "export namespace JSX {\n";
   out += "  export interface IntrinsicElements {\n";
@@ -125,6 +131,7 @@ function genIntrinsics(s: Schema): string {
     for (const e of w.events) fields.push(`${e.ndpName ?? e.name}?: ${tsHandlerType(e)}`);
     for (const ap of attached) fields.push(`${ap.name}?: ${tsTypeOf(ap)}`);
     fields.push("style?: StyleProp");
+    fields.push("cssClasses?: string[]");
     fields.push("key?: string | number | null");
     fields.push("children?: ReactNode");
     out += `    ${w.intrinsic}: { ${fields.join("; ")} };\n`;
