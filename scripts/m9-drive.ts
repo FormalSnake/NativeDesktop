@@ -3,7 +3,7 @@
 // server, run the NON-DISABLEABLE Zig verifier (zig-out/bin/nd-update-verify),
 // assert valid=accept + tampered=reject, then atomic-swap-stage. Zero network.
 import { $ } from "bun";
-import { writeFileSync, mkdirSync, renameSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, renameSync } from "node:fs";
 
 const [serverUrl, pubKey, stageDir] = process.argv.slice(2);
 const version = process.env.ND_APP_VERSION ?? "0.9.0";
