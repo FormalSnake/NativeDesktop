@@ -4,6 +4,8 @@ const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const Runtime = @import("runtime.zig").Runtime;
 const automation = @import("automation.zig");
+const acl = @import("acl.zig");
+const plugin = @import("plugin.zig");
 
 // Mirrors include/nd.h exactly. Layout asserts below catch header/Zig drift
 // at `zig build test` time — this is the compile-time contract Task 1 pins
@@ -51,6 +53,8 @@ pub const NdContext = struct {
     // means the embedder never called it, so `runtime.zig`'s commit gate
     // falls back to its own module-level default ACL.
     acl: ?*@import("acl.zig").Acl = null,
+    // Set by `nd_load_plugin`; null until the embedder opts in.
+    plugin: ?*plugin.Loaded = null,
 };
 
 /// Builds an `Environ`/`Environ.Map` pair from the process's own `environ`
@@ -121,6 +125,34 @@ pub export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
     return 0;
 }
 
+/// Installs a per-window capability grants manifest (D12). Call before
+/// `nd_start_runtime` so `runtime.zig`'s commit gate sees it from the first
+/// dispatch. A malformed manifest falls back to the safe default (core UI
+/// ops granted, plugin ops denied) rather than failing the call.
+pub export fn nd_set_acl(self: *NdContext, grants_json: [*:0]const u8) callconv(.c) void {
+    const json = std.mem.span(grants_json);
+    const a = self.gpa.create(acl.Acl) catch return;
+    a.* = acl.Acl.parse(self.gpa, json) catch acl.Acl.initDefault(self.gpa);
+    self.acl = a;
+}
+
+/// Loads a native `nd_plugin_v1` shared library (opt-in, D12). Lazily
+/// installs the default-deny ACL if the embedder never called `nd_set_acl`,
+/// so a plugin loaded with no manifest still gets capability-checked rather
+/// than running unchecked.
+pub export fn nd_load_plugin(self: *NdContext, path: [*:0]const u8) callconv(.c) i32 {
+    const p = std.mem.span(path);
+    const acl_ptr = self.acl orelse blk: {
+        const a = self.gpa.create(acl.Acl) catch return -1;
+        a.* = acl.Acl.initDefault(self.gpa);
+        self.acl = a;
+        break :blk a;
+    };
+    const loaded = plugin.load(self.gpa, p, acl_ptr) catch return -1;
+    self.plugin = loaded;
+    return 0;
+}
+
 /// Embedder -> core event channel (M6a-D2). `name == "restart"` is a
 /// reserved sentinel (M6a Task 3): the crash-overlay Restart button calls
 /// this with `node_id=0` instead of a normal NDP event (the child is dead —
@@ -153,4 +185,12 @@ fn parseEventPayload(payload_json: [*:0]const u8) protocol.EventPayload {
 /// `nd_free` callable uniformly from a Zig, C, or Swift embedder.
 pub export fn nd_free(p: ?*anyopaque) callconv(.c) void {
     std.c.free(p);
+}
+
+test "nd_set_acl parses grants into the context" {
+    const self = nd_init().?;
+    defer std.heap.page_allocator.destroy(self);
+    nd_set_acl(self, "{\"grants\":[{\"window\":0,\"permissions\":[\"plugin:hello.greet\"]}]}");
+    try std.testing.expect(self.acl != null);
+    try std.testing.expect(self.acl.?.isAllowed(0, "plugin:hello.greet"));
 }

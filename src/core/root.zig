@@ -30,6 +30,8 @@ comptime {
     _ = &abi.nd_start_automation;
     _ = &abi.nd_emit_event;
     _ = &abi.nd_free;
+    _ = &abi.nd_set_acl;
+    _ = &abi.nd_load_plugin;
 }
 
 test {

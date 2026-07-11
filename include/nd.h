@@ -4,6 +4,7 @@
 #define ND_H
 #include <stdint.h>
 #include <stdbool.h>
+#include "nd_plugin.h"
 
 typedef void* nd_widget;              /* opaque backend handle (GtkWidget* / NSView*) */
 typedef struct nd_context nd_context; /* opaque core instance */
@@ -59,6 +60,13 @@ nd_context* nd_init(void);                                  /* create core, spaw
 void nd_register_backend(nd_context*, const nd_backend*);   /* store the vtable */
 int32_t nd_start_runtime(nd_context*);                      /* open NDP socket, spawn bun child */
 int32_t nd_start_automation(nd_context*);                   /* open automation socket + thread */
+/* Capability ACL (D12): install a per-window grants manifest (NUL-terminated
+   JSON; see docs). Absent = safe default (core UI ops granted, plugin ops
+   denied). Call before nd_start_runtime. */
+void nd_set_acl(nd_context*, const char* grants_json);
+/* Load a native nd_plugin_v1 shared library (opt-in). Returns 0 ok, negative
+   on ABI mismatch / missing entry / capability-denied. */
+int32_t nd_load_plugin(nd_context*, const char* path);
 void nd_free(void* p);                                      /* free a core-allocated string */
 
 /* embedder -> core: a native event happened (button clicked, text changed, …).
