@@ -98,8 +98,16 @@ pub export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callco
 /// exactly as a plain `main(std.process.Init)` would have received it.
 pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     const real_environ = currentEnviron();
-    var parent_env = std.process.Environ.createMap(real_environ, self.gpa) catch return -1;
-    defer parent_env.deinit();
+    // Heap-allocated (not a stack-local `defer`'d at function return):
+    // `Runtime.start` stashes this pointer in `self.parent_env` for the
+    // Runtime's whole lifetime (`spawnChild`'s dev-mode respawn reads it long
+    // after this call returns), so a stack-local here was a dangling-pointer
+    // bug — benign until something else's stack/heap churn clobbered the
+    // freed frame before a crash-overlay Restart's `respawn()` walked it
+    // (`self.parent_env.keys()` panicking with "incorrect alignment" on
+    // corrupted MultiArrayList bytes). Never freed: lives for the process.
+    const parent_env = self.gpa.create(std.process.Environ.Map) catch return -1;
+    parent_env.* = std.process.Environ.createMap(real_environ, self.gpa) catch return -1;
 
     // `Tree.app` rides opaquely to `backend.createWidget`'s first argument;
     // the abi backend discards it entirely (the embedder's create vtable
@@ -108,7 +116,7 @@ pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     // continue` early-exit in `Tree.apply`.
     self.tree = Tree.init(self.gpa, self);
 
-    const rt = Runtime.start(self.gpa, self, &self.tree, &parent_env, real_environ) catch return -1;
+    const rt = Runtime.start(self.gpa, self, &self.tree, parent_env, real_environ) catch return -1;
     self.runtime = rt;
     return 0;
 }
