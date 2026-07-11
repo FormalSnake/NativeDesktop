@@ -17,7 +17,7 @@ while read -r d; do FLAGS+=("-Dgir-files-path=$d"); done < <(
     while read -r p; do [ -d "$p/gir-1.0" ] && echo "$p/gir-1.0"; done
 )
 
-(cd "$WORK/zig-gobject" && zig build codegen -Dmodules=Gtk-4.0 "${FLAGS[@]}")
+(cd "$WORK/zig-gobject" && zig build codegen -Dmodules=Gtk-4.0 -Dmodules=Adw-1 "${FLAGS[@]}")
 
 rm -rf vendor/gobject-bindings
 cp -r "$WORK/zig-gobject/zig-out/bindings" vendor/gobject-bindings

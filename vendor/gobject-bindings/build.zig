@@ -168,6 +168,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const adw1 = b.addModule("adw1", .{
+        .root_source_file = b.path(b.pathJoin(&.{ "src", "adw1", "adw1" ++ ".zig" })),
+        .target = target,
+        .optimize = optimize,
+    });
+    libraries.adw1.linkTo(adw1);
+    adw1.addImport("compat", compat);
+
+    const adw1_test = b.addTest(.{
+        .root_module = adw1,
+    });
+    test_step.dependOn(&b.addRunArtifact(adw1_test).step);
+
     const gtk4 = b.addModule("gtk4", .{
         .root_source_file = b.path(b.pathJoin(&.{ "src", "gtk4", "gtk4" ++ ".zig" })),
         .target = target,
@@ -362,6 +375,21 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(gdkpixbuf2_test).step);
 
+    adw1.addImport("gtk4", gtk4);
+    adw1.addImport("gsk4", gsk4);
+    adw1.addImport("graphene1", graphene1);
+    adw1.addImport("gobject2", gobject2);
+    adw1.addImport("glib2", glib2);
+    adw1.addImport("gdk4", gdk4);
+    adw1.addImport("cairo1", cairo1);
+    adw1.addImport("pangocairo1", pangocairo1);
+    adw1.addImport("pango1", pango1);
+    adw1.addImport("harfbuzz0", harfbuzz0);
+    adw1.addImport("freetype22", freetype22);
+    adw1.addImport("gio2", gio2);
+    adw1.addImport("gmodule2", gmodule2);
+    adw1.addImport("gdkpixbuf2", gdkpixbuf2);
+    adw1.addImport("adw1", adw1);
     gtk4.addImport("gsk4", gsk4);
     gtk4.addImport("graphene1", graphene1);
     gtk4.addImport("gobject2", gobject2);
@@ -462,6 +490,7 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "docs",
     });
     docs_step.dependOn(&install_docs.step);
+    docs_mod.addImport("adw1", adw1);
     docs_mod.addImport("gtk4", gtk4);
     docs_mod.addImport("gsk4", gsk4);
     docs_mod.addImport("graphene1", graphene1);
@@ -479,6 +508,10 @@ pub fn build(b: *std.Build) void {
 }
 
 pub const libraries = struct {
+    pub const adw1: Library = .{
+        .system_libraries = &.{"libadwaita-1"},
+    };
+
     pub const gtk4: Library = .{
         .system_libraries = &.{"gtk4"},
     };

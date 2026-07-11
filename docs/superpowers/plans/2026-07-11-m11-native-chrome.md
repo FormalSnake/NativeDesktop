@@ -79,7 +79,7 @@
 - Modify (record decision): this plan file's Task-0 checkboxes
 
 **Interfaces:**
-- Produces: an importable `adw` Zig module (`@import("adw")`) exposing `adw.Application`, `adw.ApplicationWindow`, `adw.OverlaySplitView`, `adw.HeaderBar`, `adw.WindowTitle`, `adw.init` — consumed by Tasks 5, 7, 8.
+- Produces: an importable `adw` Zig module (`@import("adw")`) exposing `adw.Application`, `adw.ApplicationWindow`, `adw.OverlaySplitView`, `adw.HeaderBar`, `adw.WindowTitle`, `adw.init` — consumed by Tasks 5, 7, 8. CONFIRMED present in the generated `vendor/gobject-bindings/src/adw1/adw1.zig`: `Application`/`ApplicationWindow` (extern struct, line ~3218/3307), `HeaderBar`/`OverlaySplitView`/`WindowTitle` (opaque, lines ~7589/10675/20702), `init` (`pub const init = adw_init;`, line ~24005).
 
 **Research already done (recorded here so the implementer does not repeat it):**
 - `adw` is NOT in the current vendored bindings (14 modules, none Adwaita).
@@ -87,28 +87,33 @@
 - No C-shim precedent exists (no `.c` files, no `extern fn` C-library calls). **Decision: regenerate the vendored bindings to add `Adw-1` — do NOT hand-write a C shim.**
 - `scripts/regen-bindings.sh` runs `zig build codegen -Dmodules=Gtk-4.0 "${FLAGS[@]}"` after cloning zig-gobject at pin `97caf8bfb4386409aab1160f7ec05c32ee6d5d7d`. Regen requires NETWORK (git clone) + the devshell.
 
-- [ ] **Step 1: Confirm the Adw-1 GIR is present**
+- [x] **Step 1: Confirm the Adw-1 GIR is present**
 
 Run: `nix develop -c bash -c 'echo "$XDG_DATA_DIRS" | tr : "\n" | while read p; do ls "$p/gir-1.0/Adw-1.gir" 2>/dev/null; done'`
 Expected: prints a path ending in `Adw-1.gir`. **HARD FALLBACK DECISION POINT:** if this prints nothing, the devshell lacks the GIR even though the `.pc` exists. In that case STOP and add `gobject-introspection` + a `libadwaita.dev` (with typelib/GIR) output to `flake.nix`'s Linux inputs, `git add flake.nix`, and re-run this step before proceeding. Do NOT fall back to a C shim — there is no precedent for one and it would be net-new ABI surface.
 
-- [ ] **Step 2: Extend the regen module list**
+RESULT: confirmed present — `/nix/store/7sy0bw9qvhzz9hpbwsw112949yigpjcj-libadwaita-1.9.1-dev/share/gir-1.0/Adw-1.gir`. No fallback needed; `flake.nix` untouched.
 
-Edit `scripts/regen-bindings.sh:20`, changing `-Dmodules=Gtk-4.0` to `-Dmodules=Gtk-4.0,Adw-1`:
+- [x] **Step 2: Extend the regen module list**
+
+Edit `scripts/regen-bindings.sh:20`, changing `-Dmodules=Gtk-4.0` to add `Adw-1`:
 ```bash
-(cd "$WORK/zig-gobject" && zig build codegen -Dmodules=Gtk-4.0,Adw-1 "${FLAGS[@]}")
+(cd "$WORK/zig-gobject" && zig build codegen -Dmodules=Gtk-4.0 -Dmodules=Adw-1 "${FLAGS[@]}")
 ```
+NOTE (deviation from plan draft): `-Dmodules` is `[]const []const u8` in zig-gobject's `build.zig` (`b.option([]const []const u8, "modules", ...)`), which Zig's build-option parser treats as a **repeatable flag**, not a comma-split list. `-Dmodules=Gtk-4.0,Adw-1` (single flag, comma-joined) fails with `error: no GIR file found for Gtk-4.0,Adw-1` — confirmed by running it. The fix is two separate `-Dmodules=` flags, one per module.
 
-- [ ] **Step 3: Regenerate the bindings**
+- [x] **Step 3: Regenerate the bindings**
 
 Run: `nix develop -c ./scripts/regen-bindings.sh`
 Expected: prints `regenerated vendor/gobject-bindings from zig-gobject@97caf8b...`. Then confirm the new module exists:
 Run: `fd -i adw vendor/gobject-bindings`
-Expected: a file under `vendor/gobject-bindings/` for the Adwaita module. Note the exact module name zig-gobject assigned (very likely `adwaita1`, matching the `gtk4`/`gsk4` convention where the trailing digit is the GIR major version). Record that exact name in this plan's Task-0 notes for Steps 4–5 and Tasks 5/7/8.
+Expected: a file under `vendor/gobject-bindings/` for the Adwaita module.
 
-- [ ] **Step 4: Wire the `adw` module into build.zig**
+RESULT: module name is **`adw1`**, NOT `adwaita1` as guessed — zig-gobject names it after the GIR namespace (`Adw`) + major version, lowercased, not the library name (`libadwaita`). File: `vendor/gobject-bindings/src/adw1/adw1.zig`, registered via `b.addModule("adw1", ...)` in the vendored `build.zig`. **Record for Tasks 5/7/8: the Zig import name is `adw` (aliased in `gtk_imports`), backed by `gobject.module("adw1")`.**
 
-Edit `build.zig:25-34`, appending one line to `gtk_imports` (use the module name confirmed in Step 3, shown here as `adwaita1`):
+- [x] **Step 4: Wire the `adw` module into build.zig**
+
+Edit `build.zig:25-34`, appending one line to `gtk_imports` (module name confirmed in Step 3: `adw1`, not `adwaita1`):
 ```zig
     const gtk_imports = [_]std.Build.Module.Import{
         .{ .name = "glib", .module = gobject.module("glib2") },
@@ -118,38 +123,29 @@ Edit `build.zig:25-34`, appending one line to `gtk_imports` (use the module name
         .{ .name = "gsk", .module = gobject.module("gsk4") },
         .{ .name = "gdk", .module = gobject.module("gdk4") },
         .{ .name = "graphene", .module = gobject.module("graphene1") },
-        .{ .name = "adw", .module = gobject.module("adwaita1") },
+        .{ .name = "adw", .module = gobject.module("adw1") },
         .{ .name = "build_options", .module = build_options_mod },
     };
 ```
 
-- [ ] **Step 5: Add a compile-only smoke import to prove the module links**
+- [x] **Step 5: Add a compile-only smoke import to prove the module links**
 
-Add a temporary throwaway file `src/gtk/adw_smoke.zig` that just imports adw and references one symbol, wired via its own `addTest` root in `build.zig` (mirror how `style_test_generated_mod` is wired at `build.zig:137`). Contents:
-```zig
-const std = @import("std");
-const adw = @import("adw");
-test "adw module links" {
-    // Reference a symbol so the binding is actually compiled/linked.
-    const T = adw.Application;
-    _ = T;
-}
-```
-Run: `nix develop -c zig build test 2>&1 | tail -5`
-Expected: PASS (all tests). If the module name in Step 4 was wrong, this fails with "no module named 'adw'" or a missing-symbol error — go back to Step 3's `fd` output for the real name. Once green, DELETE `src/gtk/adw_smoke.zig` and remove its `addTest` root (it was only to prove linkage).
+Added a temporary throwaway file `src/gtk/adw_smoke.zig` that imported `adw` and referenced `adw.Application`, wired via its own `addTest` root in `build.zig` (mirroring `style_test_generated_mod`). Ran `zig build test` — passed (25/25 steps, 148/160 tests). Verified the wiring was real (not silently skipped) by deliberately corrupting the referenced symbol to `adw.ThisSymbolDoesNotExist` and re-running — build failed with a compile error as expected, confirming the test root was genuinely exercised. Restored the correct symbol, re-ran green, then per this step's instruction DELETED `src/gtk/adw_smoke.zig` and its `addTest` root — it was only ever meant to prove linkage, not to remain in the tree.
 
-- [ ] **Step 6: Verify the existing gate still passes with the new bindings**
+- [x] **Step 6: Verify the existing gate still passes with the new bindings**
 
 Run: `nix develop -c bash -c 'zig build test && zig build && ./scripts/headless-smoke.sh'`
-Expected: builds clean, smoke passes. Regenerating the bindings must not perturb any existing GTK behavior (the new `adwaita1` module is additive).
+RESULT: `zig build test` → Build Summary: 23/23 steps succeeded; 147/159 tests passed (12 skipped) — same pass count as before Task 0 (the smoke test's extra step/tests were removed with the smoke file). `zig build` clean. `./scripts/headless-smoke.sh` → `ND_SMOKE_MAPPED` / `headless smoke: OK`. Also ran `./scripts/headless-m3.sh` per the task's own verification requirement → `headless m3: OK (17 commits, suspense resolved)`. The new `adw1` module is additive; no existing GTK behavior perturbed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
-git add scripts/regen-bindings.sh build.zig vendor/gobject-bindings docs/superpowers/plans/2026-07-11-m11-native-chrome.md
-git commit -m "feat(mac): add Adw-1 to vendored gobject bindings + wire adw module"
-git show --stat HEAD | grep -qE 'regen-bindings.sh|build.zig|gobject-bindings' || { echo "FAIL: unexpected commit contents"; exit 1; }
+git add scripts/regen-bindings.sh vendor/gobject-bindings docs/superpowers/plans/2026-07-11-m11-native-chrome.md
+git commit -m "chore(bindings): regenerate zig-gobject with Adw-1"
+git add build.zig
+git commit -m "build: expose adw module to gtk imports"
 ```
+(Split into two commits — vendored bindings/script/plan-doc vs. the `build.zig` wiring — per the task owner's commit-discipline instructions; `src/automation.zig`/`src/tree.zig` were mid-flight from a concurrent Task 3 and deliberately excluded via explicit pathspecs.)
 
 ---
 
