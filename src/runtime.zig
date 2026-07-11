@@ -438,6 +438,18 @@ pub const Runtime = struct {
             defer self.gpa.free(arg_json);
             if (loaded.dispatch(parsed.value.command, arg_json)) |result| {
                 defer std.c.free(result.ptr);
+                // The plugin ABI returns an arbitrary NUL-terminated C string;
+                // nothing on the plugin side guarantees it's well-formed JSON.
+                // Splicing it unvalidated into the frame would let a buggy
+                // plugin emit a structurally invalid wire frame (crashing the
+                // Bun child's JSON.parse) — validate first, degrade to the
+                // structured error frame on failure (never splice raw).
+                const validated = std.json.parseFromSlice(std.json.Value, self.gpa, result, .{}) catch {
+                    std.debug.print("ND_PLUGIN_BAD_RESULT plugin={s} command={s}\n", .{ parsed.value.plugin, parsed.value.command });
+                    self.writeFrame(.{ .type = "error", .message = "plugin returned malformed result", .expected = @as(u32, 0), .got = @as(u32, 0) });
+                    return;
+                };
+                defer validated.deinit();
                 std.debug.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ parsed.value.plugin, parsed.value.command });
                 const framed = std.fmt.allocPrint(self.gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch return;
                 defer self.gpa.free(framed);
@@ -484,4 +496,19 @@ test "commitGate denies window.create without grant, allows core:commit" {
     defer strict.deinit();
     _ = strict.default_perms.put(strict.arena.allocator(), "core:commit", {}) catch {};
     try std.testing.expectEqualStrings("core:window.create", commitGate(&strict, batch).?);
+}
+
+test "plugin result JSON validation: the handlePluginCommand guard accepts well-formed JSON and rejects garbage" {
+    // Mirrors the exact predicate handlePluginCommand runs on a plugin's
+    // dispatch() result before splicing it into the pluginResult frame
+    // (src/runtime.zig's ND_PLUGIN_BAD_RESULT guard) — a plugin returning
+    // non-JSON must be caught here, not corrupt the wire frame.
+    const gpa = std.testing.allocator;
+
+    const good = try std.json.parseFromSlice(std.json.Value, gpa, "{\"greeting\":\"hello, world\"}", .{});
+    good.deinit();
+
+    try std.testing.expectError(error.SyntaxError, std.json.parseFromSlice(std.json.Value, gpa, "not json", .{}));
+    try std.testing.expectError(error.UnexpectedEndOfInput, std.json.parseFromSlice(std.json.Value, gpa, "{\"truncated\":", .{}));
+    try std.testing.expectError(error.UnexpectedEndOfInput, std.json.parseFromSlice(std.json.Value, gpa, "", .{}));
 }
