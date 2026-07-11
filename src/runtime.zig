@@ -169,6 +169,25 @@ pub const Runtime = struct {
         w.interface.flush() catch {};
     }
 
+    /// Frames a pre-serialized JSON payload (u32 LE length ‖ bytes) through
+    /// the same writer-mutex path as writeFrameOpts. Used for pluginCommand
+    /// results: the plugin's JSON is arbitrary and already serialized, so
+    /// splicing it in raw (rather than re-stringifying it as a JSON string)
+    /// keeps the pluginResult frame's `result` field structurally typed.
+    fn writeRawJson(self: *Runtime, json: []const u8) void {
+        const frame = self.gpa.alloc(u8, 4 + json.len) catch return;
+        defer self.gpa.free(frame);
+        std.mem.writeInt(u32, frame[0..4], @intCast(json.len), .little);
+        @memcpy(frame[4..], json);
+        if (trace) std.debug.print("<< {s}\n", .{json});
+        self.writer_mutex.lockUncancelable(self.io);
+        defer self.writer_mutex.unlock(self.io);
+        const stream = self.stream orelse return;
+        var w = stream.writer(self.io, &self.write_buf);
+        w.interface.writeAll(frame) catch {};
+        w.interface.flush() catch {};
+    }
+
     fn readerLoop(self: *Runtime) void {
         const stream = self.server.accept(self.io) catch {
             self.onChildExit();
@@ -236,6 +255,8 @@ pub const Runtime = struct {
                 self.writeFrame(.{ .type = "pong" });
             } else if (std.mem.eql(u8, kind, "runtimeError")) {
                 self.stashRuntimeError(bytes);
+            } else if (std.mem.eql(u8, kind, "pluginCommand")) {
+                self.handlePluginCommand(bytes);
             } else {
                 self.gpa.free(bytes);
             }
@@ -379,6 +400,50 @@ pub const Runtime = struct {
             return;
         }
         self.tree.apply(batch);
+    }
+
+    /// Routes a `pluginCommand {"plugin","command","arg"}` NDP frame: gates on
+    /// `plugin:<plugin>.<command>` via the ACL, dispatches into the loaded
+    /// plugin's registry, and replies with a `pluginResult` frame carrying the
+    /// plugin's JSON result verbatim. Dispatch only touches the (already
+    /// loaded, resident) plugin registry, so unlike commit application it is
+    /// cheap and safe to run inline on the reader thread rather than
+    /// marshaling to the UI thread (mirrors marshalCommit's ownership intent,
+    /// but no UI-thread widget calls happen here).
+    fn handlePluginCommand(self: *Runtime, bytes: []u8) void {
+        defer self.gpa.free(bytes);
+        const PC = struct { plugin: []const u8 = "", command: []const u8 = "", arg: std.json.Value = .null };
+        const parsed = std.json.parseFromSlice(PC, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch return;
+        defer parsed.deinit();
+        const perm = std.fmt.allocPrint(self.gpa, "plugin:{s}.{s}", .{ parsed.value.plugin, parsed.value.command }) catch return;
+        defer self.gpa.free(perm);
+        const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
+        if (!the_acl.isAllowed(0, perm)) {
+            std.debug.print("ND_ACL_DENY permission={s}\n", .{perm});
+            self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
+            return;
+        }
+        // `ctx.plugin` is added by T10's nd_load_plugin wiring (src/abi.zig);
+        // guarded so this file compiles whether or not that field has landed
+        // yet in the parallel wave.
+        if (comptime !@hasField(@TypeOf(abi_backend.ctx.*), "plugin")) {
+            self.writeFrame(.{ .type = "error", .message = "no plugin loaded", .expected = @as(u32, 0), .got = @as(u32, 0) });
+            return;
+        } else {
+            const loaded = abi_backend.ctx.plugin orelse {
+                self.writeFrame(.{ .type = "error", .message = "no plugin loaded", .expected = @as(u32, 0), .got = @as(u32, 0) });
+                return;
+            };
+            const arg_json = std.json.Stringify.valueAlloc(self.gpa, parsed.value.arg, .{}) catch return;
+            defer self.gpa.free(arg_json);
+            if (loaded.dispatch(parsed.value.command, arg_json)) |result| {
+                defer std.c.free(result.ptr);
+                std.debug.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ parsed.value.plugin, parsed.value.command });
+                const framed = std.fmt.allocPrint(self.gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch return;
+                defer self.gpa.free(framed);
+                self.writeRawJson(framed);
+            }
+        }
     }
 
     fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {

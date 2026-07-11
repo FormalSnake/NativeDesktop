@@ -20,7 +20,11 @@ fn greet(arg_json: [*:0]const u8, result_out: *?[*:0]u8) callconv(.c) i32 {
     const arg = std.mem.span(arg_json);
     // Parse {"name":"..."} defensively; default to "world".
     var name: []const u8 = "world";
-    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, arg, .{}) catch null;
+    // Use c_allocator (not page_allocator) for every allocation in this shared
+    // lib: page_allocator's raw mmap/munmap corrupts glibc malloc's arena when
+    // both run inside a dlopen'd .so's smaller address-space carve-out — this
+    // segfaulted allocPrintSentinel's c_allocator-backed buffer growth below.
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.c_allocator, arg, .{}) catch null;
     if (parsed) |p| { defer p.deinit(); if (p.value == .object) if (p.value.object.get("name")) |n| if (n == .string) { name = n.string; }; }
     const out = std.fmt.allocPrintSentinel(std.heap.c_allocator, "{{\"greeting\":\"hello, {s}\"}}", .{name}, 0) catch return -32603;
     result_out.* = out.ptr;

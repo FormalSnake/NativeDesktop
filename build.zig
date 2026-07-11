@@ -221,6 +221,19 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(acl_tests).step);
 
+    // Native-plugin dlopen loader (M10): own addTest root; link_libc because
+    // the test dispatches into the demo plugin's libc-allocated result and
+    // frees it with std.c.free.
+    const plugin_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/plugin.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(plugin_tests).step);
+
     // `nd-update-verify` (M9): bytes-in → exit 0/1 CLI wrapping verifyMinisign,
     // used by scripts/m9-drive.ts to run the non-disableable signature check.
     const update_verify_mod = b.createModule(.{
@@ -250,6 +263,21 @@ pub fn build(b: *std.Build) void {
     const libnd_step = b.step("libnd", "Build libnd.a (static, GTK-free, -Dbackend=abi)");
     libnd_step.dependOn(&b.addInstallArtifact(libnd, .{}).step);
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
+
+    // First-party demo plugin (M10): a C-ABI shared lib exporting
+    // nd_plugin_entry. Built as its own artifact; headless-m10.sh dlopens it.
+    const plugin_hello = b.addLibrary(.{
+        .name = "nd_plugin_hello",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("plugins/hello/plugin.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const plugin_step = b.step("plugin-hello", "Build the hello demo plugin (.so)");
+    plugin_step.dependOn(&b.addInstallArtifact(plugin_hello, .{}).step);
 }
 
 fn checkZigVersion() void {
