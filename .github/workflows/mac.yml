@@ -1,0 +1,45 @@
+name: mac
+on:
+  push: { branches: [main] }
+  pull_request:
+
+# M6b-T7 (STRETCH, non-blocking): SwiftPM AppKit build + TCC-free counter
+# drive on a stock macOS runner. continue-on-error at the job level — a red
+# mac job must never block the Linux gate or a merge. Authored from the
+# verified `scripts/mac/mac-m6.sh` recipe; first live run is deferred to the
+# next push (no GitHub push access from the authoring session).
+jobs:
+  macos-appkit:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -sL https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz | tar xJ
+          echo "$PWD/zig-aarch64-macos-0.16.0" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.13 }
+      - name: Build libnd.a (+ repack for Apple ld)
+        run: |
+          zig build libnd -Dbackend=abi
+          # zig's archiver emits members Apple's ld rejects ("not 8-byte
+          # aligned") and extracts them 0-permission; repack with the system
+          # ar/libtool before the Swift link (scripts/mac/mac-run.sh recipe).
+          workdir="$(mktemp -d)"
+          ( cd "$workdir" && ar x "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" && chmod 644 *.o && libtool -static -o "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" *.o )
+          rm -rf "$workdir"
+      - name: Build Swift shell
+        run: cd swift && swift build -c release
+      - name: bun install (workspace)
+        run: bun install --frozen-lockfile
+      - name: Drive the counter (headful, TCC-free)
+        run: |
+          ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 swift/.build/release/NDShell >/tmp/nd.log 2>&1 &
+          for _ in $(seq 1 100); do grep -q ND_AUTOMATION_LISTENING /tmp/nd.log && grep -q ND_COMMIT_APPLIED /tmp/nd.log && break; sleep 0.1; done
+          grep -q ND_AUTOMATION_LISTENING /tmp/nd.log || { echo "no automation listener"; cat /tmp/nd.log; exit 1; }
+          SOCK=$(grep -m1 ND_AUTOMATION_LISTENING /tmp/nd.log | sed 's/.*path=//')
+          ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH=/tmp/ci-shot.png bun scripts/m6-drive.ts counter
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: mac-counter-shot, path: /tmp/ci-shot.png }
