@@ -47,6 +47,10 @@ pub const NdContext = struct {
     tree: Tree = undefined,
     runtime: ?*Runtime = null,
     automation_server: ?*automation.Server = null,
+    // Set by T10's `nd_set_acl` (pending) before `nd_start_runtime`; null
+    // means the embedder never called it, so `runtime.zig`'s commit gate
+    // falls back to its own module-level default ACL.
+    acl: ?*@import("acl.zig").Acl = null,
 };
 
 /// Builds an `Environ`/`Environ.Map` pair from the process's own `environ`

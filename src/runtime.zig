@@ -2,6 +2,8 @@ const std = @import("std");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const backend = @import("backend.zig").impl;
+const acl = @import("acl.zig");
+const ndp_binary = @import("ndp_binary.zig");
 // The UI-thread marshal + crash-overlay chrome are vtable-only concerns (not
 // part of the comptime null|abi seam every backend implements) — the core
 // calls them straight through the registered C vtable (M6a Task 3), the same
@@ -9,6 +11,26 @@ const backend = @import("backend.zig").impl;
 const abi_backend = @import("abi_backend.zig");
 
 var trace: bool = false;
+
+// Used when the embedder never called `nd_set_acl` (T10): the safe default
+// grants the core UI ops so every existing demo stays green.
+var default_acl: acl.Acl = undefined;
+var default_acl_ready: bool = false;
+
+/// Returns null if the batch is permitted; otherwise the first permission that
+/// was denied (for the ND_ACL_DENY marker + error frame). Every commit needs
+/// core:commit; a Window create additionally needs core:window.create.
+fn commitGate(a: *acl.Acl, batch: protocol.CommitBatch) ?[]const u8 {
+    if (!a.isAllowed(0, "core:commit")) return "core:commit";
+    for (batch.ops) |op| {
+        if (std.mem.eql(u8, op.op, "create")) {
+            if (op.widget) |w| if (std.mem.eql(u8, w, "Window")) {
+                if (!a.isAllowed(0, "core:window.create")) return "core:window.create";
+            };
+        }
+    }
+    return null;
+}
 
 pub const Runtime = struct {
     gpa: std.mem.Allocator,
@@ -59,6 +81,11 @@ pub const Runtime = struct {
         self.parent_env = parent_env;
         self.real_environ = real_environ;
         self.dev = if (parent_env.get("ND_DEV")) |v| std.mem.eql(u8, v, "1") else false;
+
+        if (!default_acl_ready) {
+            default_acl = acl.Acl.initDefault(gpa);
+            default_acl_ready = true;
+        }
 
         // `real_environ` (the process's actual environment block) is required so the
         // Threaded backend's PATH resolution for `std.process.spawn("bun", ...)` sees
@@ -176,7 +203,7 @@ pub const Runtime = struct {
                 return;
             }
         }
-        self.writeFrame(protocol.HelloAck{ .ndpVersion = protocol.ndp_version, .encodings = &.{"json"} });
+        self.writeFrame(protocol.HelloAck{ .ndpVersion = protocol.ndp_version, .encodings = &.{ "binary", "json" } });
         std.debug.print("ND_HELLO_OK\n", .{});
 
         // Frame loop.
@@ -185,15 +212,25 @@ pub const Runtime = struct {
                 self.onChildExit();
                 return;
             };
+
+            if (ndp_binary.isBinaryPayload(bytes)) {
+                if (trace) {
+                    const j = ndp_binary.traceToJson(self.gpa, bytes) catch null;
+                    if (j) |jj| {
+                        std.debug.print(">> {s}\n", .{jj});
+                        self.gpa.free(jj);
+                    }
+                }
+                self.marshalBinaryCommit(bytes); // ownership transfers
+                continue;
+            }
             const kind = protocol.peekType(self.gpa, bytes) catch {
                 self.gpa.free(bytes);
                 continue;
             };
             defer self.gpa.free(kind);
-
             if (std.mem.eql(u8, kind, "commitBatch")) {
-                // Ownership of `bytes` transfers to the marshaled closure.
-                self.marshalCommit(bytes);
+                self.marshalCommit(bytes); // ownership transfers (JSON path)
             } else if (std.mem.eql(u8, kind, "ping")) {
                 self.gpa.free(bytes);
                 self.writeFrame(.{ .type = "pong" });
@@ -213,7 +250,10 @@ pub const Runtime = struct {
         const payload = try self.gpa.alloc(u8, len);
         errdefer self.gpa.free(payload);
         try r.readSliceAll(payload);
-        if (trace) std.debug.print(">> {s}\n", .{payload});
+        // Binary payloads aren't valid UTF-8 text — tracing them raw here
+        // would print garbage. `readerLoop`'s binary-sniff branch prints the
+        // decoded-to-JSON trace instead (spec §9 parity), so skip here.
+        if (trace and !ndp_binary.isBinaryPayload(payload)) std.debug.print(">> {s}\n", .{payload});
         return payload;
     }
 
@@ -324,8 +364,59 @@ pub const Runtime = struct {
             return;
         };
         defer parsed.deinit();
-        self.tree.apply(parsed.value);
+        self.checkAndApply(parsed.value);
+        self.gpa.free(job.bytes);
+        self.gpa.destroy(job);
+    }
+
+    /// True if allowed; on denial prints ND_ACL_DENY, sends a structured error
+    /// frame, and returns false (the batch is dropped, not applied).
+    fn checkAndApply(self: *Runtime, batch: protocol.CommitBatch) void {
+        const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
+        if (commitGate(the_acl, batch)) |denied| {
+            std.debug.print("ND_ACL_DENY permission={s}\n", .{denied});
+            self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
+            return;
+        }
+        self.tree.apply(batch);
+    }
+
+    fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {
+        const job = self.gpa.create(CommitJob) catch {
+            self.gpa.free(bytes);
+            return;
+        };
+        job.* = .{ .rt = self, .bytes = bytes };
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &applyBinaryOnUi, job);
+    }
+
+    fn applyBinaryOnUi(data: ?*anyopaque) callconv(.c) void {
+        const job: *CommitJob = @ptrCast(@alignCast(data.?));
+        const self = job.rt;
+        var decoded = ndp_binary.decodeCommitBatch(self.gpa, job.bytes) catch {
+            self.gpa.free(job.bytes);
+            self.gpa.destroy(job);
+            return;
+        };
+        defer decoded.deinit();
+        self.checkAndApply(decoded.batch);
         self.gpa.free(job.bytes);
         self.gpa.destroy(job);
     }
 };
+
+test "commitGate denies window.create without grant, allows core:commit" {
+    var denied = acl.Acl.initDefault(std.testing.allocator); // grants both by default
+    defer denied.deinit();
+    // Build a minimal batch with a Window create.
+    var ops = [_]protocol.Op{.{ .op = "create", .id = 1, .widget = "Window" }};
+    const batch = protocol.CommitBatch{ .commitId = 0, .generation = 0, .ops = &ops };
+    // Default policy grants core:window.create → allowed.
+    try std.testing.expect(commitGate(&denied, batch) == null);
+
+    // A restrictive ACL (no window.create) → denied with the permission name.
+    var strict = acl.Acl{ .arena = std.heap.ArenaAllocator.init(std.testing.allocator) };
+    defer strict.deinit();
+    _ = strict.default_perms.put(strict.arena.allocator(), "core:commit", {}) catch {};
+    try std.testing.expectEqualStrings("core:window.create", commitGate(&strict, batch).?);
+}
