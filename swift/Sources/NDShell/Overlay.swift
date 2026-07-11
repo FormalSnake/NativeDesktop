@@ -66,6 +66,9 @@ func ndShowOverlay(_ message: String) {
 
     content.addSubview(panel)
     overlayPanel = panel
+    // Same marker + format as the GTK embedder (src/gtk/overlay.zig:103) —
+    // the kill9-equivalent Mac leg greps for it.
+    FileHandle.standardError.write("ND_OVERLAY_SHOWN dev=\(isDevMode)\n".data(using: .utf8)!)
 }
 
 /// Restart's action fires from inside the button's own click-event dispatch
