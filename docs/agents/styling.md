@@ -46,3 +46,14 @@ JSON — it is not nested under `style` and does not touch the C-ABI vtable (fro
   Structural classes (`navigation-sidebar`, `card`, `view`, `toolbar`, `boxed-list`, `osd`, etc.)
   are silently ignored on macOS — native chrome for those roles comes from the SplitView/HeaderBar
   widgets themselves, not from class strings.
+
+## Adwaita runtime & dark mode
+
+The Linux host runs as `AdwApplication` (`src/gtk/main.zig`), so the Adwaita stylesheet is loaded
+and `AdwStyleManager` tracks the system light/dark preference from the first frame. Unstyled
+widgets and `cssClasses` follow that preference automatically — no app code required. Hardcoded
+`style` colors are explicit overrides and do **not** adapt to dark mode; prefer `cssClasses` plus
+Adwaita defaults for theme-correct apps.
+
+The window class stays `GtkApplicationWindow`, so the default titlebar and window controls survive
+unchanged. A `<headerbar>` (upcoming widget) takes over the titlebar only when an app declares one.

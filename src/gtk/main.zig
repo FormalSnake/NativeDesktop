@@ -3,6 +3,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gio = @import("gio");
 const gtk = @import("gtk");
+const adw = @import("adw");
 const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
 
@@ -23,11 +24,17 @@ pub fn main(init: std.process.Init) void {
     }
     global_environ_map = init.environ_map;
 
-    var app = gtk.Application.new(app_id, .{});
+    // AdwApplication's default startup handler runs adw_init() for us, which
+    // loads the Adwaita stylesheet and starts AdwStyleManager's system
+    // light/dark tracking from the first frame. The window class below stays
+    // gtk.ApplicationWindow on purpose, so the default titlebar/window
+    // controls keep working until a later task hands titlebar ownership to
+    // a <headerbar> widget.
+    var app = adw.Application.new(app_id, .{});
     defer app.unref();
-    global_app = app;
+    global_app = app.as(gtk.Application);
 
-    _ = gio.Application.signals.activate.connect(app, ?*anyopaque, &onActivate, null, .{});
+    _ = gio.Application.signals.activate.connect(app.as(gtk.Application), ?*anyopaque, &onActivate, null, .{});
 
     // Only forward argv[0] to GApplication so its GOptionContext doesn't choke
     // on --smoke; the flag is parsed ourselves above.
