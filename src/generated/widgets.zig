@@ -468,7 +468,17 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     if (std.mem.eql(u8, parent_kind, "Window")) {
         gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
-        gtk.Box.append(@ptrCast(@alignCast(parent)), child);
+        const box: *gtk.Box = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) != null) {
+            // Moving an already-mounted child to the end (e.g. `insertBefore`
+            // degenerating here because `before` was null — see insertBefore
+            // below): `gtk_box_append` asserts the child has no parent, same
+            // constraint as `insertChildAfter`. `reorderChildAfter` anchored
+            // on the current last child is GTK's move-to-end primitive.
+            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent));
+        } else {
+            gtk.Box.append(box, child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
         gtk.ScrolledWindow.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
@@ -488,7 +498,18 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
     if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         const prev = gtk.Widget.getPrevSibling(b);
-        gtk.Box.insertChildAfter(box, child, prev);
+        if (gtk.Widget.getParent(child) != null) {
+            // Reordering an already-mounted child (e.g. a pin-sort), not a
+            // fresh insert: `gtk_box_insert_child_after` asserts the child
+            // has no parent and would silently no-op (Gtk-CRITICAL) here.
+            // `reorderChildAfter` is GTK's dedicated move primitive — it
+            // repositions the child in place with no unparent, so it can't
+            // cascade-destroy the moved child's own children (the M8 GC
+            // lesson: unparenting an interior node destroys its subtree).
+            gtk.Box.reorderChildAfter(box, child, prev);
+        } else {
+            gtk.Box.insertChildAfter(box, child, prev);
+        }
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
         const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));
         const pos = gtk.Notebook.pageNum(nb, b);
