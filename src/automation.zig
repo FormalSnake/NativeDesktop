@@ -312,14 +312,12 @@ const GetTreeResult = struct {
     root: JsonNode,
 };
 
-/// Builds the nested snapshot on the UI thread. M6a Task 4: the child walk
-/// is now core-owned, derived from `Tree.meta.parent` (portable — no native
-/// widget traversal) instead of walking live GTK children. This is
-/// actually simpler than the old walk: the meta map only ever contains
-/// TRACKED nodes (GTK-internal wrappers like the auto-inserted GtkViewport
-/// were never put into `tree.meta`), so there is no "untracked wrapper" to
-/// skip-and-recurse-through anymore — every meta entry whose `parent`
-/// matches becomes a direct child, in insertion order.
+/// Builds the nested snapshot on the UI thread. Task 3: child order now
+/// comes from `Tree.childrenOf` — the ordered per-parent sibling list
+/// maintained by `apply`'s append/insertBefore/remove handlers — instead of
+/// grouping over `tree.meta`'s hashmap iteration (which is bucket layout,
+/// not insertion order, and silently scrambled sibling order under
+/// `insertBefore`/reorders).
 fn handleGetTree(job: *UiJob) void {
     const tree = job.tree;
     const root_id = tree.rootId() orelse {
@@ -332,32 +330,44 @@ fn handleGetTree(job: *UiJob) void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // id -> children ids, insertion order, built once per call from the
-    // meta map's `parent` field (portable — replaces the old live-widget
-    // getFirstChild/getNextSibling walk). `parent == 0` is the overlay's
-    // "flat, not nested" sentinel (M8-D5, overlay.zig's registerOverlayNode
-    // — the crash-panel chrome is a real GTK child of the window but
-    // deliberately untracked in the parent/child sense) — attach those
-    // under the tree root so getTree still surfaces them, matching the old
-    // live-GTK walk's behaviour (the panel box IS a real descendant of the
-    // window widget there).
-    var children_of: std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)) = .empty;
+    // Nodes never reached by the ordered `children` lists (host-created
+    // overlay chrome, M8-D5: `registerOverlayNode` in gtk/overlay.zig only
+    // calls `putMeta` with `parent == 0` — it never records into `Tree`'s
+    // ordered list) still need to surface in getTree, matching the old
+    // live-GTK walk's behaviour (the crash panel IS a real descendant of the
+    // window widget there). Collect every id already placed by some
+    // parent's ordered list, then attach the rest under root, sorted by id
+    // (overlay ids are allocated from a monotonically increasing sequence,
+    // so this preserves their creation order).
+    var placed: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    var children_it = tree.children.iterator();
+    while (children_it.next()) |entry| {
+        for (entry.value_ptr.items) |child_id| placed.put(arena, child_id, {}) catch {};
+    }
+    var orphans: std.ArrayList(u32) = .empty;
     var meta_it = tree.meta.iterator();
     while (meta_it.next()) |entry| {
         const id = entry.key_ptr.*;
         if (id == root_id) continue;
-        const parent = if (entry.value_ptr.parent == 0) root_id else entry.value_ptr.parent;
-        const gop = children_of.getOrPut(arena, parent) catch continue;
-        if (!gop.found_existing) gop.value_ptr.* = .empty;
-        gop.value_ptr.append(arena, id) catch {};
+        if (placed.contains(id)) continue;
+        orphans.append(arena, id) catch {};
     }
+    std.mem.sort(u32, orphans.items, {}, std.sort.asc(u32));
 
     if (tree.get(root_id) == null) {
         job.err_code = -32603;
         job.err_msg = "root widget missing";
         return;
     }
-    const root_node = buildNode(arena, tree, &children_of, root_id) catch {
+    const root_node = buildNode(arena, tree, id: {
+        // Orphans (nodes never recorded into any parent's ordered list,
+        // e.g. overlay chrome) attach under root only, appended after the
+        // root's own ordered children.
+        var root_children: std.ArrayList(u32) = .empty;
+        root_children.appendSlice(arena, tree.childrenOf(root_id)) catch {};
+        root_children.appendSlice(arena, orphans.items) catch {};
+        break :id root_children.items;
+    }, root_id) catch {
         job.err_code = -32603;
         job.err_msg = "failed to build tree";
         return;
@@ -370,7 +380,7 @@ fn handleGetTree(job: *UiJob) void {
 fn buildNode(
     arena: std.mem.Allocator,
     tree: *Tree,
-    children_of: *std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)),
+    ordered_children: []const u32,
     id: u32,
 ) !JsonNode {
     const meta = tree.metaGet(id);
@@ -390,11 +400,9 @@ fn buildNode(
         null;
 
     var children: std.ArrayList(JsonNode) = .empty;
-    if (children_of.get(id)) |kids| {
-        for (kids.items) |child_id| {
-            const child_node = try buildNode(arena, tree, children_of, child_id);
-            try children.append(arena, child_node);
-        }
+    for (ordered_children) |child_id| {
+        const child_node = try buildNode(arena, tree, tree.childrenOf(child_id), child_id);
+        try children.append(arena, child_node);
     }
 
     return .{

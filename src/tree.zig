@@ -74,6 +74,12 @@ pub const Tree = struct {
     nodes: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
     meta: std.AutoHashMapUnmanaged(u32, NodeMeta) = .{},
     generation: u32 = 0,
+    // Ordered per-parent sibling lists (Task 3): `NodeMeta.parent` alone
+    // cannot answer "in what order" — hashmap iteration order is bucket
+    // layout, not insertion order. Maintained by the `append`/`insertBefore`/
+    // `remove` op handlers in `apply`; this is the sole ordering source for
+    // `getTree` (see automation.zig's `handleGetTree`).
+    children: std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)) = .{},
 
     pub fn init(gpa: std.mem.Allocator, app: *anyopaque) Tree {
         return .{ .gpa = gpa, .app = app };
@@ -128,6 +134,65 @@ pub const Tree = struct {
 
     pub fn setMetaParent(self: *Tree, id: u32, parent: u32) void {
         if (self.meta.getPtr(id)) |m| m.parent = parent;
+    }
+
+    /// Appends `child` to `parent`'s ordered sibling list. Detaches it from
+    /// its current parent first (read from meta, which still holds the OLD
+    /// parent at this point) — `append`/`appendChild` of an already-mounted
+    /// child is a move-to-end, not a duplicate (mirrors the null backend's
+    /// own move semantics, commits 2ba8701/a20b925/465106f).
+    pub fn recordAppend(self: *Tree, parent: u32, child: u32) void {
+        self.detachFromParent(child);
+        const gop = self.children.getOrPut(self.gpa, parent) catch return;
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        gop.value_ptr.append(self.gpa, child) catch {};
+    }
+
+    /// Inserts `child` into `parent`'s ordered sibling list immediately
+    /// before `before` (append-to-end if `before` isn't found). Same
+    /// detach-first move semantics as `recordAppend`.
+    pub fn recordInsertBefore(self: *Tree, parent: u32, child: u32, before: u32) void {
+        self.detachFromParent(child);
+        const gop = self.children.getOrPut(self.gpa, parent) catch return;
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        const list = gop.value_ptr;
+        var idx: usize = list.items.len;
+        for (list.items, 0..) |c, i| if (c == before) {
+            idx = i;
+            break;
+        };
+        list.insert(self.gpa, idx, child) catch {};
+    }
+
+    /// Removes `child` from `parent`'s ordered sibling list.
+    pub fn recordRemove(self: *Tree, parent: u32, child: u32) void {
+        const list = self.children.getPtr(parent) orelse return;
+        for (list.items, 0..) |c, i| if (c == child) {
+            _ = list.orderedRemove(i);
+            return;
+        };
+    }
+
+    /// Drops `child` from its CURRENT parent's ordered list, read from meta
+    /// (called before `setMetaParent` overwrites it — see `apply`'s
+    /// append/insertBefore arms).
+    fn detachFromParent(self: *Tree, child: u32) void {
+        const m = self.meta.getPtr(child) orelse return;
+        if (m.parent == 0) return;
+        self.recordRemove(m.parent, child);
+    }
+
+    /// The ordered child ids of `id`, or an empty slice if none (never
+    /// tracked, or tracked with zero children).
+    pub fn childrenOf(self: *Tree, id: u32) []const u32 {
+        const list = self.children.getPtr(id) orelse return &.{};
+        return list.items;
+    }
+
+    pub fn deinitChildren(self: *Tree) void {
+        var it = self.children.iterator();
+        while (it.next()) |entry| entry.value_ptr.deinit(self.gpa);
+        self.children.deinit(self.gpa);
     }
 
     pub fn setMetaItemCount(self: *Tree, id: u32, n: u32) void {
@@ -201,6 +266,7 @@ pub const Tree = struct {
                 const pmeta = self.metaGet(op.parent.?) orelse continue;
                 const cmeta = self.metaGet(op.child.?) orelse continue;
                 backend.appendChild(parent_widget, pmeta.widget_type, child_widget, cmeta.attached);
+                self.recordAppend(op.parent.?, op.child.?);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "setText")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
@@ -228,6 +294,7 @@ pub const Tree = struct {
                 const pmeta = self.metaGet(op.parent.?) orelse continue;
                 const cmeta = self.metaGet(op.child.?) orelse continue;
                 backend.insertBefore(parent_widget, pmeta.widget_type, child_widget, before, cmeta.attached);
+                if (op.before) |b| self.recordInsertBefore(op.parent.?, op.child.?, b) else self.recordAppend(op.parent.?, op.child.?);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {
                 const child = self.nodes.get(op.id.?) orelse continue;
@@ -244,6 +311,7 @@ pub const Tree = struct {
                         }
                     }
                 }
+                if (self.metaGet(op.id.?)) |cmeta| self.recordRemove(cmeta.parent, op.id.?);
                 _ = self.nodes.remove(op.id.?);
                 self.removeMeta(op.id.?);
                 std.debug.print("ND_REMOVE id={d}\n", .{op.id.?});
@@ -302,9 +370,16 @@ pub const Tree = struct {
                 if (self.nodes.get(id)) |w| {
                     if (backend.hasParent(w)) backend.unparentWidget(w);
                 }
+                // Only the doomed subtree's own root needs unlinking from
+                // its (surviving) parent's ordered list — a doomed interior
+                // node's entry lives in another doomed node's list, which is
+                // dropped wholesale below.
+                if (self.metaGet(id)) |m| self.recordRemove(m.parent, id);
             }
             _ = self.nodes.remove(id);
             self.removeMeta(id);
+            if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
+            _ = self.children.remove(id);
             swept += 1;
         }
         std.debug.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
@@ -344,9 +419,15 @@ pub const Tree = struct {
                 if (self.nodes.get(id)) |w| {
                     if (backend.hasParent(w)) backend.unparentWidget(w);
                 }
+                // Unlink from a surviving parent's (window/overlay) ordered
+                // list — a doomed interior node's entry lives in another
+                // doomed node's own list, dropped wholesale below.
+                self.recordRemove(m.parent, id);
             }
             _ = self.nodes.remove(id);
             self.removeMeta(id);
+            if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
+            _ = self.children.remove(id);
         }
         self.generation = 0;
         std.debug.print("ND_CLEAR_APP_NODES removed={d}\n", .{doomed.items.len});
@@ -364,6 +445,32 @@ test "node meta stores type/testID/text and frees on remove" {
     try std.testing.expectEqualStrings("Increment", m.text.?);
     t.removeMeta(1);
     try std.testing.expect(t.metaGet(1) == null);
+}
+
+test "childrenOf preserves append + insertBefore order" {
+    const gpa = std.testing.allocator;
+    var tree = Tree.initBare(gpa);
+    defer tree.deinitMeta();
+    defer tree.deinitChildren();
+
+    // Parent p=1, children appended 10, 20, 30.
+    try tree.putMeta(1, "Box", null, null, 0, .{});
+    try tree.putMeta(10, "Label", null, null, 0, .{});
+    try tree.putMeta(20, "Label", null, null, 0, .{});
+    try tree.putMeta(30, "Label", null, null, 0, .{});
+    tree.recordAppend(1, 10);
+    tree.recordAppend(1, 20);
+    tree.recordAppend(1, 30);
+    try std.testing.expectEqualSlices(u32, &.{ 10, 20, 30 }, tree.childrenOf(1));
+
+    // insertBefore 30 -> new child 25 lands between 20 and 30.
+    try tree.putMeta(25, "Label", null, null, 0, .{});
+    tree.recordInsertBefore(1, 25, 30);
+    try std.testing.expectEqualSlices(u32, &.{ 10, 20, 25, 30 }, tree.childrenOf(1));
+
+    // remove 20 -> order compacts.
+    tree.recordRemove(1, 20);
+    try std.testing.expectEqualSlices(u32, &.{ 10, 25, 30 }, tree.childrenOf(1));
 }
 
 test "generation bump sweeps old-generation nodes, keeps window and overlay" {
