@@ -118,7 +118,9 @@ export class Ndp {
       if (msg.ndpVersion !== NDP_VERSION) throw new Error(`ndp mismatch: host ${msg.ndpVersion}`);
       // Selection rule (spec §2): first host-advertised encoding this runtime
       // supports. This runtime supports "binary"; JSON is always the fallback.
-      if (msg.encodings?.includes("binary")) this.encoding = "binary";
+      // ND_FORCE_JSON=1 (M10 bench) makes the runtime ignore an advertised
+      // "binary" so the JSON leg can be measured against the same host build.
+      if (msg.encodings?.includes("binary") && process.env.ND_FORCE_JSON !== "1") this.encoding = "binary";
       this.helloAckResolve?.();
     } else if (msg.type === "error") {
       throw new Error(`host error: ${msg.message} (expected ${msg.expected}, got ${msg.got})`);
