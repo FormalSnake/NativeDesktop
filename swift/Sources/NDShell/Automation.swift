@@ -103,9 +103,56 @@ private extension Double {
     }
 }
 
+/// The contentView draws onto a TRANSPARENT bitmap in every capture rung —
+/// the opaque window background is painted by the window server, not by the
+/// contentView's own draw pass. Under dark mode the controls therefore
+/// render as white-on-transparent, which flattens to white-on-white in any
+/// PNG viewer AND collapses to a single un-premultiplied color under the
+/// blank check. (The M6a probe's "blank cacheDisplay" result was exactly
+/// this illusion: the alpha channel of those PNGs contained a pixel-perfect
+/// render the whole time.) Composite every captured rep over the window's
+/// effective background color before both the blank check and the write.
+/// Implemented with a pure-CoreGraphics CGBitmapContext (CPU memory
+/// drawing): drawing through `NSGraphicsContext(bitmapImageRep:)` silently
+/// produces nothing in this SSH-launched unbundled process (verified — even
+/// a direct `cgContext.fill` lands no pixels), which is also why the
+/// layer-render and lockFocus rungs came back truly empty. `cacheDisplay`
+/// fills its rep internally, so rung 1 + this CG flatten is the working
+/// combination.
+@MainActor func flattenOntoWindowBackground(_ rep: NSBitmapImageRep) -> NSBitmapImageRep {
+    let width = rep.pixelsWide
+    let height = rep.pixelsHigh
+    guard let cg = rep.cgImage,
+          let ctx = CGContext(
+              data: nil,
+              width: width,
+              height: height,
+              bitsPerComponent: 8,
+              bytesPerRow: 0,
+              space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else { return rep }
+    // Resolve the window's dynamic background color in its own appearance
+    // (dark mode -> dark gray), falling back to the generic window color.
+    var bgCG: CGColor = NSColor.windowBackgroundColor.cgColor
+    if let win = gWindow {
+        win.effectiveAppearance.performAsCurrentDrawingAppearance {
+            bgCG = win.backgroundColor.cgColor
+        }
+    }
+    let full = CGRect(x: 0, y: 0, width: width, height: height)
+    ctx.setFillColor(bgCG)
+    ctx.fill(full)
+    ctx.draw(cg, in: full)
+    guard let outCG = ctx.makeImage() else { return rep }
+    return NSBitmapImageRep(cgImage: outCG)
+}
+
 /// Writes `rep` as a PNG to `path` iff it's non-blank. Returns whether it
-/// wrote (i.e. whether this rung succeeded).
-@MainActor func writeIfNonBlank(_ rep: NSBitmapImageRep, _ path: String) -> Bool {
+/// wrote (i.e. whether this rung succeeded). The rep is flattened onto the
+/// window background first — see `flattenOntoWindowBackground`.
+@MainActor func writeIfNonBlank(_ rawRep: NSBitmapImageRep, _ path: String) -> Bool {
+    let rep = flattenOntoWindowBackground(rawRep)
     guard hasMoreThanOneColor(rep),
           let png = rep.representation(using: .png, properties: [:]) else { return false }
     do {
@@ -195,17 +242,14 @@ private extension Double {
 /// bool — no room in the C signature for a rung field — so the drive log is
 /// the record of which path rendered, per the plan's fallback instruction).
 ///
-/// KNOWN OPEN RISK (see Task 5 handoff notes): on this Mac, plain
-/// (non-editable, bezel-less) `NSTextField` labels and `NSButton` bezel
-/// chrome do not draw content into ANY of the four rungs for a window
-/// launched over SSH into the GUI session — verified NOT explained by
-/// activation/key-window state, dark mode/dynamic-color resolution, or
-/// stale layout (all independently ruled out). An editable NSTextField's
-/// bezel/background DOES render correctly (see the gallery's "name-input"
-/// text field), narrowing the gap to specific control-drawing paths rather
-/// than capture-API/window-visibility failure. `node_visible`/`node_bounds`/
-/// `semantic_action` are unaffected and fully functional. See the handoff
-/// notes for the full investigation.
+/// RESOLVED RISK (was "labels/buttons render blank"): the controls rendered
+/// correctly into EVERY rung all along — but as dark-mode white-on-
+/// TRANSPARENT pixels, because the opaque window background belongs to the
+/// window server, not the contentView's draw pass. Both the human eye (on a
+/// white viewer background) and the un-premultiplying blank check read that
+/// as "blank". Fixed by flattening every captured rep onto the window's
+/// effective background color before the check + write
+/// (`flattenOntoWindowBackground`). Rung 1 (`cacheDisplay`) wins outright.
 @MainActor func ndSnapshot(_ pngPath: String) -> Bool {
     guard let content = gWindow?.contentView else { return false }
     let bounds = content.bounds
