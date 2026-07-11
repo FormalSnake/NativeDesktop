@@ -70,6 +70,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string |  | createAndUpdate |
+| `minContentHeight` | int | 120 | create |
 | `testID` | string | — | meta |
 
 | Event | Handler | Payload |

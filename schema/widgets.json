@@ -110,6 +110,7 @@
       "container": null,
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "minContentHeight", "type": "int", "default": 120, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [

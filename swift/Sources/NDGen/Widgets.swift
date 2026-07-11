@@ -55,6 +55,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let textView = NSTextView()
         textView.string = propStr(props, "text") ?? ""
         scroll.documentView = textView
+        let minH = propInt(props, "minContentHeight") ?? 120
+        if minH > 0 { scroll.frame.size.height = CGFloat(minH) }
         return scroll
     } else if kind == "Checkbox" {
         let cb = NSButton(checkboxWithTitle: propStr(props, "label") ?? "", target: nil, action: nil)

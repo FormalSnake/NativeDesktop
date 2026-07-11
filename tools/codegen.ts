@@ -408,6 +408,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        const view = gtk.TextView.new();\n";
     out += "        const buf = gtk.TextView.getBuffer(view);\n";
     out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }\n";
+    out += "        if (propInt(props, \"minContentHeight\")) |h| { if (h > 0) gtk.Widget.setSizeRequest(view.as(gtk.Widget), -1, @intCast(h)); }\n";
     out += "        return view.as(gtk.Widget);\n";
   } else if (w.name === "Checkbox") {
     out += `        const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));\n`;
@@ -980,6 +981,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        let textView = NSTextView()\n";
     out += `        textView.string = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        scroll.documentView = textView\n";
+    out += `        let minH = propInt(props, "minContentHeight") ?? ${swiftDefaultInt(w, "minContentHeight")}\n`;
+    out += "        if minH > 0 { scroll.frame.size.height = CGFloat(minH) }\n";
     out += "        return scroll\n";
   } else if (w.name === "Checkbox") {
     out += `        let cb = NSButton(checkboxWithTitle: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;

@@ -153,6 +153,7 @@ pub fn create(
         const view = gtk.TextView.new();
         const buf = gtk.TextView.getBuffer(view);
         if (propStr(props, "text")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }
+        if (propInt(props, "minContentHeight")) |h| { if (h > 0) gtk.Widget.setSizeRequest(view.as(gtk.Widget), -1, @intCast(h)); }
         return view.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Checkbox")) {
         const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));
