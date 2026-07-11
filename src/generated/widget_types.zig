@@ -23,6 +23,7 @@ pub const widget_types = [_]Entry{
     .{ .name = "ListView", .value = 18 },
     .{ .name = "WebView", .value = 19 },
     .{ .name = "SplitView", .value = 20 },
+    .{ .name = "HeaderBar", .value = 21 },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {

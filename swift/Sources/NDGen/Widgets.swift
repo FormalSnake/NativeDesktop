@@ -150,6 +150,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
             splitViewCollapsed[ObjectIdentifier(split)] = true
         }
         return split
+    } else if kind == "HeaderBar" {
+        let bar = NDHeaderBarView()
+        bar.ndTitle = propStr(props, "title") ?? ""
+        return bar
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -271,10 +275,14 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Window" {
-        parent.subviews.forEach { $0.removeFromSuperview() }
-        parent.addSubview(child)
-        child.frame = parent.bounds
-        child.autoresizingMask = [.width, .height]
+        if let bar = child as? NDHeaderBarView {
+            ndInstallHeaderBar(bar)
+        } else {
+            parent.subviews.forEach { $0.removeFromSuperview() }
+            parent.addSubview(child)
+            child.frame = parent.bounds
+            child.autoresizingMask = [.width, .height]
+        }
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.addArrangedSubview(child)
@@ -319,6 +327,8 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
         }
+    } else if parentKind == "HeaderBar" {
+        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -378,6 +388,8 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
         }
+    } else if parentKind == "HeaderBar" {
+        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -386,7 +398,11 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
 
 func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     if parentKind == "Window" {
-        child.removeFromSuperview()
+        if let bar = child as? NDHeaderBarView {
+            ndRemoveHeaderBar(bar)
+        } else {
+            child.removeFromSuperview()
+        }
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.removeArrangedSubview(child)
@@ -411,6 +427,8 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
             split.removeArrangedSubview(child)
             child.removeFromSuperview()
         }
+    } else if parentKind == "HeaderBar" {
+        ndHeaderBarUnpack(parent as! NDHeaderBarView, child)
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

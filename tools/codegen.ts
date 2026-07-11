@@ -23,7 +23,7 @@ interface Prop {
   appliesTo: AppliesTo;
 }
 interface Event { name: string; ndpName?: string; payload?: PayloadKind }
-interface AttachedProp { name: string; type: PropType; default?: string | number | boolean }
+interface AttachedProp { name: string; type: PropType; values?: string[]; default?: string | number | boolean }
 interface Container { childModel: "single" | "multi"; attachedProps?: AttachedProp[] }
 interface Widget {
   name: string;
@@ -61,13 +61,27 @@ function tsHandlerType(e: Event): string {
   }
 }
 
-/** Union of all containers' attachedProps, deduped by name, schema order. */
+/** Union of all containers' attachedProps, deduped by name, schema order.
+ *  Two containers may declare an attached prop with the same name but a
+ *  different domain (e.g. SplitView's `slot` is "sidebar"|"content", while
+ *  HeaderBar's is "start"|"end") — the wire representation is an opaque
+ *  string either way (protocol.Attached.slot: ?[]const u8), so the merged
+ *  TS type just unions the enum values rather than throwing. */
 function collectAttachedProps(s: Schema): AttachedProp[] {
-  const seen = new Set<string>();
+  const seen = new Map<string, AttachedProp>();
   const out: AttachedProp[] = [];
   for (const w of s.widgets) {
     for (const ap of w.container?.attachedProps ?? []) {
-      if (!seen.has(ap.name)) { seen.add(ap.name); out.push(ap); }
+      const existing = seen.get(ap.name);
+      if (!existing) {
+        seen.set(ap.name, ap);
+        out.push(ap);
+      } else if (existing.type === "enum" && ap.type === "enum") {
+        const merged = new Set([...(existing.values ?? []), ...(ap.values ?? [])]);
+        existing.values = [...merged];
+      } else if (existing.type !== ap.type) {
+        throw new Error(`attached prop ${JSON.stringify(ap.name)} redeclared with incompatible type (${existing.type} vs ${ap.type})`);
+      }
     }
   }
   return out;
@@ -503,6 +517,15 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
     out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
     out += "        return sv.as(gtk.Widget);\n";
+  } else if (w.name === "HeaderBar") {
+    out += "        const hb = adw.HeaderBar.new();\n";
+    out += "        if (propStr(props, \"title\")) |t| {\n";
+    out += "            if (t.len > 0) {\n";
+    out += "                const wt = adw.WindowTitle.new(dupeZ(t), \"\");\n";
+    out += "                adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));\n";
+    out += "            }\n";
+    out += "        }\n";
+    out += "        return hb.as(gtk.Widget);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -763,8 +786,23 @@ interface StructuralTemplate {
 
 const STRUCTURAL: Record<string, StructuralTemplate> = {
   Window: {
-    append: () => "        gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);\n",
-    remove: () => "        gtk.Window.setChild(@ptrCast(@alignCast(parent)), null);\n",
+    append: () => {
+      let s = "        if (gobject.ext.isA(child, adw.HeaderBar)) {\n";
+      s += "            gtk.Window.setTitlebar(@ptrCast(@alignCast(parent)), child);\n";
+      s += "        } else {\n";
+      s += "            gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);\n";
+      s += "        }\n";
+      return s;
+    },
+    remove: () => {
+      let s = "        const win: *gtk.Window = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Window.getTitlebar(win) == child) {\n";
+      s += "            gtk.Window.setTitlebar(win, null);\n";
+      s += "        } else {\n";
+      s += "            gtk.Window.setChild(win, null);\n";
+      s += "        }\n";
+      return s;
+    },
   },
   Box: {
     append: () => {
@@ -856,6 +894,25 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);\n";
       return s;
     },
+  },
+  HeaderBar: {
+    append: () => {
+      let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"end\")) adw.HeaderBar.packEnd(hb, child)\n";
+      s += "            else adw.HeaderBar.packStart(hb, child);\n";
+      s += "        } else adw.HeaderBar.packStart(hb, child);\n";
+      return s;
+    },
+    insertBefore: () => {
+      let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"end\")) adw.HeaderBar.packEnd(hb, child)\n";
+      s += "            else adw.HeaderBar.packStart(hb, child);\n";
+      s += "        } else adw.HeaderBar.packStart(hb, child);\n";
+      return s;
+    },
+    remove: () => "        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);\n",
   },
 };
 
@@ -1111,6 +1168,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            splitViewCollapsed[ObjectIdentifier(split)] = true\n";
     out += "        }\n";
     out += "        return split\n";
+  } else if (w.name === "HeaderBar") {
+    out += "        let bar = NDHeaderBarView()\n";
+    out += `        bar.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
+    out += "        return bar\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -1319,9 +1380,24 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Window: {
     // `parent` here is the Window's tracked handle: the flipped contentView
     // itself (returned by the Window create arm), so append is single-child
-    // subview management sized to the content view's bounds.
-    append: () => "        parent.subviews.forEach { $0.removeFromSuperview() }\n        parent.addSubview(child)\n        child.frame = parent.bounds\n        child.autoresizingMask = [.width, .height]\n",
-    remove: () => "        child.removeFromSuperview()\n",
+    // subview management sized to the content view's bounds. A HeaderBar
+    // child is not part of that subview hierarchy at all — it takes over
+    // the window's real NSToolbar instead (Task 8's owner directive).
+    append: () =>
+      "        if let bar = child as? NDHeaderBarView {\n" +
+      "            ndInstallHeaderBar(bar)\n" +
+      "        } else {\n" +
+      "            parent.subviews.forEach { $0.removeFromSuperview() }\n" +
+      "            parent.addSubview(child)\n" +
+      "            child.frame = parent.bounds\n" +
+      "            child.autoresizingMask = [.width, .height]\n" +
+      "        }\n",
+    remove: () =>
+      "        if let bar = child as? NDHeaderBarView {\n" +
+      "            ndRemoveHeaderBar(bar)\n" +
+      "        } else {\n" +
+      "            child.removeFromSuperview()\n" +
+      "        }\n",
   },
   Box: {
     append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n",
@@ -1360,6 +1436,11 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            split.removeArrangedSubview(child)\n" +
       "            child.removeFromSuperview()\n" +
       "        }\n",
+  },
+  HeaderBar: {
+    append: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
+    insertBefore: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
+    remove: () => "        ndHeaderBarUnpack(parent as! NDHeaderBarView, child)\n",
   },
 };
 

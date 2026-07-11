@@ -310,6 +310,22 @@
       ],
       "events": [],
       "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "HeaderBar",
+      "intrinsic": "headerbar",
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "slot", "type": "enum", "values": ["start", "end"], "default": "start" }
+        ]
+      },
+      "props": [
+        { "name": "title", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "toolbar", "textFrom": "title" }
     }
   ]
 }

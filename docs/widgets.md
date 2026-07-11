@@ -266,3 +266,20 @@ Attached props (set on children):
 
 Attached props are attach-time-only; changing them after mount is a no-op.
 
+## HeaderBar (`<headerbar>`)
+
+Automation role: `toolbar`. Text source: `title`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `title` | string |  | create |
+| `testID` | string | — | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `slot` | enum | start |
+
+Attached props are attach-time-only; changing them after mount is a no-op.
+

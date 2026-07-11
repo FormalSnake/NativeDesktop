@@ -288,6 +288,23 @@ test "slot attachment" {
     try std.testing.expect(sv.children.items[1] == content);
 }
 
+test "HeaderBar slot attachment" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const hb = try nb.createWidget(dummyApp(), "HeaderBar", null);
+    const start = try nb.createWidget(dummyApp(), "Button", null);
+    const end = try nb.createWidget(dummyApp(), "Button", null);
+    nb.appendChild(hb, "HeaderBar", start, .{ .slot = "start" });
+    nb.appendChild(hb, "HeaderBar", end, .{ .slot = "end" });
+    try std.testing.expectEqualStrings("start", start.attached.slot.?);
+    try std.testing.expectEqualStrings("end", end.attached.slot.?);
+    try std.testing.expectEqual(@as(usize, 2), hb.children.items.len);
+    try std.testing.expect(hb.children.items[0] == start);
+    try std.testing.expect(hb.children.items[1] == end);
+}
+
 test "unknown widget fails loudly" {
     const gpa = std.testing.allocator;
     try nb.init(gpa, schema_json);

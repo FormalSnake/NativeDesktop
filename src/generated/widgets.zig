@@ -248,6 +248,15 @@ pub fn create(
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
         return sv.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "HeaderBar")) {
+        const hb = adw.HeaderBar.new();
+        if (propStr(props, "title")) |t| {
+            if (t.len > 0) {
+                const wt = adw.WindowTitle.new(dupeZ(t), "");
+                adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+            }
+        }
+        return hb.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -475,7 +484,11 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
 
 pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, attached: protocol.Attached, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);
+        if (gobject.ext.isA(child, adw.HeaderBar)) {
+            gtk.Window.setTitlebar(@ptrCast(@alignCast(parent)), child);
+        } else {
+            gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) {
@@ -502,6 +515,12 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
             else adw.OverlaySplitView.setContent(sv, child);
         } else adw.OverlaySplitView.setContent(sv, child);
+    } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
+        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
+            else adw.HeaderBar.packStart(hb, child);
+        } else adw.HeaderBar.packStart(hb, child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -539,6 +558,12 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
             else adw.OverlaySplitView.setContent(sv, child);
         } else adw.OverlaySplitView.setContent(sv, child);
+    } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
+        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
+            else adw.HeaderBar.packStart(hb, child);
+        } else adw.HeaderBar.packStart(hb, child);
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         appendChild(parent, parent_kind, child, attached, dupeZ);
@@ -547,7 +572,12 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
 
 pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        gtk.Window.setChild(@ptrCast(@alignCast(parent)), null);
+        const win: *gtk.Window = @ptrCast(@alignCast(parent));
+        if (gtk.Window.getTitlebar(win) == child) {
+            gtk.Window.setTitlebar(win, null);
+        } else {
+            gtk.Window.setChild(win, null);
+        }
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
@@ -562,6 +592,8 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
         if (adw.OverlaySplitView.getSidebar(sv) == child) adw.OverlaySplitView.setSidebar(sv, null)
         else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);
+    } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
+        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }
