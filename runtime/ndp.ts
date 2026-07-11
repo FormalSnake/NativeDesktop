@@ -7,7 +7,7 @@
 // exception / unhandled rejection sent before the process exits, so the
 // host's crash overlay shows the real error instead of a bare disconnect.
 
-import { encodeCommitBatchBinary } from "./ndp-binary";
+import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 
 type Runtime = { name: string; version: string };
 type Op =
@@ -150,10 +150,20 @@ export class Ndp {
 
   sendCommit(batch: Omit<CommitBatch, "type">): void {
     if (this.encoding === "binary") {
-      this.sendBinaryFrame(encodeCommitBatchBinary(batch));
-    } else {
-      this.send({ type: "commitBatch", ...batch });
+      // Per-batch fallback (not a per-connection downgrade): a batch whose
+      // props have no binary value tag (spec §5.3 — arrays/objects) is sent
+      // as a normal JSON frame instead. The host sniffs binary-vs-JSON per
+      // frame (isBinaryPayload's magic byte), so mixed streams are legal;
+      // `this.encoding` stays "binary" for every later batch.
+      try {
+        this.sendBinaryFrame(encodeCommitBatchBinary(batch));
+        return;
+      } catch (err) {
+        if (!(err instanceof BinaryUnsupportedValue)) throw err;
+        if (TRACE) console.error(`>> [binary fallback to json: ${err.message}]`);
+      }
     }
+    this.send({ type: "commitBatch", ...batch });
   }
 
   /// Frames a raw binary payload (u32 LE length prefix + payload) and queues

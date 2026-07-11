@@ -17,6 +17,18 @@ type Op =
   | { op: "unhide"; id: number };
 type Batch = { commitId: number; generation: number; ops: readonly Op[] };
 
+// Thrown when a prop value has no binary value tag (spec §5.3: stringRef/i64/
+// f64/bool/null only — no array/object tag). Callers (runtime/ndp.ts) catch
+// this specifically to fall back to sending the offending batch as JSON;
+// any other error out of this module is a genuine bug/corruption and should
+// propagate uncaught.
+export class BinaryUnsupportedValue extends Error {
+  constructor(key: string, value: unknown) {
+    super(`ndp-binary: unsupported prop value for "${key}" (${typeof value}) — spec §5.3 has no array/object tag`);
+    this.name = "BinaryUnsupportedValue";
+  }
+}
+
 class ByteWriter {
   private buf = new Uint8Array(256);
   len = 0;
@@ -100,7 +112,7 @@ export function encodeCommitBatchBinary(batch: Batch): Uint8Array {
         ops.u8(0x04);
         ops.u32(intern(v));
       } else {
-        throw new Error(`ndp-binary: unsupported prop value for "${k}" (${typeof v}) — spec §5.3 has no array/object tag`);
+        throw new BinaryUnsupportedValue(k, v);
       }
     }
   };

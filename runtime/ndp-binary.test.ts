@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { encodeCommitBatchBinary } from "./ndp-binary";
+import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 
 // ndp-binary spec §8 golden vector.
 const batch = {
@@ -43,4 +43,22 @@ const expected = new Uint8Array([
 test("binary encode matches spec §8 golden bytes", () => {
   const got = encodeCommitBatchBinary(batch);
   expect(Array.from(got)).toEqual(Array.from(expected));
+});
+
+test("array-valued prop throws BinaryUnsupportedValue (spec §5.3 has no array tag)", () => {
+  const arrayBatch = {
+    commitId: 1,
+    generation: 0,
+    ops: [{ op: "create", id: 1, widget: "Select", props: { options: ["a", "b", "c"] } }],
+  } as const;
+  expect(() => encodeCommitBatchBinary(arrayBatch)).toThrow(BinaryUnsupportedValue);
+});
+
+test("object-valued prop throws BinaryUnsupportedValue (spec §5.3 has no object tag)", () => {
+  const objectBatch = {
+    commitId: 1,
+    generation: 0,
+    ops: [{ op: "create", id: 1, widget: "Box", props: { style: { color: "red" } } }],
+  } as const;
+  expect(() => encodeCommitBatchBinary(objectBatch)).toThrow(BinaryUnsupportedValue);
 });
