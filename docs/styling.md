@@ -12,7 +12,11 @@
 | `color` | color | GTK CSS (`color`) |
 | `font` | object (fontSize, fontWeight, fontFamily) | GTK CSS (`nested`) |
 | `padding` | spacing | GTK CSS (`padding`) |
-| `margin` | spacing | widget margin properties |
+| `margin` | spacing | GTK widget property (not CSS) |
+| `hexpand` | bool | GTK widget property (not CSS) |
+| `vexpand` | bool | GTK widget property (not CSS) |
+| `halign` | enum | GTK widget property (not CSS) |
+| `valign` | enum | GTK widget property (not CSS) |
 | `border` | object (borderWidth, borderColor, borderRadius) | GTK CSS (`nested`) |
 
 ## Why `margin` differs from `padding`

@@ -14,6 +14,10 @@
       },
       "padding": { "kind": "spacing", "css": "padding", "unit": "px", "target": "css" },
       "margin":  { "kind": "spacing", "target": "widget" },
+      "hexpand": { "kind": "bool", "target": "widget" },
+      "vexpand": { "kind": "bool", "target": "widget" },
+      "halign":  { "kind": "enum", "target": "widget", "values": ["fill", "start", "end", "center"] },
+      "valign":  { "kind": "enum", "target": "widget", "values": ["fill", "start", "end", "center"] },
       "border": {
         "kind": "object",
         "fields": {

@@ -54,6 +54,20 @@ fn applyMarginSpacing(widget: *gtk.Widget, value: std.json.Value) void {
     }
 }
 
+/// halign/valign string -> GtkAlign. hexpand/vexpand/halign/valign are GTK
+/// widget properties (like margin, M5c-D2), not CSS — they drive the layout
+/// engine, so a filled window comes from setting them, not from a stylesheet.
+fn parseAlign(value: std.json.Value) ?gtk.Align {
+    if (value != .string) return null;
+    const s = value.string;
+    if (std.mem.eql(u8, s, "fill")) return .fill;
+    if (std.mem.eql(u8, s, "start")) return .start;
+    if (std.mem.eql(u8, s, "end")) return .end;
+    if (std.mem.eql(u8, s, "center")) return .center;
+    std.debug.print("ND_WARN unknown align value \"{s}\" (fill|start|end|center)\n", .{s});
+    return null;
+}
+
 /// `{css_name}: {value}{unit};` — the hex/rgb sanity check applies only to
 /// `kind == "color"` keys (background/color/borderColor); other string-valued
 /// keys (fontWeight enum, fontFamily string, …) pass through verbatim.
@@ -151,7 +165,17 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
             if (on_error) |f| f(node_id, key);
             continue;
         }
-        if (std.mem.eql(u8, key, "margin")) applyMarginSpacing(widget, entry.value_ptr.*);
+        if (std.mem.eql(u8, key, "margin")) {
+            applyMarginSpacing(widget, entry.value_ptr.*);
+        } else if (std.mem.eql(u8, key, "hexpand")) {
+            if (entry.value_ptr.* == .bool) gtk.Widget.setHexpand(widget, @intFromBool(entry.value_ptr.*.bool));
+        } else if (std.mem.eql(u8, key, "vexpand")) {
+            if (entry.value_ptr.* == .bool) gtk.Widget.setVexpand(widget, @intFromBool(entry.value_ptr.*.bool));
+        } else if (std.mem.eql(u8, key, "halign")) {
+            if (parseAlign(entry.value_ptr.*)) |a| gtk.Widget.setHalign(widget, a);
+        } else if (std.mem.eql(u8, key, "valign")) {
+            if (parseAlign(entry.value_ptr.*)) |a| gtk.Widget.setValign(widget, a);
+        }
     }
 
     // 2. Build the CSS half (margin excluded by compileCss's `.widget` skip).

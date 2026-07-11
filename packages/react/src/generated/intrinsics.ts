@@ -12,6 +12,10 @@ export interface StyleProp {
   font?: { fontSize?: number; fontWeight?: "normal" | "bold"; fontFamily?: string };
   padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
   margin?: number | { top?: number; right?: number; bottom?: number; left?: number };
+  hexpand?: boolean;
+  vexpand?: boolean;
+  halign?: "fill" | "start" | "end" | "center";
+  valign?: "fill" | "start" | "end" | "center";
   border?: { borderWidth?: number; borderColor?: string; borderRadius?: number };
 }
 export const styleKeySpec: Record<string, string[] | null> = {
@@ -20,6 +24,10 @@ export const styleKeySpec: Record<string, string[] | null> = {
   "font": ["fontSize","fontWeight","fontFamily"],
   "padding": null,
   "margin": null,
+  "hexpand": null,
+  "vexpand": null,
+  "halign": null,
+  "valign": null,
   "border": ["borderWidth","borderColor","borderRadius"],
 };
 export const cssClassSpec: string[] = ["suggested-action","destructive-action","flat","raised","circular","pill","linked","toolbar","spacer","title-1","title-2","title-3","title-4","heading","document","body","caption-heading","caption","monospace","numeric","accent","success","warning","error","boxed-list","boxed-list-separate","card","activatable","navigation-sidebar","selection-mode","osd","dimmed","background","view","frame","compact","menu","inline"];

@@ -550,6 +550,10 @@ pub const style_keys = [_]StyleKeyDef{
     .{ .name = "font", .css = null, .target = .css, .kind = "object", .unit = null },
     .{ .name = "padding", .css = "padding", .target = .css, .kind = "spacing", .unit = "px" },
     .{ .name = "margin", .css = null, .target = .widget, .kind = "spacing", .unit = null },
+    .{ .name = "hexpand", .css = null, .target = .widget, .kind = "bool", .unit = null },
+    .{ .name = "vexpand", .css = null, .target = .widget, .kind = "bool", .unit = null },
+    .{ .name = "halign", .css = null, .target = .widget, .kind = "enum", .unit = null },
+    .{ .name = "valign", .css = null, .target = .widget, .kind = "enum", .unit = null },
     .{ .name = "border", .css = null, .target = .css, .kind = "object", .unit = null },
 };
 pub const StyleSubDef = struct { parent: []const u8, name: []const u8, css: []const u8, kind: []const u8, unit: ?[]const u8 };

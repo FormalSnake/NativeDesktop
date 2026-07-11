@@ -34,7 +34,7 @@ interface Widget {
   events: Event[];
   automation: { role: string; textFrom: string | null };
 }
-type StyleKeyKind = "color" | "int" | "enum" | "string" | "object" | "spacing";
+type StyleKeyKind = "color" | "int" | "bool" | "enum" | "string" | "object" | "spacing";
 interface StyleField { kind: StyleKeyKind; css?: string; unit?: string; values?: string[] }
 interface StyleKey extends StyleField { fields?: Record<string, StyleField>; target?: "css" | "widget" }
 interface StyleDef { keys: Record<string, StyleKey> }
@@ -85,6 +85,7 @@ function tsStyleField(f: StyleField): string {
     case "color": return "string";
     case "string": return "string";
     case "int": return "number";
+    case "bool": return "boolean";
     case "enum": return (f.values ?? []).map((v) => JSON.stringify(v)).join(" | ");
     case "spacing": return "number | { top?: number; right?: number; bottom?: number; left?: number }";
     case "object": return "{ " + Object.entries(f.fields ?? {}).map(([k, v]) => `${k}?: ${tsStyleField(v)}`).join("; ") + " }";
@@ -1364,7 +1365,7 @@ function genStyleDocs(s: Schema): string {
     out += "## Valid keys\n\n| Key | Shape | Compiles to |\n|---|---|---|\n";
     for (const [k, def] of Object.entries(s.style.keys)) {
       const shape = def.kind === "object" ? "object (" + Object.keys(def.fields ?? {}).join(", ") + ")" : def.kind;
-      const to = def.target === "widget" ? "widget margin properties" : "GTK CSS (`" + (def.css ?? "nested") + "`)";
+      const to = def.target === "widget" ? "GTK widget property (not CSS)" : "GTK CSS (`" + (def.css ?? "nested") + "`)";
       out += `| \`${k}\` | ${shape} | ${to} |\n`;
     }
     out += "\n";
