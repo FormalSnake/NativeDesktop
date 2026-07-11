@@ -112,6 +112,16 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value
     style.applyStyle(widget, node_id, style_value);
 }
 
+/// Routes `props.cssClasses` (if present) to `style.applyCssClasses`.
+/// cssClasses rides in the ordinary props JSON, not a dedicated vtable field
+/// (M11 Task 6: the C-ABI vtable is frozen at 18 fields) — called from both
+/// `vtCreate` (right after widget creation) and `vtApplyProps`.
+fn applyCssClassesIfPresent(widget: *gtk.Widget, props: ?std.json.Value) void {
+    const v = props orelse return;
+    if (v != .object) return;
+    if (v.object.get("cssClasses")) |cls| style.applyCssClasses(widget, cls);
+}
+
 /// Generation GC helpers (M8-D9): detach a swept widget from its parent
 /// without destroying the parent or siblings.
 pub fn hasParent(widget: *gtk.Widget) bool {
@@ -151,13 +161,16 @@ fn vtCreate(_: *abi.NdContext, kind: [*:0]const u8, props_json: [*:0]const u8) c
     const parsed = parseJson(props_json);
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
     const widget = createWidget(global_app, std.mem.span(kind), props) catch return null;
+    applyCssClassesIfPresent(widget, props);
     return widget;
 }
 
 fn vtApplyProps(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, props_json: [*:0]const u8) callconv(.c) void {
     const parsed = parseJson(props_json);
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
-    applyProps(@ptrCast(@alignCast(widget)), std.mem.span(kind), props);
+    const w: *gtk.Widget = @ptrCast(@alignCast(widget));
+    applyProps(w, std.mem.span(kind), props);
+    applyCssClassesIfPresent(w, props);
 }
 
 fn parseAttached(json: [*:0]const u8) protocol.Attached {

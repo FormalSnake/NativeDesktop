@@ -39,6 +39,7 @@ func buildVTable() -> nd_backend {
         let bits: Int? = MainActor.assumeIsolated {
             guard let v = ndCreate(kindStr, propsStr) else { return nil }
             ndApplyTestID(v, propsStr)
+            ndApplyCssClassesIfPresent(v, propsStr)
             ndRecordButtonKind(v, kindStr)
             return Int(bitPattern: Unmanaged.passRetained(v).toOpaque())
         }
@@ -55,6 +56,7 @@ func buildVTable() -> nd_backend {
             let view = viewFrom(widgetPtr)
             ndApplyProps(view, kindStr, propsStr)
             ndApplyTestID(view, propsStr)
+            ndApplyCssClassesIfPresent(view, propsStr)
         }
     }
 
@@ -232,6 +234,107 @@ func buildVTable() -> nd_backend {
 func ndApplyTestID(_ view: NSView, _ propsJson: String) {
     guard let testID = propStr(parseProps(propsJson), "testID") else { return }
     view.setAccessibilityIdentifier(testID)
+}
+
+/// cssClasses (Task 6): decodes `props.cssClasses` — Task 2's validated
+/// Adwaita-class allowlist, riding in the ordinary props JSON rather than a
+/// dedicated vtable field (the C-ABI vtable is frozen at 18 fields) — and
+/// applies AppKit's mapped subset via `ndApplyCssClasses`. Called from both
+/// `create` and `apply_props`, mirroring `ndApplyTestID`.
+func ndApplyCssClassesIfPresent(_ view: NSView, _ propsJson: String) {
+    guard let classes = propArray(parseProps(propsJson), "cssClasses") else { return }
+    ndApplyCssClasses(view, classes)
+}
+
+/// `ndApplyCssClasses` (Task 6 — a real semantic mapping, not a no-op): maps
+/// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
+/// properties. Every color used is a dynamic system color
+/// (`.controlAccentColor`, `.secondaryLabelColor`, ...) rather than a
+/// hardcoded hex value, so dark mode keeps working automatically.
+///
+/// TextArea/ScrollView widgets are `NSScrollView` wrappers around an
+/// `NSTextView` document view — font/color classes below target that inner
+/// text view, not the scroll view itself (mirrors `ndApplyStyle`'s
+/// `applyTextColor`/`applyFont` helpers).
+///
+/// Structural classes (`navigation-sidebar`, `card`, `view`, `toolbar`,
+/// `boxed-list`, `osd`, ...) are silently ignored — those roles come from
+/// the SplitView/HeaderBar widgets themselves on the Mac (later M11 tasks),
+/// not from class strings.
+func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
+    let textTarget: NSView = {
+        if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
+            return textView
+        }
+        return view
+    }()
+
+    for cls in classes {
+        switch cls {
+        case "suggested-action":
+            guard let btn = view as? NSButton else { continue }
+            btn.bezelColor = .controlAccentColor
+            btn.keyEquivalent = "\r"
+        case "destructive-action":
+            guard let btn = view as? NSButton else { continue }
+            btn.bezelColor = .systemRed
+            btn.hasDestructiveAction = true
+        case "pill":
+            // Modern AppKit buttons are already rounded — no layer hacks.
+            break
+        case "flat":
+            guard let btn = view as? NSButton else { continue }
+            btn.isBordered = false
+            btn.showsBorderOnlyWhileMouseInside = true
+        case "title-1":
+            applyCssFont(textTarget, .largeTitle)
+        case "title-2":
+            applyCssFont(textTarget, .title1)
+        case "title-3":
+            applyCssFont(textTarget, .title2)
+        case "title-4":
+            applyCssFont(textTarget, .title3)
+        case "heading":
+            applyCssFont(textTarget, .headline)
+        case "caption":
+            applyCssFont(textTarget, .caption1)
+        case "caption-heading":
+            applyCssFont(textTarget, .caption2)
+        case "body":
+            applyCssFont(textTarget, .body)
+        case "dimmed":
+            applyCssTextColor(textTarget, .secondaryLabelColor)
+        case "monospace":
+            applyCssFontValue(textTarget, .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+        case "numeric":
+            applyCssFontValue(textTarget, .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+        default:
+            // navigation-sidebar, card, view, toolbar, boxed-list, osd, ...:
+            // structural roles owned by the SplitView/HeaderBar widgets on
+            // the Mac — silently ignored here.
+            break
+        }
+    }
+}
+
+private func applyCssFont(_ view: NSView, _ style: NSFont.TextStyle) {
+    applyCssFontValue(view, .preferredFont(forTextStyle: style, options: [:]))
+}
+
+private func applyCssFontValue(_ view: NSView, _ font: NSFont) {
+    if let field = view as? NSTextField {
+        field.font = font
+    } else if let textView = view as? NSTextView {
+        textView.font = font
+    }
+}
+
+private func applyCssTextColor(_ view: NSView, _ color: NSColor) {
+    if let field = view as? NSTextField {
+        field.textColor = color
+    } else if let textView = view as? NSTextView {
+        textView.textColor = color
+    }
 }
 
 /// `ndApplyStyle` (peer of GTK's `style.applyStyle`; AppKit styling is

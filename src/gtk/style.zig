@@ -198,6 +198,22 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
     gtk.CssProvider.loadFromString(provider, css_z);
 }
 
+/// Applies each string in `value` (a JSON array of Adwaita/GTK class names,
+/// already validated by the React-side allowlist) as a GTK CSS class via
+/// `gtk_widget_add_css_class`. Additive-only — a class added by a prior call
+/// is never removed on update; M11 apps don't toggle Adwaita classes at
+/// runtime, so this is acceptable for now (revisit if that changes). The
+/// internal `nd-<id>` class (added once in `applyStyle`) is untouched.
+pub fn applyCssClasses(widget: *gtk.Widget, value: std.json.Value) void {
+    if (value != .array) return;
+    for (value.array.items) |item| {
+        if (item != .string) continue;
+        const cls = gpa.dupeZ(u8, item.string) catch continue;
+        defer gpa.free(cls);
+        gtk.Widget.addCssClass(widget, cls);
+    }
+}
+
 test "compileCss emits scoped block, splits margin out, rejects unknown key" {
     const talloc = std.testing.allocator;
     const parsed = try std.json.parseFromSlice(std.json.Value, talloc, "{\"background\":\"#fff\",\"padding\":8,\"margin\":4,\"flex\":1}", .{});
