@@ -36,6 +36,17 @@
               squashfsTools    # M9: AppImage assembly (mksquashfs)
               flatpak-builder  # M9: Flatpak manifest lint (--show-manifest)
             ];
+            # build.zig's test roots import the gobject binding modules
+            # unconditionally, so `zig build test` needs pkg-config to resolve
+            # gtk4/libadwaita even on the Mac (compile/test-only there — the
+            # shipping Mac backend is AppKit). nixpkgs' libadwaita does not
+            # build on darwin (its appstream dep fails), so the darwin shell
+            # borrows Homebrew's GTK stack: `brew install libadwaita`.
+            shellHook = pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              if [ -d /opt/homebrew/lib/pkgconfig ]; then
+                export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+              fi
+            '';
           };
         });
     };
