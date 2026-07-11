@@ -200,6 +200,27 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(update_tests).step);
 
+    // Binary NDP decoder (M10): own addTest root (transitive test collection
+    // through @import does not happen in Zig 0.16).
+    const ndp_binary_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ndp_binary.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(ndp_binary_tests).step);
+
+    // Capability ACL (M10): own addTest root, std-only module.
+    const acl_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/acl.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(acl_tests).step);
+
     // `nd-update-verify` (M9): bytes-in → exit 0/1 CLI wrapping verifyMinisign,
     // used by scripts/m9-drive.ts to run the non-disableable signature check.
     const update_verify_mod = b.createModule(.{
