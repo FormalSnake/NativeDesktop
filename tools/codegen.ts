@@ -1343,6 +1343,35 @@ function genStyleDocs(s: Schema): string {
   return out;
 }
 
+// ---- artifact (f): binary NDP widgetType u16 table (ndp-binary spec §7) ----
+// Schema declaration order, 1-based, value 0 reserved/invalid, NEVER renumbered or reused.
+function genWidgetTypesTs(s: Schema): string {
+  let out = HEADER_TS + "export const WIDGET_TYPE_RESERVED = 0;\n";
+  out += "export const WIDGET_TYPE: Record<string, number> = {\n";
+  for (let i = 0; i < s.widgets.length; i++) {
+    out += `  ${s.widgets[i]!.name}: ${i + 1},\n`;
+  }
+  out += "};\n";
+  return out;
+}
+
+function genWidgetTypesZig(s: Schema): string {
+  let out = HEADER_ZIG + "const std = @import(\"std\");\n\n";
+  out += "const Entry = struct { name: []const u8, value: u16 };\n";
+  out += "pub const widget_types = [_]Entry{\n";
+  for (let i = 0; i < s.widgets.length; i++) {
+    out += `    .{ .name = ${JSON.stringify(s.widgets[i]!.name)}, .value = ${i + 1} },\n`;
+  }
+  out += "};\n\n";
+  out += "pub fn widgetTypeOf(name: []const u8) ?u16 {\n";
+  out += "    for (widget_types) |e| if (std.mem.eql(u8, e.name, name)) return e.value;\n";
+  out += "    return null;\n}\n\n";
+  out += "pub fn widgetNameOf(v: u16) ?[]const u8 {\n";
+  out += "    for (widget_types) |e| if (e.value == v) return e.name;\n";
+  out += "    return null;\n}\n";
+  return out;
+}
+
 async function writeIfChanged(rel: string, content: string): Promise<void> {
   const path = resolve(ROOT, rel);
   await Bun.write(path, content);
@@ -1356,4 +1385,6 @@ await writeIfChanged("src/generated/widgets.zig", genZig(schema));
 await writeIfChanged("docs/widgets.md", genDocs(schema));
 await writeIfChanged("docs/styling.md", genStyleDocs(schema));
 await writeIfChanged("swift/Sources/NDGen/Widgets.swift", genSwift(schema));
+await writeIfChanged("packages/react/src/generated/widget-types.ts", genWidgetTypesTs(schema));
+await writeIfChanged("src/generated/widget_types.zig", genWidgetTypesZig(schema));
 console.log("codegen complete");
