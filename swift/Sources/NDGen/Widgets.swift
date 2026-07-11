@@ -29,7 +29,9 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     let props = parseProps(propsJson)
     if kind == "Window" {
         let content = FlippedView()
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 320), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let winW = propInt(props, "defaultWidth") ?? 480
+        let winH = propInt(props, "defaultHeight") ?? 320
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         if let t = propStr(props, "title") { win.title = t }
         win.contentView = content
         win.center(); win.makeKeyAndOrderFront(nil)
@@ -111,6 +113,13 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         sv.hasVerticalScroller = true
         let doc = FlippedView()
         sv.documentView = doc
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            doc.leadingAnchor.constraint(equalTo: sv.contentView.leadingAnchor),
+            doc.trailingAnchor.constraint(equalTo: sv.contentView.trailingAnchor),
+            doc.topAnchor.constraint(equalTo: sv.contentView.topAnchor),
+            doc.widthAnchor.constraint(equalTo: sv.contentView.widthAnchor),
+        ])
         let minH = propInt(props, "minContentHeight") ?? 0
         if minH > 0 { sv.frame.size.height = CGFloat(minH) }
         return sv
@@ -288,7 +297,16 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         stack.addArrangedSubview(child)
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
-        sv.documentView = child
+        let doc = sv.documentView!
+        doc.subviews.forEach { $0.removeFromSuperview() }
+        child.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(child)
+        NSLayoutConstraint.activate([
+            child.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            child.topAnchor.constraint(equalTo: doc.topAnchor),
+            child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+        ])
     } else if parentKind == "TabView" {
         let tabs = parent as! NSTabView
         let item = NSTabViewItem()
@@ -409,7 +427,7 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         child.removeFromSuperview()
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
-        if sv.documentView === child { sv.documentView = nil }
+        if child.superview === sv.documentView { child.removeFromSuperview() }
     } else if parentKind == "TabView" {
         let tabs = parent as! NSTabView
         if let item = tabs.tabViewItems.first(where: { $0.view === child }) {

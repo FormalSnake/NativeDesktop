@@ -1047,7 +1047,9 @@ function genSwiftCreateBody(w: Widget): string {
   let out = "";
   if (w.name === "Window") {
     out += "        let content = FlippedView()\n";
-    out += `        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: ${swiftDefaultInt(w, "defaultWidth")}, height: ${swiftDefaultInt(w, "defaultHeight")}), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)\n`;
+    out += `        let winW = propInt(props, "defaultWidth") ?? ${swiftDefaultInt(w, "defaultWidth")}\n`;
+    out += `        let winH = propInt(props, "defaultHeight") ?? ${swiftDefaultInt(w, "defaultHeight")}\n`;
+    out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)\n";
     out += '        if let t = propStr(props, "title") { win.title = t }\n';
     out += "        win.contentView = content\n";
     out += "        win.center(); win.makeKeyAndOrderFront(nil)\n";
@@ -1129,6 +1131,18 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        sv.hasVerticalScroller = true\n";
     out += "        let doc = FlippedView()\n";
     out += "        sv.documentView = doc\n";
+    // doc (the FlippedView) stays the permanent documentView so scrolled
+    // content keeps top-anchored/flipped semantics; it is pinned to the clip
+    // view's leading/trailing/top/width so appended content gets a real
+    // width to lay out into. No bottom pin: doc's height is driven by the
+    // appended child's own bottom-anchor constraint (see SWIFT_STRUCTURAL.ScrollView).
+    out += "        doc.translatesAutoresizingMaskIntoConstraints = false\n";
+    out += "        NSLayoutConstraint.activate([\n";
+    out += "            doc.leadingAnchor.constraint(equalTo: sv.contentView.leadingAnchor),\n";
+    out += "            doc.trailingAnchor.constraint(equalTo: sv.contentView.trailingAnchor),\n";
+    out += "            doc.topAnchor.constraint(equalTo: sv.contentView.topAnchor),\n";
+    out += "            doc.widthAnchor.constraint(equalTo: sv.contentView.widthAnchor),\n";
+    out += "        ])\n";
     out += `        let minH = propInt(props, "minContentHeight") ?? ${swiftDefaultInt(w, "minContentHeight")}\n`;
     out += "        if minH > 0 { sv.frame.size.height = CGFloat(minH) }\n";
     out += "        return sv\n";
@@ -1405,8 +1419,28 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        child.removeFromSuperview()\n",
   },
   ScrollView: {
-    append: () => "        let sv = parent as! NSScrollView\n        sv.documentView = child\n",
-    remove: () => "        let sv = parent as! NSScrollView\n        if sv.documentView === child { sv.documentView = nil }\n",
+    // childModel is "single" (schema/widgets.json): documentView itself is
+    // never reassigned (create's FlippedView stays put, see genSwiftCreateBody)
+    // — the child is pinned inside it instead, leading+trailing+top+bottom, so
+    // its own intrinsic/fitting height drives the document's scrollable height
+    // while the width tracks the clip view via doc's own constraints. Any
+    // prior child is cleared first to preserve single-child semantics (mirrors
+    // SWIFT_STRUCTURAL.Window's `parent.subviews.forEach { removeFromSuperview() }`).
+    append: () =>
+      "        let sv = parent as! NSScrollView\n" +
+      "        let doc = sv.documentView!\n" +
+      "        doc.subviews.forEach { $0.removeFromSuperview() }\n" +
+      "        child.translatesAutoresizingMaskIntoConstraints = false\n" +
+      "        doc.addSubview(child)\n" +
+      "        NSLayoutConstraint.activate([\n" +
+      "            child.leadingAnchor.constraint(equalTo: doc.leadingAnchor),\n" +
+      "            child.trailingAnchor.constraint(equalTo: doc.trailingAnchor),\n" +
+      "            child.topAnchor.constraint(equalTo: doc.topAnchor),\n" +
+      "            child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),\n" +
+      "        ])\n",
+    remove: () =>
+      "        let sv = parent as! NSScrollView\n" +
+      "        if child.superview === sv.documentView { child.removeFromSuperview() }\n",
   },
   TabView: {
     append: () => "        let tabs = parent as! NSTabView\n        let item = NSTabViewItem()\n        item.view = child\n        item.label = attachedTabLabel\n        tabs.addTabViewItem(item)\n",
