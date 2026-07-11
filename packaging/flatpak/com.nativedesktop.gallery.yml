@@ -1,0 +1,23 @@
+app-id: com.nativedesktop.gallery
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: nd-hello
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+# Automation is in-process-first (spec §11): NO portal permissions requested —
+# the in-process getTree/screenshot path needs none. The optional OS-input mode
+# (libei/portals) is out of scope; document that it would add finish-args here.
+modules:
+  - name: nd-gallery
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 nd-hello /app/bin/nd-hello
+    sources:
+      - type: dir
+        path: ../../zig-out/bin
+# NOTE (M9-D4): the FULL flatpak-builder build is CI-only on a real GNOME
+# runner. The M9 gate only lint-validates this manifest (flatpak-builder
+# --show-manifest). See docs/packaging.md.
