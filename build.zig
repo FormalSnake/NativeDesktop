@@ -263,6 +263,9 @@ pub fn build(b: *std.Build) void {
     const libnd_step = b.step("libnd", "Build libnd.a (static, GTK-free, -Dbackend=abi)");
     libnd_step.dependOn(&b.addInstallArtifact(libnd, .{}).step);
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
+    // nd.h now nests `#include "nd_plugin.h"` (M10) — install it alongside or
+    // the installed header tree fatally fails to resolve for any consumer.
+    libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd_plugin.h"), .{ .custom = "include" }, "nd_plugin.h").step);
 
     // First-party demo plugin (M10): a C-ABI shared lib exporting
     // nd_plugin_entry. Built as its own artifact; headless-m10.sh dlopens it.
