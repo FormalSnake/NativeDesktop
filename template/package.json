@@ -2,6 +2,7 @@
   "name": "nativedesktop-app",
   "private": true,
   "type": "module",
+  "trustedDependencies": [],
   "scripts": {
     "dev": "echo 'run via the dev host: ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to>/nd-hello'",
     "compile": "babel src --out-dir dist --config-file ./babel.config.json --extensions .ts,.tsx --keep-file-extension",
