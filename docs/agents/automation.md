@@ -76,6 +76,21 @@ them by talking to the automation socket directly (see `packages/mcp/src/socket.
   `scroll` can occasionally return a texture from before the scroll finished compositing
   (`WidgetPaintable` served empty briefly in testing). If a post-scroll screenshot looks stale,
   retry (poll every ~150ms, up to ~3s) rather than treating a single failed/blank shot as final.
+- **An empty `TextArea` collapses to 0 logical height**, which fails the actionability bounds check
+  (`-32001`, non-degenerate on-screen bounds) — any action-dispatch method (`click`, `setValue`,
+  `type`, `scroll`) on it will read as not actionable until it has content or explicit sizing. Wrap
+  it in a `ScrollView` with a `minContentHeight` (or otherwise give the `TextArea` a non-zero
+  starting height) if it needs to be automation-actionable while empty; an app that only relies on
+  GTK's natural-size layout for an initially-empty `TextArea` is not automation-actionable by
+  construction.
+- **`Checkbox`/`Radio` should be driven with `setValue({ref, value: boolean})`, not `click`.** `click`
+  emits `GtkCheckButton`'s `clicked` signal, which *toggles* the current state — it is relative, not
+  idempotent, so scripting a specific end state (e.g. "make sure this is checked") by clicking
+  requires first knowing the current value and is one stray extra click away from landing on the
+  wrong state. `setValue` sets `checked` to an exact, deterministic value directly
+  (`gtk_check_button_set_active`) and is the kind-dispatched path automation was designed around for
+  these two kinds — prefer it whenever the target state (not just "flip it") is what the script
+  cares about.
 
 ## Crash/overlay contract — planned, not yet landed
 

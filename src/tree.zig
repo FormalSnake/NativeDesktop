@@ -208,7 +208,13 @@ pub const Tree = struct {
                 self.setMetaText(op.id.?, op.text.?);
             } else if (std.mem.eql(u8, op.op, "update")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
-                backend.applyProps(widget, op.widget orelse "", op.props);
+                // React's host-config `commitUpdate` never sends the widget-kind
+                // field on update ops (only `create` ops carry it) — resolve the
+                // kind from the retained tree's own create-time record instead of
+                // `op.widget` (always null on a real update), or every kind-
+                // dispatched prop applier would silently no-op on every update.
+                const kind = if (self.metaGet(op.id.?)) |m| m.widget_type else "";
+                backend.applyProps(widget, kind, op.props);
                 applyStyleIfPresent(widget, op.id.?, op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {

@@ -159,6 +159,10 @@ pub fn build(b: *std.Build) void {
     const schema_contents = b.build_root.handle.readFileAlloc(b.graph.io, "schema/widgets.json", b.allocator, .limited(1 << 20)) catch @panic("failed to read schema/widgets.json");
     const conformance_opts = b.addOptions();
     conformance_opts.addOption([]const u8, "schema_json", schema_contents);
+    // `tree.zig`'s `apply()` (exercised by the update-op conformance test) reaches
+    // `backend.zig`, which reads `build_options.backend` to pick null vs. abi —
+    // force "null" here so the conformance suite stays display-free (no gobject).
+    conformance_opts.addOption([]const u8, "backend", "null");
     const conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/conformance.zig"),

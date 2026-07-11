@@ -1,6 +1,7 @@
 const std = @import("std");
 const nb = @import("null_backend.zig");
 const protocol = @import("protocol.zig");
+const Tree = @import("tree.zig").Tree;
 
 // schema/widgets.json is read by build.zig and injected as a build option —
 // @embedFile can't reach it directly since it lives outside src/'s package path.
@@ -253,4 +254,41 @@ test "ListView is schema-driven with items + rowActivated event" {
         if (std.mem.eql(u8, ev, "rowActivated")) found = true;
     }
     try std.testing.expect(found);
+}
+
+test "update op with no widget-kind field still applies createAndUpdate props" {
+    // Regression test for the tree.zig dispatch bug: React's host-config
+    // `commitUpdate` never sends the widget-kind on update ops (only create
+    // ops carry it), so `Tree.apply` must resolve each node's kind from the
+    // retained tree, not from `op.widget`.
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    var t = Tree.init(gpa, dummyApp());
+    defer t.deinitMeta();
+    // `Tree` never tears down `nodes` itself (the real app's Tree lives for
+    // the process lifetime) — free the hashmap's own storage here so this
+    // test doesn't leak now that it's the first to exercise `apply`'s
+    // "create" arm, which populates `nodes` (the retained widget pointers
+    // themselves are owned by `nb`/`deinitAll` above, not by this map).
+    defer t.nodes.deinit(gpa);
+
+    const create_props = try std.json.parseFromSlice(std.json.Value, gpa, "{}", .{});
+    defer create_props.deinit();
+    var create_ops = [_]protocol.Op{
+        .{ .op = "create", .id = 1, .widget = "TextInput", .props = create_props.value },
+    };
+    t.apply(.{ .commitId = 1, .generation = 0, .ops = &create_ops });
+
+    const update_props = try std.json.parseFromSlice(std.json.Value, gpa, "{\"text\":\"new\"}", .{});
+    defer update_props.deinit();
+    var update_ops = [_]protocol.Op{
+        // `widget` deliberately omitted, mirroring a real update op.
+        .{ .op = "update", .id = 1, .props = update_props.value },
+    };
+    t.apply(.{ .commitId = 2, .generation = 0, .ops = &update_ops });
+
+    const node = t.get(1).?;
+    try std.testing.expectEqualStrings("\"new\"", node.props.get("text").?);
 }
