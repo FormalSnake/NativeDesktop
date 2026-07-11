@@ -208,9 +208,9 @@ Header (28 bytes, offsets 0-27):
   20      04 00 00 00               opCount            4
   24      64 00 00 00               stringTableOffset  100
 
-Op stream (offsets 28-99, 72 bytes):
+Op stream (offsets 28-81, 54 bytes):
 
-  -- op[0]: create Window(id=1), props={title:"Hi"} --  (offsets 28-46, 19 bytes)
+  -- op[0]: create Window(id=1), props={title:"Hi"} --  (offsets 28-46, 18 bytes)
   28      01                        opcode             0x01 (create)
   29      01 00 00 00               id                 1
   33      01 00                     widgetType         1 (Window)
@@ -250,26 +250,26 @@ Op stream (offsets 28-99, 72 bytes):
 
 ### 8.4 Corrected `stringTableOffset` and string table bytes
 
-Op stream byte length: op[0] 19 bytes + op[1] 18 bytes + op[2] 9 bytes + op[3] 9 bytes = **55 bytes**, occupying offsets 28–82 (exclusive end 83). Therefore `stringTableOffset = 28 + 55 = 83`, and the header's `stringTableOffset` field (offset 24, §3.1) MUST be written as `53 00 00 00` (83 LE), not the illustrative `64 00 00 00` shown inline in §8.3's per-field walkthrough above (that value was a placeholder for the walkthrough's field-position illustration and is superseded by this corrected computation, which is the one a conformance test must reproduce).
+Op stream byte length: op[0] 18 bytes + op[1] 18 bytes + op[2] 9 bytes + op[3] 9 bytes = **54 bytes**, occupying offsets 28–81 (exclusive end 82). Therefore `stringTableOffset = 28 + 54 = 82`, and the header's `stringTableOffset` field (offset 24, §3.1) MUST be written as `52 00 00 00` (82 LE), not the illustrative `64 00 00 00` shown inline in §8.3's per-field walkthrough above (that value was a placeholder for the walkthrough's field-position illustration and is superseded by this corrected computation, which is the one a conformance test must reproduce). *(An earlier revision of this section miscounted op[0] as 19 bytes and derived 83; the landed M10 implementations — `src/ndp_binary.zig` and `runtime/ndp-binary.ts` — independently derived 82 and agree byte-for-byte.)*
 
-String table (starts at offset 83):
+String table (starts at offset 82):
 
 ```
   offset  bytes                              field           value
-  83      05 00 00 00                        count           5
-  87      05 00 00 00                        entry[0].len    5
-  91      74 69 74 6c 65                     entry[0].bytes  "title"
-  96      02 00 00 00                        entry[1].len    2
-  100     48 69                              entry[1].bytes  "Hi"
-  102     04 00 00 00                        entry[2].len    4
-  106     74 65 78 74                        entry[2].bytes  "text"
-  110     09 00 00 00                        entry[3].len    9
-  114     43 6c 69 63 6b 73 3a 20 30         entry[3].bytes  "Clicks: 0"
-  123     09 00 00 00                        entry[4].len    9
-  127     43 6c 69 63 6b 73 3a 20 31         entry[4].bytes  "Clicks: 1"
+  82      05 00 00 00                        count           5
+  86      05 00 00 00                        entry[0].len    5
+  90      74 69 74 6c 65                     entry[0].bytes  "title"
+  95      02 00 00 00                        entry[1].len    2
+  99      48 69                              entry[1].bytes  "Hi"
+  101     04 00 00 00                        entry[2].len    4
+  105     74 65 78 74                        entry[2].bytes  "text"
+  109     09 00 00 00                        entry[3].len    9
+  113     43 6c 69 63 6b 73 3a 20 30         entry[3].bytes  "Clicks: 0"
+  122     09 00 00 00                        entry[4].len    9
+  126     43 6c 69 63 6b 73 3a 20 31         entry[4].bytes  "Clicks: 1"
 ```
 
-Total `payload` length: 136 bytes (28 header + 55 op stream + 53 string table [4 count + 5×(4+len) = 4 + (4+5)+(4+2)+(4+4)+(4+9)+(4+9) = 4+9+6+8+13+13 = 53]). The outer frame is this `payload` prefixed by `u32 LE 136` (`88 00 00 00`).
+Total `payload` length: 135 bytes (28 header + 54 op stream + 53 string table [4 count + 5×(4+len) = 4 + (4+5)+(4+2)+(4+4)+(4+9)+(4+9) = 4+9+6+8+13+13 = 53]). The outer frame is this `payload` prefixed by `u32 LE 135` (`87 00 00 00`).
 
 This worked example is the fixture M10's conformance suite should encode-then-compare-bytes and decode-then-compare-to-JSON against; a future M10 implementation task should add exactly this `CommitBatch` (or a superset covering `insertBefore`/`remove`/`hide`/`unhide`/`update` too) as a golden test analogous to the existing JSON golden tests in `src/protocol.zig`.
 
