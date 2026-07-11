@@ -147,10 +147,28 @@ pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
     }
 }
 
+// Removes `child` from `parent.children` if already present (a move, not a
+// fresh mount) — mirrors the GTK backend's `getParent(child) != null` check
+// (src/generated/widgets.zig:472, 501) before re-inserting at the target
+// position, so an already-mounted child never ends up duplicated.
+fn detachIfMounted(parent: *Node, child: *Node) void {
+    for (parent.children.items, 0..) |c, i| {
+        if (c == child) {
+            _ = parent.children.orderedRemove(i);
+            return;
+        }
+    }
+}
+
 pub fn appendChild(parent: *Node, parent_kind: []const u8, child: *Node, attached: protocol.Attached) void {
     child.attached = attached;
     const def = defs.get(parent_kind) orelse return;
-    if (def.child_model == .single) parent.children.clearRetainingCapacity();
+    if (def.child_model == .single) {
+        parent.children.clearRetainingCapacity();
+        parent.children.append(gpa, child) catch {};
+        return;
+    }
+    detachIfMounted(parent, child); // move-to-end if already mounted.
     parent.children.append(gpa, child) catch {};
 }
 
@@ -162,6 +180,7 @@ pub fn insertBefore(parent: *Node, parent_kind: []const u8, child: *Node, before
         parent.children.append(gpa, child) catch {};
         return;
     }
+    detachIfMounted(parent, child); // move, not duplicate, if already mounted.
     if (before) |b| {
         for (parent.children.items, 0..) |c, i| {
             if (c == b) {

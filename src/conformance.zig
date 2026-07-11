@@ -171,6 +171,69 @@ test "multi-container ordering" {
     }
 }
 
+test "insertBefore/appendChild of an already-mounted child moves it (no duplicate)" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, schema_json, .{});
+    defer parsed.deinit();
+    const widgets = parsed.value.object.get("widgets").?.array;
+
+    for (widgets.items) |w| {
+        const container = w.object.get("container").?;
+        if (container == .null) continue;
+        if (!std.mem.eql(u8, container.object.get("childModel").?.string, "multi")) continue;
+        const name = w.object.get("name").?.string;
+
+        const is_grid = if (container.object.get("attachedProps")) |aps| blk: {
+            for (aps.array.items) |ap| {
+                if (std.mem.eql(u8, ap.object.get("name").?.string, "gridRow")) break :blk true;
+            }
+            break :blk false;
+        } else false;
+        if (is_grid) continue; // ordering is not meaningful for position-addressed Grid.
+
+        // insertBefore of an already-mounted child = move, not duplicate.
+        {
+            const parent = try nb.createWidget(dummyApp(), name, null);
+            const a = try nb.createWidget(dummyApp(), "Label", null);
+            const b = try nb.createWidget(dummyApp(), "Label", null);
+            const c = try nb.createWidget(dummyApp(), "Label", null);
+
+            nb.appendChild(parent, name, a, .{});
+            nb.appendChild(parent, name, b, .{});
+            nb.appendChild(parent, name, c, .{}); // -> [a, b, c]
+
+            // Move `c` (already mounted) to before `a` -> [c, a, b].
+            nb.insertBefore(parent, name, c, a, .{});
+            try std.testing.expectEqual(@as(usize, 3), parent.children.items.len);
+            try std.testing.expect(parent.children.items[0] == c);
+            try std.testing.expect(parent.children.items[1] == a);
+            try std.testing.expect(parent.children.items[2] == b);
+        }
+
+        // appendChild of an already-mounted child = move-to-end, not duplicate.
+        {
+            const parent = try nb.createWidget(dummyApp(), name, null);
+            const a = try nb.createWidget(dummyApp(), "Label", null);
+            const b = try nb.createWidget(dummyApp(), "Label", null);
+            const c = try nb.createWidget(dummyApp(), "Label", null);
+
+            nb.appendChild(parent, name, a, .{});
+            nb.appendChild(parent, name, b, .{});
+            nb.appendChild(parent, name, c, .{}); // -> [a, b, c]
+
+            // Re-append `a` (already mounted) -> move to end -> [b, c, a].
+            nb.appendChild(parent, name, a, .{});
+            try std.testing.expectEqual(@as(usize, 3), parent.children.items.len);
+            try std.testing.expect(parent.children.items[0] == b);
+            try std.testing.expect(parent.children.items[1] == c);
+            try std.testing.expect(parent.children.items[2] == a);
+        }
+    }
+}
+
 test "single-container replacement" {
     const gpa = std.testing.allocator;
     try nb.init(gpa, schema_json);
