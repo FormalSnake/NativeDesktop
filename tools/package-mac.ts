@@ -25,7 +25,11 @@ export async function packageMac() {
   chmodSync(`${c}/MacOS/NDShell`, 0o755);
   const bunPath = Bun.which("bun");
   if (!bunPath) throw new Error("bun not found on PATH");
-  cpSync(bunPath, `${c}/MacOS/bun`); chmodSync(`${c}/MacOS/bun`, 0o755);
+  // dereference: true — `bun` on PATH is frequently a symlink into a
+  // read-only nix store; copying the link itself would leave a dangling/
+  // unwritable entry once relocated into the .app (chmod EPERM on the nix
+  // store target), so resolve it to the real file.
+  cpSync(bunPath, `${c}/MacOS/bun`, { dereference: true }); chmodSync(`${c}/MacOS/bun`, 0o755);
   // dereference: true — examples/packages node_modules are Bun-workspace
   // symlinks into the root node_modules/.bun store; a raw symlink copy would
   // dangle once relocated into the .app, so resolve them to real files.
