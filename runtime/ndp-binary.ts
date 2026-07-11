@@ -29,16 +29,29 @@ export class BinaryUnsupportedValue extends Error {
   }
 }
 
+// Reused across every string write in a single encode call (module-level:
+// TextEncoder has no per-call state, so one instance amortizes across the
+// whole process's lifetime instead of being re-allocated per encode).
+const textEncoder = new TextEncoder();
+
+// Single growable ArrayBuffer with one DataView + Uint8Array cached over it,
+// both rebuilt only when the buffer itself grows (doubling) — this avoids
+// the previous per-primitive-write `new DataView(...)` allocation, which
+// dominated encode time on large op streams (see M10 task4 diagnosis).
 class ByteWriter {
-  private buf = new Uint8Array(256);
+  private ab = new ArrayBuffer(256);
+  private buf = new Uint8Array(this.ab);
+  private view = new DataView(this.ab);
   len = 0;
   private ensure(n: number) {
-    if (this.len + n <= this.buf.length) return;
-    let cap = this.buf.length * 2;
+    if (this.len + n <= this.ab.byteLength) return;
+    let cap = this.ab.byteLength * 2;
     while (cap < this.len + n) cap *= 2;
-    const next = new Uint8Array(cap);
-    next.set(this.buf.subarray(0, this.len));
-    this.buf = next;
+    const nextAb = new ArrayBuffer(cap);
+    new Uint8Array(nextAb).set(this.buf.subarray(0, this.len));
+    this.ab = nextAb;
+    this.buf = new Uint8Array(nextAb);
+    this.view = new DataView(nextAb);
   }
   u8(v: number) {
     this.ensure(1);
@@ -46,28 +59,38 @@ class ByteWriter {
   }
   u16(v: number) {
     this.ensure(2);
-    new DataView(this.buf.buffer).setUint16(this.len, v, true);
+    this.view.setUint16(this.len, v, true);
     this.len += 2;
   }
   u32(v: number) {
     this.ensure(4);
-    new DataView(this.buf.buffer).setUint32(this.len, v >>> 0, true);
+    this.view.setUint32(this.len, v >>> 0, true);
     this.len += 4;
   }
   i64(v: number) {
     this.ensure(8);
-    new DataView(this.buf.buffer).setBigInt64(this.len, BigInt(v), true);
+    this.view.setBigInt64(this.len, BigInt(v), true);
     this.len += 8;
   }
   f64(v: number) {
     this.ensure(8);
-    new DataView(this.buf.buffer).setFloat64(this.len, v, true);
+    this.view.setFloat64(this.len, v, true);
     this.len += 8;
   }
   bytes(b: Uint8Array) {
     this.ensure(b.length);
     this.buf.set(b, this.len);
     this.len += b.length;
+  }
+  // Writes a u32 length prefix followed by the string's UTF-8 bytes, encoding
+  // directly into this writer's own buffer (worst case 3 bytes/UTF-16 code
+  // unit) instead of allocating an intermediate Uint8Array via `encode()`.
+  lenString(s: string) {
+    this.ensure(4 + s.length * 3);
+    const lenPos = this.len;
+    const { written } = textEncoder.encodeInto(s, this.buf.subarray(this.len + 4));
+    this.view.setUint32(lenPos, written, true);
+    this.len += 4 + written;
   }
   slice(): Uint8Array {
     return this.buf.slice(0, this.len);
@@ -181,11 +204,6 @@ export function encodeCommitBatchBinary(batch: Batch): Uint8Array {
   out.u32(stringTableOffset);
   out.bytes(opBytes);
   out.u32(strings.length);
-  const enc = new TextEncoder();
-  for (const s of strings) {
-    const b = enc.encode(s);
-    out.u32(b.length);
-    out.bytes(b);
-  }
+  for (const s of strings) out.lenString(s);
   return out.slice();
 }
