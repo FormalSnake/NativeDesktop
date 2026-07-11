@@ -3,3 +3,5 @@
 zig-out/
 node_modules/
 CLAUDE-*.md
+swift/.build/
+swift/.swiftpm/
