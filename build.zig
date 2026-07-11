@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "gsk", .module = gobject.module("gsk4") },
         .{ .name = "gdk", .module = gobject.module("gdk4") },
         .{ .name = "graphene", .module = gobject.module("graphene1") },
+        .{ .name = "adw", .module = gobject.module("adw1") },
         .{ .name = "build_options", .module = build_options_mod },
     };
 
