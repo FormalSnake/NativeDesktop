@@ -141,6 +141,10 @@ pub export fn nd_set_acl(self: *NdContext, grants_json: [*:0]const u8) callconv(
     const json = std.mem.span(grants_json);
     const a = self.gpa.create(acl.Acl) catch return;
     a.* = acl.Acl.parse(self.gpa, json) catch acl.Acl.initDefault(self.gpa);
+    if (self.acl) |old| {
+        old.deinit();
+        self.gpa.destroy(old);
+    }
     self.acl = a;
 }
 
