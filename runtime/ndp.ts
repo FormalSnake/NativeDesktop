@@ -7,6 +7,8 @@
 // exception / unhandled rejection sent before the process exits, so the
 // host's crash overlay shows the real error instead of a bare disconnect.
 
+import { encodeCommitBatchBinary } from "./ndp-binary";
+
 type Runtime = { name: string; version: string };
 type Op =
   | { op: "create"; id: number; widget: "Window" | "Box" | "Label" | "Button"; props: Record<string, unknown> }
@@ -42,6 +44,10 @@ export class Ndp {
   // it instead of writing concurrently and corrupting frame ordering.
   private outbox: Uint8Array[] = [];
   private outboxOffset = 0;
+  // Negotiated CommitBatch encoding (ndp-binary spec §2): default "json";
+  // "binary" only if the host advertises it in HelloAck.encodings AND this
+  // runtime supports it. Fixed for the connection's lifetime.
+  private encoding: "json" | "binary" = "json";
 
   private constructor(socket: import("bun").Socket) {
     this.socket = socket;
@@ -110,6 +116,9 @@ export class Ndp {
   private dispatch(msg: InboundMsg): void {
     if (msg.type === "helloAck") {
       if (msg.ndpVersion !== NDP_VERSION) throw new Error(`ndp mismatch: host ${msg.ndpVersion}`);
+      // Selection rule (spec §2): first host-advertised encoding this runtime
+      // supports. This runtime supports "binary"; JSON is always the fallback.
+      if (msg.encodings?.includes("binary")) this.encoding = "binary";
       this.helloAckResolve?.();
     } else if (msg.type === "error") {
       throw new Error(`host error: ${msg.message} (expected ${msg.expected}, got ${msg.got})`);
@@ -140,7 +149,25 @@ export class Ndp {
   }
 
   sendCommit(batch: Omit<CommitBatch, "type">): void {
-    this.send({ type: "commitBatch", ...batch });
+    if (this.encoding === "binary") {
+      this.sendBinaryFrame(encodeCommitBatchBinary(batch));
+    } else {
+      this.send({ type: "commitBatch", ...batch });
+    }
+  }
+
+  /// Frames a raw binary payload (u32 LE length prefix + payload) and queues
+  /// it through the SAME drain-driven outbox as JSON frames — Bun's socket
+  /// does not buffer partial writes, so a large binary CommitBatch must never
+  /// bypass the outbox (M5c fact).
+  private sendBinaryFrame(payload: Uint8Array): void {
+    const frame = new Uint8Array(4 + payload.length);
+    new DataView(frame.buffer).setUint32(0, payload.length, true);
+    frame.set(payload, 4);
+    if (TRACE) console.error(`>> [binary commitBatch ${payload.length}B]`);
+    const wasEmpty = this.outbox.length === 0;
+    this.outbox.push(frame);
+    if (wasEmpty) this.pump(this.socket);
   }
 
   onEvent(cb: (e: EventMsg) => void): void {
