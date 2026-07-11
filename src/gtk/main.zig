@@ -69,6 +69,25 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     the_vtable = backend.ndBackend();
     abi.nd_register_backend(ctx, &the_vtable);
 
+    // M10: opt-in capability ACL + native plugin. Absent env = safe default
+    // (core UI ops granted), byte-identical to pre-M10 behavior. Mirrors
+    // swift/Sources/NDShell/main.swift's env wiring (env names + call order).
+    if (global_environ_map.?.get("ND_ACL_GRANTS")) |grants| {
+        if (std.heap.page_allocator.dupeZ(u8, grants)) |grants_z| {
+            abi.nd_set_acl(ctx, grants_z.ptr);
+        } else |_| {}
+    }
+    if (global_environ_map.?.get("ND_PLUGINS")) |v| {
+        if (std.mem.eql(u8, v, "1")) {
+            if (global_environ_map.?.get("ND_PLUGIN_PATH")) |path| {
+                const path_z = std.heap.page_allocator.dupeZ(u8, path) catch @panic("oom");
+                if (abi.nd_load_plugin(ctx, path_z.ptr) != 0) {
+                    std.debug.print("ND_PLUGIN_LOAD_FAILED\n", .{});
+                }
+            }
+        }
+    }
+
     if (abi.nd_start_runtime(ctx) != 0) {
         std.debug.print("ND_RUNTIME_ERROR nd_start_runtime failed\n", .{});
         gio.Application.quit(app.as(gio.Application));
