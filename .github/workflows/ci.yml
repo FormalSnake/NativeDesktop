@@ -42,3 +42,5 @@ jobs:
         run: nix develop -c zig build plugin-hello
       - name: headless m10 (binary bench + acl + plugins)
         run: nix develop -c ./scripts/headless-m10.sh
+      - name: headless notes (native chrome)
+        run: nix develop -c ./scripts/headless-notes.sh

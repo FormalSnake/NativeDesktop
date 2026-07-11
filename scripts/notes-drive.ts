@@ -4,6 +4,7 @@
 // Proves: create note, type title+body, live word count, second note,
 // search filter narrows the list, pin reorders the list, delete removes it.
 import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { widgetMeta } from "../packages/react/src/generated/schema-meta.ts";
 
 interface TreeNode {
   ref: number;
@@ -79,6 +80,29 @@ async function waitForTitle(expected: string, t: () => Promise<GetTreeResult>): 
   throw new Error(`title-input never settled to "${expected}" (last saw "${lastActual}")`);
 }
 
+// Same remount-settle race as setValueRetrying, for a click against a node
+// looked up by a predicate (not a fixed testID) whose bounds can be
+// momentarily degenerate right after its container reflows it back into
+// view (observed live on the Mac AppKit backend: a row re-entering an
+// NSStackView after a search filter clears settles its bounds a beat after
+// the tree/label already reports it present).
+async function clickRetrying(findNode: (t: GetTreeResult) => TreeNode | null, t: () => Promise<GetTreeResult>): Promise<void> {
+  let lastErr: Error | null = null;
+  for (let i = 0; i < 20; i++) {
+    const node = findNode(await t());
+    if (!node) throw new Error("clickRetrying: node not found");
+    try {
+      const res = (await client.call("click", { ref: node.ref })) as { dispatched: boolean };
+      if (!res.dispatched) throw new Error("click did not dispatch");
+      return;
+    } catch (e) {
+      lastErr = e as Error;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  throw new Error(`click failed after retries: ${lastErr?.message}`);
+}
+
 function mustFind(t: GetTreeResult, testID: string): TreeNode {
   const n = find(t.root, testID);
   if (!n) throw new Error(`${testID} not found in tree`);
@@ -93,9 +117,23 @@ const waitedWindow = (await client.call("waitFor", {
 if (!waitedWindow.matched) throw new Error("waitFor window title did not match");
 
 let t0 = await tree();
-mustFind(t0, "app-title");
 const titleInput0 = mustFind(t0, "title-input");
 if (titleInput0.text !== "Welcome to ND Notes") throw new Error(`unexpected seeded title: ${titleInput0.text}`);
+
+// Native-chrome assertion: <splitview testID="split"> and <headerbar
+// testID="header"> must both be mounted. getTree's `type` field is the
+// schema widget name (e.g. "SplitView"/"HeaderBar" — verified against
+// src/tree.zig's putMeta, which stores the wire `widget_type` string
+// unchanged); look up each node's accessibility role from the same
+// generated table the codegen emits (packages/react/src/generated/
+// schema-meta.ts) rather than assuming a wire "role" field exists.
+const splitNode = mustFind(t0, "split");
+const headerNode = mustFind(t0, "header");
+const splitRole = widgetMeta[splitNode.type]?.role;
+if (splitRole !== "group") throw new Error(`split node (type=${splitNode.type}) role=${splitRole}, want "group"`);
+const headerRole = widgetMeta[headerNode.type]?.role;
+if (headerRole !== "toolbar") throw new Error(`header node (type=${headerNode.type}) role=${headerRole}, want "toolbar"`);
+console.log(`ND_NAVCHROME_OK splitview+headerbar present (split=${splitNode.type}/${splitRole}, header=${headerNode.type}/${headerRole})`);
 
 let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.png` })) as {
   path: string;
@@ -179,10 +217,10 @@ await client.call("waitFor", { condition: { textContains: "4 of 4 notes" }, time
 // 5. Re-select "Grocery run" via its note-row button (selection is per-note
 // state, independent of the search filter — clearing the filter does not
 // change which note is selected), then pin it and assert it reorders first.
-let t6b = await tree();
-const groceryRow = findAllPrefixed(t6b.root, "note-row-").find((r) => r.text?.includes("Grocery run"));
-if (!groceryRow) throw new Error("Grocery run row not found after clearing search");
-await client.call("click", { ref: groceryRow.ref });
+const findGroceryRow = (t: GetTreeResult): TreeNode | null =>
+  findAllPrefixed(t.root, "note-row-").find((r) => r.text?.includes("Grocery run")) ?? null;
+if (!findGroceryRow(await tree())) throw new Error("Grocery run row not found after clearing search");
+await clickRetrying(findGroceryRow, tree);
 await waitForTitle("Grocery run", tree);
 await setValueRetrying("pin-checkbox", true, tree);
 

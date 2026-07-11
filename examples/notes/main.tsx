@@ -4,16 +4,25 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // (see scripts/notes-drive.ts for the headless proof). All state is in
 // memory; there is no persistence layer by design.
 //
-// Visual target: GNOME/libadwaita's look (AdwNavigationSplitView sidebar +
-// content, AdwHeaderBar, flat/pill/suggested-action/destructive-action
-// buttons, .dim-label secondary text). NONE of that exists as a widget or a
-// style-class hook here yet (see FRAMEWORK SUITABILITY report) — this file
-// is plain GTK4 (no libadwaita loaded, confirmed: no Adwaita import anywhere
-// under src/gtk/), and `style` (docs/styling.md) has no `class`/`cssClasses`
-// escape hatch to reach GTK's or Adwaita's named CSS classes; every visual
-// below is hand-rolled from the property-only style subset (background/
-// color/font/padding/margin/border). Palette approximates libadwaita's
-// default light variant (window #fafafa, sidebar #ebebeb, accent #3584e4).
+// Visual approach: native chrome, not hand-rolled facsimiles of it.
+//   - `<headerbar>`, mounted as a direct child of `<window>`, becomes the
+//     REAL window titlebar (AdwHeaderBar on GTK) / the unified NSToolbar
+//     area (on Mac) — there is no header Box faking a toolbar look here.
+//   - `<splitview>` is the real sidebar/content split (AdwOverlaySplitView
+//     on GTK, NSSplitView + vibrancy sidebar on Mac) — no hand-rolled
+//     two-Box row with a hardcoded sidebar background.
+//   - `cssClasses` reaches libadwaita's named classes (navigation-sidebar,
+//     suggested-action, destructive-action, pill, dimmed, caption, view,
+//     flat). libadwaita is initialized host-side (src/gtk/main.zig calls
+//     adw.init()), so AdwStyleManager tracks the system color scheme — the
+//     whole app follows light/dark automatically, with no per-widget color
+//     values.
+//   - `style` is kept only for theme-neutral geometry (padding, font size)
+//     and layout (hexpand/vexpand/halign/valign — GTK widget properties
+//     that drive the layout engine) plus the one deliberate color literal
+//     below (the pinned-row accent border, chosen to read on both themes).
+// No background/color literals anywhere else: dark mode is automatic on
+// both platforms.
 
 interface Note {
   id: number;
@@ -79,156 +88,122 @@ function App(): React.ReactNode {
 
   return (
     <window title="ND Notes" defaultWidth={900} defaultHeight={600}>
-      {/* Would be AdwToolbarView/AdwHeaderBar + AdwNavigationSplitView on a
-          real GNOME app; there is no header-bar or split-view widget here,
-          so the "header" below is just a styled Box row and the sidebar is
-          a plain Box sized by its content (no true split-view divider drag). */}
-      <box orientation="vertical" spacing={0} style={{ background: "#fafafa" }}>
+      <headerbar title="ND Notes" testID="header">
+        <button
+          testID="new-note-button"
+          label="＋ New Note"
+          onClick={createNote}
+          slot="start"
+          cssClasses={["suggested-action"]}
+        />
+      </headerbar>
+      <splitview sidebarWidth={0.28} testID="split">
         <box
-          orientation="horizontal"
+          slot="sidebar"
+          orientation="vertical"
           spacing={8}
-          style={{ background: "#ebebeb", padding: { top: 10, bottom: 10, left: 12, right: 12 },
-                   border: { borderWidth: 1, borderColor: "#d8d8d8" } }}
+          cssClasses={["navigation-sidebar"]}
+          style={{ padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
         >
+          <textinput
+            testID="search-input"
+            text={query}
+            placeholder="Search notes"
+            onChanged={(e) => setQuery(e.text)}
+          />
+          {/* vexpand: the list fills the sidebar's remaining height. */}
+          <scrollview testID="note-list-scroll" minContentHeight={380} style={{ vexpand: true }}>
+            <box orientation="vertical" spacing={3}>
+              {filtered.map((n) => {
+                const isSelected = n.id === selectedId;
+                // Button.label is create-only (docs/widgets.md) — it cannot
+                // be updated in place once mounted. Selection uses the
+                // theme's suggested-action (accent) class; a plain flat row
+                // otherwise. Pin state is a left accent border via `style`
+                // (which DOES update live) — the one deliberate color
+                // literal, an amber that reads on both light and dark.
+                return (
+                  <button
+                    key={`${n.id}:${n.title}`}
+                    testID={`note-row-${n.id}`}
+                    label={n.title || "Untitled note"}
+                    onClick={() => setSelectedId(n.id)}
+                    cssClasses={isSelected ? ["suggested-action"] : ["flat"]}
+                    style={{
+                      padding: { top: 8, bottom: 8, left: 10, right: 10 },
+                      halign: "fill",
+                      border: n.pinned ? { borderWidth: 3, borderColor: "#e5a50a", borderRadius: 8 } : { borderRadius: 8 },
+                    }}
+                  />
+                );
+              })}
+            </box>
+          </scrollview>
           <label
-            testID="app-title"
-            text="ND Notes"
-            style={{ font: { fontSize: 15, fontWeight: "bold" }, color: "#1a1a1a" }}
+            testID="note-count-label"
+            text={`${filtered.length} of ${notes.length} note${notes.length === 1 ? "" : "s"}`}
+            cssClasses={["dimmed", "caption"]}
           />
         </box>
-        <box orientation="horizontal" spacing={0}>
-          <box
-            orientation="vertical"
-            spacing={8}
-            style={{ background: "#ebebeb", padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
-          >
-            <button
-              testID="new-note-button"
-              label="＋ New Note"
-              onClick={createNote}
-              style={{ background: "#3584e4", color: "#ffffff", padding: 8, border: { borderRadius: 16 } }}
-            />
-            <textinput
-              testID="search-input"
-              text={query}
-              placeholder="Search notes"
-              onChanged={(e) => setQuery(e.text)}
-              style={{ padding: 6, border: { borderRadius: 8 }, background: "#ffffff", color: "#1a1a1a" }}
-            />
-            <scrollview testID="note-list-scroll" minContentHeight={380}>
-              {/* key=orderSignature: React's insertBefore/append for a Box's
-                  children, when several siblings are reordered/inserted in
-                  the SAME commit, can produce the wrong final GTK order —
-                  the host's insertBefore (src/generated/widgets.zig) does
-                  `insertChildAfter(box, child, getPrevSibling(before))`,
-                  recomputed per call, so two inserts anchored at the same
-                  `before` land adjacent in REVERSE call order rather than
-                  each other's intended relative order; separately, GTK's
-                  `gtk_box_insert_child_after` requires the moved child's
-                  parent to be NULL, so React repositioning an
-                  ALREADY-mounted child via insertBefore hits a `Gtk-CRITICAL`
-                  assertion and silently fails to move at all (verified live:
-                  scripts/notes-drive.ts's pin-then-assert-reorder step
-                  reproduced both). Keying the whole row list on a signature
-                  of the fully sorted id order forces a clean remount (full
-                  create+append in final order) instead of a partial
-                  insert/move sequence whenever pinning (or any other sort-
-                  affecting change) reorders the list — framework bug, not
-                  patched here; see FRAMEWORK SUITABILITY report. */}
-              <box key={filtered.map((n) => n.id).join(",")} orientation="vertical" spacing={3}>
-                {filtered.map((n) => {
-                  const isSelected = n.id === selectedId;
-                  // Button.label is create-only (docs/widgets.md) — it
-                  // cannot be updated in place once mounted. Pin state is
-                  // conveyed via `style` instead (a left accent border),
-                  // which DOES update live.
-                  return (
-                    <button
-                      key={`${n.id}:${n.title}`}
-                      testID={`note-row-${n.id}`}
-                      label={n.title || "Untitled note"}
-                      onClick={() => setSelectedId(n.id)}
-                      style={
-                        isSelected
-                          ? { background: "#3584e4", color: "#ffffff", padding: { top: 8, bottom: 8, left: 10, right: 10 },
-                              border: { borderRadius: 8, borderWidth: n.pinned ? 3 : 0, borderColor: "#f5c211" } }
-                          : { background: "#fafafa", color: "#1a1a1a", padding: { top: 8, bottom: 8, left: 10, right: 10 },
-                              border: { borderRadius: 8, borderWidth: n.pinned ? 3 : 0, borderColor: "#f5c211" } }
-                      }
-                    />
-                  );
-                })}
-              </box>
-            </scrollview>
-            <label
-              testID="note-count-label"
-              text={`${filtered.length} of ${notes.length} note${notes.length === 1 ? "" : "s"}`}
-              style={{ color: "#8a8a8a", font: { fontSize: 12 } }}
-            />
-          </box>
 
-          <box orientation="vertical" spacing={12} style={{ background: "#ffffff", padding: 20 }}>
-            {selected != null ? (
-              // key={selected.id}: prop `update` ops only reach GTK for
-              // style/testID/label-text (src/tree.zig's update handler
-              // resolves the widget kind from the wire message, which is
-              // never populated for "update" ops — only "create" carries a
-              // widget kind, per packages/react/src/host-config.ts's
-              // commitUpdate). A same-widget-instance prop push (typing in
-              // THIS textinput) is invisible to that gap since the GTK
-              // widget already holds the value the user just typed; a
-              // cross-widget push (switching to a DIFFERENT note) is not,
-              // and silently no-ops without a remount. Keying on the note
-              // id forces create (not update) on note switch, sidestepping
-              // the gap; framework bug, not patched here.
-              <box key={selected.id} orientation="vertical" spacing={12}>
-                <textinput
-                  testID="title-input"
-                  text={selected.title}
-                  placeholder="Title"
-                  onChanged={(e) => updateSelected({ title: e.text })}
-                  style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4, color: "#1a1a1a" }}
+        {/* hexpand+vexpand: the content pane claims all space the sidebar doesn't. */}
+        <box slot="content" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
+          {selected != null ? (
+            // key={selected.id}: prop `update` ops only reach GTK for
+            // style/testID/label-text (src/tree.zig's update handler
+            // resolves the widget kind from the wire message, which is
+            // never populated for "update" ops — only "create" carries a
+            // widget kind, per packages/react/src/host-config.ts's
+            // commitUpdate). A same-widget-instance prop push (typing in
+            // THIS textinput) is invisible to that gap since the GTK widget
+            // already holds the value the user just typed; a cross-widget
+            // push (switching to a DIFFERENT note) is not, and silently
+            // no-ops without a remount. Keying on the note id forces create
+            // (not update) on note switch, sidestepping the gap; framework
+            // bug, not patched here.
+            <box key={selected.id} orientation="vertical" spacing={12} style={{ vexpand: true }}>
+              <textinput
+                testID="title-input"
+                text={selected.title}
+                placeholder="Title"
+                onChanged={(e) => updateSelected({ title: e.text })}
+                style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4 }}
+              />
+              <box orientation="horizontal" spacing={10}>
+                <checkbox
+                  testID="pin-checkbox"
+                  label="Pinned"
+                  checked={selected.pinned}
+                  onToggled={(e) => updateSelected({ pinned: e.checked })}
                 />
-                <box orientation="horizontal" spacing={10}>
-                  <checkbox
-                    testID="pin-checkbox"
-                    label="Pinned"
-                    checked={selected.pinned}
-                    onToggled={(e) => updateSelected({ pinned: e.checked })}
-                    style={{ color: "#1a1a1a" }}
-                  />
-                  <button
-                    testID="delete-note-button"
-                    label="Delete"
-                    onClick={deleteSelected}
-                    style={{ background: "#e01b24", color: "#ffffff", padding: { top: 6, bottom: 6, left: 12, right: 12 }, border: { borderRadius: 16 } }}
-                  />
-                </box>
-                <separator orientation="horizontal" />
-                {/* TextArea alone has no size floor and can collapse to 0
-                    height with empty content (degenerate bounds -> not
-                    actionable); ScrollView's minContentHeight gives the
-                    editor a floor and doubles as scroll for long notes. */}
-                <scrollview testID="editor-scroll" minContentHeight={320}>
-                  <textarea
-                    testID="editor-textarea"
-                    text={selected.body}
-                    onChanged={(e) => updateSelected({ body: e.text })}
-                    style={{ font: { fontSize: 14 }, padding: 4, background: "#ffffff", color: "#1a1a1a" }}
-                  />
-                </scrollview>
-                <label
-                  testID="status-label"
-                  text={`${wordCount(selected.body)} word${wordCount(selected.body) === 1 ? "" : "s"} · ${savedPulse ? "Saved" : ""}`}
-                  style={{ color: "#8a8a8a", font: { fontSize: 12 } }}
+                <button
+                  testID="delete-note-button"
+                  label="Delete"
+                  onClick={deleteSelected}
+                  cssClasses={["destructive-action", "pill"]}
                 />
               </box>
-            ) : (
-              <label testID="empty-state-label" text="No note selected. Create one to get started." style={{ color: "#8a8a8a" }} />
-            )}
-          </box>
+              <separator orientation="horizontal" />
+              {/* TextArea has its own minContentHeight floor (Task 4) — no
+                  ScrollView wrapper needed; vexpand lets it fill the pane. */}
+              <textarea
+                testID="editor-textarea"
+                minContentHeight={320}
+                text={selected.body}
+                onChanged={(e) => updateSelected({ body: e.text })}
+                style={{ font: { fontSize: 14 }, padding: 4, vexpand: true }}
+              />
+              <label
+                testID="status-label"
+                text={`${wordCount(selected.body)} word${wordCount(selected.body) === 1 ? "" : "s"} · ${savedPulse ? "Saved" : ""}`}
+                cssClasses={["dimmed", "caption"]}
+              />
+            </box>
+          ) : (
+            <label testID="empty-state-label" text="No note selected. Create one to get started." cssClasses={["dimmed"]} />
+          )}
         </box>
-      </box>
+      </splitview>
     </window>
   );
 }

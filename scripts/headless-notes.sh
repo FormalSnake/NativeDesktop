@@ -33,6 +33,7 @@ ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_DIR="$XDG_RUNTIME_DIR" bun scripts/notes-dr
   || { echo "FAIL: driver"; cat "$XDG_RUNTIME_DIR/drive.log"; cat "$LOG"; exit 1; }
 cat "$XDG_RUNTIME_DIR/drive.log"
 grep -q "ND_NOTES_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: driver did not report success"; exit 1; }
+grep -q "ND_NAVCHROME_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: native chrome not present"; exit 1; }
 
 for shot in "$XDG_RUNTIME_DIR/notes-baseline.png" "$XDG_RUNTIME_DIR/notes-final.png"; do
   [ -s "$shot" ] || { echo "FAIL: empty png $shot"; exit 1; }
