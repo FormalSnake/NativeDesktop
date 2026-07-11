@@ -271,6 +271,23 @@ test "tabLabel attachment" {
     try std.testing.expectEqualStrings("Form", child.attached.tab_label.?);
 }
 
+test "slot attachment" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    const sv = try nb.createWidget(dummyApp(), "SplitView", null);
+    const sidebar = try nb.createWidget(dummyApp(), "Label", null);
+    const content = try nb.createWidget(dummyApp(), "Label", null);
+    nb.appendChild(sv, "SplitView", sidebar, .{ .slot = "sidebar" });
+    nb.appendChild(sv, "SplitView", content, .{ .slot = "content" });
+    try std.testing.expectEqualStrings("sidebar", sidebar.attached.slot.?);
+    try std.testing.expectEqualStrings("content", content.attached.slot.?);
+    try std.testing.expectEqual(@as(usize, 2), sv.children.items.len);
+    try std.testing.expect(sv.children.items[0] == sidebar);
+    try std.testing.expect(sv.children.items[1] == content);
+}
+
 test "unknown widget fails loudly" {
     const gpa = std.testing.allocator;
     try nb.init(gpa, schema_json);

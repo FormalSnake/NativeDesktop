@@ -56,6 +56,7 @@ pub const Attached = struct {
     grid_row_span: i64 = 1,
     grid_column_span: i64 = 1,
     tab_label: ?[]const u8 = null,
+    slot: ?[]const u8 = null,
 
     pub fn fromProps(props: ?std.json.Value) Attached {
         var a = Attached{};
@@ -66,6 +67,7 @@ pub const Attached = struct {
         if (v.object.get("gridRowSpan")) |f| { if (f == .integer) a.grid_row_span = f.integer; }
         if (v.object.get("gridColumnSpan")) |f| { if (f == .integer) a.grid_column_span = f.integer; }
         if (v.object.get("tabLabel")) |f| { if (f == .string) a.tab_label = f.string; }
+        if (v.object.get("slot")) |f| { if (f == .string) a.slot = f.string; }
         return a;
     }
 };
@@ -203,7 +205,7 @@ test "styleError event payload serializes key-only, other fields still omitted" 
 test "attached fromProps extracts grid and tab metadata" {
     const gpa = std.testing.allocator;
     const parsed = try std.json.parseFromSlice(std.json.Value, gpa,
-        "{\"gridRow\":2,\"gridColumn\":1,\"gridColumnSpan\":3,\"tabLabel\":\"Form\"}", .{});
+        "{\"gridRow\":2,\"gridColumn\":1,\"gridColumnSpan\":3,\"tabLabel\":\"Form\",\"slot\":\"sidebar\"}", .{});
     defer parsed.deinit();
     const a = Attached.fromProps(parsed.value);
     try std.testing.expectEqual(@as(i64, 2), a.grid_row);
@@ -211,6 +213,7 @@ test "attached fromProps extracts grid and tab metadata" {
     try std.testing.expectEqual(@as(i64, 1), a.grid_row_span);
     try std.testing.expectEqual(@as(i64, 3), a.grid_column_span);
     try std.testing.expectEqualStrings("Form", a.tab_label.?);
+    try std.testing.expectEqualStrings("sidebar", a.slot.?);
 }
 
 test "commitBatch with remove/insertBefore/hide/unhide decodes verbatim" {

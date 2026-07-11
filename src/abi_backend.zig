@@ -118,7 +118,7 @@ pub fn getWindow() ?*Widget {
 }
 
 /// Serializes `Attached` to the same JSON shape a create-op's props carry
-/// (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel) — the embedder's
+/// (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel/slot) — the embedder's
 /// `append_child`/`insert_before` re-derive attach metadata the same way
 /// `protocol.Attached.fromProps` does today, just crossing the ABI as JSON
 /// per M6a-D2 instead of a Zig struct.
@@ -129,6 +129,7 @@ fn attachedJsonZ(attached: protocol.Attached) [:0]const u8 {
         gridRowSpan: i64,
         gridColumnSpan: i64,
         tabLabel: ?[]const u8,
+        slot: ?[]const u8,
     };
     const shape = Shape{
         .gridRow = attached.grid_row,
@@ -136,6 +137,7 @@ fn attachedJsonZ(attached: protocol.Attached) [:0]const u8 {
         .gridRowSpan = attached.grid_row_span,
         .gridColumnSpan = attached.grid_column_span,
         .tabLabel = attached.tab_label,
+        .slot = attached.slot,
     };
     return allocZFromValue(shape);
 }

@@ -18,6 +18,13 @@ func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
+// SplitView's `sidebarWidth`/`collapsed` (create-time props on the NSSplitView
+// itself) are read again when the sidebar child later appends and gets wrapped
+// in its NSVisualEffectView — stashed here since the wrapper doesn't exist yet
+// at create time.
+nonisolated(unsafe) private var splitViewSidebarFraction: [ObjectIdentifier: Double] = [:]
+nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [:]
+
 func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     let props = parseProps(propsJson)
     if kind == "Window" {
@@ -132,6 +139,17 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         FileHandle.standardError.write("ND_WARN WebView is a v1 stub (no WKWebView); rendering placeholder label\n".data(using: .utf8)!)
         let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")
         return placeholder
+    } else if kind == "SplitView" {
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        if let w = propDouble(props, "sidebarWidth"), w > 0 {
+            splitViewSidebarFraction[ObjectIdentifier(split)] = w
+        }
+        if propBool(props, "collapsed") ?? false {
+            splitViewCollapsed[ObjectIdentifier(split)] = true
+        }
+        return split
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -215,6 +233,11 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let idx = propInt(props, "selectedIndex") {
             ndListViewSetSelectedIndex(view, idx)  // NDGen/ListView.swift (T3, hand-written)
         }
+    } else if kind == "SplitView" {
+        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,
+           let sidebarPane = split.arrangedSubviews.first, sidebarPane is NSVisualEffectView {
+            sidebarPane.isHidden = c
+        }
     }
 }
 
@@ -246,6 +269,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     let attachedGridColumn = propInt(attached, "gridColumn") ?? 0
     let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
+    let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Window" {
         parent.subviews.forEach { $0.removeFromSuperview() }
         parent.addSubview(child)
@@ -266,6 +290,35 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "Grid" {
         let grid = parent as! NSGridView
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
+    } else if parentKind == "SplitView" {
+        let split = parent as! NSSplitView
+        if attachedSlot == "sidebar" {
+            let wrapper = NSVisualEffectView()
+            wrapper.material = .sidebar
+            wrapper.blendingMode = .behindWindow
+            wrapper.state = .followsWindowActiveState
+            wrapper.translatesAutoresizingMaskIntoConstraints = false
+            child.translatesAutoresizingMaskIntoConstraints = false
+            wrapper.addSubview(child)
+            NSLayoutConstraint.activate([
+                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                child.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            ])
+            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
+                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
+                widthConstraint.priority = .defaultLow
+                widthConstraint.isActive = true
+            }
+            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
+            split.insertArrangedSubview(wrapper, at: 0)
+        } else {
+            split.addArrangedSubview(child)
+        }
+        if !split.arrangedSubviews.isEmpty {
+            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+        }
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -280,6 +333,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     let attachedGridColumn = propInt(attached, "gridColumn") ?? 0
     let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
+    let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Box" {
         let stack = parent as! NSStackView
         let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count
@@ -295,6 +349,35 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         // Grid children are position-addressed; sibling order is irrelevant.
         let grid = parent as! NSGridView
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
+    } else if parentKind == "SplitView" {
+        let split = parent as! NSSplitView
+        if attachedSlot == "sidebar" {
+            let wrapper = NSVisualEffectView()
+            wrapper.material = .sidebar
+            wrapper.blendingMode = .behindWindow
+            wrapper.state = .followsWindowActiveState
+            wrapper.translatesAutoresizingMaskIntoConstraints = false
+            child.translatesAutoresizingMaskIntoConstraints = false
+            wrapper.addSubview(child)
+            NSLayoutConstraint.activate([
+                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                child.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            ])
+            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
+                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
+                widthConstraint.priority = .defaultLow
+                widthConstraint.isActive = true
+            }
+            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
+            split.insertArrangedSubview(wrapper, at: 0)
+        } else {
+            split.addArrangedSubview(child)
+        }
+        if !split.arrangedSubviews.isEmpty {
+            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+        }
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -319,6 +402,15 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     } else if parentKind == "Grid" {
         let grid = parent as! NSGridView
         ndGridRemove(grid, child)
+    } else if parentKind == "SplitView" {
+        let split = parent as! NSSplitView
+        if let wrapper = child.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {
+            split.removeArrangedSubview(wrapper)
+            wrapper.removeFromSuperview()
+        } else {
+            split.removeArrangedSubview(child)
+            child.removeFromSuperview()
+        }
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

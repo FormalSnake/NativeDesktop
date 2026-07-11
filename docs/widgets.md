@@ -248,3 +248,21 @@ Automation role: `webview`. Text source: none. Children: none.
 | `url` | string | — | create |
 | `testID` | string | — | meta |
 
+## SplitView (`<splitview>`)
+
+Automation role: `group`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `sidebarWidth` | float | 0 | create |
+| `collapsed` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `slot` | enum | content |
+
+Attached props are attach-time-only; changing them after mount is a no-op.
+

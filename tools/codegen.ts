@@ -290,6 +290,7 @@ function genZig(s: Schema): string {
   out += "const gio = @import(\"gio\");\n";
   out += "const glib = @import(\"glib\");\n";
   out += "const gobject = @import(\"gobject\");\n";
+  out += "const adw = @import(\"adw\");\n";
   out += "const protocol = @import(\"../protocol.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
@@ -497,6 +498,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        std.debug.print(\"ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\\n\", .{});\n";
     out += "        const label = gtk.Label.new(\"WebView unavailable (v1 stub)\");\n";
     out += "        return label.as(gtk.Widget);\n";
+  } else if (w.name === "SplitView") {
+    out += "        const sv = adw.OverlaySplitView.new();\n";
+    out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
+    out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
+    out += "        return sv.as(gtk.Widget);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -603,6 +609,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
       out += "            if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));\n";
       out += "        }\n";
+    } else if (w.name === "SplitView" && p.name === "collapsed") {
+      out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
     } else {
       throw new Error(`no applyProps template for ${w.name}.${p.name} — add one when introducing it (M5b)`);
     }
@@ -822,6 +830,33 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     insertBefore: () => "        // Grid children are position-addressed; sibling order is irrelevant.\n        gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));\n",
     remove: () => "        gtk.Grid.remove(@ptrCast(@alignCast(parent)), child);\n",
   },
+  SplitView: {
+    append: () => {
+      let s = "        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"sidebar\")) adw.OverlaySplitView.setSidebar(sv, child)\n";
+      s += "            else adw.OverlaySplitView.setContent(sv, child);\n";
+      s += "        } else adw.OverlaySplitView.setContent(sv, child);\n";
+      return s;
+    },
+    insertBefore: () => {
+      // Two named slots, not an ordered list — insertBefore is set-by-slot,
+      // same as append. `before` (already unwrapped into `b` by the caller,
+      // src/generated/widgets.zig's `insertBefore` dispatcher) plays no part.
+      let s = "        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"sidebar\")) adw.OverlaySplitView.setSidebar(sv, child)\n";
+      s += "            else adw.OverlaySplitView.setContent(sv, child);\n";
+      s += "        } else adw.OverlaySplitView.setContent(sv, child);\n";
+      return s;
+    },
+    remove: () => {
+      let s = "        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));\n";
+      s += "        if (adw.OverlaySplitView.getSidebar(sv) == child) adw.OverlaySplitView.setSidebar(sv, null)\n";
+      s += "        else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);\n";
+      return s;
+    },
+  },
 };
 
 /** Kind-aware container ops, generated per container template. Throws if a
@@ -902,6 +937,13 @@ func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?
 
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
+
+// SplitView's \`sidebarWidth\`/\`collapsed\` (create-time props on the NSSplitView
+// itself) are read again when the sidebar child later appends and gets wrapped
+// in its NSVisualEffectView — stashed here since the wrapper doesn't exist yet
+// at create time.
+nonisolated(unsafe) private var splitViewSidebarFraction: [ObjectIdentifier: Double] = [:]
+nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [:]
 `;
 
 function swiftStrLit(v: string): string {
@@ -1058,6 +1100,17 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        FileHandle.standardError.write("ND_WARN WebView is a v1 stub (no WKWebView); rendering placeholder label\\n".data(using: .utf8)!)\n';
     out += '        let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")\n';
     out += "        return placeholder\n";
+  } else if (w.name === "SplitView") {
+    out += "        let split = NSSplitView()\n";
+    out += "        split.isVertical = true\n";
+    out += "        split.dividerStyle = .thin\n";
+    out += '        if let w = propDouble(props, "sidebarWidth"), w > 0 {\n';
+    out += "            splitViewSidebarFraction[ObjectIdentifier(split)] = w\n";
+    out += "        }\n";
+    out += `        if propBool(props, "collapsed") ?? ${swiftDefaultBool(w, "collapsed")} {\n`;
+    out += "            splitViewCollapsed[ObjectIdentifier(split)] = true\n";
+    out += "        }\n";
+    out += "        return split\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -1167,6 +1220,11 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let idx = propInt(props, "selectedIndex") {\n';
       out += "            ndListViewSetSelectedIndex(view, idx)  // NDGen/ListView.swift (T3, hand-written)\n";
       out += "        }\n";
+    } else if (w.name === "SplitView" && p.name === "collapsed") {
+      out += '        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,\n';
+      out += "           let sidebarPane = split.arrangedSubviews.first, sidebarPane is NSVisualEffectView {\n";
+      out += "            sidebarPane.isHidden = c\n";
+      out += "        }\n";
     } else {
       throw new Error(`no applyProps template for ${key} — add one when introducing it (M6b)`);
     }
@@ -1225,6 +1283,38 @@ interface SwiftStructuralTemplate {
   remove: (childExpr: string) => string;
 }
 
+// Shared between SplitView's append/insertBefore (identical body — slots
+// aren't order-addressed, so `before` plays no part).
+const SPLITVIEW_STRUCTURAL_BODY =
+  "        let split = parent as! NSSplitView\n" +
+  '        if attachedSlot == "sidebar" {\n' +
+  "            let wrapper = NSVisualEffectView()\n" +
+  "            wrapper.material = .sidebar\n" +
+  "            wrapper.blendingMode = .behindWindow\n" +
+  "            wrapper.state = .followsWindowActiveState\n" +
+  "            wrapper.translatesAutoresizingMaskIntoConstraints = false\n" +
+  "            child.translatesAutoresizingMaskIntoConstraints = false\n" +
+  "            wrapper.addSubview(child)\n" +
+  "            NSLayoutConstraint.activate([\n" +
+  "                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),\n" +
+  "                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),\n" +
+  "                child.topAnchor.constraint(equalTo: wrapper.topAnchor),\n" +
+  "                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),\n" +
+  "            ])\n" +
+  "            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {\n" +
+  "                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))\n" +
+  "                widthConstraint.priority = .defaultLow\n" +
+  "                widthConstraint.isActive = true\n" +
+  "            }\n" +
+  "            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
+  "            split.insertArrangedSubview(wrapper, at: 0)\n" +
+  "        } else {\n" +
+  "            split.addArrangedSubview(child)\n" +
+  "        }\n" +
+  "        if !split.arrangedSubviews.isEmpty {\n" +
+  "            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)\n" +
+  "        }\n";
+
 const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Window: {
     // `parent` here is the Window's tracked handle: the flipped contentView
@@ -1252,6 +1342,25 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     insertBefore: () => "        // Grid children are position-addressed; sibling order is irrelevant.\n        let grid = parent as! NSGridView\n        ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)\n",
     remove: () => "        let grid = parent as! NSGridView\n        ndGridRemove(grid, child)\n",
   },
+  SplitView: {
+    // Two named slots, not an ordered list — insertBefore is set-by-slot, same
+    // as append (mirrors the Zig STRUCTURAL.SplitView shape); `before` is
+    // unused. The sidebar child is wrapped in a vibrancy NSVisualEffectView
+    // pinned to it via Auto Layout; NSSplitView pane order is enforced
+    // regardless of mount order — sidebar always arrangedSubviews[0] (via
+    // insertArrangedSubview(at: 0)), content always appended at the end.
+    append: () => SPLITVIEW_STRUCTURAL_BODY,
+    insertBefore: () => SPLITVIEW_STRUCTURAL_BODY,
+    remove: () =>
+      "        let split = parent as! NSSplitView\n" +
+      "        if let wrapper = child.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {\n" +
+      "            split.removeArrangedSubview(wrapper)\n" +
+      "            wrapper.removeFromSuperview()\n" +
+      "        } else {\n" +
+      "            split.removeArrangedSubview(child)\n" +
+      "            child.removeFromSuperview()\n" +
+      "        }\n",
+  },
 };
 
 /** Emits `ndAppendChild`/`ndInsertBefore`/`ndRemoveChild`, one arm per
@@ -1271,7 +1380,8 @@ function genSwiftStructural(s: Schema): string {
     '    let attachedGridRow = propInt(attached, "gridRow") ?? 0\n' +
     '    let attachedGridColumn = propInt(attached, "gridColumn") ?? 0\n' +
     '    let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1\n' +
-    '    let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1\n';
+    '    let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1\n' +
+    '    let attachedSlot = propStr(attached, "slot") ?? "content"\n';
 
   let out = "func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ attachedJson: String) {\n";
   out += attachedPrelude;

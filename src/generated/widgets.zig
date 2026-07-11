@@ -4,6 +4,7 @@ const gtk = @import("gtk");
 const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
+const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -242,6 +243,11 @@ pub fn create(
         std.debug.print("ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (v1 stub)");
         return label.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SplitView")) {
+        const sv = adw.OverlaySplitView.new();
+        if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
+        if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
+        return sv.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -351,6 +357,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
             if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));
         }
+    } else if (std.mem.eql(u8, kind, "SplitView")) {
+        if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
     }
 }
 
@@ -488,6 +496,12 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (attached.tab_label) |tl| gtk.Notebook.setTabLabelText(nb, child, dupeZ(tl));
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));
+    } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
+            else adw.OverlaySplitView.setContent(sv, child);
+        } else adw.OverlaySplitView.setContent(sv, child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -519,6 +533,12 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         // Grid children are position-addressed; sibling order is irrelevant.
         gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));
+    } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
+            else adw.OverlaySplitView.setContent(sv, child);
+        } else adw.OverlaySplitView.setContent(sv, child);
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         appendChild(parent, parent_kind, child, attached, dupeZ);
@@ -538,6 +558,10 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (pos >= 0) gtk.Notebook.removePage(nb, pos);
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         gtk.Grid.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
+        if (adw.OverlaySplitView.getSidebar(sv) == child) adw.OverlaySplitView.setSidebar(sv, null)
+        else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }

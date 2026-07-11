@@ -13,7 +13,7 @@ pub const NodeMeta = struct {
     test_id: ?[]u8,
     text: ?[]u8,
     parent: u32,
-    attached: protocol.Attached = .{}, // tab_label duped/owned here
+    attached: protocol.Attached = .{}, // tab_label/slot duped/owned here
     /// ListView's row count (M5c-D4): getTree reports this instead of
     /// dumping the recycled row widgets. Null for every non-data-driven widget.
     item_count: ?u32 = null,
@@ -123,6 +123,8 @@ pub const Tree = struct {
         var owned_attached = attached;
         owned_attached.tab_label = try self.dupeOpt(attached.tab_label);
         errdefer if (owned_attached.tab_label) |v| self.gpa.free(v);
+        owned_attached.slot = try self.dupeOpt(attached.slot);
+        errdefer if (owned_attached.slot) |v| self.gpa.free(v);
         try self.meta.put(self.gpa, id, .{
             .widget_type = owned_type,
             .test_id = owned_test_id,
@@ -217,6 +219,7 @@ pub const Tree = struct {
         if (kv.value.test_id) |v| self.gpa.free(v);
         if (kv.value.text) |v| self.gpa.free(v);
         if (kv.value.attached.tab_label) |v| self.gpa.free(v);
+        if (kv.value.attached.slot) |v| self.gpa.free(v);
     }
 
     pub fn deinitMeta(self: *Tree) void {
@@ -226,6 +229,7 @@ pub const Tree = struct {
             if (entry.value_ptr.test_id) |v| self.gpa.free(v);
             if (entry.value_ptr.text) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
+            if (entry.value_ptr.attached.slot) |v| self.gpa.free(v);
         }
         self.meta.deinit(self.gpa);
     }

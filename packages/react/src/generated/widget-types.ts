@@ -20,4 +20,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   Grid: 17,
   ListView: 18,
   WebView: 19,
+  SplitView: 20,
 };

@@ -293,6 +293,23 @@
       ],
       "events": [],
       "automation": { "role": "webview", "textFrom": null }
+    },
+    {
+      "name": "SplitView",
+      "intrinsic": "splitview",
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "slot", "type": "enum", "values": ["sidebar", "content"], "default": "content" }
+        ]
+      },
+      "props": [
+        { "name": "sidebarWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
+        { "name": "collapsed", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": null }
     }
   ]
 }
