@@ -15,6 +15,16 @@ let package = Package(
         .executableTarget(
             name: "NDShell",
             dependencies: ["CNd"],
+            // Generated widget code (swift/Sources/NDGen/Widgets.swift +
+            // T3's hand-written NDGen/ListView.swift) references
+            // NDShell-only symbols (EventDispatcher, withEchoSuppressed,
+            // radioGroupIdentifier, gWindow, makeListView) and vice versa —
+            // a separate NDGen module would be circular. Compiling both
+            // directories into one target keeps the file paths the plan
+            // mandates (swift/Sources/NDGen/Widgets.swift) while giving
+            // generated + hand-written code one shared namespace.
+            path: "Sources",
+            sources: ["NDShell", "NDGen"],
             linkerSettings: [
                 // Link the prebuilt static lib + the frameworks the AppKit
                 // backend (T3+) needs. libnd.a is GTK-free pure-Zig core.
