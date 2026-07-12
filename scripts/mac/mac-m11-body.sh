@@ -49,6 +49,8 @@ ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_DIR=/tmp bun scripts/notes-drive.ts >"$DRIV
 cat "$DRIVE_LOG"
 grep -q ND_NOTES_OK "$DRIVE_LOG" || { echo "FAIL: no ND_NOTES_OK"; kill "$PID" 2>/dev/null; exit 1; }
 grep -q ND_NAVCHROME_OK "$DRIVE_LOG" || { echo "FAIL: native chrome not present"; kill "$PID" 2>/dev/null; exit 1; }
+grep -q ND_THREEPANE_OK "$DRIVE_LOG" || { echo "FAIL: three-pane chrome not present"; kill "$PID" 2>/dev/null; exit 1; }
+grep -q ND_MENU_NEWNOTE_OK "$DRIVE_LOG" || { echo "FAIL: menu bar File>New Note not wired"; kill "$PID" 2>/dev/null; exit 1; }
 file /tmp/notes-baseline.png | grep -q "PNG image" || { echo "FAIL: baseline not a png"; kill "$PID" 2>/dev/null; exit 1; }
 file /tmp/notes-final.png | grep -q "PNG image" || { echo "FAIL: final not a png"; kill "$PID" 2>/dev/null; exit 1; }
 kill -TERM "$PID" 2>/dev/null || true

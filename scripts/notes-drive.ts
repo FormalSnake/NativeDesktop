@@ -1,8 +1,12 @@
 #!/usr/bin/env bun
 // scripts/notes-drive.ts — drives the ND Notes example over the automation
 // socket. Mirrors scripts/m5c-drive.ts's AutomationClient/find scaffold.
-// Proves: create note, type title+body, live word count, second note,
-// search filter narrows the list, pin reorders the list, delete removes it.
+// Proves: three-pane chrome (folders/list/editor), menu bar wiring, create
+// note, type title+body, live word count, second note, search filter narrows
+// the list, pin (via the header pin-button) reorders the list, delete
+// (soft-delete to Trash) removes it from the All Notes scope, and File>New
+// Note from the menu bar hits the same createNote() path as the header
+// button.
 import { AutomationClient } from "../packages/mcp/src/socket.ts";
 import { widgetMeta } from "../packages/react/src/generated/schema-meta.ts";
 
@@ -142,42 +146,82 @@ let t0 = await tree();
 const titleInput0 = mustFind(t0, "title-input");
 if (titleInput0.text !== "Welcome to ND Notes") throw new Error(`unexpected seeded title: ${titleInput0.text}`);
 
-// Native-chrome assertion (Phase A): the window is edge-to-edge and each
-// split pane carries its OWN header bar. So <splitview testID="split">
-// (role group) wraps two <toolbarview> panes (role group), and each pane's
-// first child is a <headerbar> (role toolbar) — the sidebar header holds the
-// "New Note" button, the content header shows the note title. getTree's
-// `type` field is the schema widget name (e.g. "SplitView"/"ToolbarView"/
-// "HeaderBar" — verified against src/tree.zig's putMeta, which stores the
-// wire `widget_type` string unchanged); look up each node's accessibility
-// role from the same generated table the codegen emits (packages/react/src/
-// generated/schema-meta.ts) rather than assuming a wire "role" field exists.
+// Native-chrome assertion (Phase A, now three-pane): the window is
+// edge-to-edge and each split pane carries its OWN header bar. So
+// <splitview testID="split"> (role group) wraps THREE <toolbarview> panes
+// (role group) — sidebar (folders), list (search + note rows), content
+// (editor) — and each pane's first child is a <headerbar> (role toolbar).
+// getTree's `type` field is the schema widget name (e.g. "SplitView"/
+// "ToolbarView"/"HeaderBar" — verified against src/tree.zig's putMeta, which
+// stores the wire `widget_type` string unchanged); look up each node's
+// accessibility role from the same generated table the codegen emits
+// (packages/react/src/generated/schema-meta.ts) rather than assuming a wire
+// "role" field exists.
 const splitNode = mustFind(t0, "split");
 const splitRole = widgetMeta[splitNode.type]?.role;
 if (splitRole !== "group") throw new Error(`split node (type=${splitNode.type}) role=${splitRole}, want "group"`);
 
 const sidebarToolbar = mustFind(t0, "sidebar-toolbar");
+const listToolbar = mustFind(t0, "list-toolbar");
 const contentToolbar = mustFind(t0, "content-toolbar");
-for (const tv of [sidebarToolbar, contentToolbar]) {
+for (const tv of [sidebarToolbar, listToolbar, contentToolbar]) {
   const role = widgetMeta[tv.type]?.role;
   if (role !== "group") throw new Error(`toolbarview node ${tv.testID} (type=${tv.type}) role=${role}, want "group"`);
 }
 
 const sidebarHeader = mustFind(t0, "sidebar-header");
+const listHeader = mustFind(t0, "list-header");
 const contentHeader = mustFind(t0, "content-header");
-for (const h of [sidebarHeader, contentHeader]) {
+for (const h of [sidebarHeader, listHeader, contentHeader]) {
   const role = widgetMeta[h.type]?.role;
   if (role !== "toolbar") throw new Error(`header node ${h.testID} (type=${h.type}) role=${role}, want "toolbar"`);
 }
 
 // Each header must live inside its own toolbarview pane (not the window).
 if (!find(sidebarToolbar, "sidebar-header")) throw new Error("sidebar-header is not inside sidebar-toolbar");
+if (!find(listToolbar, "list-header")) throw new Error("list-header is not inside list-toolbar");
 if (!find(contentToolbar, "content-header")) throw new Error("content-header is not inside content-toolbar");
-// The "New Note" button lives in the sidebar's header, not the window titlebar.
-if (!find(sidebarHeader, "new-note-button")) throw new Error("new-note-button is not inside sidebar-header");
+// The floating editing buttons (pin/delete/new-note) live in the EDITOR
+// pane's own header (end slot), not the window titlebar or the sidebar.
+if (!find(contentHeader, "new-note-button")) throw new Error("new-note-button is not inside content-header");
+if (!find(contentHeader, "pin-button")) throw new Error("pin-button is not inside content-header");
+if (!find(contentHeader, "delete-note-button")) throw new Error("delete-note-button is not inside content-header");
 console.log(
-  `ND_NAVCHROME_OK edge-to-edge split with per-pane headers (split=${splitNode.type}/${splitRole}, ` +
-    `sidebar-header=${sidebarHeader.type}, content-header=${contentHeader.type})`,
+  `ND_NAVCHROME_OK edge-to-edge three-pane split with per-pane headers (split=${splitNode.type}/${splitRole}, ` +
+    `sidebar-header=${sidebarHeader.type}, list-header=${listHeader.type}, content-header=${contentHeader.type})`,
+);
+
+// M13 Feature C gate: three REAL panes (sidebar/list/content), each >= 150pt
+// wide, laid out left-to-right in that literal x-order — measured on the
+// same widgets a user would actually click (a folder row, a note row, the
+// editor textarea), not just internal wrapper geometry.
+const sidebarContent = mustFind(t0, "sidebar-content");
+const listContent = mustFind(t0, "list-content");
+const contentBody = mustFind(t0, "content-body");
+for (const { name, node } of [
+  { name: "sidebar", node: sidebarContent },
+  { name: "list", node: listContent },
+  { name: "content", node: contentBody },
+]) {
+  if (!node.geometry) throw new Error(`${name} pane has no geometry`);
+  if (node.geometry.w < 150) throw new Error(`${name} pane width=${node.geometry.w} — expected >= 150`);
+}
+const folderRowAll0 = mustFind(t0, "folder-row-all");
+const someNoteRow0 = findAllPrefixed(t0.root, "note-row-")[0];
+if (!someNoteRow0) throw new Error("no note-row-* present at boot for ND_THREEPANE_OK");
+const editorTextarea0 = mustFind(t0, "editor-textarea");
+const folderX = folderRowAll0.geometry?.x;
+const noteRowX = someNoteRow0.geometry?.x;
+const editorX = editorTextarea0.geometry?.x;
+if (folderX == null || noteRowX == null || editorX == null) throw new Error("missing x geometry for three-pane x-order check");
+if (!(folderX < noteRowX && noteRowX < editorX)) {
+  throw new Error(
+    `x-order violated: folder-row-all@${folderX}, ${someNoteRow0.testID}@${noteRowX}, editor-textarea@${editorX} — want folder < note < editor`,
+  );
+}
+console.log(
+  `ND_THREEPANE_OK sidebar(w=${sidebarContent.geometry!.w})@x=${folderX} ` +
+    `list(w=${listContent.geometry!.w})@x=${noteRowX} content(w=${contentBody.geometry!.w})@x=${editorX}`,
 );
 
 // Chrome geometry gates (regressed silently once, during the AppKit
@@ -185,23 +229,28 @@ console.log(
 // 1. Pane CONTENT must clear the title bar / header area. On AppKit
 //    (fullSizeContentView + unified toolbar, safe area ~52pt) and on GTK
 //    (AdwHeaderBar titlebar sits above y=0 of the content coordinate space,
-//    content boxes carry 10-12px padding) the first in-pane control sits
+//    content boxes carry 8-12px padding) the first in-pane control sits
 //    comfortably below y=40 only when the safe-area/header inset is intact.
-// 2. The window must honor defaultWidth/Height (900x600) — AppKit's
+// 2. The window must honor defaultWidth/Height (1100x700) — AppKit's
 //    contentViewController assignment resizes the window to fitting size
 //    unless the frame is explicitly preserved (measured collapse: 500x500).
 const searchGeom = mustFind(t0, "search-input").geometry;
 const titleGeom = mustFind(t0, "title-input").geometry;
-if (!searchGeom || searchGeom.y < 40) throw new Error(`search-input y=${searchGeom?.y} — sidebar content is under the titlebar (safe-area inset lost)`);
+if (!searchGeom || searchGeom.y < 40) throw new Error(`search-input y=${searchGeom?.y} — list pane content is under the titlebar (safe-area inset lost)`);
 if (!titleGeom || titleGeom.y < 40) throw new Error(`title-input y=${titleGeom?.y} — content pane is under the titlebar (safe-area inset lost)`);
 const rootGeom = t0.root.geometry;
-if (!rootGeom || rootGeom.w < 850) throw new Error(`window content width=${rootGeom?.w} — defaultWidth (900) not honored`);
-// 3. Content-pane layout must start RIGHT of the sidebar (sidebar fraction
-//    0.28 * 900 = 252). On AppKit the pane's frame deliberately extends
-//    under the floating glass sidebar, but its content must inset past it
-//    via the safe-area leading guide — an x below the sidebar width means
-//    the editor is rendering underneath the glass (owner-reported overlap).
-if (titleGeom.x < 200) throw new Error(`title-input x=${titleGeom.x} — content pane renders under the sidebar`);
+if (!rootGeom || rootGeom.w < 1050) throw new Error(`window content width=${rootGeom?.w} — defaultWidth (1100) not honored`);
+// 3. Each pane's content must start RIGHT of the pane before it — on AppKit
+//    a pane's frame deliberately extends under the floating glass pane to
+//    its left, but its content must inset past it via the safe-area leading
+//    guide — an x at or left of the previous pane's right edge means content
+//    is rendering underneath that pane's glass (owner-reported overlap).
+if (searchGeom.x < sidebarContent.geometry!.x + sidebarContent.geometry!.w) {
+  throw new Error(`search-input x=${searchGeom.x} — list pane renders under the sidebar`);
+}
+if (titleGeom.x < listContent.geometry!.x + listContent.geometry!.w) {
+  throw new Error(`title-input x=${titleGeom.x} — content pane renders under the list pane`);
+}
 console.log(`ND_CHROMEGEOM_OK search-input@y=${searchGeom.y} title-input@y=${titleGeom.y},x=${titleGeom.x} root=${rootGeom.w}x${rootGeom.h}`);
 
 let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.png` })) as {
@@ -211,7 +260,7 @@ let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.p
 };
 if (shot.width <= 0 || shot.height <= 0) throw new Error("baseline screenshot has no dimensions");
 
-// 1. Create a new note via the "New note" button.
+// 1. Create a new note via the editor pane's "New note" header button.
 const newNoteBtn = mustFind(t0, "new-note-button");
 const createRes = (await client.call("click", { ref: newNoteBtn.ref })) as { dispatched: boolean };
 if (!createRes.dispatched) throw new Error("new-note-button click did not dispatch");
@@ -247,7 +296,7 @@ const status3 = mustFind(t3, "status-label");
 if (!status3.text?.startsWith("6 words")) throw new Error(`status-label=${status3.text}, want to start with "6 words"`);
 if (!status3.text?.includes("Saved")) throw new Error(`status-label=${status3.text}, want to include "Saved"`);
 
-// List now shows all three notes (2 seeded + 1 new), count label updated.
+// List (scoped to All Notes) now shows all three notes (2 seeded + 1 new), count label updated.
 const countLabel3 = mustFind(t3, "note-count-label");
 if (countLabel3.text !== "3 of 3 notes") throw new Error(`note-count-label=${countLabel3.text}, want "3 of 3 notes"`);
 const rows3 = findAllPrefixed(t3.root, "note-row-");
@@ -285,20 +334,22 @@ await client.call("waitFor", { condition: { textContains: "4 of 4 notes" }, time
 
 // 5. Re-select "Grocery run" via its note-row button (selection is per-note
 // state, independent of the search filter — clearing the filter does not
-// change which note is selected), then pin it and assert it reorders first.
+// change which note is selected), then pin it via the editor header's
+// pin-button (Feature C: the checkbox is gone — pin/unpin now goes through
+// the SAME togglePinSelected() path as the Note>Pin menu item) and assert it
+// reorders first.
 const findGroceryRow = (t: GetTreeResult): TreeNode | null =>
   findAllPrefixed(t.root, "note-row-").find((r) => r.text?.includes("Grocery run")) ?? null;
 if (!findGroceryRow(await tree())) throw new Error("Grocery run row not found after clearing search");
 await clickRetrying(findGroceryRow, tree);
 await waitForTitle("Grocery run", tree);
-await setValueRetrying("pin-checkbox", true, tree);
+await clickRetrying((t) => find(t.root, "pin-button"), tree);
 
-// setValue's RPC ack only confirms the GTK-side action was dispatched
-// (gtk.CheckButton.setActive), which is synchronous at the signal level —
-// the resulting onToggled -> React state update -> NDP commitBatch round
-// trip through the Bun child is a separate, later, async event. Give that
-// at least one round trip before polling, same class of race as the
-// title/word-count waits above.
+// The click RPC ack only confirms the GTK/AppKit-side action was dispatched,
+// which is synchronous at the signal level — the resulting onClick -> React
+// state update -> NDP commitBatch round trip through the Bun child is a
+// separate, later, async event. Give that at least one round trip before
+// polling, same class of race as the title/word-count waits above.
 await new Promise((r) => setTimeout(r, 300));
 
 // getTree's reported child ORDER is not a reliable signal for asserting
@@ -310,14 +361,13 @@ await new Promise((r) => setTimeout(r, 300));
 // live: an NDP wire trace of this exact pin action shows the host correctly
 // emitting create+append ops in the right final sequence
 // (note-row-3,1,4,2 = Grocery,Welcome,Trip,Shopping, pinned-first then id
-// descending) AND the checkbox's `checked:true` update landing — but the
-// SAME getTree call immediately after can report the children back in
-// plain id order (1,2,3,4). The app and the widget tree are both correct;
-// only the automation reflection of "what order are they in" is unreliable
-// for a reordering list. Assert what getTree DOES guarantee instead:
-// membership (all 4 rows present, by testID, order-independent) and the
-// checkbox's own semantic effect (still checked) — then let the final
-// screenshot be the visual proof of the actual on-screen order/accent.
+// descending) AND the pinned flag flipping — but the SAME getTree call
+// immediately after can report the children back in plain id order
+// (1,2,3,4). The app and the widget tree are both correct; only the
+// automation reflection of "what order are they in" is unreliable for a
+// reordering list. Assert what getTree DOES guarantee instead: membership
+// (all 4 rows present, by testID, order-independent) — then let the y-order
+// wait below assert the actual on-screen order.
 let rows8: TreeNode[] = [];
 let t8: GetTreeResult = await tree();
 for (let i = 0; i < 20; i++) {
@@ -341,15 +391,16 @@ if (!groceryRowAfterPin?.text?.includes("Grocery run")) throw new Error(`note-ro
 const rowsAfterPin = await waitForRowsByY((rows) => rows.length === 4 && rows[0]!.id === "note-row-3" && rows[0]!.y < rows[1]!.y, tree);
 console.log(`ND_PIN_YORDER_OK pinned row y-topmost: ${rowsAfterPin.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}`);
 
-// 5c. Unpin the same note and assert the full y-order matches sortNotes's
-// expected order once note 1 (Welcome) is the only pinned note again:
-// pinned-first (1), then id descending among the unpinned (4,3,2) — i.e.
-// note-row-1, note-row-4, note-row-3, note-row-2 (see examples/notes/
-// main.tsx sortNotes). Re-select note-row-3 first: selection is independent
-// of pin state, but the pin-checkbox only renders for the selected row.
+// 5c. Unpin the same note (pin-button again — it's a toggle) and assert the
+// full y-order matches sortNotes's expected order once note 1 (Welcome) is
+// the only pinned note again: pinned-first (1), then id descending among the
+// unpinned (4,3,2) — i.e. note-row-1, note-row-4, note-row-3, note-row-2 (see
+// examples/notes/main.tsx sortNotes). Re-select note-row-3 first: selection
+// is independent of pin state, but the pin-button toggles whichever note is
+// currently selected.
 await clickRetrying((t) => find(t.root, "note-row-3"), tree);
 await waitForTitle("Grocery run", tree);
-await setValueRetrying("pin-checkbox", false, tree);
+await clickRetrying((t) => find(t.root, "pin-button"), tree);
 // Same async commit-round-trip race as the pin toggle above.
 await new Promise((r) => setTimeout(r, 300));
 
@@ -363,7 +414,10 @@ console.log(`ND_UNPIN_YORDER_OK y-order restored: ${rowsAfterUnpin.map((r) => `$
 // Refresh t8 (used below to find delete-note-button) to the post-unpin tree.
 t8 = await tree();
 
-// 6. Delete the selected ("Grocery run") note; list shrinks and selection moves on.
+// 6. Delete the selected ("Grocery run") note; Feature C makes this a soft
+// delete (moves to Trash), which drops it out of the All Notes scope the
+// list is currently showing — list shrinks and selection moves on exactly
+// as the old hard-delete did from this view's perspective.
 const deleteBtn8 = mustFind(t8, "delete-note-button");
 const deleteRes = (await client.call("click", { ref: deleteBtn8.ref })) as { dispatched: boolean };
 if (!deleteRes.dispatched) throw new Error("delete-note-button click did not dispatch");
@@ -372,7 +426,26 @@ await client.call("waitFor", { condition: { textContains: "3 of 3 notes" }, time
 let t9 = await tree();
 const rows9 = findAllPrefixed(t9.root, "note-row-");
 if (rows9.length !== 3) throw new Error(`expected 3 note rows after delete, got ${rows9.length}`);
-if (rows9.some((r) => r.text?.includes("Grocery run"))) throw new Error("deleted note still present in list");
+if (rows9.some((r) => r.text?.includes("Grocery run"))) throw new Error("deleted (trashed) note still present in the All Notes list");
+
+// 7. File > New Note from the menu bar must hit the SAME createNote() path
+// as the editor header's new-note-button (Feature C: header button + menu
+// item both call the same updater) — semanticClick the menuitem and confirm
+// the note count increments exactly like button 1 did.
+let t10 = await tree();
+const countBefore10 = findAllPrefixed(t10.root, "note-row-").length;
+const menuNewNote = mustFind(t10, "menu-new-note");
+const menuClickRes = (await client.call("click", { ref: menuNewNote.ref })) as { dispatched: boolean };
+if (!menuClickRes.dispatched) throw new Error("menu-new-note click did not dispatch");
+await client.call("waitFor", { condition: { textContains: "Untitled note" }, timeoutMs: 3000 });
+let t11 = await tree();
+const rows11 = findAllPrefixed(t11.root, "note-row-");
+if (rows11.length !== countBefore10 + 1) {
+  throw new Error(`expected ${countBefore10 + 1} note rows after File>New Note, got ${rows11.length}`);
+}
+const titleInput11 = mustFind(t11, "title-input");
+if (titleInput11.text !== "Untitled note") throw new Error(`menu New Note did not select the new note: title-input=${titleInput11.text}`);
+console.log(`ND_MENU_NEWNOTE_OK note-row count ${countBefore10} -> ${rows11.length} via File>New Note menu item`);
 
 // Final screenshot, polling like m5c-drive.ts (post-mutation frame can race invalidation).
 let finalShot: { path: string; width: number; height: number } | null = null;

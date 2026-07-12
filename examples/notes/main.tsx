@@ -4,17 +4,29 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // (see scripts/notes-drive.ts for the headless proof). All state is in
 // memory; there is no persistence layer by design.
 //
+// M13 Feature C: Apple-Notes-style rework on the landed three-pane SplitView
+// + menu bar machinery (see docs/superpowers/plans/2026-07-12-m13-menubar-
+// threepane-examples-docs.md, Feature C). Three <splitview> panes, each its
+// own <toolbarview>+<headerbar> (own header, not one shared window titlebar):
+//   - sidebar (slot="sidebar", glass): folders — All Notes / Personal / Work
+//     / Trash — as navigation-sidebar flat buttons, counts in the label.
+//   - list (slot="list"): search + the note-row list + a count caption.
+//   - content (slot="content", declared LAST so GTK homes the menu bar's
+//     primary button in ITS headerbar per GNOME convention): the floating
+//     editing buttons (pin/delete/new-note, icon-only, end slot) plus the
+//     title textinput, the body textarea, and the word-count/saved caption.
+// A <menubar> (File > New Note, Note > Pin/Unpin + Delete) sits alongside the
+// splitview as a Window sibling; its custom items call the EXACT SAME
+// updater functions as the matching header buttons (createNote/togglePin/
+// deleteSelected) — one mutation path per action, two triggers each.
+//
 // Visual approach: native chrome, not hand-rolled facsimiles of it.
 //   - The `<window>` is edge-to-edge (AdwApplicationWindow): the `<splitview>`
-//     fills to the very top, GNOME-style. Each pane is wrapped in a
-//     `<toolbarview>` (AdwToolbarView) whose first child is a `<headerbar>`
-//     — so the sidebar and the content pane each carry their OWN header bar
-//     at the top, instead of one shared window titlebar.
-//   - `<splitview>` is the real sidebar/content split (AdwOverlaySplitView
-//     on GTK, NSSplitView + vibrancy sidebar on Mac) — no hand-rolled
-//     two-Box row with a hardcoded sidebar background.
+//     fills to the very top, GNOME-style.
+//   - `<splitview>` is the real three-pane split (AdwOverlaySplitView nested
+//     pair on GTK, NSSplitView three-way on Mac) — no hand-rolled boxes.
 //   - `cssClasses` reaches libadwaita's named classes (navigation-sidebar,
-//     suggested-action, destructive-action, pill, dimmed, caption, view,
+//     suggested-action, destructive-action, accent, dimmed, caption, view,
 //     flat). libadwaita is initialized host-side (src/gtk/main.zig calls
 //     adw.init()), so AdwStyleManager tracks the system color scheme — the
 //     whole app follows light/dark automatically, with no per-widget color
@@ -26,18 +38,23 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // No background/color literals anywhere else: dark mode is automatic on
 // both platforms.
 
+type FolderId = "personal" | "work";
+type FolderView = "all" | FolderId | "trash";
+
 interface Note {
   id: number;
   title: string;
   body: string;
   pinned: boolean;
+  folderId: FolderId;
+  deleted: boolean;
 }
 
 let nextId = 3;
 
 const initialNotes: Note[] = [
-  { id: 1, title: "Welcome to ND Notes", body: "This is your first note. Select it, edit it, or create a new one.", pinned: true },
-  { id: 2, title: "Shopping list", body: "Milk\nEggs\nBread", pinned: false },
+  { id: 1, title: "Welcome to ND Notes", body: "This is your first note. Select it, edit it, or create a new one.", pinned: true, folderId: "personal", deleted: false },
+  { id: 2, title: "Shopping list", body: "Milk\nEggs\nBread", pinned: false, folderId: "personal", deleted: false },
 ];
 
 function wordCount(text: string): number {
@@ -52,18 +69,52 @@ function sortNotes(notes: Note[]): Note[] {
   });
 }
 
+function folderScoped(all: Note[], view: FolderView): Note[] {
+  switch (view) {
+    case "trash":
+      return all.filter((n) => n.deleted);
+    case "personal":
+      return all.filter((n) => !n.deleted && n.folderId === "personal");
+    case "work":
+      return all.filter((n) => !n.deleted && n.folderId === "work");
+    case "all":
+      return all.filter((n) => !n.deleted);
+  }
+}
+
+function folderLabel(view: FolderView): string {
+  switch (view) {
+    case "all":
+      return "All Notes";
+    case "personal":
+      return "Personal";
+    case "work":
+      return "Work";
+    case "trash":
+      return "Trash";
+  }
+}
+
 function App(): React.ReactNode {
   const [notes, setNotes] = useState<Note[]>(initialNotes);
   const [selectedId, setSelectedId] = useState<number | null>(1);
+  const [folder, setFolder] = useState<FolderView>("all");
   const [query, setQuery] = useState("");
   const [savedPulse, setSavedPulse] = useState(true);
 
-  const sorted = useMemo(() => sortNotes(notes), [notes]);
+  const scopedNotes = useMemo(() => folderScoped(notes, folder), [notes, folder]);
+  const sorted = useMemo(() => sortNotes(scopedNotes), [scopedNotes]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q === "") return sorted;
     return sorted.filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q));
   }, [sorted, query]);
+
+  const nonDeleted = useMemo(() => notes.filter((n) => !n.deleted), [notes]);
+  const allCount = nonDeleted.length;
+  const personalCount = nonDeleted.filter((n) => n.folderId === "personal").length;
+  const workCount = nonDeleted.filter((n) => n.folderId === "work").length;
+  const trashCount = notes.length - nonDeleted.length;
 
   const selected = notes.find((n) => n.id === selectedId) ?? null;
 
@@ -73,94 +124,204 @@ function App(): React.ReactNode {
     setSavedPulse(true);
   }
 
+  function togglePinSelected(): void {
+    if (selected == null) return;
+    updateSelected({ pinned: !selected.pinned });
+  }
+
+  function selectFolder(next: FolderView): void {
+    setFolder(next);
+    setQuery("");
+    const scoped = sortNotes(folderScoped(notes, next));
+    setSelectedId(scoped.length > 0 ? scoped[0]!.id : null);
+  }
+
   function createNote(): void {
-    const note: Note = { id: nextId++, title: "Untitled note", body: "", pinned: false };
+    // New notes land in the selected folder, or Personal when created from
+    // All Notes / Trash (a folder view that isn't a real destination).
+    const targetFolder: FolderId = folder === "personal" || folder === "work" ? folder : "personal";
+    const note: Note = { id: nextId++, title: "Untitled note", body: "", pinned: false, folderId: targetFolder, deleted: false };
     setNotes((prev) => [...prev, note]);
     setSelectedId(note.id);
     setQuery("");
+    if (folder === "trash") setFolder(targetFolder);
   }
 
   function deleteSelected(): void {
     if (selected == null) return;
-    const remaining = notes.filter((n) => n.id !== selected.id);
-    setNotes(remaining);
-    const nextSorted = sortNotes(remaining);
-    setSelectedId(nextSorted.length > 0 ? nextSorted[0]!.id : null);
+    if (selected.deleted) {
+      // Already in Trash: this is a permanent delete.
+      const remaining = notes.filter((n) => n.id !== selected.id);
+      setNotes(remaining);
+      const nextScoped = sortNotes(folderScoped(remaining, folder));
+      setSelectedId(nextScoped.length > 0 ? nextScoped[0]!.id : null);
+    } else {
+      // Soft delete: flip the flag, the note moves to Trash.
+      const updated = notes.map((n) => (n.id === selected.id ? { ...n, deleted: true } : n));
+      setNotes(updated);
+      const nextScoped = sortNotes(folderScoped(updated, folder));
+      setSelectedId(nextScoped.length > 0 ? nextScoped[0]!.id : null);
+    }
   }
 
   return (
-    <window title="ND Notes" defaultWidth={900} defaultHeight={600}>
-      <splitview sidebarWidth={0.28} testID="split">
+    <window title="ND Notes" defaultWidth={1100} defaultHeight={700}>
+      <menubar defaults>
+        <menu label="File" testID="menu-file">
+          <menuitem
+            testID="menu-new-note"
+            label="New Note"
+            iconName="document-new"
+            accelerator="primary+n"
+            onSelect={createNote}
+          />
+        </menu>
+        <menu label="Note" testID="menu-note">
+          {/* MenuItem.label is create-only (docs/widgets.md) — key on the
+              pin state so the label flips between "Pin"/"Unpin" on toggle,
+              same create-only-prop workaround as headerbar/folder-row keys
+              below. */}
+          <menuitem
+            key={selected != null && selected.pinned ? "pinned" : "unpinned"}
+            testID="menu-toggle-pin"
+            label={selected != null && selected.pinned ? "Unpin" : "Pin"}
+            accelerator="primary+p"
+            enabled={selected != null}
+            onSelect={togglePinSelected}
+          />
+          <menuitem role="separator" testID="menu-note-sep" />
+          <menuitem
+            testID="menu-delete-note"
+            label="Delete"
+            iconName="edit-delete"
+            accelerator="primary+backspace"
+            enabled={selected != null}
+            onSelect={deleteSelected}
+          />
+        </menu>
+      </menubar>
+
+      <splitview sidebarWidth={0.2} listWidth={0.3} testID="split">
         <toolbarview slot="sidebar" testID="sidebar-toolbar">
-          <headerbar testID="sidebar-header">
-            <button
-              testID="new-note-button"
-              label=""
-              iconName="document-new"
-              onClick={createNote}
-              slot="start"
-              cssClasses={["suggested-action"]}
-            />
-          </headerbar>
+          <headerbar testID="sidebar-header" title="ND Notes" />
           <box
+            testID="sidebar-content"
             orientation="vertical"
-            spacing={8}
+            spacing={3}
             cssClasses={["navigation-sidebar"]}
             style={{ vexpand: true, padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
           >
-          <searchinput
-            testID="search-input"
-            text={query}
-            placeholder="Search notes"
-            onChanged={(e) => setQuery(e.text)}
-          />
-          {/* vexpand: the list fills the sidebar's remaining height. */}
-          <scrollview testID="note-list-scroll" minContentHeight={380} style={{ vexpand: true }}>
-            <box orientation="vertical" spacing={3}>
-              {filtered.map((n) => {
-                const isSelected = n.id === selectedId;
-                // Button.label is create-only (docs/widgets.md) — it cannot
-                // be updated in place once mounted. Selection uses the
-                // theme's suggested-action (accent) class; a plain flat row
-                // otherwise. Pin state is a left accent border via `style`
-                // (which DOES update live) — the one deliberate color
-                // literal, an amber that reads on both light and dark.
-                return (
-                  <button
-                    key={`${n.id}:${n.title}`}
-                    testID={`note-row-${n.id}`}
-                    label={n.title || "Untitled note"}
-                    labelAlign="start"
-                    onClick={() => setSelectedId(n.id)}
-                    cssClasses={isSelected ? ["suggested-action"] : ["flat"]}
-                    style={{
-                      padding: { top: 8, bottom: 8, left: 10, right: 10 },
-                      halign: "fill",
-                      border: n.pinned ? { borderWidth: 3, borderColor: "#e5a50a", borderRadius: 8 } : { borderRadius: 8 },
-                    }}
-                  />
-                );
-              })}
-            </box>
-          </scrollview>
+            {/* Button.label is create-only — the counts embedded in the
+                label text need a remount to update, so each row is keyed
+                on its own count (same workaround as note-row's key below). */}
+            <button
+              key={`all:${allCount}`}
+              testID="folder-row-all"
+              label={`All Notes  ${allCount}`}
+              labelAlign="start"
+              onClick={() => selectFolder("all")}
+              cssClasses={folder === "all" ? ["suggested-action"] : ["flat"]}
+              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+            />
+            <button
+              key={`personal:${personalCount}`}
+              testID="folder-row-personal"
+              label={`Personal  ${personalCount}`}
+              labelAlign="start"
+              onClick={() => selectFolder("personal")}
+              cssClasses={folder === "personal" ? ["suggested-action"] : ["flat"]}
+              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+            />
+            <button
+              key={`work:${workCount}`}
+              testID="folder-row-work"
+              label={`Work  ${workCount}`}
+              labelAlign="start"
+              onClick={() => selectFolder("work")}
+              cssClasses={folder === "work" ? ["suggested-action"] : ["flat"]}
+              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+            />
+            <button
+              key={`trash:${trashCount}`}
+              testID="folder-row-trash"
+              label={`Trash  ${trashCount}`}
+              labelAlign="start"
+              onClick={() => selectFolder("trash")}
+              cssClasses={folder === "trash" ? ["suggested-action"] : ["flat"]}
+              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+            />
+          </box>
+        </toolbarview>
+
+        <toolbarview slot="list" testID="list-toolbar">
+          {/* HeaderBar.title is create-only; key on the folder so the
+              header relabels itself when the folder selection changes
+              (an infrequent switch, unlike per-keystroke title edits). */}
+          <headerbar key={folder} testID="list-header" title={folderLabel(folder)} />
+          <box testID="list-content" orientation="vertical" spacing={8} style={{ vexpand: true, padding: { top: 8, bottom: 8, left: 10, right: 10 } }}>
+            <searchinput
+              testID="search-input"
+              text={query}
+              placeholder="Search notes"
+              onChanged={(e) => setQuery(e.text)}
+            />
+            {/* vexpand: the list fills the pane's remaining height. */}
+            <scrollview testID="note-list-scroll" minContentHeight={380} style={{ vexpand: true }}>
+              <box orientation="vertical" spacing={3}>
+                {filtered.map((n) => {
+                  const isSelected = n.id === selectedId;
+                  // Button.label is create-only (docs/widgets.md) — it cannot
+                  // be updated in place once mounted. Selection uses the
+                  // theme's suggested-action (accent) class; a plain flat row
+                  // otherwise. Pin state is a left accent border via `style`
+                  // (which DOES update live) — the one deliberate color
+                  // literal, an amber that reads on both light and dark.
+                  return (
+                    <button
+                      key={`${n.id}:${n.title}`}
+                      testID={`note-row-${n.id}`}
+                      label={n.title || "Untitled note"}
+                      labelAlign="start"
+                      onClick={() => setSelectedId(n.id)}
+                      cssClasses={isSelected ? ["suggested-action"] : ["flat"]}
+                      style={{
+                        padding: { top: 8, bottom: 8, left: 10, right: 10 },
+                        halign: "fill",
+                        border: n.pinned ? { borderWidth: 3, borderColor: "#e5a50a", borderRadius: 8 } : { borderRadius: 8 },
+                      }}
+                    />
+                  );
+                })}
+              </box>
+            </scrollview>
             <label
               testID="note-count-label"
-              text={`${filtered.length} of ${notes.length} note${notes.length === 1 ? "" : "s"}`}
+              text={`${filtered.length} of ${scopedNotes.length} note${scopedNotes.length === 1 ? "" : "s"}`}
               cssClasses={["dimmed", "caption"]}
             />
           </box>
         </toolbarview>
 
         <toolbarview slot="content" testID="content-toolbar">
-          {/* HeaderBar.title is create-only (docs/widgets.md); key on the
-              displayed value so the header remounts when the title changes. */}
-          <headerbar
-            key={selected != null ? `${selected.id}:${selected.title}` : "empty"}
-            testID="content-header"
-            title={selected != null ? selected.title || "Untitled note" : "ND Notes"}
-          />
-          {/* hexpand+vexpand: the content pane claims all space the sidebar doesn't. */}
-          <box orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
+          {/* This header never changes its own title, so it never needs a
+              remount — the note's own title lives in title-input below. It
+              only carries the floating editing buttons (end slot), which
+              stay live via cssClasses updates (createAndUpdate) with no
+              remount needed either. */}
+          <headerbar testID="content-header" title="Editor">
+            <button
+              slot="end"
+              testID="pin-button"
+              iconName="pin"
+              label=""
+              onClick={togglePinSelected}
+              cssClasses={selected != null && selected.pinned ? ["flat", "accent"] : ["flat"]}
+            />
+            <button slot="end" testID="delete-note-button" iconName="edit-delete" label="" onClick={deleteSelected} cssClasses={["flat"]} />
+            <button slot="end" testID="new-note-button" iconName="document-new" label="" onClick={createNote} cssClasses={["flat"]} />
+          </headerbar>
+          {/* hexpand+vexpand: the content pane claims all space the other panes don't. */}
+          <box testID="content-body" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
             {selected != null ? (
             // key={selected.id}: prop `update` ops only reach GTK for
             // style/testID/label-text (src/tree.zig's update handler
@@ -182,20 +343,6 @@ function App(): React.ReactNode {
                 onChanged={(e) => updateSelected({ title: e.text })}
                 style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4 }}
               />
-              <box orientation="horizontal" spacing={10}>
-                <checkbox
-                  testID="pin-checkbox"
-                  label="Pinned"
-                  checked={selected.pinned}
-                  onToggled={(e) => updateSelected({ pinned: e.checked })}
-                />
-                <button
-                  testID="delete-note-button"
-                  label="Delete"
-                  onClick={deleteSelected}
-                  cssClasses={["destructive-action", "pill"]}
-                />
-              </box>
               <separator orientation="horizontal" />
               {/* TextArea has its own minContentHeight floor (Task 4) — no
                   ScrollView wrapper needed; vexpand lets it fill the pane. */}
