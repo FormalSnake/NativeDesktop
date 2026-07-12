@@ -419,7 +419,32 @@ function genZigCreateBody(w: Widget): string {
     out += "        return label.as(gtk.Widget);\n";
   } else if (w.name === "Button") {
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
-    out += "        const button = gtk.Button.newWithLabel(dupeZ(lbl));\n";
+    out += "        var button: *gtk.Button = undefined;\n";
+    out += "        if (propStr(props, \"iconName\")) |icon| {\n";
+    out += "            if (lbl.len == 0) {\n";
+    out += "                button = gtk.Button.new();\n";
+    out += "                gtk.Button.setIconName(button, dupeZ(icon));\n";
+    out += "            } else {\n";
+    out += "                button = gtk.Button.new();\n";
+    out += "                const content = adw.ButtonContent.new();\n";
+    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
+    out += "                gtk.Button.setChild(button, content.as(gtk.Widget));\n";
+    out += "            }\n";
+    out += "        } else {\n";
+    out += "            button = gtk.Button.newWithLabel(dupeZ(lbl));\n";
+    out += "        }\n";
+    out += `        const label_align = propStr(props, "labelAlign") orelse ${zigDefaultStr(w, "labelAlign")};\n`;
+    out += "        if (!std.mem.eql(u8, label_align, \"center\")) {\n";
+    out += "            if (gtk.Button.getChild(button)) |child| {\n";
+    out += "                const halign: gtk.Align = if (std.mem.eql(u8, label_align, \"start\")) .start else .end;\n";
+    out += "                gtk.Widget.setHalign(child, halign);\n";
+    out += "                if (gobject.ext.isA(child, gtk.Label)) {\n";
+    out += "                    const xalign: f32 = if (std.mem.eql(u8, label_align, \"start\")) 0.0 else 1.0;\n";
+    out += "                    gtk.Label.setXalign(@ptrCast(@alignCast(child)), xalign);\n";
+    out += "                }\n";
+    out += "            }\n";
+    out += "        }\n";
     out += "        return button.as(gtk.Widget);\n";
   } else if (w.name === "TextInput") {
     out += "        const entry = gtk.Entry.new();\n";
@@ -428,6 +453,12 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));\n";
     out += "        if (propBool(props, \"editable\")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));\n";
     out += "        return entry.as(gtk.Widget);\n";
+  } else if (w.name === "SearchInput") {
+    out += "        const search = gtk.SearchEntry.new();\n";
+    out += "        const editable = search.as(gtk.Editable);\n";
+    out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }\n";
+    out += "        if (propStr(props, \"placeholder\")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));\n";
+    out += "        return search.as(gtk.Widget);\n";
   } else if (w.name === "TextArea") {
     out += "        const view = gtk.TextView.new();\n";
     out += "        const buf = gtk.TextView.getBuffer(view);\n";
@@ -571,6 +602,18 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"placeholder\")) |p_| gtk.Entry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "TextInput" && p.name === "editable") {
       out += "        if (propBool(props, \"editable\")) |e| gtk.Editable.setEditable(@as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable), @intFromBool(e));\n";
+    } else if (w.name === "SearchInput" && p.name === "text") {
+      out += "        if (propStr(props, \"text\")) |t| {\n";
+      out += "            const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);\n";
+      out += "            const cur = std.mem.span(gtk.Editable.getText(editable));\n";
+      out += "            if (!std.mem.eql(u8, cur, t)) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.Editable.setText(editable, dupeZ(t));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "SearchInput" && p.name === "placeholder") {
+      out += "        if (propStr(props, \"placeholder\")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "TextArea" && p.name === "text") {
       out += "        if (propStr(props, \"text\")) |t| {\n";
       out += "            const view: *gtk.TextView = @ptrCast(@alignCast(widget));\n";
@@ -658,6 +701,8 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "TextInput.activate":      { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
+  "SearchInput.changed":     { signal: "search-changed",   target: "widget", cb: "cbEditableChanged",  suppress: true },
+  "SearchInput.activate":    { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
   "TextArea.changed":        { signal: "changed",          target: "buffer", cb: "cbBufferChanged",    suppress: true },
   "Checkbox.toggled":        { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
   "Radio.toggled":           { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
@@ -1090,14 +1135,27 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        let label = NDTextField(labelWithString: text)\n";
     out += "        return label\n";
   } else if (w.name === "Button") {
-    out += `        let b = NDButton(title: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
+    out += `        let lbl = propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}\n`;
+    out += "        let b = NDButton(title: lbl, target: nil, action: nil)\n";
     out += "        b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded\n";
+    out += '        if let icon = propStr(props, "iconName") {\n';
+    out += "            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
+    out += "        }\n";
+    out += `        switch propStr(props, "labelAlign") ?? ${swiftDefaultStr(w, "labelAlign")} {\n`;
+    out += '        case "start": b.alignment = .left\n';
+    out += '        case "end": b.alignment = .right\n';
+    out += "        default: break\n";
+    out += "        }\n";
     out += "        return b\n";
   } else if (w.name === "TextInput") {
     out += `        let field = NDTextField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
     out += '        if let ph = propStr(props, "placeholder") { field.placeholderString = ph }\n';
     out += '        if let e = propBool(props, "editable") { field.isEditable = e }\n';
     out += "        return field\n";
+  } else if (w.name === "SearchInput") {
+    out += `        let search = NSSearchField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
+    out += '        if let ph = propStr(props, "placeholder") { search.placeholderString = ph }\n';
+    out += "        return search\n";
   } else if (w.name === "TextArea") {
     out += "        let scroll = NSScrollView()\n";
     out += "        scroll.hasVerticalScroller = true\n";
@@ -1252,6 +1310,7 @@ const SWIFT_SUPPRESSED = new Set([
   "Radio.checked",
   "Select.selectedIndex",
   "Slider.value",
+  "SearchInput.text",
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
@@ -1292,6 +1351,14 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "TextInput" && p.name === "editable") {
       out += '        if let e = propBool(props, "editable"), let field = view as? NSTextField {\n';
       out += "            field.isEditable = e\n";
+      out += "        }\n";
+    } else if (w.name === "SearchInput" && p.name === "text") {
+      out += '        if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {\n';
+      out += "            withEchoSuppressed(view) { field.stringValue = t }\n";
+      out += "        }\n";
+    } else if (w.name === "SearchInput" && p.name === "placeholder") {
+      out += '        if let ph = propStr(props, "placeholder"), let field = view as? NSTextField {\n';
+      out += "            field.placeholderString = ph\n";
       out += "        }\n";
     } else if (w.name === "TextArea" && p.name === "text") {
       out += '        if let t = propStr(props, "text"), let scroll = view as? NSScrollView,\n';
@@ -1363,6 +1430,8 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Button.clicked":          { selector: "fireNone",    payload: "none" },
   "TextInput.changed":       { selector: "fireText",    payload: "text" },
   "TextInput.activate":      { selector: "fireText",    payload: "text" },
+  "SearchInput.changed":     { selector: "fireText",    payload: "text" },
+  "SearchInput.activate":    { selector: "fireText",    payload: "text" },
   "TextArea.changed":        { selector: "fireText",    payload: "text" },
   "Checkbox.toggled":        { selector: "fireChecked", payload: "checked" },
   "Radio.toggled":           { selector: "fireChecked", payload: "checked" },

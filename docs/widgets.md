@@ -42,6 +42,8 @@ Automation role: `button`. Text source: `label`. Children: none.
 |---|---|---|---|
 | `label` | string | Button | create |
 | `testID` | string | — | meta |
+| `iconName` | string | — | create |
+| `labelAlign` | start \| center \| end | center | create |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -290,4 +292,19 @@ Automation role: `group`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `testID` | string | — | meta |
+
+## SearchInput (`<searchinput>`)
+
+Automation role: `textbox`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `text` | string |  | createAndUpdate |
+| `placeholder` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `changed` | `onChanged` | text |
+| `activate` | `onActivate` | text |
 

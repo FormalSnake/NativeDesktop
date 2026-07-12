@@ -23,4 +23,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   SplitView: 20,
   HeaderBar: 21,
   ToolbarView: 22,
+  SearchInput: 23,
 };

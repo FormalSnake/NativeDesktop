@@ -28,6 +28,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "SplitView": { role: "group", textFrom: null, childModel: "multi" },
   "HeaderBar": { role: "toolbar", textFrom: "title", childModel: "multi" },
   "ToolbarView": { role: "group", textFrom: null, childModel: "multi" },
+  "SearchInput": { role: "textbox", textFrom: "text", childModel: null },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -53,6 +54,7 @@ export const intrinsicToName: Record<string, string> = {
   "splitview": "SplitView",
   "headerbar": "HeaderBar",
   "toolbarview": "ToolbarView",
+  "searchinput": "SearchInput",
 };
 
 export interface WidgetEvent {
@@ -83,6 +85,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "splitview": [],
   "headerbar": [],
   "toolbarview": [],
+  "searchinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -108,4 +111,5 @@ export const handlerPropNames: Record<string, string[]> = {
   "splitview": [],
   "headerbar": [],
   "toolbarview": [],
+  "searchinput": ["onChanged", "onActivate"],
 };

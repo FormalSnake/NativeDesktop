@@ -55,8 +55,17 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let label = NDTextField(labelWithString: text)
         return label
     } else if kind == "Button" {
-        let b = NDButton(title: propStr(props, "label") ?? "Button", target: nil, action: nil)
+        let lbl = propStr(props, "label") ?? "Button"
+        let b = NDButton(title: lbl, target: nil, action: nil)
         b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded
+        if let icon = propStr(props, "iconName") {
+            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)
+        }
+        switch propStr(props, "labelAlign") ?? "center" {
+        case "start": b.alignment = .left
+        case "end": b.alignment = .right
+        default: break
+        }
         return b
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
@@ -181,6 +190,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return bar
     } else if kind == "ToolbarView" {
         return NDToolbarPaneView()
+    } else if kind == "SearchInput" {
+        let search = NSSearchField(string: propStr(props, "text") ?? "")
+        if let ph = propStr(props, "placeholder") { search.placeholderString = ph }
+        return search
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -269,6 +282,13 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
            let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {
             sidebarItem.isCollapsed = c
         }
+    } else if kind == "SearchInput" {
+        if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {
+            withEchoSuppressed(view) { field.stringValue = t }
+        }
+        if let ph = propStr(props, "placeholder"), let field = view as? NSTextField {
+            field.placeholderString = ph
+        }
     }
 }
 
@@ -290,6 +310,9 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "valueChanged", payload: .value, action: #selector(EventDispatcher.fireValue(_:)))
     } else if kind == "ListView" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
+    } else if kind == "SearchInput" {
+        EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
+        EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
     }
 }
 

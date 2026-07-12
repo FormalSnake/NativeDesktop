@@ -432,6 +432,13 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
         const z = arena.dupeZ(u8, value.string) catch return -32602;
         const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
         gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
+    } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        // GtkSearchEntry is not a GtkEntry subclass (unlike TextInput) but
+        // does implement gtk.Editable — same setText-fires-changed contract.
+        if (value != .string) return invalidValue(err_json_out, node_id);
+        const z = arena.dupeZ(u8, value.string) catch return -32602;
+        const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
+        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (value != .string) return invalidValue(err_json_out, node_id);
         const z = arena.dupeZ(u8, value.string) catch return -32602;
@@ -475,6 +482,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     const instance: *gobject.TypeInstance = @ptrCast(@alignCast(widget));
     const type_name = std.mem.span(gobject.typeNameFromInstance(instance));
     if (std.mem.eql(u8, type_name, "GtkEntry")) return "TextInput";
+    if (std.mem.eql(u8, type_name, "GtkSearchEntry")) return "SearchInput";
     if (std.mem.eql(u8, type_name, "GtkTextView")) return "TextArea";
     if (std.mem.eql(u8, type_name, "GtkCheckButton")) return "Checkbox";
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
@@ -484,10 +492,14 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
 }
 
 fn semanticType(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
-    if (!std.mem.eql(u8, widgetKind(widget), "TextInput")) return invalidValue(err_json_out, node_id);
+    const kind = widgetKind(widget);
+    if (!std.mem.eql(u8, kind, "TextInput") and !std.mem.eql(u8, kind, "SearchInput")) return invalidValue(err_json_out, node_id);
     const text = if (args) |a| (if (a == .object) a.object.get("text") else null) else null;
     if (text == null or text.? != .string) return invalidValue(err_json_out, node_id);
-    const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
+    // GtkEntry and GtkSearchEntry both implement gtk.Editable (unrelated
+    // otherwise — SearchEntry is not an Entry subclass), so go through the
+    // interface directly rather than a kind-specific concrete-type cast.
+    const editable: *gtk.Editable = @ptrCast(@alignCast(widget));
     const cur = std.mem.span(gtk.Editable.getText(editable));
     // insertText position is in CHARACTERS; append = current codepoint count.
     var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);

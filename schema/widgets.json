@@ -81,7 +81,9 @@
       "container": null,
       "props": [
         { "name": "label", "type": "string", "default": "Button", "appliesTo": "create" },
-        { "name": "testID", "type": "string", "appliesTo": "meta" }
+        { "name": "testID", "type": "string", "appliesTo": "meta" },
+        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" }
       ],
       "events": [
         { "name": "clicked", "ndpName": "onClick" }
@@ -336,6 +338,21 @@
       ],
       "events": [],
       "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "SearchInput",
+      "intrinsic": "searchinput",
+      "container": null,
+      "props": [
+        { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "changed", "ndpName": "onChanged", "payload": "text" },
+        { "name": "activate", "ndpName": "onActivate", "payload": "text" }
+      ],
+      "automation": { "role": "textbox", "textFrom": "text" }
     }
   ]
 }

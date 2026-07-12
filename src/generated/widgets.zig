@@ -141,7 +141,32 @@ pub fn create(
         return label.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Button")) {
         const lbl = propStr(props, "label") orelse "Button";
-        const button = gtk.Button.newWithLabel(dupeZ(lbl));
+        var button: *gtk.Button = undefined;
+        if (propStr(props, "iconName")) |icon| {
+            if (lbl.len == 0) {
+                button = gtk.Button.new();
+                gtk.Button.setIconName(button, dupeZ(icon));
+            } else {
+                button = gtk.Button.new();
+                const content = adw.ButtonContent.new();
+                adw.ButtonContent.setIconName(content, dupeZ(icon));
+                adw.ButtonContent.setLabel(content, dupeZ(lbl));
+                gtk.Button.setChild(button, content.as(gtk.Widget));
+            }
+        } else {
+            button = gtk.Button.newWithLabel(dupeZ(lbl));
+        }
+        const label_align = propStr(props, "labelAlign") orelse "center";
+        if (!std.mem.eql(u8, label_align, "center")) {
+            if (gtk.Button.getChild(button)) |child| {
+                const halign: gtk.Align = if (std.mem.eql(u8, label_align, "start")) .start else .end;
+                gtk.Widget.setHalign(child, halign);
+                if (gobject.ext.isA(child, gtk.Label)) {
+                    const xalign: f32 = if (std.mem.eql(u8, label_align, "start")) 0.0 else 1.0;
+                    gtk.Label.setXalign(@ptrCast(@alignCast(child)), xalign);
+                }
+            }
+        }
         return button.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
@@ -260,6 +285,12 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "ToolbarView")) {
         const tv = adw.ToolbarView.new();
         return tv.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        const search = gtk.SearchEntry.new();
+        const editable = search.as(gtk.Editable);
+        if (propStr(props, "text")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }
+        if (propStr(props, "placeholder")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));
+        return search.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -371,6 +402,17 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
+    } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        if (propStr(props, "text")) |t| {
+            const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
+            const cur = std.mem.span(gtk.Editable.getText(editable));
+            if (!std.mem.eql(u8, cur, t)) {
+                blockEcho(asObject(widget));
+                gtk.Editable.setText(editable, dupeZ(t));
+                unblockEcho(asObject(widget));
+            }
+        }
+        if (propStr(props, "placeholder")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
     }
 }
 
@@ -482,6 +524,13 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_ListView_rowActivated = asObject(gtk.ScrolledWindow.getChild(@ptrCast(@alignCast(widget))).?);
         const hid_ListView_rowActivated = gobject.signalConnectData(obj_ListView_rowActivated, "activate", @ptrCast(&cbListActivate), data, null, .{});
         _ = hid_ListView_rowActivated;
+    } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        const obj_SearchInput_changed = asObject(widget);
+        const hid_SearchInput_changed = gobject.signalConnectData(obj_SearchInput_changed, "search-changed", @ptrCast(&cbEditableChanged), data, null, .{});
+        noteSuppressible(obj_SearchInput_changed, hid_SearchInput_changed);
+        const obj_SearchInput_activate = asObject(widget);
+        const hid_SearchInput_activate = gobject.signalConnectData(obj_SearchInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});
+        _ = hid_SearchInput_activate;
     }
 }
 
