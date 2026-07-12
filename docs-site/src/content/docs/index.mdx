@@ -1,0 +1,47 @@
+---
+title: NativeDesktop
+description: React for real native desktop apps — GTK4/libadwaita on Linux, AppKit on macOS, no DOM, no WebView, no Electron.
+template: splash
+hero:
+  tagline: Write React. Ship real native widgets — GTK4/libadwaita on Linux, AppKit on macOS. No DOM, no WebView, no Electron.
+  actions:
+    - text: Get Started
+      link: /get-started/introduction/
+      icon: right-arrow
+    - text: Quick Start
+      link: /get-started/quick-start/
+      icon: rocket
+      variant: minimal
+    - text: Widget Reference
+      link: /components/widget-reference/
+      icon: document
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Why NativeDesktop
+
+A Bun/TypeScript child process renders a React tree over a local binary protocol (NDP) into a Zig
+host that owns **real** native widgets. There is no embedded browser and no DOM — the widgets your
+app renders *are* `GtkBox`, `AdwHeaderBar`, `NSButton`, `NSSplitView`. One React tree automatically
+adopts both platforms' current design languages (Liquid Glass on macOS, Adwaita on GNOME), because
+there's no facsimile layer standing between your JSX and the platform's own widget toolkit.
+
+<CardGrid stagger>
+	<Card title="Real native widgets" icon="approve-check">
+		GTK4 + libadwaita on Linux, AppKit on macOS — the same widget classes a native app would use,
+		not a styled-to-look-native approximation.
+	</Card>
+	<Card title="Automation-first" icon="setting">
+		Every widget is inspectable and drivable over a JSON-RPC socket from the moment it mounts —
+		coding agents are a first-class consumer, not an afterthought.
+	</Card>
+	<Card title="Theme-neutral styling" icon="pencil">
+		`style` is geometry (padding, layout), `cssClasses` reaches named design-language classes.
+		Dark mode follows the system automatically on both platforms.
+	</Card>
+	<Card title="React 19, for real" icon="open-book">
+		Hooks, Suspense, transitions, and hot reload — driving native widget trees instead of a DOM.
+	</Card>
+</CardGrid>
