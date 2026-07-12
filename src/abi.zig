@@ -190,6 +190,14 @@ fn parseEventPayload(payload_json: [*:0]const u8) protocol.EventPayload {
     return parsed.value;
 }
 
+/// Terminates the bun child. The embedder calls this from its app-shutdown
+/// path (last window closed) so the child dies with the parent rather than
+/// being orphaned. Safe to call before `nd_start_runtime` (no-op — no child
+/// spawned yet).
+pub export fn nd_shutdown(_: *NdContext) callconv(.c) void {
+    Runtime.stop();
+}
+
 /// Frees a string the embedder allocated and handed back across the ABI
 /// (e.g. `semantic_action`'s `result_json_out`/`err_json_out`, M6a Task 4).
 /// The convention is the portable-C one: the embedder allocates with

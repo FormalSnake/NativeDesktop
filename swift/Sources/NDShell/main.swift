@@ -17,6 +17,10 @@ nonisolated(unsafe) var gCtx: OpaquePointer? = nil
 // Set by the generated Window create arm (NDGen/Widgets.swift's `ndCreate`)
 // so get_window/show_overlay/etc. can reach the live NSWindow.
 nonisolated(unsafe) var gWindow: NSWindow? = nil
+// The window's single unified NSToolbar manager (M11 Phase B), set by the
+// generated Window create arm. The pane <headerbar>s register their items
+// into it; it owns the tracking separator aligned to the split's divider.
+nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)

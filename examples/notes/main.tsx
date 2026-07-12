@@ -5,9 +5,11 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // memory; there is no persistence layer by design.
 //
 // Visual approach: native chrome, not hand-rolled facsimiles of it.
-//   - `<headerbar>`, mounted as a direct child of `<window>`, becomes the
-//     REAL window titlebar (AdwHeaderBar on GTK) / the unified NSToolbar
-//     area (on Mac) — there is no header Box faking a toolbar look here.
+//   - The `<window>` is edge-to-edge (AdwApplicationWindow): the `<splitview>`
+//     fills to the very top, GNOME-style. Each pane is wrapped in a
+//     `<toolbarview>` (AdwToolbarView) whose first child is a `<headerbar>`
+//     — so the sidebar and the content pane each carry their OWN header bar
+//     at the top, instead of one shared window titlebar.
 //   - `<splitview>` is the real sidebar/content split (AdwOverlaySplitView
 //     on GTK, NSSplitView + vibrancy sidebar on Mac) — no hand-rolled
 //     two-Box row with a hardcoded sidebar background.
@@ -88,23 +90,23 @@ function App(): React.ReactNode {
 
   return (
     <window title="ND Notes" defaultWidth={900} defaultHeight={600}>
-      <headerbar title="ND Notes" testID="header">
-        <button
-          testID="new-note-button"
-          label="＋ New Note"
-          onClick={createNote}
-          slot="start"
-          cssClasses={["suggested-action"]}
-        />
-      </headerbar>
       <splitview sidebarWidth={0.28} testID="split">
-        <box
-          slot="sidebar"
-          orientation="vertical"
-          spacing={8}
-          cssClasses={["navigation-sidebar"]}
-          style={{ padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
-        >
+        <toolbarview slot="sidebar" testID="sidebar-toolbar">
+          <headerbar testID="sidebar-header">
+            <button
+              testID="new-note-button"
+              label="＋ New Note"
+              onClick={createNote}
+              slot="start"
+              cssClasses={["suggested-action"]}
+            />
+          </headerbar>
+          <box
+            orientation="vertical"
+            spacing={8}
+            cssClasses={["navigation-sidebar"]}
+            style={{ vexpand: true, padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
+          >
           <textinput
             testID="search-input"
             text={query}
@@ -139,16 +141,25 @@ function App(): React.ReactNode {
               })}
             </box>
           </scrollview>
-          <label
-            testID="note-count-label"
-            text={`${filtered.length} of ${notes.length} note${notes.length === 1 ? "" : "s"}`}
-            cssClasses={["dimmed", "caption"]}
-          />
-        </box>
+            <label
+              testID="note-count-label"
+              text={`${filtered.length} of ${notes.length} note${notes.length === 1 ? "" : "s"}`}
+              cssClasses={["dimmed", "caption"]}
+            />
+          </box>
+        </toolbarview>
 
-        {/* hexpand+vexpand: the content pane claims all space the sidebar doesn't. */}
-        <box slot="content" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
-          {selected != null ? (
+        <toolbarview slot="content" testID="content-toolbar">
+          {/* HeaderBar.title is create-only (docs/widgets.md); key on the
+              displayed value so the header remounts when the title changes. */}
+          <headerbar
+            key={selected != null ? `${selected.id}:${selected.title}` : "empty"}
+            testID="content-header"
+            title={selected != null ? selected.title || "Untitled note" : "ND Notes"}
+          />
+          {/* hexpand+vexpand: the content pane claims all space the sidebar doesn't. */}
+          <box orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
+            {selected != null ? (
             // key={selected.id}: prop `update` ops only reach GTK for
             // style/testID/label-text (src/tree.zig's update handler
             // resolves the widget kind from the wire message, which is
@@ -202,7 +213,8 @@ function App(): React.ReactNode {
           ) : (
             <label testID="empty-state-label" text="No note selected. Create one to get started." cssClasses={["dimmed"]} />
           )}
-        </box>
+          </box>
+        </toolbarview>
       </splitview>
     </window>
   );

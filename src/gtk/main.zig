@@ -11,7 +11,12 @@ pub const app_id = "dev.nativedesktop.hello";
 
 var smoke = false;
 var global_app: ?*gtk.Application = null;
+var global_ctx: ?*abi.NdContext = null;
 var global_environ_map: ?*std.process.Environ.Map = null;
+// Balances the startup `hold()` (below) exactly once, when the child's first
+// commit presents a window. After that GtkApplication keeps itself alive via
+// the window, so closing it drops the use-count to zero and the app quits.
+var hold_released = false;
 // Must outlive `onActivate`'s stack frame — `nd_register_backend` stores a
 // pointer to this, and the core calls through it for the rest of the
 // process's life (every commit-apply/marshal_async/etc.). A stack-local
@@ -67,11 +72,17 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         gio.Application.quit(app.as(gio.Application));
         return;
     };
+    global_ctx = ctx;
     backend.setCtx(ctx);
     backend.initEventsAndStyle();
 
-    // Hold the app alive with no window until the first commit presents one.
+    // Hold the app alive with no window until the first commit presents one;
+    // `onWindowAdded` releases it so closing that window quits the app.
     gio.Application.hold(app.as(gio.Application));
+    _ = gtk.Application.signals.window_added.connect(app, ?*anyopaque, &onWindowAdded, null, .{});
+    // Kill the bun child when the app tears down, so it dies with the parent
+    // instead of being orphaned.
+    _ = gio.Application.signals.shutdown.connect(app.as(gio.Application), ?*anyopaque, &onShutdown, null, .{});
 
     the_vtable = backend.ndBackend();
     abi.nd_register_backend(ctx, &the_vtable);
@@ -109,6 +120,17 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
             }
         }
     }
+}
+
+fn onWindowAdded(_: *gtk.Application, _: *gtk.Window, _: ?*anyopaque) callconv(.c) void {
+    if (hold_released) return;
+    hold_released = true;
+    if (global_app) |app| gio.Application.release(app.as(gio.Application));
+}
+
+fn onShutdown(app: *gio.Application, _: ?*anyopaque) callconv(.c) void {
+    _ = app;
+    if (global_ctx) |ctx| abi.nd_shutdown(ctx);
 }
 
 fn onClicked(_: *gtk.Button, _: ?*anyopaque) callconv(.c) void {

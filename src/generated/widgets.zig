@@ -120,7 +120,7 @@ pub fn create(
     the_window: *?*gtk.Window,
 ) !*gtk.Widget {
     if (std.mem.eql(u8, kind, "Window")) {
-        const window = gtk.ApplicationWindow.new(app);
+        const window = adw.ApplicationWindow.new(app);
         const win = window.as(gtk.Window);
         the_window.* = win;
         if (propStr(props, "title")) |t| gtk.Window.setTitle(win, dupeZ(t));
@@ -257,6 +257,9 @@ pub fn create(
             }
         }
         return hb.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ToolbarView")) {
+        const tv = adw.ToolbarView.new();
+        return tv.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -484,11 +487,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
 
 pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, attached: protocol.Attached, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        if (gobject.ext.isA(child, adw.HeaderBar)) {
-            gtk.Window.setTitlebar(@ptrCast(@alignCast(parent)), child);
-        } else {
-            gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);
-        }
+        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) {
@@ -521,6 +520,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
             else adw.HeaderBar.packStart(hb, child);
         } else adw.HeaderBar.packStart(hb, child);
+    } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
+        const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));
+        if (gobject.ext.isA(child, adw.HeaderBar)) adw.ToolbarView.addTopBar(tv, child)
+        else adw.ToolbarView.setContent(tv, child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -572,12 +575,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
 
 pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        const win: *gtk.Window = @ptrCast(@alignCast(parent));
-        if (gtk.Window.getTitlebar(win) == child) {
-            gtk.Window.setTitlebar(win, null);
-        } else {
-            gtk.Window.setChild(win, null);
-        }
+        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
@@ -594,6 +592,8 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
+        adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }
@@ -622,3 +622,4 @@ pub const style_subkeys = [_]StyleSubDef{
     .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
     .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
 };
+pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline"};

@@ -198,19 +198,33 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
     gtk.CssProvider.loadFromString(provider, css_z);
 }
 
-/// Applies each string in `value` (a JSON array of Adwaita/GTK class names,
-/// already validated by the React-side allowlist) as a GTK CSS class via
-/// `gtk_widget_add_css_class`. Additive-only — a class added by a prior call
-/// is never removed on update; M11 apps don't toggle Adwaita classes at
-/// runtime, so this is acceptable for now (revisit if that changes). The
-/// internal `nd-<id>` class (added once in `applyStyle`) is untouched.
+/// Reconciles `widget`'s Adwaita/GTK CSS classes against `value` (a JSON
+/// array of class names, already validated by the React-side allowlist):
+/// set-replace over `generated.css_class_spec`, the same allowlist the
+/// React side validates `cssClasses` entries against. For each allowed
+/// class, add it if present in `value`, else remove it — so classes no
+/// longer requested are cleared instead of accumulating. Scoping the
+/// reconcile to the allowlist means the internal `nd-<id>` class (added
+/// once in `applyStyle`) and GTK's own default classes (e.g. `text-button`,
+/// `toggle`) are never touched, since those aren't in the allowlist.
+/// `gtk_widget_remove_css_class` on an absent class is a safe no-op.
 pub fn applyCssClasses(widget: *gtk.Widget, value: std.json.Value) void {
     if (value != .array) return;
-    for (value.array.items) |item| {
-        if (item != .string) continue;
-        const cls = gpa.dupeZ(u8, item.string) catch continue;
-        defer gpa.free(cls);
-        gtk.Widget.addCssClass(widget, cls);
+    for (generated.css_class_spec) |name| {
+        var present = false;
+        for (value.array.items) |item| {
+            if (item == .string and std.mem.eql(u8, item.string, name)) {
+                present = true;
+                break;
+            }
+        }
+        const z = gpa.dupeZ(u8, name) catch continue;
+        defer gpa.free(z);
+        if (present) {
+            gtk.Widget.addCssClass(widget, z);
+        } else {
+            gtk.Widget.removeCssClass(widget, z);
+        }
     }
 }
 

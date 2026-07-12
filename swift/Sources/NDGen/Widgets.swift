@@ -31,11 +31,16 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let content = FlippedView()
         let winW = propInt(props, "defaultWidth") ?? 480
         let winH = propInt(props, "defaultHeight") ?? 320
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         if let t = propStr(props, "title") { win.title = t }
+        win.titlebarAppearsTransparent = true
         win.contentView = content
-        win.center(); win.makeKeyAndOrderFront(nil)
         gWindow = win
+        let manager = NDToolbarManager()
+        ndWindowToolbarManager = manager
+        win.toolbar = manager.toolbar
+        win.toolbarStyle = .unified
+        win.center(); win.makeKeyAndOrderFront(nil)
         return content
     } else if kind == "Box" {
         let stack = NSStackView()
@@ -163,6 +168,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let bar = NDHeaderBarView()
         bar.ndTitle = propStr(props, "title") ?? ""
         return bar
+    } else if kind == "ToolbarView" {
+        return NDToolbarPaneView()
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -284,17 +291,18 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Window" {
-        if let bar = child as? NDHeaderBarView {
-            ndInstallHeaderBar(bar)
-        } else {
-            parent.subviews.forEach { $0.removeFromSuperview() }
-            parent.addSubview(child)
-            child.frame = parent.bounds
-            child.autoresizingMask = [.width, .height]
-        }
+        parent.subviews.forEach { $0.removeFromSuperview() }
+        parent.addSubview(child)
+        child.frame = parent.bounds
+        child.autoresizingMask = [.width, .height]
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.addArrangedSubview(child)
+        let fill = stack.orientation == .vertical
+            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)
+        fill.priority = NSLayoutConstraint.Priority(999)
+        fill.isActive = true
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
         let doc = sv.documentView!
@@ -318,35 +326,42 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
+        var realChild = child
+        if let pane = child as? NDToolbarPaneView {
+            ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)
+            realChild = pane.contentView ?? child
+        }
         if attachedSlot == "sidebar" {
             let wrapper = NSVisualEffectView()
             wrapper.material = .sidebar
             wrapper.blendingMode = .behindWindow
             wrapper.state = .followsWindowActiveState
             wrapper.translatesAutoresizingMaskIntoConstraints = false
-            child.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(child)
+            realChild.translatesAutoresizingMaskIntoConstraints = false
+            wrapper.addSubview(realChild)
             NSLayoutConstraint.activate([
-                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                child.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
             ])
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
-                widthConstraint.priority = .defaultLow
+                widthConstraint.priority = .defaultHigh
                 widthConstraint.isActive = true
             }
             wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             split.insertArrangedSubview(wrapper, at: 0)
         } else {
-            split.addArrangedSubview(child)
+            split.addArrangedSubview(realChild)
         }
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
+    } else if parentKind == "ToolbarView" {
+        ndToolbarPanePack(parent as! NDToolbarPaneView, child)
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -366,6 +381,11 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         let stack = parent as! NSStackView
         let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count
         stack.insertArrangedSubview(child, at: idx)
+        let fill = stack.orientation == .vertical
+            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)
+        fill.priority = NSLayoutConstraint.Priority(999)
+        fill.isActive = true
     } else if parentKind == "TabView" {
         let tabs = parent as! NSTabView
         let item = NSTabViewItem()
@@ -379,35 +399,42 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
+        var realChild = child
+        if let pane = child as? NDToolbarPaneView {
+            ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)
+            realChild = pane.contentView ?? child
+        }
         if attachedSlot == "sidebar" {
             let wrapper = NSVisualEffectView()
             wrapper.material = .sidebar
             wrapper.blendingMode = .behindWindow
             wrapper.state = .followsWindowActiveState
             wrapper.translatesAutoresizingMaskIntoConstraints = false
-            child.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(child)
+            realChild.translatesAutoresizingMaskIntoConstraints = false
+            wrapper.addSubview(realChild)
             NSLayoutConstraint.activate([
-                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                child.topAnchor.constraint(equalTo: wrapper.topAnchor),
-                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
             ])
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
-                widthConstraint.priority = .defaultLow
+                widthConstraint.priority = .defaultHigh
                 widthConstraint.isActive = true
             }
             wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             split.insertArrangedSubview(wrapper, at: 0)
         } else {
-            split.addArrangedSubview(child)
+            split.addArrangedSubview(realChild)
         }
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
+    } else if parentKind == "ToolbarView" {
+        ndToolbarPanePack(parent as! NDToolbarPaneView, child)
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -416,11 +443,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
 
 func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     if parentKind == "Window" {
-        if let bar = child as? NDHeaderBarView {
-            ndRemoveHeaderBar(bar)
-        } else {
-            child.removeFromSuperview()
-        }
+        child.removeFromSuperview()
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.removeArrangedSubview(child)
@@ -438,15 +461,22 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndGridRemove(grid, child)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
-        if let wrapper = child.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {
+        var realChild = child
+        if let pane = child as? NDToolbarPaneView {
+            ndToolbarPaneDetachedFromSplit(pane)
+            realChild = pane.contentView ?? child
+        }
+        if let wrapper = realChild.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {
             split.removeArrangedSubview(wrapper)
             wrapper.removeFromSuperview()
         } else {
-            split.removeArrangedSubview(child)
-            child.removeFromSuperview()
+            split.removeArrangedSubview(realChild)
+            realChild.removeFromSuperview()
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarUnpack(parent as! NDHeaderBarView, child)
+    } else if parentKind == "ToolbarView" {
+        ndToolbarPaneUnpack(parent as! NDToolbarPaneView, child)
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

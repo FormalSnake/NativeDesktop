@@ -1,48 +1,117 @@
 import AppKit
 
-// Task 8 owner directive: HeaderBar on Mac is a REAL unified NSToolbar on
-// the NSWindow, not a styled stand-in bar view — the AppKit peer of the
-// GTK side's `gtk_window_set_titlebar` takeover (NDGen/Widgets.swift's
-// generated Window append/remove arms).
+// M11 Phase B: macOS uses the REAL native idiom (Notes.app/Mail) — a SINGLE
+// unified NSToolbar spanning the top, with the sidebar reaching the very top
+// of the window (traffic lights floating over it) via the Window create arm's
+// .fullSizeContentView + titlebarAppearsTransparent. The two per-pane
+// <headerbar>s do NOT each create their own toolbar: their items MERGE into
+// the one window toolbar. The sidebar pane's items sit LEFT of an
+// NSTrackingSeparatorToolbarItem (aligned to the split's divider), the content
+// pane's items sit RIGHT of it. The GTK peer stacks a real AdwHeaderBar inside
+// each AdwToolbarView; on the Mac that split-per-pane header maps onto the one
+// unified toolbar instead.
 
-/// Host-rendered widget handle for a mounted `<headerbar>`. It never joins
-/// the window's content-view subview hierarchy — `ndInstallHeaderBar` hands
-/// the window's real `NSToolbar` over to it instead, so this class exists
-/// only to hold state (title, slot children, the owning toolbar manager)
-/// until/while it's installed.
+/// Host-rendered handle for a mounted `<headerbar>`. It never joins any view
+/// hierarchy — it holds the header's start/end child views until its owning
+/// `<toolbarview>` pane registers them into the window toolbar. `pane` is set
+/// once this header is packed into its pane so a late child add can trigger a
+/// coalesced toolbar rebuild.
 final class NDHeaderBarView: NSView {
     var ndTitle: String = ""
     var startViews: [NSView] = []
     var endViews: [NSView] = []
-    weak var attachedWindow: NSWindow?
-    var toolbarManager: NDToolbarManager?
+    weak var pane: NDToolbarPaneView?
 }
 
-// Monotonic source for both toolbar identifiers ("nd-toolbar-<n>") and
-// per-child item identifiers ("nd-hb-<n>") — single global counter, module
-// scope, same `nonisolated(unsafe)` idiom as Backend.swift's `gridCells`
-// (this process's UI code all runs on one thread in practice).
+/// Host-rendered handle for a mounted `<toolbarview>` pane — a LOGICAL holder
+/// that never enters the view hierarchy. Its non-header child is recorded in
+/// `contentView`; the SplitView arm adds THAT box directly to its slot (and
+/// vibrancy-wraps it for the sidebar), so it fills the slot natively. Its
+/// `<headerbar>` child is recorded in `header` — those items feed the window
+/// toolbar under this pane's `slot`, resolved once the pane hits the split.
+final class NDToolbarPaneView: NSView {
+    override var isFlipped: Bool { true }
+    var header: NDHeaderBarView?
+    var contentView: NSView?
+    var slot: String = "content"
+    weak var manager: NDToolbarManager?
+}
+
+// Monotonic source for per-child item identifiers ("nd-hb-<n>") and toolbar
+// identifiers — single global counter, module scope, same `nonisolated(unsafe)`
+// idiom as Backend.swift's `gridCells` (this process's UI code runs on one
+// thread in practice).
 nonisolated(unsafe) private var ndHeaderBarNextID = 0
 private func ndHeaderBarFreshID() -> Int {
     ndHeaderBarNextID += 1
     return ndHeaderBarNextID
 }
 
-/// Owns the live `NSToolbar` for one installed HeaderBar. Item identifiers
-/// are minted per child view so the delegate callbacks can map an
-/// identifier back to the `NSView` that becomes the item's `.view`.
+/// The window's single toolbar manager (set by the generated Window create arm
+/// via `ndWindowToolbarManager`). Owns the one live `NSToolbar`, both pane
+/// groups, and the tracking separator bound to the split's divider.
 final class NDToolbarManager: NSObject, NSToolbarDelegate {
-    private weak var bar: NDHeaderBarView?
-    private var idsByView: [ObjectIdentifier: NSToolbarItem.Identifier] = [:]
     private(set) var toolbar: NSToolbar
+    private var idsByView: [ObjectIdentifier: NSToolbarItem.Identifier] = [:]
 
-    init(bar: NDHeaderBarView) {
-        self.bar = bar
+    // Both pane header handles, once their panes have landed in the split.
+    private weak var sidebarHeader: NDHeaderBarView?
+    private weak var contentHeader: NDHeaderBarView?
+    // The split the tracking separator aligns to, and its divider index. Set
+    // when the FIRST pane is attached — both panes share one split.
+    private weak var split: NSSplitView?
+    private let trackingSeparatorID = NSToolbarItem.Identifier("nd-toolbar-tracking-separator")
+    private var rebuildScheduled = false
+
+    override init() {
         self.toolbar = NSToolbar(identifier: "nd-toolbar-\(ndHeaderBarFreshID())")
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
+    }
+
+    /// Records `header` under `slot` and captures the split for the tracking
+    /// separator. Called once per pane, when the pane is appended to the split
+    /// (its slot known). Panes can arrive in either order and either before or
+    /// after their headers finish packing children, so a single deferred
+    /// rebuild coalesces whatever state exists once the run loop settles.
+    func register(header: NDHeaderBarView, slot: String, split: NSSplitView) {
+        self.split = split
+        if slot == "sidebar" {
+            sidebarHeader = header
+        } else {
+            contentHeader = header
+        }
+        scheduleRebuild()
+    }
+
+    /// Drops a pane's header when its pane leaves the split.
+    func unregister(header: NDHeaderBarView) {
+        if sidebarHeader === header { sidebarHeader = nil }
+        if contentHeader === header { contentHeader = nil }
+        scheduleRebuild()
+    }
+
+    /// Coalesces bursts of register/pack calls within one commit into a single
+    /// toolbar rebuild on the next main-queue turn — the panes, their headers,
+    /// and the header children all land in the same commit but in an order we
+    /// can't assume, so we rebuild once after they've all settled rather than
+    /// racing a rebuild per structural op. Runs on the main thread already (the
+    /// vtable contract), so `DispatchQueue.main.async` just defers, no hop.
+    func scheduleRebuild() {
+        if rebuildScheduled { return }
+        rebuildScheduled = true
+        // Same dispatch idiom as Backend.swift's marshal_async: capture nothing
+        // non-Sendable — the sole manager is reachable via the nonisolated(unsafe)
+        // `ndWindowToolbarManager` global, so no `self` crosses the isolation
+        // boundary (which the Swift 6 concurrency checker rejects). By the next
+        // main-queue turn both panes and their headers have settled.
+        DispatchQueue.main.async {
+            guard let mgr = ndWindowToolbarManager else { return }
+            mgr.rebuildScheduled = false
+            mgr.rebuild()
+        }
     }
 
     private func identifier(for view: NSView) -> NSToolbarItem.Identifier {
@@ -53,81 +122,133 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         return id
     }
 
-    /// Rebuilds the toolbar from scratch (new `NSToolbar` instance, fresh
-    /// item identifiers) rather than mutating a live toolbar's item list in
-    /// place — simpler and reliable for a full pack/unpack refresh, and
-    /// cheap since a HeaderBar carries only a handful of items.
+    /// Rebuilds the toolbar item list from scratch (fresh identifiers) rather
+    /// than mutating a live list in place — simple and reliable for a full
+    /// re-pack, and cheap for a handful of items (mirrors the M11 Phase A
+    /// full-recreate rebuild pattern this replaces).
     func rebuild() {
-        guard let bar = bar, let win = bar.attachedWindow else { return }
         idsByView.removeAll()
-        toolbar = NSToolbar(identifier: "nd-toolbar-\(ndHeaderBarFreshID())")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
-        win.toolbar = toolbar
+        for idx in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
+            toolbar.removeItem(at: idx)
+        }
+        var pos = 0
+        for id in defaultItemIdentifiers() {
+            toolbar.insertItem(withItemIdentifier: id, at: pos)
+            pos += 1
+        }
+    }
+
+    private func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
+        var ids: [NSToolbarItem.Identifier] = []
+        if let h = sidebarHeader {
+            ids += h.startViews.map { identifier(for: $0) }
+            ids += h.endViews.map { identifier(for: $0) }
+        }
+        // Only insert the tracking separator when the split is present — it is
+        // required to construct the item (it binds to the split's divider).
+        if split != nil {
+            ids.append(trackingSeparatorID)
+        }
+        if let h = contentHeader {
+            ids += h.startViews.map { identifier(for: $0) }
+            ids.append(.flexibleSpace)
+            ids += h.endViews.map { identifier(for: $0) }
+        }
+        return ids
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        guard let bar = bar else { return [] }
-        let start = bar.startViews.map { identifier(for: $0) }
-        let end = bar.endViews.map { identifier(for: $0) }
-        return start + [.flexibleSpace] + end
+        defaultItemIdentifiers()
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        defaultItemIdentifiers()
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        guard let bar = bar,
-              let view = (bar.startViews + bar.endViews).first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier })
-        else { return nil }
+        if itemIdentifier == trackingSeparatorID {
+            guard let split = split else { return nil }
+            // dividerIndex 0: the single divider between the sidebar (arranged
+            // subview 0) and the content pane. Items before this item track
+            // the sidebar side; items after track the content side.
+            return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split, dividerIndex: 0)
+        }
+        let allViews = (sidebarHeader.map { $0.startViews + $0.endViews } ?? [])
+            + (contentHeader.map { $0.startViews + $0.endViews } ?? [])
+        guard let view = allViews.first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier }) else {
+            return nil
+        }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = view
         return item
     }
 }
 
-/// Appends `child` to HeaderBar's start/end slot arrays (generated
-/// `ndAppendChild`/`ndInsertBefore` HeaderBar arm) and, if already
-/// installed on a window, rebuilds the live toolbar to reflect it.
+/// Appends `child` to `bar`'s start/end slot arrays (generated HeaderBar
+/// append/insertBefore arm). If the bar's pane is already registered with the
+/// window toolbar, a coalesced rebuild picks the new item up.
 func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String) {
     if slot == "end" {
         bar.endViews.append(child)
     } else {
         bar.startViews.append(child)
     }
-    bar.toolbarManager?.rebuild()
+    bar.pane?.manager?.scheduleRebuild()
 }
 
-/// Removes `child` from whichever slot array holds it (generated
-/// `ndRemoveChild` HeaderBar arm) and rebuilds the toolbar if installed.
+/// Removes `child` from whichever slot array holds it (generated HeaderBar
+/// remove arm) and requests a rebuild if the pane is registered.
 func ndHeaderBarUnpack(_ bar: NDHeaderBarView, _ child: NSView) {
     bar.startViews.removeAll { $0 === child }
     bar.endViews.removeAll { $0 === child }
-    bar.toolbarManager?.rebuild()
+    bar.pane?.manager?.scheduleRebuild()
 }
 
-/// Hands the process's window's real `NSToolbar` over to `bar` (generated
-/// `ndAppendChild` Window arm, HeaderBar branch). `bar` itself never joins
-/// the content-view hierarchy. Window close/minimize/zoom buttons are
-/// untouched by any of this — only `toolbar`/`toolbarStyle` are set.
-func ndInstallHeaderBar(_ bar: NDHeaderBarView) {
-    guard let win = gWindow else { return }
-    bar.attachedWindow = win
-    let manager = NDToolbarManager(bar: bar)
-    bar.toolbarManager = manager
-    win.toolbar = manager.toolbar
-    win.toolbarStyle = .unified
-    if !bar.ndTitle.isEmpty { win.title = bar.ndTitle }
-}
-
-/// Reverses `ndInstallHeaderBar` (generated `ndRemoveChild` Window arm).
-func ndRemoveHeaderBar(_ bar: NDHeaderBarView) {
-    if let win = bar.attachedWindow, win.toolbar === bar.toolbarManager?.toolbar {
-        win.toolbar = nil
+/// Records a `<toolbarview>` pane's child (generated ToolbarView append arm):
+/// a `<headerbar>` becomes the pane's `header`; anything else becomes the
+/// pane's `contentView`, pinned inside the pane so the split slot (and the
+/// sidebar vibrancy wrapper) shows it.
+func ndToolbarPanePack(_ pane: NDToolbarPaneView, _ child: NSView) {
+    if let header = child as? NDHeaderBarView {
+        pane.header = header
+        header.pane = pane
+    } else {
+        // Logical only — the pane VIEW never enters the hierarchy. The SplitView
+        // arm adds THIS content box (an NSStackView) directly to the split slot,
+        // where it fills natively; parenting it inside the plain-NSView pane
+        // instead would collapse it to its intrinsic size (the M11 Phase B bug).
+        pane.contentView?.removeFromSuperview()
+        pane.contentView = child
     }
-    bar.toolbarManager = nil
-    bar.attachedWindow = nil
+}
+
+/// Reverses `ndToolbarPanePack` (generated ToolbarView remove arm).
+func ndToolbarPaneUnpack(_ pane: NDToolbarPaneView, _ child: NSView) {
+    if let header = child as? NDHeaderBarView, pane.header === header {
+        pane.header = nil
+        header.pane = nil
+        pane.manager?.unregister(header: header)
+    } else if pane.contentView === child {
+        child.removeFromSuperview()
+        pane.contentView = nil
+    }
+}
+
+/// Called when a pane lands in the split (generated SplitView append/
+/// insertBefore arm): the pane's slot is now known, so its header's items can
+/// be registered into the window toolbar on the correct side of the tracking
+/// separator, and the split is handed to the manager for that separator.
+func ndToolbarPaneAttachedToSplit(_ pane: NDToolbarPaneView, split: NSSplitView, slot: String) {
+    guard let manager = ndWindowToolbarManager else { return }
+    pane.slot = slot
+    pane.manager = manager
+    guard let header = pane.header else { return }
+    manager.register(header: header, slot: slot, split: split)
+}
+
+/// Reverses `ndToolbarPaneAttachedToSplit` (generated SplitView remove arm).
+func ndToolbarPaneDetachedFromSplit(_ pane: NDToolbarPaneView) {
+    if let header = pane.header { pane.manager?.unregister(header: header) }
+    pane.manager = nil
 }

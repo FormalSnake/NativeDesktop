@@ -7,6 +7,7 @@
 // agent most needs to see the failure).
 const std = @import("std");
 const gtk = @import("gtk");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const glib = @import("glib");
 const tree_mod = @import("../tree.zig");
@@ -70,18 +71,22 @@ fn onRestartClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
 /// Builds and shows the crash panel over the window's current content.
 /// `dev` gates the Restart button (M8-D4: Restart/respawn are dev-only).
 pub fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, restart: RestartFn) void {
-    const content = gtk.Window.getChild(window);
+    // The window is an adw.ApplicationWindow (edge-to-edge): its content is
+    // owned via setContent/getContent, NOT gtk.Window.getChild/setChild —
+    // those target the internal handle AdwApplicationWindow wraps.
+    const app_win: *adw.ApplicationWindow = @ptrCast(@alignCast(window));
+    const content = adw.ApplicationWindow.getContent(app_win);
     const overlay = gtk.Overlay.new();
     if (content) |c| {
         // Ref before detaching so the widget survives the brief
-        // parent-less window between setChild(null) and Overlay.setChild.
+        // parent-less window between setContent(null) and Overlay.setChild.
         _ = gobject.Object.ref(c.as(gobject.Object));
-        gtk.Window.setChild(window, null);
+        adw.ApplicationWindow.setContent(app_win, null);
         gtk.Overlay.setChild(overlay, c);
         _ = gobject.Object.unref(c.as(gobject.Object));
         original_content = c;
     }
-    gtk.Window.setChild(window, overlay.as(gtk.Widget));
+    adw.ApplicationWindow.setContent(app_win, overlay.as(gtk.Widget));
     overlay_widget = overlay;
 
     const box = gtk.Box.new(.vertical, 8);
@@ -127,13 +132,14 @@ pub fn clear(tree: *Tree, window: *gtk.Window) void {
         if (panel_box) |box| gtk.Overlay.removeOverlay(ov, box);
     }
     panel_box = null;
+    const app_win: *adw.ApplicationWindow = @ptrCast(@alignCast(window));
     if (original_content) |c| {
         _ = gobject.Object.ref(c.as(gobject.Object));
         gtk.Overlay.setChild(overlay_widget.?, null);
-        gtk.Window.setChild(window, c);
+        adw.ApplicationWindow.setContent(app_win, c);
         _ = gobject.Object.unref(c.as(gobject.Object));
     } else {
-        gtk.Window.setChild(window, null);
+        adw.ApplicationWindow.setContent(app_win, null);
     }
     overlay_widget = null;
     original_content = null;

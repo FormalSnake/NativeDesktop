@@ -335,6 +335,19 @@ pub const Runtime = struct {
         if (singleton) |self| self.respawn();
     }
 
+    /// Terminates the bun child. The embedder's app-shutdown handler routes
+    /// here (via `nd_shutdown`) so closing the window kills the child instead
+    /// of orphaning it. `overlay_shown` is set first so the reader loop's
+    /// `onChildExit` treats this deliberate kill as already-handled and
+    /// doesn't try to paint a crash overlay onto a window that is tearing
+    /// down. No-op before `start` (no child yet).
+    pub fn stop() void {
+        if (singleton) |self| {
+            self.overlay_shown = true;
+            self.child.kill(self.io);
+        }
+    }
+
     /// Clears the crash overlay and spawns a fresh child against the same
     /// listening socket. The respawned child starts at generation 0 again;
     /// since the dead child's nodes were never GC'd (the process died, it

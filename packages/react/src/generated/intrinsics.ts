@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 
 export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "SplitView" | "HeaderBar";
-export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "splitview" | "headerbar";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "SplitView" | "HeaderBar" | "ToolbarView";
+export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "splitview" | "headerbar" | "toolbarview";
 
 export interface StyleProp {
   background?: string;
@@ -55,6 +55,7 @@ export namespace JSX {
     webview: { url?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; children?: ReactNode };
     splitview: { sidebarWidth?: number; collapsed?: boolean; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; children?: ReactNode };
     headerbar: { title?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; children?: ReactNode };
+    toolbarview: { testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; children?: ReactNode };
   }
   export type Element = ReactNode;
   export interface IntrinsicAttributes {

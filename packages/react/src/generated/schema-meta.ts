@@ -27,6 +27,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "WebView": { role: "webview", textFrom: null, childModel: null },
   "SplitView": { role: "group", textFrom: null, childModel: "multi" },
   "HeaderBar": { role: "toolbar", textFrom: "title", childModel: "multi" },
+  "ToolbarView": { role: "group", textFrom: null, childModel: "multi" },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -51,6 +52,7 @@ export const intrinsicToName: Record<string, string> = {
   "webview": "WebView",
   "splitview": "SplitView",
   "headerbar": "HeaderBar",
+  "toolbarview": "ToolbarView",
 };
 
 export interface WidgetEvent {
@@ -80,6 +82,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "webview": [],
   "splitview": [],
   "headerbar": [],
+  "toolbarview": [],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -104,4 +107,5 @@ export const handlerPropNames: Record<string, string[]> = {
   "webview": [],
   "splitview": [],
   "headerbar": [],
+  "toolbarview": [],
 };

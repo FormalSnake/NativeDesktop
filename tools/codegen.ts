@@ -127,6 +127,14 @@ function genCssClassSpec(s: Schema): string {
   return `export const cssClassSpec: string[] = ${JSON.stringify(classes)};\n`;
 }
 
+function genZigCssClassSpec(s: Schema): string {
+  const classes = s.cssClasses ?? [];
+  let out = "pub const css_class_spec = [_][]const u8{";
+  out += classes.map((c) => JSON.stringify(c)).join(", ");
+  out += "};\n";
+  return out;
+}
+
 // ---- artifact (a): TS/JSX intrinsics ----
 function genIntrinsics(s: Schema): string {
   let out = HEADER_TS;
@@ -345,6 +353,7 @@ function genZig(s: Schema): string {
   out += genZigEvents(s);
   out += genZigStructural(s);
   out += genZigStyleTable(s);
+  out += genZigCssClassSpec(s);
   return out;
 }
 
@@ -389,7 +398,7 @@ function zigDefaultStr(w: Widget, prop: string): string {
 function genZigCreateBody(w: Widget): string {
   let out = "";
   if (w.name === "Window") {
-    out += "        const window = gtk.ApplicationWindow.new(app);\n";
+    out += "        const window = adw.ApplicationWindow.new(app);\n";
     out += "        const win = window.as(gtk.Window);\n";
     out += "        the_window.* = win;\n";
     out += "        if (propStr(props, \"title\")) |t| gtk.Window.setTitle(win, dupeZ(t));\n";
@@ -526,6 +535,9 @@ function genZigCreateBody(w: Widget): string {
     out += "            }\n";
     out += "        }\n";
     out += "        return hb.as(gtk.Widget);\n";
+  } else if (w.name === "ToolbarView") {
+    out += "        const tv = adw.ToolbarView.new();\n";
+    out += "        return tv.as(gtk.Widget);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -786,23 +798,12 @@ interface StructuralTemplate {
 
 const STRUCTURAL: Record<string, StructuralTemplate> = {
   Window: {
-    append: () => {
-      let s = "        if (gobject.ext.isA(child, adw.HeaderBar)) {\n";
-      s += "            gtk.Window.setTitlebar(@ptrCast(@alignCast(parent)), child);\n";
-      s += "        } else {\n";
-      s += "            gtk.Window.setChild(@ptrCast(@alignCast(parent)), child);\n";
-      s += "        }\n";
-      return s;
-    },
-    remove: () => {
-      let s = "        const win: *gtk.Window = @ptrCast(@alignCast(parent));\n";
-      s += "        if (gtk.Window.getTitlebar(win) == child) {\n";
-      s += "            gtk.Window.setTitlebar(win, null);\n";
-      s += "        } else {\n";
-      s += "            gtk.Window.setChild(win, null);\n";
-      s += "        }\n";
-      return s;
-    },
+    // adw.ApplicationWindow is edge-to-edge: content is a single child set via
+    // setContent (NOT gtk.Window.setChild — that targets the internal handle
+    // AdwApplicationWindow wraps). Headers no longer mount at window level;
+    // they live inside a <toolbarview> pane.
+    append: () => "        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);\n",
   },
   Box: {
     append: () => {
@@ -913,6 +914,17 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       return s;
     },
     remove: () => "        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);\n",
+  },
+  ToolbarView: {
+    // Child routing is by widget TYPE (like Window's HeaderBar check): a
+    // HeaderBar child becomes a top bar, anything else the content pane.
+    append: () => {
+      let s = "        const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gobject.ext.isA(child, adw.HeaderBar)) adw.ToolbarView.addTopBar(tv, child)\n";
+      s += "        else adw.ToolbarView.setContent(tv, child);\n";
+      return s;
+    },
+    remove: () => "        adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);\n",
   },
 };
 
@@ -1049,11 +1061,21 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        let content = FlippedView()\n";
     out += `        let winW = propInt(props, "defaultWidth") ?? ${swiftDefaultInt(w, "defaultWidth")}\n`;
     out += `        let winH = propInt(props, "defaultHeight") ?? ${swiftDefaultInt(w, "defaultHeight")}\n`;
-    out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)\n";
+    // .fullSizeContentView + transparent titlebar: the content (the split's
+    // vibrancy sidebar) reaches the very top so traffic lights float over the
+    // sidebar, native Notes/Mail idiom. The single unified NSToolbar the pane
+    // <headerbar>s feed is created and assigned here (empty until the panes
+    // register their items); see ndWindowToolbarManager / NDToolbarManager.
+    out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)\n";
     out += '        if let t = propStr(props, "title") { win.title = t }\n';
+    out += "        win.titlebarAppearsTransparent = true\n";
     out += "        win.contentView = content\n";
-    out += "        win.center(); win.makeKeyAndOrderFront(nil)\n";
     out += "        gWindow = win\n";
+    out += "        let manager = NDToolbarManager()\n";
+    out += "        ndWindowToolbarManager = manager\n";
+    out += "        win.toolbar = manager.toolbar\n";
+    out += "        win.toolbarStyle = .unified\n";
+    out += "        win.center(); win.makeKeyAndOrderFront(nil)\n";
     out += "        return content\n";
   } else if (w.name === "Box") {
     out += "        let stack = NSStackView()\n";
@@ -1186,6 +1208,16 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        let bar = NDHeaderBarView()\n";
     out += `        bar.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
     out += "        return bar\n";
+  } else if (w.name === "ToolbarView") {
+    // A pane wrapper: its non-header child is its content (what SplitView adds
+    // to its slot and vibrancy-wraps for the sidebar); its <headerbar> child
+    // contributes items to the ONE window NSToolbar, not to this view's own
+    // subtree. The pane's slot (sidebar/content) — which decides where those
+    // items land relative to the tracking separator — isn't known until this
+    // pane is appended to the SplitView, so item registration is deferred to
+    // that point (see ndToolbarPaneAttachedToSplit). NDToolbarPaneView holds
+    // the header/content refs and slot until then.
+    out += "        return NDToolbarPaneView()\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -1362,60 +1394,85 @@ interface SwiftStructuralTemplate {
 // aren't order-addressed, so `before` plays no part).
 const SPLITVIEW_STRUCTURAL_BODY =
   "        let split = parent as! NSSplitView\n" +
+  // A ToolbarView pane is a LOGICAL holder: it merges its <headerbar>'s items
+  // into the window toolbar (sidebar items left of the tracking separator,
+  // content items right), but the pane VIEW never enters the hierarchy. Its
+  // CONTENT box (an NSStackView) is what becomes the split's slot subview —
+  // added directly, exactly like a non-toolbarview child, so NSSplitView sizes
+  // it to fill. (A plain-NSView pane wrapper would only hug its content's
+  // intrinsic size, collapsing the pane to a narrow column.)
+  "        var realChild = child\n" +
+  "        if let pane = child as? NDToolbarPaneView {\n" +
+  "            ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)\n" +
+  "            realChild = pane.contentView ?? child\n" +
+  "        }\n" +
   '        if attachedSlot == "sidebar" {\n' +
   "            let wrapper = NSVisualEffectView()\n" +
   "            wrapper.material = .sidebar\n" +
   "            wrapper.blendingMode = .behindWindow\n" +
   "            wrapper.state = .followsWindowActiveState\n" +
   "            wrapper.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            child.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            wrapper.addSubview(child)\n" +
+  "            realChild.translatesAutoresizingMaskIntoConstraints = false\n" +
+  "            wrapper.addSubview(realChild)\n" +
   "            NSLayoutConstraint.activate([\n" +
-  "                child.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),\n" +
-  "                child.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),\n" +
-  "                child.topAnchor.constraint(equalTo: wrapper.topAnchor),\n" +
-  "                child.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),\n" +
+  "                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),\n" +
+  "                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),\n" +
+  "                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),\n" +
+  "                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),\n" +
   "            ])\n" +
   "            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {\n" +
   "                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))\n" +
-  "                widthConstraint.priority = .defaultLow\n" +
+  // .defaultLow (250) sat below the 260 holding priority, so the wrapper
+  // collapsed to its content's intrinsic hugging width (~157) instead of its
+  // fraction. .defaultHigh (750) holds the fraction while staying below
+  // required, so the divider remains user-draggable.
+  "                widthConstraint.priority = .defaultHigh\n" +
   "                widthConstraint.isActive = true\n" +
   "            }\n" +
   "            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
   "            split.insertArrangedSubview(wrapper, at: 0)\n" +
   "        } else {\n" +
-  "            split.addArrangedSubview(child)\n" +
+  "            split.addArrangedSubview(realChild)\n" +
   "        }\n" +
   "        if !split.arrangedSubviews.isEmpty {\n" +
   "            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)\n" +
   "        }\n";
 
+// GTK box children fill the PERPENDICULAR axis by default (a vertical box
+// stretches children across WIDTH, a horizontal box across HEIGHT). An
+// NSStackView's `.leading`/`.centerY` alignment does NOT stretch its arranged
+// subviews — they hug intrinsic size, which collapsed nested content panes to
+// ~137pt inside a 741pt slot. NSStackView has no built-in cross-axis "fill",
+// so we pin each arranged subview's cross-axis anchor to the stack. Priority
+// 999 (just under required) lets an arranged subview with a hard intrinsic
+// constraint still win, while beating default content-hugging. We do NOT touch
+// the main axis, so rows keep their natural size (no equal-height stretch).
+const BOX_CROSS_FILL_BODY =
+  "        let fill = stack.orientation == .vertical\n" +
+  "            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)\n" +
+  "            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)\n" +
+  "        fill.priority = NSLayoutConstraint.Priority(999)\n" +
+  "        fill.isActive = true\n";
+
 const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Window: {
     // `parent` here is the Window's tracked handle: the flipped contentView
     // itself (returned by the Window create arm), so append is single-child
-    // subview management sized to the content view's bounds. A HeaderBar
-    // child is not part of that subview hierarchy at all — it takes over
-    // the window's real NSToolbar instead (Task 8's owner directive).
+    // subview management sized to the content view's bounds. Window chrome on
+    // the Mac (M11 Phase B) is the unified NSToolbar the pane <headerbar>s
+    // feed via the SplitView, not a window-level header child — so there is no
+    // NDHeaderBarView branch here; the split fills the content view edge-to-
+    // edge and reaches the top under .fullSizeContentView.
     append: () =>
-      "        if let bar = child as? NDHeaderBarView {\n" +
-      "            ndInstallHeaderBar(bar)\n" +
-      "        } else {\n" +
-      "            parent.subviews.forEach { $0.removeFromSuperview() }\n" +
-      "            parent.addSubview(child)\n" +
-      "            child.frame = parent.bounds\n" +
-      "            child.autoresizingMask = [.width, .height]\n" +
-      "        }\n",
-    remove: () =>
-      "        if let bar = child as? NDHeaderBarView {\n" +
-      "            ndRemoveHeaderBar(bar)\n" +
-      "        } else {\n" +
-      "            child.removeFromSuperview()\n" +
-      "        }\n",
+      "        parent.subviews.forEach { $0.removeFromSuperview() }\n" +
+      "        parent.addSubview(child)\n" +
+      "        child.frame = parent.bounds\n" +
+      "        child.autoresizingMask = [.width, .height]\n",
+    remove: () => "        child.removeFromSuperview()\n",
   },
   Box: {
-    append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n",
-    insertBefore: () => "        let stack = parent as! NSStackView\n        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n        stack.insertArrangedSubview(child, at: idx)\n",
+    append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n" + BOX_CROSS_FILL_BODY,
+    insertBefore: () => "        let stack = parent as! NSStackView\n        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n        stack.insertArrangedSubview(child, at: idx)\n" + BOX_CROSS_FILL_BODY,
     remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        child.removeFromSuperview()\n",
   },
   ScrollView: {
@@ -1463,18 +1520,33 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     insertBefore: () => SPLITVIEW_STRUCTURAL_BODY,
     remove: () =>
       "        let split = parent as! NSSplitView\n" +
-      "        if let wrapper = child.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {\n" +
+      "        var realChild = child\n" +
+      "        if let pane = child as? NDToolbarPaneView {\n" +
+      "            ndToolbarPaneDetachedFromSplit(pane)\n" +
+      "            realChild = pane.contentView ?? child\n" +
+      "        }\n" +
+      "        if let wrapper = realChild.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {\n" +
       "            split.removeArrangedSubview(wrapper)\n" +
       "            wrapper.removeFromSuperview()\n" +
       "        } else {\n" +
-      "            split.removeArrangedSubview(child)\n" +
-      "            child.removeFromSuperview()\n" +
+      "            split.removeArrangedSubview(realChild)\n" +
+      "            realChild.removeFromSuperview()\n" +
       "        }\n",
   },
   HeaderBar: {
     append: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
     insertBefore: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
     remove: () => "        ndHeaderBarUnpack(parent as! NDHeaderBarView, child)\n",
+  },
+  ToolbarView: {
+    // Child routing is by widget TYPE (like Window's HeaderBar check): a
+    // <headerbar> child is recorded as the pane's header (its items feed the
+    // window toolbar, tagged by pane slot, once the pane is in the split); any
+    // other child becomes the pane's content view. `before` is irrelevant —
+    // a pane has at most one header and one content child.
+    append: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child)\n",
+    insertBefore: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child)\n",
+    remove: () => "        ndToolbarPaneUnpack(parent as! NDToolbarPaneView, child)\n",
   },
 };
 

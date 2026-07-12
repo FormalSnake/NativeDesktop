@@ -38,6 +38,7 @@ pub const StyleKeyDef = g.StyleKeyDef;
 pub const style_keys = g.style_keys;
 pub const StyleSubDef = g.StyleSubDef;
 pub const style_subkeys = g.style_subkeys;
+pub const css_class_spec = g.css_class_spec;
 
 pub const main = @import("gtk/main.zig").main;
 

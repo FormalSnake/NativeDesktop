@@ -269,6 +269,28 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         return view
     }()
 
+    // Set-replace, not additive (mirrors GTK's applyCssClasses, which removes
+    // every allowlist class not in `value`): reset the properties the switch
+    // below can touch to their baseline FIRST, so a class dropped from the
+    // list actually clears its effect (e.g. a former "suggested-action" no
+    // longer leaves keyEquivalent="\r"/an accent bezel, a former "flat" gets
+    // its border back). Baselines match a freshly-created control from
+    // NDGen/Widgets.swift's create arms (.rounded bezel, no key equivalent).
+    if let btn = view as? NSButton {
+        btn.bezelColor = nil
+        btn.keyEquivalent = ""
+        btn.hasDestructiveAction = false
+        btn.isBordered = true
+        btn.showsBorderOnlyWhileMouseInside = false
+    }
+    if let field = textTarget as? NSTextField {
+        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.textColor = .labelColor
+    } else if let textView = textTarget as? NSTextView {
+        textView.font = .systemFont(ofSize: NSFont.systemFontSize)
+        textView.textColor = .labelColor
+    }
+
     for cls in classes {
         switch cls {
         case "suggested-action":

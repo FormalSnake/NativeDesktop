@@ -120,20 +120,43 @@ let t0 = await tree();
 const titleInput0 = mustFind(t0, "title-input");
 if (titleInput0.text !== "Welcome to ND Notes") throw new Error(`unexpected seeded title: ${titleInput0.text}`);
 
-// Native-chrome assertion: <splitview testID="split"> and <headerbar
-// testID="header"> must both be mounted. getTree's `type` field is the
-// schema widget name (e.g. "SplitView"/"HeaderBar" — verified against
-// src/tree.zig's putMeta, which stores the wire `widget_type` string
-// unchanged); look up each node's accessibility role from the same
-// generated table the codegen emits (packages/react/src/generated/
-// schema-meta.ts) rather than assuming a wire "role" field exists.
+// Native-chrome assertion (Phase A): the window is edge-to-edge and each
+// split pane carries its OWN header bar. So <splitview testID="split">
+// (role group) wraps two <toolbarview> panes (role group), and each pane's
+// first child is a <headerbar> (role toolbar) — the sidebar header holds the
+// "New Note" button, the content header shows the note title. getTree's
+// `type` field is the schema widget name (e.g. "SplitView"/"ToolbarView"/
+// "HeaderBar" — verified against src/tree.zig's putMeta, which stores the
+// wire `widget_type` string unchanged); look up each node's accessibility
+// role from the same generated table the codegen emits (packages/react/src/
+// generated/schema-meta.ts) rather than assuming a wire "role" field exists.
 const splitNode = mustFind(t0, "split");
-const headerNode = mustFind(t0, "header");
 const splitRole = widgetMeta[splitNode.type]?.role;
 if (splitRole !== "group") throw new Error(`split node (type=${splitNode.type}) role=${splitRole}, want "group"`);
-const headerRole = widgetMeta[headerNode.type]?.role;
-if (headerRole !== "toolbar") throw new Error(`header node (type=${headerNode.type}) role=${headerRole}, want "toolbar"`);
-console.log(`ND_NAVCHROME_OK splitview+headerbar present (split=${splitNode.type}/${splitRole}, header=${headerNode.type}/${headerRole})`);
+
+const sidebarToolbar = mustFind(t0, "sidebar-toolbar");
+const contentToolbar = mustFind(t0, "content-toolbar");
+for (const tv of [sidebarToolbar, contentToolbar]) {
+  const role = widgetMeta[tv.type]?.role;
+  if (role !== "group") throw new Error(`toolbarview node ${tv.testID} (type=${tv.type}) role=${role}, want "group"`);
+}
+
+const sidebarHeader = mustFind(t0, "sidebar-header");
+const contentHeader = mustFind(t0, "content-header");
+for (const h of [sidebarHeader, contentHeader]) {
+  const role = widgetMeta[h.type]?.role;
+  if (role !== "toolbar") throw new Error(`header node ${h.testID} (type=${h.type}) role=${role}, want "toolbar"`);
+}
+
+// Each header must live inside its own toolbarview pane (not the window).
+if (!find(sidebarToolbar, "sidebar-header")) throw new Error("sidebar-header is not inside sidebar-toolbar");
+if (!find(contentToolbar, "content-header")) throw new Error("content-header is not inside content-toolbar");
+// The "New Note" button lives in the sidebar's header, not the window titlebar.
+if (!find(sidebarHeader, "new-note-button")) throw new Error("new-note-button is not inside sidebar-header");
+console.log(
+  `ND_NAVCHROME_OK edge-to-edge split with per-pane headers (split=${splitNode.type}/${splitRole}, ` +
+    `sidebar-header=${sidebarHeader.type}, content-header=${contentHeader.type})`,
+);
 
 let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.png` })) as {
   path: string;

@@ -4,9 +4,16 @@ set -euo pipefail
 # ON a Mac (the local clone, the ~/nd ssh clone, or a macos CI runner):
 # builds libnd + the Swift shell, launches examples/notes under
 # NATIVE_AUTOMATION, and requires the full notes round-trip (ND_NOTES_OK)
-# AND the chrome assertions (ND_NAVCHROME_OK: splitview role=group,
-# headerbar role=toolbar — the headerbar mounts as a real unified NSToolbar,
-# the splitview as an NSSplitView with a vibrancy sidebar).
+# AND the chrome assertions (ND_NAVCHROME_OK, asserted in notes-drive.ts):
+# an edge-to-edge <splitview> (role=group) wrapping two <toolbarview> panes
+# (role=group), each carrying a <headerbar> (role=toolbar). On the Mac (Phase
+# B) the two per-pane headers do NOT each make their own bar — their items
+# MERGE into ONE unified NSToolbar spanning the window top (the New Note
+# button on the sidebar side, the note title on the content side), split by an
+# NSTrackingSeparatorToolbarItem aligned to the NSSplitView divider, with the
+# vibrancy sidebar reaching the top under .fullSizeContentView so the traffic
+# lights float over it. getTree reflects the same schema tree on both
+# platforms; the unified-toolbar merge is an AppKit render detail below it.
 # Invoked directly on Darwin, or over ssh by scripts/mac/mac-m11.sh.
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd -P)"

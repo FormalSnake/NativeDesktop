@@ -283,3 +283,11 @@ Attached props (set on children):
 
 Attached props are attach-time-only; changing them after mount is a no-op.
 
+## ToolbarView (`<toolbarview>`)
+
+Automation role: `group`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `testID` | string | — | meta |
+

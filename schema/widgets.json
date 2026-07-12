@@ -326,6 +326,16 @@
       ],
       "events": [],
       "automation": { "role": "toolbar", "textFrom": "title" }
+    },
+    {
+      "name": "ToolbarView",
+      "intrinsic": "toolbarview",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": null }
     }
   ]
 }
