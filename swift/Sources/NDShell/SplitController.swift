@@ -58,9 +58,16 @@ func ndMakePaneViewController(_ content: NSView) -> NSViewController {
     host.translatesAutoresizingMaskIntoConstraints = false
     content.translatesAutoresizingMaskIntoConstraints = false
     host.addSubview(content)
+    // ALL leading/trailing/top pins go through the safe-area guide, not the
+    // host edges: with the content item's automaticallyAdjustsSafeAreaInsets,
+    // the pane's FRAME extends under the floating glass sidebar (Tahoe
+    // layering — the editor background is what the glass blurs), but its
+    // LAYOUT must inset past it; edge-pinned content rendered underneath the
+    // sidebar (title field poking out past the glass, owner-reported).
+    // For the sidebar pane those insets are zero, so one form serves both.
     NSLayoutConstraint.activate([
-        content.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-        content.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
+        content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
         content.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
     ])

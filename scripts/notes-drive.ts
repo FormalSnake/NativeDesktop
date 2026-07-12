@@ -196,7 +196,13 @@ if (!searchGeom || searchGeom.y < 40) throw new Error(`search-input y=${searchGe
 if (!titleGeom || titleGeom.y < 40) throw new Error(`title-input y=${titleGeom?.y} — content pane is under the titlebar (safe-area inset lost)`);
 const rootGeom = t0.root.geometry;
 if (!rootGeom || rootGeom.w < 850) throw new Error(`window content width=${rootGeom?.w} — defaultWidth (900) not honored`);
-console.log(`ND_CHROMEGEOM_OK search-input@y=${searchGeom.y} title-input@y=${titleGeom.y} root=${rootGeom.w}x${rootGeom.h}`);
+// 3. Content-pane layout must start RIGHT of the sidebar (sidebar fraction
+//    0.28 * 900 = 252). On AppKit the pane's frame deliberately extends
+//    under the floating glass sidebar, but its content must inset past it
+//    via the safe-area leading guide — an x below the sidebar width means
+//    the editor is rendering underneath the glass (owner-reported overlap).
+if (titleGeom.x < 200) throw new Error(`title-input x=${titleGeom.x} — content pane renders under the sidebar`);
+console.log(`ND_CHROMEGEOM_OK search-input@y=${searchGeom.y} title-input@y=${titleGeom.y},x=${titleGeom.x} root=${rootGeom.w}x${rootGeom.h}`);
 
 let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.png` })) as {
   path: string;
