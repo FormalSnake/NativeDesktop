@@ -19,6 +19,7 @@ fn synthValue(gpa: std.mem.Allocator, prop: std.json.Value) ![]const u8 {
     if (std.mem.eql(u8, t, "int")) return gpa.dupe(u8, "7");
     if (std.mem.eql(u8, t, "float")) return gpa.dupe(u8, "0.5");
     if (std.mem.eql(u8, t, "stringList")) return gpa.dupe(u8, "[\"a\",\"b\"]");
+    if (std.mem.eql(u8, t, "objectList")) return gpa.dupe(u8, "[{\"title\":\"a\"},{\"title\":\"b\",\"badge\":\"2\"}]");
     if (std.mem.eql(u8, t, "bool")) {
         const d = prop.object.get("default") orelse std.json.Value{ .bool = false };
         return gpa.dupe(u8, if (d == .bool and d.bool) "false" else "true");

@@ -294,6 +294,11 @@ fn handleScreenshot(job: *UiJob) void {
 /// Owned tree-node JSON shape (matches the RPC surface contract exactly).
 const Geometry = struct { x: i32, y: i32, w: i32, h: i32 };
 
+/// SourceList's per-row shape on the wire (M11 SourceList Wave 1) —
+/// `iconName` here (camelCase, matching the schema prop shape), renamed
+/// from `Tree.NodeMeta.Row`'s `icon_name` (Zig-idiomatic snake_case).
+const RowJson = struct { title: []const u8, badge: ?[]const u8, iconName: ?[]const u8 };
+
 const JsonNode = struct {
     ref: u32,
     type: []const u8,
@@ -305,6 +310,9 @@ const JsonNode = struct {
     /// ListView's row count (M5c-D4). Null for every widget that isn't
     /// data-driven; never derived from walking recycled row widgets.
     itemCount: ?u32 = null,
+    /// SourceList's ordered row data (M11 SourceList Wave 1). Null for every
+    /// widget that isn't row-driven.
+    rows: ?[]RowJson = null,
 };
 
 const GetTreeResult = struct {
@@ -388,6 +396,14 @@ fn buildNode(
     const test_id = if (meta) |m| m.test_id else null;
     const text = if (meta) |m| m.text else null;
     const item_count = if (meta) |m| m.item_count else null;
+    const rows: ?[]RowJson = if (meta) |m| blk: {
+        const r = m.rows orelse break :blk null;
+        const out = try arena.alloc(RowJson, r.len);
+        for (r, 0..) |row, i| {
+            out[i] = .{ .title = row.title, .badge = row.badge, .iconName = row.icon_name };
+        }
+        break :blk out;
+    } else null;
     const widget = tree.get(id);
 
     const visible = if (widget) |w| abi_backend.vtable.node_visible(abi_backend.ctx, w) else false;
@@ -414,6 +430,7 @@ fn buildNode(
         .geometry = geometry,
         .children = children.items,
         .itemCount = item_count,
+        .rows = rows,
     };
 }
 

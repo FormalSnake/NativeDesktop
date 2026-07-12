@@ -3,13 +3,14 @@ import AppKit
 // M11 Phase B: macOS uses the REAL native idiom (Notes.app/Mail) — a SINGLE
 // unified NSToolbar spanning the top, with the sidebar reaching the very top
 // of the window (traffic lights floating over it) via the Window create arm's
-// .fullSizeContentView + titlebarAppearsTransparent. The two per-pane
-// <headerbar>s do NOT each create their own toolbar: their items MERGE into
-// the one window toolbar. The sidebar pane's items sit LEFT of an
-// NSTrackingSeparatorToolbarItem (aligned to the split's divider), the content
-// pane's items sit RIGHT of it. The GTK peer stacks a real AdwHeaderBar inside
-// each AdwToolbarView; on the Mac that split-per-pane header maps onto the one
-// unified toolbar instead.
+// .fullSizeContentView + titlebarAppearsTransparent. The per-pane <headerbar>s
+// (two, or three for an M13 three-pane SplitView) do NOT each create their
+// own toolbar: their items MERGE into the one window toolbar, separated by an
+// NSTrackingSeparatorToolbarItem per divider (aligned to the split's dividers)
+// — sidebar items sit left of divider 0, list items (if any) sit between
+// divider 0 and 1, content items sit right of the last divider. The GTK peer
+// stacks a real AdwHeaderBar inside each AdwToolbarView; on the Mac that
+// split-per-pane header maps onto the one unified toolbar instead.
 
 /// Host-rendered handle for a mounted `<headerbar>`. It never joins any view
 /// hierarchy — it holds the header's start/end child views until its owning
@@ -54,13 +55,20 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     private(set) var toolbar: NSToolbar
     private var idsByView: [ObjectIdentifier: NSToolbarItem.Identifier] = [:]
 
-    // Both pane header handles, once their panes have landed in the split.
+    // Pane header handles, once their panes have landed in the split. `list`
+    // is the middle "folders / list / content" pane (M13 three-pane
+    // SplitView) — nil for a two-pane tree, in which case the toolbar output
+    // is byte-identical to the pre-M13 two-bucket behavior.
     private weak var sidebarHeader: NDHeaderBarView?
+    private weak var listHeader: NDHeaderBarView?
     private weak var contentHeader: NDHeaderBarView?
-    // The split the tracking separator aligns to, and its divider index. Set
-    // when the FIRST pane is attached — both panes share one split.
+    // The split the tracking separators align to. Set when the FIRST pane is
+    // attached — all panes share one split.
     private weak var split: NSSplitView?
-    private let trackingSeparatorID = NSToolbarItem.Identifier("nd-toolbar-tracking-separator")
+    // Divider 0 sits between sidebar and list-or-content; divider 1 (only
+    // emitted when a `list` pane exists) sits between list and content.
+    private let trackingSeparatorID0 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator")
+    private let trackingSeparatorID1 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator-1")
     private var rebuildScheduled = false
 
     override init() {
@@ -80,6 +88,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         self.split = split
         if slot == "sidebar" {
             sidebarHeader = header
+        } else if slot == "list" {
+            listHeader = header
         } else {
             contentHeader = header
         }
@@ -89,6 +99,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// Drops a pane's header when its pane leaves the split.
     func unregister(header: NDHeaderBarView) {
         if sidebarHeader === header { sidebarHeader = nil }
+        if listHeader === header { listHeader = nil }
         if contentHeader === header { contentHeader = nil }
         scheduleRebuild()
     }
@@ -144,10 +155,19 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             ids += h.startViews.map { identifier(for: $0) }
             ids += h.endViews.map { identifier(for: $0) }
         }
-        // Only insert the tracking separator when the split is present — it is
+        // Only insert a tracking separator when the split is present — it is
         // required to construct the item (it binds to the split's divider).
+        // Divider 0 always appears (byte-identical to the pre-M13 two-pane
+        // output); divider 1 only when a `list` pane exists (three-pane).
         if split != nil {
-            ids.append(trackingSeparatorID)
+            ids.append(trackingSeparatorID0)
+        }
+        if let h = listHeader {
+            ids += h.startViews.map { identifier(for: $0) }
+            ids += h.endViews.map { identifier(for: $0) }
+            if split != nil {
+                ids.append(trackingSeparatorID1)
+            }
         }
         if let h = contentHeader {
             ids += h.startViews.map { identifier(for: $0) }
@@ -167,15 +187,24 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        if itemIdentifier == trackingSeparatorID {
+        if itemIdentifier == trackingSeparatorID0 {
             guard let split = split else { return nil }
-            // dividerIndex 0: the single divider between the sidebar (arranged
-            // subview 0) and the content pane. Items before this item track
-            // the sidebar side; items after track the content side.
+            // dividerIndex 0: sidebar (arranged subview 0) vs. list-or-content.
             return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split, dividerIndex: 0)
         }
-        let allViews = (sidebarHeader.map { $0.startViews + $0.endViews } ?? [])
-            + (contentHeader.map { $0.startViews + $0.endViews } ?? [])
+        if itemIdentifier == trackingSeparatorID1 {
+            guard let split = split else { return nil }
+            // dividerIndex 1: list (arranged subview 1) vs. content — only
+            // constructed when a `list` pane is registered.
+            return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split, dividerIndex: 1)
+        }
+        // Built as separate statements, not one chained `+`/`??` expression —
+        // three optional-map terms combined that way pushed the type checker
+        // over its time budget ("unable to type-check in reasonable time").
+        var allViews: [NSView] = []
+        if let h = sidebarHeader { allViews += h.startViews + h.endViews }
+        if let h = listHeader { allViews += h.startViews + h.endViews }
+        if let h = contentHeader { allViews += h.startViews + h.endViews }
         guard let view = allViews.first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier }) else {
             return nil
         }

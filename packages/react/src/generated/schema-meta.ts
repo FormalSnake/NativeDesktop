@@ -29,6 +29,10 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "HeaderBar": { role: "toolbar", textFrom: "title", childModel: "multi" },
   "ToolbarView": { role: "group", textFrom: null, childModel: "multi" },
   "SearchInput": { role: "textbox", textFrom: "text", childModel: null },
+  "SourceList": { role: "list", textFrom: null, childModel: null },
+  "Menubar": { role: "menubar", textFrom: null, childModel: "multi" },
+  "Menu": { role: "menu", textFrom: "label", childModel: "multi" },
+  "MenuItem": { role: "menuitem", textFrom: "label", childModel: null },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -55,6 +59,10 @@ export const intrinsicToName: Record<string, string> = {
   "headerbar": "HeaderBar",
   "toolbarview": "ToolbarView",
   "searchinput": "SearchInput",
+  "sourcelist": "SourceList",
+  "menubar": "Menubar",
+  "menu": "Menu",
+  "menuitem": "MenuItem",
 };
 
 export interface WidgetEvent {
@@ -86,6 +94,10 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "headerbar": [],
   "toolbarview": [],
   "searchinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }],
+  "sourcelist": [{ name: "selectionChanged", handler: "onSelectionChanged", payload: "index" }, { name: "rowActivated", handler: "onRowActivated", payload: "index" }],
+  "menubar": [],
+  "menu": [],
+  "menuitem": [{ name: "selected", handler: "onSelect", payload: "none" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -112,4 +124,8 @@ export const handlerPropNames: Record<string, string[]> = {
   "headerbar": [],
   "toolbarview": [],
   "searchinput": ["onChanged", "onActivate"],
+  "sourcelist": ["onSelectionChanged", "onRowActivated"],
+  "menubar": [],
+  "menu": [],
+  "menuitem": ["onSelect"],
 };

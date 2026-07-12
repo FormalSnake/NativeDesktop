@@ -17,6 +17,13 @@ pub const NodeMeta = struct {
     /// ListView's row count (M5c-D4): getTree reports this instead of
     /// dumping the recycled row widgets. Null for every non-data-driven widget.
     item_count: ?u32 = null,
+    /// SourceList's row data (M11 SourceList Wave 1): getTree reports these
+    /// title/badge/iconName triples directly, mirroring `item_count` — never
+    /// re-derived by walking the live AdwActionRow widgets. Null for every
+    /// widget that isn't row-driven.
+    rows: ?[]Row = null,
+
+    pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8 };
 };
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -39,6 +46,54 @@ fn propArrayLen(props: ?std.json.Value, key: []const u8) ?u32 {
         .array => @intCast(field.array.items.len),
         else => null,
     };
+}
+
+/// Parses SourceList's `items` (an `objectList` of `{title, badge?,
+/// iconName?}`) into heap-owned `NodeMeta.Row`s for `NodeMeta.rows`. Every
+/// string is duped into `gpa` — the source `std.json.Value` tree is
+/// transient (freed with the CommitBatch's parse arena once `apply`
+/// returns). Returns null if `items` is absent or not an array; an
+/// individual malformed row (missing/non-string `title`) is skipped, not
+/// fatal to the rest of the list.
+fn parseRows(gpa: std.mem.Allocator, props: ?std.json.Value) ?[]NodeMeta.Row {
+    const v = props orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get("items") orelse return null;
+    if (field != .array) return null;
+    var out: std.ArrayList(NodeMeta.Row) = .empty;
+    for (field.array.items) |it| {
+        if (it != .object) continue;
+        const title_v = it.object.get("title") orelse continue;
+        if (title_v != .string) continue;
+        const title = gpa.dupe(u8, title_v.string) catch continue;
+        var badge: ?[]u8 = null;
+        if (it.object.get("badge")) |b| {
+            if (b == .string) badge = gpa.dupe(u8, b.string) catch null;
+        }
+        var icon_name: ?[]u8 = null;
+        if (it.object.get("iconName")) |ic| {
+            if (ic == .string) icon_name = gpa.dupe(u8, ic.string) catch null;
+        }
+        out.append(gpa, .{ .title = title, .badge = badge, .icon_name = icon_name }) catch {
+            gpa.free(title);
+            if (badge) |b| gpa.free(b);
+            if (icon_name) |i| gpa.free(i);
+        };
+    }
+    return out.toOwnedSlice(gpa) catch null;
+}
+
+/// Frees a `NodeMeta.rows` slice (each row's owned strings, then the slice
+/// itself) — mirrors the title/badge/icon_name ownership shape `removeMeta`/
+/// `deinitMeta`/`setMetaRows` all share.
+fn freeRows(gpa: std.mem.Allocator, rows: ?[]NodeMeta.Row) void {
+    const r = rows orelse return;
+    for (r) |row| {
+        gpa.free(row.title);
+        if (row.badge) |b| gpa.free(b);
+        if (row.icon_name) |i| gpa.free(i);
+    }
+    gpa.free(r);
 }
 
 /// Invoked from both the create and update arms of `apply` — style is only
@@ -201,6 +256,19 @@ pub const Tree = struct {
         if (self.meta.getPtr(id)) |m| m.item_count = n;
     }
 
+    /// Replaces `id`'s SourceList row data, freeing the previously stored
+    /// rows first (mirrors `setMetaText`'s free-then-replace contract).
+    /// Takes ownership of `rows` — frees it instead if `id` has no meta
+    /// entry (shouldn't happen in practice, but avoids a leak either way).
+    pub fn setMetaRows(self: *Tree, id: u32, rows: []NodeMeta.Row) void {
+        const m = self.meta.getPtr(id) orelse {
+            freeRows(self.gpa, rows);
+            return;
+        };
+        freeRows(self.gpa, m.rows);
+        m.rows = rows;
+    }
+
     pub fn setMetaText(self: *Tree, id: u32, text: []const u8) void {
         const m = self.meta.getPtr(id) orelse return;
         if (m.text) |old| self.gpa.free(old);
@@ -220,6 +288,7 @@ pub const Tree = struct {
         if (kv.value.text) |v| self.gpa.free(v);
         if (kv.value.attached.tab_label) |v| self.gpa.free(v);
         if (kv.value.attached.slot) |v| self.gpa.free(v);
+        freeRows(self.gpa, kv.value.rows);
     }
 
     pub fn deinitMeta(self: *Tree) void {
@@ -230,6 +299,7 @@ pub const Tree = struct {
             if (entry.value_ptr.text) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.slot) |v| self.gpa.free(v);
+            freeRows(self.gpa, entry.value_ptr.rows);
         }
         self.meta.deinit(self.gpa);
     }
@@ -263,6 +333,7 @@ pub const Tree = struct {
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
                 if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
+                if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
                 applyStyleIfPresent(widget, op.id.?, op.props);
             } else if (std.mem.eql(u8, op.op, "append")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;
@@ -291,6 +362,7 @@ pub const Tree = struct {
                     self.setMetaText(op.id.?, t);
                 }
                 if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
+                if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;
                 const child_widget = self.nodes.get(op.child.?) orelse continue;
@@ -494,4 +566,46 @@ test "generation bump sweeps old-generation nodes, keeps window and overlay" {
     try std.testing.expect(t.metaGet(0x000003) == null); // label swept
     try std.testing.expect(t.metaGet(0x000001) != null); // window kept
     try std.testing.expect(t.metaGet(overlay_id) != null); // overlay kept
+}
+
+test "SourceList rows: parse round-trip, update replaces, no leak" {
+    const gpa = std.testing.allocator;
+    var t = Tree.initBare(gpa);
+    defer t.deinitMeta();
+    try t.putMeta(1, "SourceList", "gallery-sourcelist", null, 0, .{});
+
+    const create_json =
+        \\{"items":[{"title":"Inbox","badge":"3"},{"title":"Starred","iconName":"starred-symbolic"}]}
+    ;
+    const parsed1 = try std.json.parseFromSlice(std.json.Value, gpa, create_json, .{});
+    defer parsed1.deinit();
+    const rows1 = parseRows(gpa, parsed1.value).?;
+    t.setMetaRows(1, rows1);
+
+    const m1 = t.metaGet(1).?;
+    try std.testing.expectEqual(@as(usize, 2), m1.rows.?.len);
+    try std.testing.expectEqualStrings("Inbox", m1.rows.?[0].title);
+    try std.testing.expectEqualStrings("3", m1.rows.?[0].badge.?);
+    try std.testing.expect(m1.rows.?[0].icon_name == null);
+    try std.testing.expectEqualStrings("Starred", m1.rows.?[1].title);
+    try std.testing.expectEqualStrings("starred-symbolic", m1.rows.?[1].icon_name.?);
+    try std.testing.expect(m1.rows.?[1].badge == null);
+
+    // An update with a shorter `items` array must free the old rows, not
+    // leak them (the testing allocator catches a missed free) — same
+    // free-then-replace contract `setMetaText` uses for `text`.
+    const update_json =
+        \\{"items":[{"title":"Sent"}]}
+    ;
+    const parsed2 = try std.json.parseFromSlice(std.json.Value, gpa, update_json, .{});
+    defer parsed2.deinit();
+    const rows2 = parseRows(gpa, parsed2.value).?;
+    t.setMetaRows(1, rows2);
+
+    const m2 = t.metaGet(1).?;
+    try std.testing.expectEqual(@as(usize, 1), m2.rows.?.len);
+    try std.testing.expectEqualStrings("Sent", m2.rows.?[0].title);
+
+    t.removeMeta(1);
+    try std.testing.expect(t.metaGet(1) == null);
 }

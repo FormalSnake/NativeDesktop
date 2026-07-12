@@ -24,4 +24,8 @@ export const WIDGET_TYPE: Record<string, number> = {
   HeaderBar: 21,
   ToolbarView: 22,
   SearchInput: 23,
+  SourceList: 24,
+  Menubar: 25,
+  Menu: 26,
+  MenuItem: 27,
 };

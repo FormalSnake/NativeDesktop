@@ -23,6 +23,15 @@ private let ndSFSymbolMap: [String: String] = [
     "document-save": "square.and.arrow.down",
     "view-refresh": "arrow.clockwise",
     "open-menu": "ellipsis.circle",
+    // M13: menu-bar / notes-rework icon names (document-new/edit-delete above;
+    // pin variants here so the foreseen <menuitem iconName> set resolves).
+    "view-pin": "pin",
+    "pin": "pin",
+    "starred": "star.fill",
+    "non-starred": "star",
+    "edit-copy": "doc.on.doc",
+    "edit-cut": "scissors",
+    "edit-paste": "doc.on.clipboard",
 ]
 
 func ndSFSymbol(forFreedesktop name: String) -> String? {

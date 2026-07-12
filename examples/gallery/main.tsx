@@ -16,6 +16,13 @@ function App(): React.ReactNode {
   const rows = useMemo(() => Array.from({ length: 100_000 }, (_, i) => `Item ${i}`), []);
   const [selectedRow, setSelectedRow] = useState(0);
   const [activatedRow, setActivatedRow] = useState(-1);
+  const sourceItems = [
+    { title: "Inbox", badge: "3" },
+    { title: "Starred", iconName: "starred-symbolic" },
+    { title: "Sent" },
+    { title: "Archive" },
+  ];
+  const [sourceSelected, setSourceSelected] = useState(0);
 
   return (
     <window title="NativeDesktop M5b Gallery" defaultWidth={560} defaultHeight={680}>
@@ -71,6 +78,13 @@ function App(): React.ReactNode {
             items={rows}
             selectedIndex={selectedRow}
             onRowActivated={(e) => setActivatedRow(e.index)} />
+          <box tabLabel="SourceList" orientation="vertical" spacing={6}>
+            <sourcelist testID="gallery-sourcelist"
+              items={sourceItems}
+              selectedIndex={sourceSelected}
+              onSelectionChanged={(e) => setSourceSelected(e.index)} />
+            <label testID="sourcelist-selected-label" text={`SourceList selected: ${sourceSelected}`} />
+          </box>
         </tabview>
         <label testID="activated-label" text={`Activated: ${activatedRow}`} />
         <scrollview testID="log-scroll" minContentHeight={120}>

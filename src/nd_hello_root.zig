@@ -39,6 +39,8 @@ pub const style_keys = g.style_keys;
 pub const StyleSubDef = g.StyleSubDef;
 pub const style_subkeys = g.style_subkeys;
 pub const css_class_spec = g.css_class_spec;
+pub const scrolledWindowInner = g.scrolledWindowInner;
+pub const menuSemanticClick = g.menuSemanticClick;
 
 pub const main = @import("gtk/main.zig").main;
 

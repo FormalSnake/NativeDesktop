@@ -24,6 +24,10 @@ final class FlippedView: NSView { override var isFlipped: Bool { true } }
 // yet at create time.
 nonisolated(unsafe) private var splitViewSidebarFraction: [ObjectIdentifier: Double] = [:]
 nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [:]
+// M13: three-pane SplitView's `listWidth` (create-time prop for the
+// contentList NSSplitViewItem) — same stash-until-append mechanism as
+// `splitViewSidebarFraction`, keyed by the same outer splitView identity.
+nonisolated(unsafe) private var splitViewListFraction: [ObjectIdentifier: Double] = [:]
 
 func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     let props = parseProps(propsJson)
@@ -40,6 +44,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         ndWindowToolbarManager = manager
         win.toolbar = manager.toolbar
         win.toolbarStyle = .unified
+        ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)
         win.center(); win.makeKeyAndOrderFront(nil)
         return content
     } else if kind == "Box" {
@@ -181,6 +186,9 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         if let w = propDouble(props, "sidebarWidth"), w > 0 {
             splitViewSidebarFraction[ObjectIdentifier(controller.splitView)] = w
         }
+        if let lw = propDouble(props, "listWidth"), lw > 0 {
+            splitViewListFraction[ObjectIdentifier(controller.splitView)] = lw
+        }
         if propBool(props, "collapsed") ?? false {
             splitViewCollapsed[ObjectIdentifier(controller.splitView)] = true
         }
@@ -195,6 +203,15 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let search = NSSearchField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { search.placeholderString = ph }
         return search
+    } else if kind == "SourceList" {
+        FileHandle.standardError.write("ND_WARN SourceList not yet implemented on AppKit\n".data(using: .utf8)!)
+        return FlippedView()
+    } else if kind == "Menubar" {
+        return ndMenubarCreate(propBool(props, "defaults") ?? true)
+    } else if kind == "Menu" {
+        return ndMenuCreate(propStr(props, "label") ?? "")
+    } else if kind == "MenuItem" {
+        return ndMenuItemCreate(props)
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -290,6 +307,11 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let ph = propStr(props, "placeholder"), let field = view as? NSTextField {
             field.placeholderString = ph
         }
+    } else if kind == "SourceList" {
+        // Wave 2: AppKit SourceList not yet implemented (items no-op).
+        // Wave 2: AppKit SourceList not yet implemented (selectedIndex no-op).
+    } else if kind == "MenuItem" {
+        if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
     }
 }
 
@@ -314,6 +336,11 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     } else if kind == "SearchInput" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
+    } else if kind == "SourceList" {
+        EventDispatcher.shared.wire(view, nodeID: nodeID, name: "selectionChanged", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
+        EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
+    } else if kind == "MenuItem" {
+        ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
     }
 }
 
@@ -326,6 +353,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Window" {
+        if ndMenuAttachToWindow(child) { return } // M13: a <menubar> child is app chrome (NSApp.mainMenu), not window content
         let window = parent.window ?? gWindow
         parent.subviews.forEach { $0.removeFromSuperview() }
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {
@@ -376,12 +404,22 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         let vc = ndMakePaneViewController(realChild)
         if attachedSlot == "sidebar" {
             let item = NSSplitViewItem(sidebarWithViewController: vc)
+            item.minimumThickness = 180
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
             }
             item.canCollapse = true
             item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             controller.insertSplitViewItem(item, at: 0)
+        } else if attachedSlot == "list" {
+            let item = NSSplitViewItem(contentListWithViewController: vc)
+            item.minimumThickness = 240
+            item.canCollapse = true
+            if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
+                item.preferredThicknessFraction = fraction
+            }
+            let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
+            controller.insertSplitViewItem(item, at: insertIndex)
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
@@ -391,6 +429,10 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
         ndToolbarPanePack(parent as! NDToolbarPaneView, child)
+    } else if parentKind == "Menubar" {
+        ndMenuAppendChild(parent, child)
+    } else if parentKind == "Menu" {
+        ndMenuAppendChild(parent, child)
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -434,12 +476,22 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         let vc = ndMakePaneViewController(realChild)
         if attachedSlot == "sidebar" {
             let item = NSSplitViewItem(sidebarWithViewController: vc)
+            item.minimumThickness = 180
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
             }
             item.canCollapse = true
             item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             controller.insertSplitViewItem(item, at: 0)
+        } else if attachedSlot == "list" {
+            let item = NSSplitViewItem(contentListWithViewController: vc)
+            item.minimumThickness = 240
+            item.canCollapse = true
+            if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
+                item.preferredThicknessFraction = fraction
+            }
+            let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
+            controller.insertSplitViewItem(item, at: insertIndex)
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
@@ -449,6 +501,10 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
         ndToolbarPanePack(parent as! NDToolbarPaneView, child)
+    } else if parentKind == "Menubar" {
+        ndMenuAppendChild(parent, child)
+    } else if parentKind == "Menu" {
+        ndMenuAppendChild(parent, child)
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -457,6 +513,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
 
 func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     if parentKind == "Window" {
+        if ndIsMenuNode(child) { return } // M13: menubar detach is a no-op (mainMenu rebuilt on next change)
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),
            let window = parent.window ?? gWindow, window.contentViewController === controller {
             window.contentViewController = nil
@@ -498,6 +555,10 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndHeaderBarUnpack(parent as! NDHeaderBarView, child)
     } else if parentKind == "ToolbarView" {
         ndToolbarPaneUnpack(parent as! NDToolbarPaneView, child)
+    } else if parentKind == "Menubar" {
+        ndMenuRemoveChild(parent, child)
+    } else if parentKind == "Menu" {
+        ndMenuRemoveChild(parent, child)
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

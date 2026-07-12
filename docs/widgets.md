@@ -258,6 +258,7 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|---|
 | `sidebarWidth` | float | 0 | create |
 | `collapsed` | bool | false | createAndUpdate |
+| `listWidth` | float | 0 | create |
 | `testID` | string | — | meta |
 
 Attached props (set on children):
@@ -307,4 +308,54 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+
+## SourceList (`<sourcelist>`)
+
+Automation role: `list`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `items` | objectList | — | createAndUpdate |
+| `selectedIndex` | int | -1 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+| `rowActivated` | `onRowActivated` | index |
+
+## Menubar (`<menubar>`)
+
+Automation role: `menubar`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `defaults` | bool | true | create |
+| `testID` | string | — | meta |
+
+## Menu (`<menu>`)
+
+Automation role: `menu`. Text source: `label`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | create |
+| `testID` | string | — | meta |
+
+## MenuItem (`<menuitem>`)
+
+Automation role: `menuitem`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | create |
+| `iconName` | string | — | create |
+| `accelerator` | string | — | create |
+| `role` | none \| separator \| about \| settings \| quit \| undo \| redo \| cut \| copy \| paste \| delete \| selectAll \| close \| minimize \| zoom \| fullscreen | none | create |
+| `enabled` | bool | true | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selected` | `onSelect` | none |
 

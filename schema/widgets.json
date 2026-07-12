@@ -302,12 +302,13 @@
       "container": {
         "childModel": "multi",
         "attachedProps": [
-          { "name": "slot", "type": "enum", "values": ["sidebar", "content"], "default": "content" }
+          { "name": "slot", "type": "enum", "values": ["sidebar", "content", "list"], "default": "content" }
         ]
       },
       "props": [
         { "name": "sidebarWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
         { "name": "collapsed", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "listWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -353,6 +354,60 @@
         { "name": "activate", "ndpName": "onActivate", "payload": "text" }
       ],
       "automation": { "role": "textbox", "textFrom": "text" }
+    },
+    {
+      "name": "SourceList",
+      "intrinsic": "sourcelist",
+      "container": null,
+      "props": [
+        { "name": "items", "type": "objectList", "appliesTo": "createAndUpdate" },
+        { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "index" },
+        { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "index" }
+      ],
+      "automation": { "role": "list", "textFrom": null }
+    },
+    {
+      "name": "Menubar",
+      "intrinsic": "menubar",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "defaults", "type": "bool", "default": true, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "menubar", "textFrom": null }
+    },
+    {
+      "name": "Menu",
+      "intrinsic": "menu",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "menu", "textFrom": "label" }
+    },
+    {
+      "name": "MenuItem",
+      "intrinsic": "menuitem",
+      "container": null,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "accelerator", "type": "string", "appliesTo": "create" },
+        { "name": "role", "type": "enum", "values": ["none", "separator", "about", "settings", "quit", "undo", "redo", "cut", "copy", "paste", "delete", "selectAll", "close", "minimize", "zoom", "fullscreen"], "default": "none", "appliesTo": "create" },
+        { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selected", "ndpName": "onSelect" }
+      ],
+      "automation": { "role": "menuitem", "textFrom": "label" }
     }
   ]
 }

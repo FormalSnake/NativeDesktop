@@ -62,6 +62,46 @@ fn asObject(ptr: anytype) *gobject.Object {
     return @ptrCast(@alignCast(ptr));
 }
 
+/// Some ScrolledWindow-tracked widgets' live inner widget sits behind an
+/// implicit GtkViewport: `gtk_scrolled_window_set_child` auto-wraps any
+/// child that doesn't implement GtkScrollable. SourceList's GtkListBox is
+/// one such child (wrapped); ListView's GtkListView implements GtkScrollable
+/// itself and is never wrapped. Unwraps either shape uniformly so callers
+/// (apply-prop arms, the `listview-inner` signal target) never special-case
+/// which kind got the implicit Viewport.
+pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
+    const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
+    if (gobject.ext.isA(child, gtk.Viewport)) {
+        const vp: *gtk.Viewport = @ptrCast(@alignCast(child));
+        return gtk.Viewport.getChild(vp);
+    }
+    return child;
+}
+
+/// Returns the lazily-created inner `AdwOverlaySplitView` that hosts a
+/// three-pane SplitView's `list`/`content` panes (M13). `AdwOverlaySplitView`
+/// is strictly two-pane, so the third pane nests a second instance inside the
+/// outer's content slot: outer.sidebar = sidebar child, outer.content = inner,
+/// inner.sidebar = list child, inner.content = content child. Whether the
+/// inner split already exists is determined by querying `sv`'s current
+/// content and `isA`-checking it — no separate node registry needed (mirrors
+/// the mac side's `ndSplitViewController(for:)` query-based lookup). Two-pane
+/// apps (no `list` child ever appends) never call this, so their behavior is
+/// unchanged.
+fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
+    const existing = adw.OverlaySplitView.getContent(sv);
+    if (existing) |cur| {
+        if (gobject.ext.isA(cur, adw.OverlaySplitView)) return @ptrCast(@alignCast(cur));
+    }
+    const inner = adw.OverlaySplitView.new();
+    if (split_list_widths.get(@intFromPtr(sv))) |lw| {
+        if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
+    }
+    if (existing) |cur| adw.OverlaySplitView.setContent(inner, cur);
+    adw.OverlaySplitView.setContent(sv, inner.as(gtk.Widget));
+    return inner;
+}
+
 /// Builds a NULL-terminated strv (`?[*]const [*:0]const u8`) from a JSON
 /// string array in ONE bulk allocation, for bulk GtkStringList construction
 /// (gtk_string_list_new/splice both deep-copy the strings, so the returned
@@ -81,6 +121,38 @@ fn buildStrv(arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) [
     return buf[0 .. n + 1];
 }
 
+/// Builds SourceList's AdwActionRow children from a JSON object array (peer
+/// of `buildStrv`, but for objects instead of strings — reuses `propArray`
+/// as-is since `std.json.Array` holds untyped `std.json.Value` items
+/// regardless of whether they're strings or objects). Rows are appended
+/// directly (not bulk-built like `buildStrv`'s strv): AdwActionRow
+/// construction is a widget-per-row operation, so there is no bulk GTK
+/// primitive to defer to.
+fn ndBuildSourceRows(box: *gtk.ListBox, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const items = arr orelse return;
+    for (items.items) |it| {
+        if (it != .object) continue;
+        const title = if (it.object.get("title")) |t| (if (t == .string) t.string else "") else "";
+        const row = adw.ActionRow.new();
+        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
+        if (it.object.get("iconName")) |ic| {
+            if (ic == .string) {
+                const img = gtk.Image.newFromIconName(dupeZ(ic.string));
+                adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
+            }
+        }
+        if (it.object.get("badge")) |bd| {
+            if (bd == .string) {
+                const lbl = gtk.Label.new(dupeZ(bd.string));
+                gtk.Widget.addCssClass(lbl.as(gtk.Widget), "dimmed");
+                gtk.Widget.addCssClass(lbl.as(gtk.Widget), "numeric");
+                adw.ActionRow.addSuffix(row, lbl.as(gtk.Widget));
+            }
+        }
+        gtk.ListBox.append(box, row.as(gtk.Widget));
+    }
+}
+
 // ---- event wiring state (installed once by gtk_backend.setEventSink via
 // initEvents, BEFORE the NDP socket accepts — so before any widget exists) ----
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
@@ -89,8 +161,34 @@ var events_gpa: std.mem.Allocator = undefined;
 var events_ready = false;
 /// GObject ptr -> the ONE suppressible (change-echo) handler id on it.
 var suppress_map: std.AutoHashMapUnmanaged(usize, c_ulong) = .empty;
-/// Radio group name -> first CheckButton in the group (lives for process lifetime).
+/// Radio group name -> first CheckButton in the group. Entries are evicted by
+/// cbRadioGroupDestroyed when the anchor button dies (a conditionally-rendered
+/// radio group unmounts/remounts under the same name — without eviction the
+/// next mount joins a freed CheckButton and segfaults in
+/// _gtk_check_button_set_group; M13 settings-example crash).
 var radio_groups: std.StringHashMapUnmanaged(*gtk.CheckButton) = .empty;
+
+/// Destroy handler for the anchor (first) radio of each group: drop the map
+/// entry and its owned key so a later same-named group re-anchors cleanly.
+fn cbRadioGroupDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    const dead: *gtk.CheckButton = @ptrCast(@alignCast(w));
+    var it = radio_groups.iterator();
+    var dead_key: ?[]const u8 = null;
+    while (it.next()) |e| {
+        if (e.value_ptr.* == dead) {
+            dead_key = e.key_ptr.*;
+            break;
+        }
+    }
+    if (dead_key) |k| {
+        _ = radio_groups.remove(k);
+        events_gpa.free(k);
+    }
+}
+/// Outer AdwOverlaySplitView ptr -> pending `listWidth` (M13 three-pane
+/// SplitView), read again when the inner split is lazily created (the inner
+/// doesn't exist yet at the outer's create time — see ndSplitViewInner).
+var split_list_widths: std.AutoHashMapUnmanaged(usize, f64) = .empty;
 
 pub fn initEvents(gpa: std.mem.Allocator, emit_fn: EmitFn) void {
     events_gpa = gpa;
@@ -108,6 +206,287 @@ fn blockEcho(obj: *gobject.Object) void {
 
 fn unblockEcho(obj: *gobject.Object) void {
     if (suppress_map.get(@intFromPtr(obj))) |hid| gobject.signalHandlerUnblock(obj, hid);
+}
+
+const MenuRole = enum { none, separator, about, settings, dropped };
+
+fn parseMenuRole(s: []const u8) MenuRole {
+    if (std.mem.eql(u8, s, "separator")) return .separator;
+    if (std.mem.eql(u8, s, "about")) return .about;
+    if (std.mem.eql(u8, s, "settings")) return .settings;
+    if (std.mem.eql(u8, s, "none")) return .none;
+    return .dropped; // quit/close/minimize/undo/cut/... duplicate window + system chrome (GNOME HIG)
+}
+
+const MenuItemInfo = struct {
+    label: [:0]const u8 = "",
+    icon: ?[:0]const u8 = null, // stored but unused on GTK (popover icons omitted by design)
+    accel: ?[:0]const u8 = null, // pre-converted GTK accel string ("<Primary>n")
+    role: MenuRole = .none,
+    enabled: bool = true,
+    node_id: u32 = 0,
+    action: ?*gio.SimpleAction = null,
+};
+
+var menu_app: ?*gtk.Application = null;
+var menu_window: ?*gtk.Window = null;
+var the_menubar: ?*gio.Menu = null;
+var menu_defaults: bool = true;
+var menu_about_added: bool = false;
+var menu_primary_button: ?*gtk.MenuButton = null;
+var menu_primary_parent: ?*adw.HeaderBar = null;
+var menu_item_info: std.AutoHashMapUnmanaged(usize, MenuItemInfo) = .empty;
+var menu_labels: std.AutoHashMapUnmanaged(usize, [:0]const u8) = .empty;
+var menubar_menus: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty;
+var submenu_items: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty;
+var menu_node_ids: std.AutoHashMapUnmanaged(u32, usize) = .empty;
+var menu_headerbars: std.ArrayList(*adw.HeaderBar) = .empty;
+
+fn ndAccelKeyName(k: []const u8) []const u8 {
+    if (std.mem.eql(u8, k, "enter")) return "Return";
+    if (std.mem.eql(u8, k, "escape")) return "Escape";
+    if (std.mem.eql(u8, k, "backspace")) return "BackSpace";
+    if (std.mem.eql(u8, k, "delete")) return "Delete";
+    if (std.mem.eql(u8, k, "space")) return "space";
+    if (std.mem.eql(u8, k, "tab")) return "Tab";
+    if (std.mem.eql(u8, k, "left")) return "Left";
+    if (std.mem.eql(u8, k, "right")) return "Right";
+    if (std.mem.eql(u8, k, "up")) return "Up";
+    if (std.mem.eql(u8, k, "down")) return "Down";
+    if (std.mem.eql(u8, k, "comma")) return "comma";
+    if (std.mem.eql(u8, k, "period")) return "period";
+    return k; // single printable char (and f1..f12) pass through verbatim
+}
+
+fn ndAccelToGtk(spec: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) ?[:0]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(events_gpa);
+    var it = std.mem.splitScalar(u8, spec, '+');
+    var key: ?[]const u8 = null;
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "primary")) buf.appendSlice(events_gpa, "<Primary>") catch return null
+        else if (std.mem.eql(u8, part, "shift")) buf.appendSlice(events_gpa, "<Shift>") catch return null
+        else if (std.mem.eql(u8, part, "alt")) buf.appendSlice(events_gpa, "<Alt>") catch return null
+        else if (std.mem.eql(u8, part, "ctrl")) buf.appendSlice(events_gpa, "<Control>") catch return null
+        else key = part;
+    }
+    const k = key orelse return null;
+    buf.appendSlice(events_gpa, ndAccelKeyName(k)) catch return null;
+    return dupeZ(buf.items);
+}
+
+fn ndMenubarCreate(app: *gtk.Application, window: ?*gtk.Window, defaults: bool) *gtk.Widget {
+    menu_app = app;
+    menu_window = window;
+    const m = gio.Menu.new();
+    the_menubar = m;
+    menu_defaults = defaults;
+    return @ptrCast(@alignCast(m));
+}
+
+fn ndMenuCreate(app: *gtk.Application, label: [:0]const u8) *gtk.Widget {
+    menu_app = app;
+    const m = gio.Menu.new();
+    menu_labels.put(events_gpa, @intFromPtr(m), label) catch {};
+    return @ptrCast(@alignCast(m));
+}
+
+fn ndMenuItemCreate(app: *gtk.Application, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) *gtk.Widget {
+    menu_app = app;
+    const item = gio.MenuItem.new(null, null);
+    var info = MenuItemInfo{};
+    info.label = dupeZ(propStr(props, "label") orelse "");
+    if (propStr(props, "iconName")) |ic| info.icon = dupeZ(ic);
+    if (propStr(props, "accelerator")) |ac| info.accel = ndAccelToGtk(ac, dupeZ);
+    info.role = parseMenuRole(propStr(props, "role") orelse "none");
+    info.enabled = propBool(props, "enabled") orelse true;
+    menu_item_info.put(events_gpa, @intFromPtr(item), info) catch {};
+    return @ptrCast(@alignCast(item));
+}
+
+fn cbMenuActionActivate(_: *gobject.Object, _: ?*glib.Variant, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "selected", .{});
+}
+
+fn cbMenuAboutActivate(_: *gobject.Object, _: ?*glib.Variant, _: ?*anyopaque) callconv(.c) void {
+    const dialog = adw.AboutDialog.new();
+    if (menu_window) |w| {
+        const title = gtk.Window.getTitle(w);
+        if (title) |t| adw.AboutDialog.setApplicationName(dialog, t);
+    }
+    adw.Dialog.present(dialog.as(adw.Dialog), if (menu_window) |w| w.as(gtk.Widget) else null);
+}
+
+fn ndMenuEnsureAbout() void {
+    if (menu_about_added) return;
+    const app = menu_app orelse return;
+    const sa = gio.SimpleAction.new("nd-about", null);
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(sa)), "activate", @ptrCast(&cbMenuAboutActivate), null, null, .{});
+    gio.ActionMap.addAction(app.as(gio.ActionMap), sa.as(gio.Action));
+    menu_about_added = true;
+}
+
+pub fn ndMenuItemConnect(item_w: *gtk.Widget, node_id: u32) void {
+    const item: *gio.MenuItem = @ptrCast(@alignCast(item_w));
+    const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
+    info.node_id = node_id;
+    menu_node_ids.put(events_gpa, node_id, @intFromPtr(item)) catch {};
+    if (info.role != .none and info.role != .settings) return;
+    const app = menu_app orelse return;
+    const name = std.fmt.allocPrintSentinel(events_gpa, "nd-menu-{d}", .{node_id}, 0) catch return;
+    const sa = gio.SimpleAction.new(name, null);
+    info.action = sa;
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(sa)), "activate", @ptrCast(&cbMenuActionActivate), @ptrFromInt(@as(usize, node_id)), null, .{});
+    gio.SimpleAction.setEnabled(sa, @intFromBool(info.enabled));
+    gio.ActionMap.addAction(app.as(gio.ActionMap), sa.as(gio.Action));
+    if (info.accel) |accel| {
+        const detailed = std.fmt.allocPrintSentinel(events_gpa, "app.nd-menu-{d}", .{node_id}, 0) catch return;
+        var accels = [_]?[*:0]const u8{ accel.ptr, null };
+        gtk.Application.setAccelsForAction(app, detailed, @ptrCast(&accels));
+    }
+}
+
+fn ndMenuItemSetEnabled(item_w: *gtk.Widget, enabled: bool) void {
+    const item: *gio.MenuItem = @ptrCast(@alignCast(item_w));
+    const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
+    info.enabled = enabled;
+    if (info.action) |sa| gio.SimpleAction.setEnabled(sa, @intFromBool(enabled));
+}
+
+fn ndBuildGMenuItem(info: MenuItemInfo) ?*gio.MenuItem {
+    switch (info.role) {
+        .separator, .dropped => return null,
+        .about => {
+            const lbl: [*:0]const u8 = if (info.label.len > 0) info.label.ptr else "About";
+            return gio.MenuItem.new(lbl, "app.nd-about");
+        },
+        .none, .settings => {
+            const lbl: [*:0]const u8 = if (info.label.len > 0) info.label.ptr else (if (info.role == .settings) "Preferences" else "");
+            const detailed = std.fmt.allocPrintSentinel(events_gpa, "app.nd-menu-{d}", .{info.node_id}, 0) catch return null;
+            return gio.MenuItem.new(lbl, detailed);
+        },
+    }
+}
+
+fn ndBuildSubmenuModel(submenu: *gio.Menu) ?*gio.Menu {
+    const items = submenu_items.get(@intFromPtr(submenu)) orelse return null;
+    const root = gio.Menu.new();
+    var section = gio.Menu.new();
+    var any = false;
+    for (items.items) |item_ptr| {
+        const info = menu_item_info.get(item_ptr) orelse continue;
+        if (info.role == .separator) {
+            gio.Menu.appendSection(root, null, section.as(gio.MenuModel));
+            section = gio.Menu.new();
+            continue;
+        }
+        if (ndBuildGMenuItem(info)) |gi| {
+            gio.Menu.appendItem(section, gi);
+            any = true;
+        }
+    }
+    gio.Menu.appendSection(root, null, section.as(gio.MenuModel));
+    return if (any) root else null;
+}
+
+fn ndBuildMenubarModel() ?*gio.Menu {
+    const menubar = the_menubar orelse return null;
+    const menus = menubar_menus.get(@intFromPtr(menubar)) orelse return null;
+    const root = gio.Menu.new();
+    var any = false;
+    for (menus.items) |submenu_ptr| {
+        const submenu: *gio.Menu = @ptrFromInt(submenu_ptr);
+        if (ndBuildSubmenuModel(submenu)) |model| {
+            const label = menu_labels.get(submenu_ptr) orelse "";
+            const lbl: [*:0]const u8 = if (label.len > 0) label.ptr else "Menu";
+            gio.Menu.appendSubmenu(root, lbl, model.as(gio.MenuModel));
+            any = true;
+        }
+    }
+    return if (any) root else null;
+}
+
+fn ndMenuRefresh() void {
+    const app = menu_app orelse return;
+    if (the_menubar == null) return;
+    ndMenuEnsureAbout();
+    const model = ndBuildMenubarModel() orelse return;
+    if (menu_headerbars.items.len > 0) {
+        const target = menu_headerbars.items[menu_headerbars.items.len - 1];
+        if (menu_primary_button == null) {
+            const btn = gtk.MenuButton.new();
+            // Own a strong ref (sinks the floating ref): rehoming does
+            // HeaderBar.remove -> packEnd, and remove() would otherwise drop
+            // the last ref and destroy the button mid-rehome (observed as
+            // GTK_IS_WIDGET / GTK_IS_MENU_BUTTON criticals with 2+ headerbars).
+            _ = gobject.Object.refSink(btn.as(gobject.Object));
+            gtk.MenuButton.setIconName(btn, "open-menu-symbolic");
+            gtk.Widget.setTooltipText(btn.as(gtk.Widget), "Main Menu");
+            menu_primary_button = btn;
+        }
+        const btn = menu_primary_button.?;
+        gtk.MenuButton.setMenuModel(btn, model.as(gio.MenuModel));
+        if (menu_primary_parent != target) {
+            if (menu_primary_parent) |old| adw.HeaderBar.remove(old, btn.as(gtk.Widget));
+            adw.HeaderBar.packEnd(target, btn.as(gtk.Widget));
+            menu_primary_parent = target;
+        }
+    } else {
+        gtk.Application.setMenubar(app, model.as(gio.MenuModel));
+    }
+}
+
+fn ndMenubarAppendMenu(menubar_w: *gtk.Widget, menu_w: *gtk.Widget) void {
+    const menubar: *gio.Menu = @ptrCast(@alignCast(menubar_w));
+    const gop = menubar_menus.getOrPut(events_gpa, @intFromPtr(menubar)) catch return;
+    if (!gop.found_existing) gop.value_ptr.* = .empty;
+    gop.value_ptr.append(events_gpa, @intFromPtr(menu_w)) catch {};
+    ndMenuRefresh();
+}
+
+fn ndMenuAppendItem(menu_w: *gtk.Widget, item_w: *gtk.Widget) void {
+    const submenu: *gio.Menu = @ptrCast(@alignCast(menu_w));
+    const gop = submenu_items.getOrPut(events_gpa, @intFromPtr(submenu)) catch return;
+    if (!gop.found_existing) gop.value_ptr.* = .empty;
+    gop.value_ptr.append(events_gpa, @intFromPtr(item_w)) catch {};
+    ndMenuRefresh();
+}
+
+/// Records a headerbar so a later menubar can home its primary button in the
+/// LAST one (GNOME convention: the content pane's header). No-op for menu-less
+/// apps beyond the record — the button is only created/moved once a <menubar>
+/// exists, so counter/gallery/two-pane trees are behaviorally unchanged.
+pub fn ndMenuNoteHeaderBar(hb: *adw.HeaderBar) void {
+    menu_headerbars.append(events_gpa, hb) catch {};
+    if (the_menubar != null) ndMenuRefresh();
+}
+
+/// Called from the Window structural arm when a non-widget child (the menubar
+/// GMenu) is appended: install the primary menu instead of setting it as the
+/// window content.
+pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
+    ndMenuRefresh();
+}
+
+/// backend.zig routes a non-widget node handle's semantic click here.
+pub fn menuSemanticClick(node_id: u32) bool {
+    const item_ptr = menu_node_ids.get(node_id) orelse return false;
+    const info = menu_item_info.get(item_ptr) orelse return true;
+    switch (info.role) {
+        .about => {
+            cbMenuAboutActivate(@ptrCast(menu_app orelse return true), null, null);
+            return true;
+        },
+        .separator, .dropped => return true,
+        .none, .settings => {
+            const app = menu_app orelse return true;
+            if (!info.enabled) return true; // disabled: onSelect must not fire
+            const name = std.fmt.allocPrintSentinel(events_gpa, "nd-menu-{d}", .{node_id}, 0) catch return true;
+            gio.ActionGroup.activateAction(app.as(gio.ActionGroup), name, null);
+            return true;
+        },
+    }
 }
 
 /// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-
@@ -191,10 +570,11 @@ pub fn create(
             std.debug.assert(events_ready); // initEvents runs before any create (runtime.zig startup order)
             if (radio_groups.get(g)) |first| {
                 gtk.CheckButton.setGroup(cb, first);
-            } else {
-                const key = events_gpa.dupe(u8, g) catch g;
-                radio_groups.put(events_gpa, key, cb) catch {};
-            }
+            } else if (events_gpa.dupe(u8, g)) |key| {
+                radio_groups.put(events_gpa, key, cb) catch events_gpa.free(key);
+                // Evict the entry when this anchor dies (see cbRadioGroupDestroyed).
+                _ = gtk.Widget.signals.destroy.connect(cb.as(gtk.Widget), ?*anyopaque, &cbRadioGroupDestroyed, null, .{});
+            } else |_| {} // OOM: skip anchoring; this radio forms its own group
         } else {
             std.debug.print("ND_WARN Radio without group prop\n", .{});
         }
@@ -272,6 +652,7 @@ pub fn create(
         const sv = adw.OverlaySplitView.new();
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
+        if (propFloat(props, "listWidth")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }
         return sv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         const hb = adw.HeaderBar.new();
@@ -281,6 +662,7 @@ pub fn create(
                 adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
             }
         }
+        ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)
         return hb.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ToolbarView")) {
         const tv = adw.ToolbarView.new();
@@ -291,6 +673,25 @@ pub fn create(
         if (propStr(props, "text")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }
         if (propStr(props, "placeholder")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));
         return search.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SourceList")) {
+        const box = gtk.ListBox.new();
+        gtk.ListBox.setSelectionMode(box, .browse);
+        gtk.ListBox.setActivateOnSingleClick(box, 0);
+        gtk.Widget.addCssClass(box.as(gtk.Widget), "navigation-sidebar");
+        ndBuildSourceRows(box, propArray(props, "items"), dupeZ);
+        const sel_idx = propInt(props, "selectedIndex") orelse -1;
+        if (sel_idx >= 0) { if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r); }
+        const sw = gtk.ScrolledWindow.new();
+        gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));
+        return sw.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Menubar")) {
+        const defaults = propBool(props, "defaults") orelse true;
+        return ndMenubarCreate(app, the_window.*, defaults);
+    } else if (std.mem.eql(u8, kind, "Menu")) {
+        const label = dupeZ(propStr(props, "label") orelse "");
+        return ndMenuCreate(app, label);
+    } else if (std.mem.eql(u8, kind, "MenuItem")) {
+        return ndMenuItemCreate(app, props, dupeZ);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -413,6 +814,33 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             }
         }
         if (propStr(props, "placeholder")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
+    } else if (std.mem.eql(u8, kind, "SourceList")) {
+        {
+            const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
+            const prev = gtk.ListBox.getSelectedRow(box);
+            const prev_idx: c_int = if (prev) |r| gtk.ListBoxRow.getIndex(r) else -1;
+            blockEcho(asObject(box));
+            gtk.ListBox.removeAll(box);
+            ndBuildSourceRows(box, propArray(props, "items"), dupeZ);
+            if (prev_idx >= 0) {
+                if (gtk.ListBox.getRowAtIndex(box, prev_idx)) |r| gtk.ListBox.selectRow(box, r);
+            }
+            unblockEcho(asObject(box));
+        }
+        if (propInt(props, "selectedIndex")) |idx| {
+            const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
+            const cur = gtk.ListBox.getSelectedRow(box);
+            const cur_idx: i64 = if (cur) |r| gtk.ListBoxRow.getIndex(r) else -1;
+            if (cur_idx != idx) {
+                blockEcho(asObject(box));
+                if (idx >= 0) {
+                    if (gtk.ListBox.getRowAtIndex(box, @intCast(idx))) |r| gtk.ListBox.selectRow(box, r);
+                } else gtk.ListBox.unselectAll(box);
+                unblockEcho(asObject(box));
+            }
+        }
+    } else if (std.mem.eql(u8, kind, "MenuItem")) {
+        if (propBool(props, "enabled")) |en| ndMenuItemSetEnabled(widget, en);
     }
 }
 
@@ -487,6 +915,17 @@ fn cbListActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) cal
     if (emit) |f| f(node_id, "rowActivated", .{ .index = @intCast(position) });
 }
 
+fn cbListBoxRowSelected(_: *gobject.Object, row: ?*gtk.ListBoxRow, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const idx: i64 = if (row) |r| gtk.ListBoxRow.getIndex(r) else -1;
+    if (emit) |f| f(node_id, "selectionChanged", .{ .index = idx });
+}
+
+fn cbListBoxRowActivated(_: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "rowActivated", .{ .index = gtk.ListBoxRow.getIndex(row) });
+}
+
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Button")) {
@@ -521,7 +960,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const hid_Slider_valueChanged = gobject.signalConnectData(obj_Slider_valueChanged, "value-changed", @ptrCast(&cbScaleValueChanged), data, null, .{});
         noteSuppressible(obj_Slider_valueChanged, hid_Slider_valueChanged);
     } else if (std.mem.eql(u8, kind, "ListView")) {
-        const obj_ListView_rowActivated = asObject(gtk.ScrolledWindow.getChild(@ptrCast(@alignCast(widget))).?);
+        const obj_ListView_rowActivated = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
         const hid_ListView_rowActivated = gobject.signalConnectData(obj_ListView_rowActivated, "activate", @ptrCast(&cbListActivate), data, null, .{});
         _ = hid_ListView_rowActivated;
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
@@ -531,12 +970,23 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_SearchInput_activate = asObject(widget);
         const hid_SearchInput_activate = gobject.signalConnectData(obj_SearchInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});
         _ = hid_SearchInput_activate;
+    } else if (std.mem.eql(u8, kind, "SourceList")) {
+        const obj_SourceList_selectionChanged = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
+        const hid_SourceList_selectionChanged = gobject.signalConnectData(obj_SourceList_selectionChanged, "row-selected", @ptrCast(&cbListBoxRowSelected), data, null, .{});
+        noteSuppressible(obj_SourceList_selectionChanged, hid_SourceList_selectionChanged);
+        const obj_SourceList_rowActivated = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
+        const hid_SourceList_rowActivated = gobject.signalConnectData(obj_SourceList_rowActivated, "row-activated", @ptrCast(&cbListBoxRowActivated), data, null, .{});
+        _ = hid_SourceList_rowActivated;
+    } else if (std.mem.eql(u8, kind, "MenuItem")) {
+        ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal
     }
 }
 
 pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, attached: protocol.Attached, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
+        if (!gobject.ext.isA(child, gtk.Widget)) {
+            ndMenuAttachToWindow(child);
+        } else adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) {
@@ -560,8 +1010,14 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
         const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
         if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
-            else adw.OverlaySplitView.setContent(sv, child);
+            if (std.mem.eql(u8, sl, "sidebar")) {
+                adw.OverlaySplitView.setSidebar(sv, child);
+            } else if (std.mem.eql(u8, sl, "list")) {
+                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
+            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
+                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)
+                else adw.OverlaySplitView.setContent(sv, child);
+            } else adw.OverlaySplitView.setContent(sv, child);
         } else adw.OverlaySplitView.setContent(sv, child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
@@ -573,6 +1029,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));
         if (gobject.ext.isA(child, adw.HeaderBar)) adw.ToolbarView.addTopBar(tv, child)
         else adw.ToolbarView.setContent(tv, child);
+    } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
+        ndMenubarAppendMenu(parent, child);
+    } else if (std.mem.eql(u8, parent_kind, "Menu")) {
+        ndMenuAppendItem(parent, child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -607,8 +1067,14 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
     } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
         const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
         if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "sidebar")) adw.OverlaySplitView.setSidebar(sv, child)
-            else adw.OverlaySplitView.setContent(sv, child);
+            if (std.mem.eql(u8, sl, "sidebar")) {
+                adw.OverlaySplitView.setSidebar(sv, child);
+            } else if (std.mem.eql(u8, sl, "list")) {
+                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
+            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
+                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)
+                else adw.OverlaySplitView.setContent(sv, child);
+            } else adw.OverlaySplitView.setContent(sv, child);
         } else adw.OverlaySplitView.setContent(sv, child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
@@ -624,7 +1090,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
 
 pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget) void {
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);
+        if (gobject.ext.isA(child, gtk.Widget)) adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
@@ -637,12 +1103,25 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         gtk.Grid.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
         const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
-        if (adw.OverlaySplitView.getSidebar(sv) == child) adw.OverlaySplitView.setSidebar(sv, null)
-        else if (adw.OverlaySplitView.getContent(sv) == child) adw.OverlaySplitView.setContent(sv, null);
+        if (adw.OverlaySplitView.getSidebar(sv) == child) {
+            adw.OverlaySplitView.setSidebar(sv, null);
+        } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
+            if (cur == child) {
+                adw.OverlaySplitView.setContent(sv, null);
+            } else if (gobject.ext.isA(cur, adw.OverlaySplitView)) {
+                const inner: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
+                if (adw.OverlaySplitView.getSidebar(inner) == child) adw.OverlaySplitView.setSidebar(inner, null)
+                else if (adw.OverlaySplitView.getContent(inner) == child) adw.OverlaySplitView.setContent(inner, null);
+            }
+        }
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
+        // M13: submenu removal rebuilds on next refresh (v1 no-op)
+    } else if (std.mem.eql(u8, parent_kind, "Menu")) {
+        // M13: item removal rebuilds on next refresh (v1 no-op)
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }

@@ -13,7 +13,11 @@ import Foundation
 /// `visible` folds "mapped" into the same contract GTK's vtNodeVisible uses
 /// (M6a Task 4 v1 decision): hidden OR not in a window == not visible.
 @MainActor func ndNodeVisible(_ view: NSView) -> Bool {
-    !view.isHidden && view.window != nil
+    // M13 menu nodes are host-only NDMenuNodeViews (never in a window); treat
+    // them as actionable so a MenuItem ref survives checkActionable and reaches
+    // semanticClick.
+    if ndIsMenuNode(view) { return true }
+    return !view.isHidden && view.window != nil
 }
 
 /// `bounds` = the view's frame converted into the window's content-view
@@ -27,6 +31,12 @@ import Foundation
 /// before we read anything, otherwise stack-arranged widgets (the counter's
 /// label/button) report all-zero geometry.
 @MainActor func ndNodeBounds(_ view: NSView, _ out: inout nd_rect) -> Bool {
+    // M13 menu nodes have no geometry; report a nominal non-degenerate rect so
+    // checkActionable (w>0 ∧ h>0) admits a MenuItem ref for semanticClick.
+    if ndIsMenuNode(view) {
+        out = nd_rect(x: 0, y: 0, w: 1, h: 1)
+        return true
+    }
     // M11 Phase C (Risk 1 + Risk 2): resolve the LIVE, flipped content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
     guard let content = ndLiveContentView() else { return false }
@@ -375,6 +385,13 @@ private func escapeJSONString(_ s: String) -> String {
 
 @MainActor private func semanticClick(_ view: NSView, _ nodeID: UInt32,
                             _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    // M13: a menu node dispatches its item (custom onSelect fires "selected";
+    // a disabled item is a no-op, so onSelect does not fire — state unchanged).
+    if ndIsMenuNode(view) {
+        _ = ndMenuSemanticClick(view, nodeID)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
     (view as? NSControl)?.performClick(nil)
     setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
     return 0

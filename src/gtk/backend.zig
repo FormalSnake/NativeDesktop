@@ -75,6 +75,16 @@ fn dupeZ(s: []const u8) [:0]const u8 {
     return arena.dupeZ(u8, s) catch @panic("OOM in gtk_backend arena");
 }
 
+/// M13 menu bar: menu nodes (Menubar/Menu/MenuItem) ride the ordinary
+/// create/append vtable ops but their handles are GMenu/GMenuItem GObjects,
+/// not GtkWidgets. Every generic vtable op that would cast a stored handle to
+/// *gtk.Widget must guard with this: `gobject.ext.isA` is safe on any valid
+/// GObject and cleanly returns false for the non-Widget menu GObjects, so the
+/// op no-ops instead of reinterpreting a GMenu as a GtkWidget.
+fn isRealWidget(widget: *gtk.Widget) bool {
+    return gobject.ext.isA(widget, gtk.Widget);
+}
+
 pub fn createWidget(app: *gtk.Application, kind: []const u8, props: ?std.json.Value) !*gtk.Widget {
     return generated.create(app, kind, props, &dupeZ, &the_window);
 }
@@ -84,6 +94,7 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
 }
 
 pub fn setText(widget: *gtk.Widget, text: []const u8) void {
+    if (!isRealWidget(widget)) return; // menu node: no GtkLabel to set
     const label: *gtk.Label = @ptrCast(@alignCast(widget));
     gtk.Label.setText(label, dupeZ(text));
 }
@@ -97,6 +108,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
 }
 
 pub fn setVisible(widget: *gtk.Widget, visible: bool) void {
+    if (!isRealWidget(widget)) return; // menu node: not a GtkWidget
     gtk.Widget.setVisible(widget, @intFromBool(visible));
 }
 
@@ -109,6 +121,7 @@ pub fn initStyle(sink_err: style.StyleErrorFn) void {
 }
 
 pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value) void {
+    if (!isRealWidget(widget)) return; // menu node: no GtkWidget CSS surface
     style.applyStyle(widget, node_id, style_value);
 }
 
@@ -125,10 +138,12 @@ fn applyCssClassesIfPresent(widget: *gtk.Widget, props: ?std.json.Value) void {
 /// Generation GC helpers (M8-D9): detach a swept widget from its parent
 /// without destroying the parent or siblings.
 pub fn hasParent(widget: *gtk.Widget) bool {
+    if (!isRealWidget(widget)) return false; // menu node: never parented into a GtkWidget tree
     return gtk.Widget.getParent(widget) != null;
 }
 
 pub fn unparentWidget(widget: *gtk.Widget) void {
+    if (!isRealWidget(widget)) return; // menu node: nothing to unparent
     gtk.Widget.unparent(widget);
 }
 
@@ -290,6 +305,9 @@ pub fn setTree(tree: *tree_mod.Tree) void {
 
 fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
+    // Menu nodes have no GtkWidget mapped state; treat them as actionable so a
+    // MenuItem ref survives checkActionable and reaches semanticClick.
+    if (!isRealWidget(w)) return true;
     if (gtk.Widget.getVisible(w) == 0) return false;
     // "mapped" folds into node_visible's contract (M6a Task 4 v1 decision,
     // documented in automation.zig's checkActionable comment).
@@ -298,6 +316,12 @@ fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
 
 fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callconv(.c) bool {
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
+    // Menu nodes have no geometry; report a nominal non-degenerate rect so
+    // checkActionable (w>0 ∧ h>0) admits a MenuItem ref for semanticClick.
+    if (!isRealWidget(w)) {
+        out.* = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
+        return true;
+    }
     const win = getWindow() orelse return false;
     var rect: graphene.Rect = undefined;
     const has_bounds = gtk.Widget.computeBounds(w, win.as(gtk.Widget), &rect) != 0;
@@ -374,6 +398,13 @@ fn vtSemanticAction(
     const parsed = parseJson(arg_json);
     const args: ?std.json.Value = if (parsed) |p| p.value else null;
 
+    // Menu nodes only support "click" (→ menu dispatch); setValue/type/scroll
+    // would cast the GMenu handle to a GtkWidget, so reject them here.
+    if (!isRealWidget(w) and !std.mem.eql(u8, action_s, "click")) {
+        setErr(err_json_out, node_id);
+        return -32602;
+    }
+
     if (std.mem.eql(u8, action_s, "click")) {
         return semanticClick(w, node_id, result_json_out);
     } else if (std.mem.eql(u8, action_s, "setValue")) {
@@ -409,6 +440,29 @@ fn setErr(out: *?[*:0]u8, node_id: u32) void {
 }
 
 fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i32 {
+    if (!isRealWidget(widget)) {
+        // M13 menu node: dispatch the item's GAction (custom onSelect fires
+        // "selected"; a disabled item's action is a no-op, so onSelect does
+        // not fire and app state is unchanged).
+        _ = generated.menuSemanticClick(node_id);
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
+    if (std.mem.eql(u8, widgetKind(widget), "SourceList")) {
+        // SourceList (M11 SourceList Wave 1): "click" activates the
+        // currently-selected row, or the first row if none is selected.
+        // `gtk.Widget.activate` on the GtkListBoxRow was tried first but
+        // does not reliably raise the ListBox's "row-activated" (verified
+        // live: no event observed) — same class of quirk as Button's
+        // activate() below, fixed the same way: emit the ListBox's signal
+        // directly, bypassing whatever internal activation gating drops it.
+        const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+        const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
+        const row = gtk.ListBox.getSelectedRow(box) orelse gtk.ListBox.getRowAtIndex(box, 0);
+        if (row) |r| gobject.signalEmitByName(@ptrCast(@alignCast(box)), "row-activated", r);
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
     // Semantic dispatch: emit `clicked` directly. `gtk.Widget.activate` was
     // tried first but only re-emits `clicked` on the first call per main-loop
     // settle under weston headless — rapid successive activate() calls
@@ -460,6 +514,15 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
     } else if (std.mem.eql(u8, kind, "Select")) {
         if (value != .integer) return invalidValue(err_json_out, node_id);
         gtk.DropDown.setSelected(@ptrCast(@alignCast(widget)), @intCast(value.integer)); // fires notify::selected
+    } else if (std.mem.eql(u8, kind, "SourceList")) {
+        if (value != .integer) return invalidValue(err_json_out, node_id);
+        const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+        const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
+        if (gtk.ListBox.getRowAtIndex(box, @intCast(value.integer))) |row| {
+            gtk.ListBox.selectRow(box, row); // fires "row-selected" -> Event -> React (by design)
+        } else {
+            return invalidValue(err_json_out, node_id);
+        }
     } else {
         setErr(err_json_out, node_id);
         return -32602;
@@ -487,7 +550,21 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     if (std.mem.eql(u8, type_name, "GtkCheckButton")) return "Checkbox";
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
     if (std.mem.eql(u8, type_name, "GtkDropDown")) return "Select";
-    if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) return "ScrollView";
+    if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) {
+        // ScrollView and SourceList (M11 SourceList Wave 1) are both tracked
+        // by their GtkScrolledWindow wrapper — disambiguate by sniffing the
+        // inner child's type (unwrapping the implicit GtkViewport GTK
+        // inserts for SourceList's non-GtkScrollable GtkListBox, same as
+        // `scrolledWindowInner` — mirrors the structural shape ListView uses
+        // for its own ScrolledWindow-wrapped, natively-scrollable GtkListView).
+        const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+        if (generated.scrolledWindowInner(sw)) |child| {
+            const child_instance: *gobject.TypeInstance = @ptrCast(@alignCast(child));
+            const child_type_name = std.mem.span(gobject.typeNameFromInstance(child_instance));
+            if (std.mem.eql(u8, child_type_name, "GtkListBox")) return "SourceList";
+        }
+        return "ScrollView";
+    }
     return "";
 }
 

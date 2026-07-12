@@ -26,6 +26,10 @@ pub const widget_types = [_]Entry{
     .{ .name = "HeaderBar", .value = 21 },
     .{ .name = "ToolbarView", .value = 22 },
     .{ .name = "SearchInput", .value = 23 },
+    .{ .name = "SourceList", .value = 24 },
+    .{ .name = "Menubar", .value = 25 },
+    .{ .name = "Menu", .value = 26 },
+    .{ .name = "MenuItem", .value = 27 },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {
