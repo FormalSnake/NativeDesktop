@@ -130,6 +130,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ScrollView" {
         let sv = NSScrollView()
         sv.hasVerticalScroller = true
+        sv.drawsBackground = false
         let doc = FlippedView()
         sv.documentView = doc
         doc.translatesAutoresizingMaskIntoConstraints = false

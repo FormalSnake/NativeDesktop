@@ -1217,6 +1217,11 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "ScrollView") {
     out += "        let sv = NSScrollView()\n";
     out += "        sv.hasVerticalScroller = true\n";
+    // GtkScrolledWindow never paints its own background — the AppKit peer
+    // must not either, or it renders as an opaque gray slab inside the glass
+    // sidebar (owner-reported). Apps that want a fill set style.background,
+    // which works via the layer regardless of drawsBackground.
+    out += "        sv.drawsBackground = false\n";
     out += "        let doc = FlippedView()\n";
     out += "        sv.documentView = doc\n";
     // doc (the FlippedView) stays the permanent documentView so scrolled
