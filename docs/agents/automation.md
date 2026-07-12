@@ -108,3 +108,55 @@ dies, so the overlay shows the real error rather than a bare disconnect notice.
 recovery node in the tree; `getTree` after a crash will fail or return stale data, not an overlay
 snapshot. Do not write agent logic that assumes `nd-overlay-*` testIDs exist until this section is
 updated to say the task has landed.
+
+## Screenshots on macOS (ndshot)
+
+The `screenshot` RPC (see above) renders offscreen inside the host process, and on macOS 26 that
+path draws blank editable fields for `TextInput`/`TextArea` — `_NSCoreHostingView` only paints via
+CoreAnimation when it's actually composited on screen, so an offscreen render ladder gets an empty
+field back. Shelling out to `screencapture` over ssh doesn't work around this either: the terminal
+environment agents run in (herdr) is blocked by TCC and cannot be granted Screen Recording, no
+matter what the ssh session does. `tools/ndshot/` is the fix — a small, dependency-free Swift
+package with its own stable binary identity that preflights/requests Screen Recording once, then
+captures the *live composited* window via ScreenCaptureKit. This works even when the window is
+occluded, and it doesn't touch the render ladder at all.
+
+Build it (must unset `SDKROOT`/`DEVELOPER_DIR` inside the repo's nix devshell, or the system Swift
+toolchain breaks):
+
+```
+cd tools/ndshot && ./build.sh
+```
+
+`build.sh` runs `swift build -c release` and then ad-hoc signs the binary with a stable identifier
+(`codesign -f -s - -i com.nativedesktop.ndshot .build/release/ndshot`) so the Screen Recording grant
+sticks across rebuilds — as long as the compiled bytes don't actually change; a rebuild that changes
+the binary's content counts as a new identity to TCC and needs re-granting either way.
+
+Three subcommands, all under `.build/release/ndshot`:
+
+- **`ndshot doctor`** — reports current Screen Recording permission state (and the binary's
+  codesign identity, to help spot a stale grant after a rebuild). Exit 0 if granted, 2 if not.
+- **`ndshot list`** — enumerates every capturable window as one JSON object per line: `{"pid":…,
+  "windowID":…, "app":"…", "title":"…", "x":…, "y":…, "width":…, "height":…, "onScreen":…}`.
+- **`ndshot capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]`** —
+  captures the first matching window to a full-resolution PNG. `--title` is a case-insensitive
+  substring match; `--pid`/`--title` compose (both must match); `--window-id` wins outright.
+
+Example capturing the ND Notes window:
+
+```
+.build/release/ndshot capture --title "ND Notes" --out /tmp/nd.png
+```
+
+Exit codes across all three subcommands: `0` success, `2` no Screen Recording access (grant
+instructions printed to stderr), `3` no window matched the given filters (the candidate window list
+is printed to stderr so an agent can self-correct), `4` capture or PNG-write failure.
+
+**One-time grant flow:** the first invocation of `list` or `capture` calls
+`CGRequestScreenCaptureAccess()`, which triggers the system permission prompt — but that prompt is
+interactive and this is a one-time, headful step only the machine's owner can complete. Grant it via
+System Settings → Privacy & Security → Screen Recording once; the grant then sticks to this binary's
+path and ad hoc signature (see above) across future runs and rebuilds. Do not script around this or
+loop retrying it — `ndshot doctor` exists precisely so an agent can check the state instead of
+guessing.
