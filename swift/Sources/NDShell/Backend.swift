@@ -252,49 +252,55 @@ func ndApplyCssClassesIfPresent(_ view: NSView, _ propsJson: String) {
     ndApplyCssClasses(view, classes)
 }
 
+/// Per-node typography cascade state — the font/color a node's text target
+/// should end up with once classes AND style are both accounted for. Keyed
+/// by the OUTER widget view's identity (the vtable handle), not the
+/// resolved text target, using the same `nonisolated(unsafe)` map idiom as
+/// `gridCells`/`ndLayoutFlags`. `nil` means "absent from the last props/style
+/// JSON seen", not "unset" — that's what makes dropping a key a real
+/// set-replace instead of a no-op. Entries are never pruned, same accepted
+/// leak profile as `ndLayoutFlags` (bounded by live widget count).
+private struct NDTypography {
+    var classes: [String] = []
+    var fontObj: [String: Any]? = nil
+    var colorStr: String? = nil
+}
+nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypography] = [:]
+
 /// `ndApplyCssClasses` (Task 6 — a real semantic mapping, not a no-op): maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
 /// properties. Every color used is a dynamic system color
 /// (`.controlAccentColor`, `.secondaryLabelColor`, ...) rather than a
 /// hardcoded hex value, so dark mode keeps working automatically.
 ///
-/// TextArea/ScrollView widgets are `NSScrollView` wrappers around an
-/// `NSTextView` document view — font/color classes below target that inner
-/// text view, not the scroll view itself (mirrors `ndApplyStyle`'s
-/// `applyTextColor`/`applyFont` helpers).
+/// Button-bezel classes (`suggested-action`/`destructive-action`/`pill`/
+/// `flat`) are applied directly below, set-replace against a baseline reset
+/// (a class dropped from the list must clear its effect — e.g. a former
+/// "suggested-action" no longer leaves keyEquivalent="\r"/an accent bezel, a
+/// former "flat" gets its border back; baselines match a freshly-created
+/// control from NDGen/Widgets.swift's create arms).
+///
+/// Typography classes (`title-*`/`heading`/`caption*`/`body`/`dimmed`/
+/// `monospace`/`numeric`) are NOT applied here — they're recorded into the
+/// per-node `ndNodeTypography` registry and replayed by
+/// `ndRecomputeTypography`, which also layers in any standing `style` font/
+/// color (see that function's doc comment for the full cascade order).
 ///
 /// Structural classes (`navigation-sidebar`, `card`, `view`, `toolbar`,
 /// `boxed-list`, `osd`, ...) are silently ignored — those roles come from
 /// the SplitView/HeaderBar widgets themselves on the Mac (later M11 tasks),
 /// not from class strings.
 func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
-    let textTarget: NSView = {
-        if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
-            return textView
-        }
-        return view
-    }()
-
     // Set-replace, not additive (mirrors GTK's applyCssClasses, which removes
-    // every allowlist class not in `value`): reset the properties the switch
-    // below can touch to their baseline FIRST, so a class dropped from the
-    // list actually clears its effect (e.g. a former "suggested-action" no
-    // longer leaves keyEquivalent="\r"/an accent bezel, a former "flat" gets
-    // its border back). Baselines match a freshly-created control from
-    // NDGen/Widgets.swift's create arms (.rounded bezel, no key equivalent).
+    // every allowlist class not in `value`): reset the button properties the
+    // switch below can touch to their baseline FIRST, so a class dropped from
+    // the list actually clears its effect.
     if let btn = view as? NSButton {
         btn.bezelColor = nil
         btn.keyEquivalent = ""
         btn.hasDestructiveAction = false
         btn.isBordered = true
         btn.showsBorderOnlyWhileMouseInside = false
-    }
-    if let field = textTarget as? NSTextField {
-        field.font = .systemFont(ofSize: NSFont.systemFontSize)
-        field.textColor = .labelColor
-    } else if let textView = textTarget as? NSTextView {
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize)
-        textView.textColor = .labelColor
     }
 
     for cls in classes {
@@ -314,6 +320,52 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             guard let btn = view as? NSButton else { continue }
             btn.isBordered = false
             btn.showsBorderOnlyWhileMouseInside = true
+        default:
+            // Typography classes are handled by ndRecomputeTypography below,
+            // not this switch. navigation-sidebar, card, view, toolbar,
+            // boxed-list, osd, ...: structural roles owned by the
+            // SplitView/HeaderBar widgets on the Mac — silently ignored here.
+            break
+        }
+    }
+
+    var typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
+    typography.classes = classes
+    ndNodeTypography[ObjectIdentifier(view)] = typography
+    ndRecomputeTypography(view)
+}
+
+/// Recomputes the full per-node typography cascade for `view`'s text target
+/// from its stored `ndNodeTypography` state: baseline -> class typography (in
+/// stored order) -> style font -> style color. Style beats classes (GTK
+/// parity: a node's scoped `.nd-<id>` CSS block is APPLICATION priority,
+/// which beats theme classes there, so `style` wins over `cssClasses` here
+/// too). Called after every write to the registry, from both
+/// `ndApplyCssClasses` and `ndApplyStyle`, so whichever one runs last always
+/// replays the COMPLETE standing state instead of leaving the other's
+/// contribution stale — this is what makes a cssClasses-only update stop
+/// wiping a standing style font, and a style-only update stop leaving stale
+/// class typography behind.
+///
+/// TextArea/ScrollView widgets are `NSScrollView` wrappers around an
+/// `NSTextView` document view — the baseline and class steps below target
+/// that inner text view, not the scroll view itself; the style steps call
+/// `applyFont`/`applyTextColor`, which resolve the same way internally (and
+/// also handle NSButton's attributedTitle color path).
+func ndRecomputeTypography(_ view: NSView) {
+    let textTarget: NSView = {
+        if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
+            return textView
+        }
+        return view
+    }()
+    let typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
+
+    applyCssFontValue(textTarget, .systemFont(ofSize: NSFont.systemFontSize))
+    applyCssTextColor(textTarget, .labelColor)
+
+    for cls in typography.classes {
+        switch cls {
         case "title-1":
             applyCssFont(textTarget, .largeTitle)
         case "title-2":
@@ -337,11 +389,15 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         case "numeric":
             applyCssFontValue(textTarget, .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
         default:
-            // navigation-sidebar, card, view, toolbar, boxed-list, osd, ...:
-            // structural roles owned by the SplitView/HeaderBar widgets on
-            // the Mac — silently ignored here.
             break
         }
+    }
+
+    if let fontObj = typography.fontObj {
+        applyFont(view, fontObj)
+    }
+    if let colorStr = typography.colorStr, let color = nsColor(fromHexOrName: colorStr) {
+        applyTextColor(view, color)
     }
 }
 
@@ -399,26 +455,28 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     // never clears because unpinning's style object simply omits
     // borderColor/borderWidth).
     //
-    // `color`/`font` are also CSS-target on GTK but are deliberately NOT
-    // reset here: on AppKit, ndApplyCssClasses (title-*/caption/dimmed/
-    // monospace) writes the same NSFont/textColor properties, and a
-    // prop-diff update that changes only `style` does not re-apply
-    // cssClasses — resetting font/color to baseline here would clobber
-    // standing cssClasses typography with nothing to restore it. The
-    // correct fix is a per-node style cascade recompute (baseline ->
-    // cssClasses -> style); tracked as a follow-up. Left monotonic for now.
+    // `color`/`font` are also CSS-target on GTK, and feed the same per-node
+    // typography cascade `ndApplyCssClasses` writes into (`ndNodeTypography`,
+    // keyed off this view's identity): store the raw style value below —
+    // `nil` when the key is absent, which IS the set-replace signal, not a
+    // no-op — then let `ndRecomputeTypography` replay baseline -> classes ->
+    // style in full. That makes this function and `ndApplyCssClasses`
+    // order-independent: whichever one runs last recomputes from the
+    // complete standing state, so a style-only update no longer leaves stale
+    // class typography behind, and a cssClasses-only update no longer wipes
+    // a standing style font (see `ndRecomputeTypography`'s doc comment for
+    // the full cascade order).
     if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
         view.wantsLayer = true
         view.layer?.backgroundColor = color.cgColor
     } else if let layer = view.layer {
         layer.backgroundColor = nil
     }
-    if let colorStr = style["color"] as? String, let color = nsColor(fromHexOrName: colorStr) {
-        applyTextColor(view, color)
-    }
-    if let fontObj = style["font"] as? [String: Any] {
-        applyFont(view, fontObj)
-    }
+    var typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
+    typography.fontObj = style["font"] as? [String: Any]
+    typography.colorStr = style["color"] as? String
+    ndNodeTypography[ObjectIdentifier(view)] = typography
+    ndRecomputeTypography(view)
     let borderObj = style["border"] as? [String: Any]
     let borderWidth = (borderObj?["borderWidth"] as? NSNumber)?.doubleValue ?? 0
     let borderColor = (borderObj?["borderColor"] as? String).flatMap { nsColor(fromHexOrName: $0) }
