@@ -180,6 +180,24 @@ console.log(
     `sidebar-header=${sidebarHeader.type}, content-header=${contentHeader.type})`,
 );
 
+// Chrome geometry gates (regressed silently once, during the AppKit
+// NSSplitViewController/glass migration — never again):
+// 1. Pane CONTENT must clear the title bar / header area. On AppKit
+//    (fullSizeContentView + unified toolbar, safe area ~52pt) and on GTK
+//    (AdwHeaderBar titlebar sits above y=0 of the content coordinate space,
+//    content boxes carry 10-12px padding) the first in-pane control sits
+//    comfortably below y=40 only when the safe-area/header inset is intact.
+// 2. The window must honor defaultWidth/Height (900x600) — AppKit's
+//    contentViewController assignment resizes the window to fitting size
+//    unless the frame is explicitly preserved (measured collapse: 500x500).
+const searchGeom = mustFind(t0, "search-input").geometry;
+const titleGeom = mustFind(t0, "title-input").geometry;
+if (!searchGeom || searchGeom.y < 40) throw new Error(`search-input y=${searchGeom?.y} — sidebar content is under the titlebar (safe-area inset lost)`);
+if (!titleGeom || titleGeom.y < 40) throw new Error(`title-input y=${titleGeom?.y} — content pane is under the titlebar (safe-area inset lost)`);
+const rootGeom = t0.root.geometry;
+if (!rootGeom || rootGeom.w < 850) throw new Error(`window content width=${rootGeom?.w} — defaultWidth (900) not honored`);
+console.log(`ND_CHROMEGEOM_OK search-input@y=${searchGeom.y} title-input@y=${titleGeom.y} root=${rootGeom.w}x${rootGeom.h}`);
+
 let shot = (await client.call("screenshot", { path: `${shotDir}/notes-baseline.png` })) as {
   path: string;
   width: number;

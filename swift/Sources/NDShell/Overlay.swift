@@ -23,7 +23,9 @@ nonisolated(unsafe) private let isDevMode: Bool = {
 }()
 
 func ndShowOverlay(_ message: String) {
-    guard let content = gWindow?.contentView else { return }
+    // M11 Phase C (Risk 1): resolve the LIVE content — see
+    // SplitController.swift's ndLiveContentView for the full rationale.
+    guard let content = ndLiveContentView() else { return }
     if message.isEmpty {
         overlayPanel?.removeFromSuperview()
         overlayPanel = nil

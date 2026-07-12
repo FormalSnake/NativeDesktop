@@ -18,10 +18,10 @@ func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
-// SplitView's `sidebarWidth`/`collapsed` (create-time props on the NSSplitView
-// itself) are read again when the sidebar child later appends and gets wrapped
-// in its NSVisualEffectView — stashed here since the wrapper doesn't exist yet
-// at create time.
+// SplitView's `sidebarWidth`/`collapsed` (create-time props on the
+// NSSplitView itself) are read again when the sidebar child later appends
+// and becomes an NSSplitViewItem — stashed here since the item doesn't exist
+// yet at create time.
 nonisolated(unsafe) private var splitViewSidebarFraction: [ObjectIdentifier: Double] = [:]
 nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [:]
 
@@ -164,16 +164,17 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")
         return placeholder
     } else if kind == "SplitView" {
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
+        let controller = NSSplitViewController()
+        controller.splitView.isVertical = true
+        controller.splitView.dividerStyle = .thin
+        ndSplitControllers[ObjectIdentifier(controller.splitView)] = controller
         if let w = propDouble(props, "sidebarWidth"), w > 0 {
-            splitViewSidebarFraction[ObjectIdentifier(split)] = w
+            splitViewSidebarFraction[ObjectIdentifier(controller.splitView)] = w
         }
         if propBool(props, "collapsed") ?? false {
-            splitViewCollapsed[ObjectIdentifier(split)] = true
+            splitViewCollapsed[ObjectIdentifier(controller.splitView)] = true
         }
-        return split
+        return controller.splitView
     } else if kind == "HeaderBar" {
         let bar = NDHeaderBarView()
         bar.ndTitle = propStr(props, "title") ?? ""
@@ -265,8 +266,8 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         }
     } else if kind == "SplitView" {
         if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,
-           let sidebarPane = split.arrangedSubviews.first, sidebarPane is NSVisualEffectView {
-            sidebarPane.isHidden = c
+           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {
+            sidebarItem.isCollapsed = c
         }
     }
 }
@@ -301,10 +302,20 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Window" {
+        let window = parent.window ?? gWindow
         parent.subviews.forEach { $0.removeFromSuperview() }
-        parent.addSubview(child)
-        child.frame = parent.bounds
-        child.autoresizingMask = [.width, .height]
+        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {
+            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size
+            win.contentViewController = controller
+        } else {
+            if let win = window, win.contentViewController != nil {
+                win.contentViewController = nil
+                win.contentView = parent
+            }
+            parent.addSubview(child)
+            child.frame = parent.bounds
+            child.autoresizingMask = [.width, .height]
+        }
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.addArrangedSubview(child)
@@ -332,47 +343,25 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
+        let controller = ndSplitViewController(for: split)!
         var realChild = child
         if let pane = child as? NDToolbarPaneView {
             ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)
             realChild = pane.contentView ?? child
         }
+        let vc = ndMakePaneViewController(realChild)
         if attachedSlot == "sidebar" {
-            let wrapper = NSVisualEffectView()
-            wrapper.material = .sidebar
-            wrapper.blendingMode = .behindWindow
-            wrapper.state = .followsWindowActiveState
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            realChild.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(realChild)
-            NSLayoutConstraint.activate([
-                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),
-                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-            ])
+            let item = NSSplitViewItem(sidebarWithViewController: vc)
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
-                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
-                widthConstraint.priority = .defaultHigh
-                widthConstraint.isActive = true
+                item.preferredThicknessFraction = fraction
             }
-            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
-            split.insertArrangedSubview(wrapper, at: 0)
+            item.canCollapse = true
+            item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
+            controller.insertSplitViewItem(item, at: 0)
         } else {
-            let host = NDPaneHostView()
-            host.translatesAutoresizingMaskIntoConstraints = false
-            realChild.translatesAutoresizingMaskIntoConstraints = false
-            host.addSubview(realChild)
-            NSLayoutConstraint.activate([
-                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-            ])
-            split.addArrangedSubview(host)
-        }
-        if !split.arrangedSubviews.isEmpty {
-            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+            let item = NSSplitViewItem(viewController: vc)
+            item.automaticallyAdjustsSafeAreaInsets = true
+            controller.addSplitViewItem(item)
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
@@ -412,47 +401,25 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
+        let controller = ndSplitViewController(for: split)!
         var realChild = child
         if let pane = child as? NDToolbarPaneView {
             ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)
             realChild = pane.contentView ?? child
         }
+        let vc = ndMakePaneViewController(realChild)
         if attachedSlot == "sidebar" {
-            let wrapper = NSVisualEffectView()
-            wrapper.material = .sidebar
-            wrapper.blendingMode = .behindWindow
-            wrapper.state = .followsWindowActiveState
-            wrapper.translatesAutoresizingMaskIntoConstraints = false
-            realChild.translatesAutoresizingMaskIntoConstraints = false
-            wrapper.addSubview(realChild)
-            NSLayoutConstraint.activate([
-                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),
-                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-            ])
+            let item = NSSplitViewItem(sidebarWithViewController: vc)
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
-                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))
-                widthConstraint.priority = .defaultHigh
-                widthConstraint.isActive = true
+                item.preferredThicknessFraction = fraction
             }
-            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
-            split.insertArrangedSubview(wrapper, at: 0)
+            item.canCollapse = true
+            item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
+            controller.insertSplitViewItem(item, at: 0)
         } else {
-            let host = NDPaneHostView()
-            host.translatesAutoresizingMaskIntoConstraints = false
-            realChild.translatesAutoresizingMaskIntoConstraints = false
-            host.addSubview(realChild)
-            NSLayoutConstraint.activate([
-                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-            ])
-            split.addArrangedSubview(host)
-        }
-        if !split.arrangedSubviews.isEmpty {
-            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+            let item = NSSplitViewItem(viewController: vc)
+            item.automaticallyAdjustsSafeAreaInsets = true
+            controller.addSplitViewItem(item)
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
@@ -466,7 +433,13 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
 
 func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     if parentKind == "Window" {
-        child.removeFromSuperview()
+        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),
+           let window = parent.window ?? gWindow, window.contentViewController === controller {
+            window.contentViewController = nil
+            window.contentView = parent
+        } else {
+            child.removeFromSuperview()
+        }
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.removeArrangedSubview(child)
@@ -485,14 +458,14 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndGridRemove(grid, child)
     } else if parentKind == "SplitView" {
         let split = parent as! NSSplitView
+        let controller = ndSplitViewController(for: split)!
         var realChild = child
         if let pane = child as? NDToolbarPaneView {
             ndToolbarPaneDetachedFromSplit(pane)
             realChild = pane.contentView ?? child
         }
-        if let wrapper = realChild.superview, split.arrangedSubviews.contains(where: { $0 === wrapper }) {
-            split.removeArrangedSubview(wrapper)
-            wrapper.removeFromSuperview()
+        if let item = controller.splitViewItems.first(where: { $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {
+            controller.removeSplitViewItem(item)
         } else {
             split.removeArrangedSubview(realChild)
             realChild.removeFromSuperview()

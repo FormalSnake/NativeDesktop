@@ -152,7 +152,13 @@ func buildVTable() -> nd_backend {
 
     vt.get_window = { _ in
         let bits: Int? = MainActor.assumeIsolated {
-            guard let content = gWindow?.contentView else { return nil }
+            // M11 Phase C (Risk 1): src/tree.zig's post-crash respawn path
+            // binds a fresh reconciler root's "Window" node to whatever this
+            // returns (backend.getWindow()), so it must resolve to the
+            // CURRENT live content (SplitController.swift's ndLiveContentView),
+            // not the Window create arm's FlippedView, which is orphaned
+            // once a SplitView becomes contentViewController.
+            guard let content = ndLiveContentView() else { return nil }
             return Int(bitPattern: Unmanaged.passUnretained(content).toOpaque())
         }
         guard let bits else { return nil }

@@ -27,7 +27,9 @@ import Foundation
 /// before we read anything, otherwise stack-arranged widgets (the counter's
 /// label/button) report all-zero geometry.
 @MainActor func ndNodeBounds(_ view: NSView, _ out: inout nd_rect) -> Bool {
-    guard let content = gWindow?.contentView else { return false }
+    // M11 Phase C (Risk 1 + Risk 2): resolve the LIVE, flipped content — see
+    // SplitController.swift's ndLiveContentView for the full rationale.
+    guard let content = ndLiveContentView() else { return false }
     content.layoutSubtreeIfNeeded()
     let r = view.convert(view.bounds, to: content)
     out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
@@ -251,7 +253,9 @@ private extension Double {
 /// effective background color before the check + write
 /// (`flattenOntoWindowBackground`). Rung 1 (`cacheDisplay`) wins outright.
 @MainActor func ndSnapshot(_ pngPath: String) -> Bool {
-    guard let content = gWindow?.contentView else { return false }
+    // M11 Phase C (Risk 1): resolve the LIVE content — see
+    // SplitController.swift's ndLiveContentView for the full rationale.
+    guard let content = ndLiveContentView() else { return false }
     let bounds = content.bounds
     content.layoutSubtreeIfNeeded() // real Auto Layout pass before any capture rung
 

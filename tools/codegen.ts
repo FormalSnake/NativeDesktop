@@ -1007,10 +1007,10 @@ func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
-// SplitView's \`sidebarWidth\`/\`collapsed\` (create-time props on the NSSplitView
-// itself) are read again when the sidebar child later appends and gets wrapped
-// in its NSVisualEffectView — stashed here since the wrapper doesn't exist yet
-// at create time.
+// SplitView's \`sidebarWidth\`/\`collapsed\` (create-time props on the
+// NSSplitView itself) are read again when the sidebar child later appends
+// and becomes an NSSplitViewItem — stashed here since the item doesn't exist
+// yet at create time.
 nonisolated(unsafe) private var splitViewSidebarFraction: [ObjectIdentifier: Double] = [:]
 nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [:]
 `;
@@ -1207,16 +1207,22 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")\n';
     out += "        return placeholder\n";
   } else if (w.name === "SplitView") {
-    out += "        let split = NSSplitView()\n";
-    out += "        split.isVertical = true\n";
-    out += "        split.dividerStyle = .thin\n";
+    // NSSplitViewController (not a bare NSSplitView) is what earns the
+    // automatic Liquid Glass sidebar treatment on macOS 26 — see
+    // SplitController.swift. Its `view` IS `controller.splitView`, so that's
+    // still what's returned/handled as this widget's ABI handle everywhere
+    // else (structural/apply arms, the toolbar's tracking separator).
+    out += "        let controller = NSSplitViewController()\n";
+    out += "        controller.splitView.isVertical = true\n";
+    out += "        controller.splitView.dividerStyle = .thin\n";
+    out += "        ndSplitControllers[ObjectIdentifier(controller.splitView)] = controller\n";
     out += '        if let w = propDouble(props, "sidebarWidth"), w > 0 {\n';
-    out += "            splitViewSidebarFraction[ObjectIdentifier(split)] = w\n";
+    out += "            splitViewSidebarFraction[ObjectIdentifier(controller.splitView)] = w\n";
     out += "        }\n";
     out += `        if propBool(props, "collapsed") ?? ${swiftDefaultBool(w, "collapsed")} {\n`;
-    out += "            splitViewCollapsed[ObjectIdentifier(split)] = true\n";
+    out += "            splitViewCollapsed[ObjectIdentifier(controller.splitView)] = true\n";
     out += "        }\n";
-    out += "        return split\n";
+    out += "        return controller.splitView\n";
   } else if (w.name === "HeaderBar") {
     out += "        let bar = NDHeaderBarView()\n";
     out += `        bar.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
@@ -1342,8 +1348,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "SplitView" && p.name === "collapsed") {
       out += '        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,\n';
-      out += "           let sidebarPane = split.arrangedSubviews.first, sidebarPane is NSVisualEffectView {\n";
-      out += "            sidebarPane.isHidden = c\n";
+      out += "           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {\n";
+      out += "            sidebarItem.isCollapsed = c\n";
       out += "        }\n";
     } else {
       throw new Error(`no applyProps template for ${key} — add one when introducing it (M6b)`);
@@ -1404,14 +1410,21 @@ interface SwiftStructuralTemplate {
 }
 
 // Shared between SplitView's append/insertBefore (identical body — slots
-// aren't order-addressed, so `before` plays no part).
+// aren't order-addressed, so `before` plays no part). M11 Phase C: the
+// sidebar/content panes are now real NSSplitViewItems on the controller
+// stashed at create time (SplitController.swift) — that's what earns the
+// automatic Liquid Glass sidebar (floating glass pane on macOS 26, correct
+// vibrancy pre-26) from one un-guarded code path, so there's no more manual
+// NSVisualEffectView/NDPaneHostView wrapper or safe-area pin: the split view
+// item itself supplies material, safe-area inset, and holding behavior.
 const SPLITVIEW_STRUCTURAL_BODY =
   "        let split = parent as! NSSplitView\n" +
+  "        let controller = ndSplitViewController(for: split)!\n" +
   // A ToolbarView pane is a LOGICAL holder: it merges its <headerbar>'s items
   // into the window toolbar (sidebar items left of the tracking separator,
   // content items right), but the pane VIEW never enters the hierarchy. Its
-  // CONTENT box (an NSStackView) is what becomes the split's slot subview —
-  // added directly, exactly like a non-toolbarview child, so NSSplitView sizes
+  // CONTENT box (an NSStackView) is what becomes the split item's view —
+  // wrapped directly, exactly like a non-toolbarview child, so the item sizes
   // it to fill. (A plain-NSView pane wrapper would only hug its content's
   // intrinsic size, collapsing the pane to a narrow column.)
   "        var realChild = child\n" +
@@ -1419,71 +1432,94 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            ndToolbarPaneAttachedToSplit(pane, split: split, slot: attachedSlot)\n" +
   "            realChild = pane.contentView ?? child\n" +
   "        }\n" +
+  // ndMakePaneViewController (SplitController.swift) wraps realChild in a
+  // flipped plain-NSView host pinned below the safe area: the split view
+  // item supplies the material/glass, but nothing insets an NSStackView
+  // below the titlebar of a fullSizeContentView window on its own — without
+  // this pin, sidebar/editor content renders under the traffic lights
+  // (measured: search-input at y=20). A plain NSView host does NOT block
+  // the glass (unlike the old NSVisualEffectView wrapper).
+  "        let vc = ndMakePaneViewController(realChild)\n" +
   '        if attachedSlot == "sidebar" {\n' +
-  "            let wrapper = NSVisualEffectView()\n" +
-  "            wrapper.material = .sidebar\n" +
-  "            wrapper.blendingMode = .behindWindow\n" +
-  "            wrapper.state = .followsWindowActiveState\n" +
-  "            wrapper.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            realChild.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            wrapper.addSubview(realChild)\n" +
-  "            NSLayoutConstraint.activate([\n" +
-  "                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),\n" +
-  "                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),\n" +
-  // The window is .fullSizeContentView with a unified NSToolbar, so the
-  // wrapper itself reaches the very top (vibrancy floats under the traffic
-  // lights, Notes/Mail idiom) but its CONTENT is pinned to the safe-area top
-  // instead, so sidebar controls don't render underneath the titlebar.
-  "                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),\n" +
-  "                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),\n" +
-  "            ])\n" +
+  "            let item = NSSplitViewItem(sidebarWithViewController: vc)\n" +
   "            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {\n" +
-  "                let widthConstraint = wrapper.widthAnchor.constraint(equalToConstant: CGFloat(fraction * 900))\n" +
-  // .defaultLow (250) sat below the 260 holding priority, so the wrapper
-  // collapsed to its content's intrinsic hugging width (~157) instead of its
-  // fraction. .defaultHigh (750) holds the fraction while staying below
-  // required, so the divider remains user-draggable.
-  "                widthConstraint.priority = .defaultHigh\n" +
-  "                widthConstraint.isActive = true\n" +
+  "                item.preferredThicknessFraction = fraction\n" +
   "            }\n" +
-  "            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
-  "            split.insertArrangedSubview(wrapper, at: 0)\n" +
+  "            item.canCollapse = true\n" +
+  "            item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
+  "            controller.insertSplitViewItem(item, at: 0)\n" +
   "        } else {\n" +
-  // The content pane has no vibrancy wrapper of its own, so it's given a
-  // plain NDPaneHostView instead purely to hang the same safe-area top pin
-  // off — the host spans the full slot (leading/trailing/bottom), only the
-  // content inside is inset from the toolbar.
-  "            let host = NDPaneHostView()\n" +
-  "            host.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            realChild.translatesAutoresizingMaskIntoConstraints = false\n" +
-  "            host.addSubview(realChild)\n" +
-  "            NSLayoutConstraint.activate([\n" +
-  "                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),\n" +
-  "                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),\n" +
-  "                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),\n" +
-  "                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),\n" +
-  "            ])\n" +
-  "            split.addArrangedSubview(host)\n" +
-  "        }\n" +
-  "        if !split.arrangedSubviews.isEmpty {\n" +
-  "            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)\n" +
+  "            let item = NSSplitViewItem(viewController: vc)\n" +
+  "            item.automaticallyAdjustsSafeAreaInsets = true\n" +
+  "            controller.addSplitViewItem(item)\n" +
   "        }\n";
 
 const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Window: {
     // `parent` here is the Window's tracked handle: the flipped contentView
-    // itself (returned by the Window create arm), so append is single-child
-    // subview management sized to the content view's bounds. Window chrome on
-    // the Mac (M11 Phase B) is the unified NSToolbar the pane <headerbar>s
-    // feed via the SplitView, not a window-level header child — so there is no
-    // NDHeaderBarView branch here; the split fills the content view edge-to-
-    // edge and reaches the top under .fullSizeContentView.
+    // itself (returned by the Window create arm) — reachable via
+    // `parent.window` since it WAS the window's contentView at creation.
+    // Window chrome on the Mac (M11 Phase B) is the unified NSToolbar the
+    // pane <headerbar>s feed via the SplitView, not a window-level header
+    // child — so there is no NDHeaderBarView branch here.
+    //
+    // M11 Phase C: a registered SplitView child must enter the window as
+    // `contentViewController` (not a plain subview) — only that path earns
+    // the automatic Liquid Glass sidebar treatment on macOS 26. This orphans
+    // `parent` (Risk 1) — Backend.swift's get_window and Overlay.swift's
+    // ndShowOverlay resolve the LIVE content via `contentViewController?.view`
+    // first for this reason, and src/tree.zig's post-crash respawn path binds
+    // the new Window node to whatever get_window returns, so that resolution
+    // must stay live too. Any other child (counter/gallery, no split) keeps
+    // the plain-subview path untouched.
+    // `parent.window ?? gWindow`: once a split is installed as
+    // contentViewController, `parent` (the create-arm FlippedView) is
+    // orphaned and `parent.window` is nil — a REMOUNT (HMR / crash-restart
+    // generation swap) must still find the window, so fall back to the
+    // gWindow global. The non-split branch is self-healing for the same
+    // reason: if a controller is still installed, clear it and re-seat
+    // `parent` as contentView before parenting the plain child into it.
     append: () =>
+      "        let window = parent.window ?? gWindow\n" +
       "        parent.subviews.forEach { $0.removeFromSuperview() }\n" +
-      "        parent.addSubview(child)\n" +
-      "        child.frame = parent.bounds\n" +
-      "        child.autoresizingMask = [.width, .height]\n",
-    remove: () => "        child.removeFromSuperview()\n",
+      "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {\n" +
+      // Assigning contentViewController resizes the window to the
+      // controller's preferredContentSize (default zero -> the split view's
+      // tiny fitting size), clobbering Window defaultWidth/Height — measured
+      // 900x600 -> 500x500, and a post-assignment setFrame gets re-clobbered
+      // on a later layout pass. Feed the mechanism instead: the current
+      // contentView (the Window handle) still holds the intended size.
+      "            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size\n" +
+      "            win.contentViewController = controller\n" +
+      "        } else {\n" +
+      "            if let win = window, win.contentViewController != nil {\n" +
+      "                win.contentViewController = nil\n" +
+      "                win.contentView = parent\n" +
+      "            }\n" +
+      "            parent.addSubview(child)\n" +
+      "            child.frame = parent.bounds\n" +
+      "            child.autoresizingMask = [.width, .height]\n" +
+      "        }\n",
+    // A registered split currently installed as contentViewController has no
+    // superview to remove from (removeFromSuperview() would no-op or, worse,
+    // reach into the window's private frame view) — clear
+    // contentViewController instead so a later re-append can install a fresh
+    // one cleanly (HMR remove+re-append of the root split).
+    // Guard notes: compare CONTROLLERS, not `contentViewController?.view ===
+    // child` — the controller's `view` is a distinct wrapper, never the
+    // splitView handle (see SplitController.swift), so a view comparison is
+    // dead code. And `parent.window` is nil in exactly this case (parent is
+    // orphaned while a split is installed) — resolve via gWindow. After
+    // clearing, re-seat `parent` as contentView so later appends of either
+    // kind land in a live hierarchy.
+    remove: () =>
+      "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),\n" +
+      "           let window = parent.window ?? gWindow, window.contentViewController === controller {\n" +
+      "            window.contentViewController = nil\n" +
+      "            window.contentView = parent\n" +
+      "        } else {\n" +
+      "            child.removeFromSuperview()\n" +
+      "        }\n",
   },
   Box: {
     // Cross-axis "fill" + main-axis expand are both handled by
@@ -1540,26 +1576,27 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   SplitView: {
     // Two named slots, not an ordered list — insertBefore is set-by-slot, same
     // as append (mirrors the Zig STRUCTURAL.SplitView shape); `before` is
-    // unused. The sidebar child is wrapped in a vibrancy NSVisualEffectView
-    // pinned to it via Auto Layout; NSSplitView pane order is enforced
-    // regardless of mount order — sidebar always arrangedSubviews[0] (via
-    // insertArrangedSubview(at: 0)), content always appended at the end.
+    // unused. NSSplitViewItem order is enforced regardless of mount order —
+    // sidebar always inserted at index 0, content always appended at the end.
     append: () => SPLITVIEW_STRUCTURAL_BODY,
     insertBefore: () => SPLITVIEW_STRUCTURAL_BODY,
     remove: () =>
       "        let split = parent as! NSSplitView\n" +
+      "        let controller = ndSplitViewController(for: split)!\n" +
       "        var realChild = child\n" +
       "        if let pane = child as? NDToolbarPaneView {\n" +
       "            ndToolbarPaneDetachedFromSplit(pane)\n" +
       "            realChild = pane.contentView ?? child\n" +
       "        }\n" +
-      // Sidebar children are wrapped in NSVisualEffectView, content children
-      // in NDPaneHostView (both purely so the wrapper can carry the
-      // safe-area top pin) — generalize past superview TYPE to whichever
-      // wrapper is itself one of the split's arranged subviews.
-      "        if let wrapper = realChild.superview, split.arrangedSubviews.contains(where: { $0 === wrapper }) {\n" +
-      "            split.removeArrangedSubview(wrapper)\n" +
-      "            wrapper.removeFromSuperview()\n" +
+      // realChild is directly a split view item's viewController.view now (no
+      // wrapper) — find the owning item by that identity and remove it via
+      // the controller so its NSSplitViewItem bookkeeping stays consistent.
+      // The superview-removal fallback below only covers a non-item child
+      // (shouldn't occur via the generated arms, kept for defense in depth).
+      // realChild sits INSIDE the pane host view (ndMakePaneViewController),
+      // so match by descendant, not view identity.
+      "        if let item = controller.splitViewItems.first(where: { $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {\n" +
+      "            controller.removeSplitViewItem(item)\n" +
       "        } else {\n" +
       "            split.removeArrangedSubview(realChild)\n" +
       "            realChild.removeFromSuperview()\n" +
