@@ -90,8 +90,42 @@ final class NDPaneHostView: NSView {
 /// doesn't stretch arranged subviews, so "fill" is approximated with an
 /// explicit cross-axis anchor constraint against the stack, inset by the
 /// stack's own edgeInsets so it doesn't fight the padding those insets
-/// represent. "start" already matches the stack's own `.leading`/`.centerY`
-/// alignment, so no constraint is needed. "center"/"end" have no v1 mapping.
+/// represent.
+///
+/// "start"/"center"/"end" all need a per-child leading/top/centerX/centerY/
+/// trailing/bottom pin against the stack — but a bare pin alone doesn't
+/// work: NSStackView installs its OWN low-priority (~260) alignment
+/// constraint on every arranged subview PLUS an even-weaker (~250) "fill"
+/// wish pulling the far edge toward the stack's own far edge. A
+/// single-anchor pin at priority 999 doesn't outright beat or lose to that
+/// pair — the solver satisfies all three simultaneously by stretching the
+/// child to span the full cross axis (which trivially satisfies a
+/// centerX/trailing pin too, since a fully stretched view's center and
+/// trailing edge already coincide with the stack's), so the child never
+/// actually MOVES, it balloons instead (confirmed empirically: a probe pin
+/// alone always produced a full-width/height stretch, regardless of
+/// priority 999 or 1000). Fixing the child's cross-axis size first —
+/// raising contentHuggingPriority AND contentCompressionResistancePriority
+/// to `.required` for that axis, so its intrinsic size becomes
+/// non-negotiable — removes that degree of freedom; with size pinned, the
+/// 999 pin is the only thing left that can move the child, and it cleanly
+/// wins over the stack's own ~260 pin (confirmed empirically: same setup
+/// with hugging fixed first reliably produced the intended
+/// start/centered/trailing-aligned frame, stable across repeated layout
+/// passes and coexisting correctly with fill siblings in the same stack).
+///
+/// "start" used to be a no-op (relying on the stack's own create-time
+/// alignment, Widgets.swift ~46-51: `.leading` for vertical stacks,
+/// `.centerY` for horizontal) — that coincidentally matched GTK's "start"
+/// for vertical boxes (`.leading` IS "start"), but was silently wrong for
+/// horizontal ones: GTK's valign="start" always means top, never centered.
+/// Now all three non-fill cases share one recipe, and "fill" resets
+/// hugging/compression back to the AppKit defaults (250/750) on every call
+/// so a child that previously held "start"/"center"/"end" doesn't leave a
+/// stale required-priority behind when its align later changes — this
+/// function must be idempotent regardless of entry path (direct attach from
+/// the generated Box arms, restyle via `ndApplyStyle`, or
+/// `ndBoxReconcileChildren`'s padding-change replay).
 func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
     let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
     let vertical = stack.orientation == .vertical
@@ -108,9 +142,12 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
         ndCrossAxisConstraints[ObjectIdentifier(child)] = nil
     }
 
+    let crossAxis: NSLayoutConstraint.Orientation = vertical ? .horizontal : .vertical
     let align = (vertical ? flags.halign : flags.valign) ?? "fill"
     switch align {
     case "fill":
+        child.setContentHuggingPriority(NSLayoutConstraint.Priority(250), for: crossAxis)
+        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(750), for: crossAxis)
         let constraint: NSLayoutConstraint
         if vertical {
             constraint = child.widthAnchor.constraint(equalTo: stack.widthAnchor,
@@ -123,10 +160,61 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
         constraint.isActive = true
         ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
     case "start":
-        break // stack alignment (.leading/.centerY) already covers this.
+        // An explicit pin, not "no constraint": that was only ever correct
+        // for vertical stacks, whose OWN create-time alignment happens to be
+        // `.leading` (Widgets.swift ~46-51) — the same GTK "start" position.
+        // Horizontal stacks are created `.centerY`, so a horizontal box's
+        // "start" silently rendered as vertically CENTERED, not top-aligned
+        // (GTK's valign="start" always means top, independent of the
+        // .leading/.trailing text-direction axis that halign="start" rides
+        // on). Pinning explicitly — same hugging-fix recipe as center/end —
+        // fixes that mismatch and costs nothing for vertical boxes, whose
+        // `.leading` stack default already puts the pin's target exactly
+        // where the old free-ride landed.
+        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        let constraint: NSLayoutConstraint
+        if vertical {
+            constraint = child.leadingAnchor.constraint(equalTo: stack.leadingAnchor,
+                                                          constant: stack.edgeInsets.left)
+        } else {
+            constraint = child.topAnchor.constraint(equalTo: stack.topAnchor,
+                                                      constant: stack.edgeInsets.top)
+        }
+        constraint.priority = NSLayoutConstraint.Priority(999)
+        constraint.isActive = true
+        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
+    case "center":
+        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        let constraint: NSLayoutConstraint
+        if vertical {
+            constraint = child.centerXAnchor.constraint(equalTo: stack.centerXAnchor,
+                                                          constant: (stack.edgeInsets.left - stack.edgeInsets.right) / 2)
+        } else {
+            constraint = child.centerYAnchor.constraint(equalTo: stack.centerYAnchor,
+                                                          constant: (stack.edgeInsets.top - stack.edgeInsets.bottom) / 2)
+        }
+        constraint.priority = NSLayoutConstraint.Priority(999)
+        constraint.isActive = true
+        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
+    case "end":
+        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
+        let constraint: NSLayoutConstraint
+        if vertical {
+            constraint = child.trailingAnchor.constraint(equalTo: stack.trailingAnchor,
+                                                           constant: -stack.edgeInsets.right)
+        } else {
+            constraint = child.bottomAnchor.constraint(equalTo: stack.bottomAnchor,
+                                                         constant: -stack.edgeInsets.bottom)
+        }
+        constraint.priority = NSLayoutConstraint.Priority(999)
+        constraint.isActive = true
+        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
     default:
         FileHandle.standardError.write(
-            "ND_WARN halign/valign \"\(align)\" is unimplemented on AppKit v1 (only fill/start supported)\n".data(using: .utf8)!)
+            "ND_WARN halign/valign \"\(align)\" is not a recognized alignment value (expected fill/start/center/end)\n".data(using: .utf8)!)
     }
 }
 
