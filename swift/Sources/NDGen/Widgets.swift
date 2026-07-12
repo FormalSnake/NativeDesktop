@@ -395,6 +395,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Box" {
         let stack = parent as! NSStackView
+        if stack.arrangedSubviews.contains(child) { stack.removeArrangedSubview(child) }
         let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count
         stack.insertArrangedSubview(child, at: idx)
         ndBoxChildAttached(stack, child)

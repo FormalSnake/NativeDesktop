@@ -1490,7 +1490,17 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     // ndBoxChildAttached (Layout.swift), driven off the hexpand/vexpand/
     // halign/valign flags ndApplyStyle records per child.
     append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n        ndBoxChildAttached(stack, child)\n",
-    insertBefore: () => "        let stack = parent as! NSStackView\n        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n        stack.insertArrangedSubview(child, at: idx)\n        ndBoxChildAttached(stack, child)\n",
+    // The index must be computed on the child-less list: insertArrangedSubview(_:at:)
+    // implicitly removes `child` first if it's already arranged, which shifts
+    // `before`'s index down by one whenever child currently sits above it —
+    // so detach child from its stale slot BEFORE finding `before`'s index
+    // (mirrors src/tree.zig:156 recordInsertBefore's detach-first model).
+    insertBefore: () =>
+      "        let stack = parent as! NSStackView\n" +
+      "        if stack.arrangedSubviews.contains(child) { stack.removeArrangedSubview(child) }\n" +
+      "        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n" +
+      "        stack.insertArrangedSubview(child, at: idx)\n" +
+      "        ndBoxChildAttached(stack, child)\n",
     remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        ndBoxChildDetached(stack, child)\n        child.removeFromSuperview()\n",
   },
   ScrollView: {

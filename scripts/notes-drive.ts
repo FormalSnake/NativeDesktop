@@ -109,6 +109,28 @@ function mustFind(t: GetTreeResult, testID: string): TreeNode {
   return n;
 }
 
+// Row bounds' y-coordinates ARE a reliable order signal, unlike getTree's
+// child-ARRAY order (see the big comment below on hashmap iteration order) —
+// a pin/unpin reorder must eventually settle into the sort examples/notes/
+// main.tsx's sortNotes applies (pinned-first, then id descending). Poll for
+// that y-order instead of trusting a single snapshot, same remount-settle
+// race as setValueRetrying/clickRetrying above.
+async function waitForRowsByY(
+  predicate: (rows: { id: string; y: number }[]) => boolean,
+  t: () => Promise<GetTreeResult>,
+): Promise<{ id: string; y: number }[]> {
+  let last: { id: string; y: number }[] = [];
+  for (let i = 0; i < 20; i++) {
+    const rows = findAllPrefixed((await t()).root, "note-row-")
+      .map((r) => ({ id: r.testID!, y: r.geometry?.y ?? -1 }))
+      .sort((a, b) => a.y - b.y);
+    last = rows;
+    if (predicate(rows)) return rows;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(`row y-order predicate never settled (last saw [${last.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}])`);
+}
+
 // 0. Window present; baseline screenshot with the seeded first note selected.
 const waitedWindow = (await client.call("waitFor", {
   condition: { textContains: "ND Notes" },
@@ -287,6 +309,35 @@ for (const id of ["note-row-1", "note-row-2", "note-row-3", "note-row-4"]) {
 }
 const groceryRowAfterPin = rows8.find((r) => r.testID === "note-row-3");
 if (!groceryRowAfterPin?.text?.includes("Grocery run")) throw new Error(`note-row-3 label wrong after pin: ${groceryRowAfterPin?.text}`);
+
+// 5b. Bug 1 regression gate: bounds ARE a reliable order signal (unlike
+// getTree's child-array order, per the comment above) — assert the pinned
+// row is now visually on top, i.e. its y is strictly the smallest among all
+// note-row-* rows (rows8[0] after sorting by y is the topmost row).
+const rowsAfterPin = await waitForRowsByY((rows) => rows.length === 4 && rows[0]!.id === "note-row-3" && rows[0]!.y < rows[1]!.y, tree);
+console.log(`ND_PIN_YORDER_OK pinned row y-topmost: ${rowsAfterPin.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}`);
+
+// 5c. Unpin the same note and assert the full y-order matches sortNotes's
+// expected order once note 1 (Welcome) is the only pinned note again:
+// pinned-first (1), then id descending among the unpinned (4,3,2) — i.e.
+// note-row-1, note-row-4, note-row-3, note-row-2 (see examples/notes/
+// main.tsx sortNotes). Re-select note-row-3 first: selection is independent
+// of pin state, but the pin-checkbox only renders for the selected row.
+await clickRetrying((t) => find(t.root, "note-row-3"), tree);
+await waitForTitle("Grocery run", tree);
+await setValueRetrying("pin-checkbox", false, tree);
+// Same async commit-round-trip race as the pin toggle above.
+await new Promise((r) => setTimeout(r, 300));
+
+const unpinnedOrder = ["note-row-1", "note-row-4", "note-row-3", "note-row-2"];
+const rowsAfterUnpin = await waitForRowsByY(
+  (rows) => rows.length === 4 && rows.map((r) => r.id).join(",") === unpinnedOrder.join(","),
+  tree,
+);
+console.log(`ND_UNPIN_YORDER_OK y-order restored: ${rowsAfterUnpin.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}`);
+
+// Refresh t8 (used below to find delete-note-button) to the post-unpin tree.
+t8 = await tree();
 
 // 6. Delete the selected ("Grocery run") note; list shrinks and selection moves on.
 const deleteBtn8 = mustFind(t8, "delete-note-button");

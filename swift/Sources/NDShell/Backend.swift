@@ -383,9 +383,29 @@ private func applyCssTextColor(_ view: NSView, _ color: NSColor) {
 func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     let style = parseProps(styleJson)
 
+    // `background`/`border`/`padding` are the CSS-target keys GTK rebuilds
+    // wholesale per apply (src/gtk/style.zig compileCss regenerates the
+    // node's whole scoped CSS block from the CURRENT style object, so a
+    // dropped key reverts to baseline there). Mirror that: write each one's
+    // FULL effective state every apply — absent sub-keys fall back to
+    // baseline — instead of only writing the sub-keys present in the JSON.
+    // Additive-only writes leave residue (e.g. an amber pin border that
+    // never clears because unpinning's style object simply omits
+    // borderColor/borderWidth).
+    //
+    // `color`/`font` are also CSS-target on GTK but are deliberately NOT
+    // reset here: on AppKit, ndApplyCssClasses (title-*/caption/dimmed/
+    // monospace) writes the same NSFont/textColor properties, and a
+    // prop-diff update that changes only `style` does not re-apply
+    // cssClasses — resetting font/color to baseline here would clobber
+    // standing cssClasses typography with nothing to restore it. The
+    // correct fix is a per-node style cascade recompute (baseline ->
+    // cssClasses -> style); tracked as a follow-up. Left monotonic for now.
     if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
         view.wantsLayer = true
         view.layer?.backgroundColor = color.cgColor
+    } else if let layer = view.layer {
+        layer.backgroundColor = nil
     }
     if let colorStr = style["color"] as? String, let color = nsColor(fromHexOrName: colorStr) {
         applyTextColor(view, color)
@@ -393,21 +413,26 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     if let fontObj = style["font"] as? [String: Any] {
         applyFont(view, fontObj)
     }
-    if let borderObj = style["border"] as? [String: Any] {
+    let borderObj = style["border"] as? [String: Any]
+    let borderWidth = (borderObj?["borderWidth"] as? NSNumber)?.doubleValue ?? 0
+    let borderColor = (borderObj?["borderColor"] as? String).flatMap { nsColor(fromHexOrName: $0) }
+    let borderRadius = (borderObj?["borderRadius"] as? NSNumber)?.doubleValue ?? 0
+    if borderWidth != 0 || borderColor != nil || borderRadius != 0 {
         view.wantsLayer = true
-        if let width = (borderObj["borderWidth"] as? NSNumber)?.doubleValue {
-            view.layer?.borderWidth = CGFloat(width)
-        }
-        if let colorStr = borderObj["borderColor"] as? String, let color = nsColor(fromHexOrName: colorStr) {
-            view.layer?.borderColor = color.cgColor
-        }
-        if let radius = (borderObj["borderRadius"] as? NSNumber)?.doubleValue {
-            view.layer?.cornerRadius = CGFloat(radius)
-        }
+        view.layer?.borderWidth = CGFloat(borderWidth)
+        view.layer?.borderColor = borderColor?.cgColor
+        view.layer?.cornerRadius = CGFloat(borderRadius)
+    } else if let layer = view.layer {
+        layer.borderWidth = 0
+        layer.borderColor = nil
+        layer.cornerRadius = 0
     }
-    if let paddingValue = style["padding"], let insets = parseEdgeInsets(paddingValue) {
-        applyPadding(view, insets)
-    }
+    // NSEdgeInsets() (all-zero) is the baseline when `padding` drops out of
+    // the style object, so this always runs. (Aside: NDButton's ndPadding
+    // didSet only switches its bezel TO `.flexiblePush`, never back — a
+    // pre-existing one-way behavior, left as-is here.)
+    let insets = style["padding"].flatMap(parseEdgeInsets) ?? NSEdgeInsets()
+    applyPadding(view, insets)
     // `margin`: silently ignored on AppKit v1 (see doc comment above).
 
     if style["hexpand"] != nil || style["vexpand"] != nil || style["halign"] != nil || style["valign"] != nil {
