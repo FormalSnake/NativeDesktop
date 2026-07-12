@@ -360,21 +360,26 @@ private func applyCssTextColor(_ view: NSView, _ color: NSColor) {
 }
 
 /// `ndApplyStyle` (peer of GTK's `style.applyStyle`; AppKit styling is
-/// `NSColor`/`NSFont`/frame insets, not CSS — M6a-D5's reasoning kept
+/// `NSColor`/`NSFont`/Auto Layout, not CSS — M6a-D5's reasoning kept
 /// `style.zig` GTK-only). Decodes the `style` JSON object per M6b-D3's
-/// style-key set (background/color/font/padding/margin/border). Best-effort
-/// choices, documented per key:
+/// style-key set (background/color/font/padding/margin/border/hexpand/
+/// vexpand/halign/valign). Best-effort choices, documented per key:
 ///  - `background` -> `layer.backgroundColor` (forces `wantsLayer = true`).
 ///  - `color` -> the text color of the nearest text-bearing control
 ///    (NSTextField/NSButton/NSTextView-in-scrollview).
-///  - `font` -> `NSFont` on the same text-bearing controls (family + size).
+///  - `font` -> `NSFont` on the same text-bearing controls (fontSize/
+///    fontFamily/fontWeight).
 ///  - `border` -> `layer.borderWidth`/`borderColor`/`cornerRadius`.
-///  - `padding`/`margin` -> AppKit has no first-class equivalent to GTK's
-///    CSS padding or widget margins; both are approximated by insetting the
-///    view's frame within its parent by the given amount post-layout. This
-///    is a v1 best-effort (documented per M6b-D3's "best-effort" callout) —
-///    NSStackView already provides real spacing via the Box `spacing` prop,
-///    so `padding`/`margin` mainly matter for non-stack leaf widgets.
+///  - `padding` -> dispatched by view type; see `applyPadding`.
+///  - `margin` -> silently ignored on AppKit v1. GTK widget margins are a
+///    per-child gap the PARENT leaves around this widget; NSStackView has no
+///    per-arranged-subview margin equivalent (only the stack's own
+///    `edgeInsets`, which is `padding`'s job). A prior version approximated
+///    this by mutating the view's frame post-layout, which fought Auto
+///    Layout on every subsequent pass — removed rather than kept as a lie.
+///  - `hexpand`/`vexpand`/`halign`/`valign` -> recorded into `ndLayoutFlags`
+///    (Layout.swift) and reconciled against the parent NSStackView, if any,
+///    via `ndBoxChildAttached`.
 func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     let style = parseProps(styleJson)
 
@@ -390,21 +395,80 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     }
     if let borderObj = style["border"] as? [String: Any] {
         view.wantsLayer = true
-        if let width = (borderObj["width"] as? NSNumber)?.doubleValue {
+        if let width = (borderObj["borderWidth"] as? NSNumber)?.doubleValue {
             view.layer?.borderWidth = CGFloat(width)
         }
-        if let colorStr = borderObj["color"] as? String, let color = nsColor(fromHexOrName: colorStr) {
+        if let colorStr = borderObj["borderColor"] as? String, let color = nsColor(fromHexOrName: colorStr) {
             view.layer?.borderColor = color.cgColor
         }
-        if let radius = (borderObj["radius"] as? NSNumber)?.doubleValue {
+        if let radius = (borderObj["borderRadius"] as? NSNumber)?.doubleValue {
             view.layer?.cornerRadius = CGFloat(radius)
         }
     }
-    if let paddingObj = style["padding"] as? [String: Any] {
-        applyInset(view, paddingObj)
+    if let paddingValue = style["padding"], let insets = parseEdgeInsets(paddingValue) {
+        applyPadding(view, insets)
     }
-    if let marginObj = style["margin"] as? [String: Any] {
-        applyInset(view, marginObj)
+    // `margin`: silently ignored on AppKit v1 (see doc comment above).
+
+    if style["hexpand"] != nil || style["vexpand"] != nil || style["halign"] != nil || style["valign"] != nil {
+        var flags = ndLayoutFlags[ObjectIdentifier(view)] ?? NDLayoutFlags()
+        if let h = (style["hexpand"] as? NSNumber)?.boolValue { flags.hexpand = h }
+        if let v = (style["vexpand"] as? NSNumber)?.boolValue { flags.vexpand = v }
+        if let ha = style["halign"] as? String { flags.halign = ha }
+        if let va = style["valign"] as? String { flags.valign = va }
+        ndLayoutFlags[ObjectIdentifier(view)] = flags
+
+        view.setContentHuggingPriority(flags.hexpand ? NSLayoutConstraint.Priority(1) : NSLayoutConstraint.Priority(250), for: .horizontal)
+        view.setContentHuggingPriority(flags.vexpand ? NSLayoutConstraint.Priority(1) : NSLayoutConstraint.Priority(250), for: .vertical)
+
+        if let stack = view.superview as? NSStackView {
+            ndBoxChildAttached(stack, view)
+        }
+    }
+}
+
+/// Scalar (all four sides) or per-side object ({top,left,bottom,right},
+/// missing = 0) — mirrors GTK style.zig's `applyMarginSpacing`/
+/// `emitSpacingCss` scalar-or-object handling for the same `padding`/`margin`
+/// JSON shape.
+private func parseEdgeInsets(_ value: Any) -> NSEdgeInsets? {
+    if let scalar = (value as? NSNumber)?.doubleValue {
+        return NSEdgeInsets(top: CGFloat(scalar), left: CGFloat(scalar), bottom: CGFloat(scalar), right: CGFloat(scalar))
+    }
+    if let obj = value as? [String: Any] {
+        let top = (obj["top"] as? NSNumber)?.doubleValue ?? 0
+        let left = (obj["left"] as? NSNumber)?.doubleValue ?? 0
+        let bottom = (obj["bottom"] as? NSNumber)?.doubleValue ?? 0
+        let right = (obj["right"] as? NSNumber)?.doubleValue ?? 0
+        return NSEdgeInsets(top: CGFloat(top), left: CGFloat(left), bottom: CGFloat(bottom), right: CGFloat(right))
+    }
+    return nil
+}
+
+/// Dispatches `padding` by view type — AppKit has no single "content inset"
+/// API, so each widget shape gets its own real mapping instead of the old
+/// one-shot frame mutation:
+///  - NSStackView -> the stack's own `edgeInsets`, then reconcile children
+///    (their cross-axis "fill" constraint bakes the insets into its constant).
+///  - NDButton/NDTextField -> `ndPadding` (Layout.swift; inflates
+///    intrinsicContentSize instead of touching the frame directly).
+///  - NSScrollView wrapping an NSTextView (TextArea) -> `textContainerInset`.
+///  - any other NSScrollView (ScrollView) -> `contentInsets`.
+///  - anything else -> silently ignored (no AppKit equivalent for this
+///    widget shape in v1).
+private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
+    if let stack = view as? NSStackView {
+        stack.edgeInsets = insets
+        ndBoxReconcileChildren(stack)
+    } else if let button = view as? NDButton {
+        button.ndPadding = insets
+    } else if let field = view as? NDTextField {
+        field.ndPadding = insets
+    } else if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
+        textView.textContainerInset = NSSize(width: (insets.left + insets.right) / 2, height: (insets.top + insets.bottom) / 2)
+    } else if let scrollView = view as? NSScrollView {
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = insets
     }
 }
 
@@ -421,9 +485,16 @@ private func applyTextColor(_ view: NSView, _ color: NSColor) {
 }
 
 private func applyFont(_ view: NSView, _ fontObj: [String: Any]) {
-    let size = (fontObj["size"] as? NSNumber)?.doubleValue ?? NSFont.systemFontSize
-    let family = fontObj["family"] as? String
-    let font = family.flatMap { NSFont(name: $0, size: CGFloat(size)) } ?? NSFont.systemFont(ofSize: CGFloat(size))
+    let size = (fontObj["fontSize"] as? NSNumber)?.doubleValue ?? NSFont.systemFontSize
+    let family = fontObj["fontFamily"] as? String
+    var font = family.flatMap { NSFont(name: $0, size: CGFloat(size)) } ?? NSFont.systemFont(ofSize: CGFloat(size))
+    if (fontObj["fontWeight"] as? String) == "bold" {
+        if family != nil {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        } else {
+            font = NSFont.boldSystemFont(ofSize: CGFloat(size))
+        }
+    }
     if let field = view as? NSTextField {
         field.font = font
     } else if let button = view as? NSButton {
@@ -431,23 +502,6 @@ private func applyFont(_ view: NSView, _ fontObj: [String: Any]) {
     } else if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
         textView.font = font
     }
-}
-
-/// Best-effort padding/margin: insets the view's frame within its current
-/// bounds allocation by the given per-edge amounts. Applied once at style-
-/// apply time (not re-derived on every layout pass), matching v1's scope.
-private func applyInset(_ view: NSView, _ insetObj: [String: Any]) {
-    let top = (insetObj["top"] as? NSNumber)?.doubleValue ?? 0
-    let left = (insetObj["left"] as? NSNumber)?.doubleValue ?? 0
-    let bottom = (insetObj["bottom"] as? NSNumber)?.doubleValue ?? 0
-    let right = (insetObj["right"] as? NSNumber)?.doubleValue ?? 0
-    guard top != 0 || left != 0 || bottom != 0 || right != 0 else { return }
-    var frame = view.frame
-    frame.origin.x += CGFloat(left)
-    frame.origin.y += CGFloat(top)
-    frame.size.width -= CGFloat(left + right)
-    frame.size.height -= CGFloat(top + bottom)
-    view.frame = frame
 }
 
 /// Parses `#RRGGBB`/`#RRGGBBAA` hex strings (the schema's style color

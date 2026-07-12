@@ -52,14 +52,14 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return stack
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
-        let label = NSTextField(labelWithString: text)
+        let label = NDTextField(labelWithString: text)
         return label
     } else if kind == "Button" {
-        let b = NSButton(title: propStr(props, "label") ?? "Button", target: nil, action: nil)
+        let b = NDButton(title: propStr(props, "label") ?? "Button", target: nil, action: nil)
         b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded
         return b
     } else if kind == "TextInput" {
-        let field = NSTextField(string: propStr(props, "text") ?? "")
+        let field = NDTextField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { field.placeholderString = ph }
         if let e = propBool(props, "editable") { field.isEditable = e }
         return field
@@ -70,7 +70,12 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         textView.string = propStr(props, "text") ?? ""
         scroll.documentView = textView
         let minH = propInt(props, "minContentHeight") ?? 120
-        if minH > 0 { scroll.frame.size.height = CGFloat(minH) }
+        if minH > 0 {
+            scroll.frame.size.height = CGFloat(minH)
+            let floor_ = scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(minH))
+            floor_.priority = NSLayoutConstraint.Priority(999)
+            floor_.isActive = true
+        }
         return scroll
     } else if kind == "Checkbox" {
         let cb = NSButton(checkboxWithTitle: propStr(props, "label") ?? "", target: nil, action: nil)
@@ -126,7 +131,12 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
             doc.widthAnchor.constraint(equalTo: sv.contentView.widthAnchor),
         ])
         let minH = propInt(props, "minContentHeight") ?? 0
-        if minH > 0 { sv.frame.size.height = CGFloat(minH) }
+        if minH > 0 {
+            sv.frame.size.height = CGFloat(minH)
+            let floor_ = sv.heightAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(minH))
+            floor_.priority = NSLayoutConstraint.Priority(999)
+            floor_.isActive = true
+        }
         return sv
     } else if kind == "Separator" {
         let sep = NSBox()
@@ -298,11 +308,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.addArrangedSubview(child)
-        let fill = stack.orientation == .vertical
-            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)
-            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)
-        fill.priority = NSLayoutConstraint.Priority(999)
-        fill.isActive = true
+        ndBoxChildAttached(stack, child)
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
         let doc = sv.documentView!
@@ -342,7 +348,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             NSLayoutConstraint.activate([
                 realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
                 realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),
                 realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
             ])
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
@@ -353,7 +359,17 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             split.insertArrangedSubview(wrapper, at: 0)
         } else {
-            split.addArrangedSubview(realChild)
+            let host = NDPaneHostView()
+            host.translatesAutoresizingMaskIntoConstraints = false
+            realChild.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(realChild)
+            NSLayoutConstraint.activate([
+                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
+            ])
+            split.addArrangedSubview(host)
         }
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
@@ -381,11 +397,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         let stack = parent as! NSStackView
         let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count
         stack.insertArrangedSubview(child, at: idx)
-        let fill = stack.orientation == .vertical
-            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)
-            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)
-        fill.priority = NSLayoutConstraint.Priority(999)
-        fill.isActive = true
+        ndBoxChildAttached(stack, child)
     } else if parentKind == "TabView" {
         let tabs = parent as! NSTabView
         let item = NSTabViewItem()
@@ -415,7 +427,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             NSLayoutConstraint.activate([
                 realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
                 realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),
+                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),
                 realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
             ])
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
@@ -426,7 +438,17 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false
             split.insertArrangedSubview(wrapper, at: 0)
         } else {
-            split.addArrangedSubview(realChild)
+            let host = NDPaneHostView()
+            host.translatesAutoresizingMaskIntoConstraints = false
+            realChild.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(realChild)
+            NSLayoutConstraint.activate([
+                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
+            ])
+            split.addArrangedSubview(host)
         }
         if !split.arrangedSubviews.isEmpty {
             split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
@@ -447,6 +469,7 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     } else if parentKind == "Box" {
         let stack = parent as! NSStackView
         stack.removeArrangedSubview(child)
+        ndBoxChildDetached(stack, child)
         child.removeFromSuperview()
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
@@ -466,7 +489,7 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
             ndToolbarPaneDetachedFromSplit(pane)
             realChild = pane.contentView ?? child
         }
-        if let wrapper = realChild.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {
+        if let wrapper = realChild.superview, split.arrangedSubviews.contains(where: { $0 === wrapper }) {
             split.removeArrangedSubview(wrapper)
             wrapper.removeFromSuperview()
         } else {

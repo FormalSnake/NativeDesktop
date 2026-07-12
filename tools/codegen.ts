@@ -1087,14 +1087,14 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return stack\n";
   } else if (w.name === "Label") {
     out += `        let text = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
-    out += "        let label = NSTextField(labelWithString: text)\n";
+    out += "        let label = NDTextField(labelWithString: text)\n";
     out += "        return label\n";
   } else if (w.name === "Button") {
-    out += `        let b = NSButton(title: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
+    out += `        let b = NDButton(title: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
     out += "        b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded\n";
     out += "        return b\n";
   } else if (w.name === "TextInput") {
-    out += `        let field = NSTextField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
+    out += `        let field = NDTextField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
     out += '        if let ph = propStr(props, "placeholder") { field.placeholderString = ph }\n';
     out += '        if let e = propBool(props, "editable") { field.isEditable = e }\n';
     out += "        return field\n";
@@ -1105,7 +1105,15 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        textView.string = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        scroll.documentView = textView\n";
     out += `        let minH = propInt(props, "minContentHeight") ?? ${swiftDefaultInt(w, "minContentHeight")}\n`;
-    out += "        if minH > 0 { scroll.frame.size.height = CGFloat(minH) }\n";
+    out += "        if minH > 0 {\n";
+    out += "            scroll.frame.size.height = CGFloat(minH)\n";
+    // The frame set above is ignored once `scroll` becomes an arranged
+    // subview (translatesAutoresizingMaskIntoConstraints turns off), so the
+    // floor needs to be a real constraint to survive layout.
+    out += "            let floor_ = scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(minH))\n";
+    out += "            floor_.priority = NSLayoutConstraint.Priority(999)\n";
+    out += "            floor_.isActive = true\n";
+    out += "        }\n";
     out += "        return scroll\n";
   } else if (w.name === "Checkbox") {
     out += `        let cb = NSButton(checkboxWithTitle: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
@@ -1166,7 +1174,12 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            doc.widthAnchor.constraint(equalTo: sv.contentView.widthAnchor),\n";
     out += "        ])\n";
     out += `        let minH = propInt(props, "minContentHeight") ?? ${swiftDefaultInt(w, "minContentHeight")}\n`;
-    out += "        if minH > 0 { sv.frame.size.height = CGFloat(minH) }\n";
+    out += "        if minH > 0 {\n";
+    out += "            sv.frame.size.height = CGFloat(minH)\n";
+    out += "            let floor_ = sv.heightAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(minH))\n";
+    out += "            floor_.priority = NSLayoutConstraint.Priority(999)\n";
+    out += "            floor_.isActive = true\n";
+    out += "        }\n";
     out += "        return sv\n";
   } else if (w.name === "Separator") {
     out += "        let sep = NSBox()\n";
@@ -1417,7 +1430,11 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            NSLayoutConstraint.activate([\n" +
   "                realChild.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),\n" +
   "                realChild.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),\n" +
-  "                realChild.topAnchor.constraint(equalTo: wrapper.topAnchor),\n" +
+  // The window is .fullSizeContentView with a unified NSToolbar, so the
+  // wrapper itself reaches the very top (vibrancy floats under the traffic
+  // lights, Notes/Mail idiom) but its CONTENT is pinned to the safe-area top
+  // instead, so sidebar controls don't render underneath the titlebar.
+  "                realChild.topAnchor.constraint(equalTo: wrapper.safeAreaLayoutGuide.topAnchor),\n" +
   "                realChild.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),\n" +
   "            ])\n" +
   "            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {\n" +
@@ -1432,27 +1449,25 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            wrapper.isHidden = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
   "            split.insertArrangedSubview(wrapper, at: 0)\n" +
   "        } else {\n" +
-  "            split.addArrangedSubview(realChild)\n" +
+  // The content pane has no vibrancy wrapper of its own, so it's given a
+  // plain NDPaneHostView instead purely to hang the same safe-area top pin
+  // off — the host spans the full slot (leading/trailing/bottom), only the
+  // content inside is inset from the toolbar.
+  "            let host = NDPaneHostView()\n" +
+  "            host.translatesAutoresizingMaskIntoConstraints = false\n" +
+  "            realChild.translatesAutoresizingMaskIntoConstraints = false\n" +
+  "            host.addSubview(realChild)\n" +
+  "            NSLayoutConstraint.activate([\n" +
+  "                realChild.leadingAnchor.constraint(equalTo: host.leadingAnchor),\n" +
+  "                realChild.trailingAnchor.constraint(equalTo: host.trailingAnchor),\n" +
+  "                realChild.bottomAnchor.constraint(equalTo: host.bottomAnchor),\n" +
+  "                realChild.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),\n" +
+  "            ])\n" +
+  "            split.addArrangedSubview(host)\n" +
   "        }\n" +
   "        if !split.arrangedSubviews.isEmpty {\n" +
   "            split.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)\n" +
   "        }\n";
-
-// GTK box children fill the PERPENDICULAR axis by default (a vertical box
-// stretches children across WIDTH, a horizontal box across HEIGHT). An
-// NSStackView's `.leading`/`.centerY` alignment does NOT stretch its arranged
-// subviews — they hug intrinsic size, which collapsed nested content panes to
-// ~137pt inside a 741pt slot. NSStackView has no built-in cross-axis "fill",
-// so we pin each arranged subview's cross-axis anchor to the stack. Priority
-// 999 (just under required) lets an arranged subview with a hard intrinsic
-// constraint still win, while beating default content-hugging. We do NOT touch
-// the main axis, so rows keep their natural size (no equal-height stretch).
-const BOX_CROSS_FILL_BODY =
-  "        let fill = stack.orientation == .vertical\n" +
-  "            ? child.widthAnchor.constraint(equalTo: stack.widthAnchor)\n" +
-  "            : child.heightAnchor.constraint(equalTo: stack.heightAnchor)\n" +
-  "        fill.priority = NSLayoutConstraint.Priority(999)\n" +
-  "        fill.isActive = true\n";
 
 const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Window: {
@@ -1471,9 +1486,12 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     remove: () => "        child.removeFromSuperview()\n",
   },
   Box: {
-    append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n" + BOX_CROSS_FILL_BODY,
-    insertBefore: () => "        let stack = parent as! NSStackView\n        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n        stack.insertArrangedSubview(child, at: idx)\n" + BOX_CROSS_FILL_BODY,
-    remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        child.removeFromSuperview()\n",
+    // Cross-axis "fill" + main-axis expand are both handled by
+    // ndBoxChildAttached (Layout.swift), driven off the hexpand/vexpand/
+    // halign/valign flags ndApplyStyle records per child.
+    append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n        ndBoxChildAttached(stack, child)\n",
+    insertBefore: () => "        let stack = parent as! NSStackView\n        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n        stack.insertArrangedSubview(child, at: idx)\n        ndBoxChildAttached(stack, child)\n",
+    remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        ndBoxChildDetached(stack, child)\n        child.removeFromSuperview()\n",
   },
   ScrollView: {
     // childModel is "single" (schema/widgets.json): documentView itself is
@@ -1525,7 +1543,11 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            ndToolbarPaneDetachedFromSplit(pane)\n" +
       "            realChild = pane.contentView ?? child\n" +
       "        }\n" +
-      "        if let wrapper = realChild.superview as? NSVisualEffectView, split.arrangedSubviews.contains(wrapper) {\n" +
+      // Sidebar children are wrapped in NSVisualEffectView, content children
+      // in NDPaneHostView (both purely so the wrapper can carry the
+      // safe-area top pin) — generalize past superview TYPE to whichever
+      // wrapper is itself one of the split's arranged subviews.
+      "        if let wrapper = realChild.superview, split.arrangedSubviews.contains(where: { $0 === wrapper }) {\n" +
       "            split.removeArrangedSubview(wrapper)\n" +
       "            wrapper.removeFromSuperview()\n" +
       "        } else {\n" +
