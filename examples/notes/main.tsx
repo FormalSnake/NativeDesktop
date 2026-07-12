@@ -95,7 +95,8 @@ function App(): React.ReactNode {
           <headerbar testID="sidebar-header">
             <button
               testID="new-note-button"
-              label="＋ New Note"
+              label=""
+              iconName="document-new"
               onClick={createNote}
               slot="start"
               cssClasses={["suggested-action"]}
@@ -107,7 +108,7 @@ function App(): React.ReactNode {
             cssClasses={["navigation-sidebar"]}
             style={{ vexpand: true, padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
           >
-          <textinput
+          <searchinput
             testID="search-input"
             text={query}
             placeholder="Search notes"
@@ -129,6 +130,7 @@ function App(): React.ReactNode {
                     key={`${n.id}:${n.title}`}
                     testID={`note-row-${n.id}`}
                     label={n.title || "Untitled note"}
+                    labelAlign="start"
                     onClick={() => setSelectedId(n.id)}
                     cssClasses={isSelected ? ["suggested-action"] : ["flat"]}
                     style={{
