@@ -7,8 +7,25 @@
 // (soft-delete to Trash) removes it from the All Notes scope, and File>New
 // Note from the menu bar hits the same createNote() path as the header
 // button.
+//
+// M11 SourceList Wave 3: the note-row-per-button list (list of testID
+// `note-row-${id}` Button widgets, one per note) is gone — the list pane is
+// now a single <sourcelist testID="note-list">. getTree reports its state as
+// `itemCount` (row count) and `rows` (an ORDER-AUTHORITATIVE array of
+// `{title, badge, iconName}`, core-side and backend-agnostic — see
+// src/tree.zig's NodeMeta.rows / src/automation.zig's RowJson). That row
+// order directly reflects what's on screen, unlike the old per-button list
+// whose getTree child-array order was a HashMap iteration artifact (see the
+// git history of this file for that now-obsolete workaround) — so pin/unpin
+// reorder gates read `rows` directly instead of polling row y-geometry.
 import { AutomationClient } from "../packages/mcp/src/socket.ts";
 import { widgetMeta } from "../packages/react/src/generated/schema-meta.ts";
+
+interface SourceListRow {
+  title: string;
+  badge?: string | null;
+  iconName?: string | null;
+}
 
 interface TreeNode {
   ref: number;
@@ -19,6 +36,7 @@ interface TreeNode {
   geometry: { x: number; y: number; w: number; h: number } | null;
   children: TreeNode[];
   itemCount?: number | null;
+  rows?: SourceListRow[] | null;
 }
 
 interface GetTreeResult {
@@ -33,12 +51,6 @@ function find(node: TreeNode, testID: string): TreeNode | null {
     if (found) return found;
   }
   return null;
-}
-
-function findAllPrefixed(node: TreeNode, prefix: string, acc: TreeNode[] = []): TreeNode[] {
-  if (node.testID && node.testID.startsWith(prefix)) acc.push(node);
-  for (const child of node.children) findAllPrefixed(child, prefix, acc);
-  return acc;
 }
 
 const shotDir = process.env.ND_SHOT_DIR ?? "/tmp";
@@ -72,7 +84,7 @@ async function setValueRetrying(testID: string, value: string | boolean | number
 }
 
 // Same remount-settle race as setValueRetrying, for a plain read-and-assert
-// (e.g. confirming a note-row click landed) instead of a follow-up action.
+// (e.g. confirming a note-list selection landed) instead of a follow-up action.
 async function waitForTitle(expected: string, t: () => Promise<GetTreeResult>): Promise<TreeNode> {
   let lastActual = "";
   for (let i = 0; i < 20; i++) {
@@ -85,11 +97,10 @@ async function waitForTitle(expected: string, t: () => Promise<GetTreeResult>): 
 }
 
 // Same remount-settle race as setValueRetrying, for a click against a node
-// looked up by a predicate (not a fixed testID) whose bounds can be
-// momentarily degenerate right after its container reflows it back into
-// view (observed live on the Mac AppKit backend: a row re-entering an
-// NSStackView after a search filter clears settles its bounds a beat after
-// the tree/label already reports it present).
+// looked up by a predicate (not a fixed testID) — kept generic since a
+// widget can still report momentarily degenerate bounds for one frame after
+// its container reflows (same class as setValueRetrying above), even for a
+// static header control like pin-button.
 async function clickRetrying(findNode: (t: GetTreeResult) => TreeNode | null, t: () => Promise<GetTreeResult>): Promise<void> {
   let lastErr: Error | null = null;
   for (let i = 0; i < 20; i++) {
@@ -113,26 +124,49 @@ function mustFind(t: GetTreeResult, testID: string): TreeNode {
   return n;
 }
 
-// Row bounds' y-coordinates ARE a reliable order signal, unlike getTree's
-// child-ARRAY order (see the big comment below on hashmap iteration order) —
-// a pin/unpin reorder must eventually settle into the sort examples/notes/
-// main.tsx's sortNotes applies (pinned-first, then id descending). Poll for
-// that y-order instead of trusting a single snapshot, same remount-settle
-// race as setValueRetrying/clickRetrying above.
-async function waitForRowsByY(
-  predicate: (rows: { id: string; y: number }[]) => boolean,
-  t: () => Promise<GetTreeResult>,
-): Promise<{ id: string; y: number }[]> {
-  let last: { id: string; y: number }[] = [];
+// SourceList's row-select analog of clickRetrying: selects a row by TITLE
+// substring (rather than a fixed testID/ref, since rows are recycled cells
+// with no per-row ref) via setValue(list.ref, idx). idx is recomputed
+// against a fresh tree on every attempt — same remount-settle race as
+// setValueRetrying/clickRetrying above, plus the list's own row order can
+// still be mid-reorder right after a pin/unpin or filter change.
+async function selectNoteRowRetrying(titleSubstring: string, t: () => Promise<GetTreeResult>): Promise<void> {
+  let lastErr: Error | null = null;
   for (let i = 0; i < 20; i++) {
-    const rows = findAllPrefixed((await t()).root, "note-row-")
-      .map((r) => ({ id: r.testID!, y: r.geometry?.y ?? -1 }))
-      .sort((a, b) => a.y - b.y);
+    const list = mustFind(await t(), "note-list");
+    const rows = list.rows ?? [];
+    const idx = rows.findIndex((r) => r.title.includes(titleSubstring));
+    if (idx < 0) {
+      lastErr = new Error(`no note-list row matching "${titleSubstring}" (rows=${rows.map((r) => r.title).join(", ")})`);
+      await new Promise((r) => setTimeout(r, 100));
+      continue;
+    }
+    try {
+      const res = (await client.call("setValue", { ref: list.ref, value: idx })) as { applied: boolean };
+      if (!res.applied) throw new Error("setValue on note-list did not apply");
+      return;
+    } catch (e) {
+      lastErr = e as Error;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  throw new Error(`selecting note-list row "${titleSubstring}" failed after retries: ${lastErr?.message}`);
+}
+
+// Polls note-list's `rows` array (order-authoritative, per the header
+// comment) until `predicate` holds — a pin/unpin reorder settles a beat
+// after the click ack, same remount-settle race as setValueRetrying/
+// clickRetrying above.
+async function waitForRowsOrder(predicate: (rows: SourceListRow[]) => boolean, t: () => Promise<GetTreeResult>): Promise<SourceListRow[]> {
+  let last: SourceListRow[] = [];
+  for (let i = 0; i < 20; i++) {
+    const list = mustFind(await t(), "note-list");
+    const rows = list.rows ?? [];
     last = rows;
     if (predicate(rows)) return rows;
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`row y-order predicate never settled (last saw [${last.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}])`);
+  throw new Error(`note-list row-order predicate never settled (last saw [${last.map((r) => r.title).join(", ")}])`);
 }
 
 // 0. Window present; baseline screenshot with the seeded first note selected.
@@ -193,8 +227,8 @@ console.log(
 
 // M13 Feature C gate: three REAL panes (sidebar/list/content), each >= 150pt
 // wide, laid out left-to-right in that literal x-order — measured on the
-// same widgets a user would actually click (a folder row, a note row, the
-// editor textarea), not just internal wrapper geometry.
+// same widgets a user would actually click (a folder row, the note-list
+// SourceList, the editor textarea), not just internal wrapper geometry.
 const sidebarContent = mustFind(t0, "sidebar-content");
 const listContent = mustFind(t0, "list-content");
 const contentBody = mustFind(t0, "content-body");
@@ -207,17 +241,15 @@ for (const { name, node } of [
   if (node.geometry.w < 150) throw new Error(`${name} pane width=${node.geometry.w} — expected >= 150`);
 }
 const folderRowAll0 = mustFind(t0, "folder-row-all");
-const someNoteRow0 = findAllPrefixed(t0.root, "note-row-")[0];
-if (!someNoteRow0) throw new Error("no note-row-* present at boot for ND_THREEPANE_OK");
+const noteList0 = mustFind(t0, "note-list");
+if ((noteList0.itemCount ?? 0) < 1) throw new Error("note-list has no rows at boot for ND_THREEPANE_OK");
 const editorTextarea0 = mustFind(t0, "editor-textarea");
 const folderX = folderRowAll0.geometry?.x;
-const noteRowX = someNoteRow0.geometry?.x;
+const noteRowX = noteList0.geometry?.x;
 const editorX = editorTextarea0.geometry?.x;
 if (folderX == null || noteRowX == null || editorX == null) throw new Error("missing x geometry for three-pane x-order check");
 if (!(folderX < noteRowX && noteRowX < editorX)) {
-  throw new Error(
-    `x-order violated: folder-row-all@${folderX}, ${someNoteRow0.testID}@${noteRowX}, editor-textarea@${editorX} — want folder < note < editor`,
-  );
+  throw new Error(`x-order violated: folder-row-all@${folderX}, note-list@${noteRowX}, editor-textarea@${editorX} — want folder < note < editor`);
 }
 console.log(
   `ND_THREEPANE_OK sidebar(w=${sidebarContent.geometry!.w})@x=${folderX} ` +
@@ -299,8 +331,19 @@ if (!status3.text?.includes("Saved")) throw new Error(`status-label=${status3.te
 // List (scoped to All Notes) now shows all three notes (2 seeded + 1 new), count label updated.
 const countLabel3 = mustFind(t3, "note-count-label");
 if (countLabel3.text !== "3 of 3 notes") throw new Error(`note-count-label=${countLabel3.text}, want "3 of 3 notes"`);
-const rows3 = findAllPrefixed(t3.root, "note-row-");
-if (rows3.length !== 3) throw new Error(`expected 3 note rows, got ${rows3.length}`);
+const list3 = mustFind(t3, "note-list");
+const rows3 = list3.rows ?? [];
+if ((list3.itemCount ?? -1) !== 3) throw new Error(`expected note-list itemCount=3, got ${list3.itemCount}`);
+if (rows3.length !== 3) throw new Error(`expected 3 note-list rows, got ${rows3.length}`);
+
+// Badge gate: SourceList's trailing badge is the note's live word count
+// (main.tsx: `badge: wordCount(n.body) > 0 ? String(wordCount(n.body)) : undefined`)
+// — "buy oat milk and coffee beans" is 6 words, matching the status-label
+// wait above.
+const groceryRow3 = rows3.find((r) => r.title.includes("Grocery run"));
+if (!groceryRow3) throw new Error(`Grocery run row not found in note-list (rows=${rows3.map((r) => r.title).join(", ")})`);
+if (groceryRow3.badge !== "6") throw new Error(`note-list badge for Grocery run=${groceryRow3.badge}, want "6"`);
+console.log(`ND_BADGE_OK Grocery run row badge=${groceryRow3.badge} matches 6-word body`);
 
 // 3. Create a fourth note distinguishable by title, to test search + pin ordering.
 const newNoteBtn3 = mustFind(t3, "new-note-button");
@@ -316,32 +359,31 @@ let t5 = await tree();
 const countLabel5 = mustFind(t5, "note-count-label");
 if (countLabel5.text !== "4 of 4 notes") throw new Error(`note-count-label=${countLabel5.text}, want "4 of 4 notes"`);
 
-// 4. Search filter narrows the visible note-row list.
+// 4. Search filter narrows the visible note-list rows.
 const searchInput5 = mustFind(t5, "search-input");
 const setSearchRes = (await client.call("setValue", { ref: searchInput5.ref, value: "grocery" })) as { applied: boolean };
 if (!setSearchRes.applied) throw new Error("setValue on search-input did not apply");
 
 await client.call("waitFor", { condition: { textContains: "1 of 4 notes" }, timeoutMs: 3000 });
 let t6 = await tree();
-const rows6 = findAllPrefixed(t6.root, "note-row-");
-if (rows6.length !== 1) throw new Error(`expected 1 note row after search filter, got ${rows6.length}`);
-if (!rows6[0]!.text?.includes("Grocery run")) throw new Error(`filtered row text=${rows6[0]!.text}, want to include "Grocery run"`);
+const list6 = mustFind(t6, "note-list");
+const rows6 = list6.rows ?? [];
+if ((list6.itemCount ?? -1) !== 1) throw new Error(`expected note-list itemCount=1 after search filter, got ${list6.itemCount}`);
+if (rows6.length !== 1) throw new Error(`expected 1 note-list row after search filter, got ${rows6.length}`);
+if (!rows6[0]!.title.includes("Grocery run")) throw new Error(`filtered row title=${rows6[0]!.title}, want to include "Grocery run"`);
 
 // Clear the search filter back to showing all notes.
 const searchInput6 = mustFind(t6, "search-input");
 await client.call("setValue", { ref: searchInput6.ref, value: "" });
 await client.call("waitFor", { condition: { textContains: "4 of 4 notes" }, timeoutMs: 3000 });
 
-// 5. Re-select "Grocery run" via its note-row button (selection is per-note
+// 5. Re-select "Grocery run" via the SourceList (selection is per-note
 // state, independent of the search filter — clearing the filter does not
 // change which note is selected), then pin it via the editor header's
 // pin-button (Feature C: the checkbox is gone — pin/unpin now goes through
 // the SAME togglePinSelected() path as the Note>Pin menu item) and assert it
 // reorders first.
-const findGroceryRow = (t: GetTreeResult): TreeNode | null =>
-  findAllPrefixed(t.root, "note-row-").find((r) => r.text?.includes("Grocery run")) ?? null;
-if (!findGroceryRow(await tree())) throw new Error("Grocery run row not found after clearing search");
-await clickRetrying(findGroceryRow, tree);
+await selectNoteRowRetrying("Grocery run", tree);
 await waitForTitle("Grocery run", tree);
 await clickRetrying((t) => find(t.root, "pin-button"), tree);
 
@@ -352,100 +394,72 @@ await clickRetrying((t) => find(t.root, "pin-button"), tree);
 // polling, same class of race as the title/word-count waits above.
 await new Promise((r) => setTimeout(r, 300));
 
-// getTree's reported child ORDER is not a reliable signal for asserting
-// sort/reorder behavior: src/automation.zig's handleGetTree builds each
-// parent's children list by iterating `tree.meta` (an
-// AutoHashMapUnmanaged) and grouping by parent id — Zig HashMap iteration
-// order reflects bucket/hash layout, not node-creation or GTK-sibling
-// order, despite the "insertion order" comment at that call site. Verified
-// live: an NDP wire trace of this exact pin action shows the host correctly
-// emitting create+append ops in the right final sequence
-// (note-row-3,1,4,2 = Grocery,Welcome,Trip,Shopping, pinned-first then id
-// descending) AND the pinned flag flipping — but the SAME getTree call
-// immediately after can report the children back in plain id order
-// (1,2,3,4). The app and the widget tree are both correct; only the
-// automation reflection of "what order are they in" is unreliable for a
-// reordering list. Assert what getTree DOES guarantee instead: membership
-// (all 4 rows present, by testID, order-independent) — then let the y-order
-// wait below assert the actual on-screen order.
-let rows8: TreeNode[] = [];
-let t8: GetTreeResult = await tree();
-for (let i = 0; i < 20; i++) {
-  t8 = await tree();
-  rows8 = findAllPrefixed(t8.root, "note-row-");
-  if (rows8.length === 4) break;
-  await new Promise((r) => setTimeout(r, 150));
-}
-if (rows8.length !== 4) throw new Error(`expected 4 note rows, got ${rows8.length}`);
-const rowIds = new Set(rows8.map((r) => r.testID));
-for (const id of ["note-row-1", "note-row-2", "note-row-3", "note-row-4"]) {
-  if (!rowIds.has(id)) throw new Error(`expected ${id} present after pin, rows=${rows8.map((r) => `${r.testID}:${r.text}`).join(" | ")}`);
-}
-const groceryRowAfterPin = rows8.find((r) => r.testID === "note-row-3");
-if (!groceryRowAfterPin?.text?.includes("Grocery run")) throw new Error(`note-row-3 label wrong after pin: ${groceryRowAfterPin?.text}`);
-
-// 5b. Bug 1 regression gate: bounds ARE a reliable order signal (unlike
-// getTree's child-array order, per the comment above) — assert the pinned
-// row is now visually on top, i.e. its y is strictly the smallest among all
-// note-row-* rows (rows8[0] after sorting by y is the topmost row).
-const rowsAfterPin = await waitForRowsByY((rows) => rows.length === 4 && rows[0]!.id === "note-row-3" && rows[0]!.y < rows[1]!.y, tree);
-console.log(`ND_PIN_YORDER_OK pinned row y-topmost: ${rowsAfterPin.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}`);
+// Pin gate: note-list's `rows` array is order-authoritative (per the header
+// comment), so membership + reorder + the pinned row's star icon are all one
+// poll — the pinned note ("Grocery run") must be rows[0], carrying the
+// leading star icon main.tsx sets for `n.pinned` (`iconName:
+// "starred-symbolic"`).
+const rowsAfterPin = await waitForRowsOrder(
+  (rows) => rows.length === 4 && (rows[0]?.title.includes("Grocery run") ?? false) && rows[0]?.iconName === "starred-symbolic",
+  tree,
+);
+console.log(`ND_PIN_ORDER_OK pinned row topmost: ${rowsAfterPin.map((r) => `${r.title}${r.iconName ? "*" : ""}`).join(" | ")}`);
 
 // 5c. Unpin the same note (pin-button again — it's a toggle) and assert the
-// full y-order matches sortNotes's expected order once note 1 (Welcome) is
-// the only pinned note again: pinned-first (1), then id descending among the
-// unpinned (4,3,2) — i.e. note-row-1, note-row-4, note-row-3, note-row-2 (see
-// examples/notes/main.tsx sortNotes). Re-select note-row-3 first: selection
-// is independent of pin state, but the pin-button toggles whichever note is
-// currently selected.
-await clickRetrying((t) => find(t.root, "note-row-3"), tree);
+// full row-title order matches sortNotes's expected order once "Welcome to
+// ND Notes" is the only pinned note again: pinned-first, then id descending
+// among the rest — Welcome(1), Trip itinerary(4), Grocery run(3), Shopping
+// list(2) (see examples/notes/main.tsx sortNotes). Re-select Grocery run
+// first: selection is independent of pin state, but the pin-button toggles
+// whichever note is currently selected.
+await selectNoteRowRetrying("Grocery run", tree);
 await waitForTitle("Grocery run", tree);
 await clickRetrying((t) => find(t.root, "pin-button"), tree);
 // Same async commit-round-trip race as the pin toggle above.
 await new Promise((r) => setTimeout(r, 300));
 
-const unpinnedOrder = ["note-row-1", "note-row-4", "note-row-3", "note-row-2"];
-const rowsAfterUnpin = await waitForRowsByY(
-  (rows) => rows.length === 4 && rows.map((r) => r.id).join(",") === unpinnedOrder.join(","),
+const unpinnedOrder = ["Welcome to ND Notes", "Trip itinerary", "Grocery run", "Shopping list"];
+const rowsAfterUnpin = await waitForRowsOrder(
+  (rows) => rows.length === 4 && rows.map((r) => r.title).join(" | ") === unpinnedOrder.join(" | "),
   tree,
 );
-console.log(`ND_UNPIN_YORDER_OK y-order restored: ${rowsAfterUnpin.map((r) => `${r.id}@${r.y.toFixed(1)}`).join(", ")}`);
-
-// Refresh t8 (used below to find delete-note-button) to the post-unpin tree.
-t8 = await tree();
+console.log(`ND_UNPIN_ORDER_OK order restored: ${rowsAfterUnpin.map((r) => r.title).join(" | ")}`);
 
 // 6. Delete the selected ("Grocery run") note; Feature C makes this a soft
 // delete (moves to Trash), which drops it out of the All Notes scope the
 // list is currently showing — list shrinks and selection moves on exactly
 // as the old hard-delete did from this view's perspective.
+const t8 = await tree();
 const deleteBtn8 = mustFind(t8, "delete-note-button");
 const deleteRes = (await client.call("click", { ref: deleteBtn8.ref })) as { dispatched: boolean };
 if (!deleteRes.dispatched) throw new Error("delete-note-button click did not dispatch");
 
 await client.call("waitFor", { condition: { textContains: "3 of 3 notes" }, timeoutMs: 3000 });
 let t9 = await tree();
-const rows9 = findAllPrefixed(t9.root, "note-row-");
-if (rows9.length !== 3) throw new Error(`expected 3 note rows after delete, got ${rows9.length}`);
-if (rows9.some((r) => r.text?.includes("Grocery run"))) throw new Error("deleted (trashed) note still present in the All Notes list");
+const list9 = mustFind(t9, "note-list");
+const rows9 = list9.rows ?? [];
+if ((list9.itemCount ?? -1) !== 3) throw new Error(`expected note-list itemCount=3 after delete, got ${list9.itemCount}`);
+if (rows9.length !== 3) throw new Error(`expected 3 note-list rows after delete, got ${rows9.length}`);
+if (rows9.some((r) => r.title.includes("Grocery run"))) throw new Error("deleted (trashed) note still present in the All Notes list");
 
 // 7. File > New Note from the menu bar must hit the SAME createNote() path
 // as the editor header's new-note-button (Feature C: header button + menu
 // item both call the same updater) — semanticClick the menuitem and confirm
-// the note count increments exactly like button 1 did.
+// the note-list's itemCount increments exactly like button 1 did.
 let t10 = await tree();
-const countBefore10 = findAllPrefixed(t10.root, "note-row-").length;
+const countBefore10 = mustFind(t10, "note-list").itemCount ?? 0;
 const menuNewNote = mustFind(t10, "menu-new-note");
 const menuClickRes = (await client.call("click", { ref: menuNewNote.ref })) as { dispatched: boolean };
 if (!menuClickRes.dispatched) throw new Error("menu-new-note click did not dispatch");
 await client.call("waitFor", { condition: { textContains: "Untitled note" }, timeoutMs: 3000 });
 let t11 = await tree();
-const rows11 = findAllPrefixed(t11.root, "note-row-");
-if (rows11.length !== countBefore10 + 1) {
-  throw new Error(`expected ${countBefore10 + 1} note rows after File>New Note, got ${rows11.length}`);
+const countAfter11 = mustFind(t11, "note-list").itemCount ?? 0;
+if (countAfter11 !== countBefore10 + 1) {
+  throw new Error(`expected note-list itemCount=${countBefore10 + 1} after File>New Note, got ${countAfter11}`);
 }
 const titleInput11 = mustFind(t11, "title-input");
 if (titleInput11.text !== "Untitled note") throw new Error(`menu New Note did not select the new note: title-input=${titleInput11.text}`);
-console.log(`ND_MENU_NEWNOTE_OK note-row count ${countBefore10} -> ${rows11.length} via File>New Note menu item`);
+console.log(`ND_MENU_NEWNOTE_OK note-list itemCount ${countBefore10} -> ${countAfter11} via File>New Note menu item`);
 
 // Final screenshot, polling like m5c-drive.ts (post-mutation frame can race invalidation).
 let finalShot: { path: string; width: number; height: number } | null = null;

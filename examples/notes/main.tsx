@@ -10,7 +10,7 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // own <toolbarview>+<headerbar> (own header, not one shared window titlebar):
 //   - sidebar (slot="sidebar", glass): folders — All Notes / Personal / Work
 //     / Trash — as navigation-sidebar flat buttons, counts in the label.
-//   - list (slot="list"): search + the note-row list + a count caption.
+//   - list (slot="list"): search + a <sourcelist> of notes + a count caption.
 //   - content (slot="content", declared LAST so GTK homes the menu bar's
 //     primary button in ITS headerbar per GNOME convention): the floating
 //     editing buttons (pin/delete/new-note, icon-only, end slot) plus the
@@ -33,10 +33,9 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 //     values.
 //   - `style` is kept only for theme-neutral geometry (padding, font size)
 //     and layout (hexpand/vexpand/halign/valign — GTK widget properties
-//     that drive the layout engine) plus the one deliberate color literal
-//     below (the pinned-row accent border, chosen to read on both themes).
-// No background/color literals anywhere else: dark mode is automatic on
-// both platforms.
+//     that drive the layout engine). No color literals anywhere: dark mode
+//     is automatic on both platforms, and pin state now surfaces as the
+//     <sourcelist> row's leading star icon rather than a per-row border.
 
 type FolderId = "personal" | "work";
 type FolderView = "all" | FolderId | "trash";
@@ -213,7 +212,7 @@ function App(): React.ReactNode {
           >
             {/* Button.label is create-only — the counts embedded in the
                 label text need a remount to update, so each row is keyed
-                on its own count (same workaround as note-row's key below). */}
+                on its own count. */}
             <button
               key={`all:${allCount}`}
               testID="folder-row-all"
@@ -265,35 +264,27 @@ function App(): React.ReactNode {
               placeholder="Search notes"
               onChanged={(e) => setQuery(e.text)}
             />
-            {/* vexpand: the list fills the pane's remaining height. */}
-            <scrollview testID="note-list-scroll" minContentHeight={380} style={{ vexpand: true }}>
-              <box orientation="vertical" spacing={3}>
-                {filtered.map((n) => {
-                  const isSelected = n.id === selectedId;
-                  // Button.label is create-only (docs/widgets.md) — it cannot
-                  // be updated in place once mounted. Selection uses the
-                  // theme's suggested-action (accent) class; a plain flat row
-                  // otherwise. Pin state is a left accent border via `style`
-                  // (which DOES update live) — the one deliberate color
-                  // literal, an amber that reads on both light and dark.
-                  return (
-                    <button
-                      key={`${n.id}:${n.title}`}
-                      testID={`note-row-${n.id}`}
-                      label={n.title || "Untitled note"}
-                      labelAlign="start"
-                      onClick={() => setSelectedId(n.id)}
-                      cssClasses={isSelected ? ["suggested-action"] : ["flat"]}
-                      style={{
-                        padding: { top: 8, bottom: 8, left: 10, right: 10 },
-                        halign: "fill",
-                        border: n.pinned ? { borderWidth: 3, borderColor: "#e5a50a", borderRadius: 8 } : { borderRadius: 8 },
-                      }}
-                    />
-                  );
-                })}
-              </box>
-            </scrollview>
+            {/* SourceList is its own scroll container on both backends (GTK:
+                GtkListBox in a ScrolledWindow; Mac: NSTableView .sourceList
+                in an NSScrollView) — no ScrollView wrapper needed. Selection
+                is controlled (selectedIndex/onSelectionChanged); pin state
+                surfaces as a leading star icon (source-list rows carry no
+                per-row border), and the trailing badge is the note's live
+                word count. */}
+            <sourcelist
+              testID="note-list"
+              style={{ vexpand: true }}
+              items={filtered.map((n) => ({
+                title: n.title || "Untitled note",
+                iconName: n.pinned ? "starred-symbolic" : undefined,
+                badge: wordCount(n.body) > 0 ? String(wordCount(n.body)) : undefined,
+              }))}
+              selectedIndex={filtered.findIndex((n) => n.id === selectedId)}
+              onSelectionChanged={(e) => {
+                const n = filtered[e.index];
+                if (n) setSelectedId(n.id);
+              }}
+            />
             <label
               testID="note-count-label"
               text={`${filtered.length} of ${scopedNotes.length} note${scopedNotes.length === 1 ? "" : "s"}`}
