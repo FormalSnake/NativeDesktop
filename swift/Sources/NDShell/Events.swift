@@ -94,6 +94,18 @@ final class EventDispatcher: NSObject {
         emit(scrollView, name: name, json: jsonObject(["index": .int(index)]))
     }
 
+    /// Peer of `wiringFireIndex`, but for views that carry MORE THAN ONE
+    /// index-payload event on the same tracked handle — SourceList wires
+    /// both `selectionChanged` and `rowActivated` on its NSScrollView, so
+    /// `soleEventName`'s "first key in the dict" lookup can't disambiguate
+    /// which one fired. Called directly by `SourceListDataSource`
+    /// (selectionChanged from `tableViewSelectionDidChange`, rowActivated
+    /// from `rowDoubleClicked`) and by `Automation.swift`'s `semanticClick`
+    /// (rowActivated for a semantic click on the current selection).
+    func fireIndexNamed(_ view: NSView, name: String, index: Int) {
+        emit(view, name: name, json: jsonObject(["index": .int(index)]))
+    }
+
     private func wiring(for view: NSView, name: String) -> Wiring? {
         wiring[ObjectIdentifier(view)]?[name]
     }

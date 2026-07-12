@@ -28,6 +28,7 @@ private let ndSFSymbolMap: [String: String] = [
     "view-pin": "pin",
     "pin": "pin",
     "starred": "star.fill",
+    "starred-symbolic": "star.fill", // M11 SourceList Wave 3: gallery's SourceList "Starred" row icon
     "non-starred": "star",
     "edit-copy": "doc.on.doc",
     "edit-cut": "scissors",

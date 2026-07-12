@@ -1568,6 +1568,7 @@ func propInt(_ p: [String: Any], _ k: String) -> Int? { (p[k] as? NSNumber)?.int
 func propDouble(_ p: [String: Any], _ k: String) -> Double? { (p[k] as? NSNumber)?.doubleValue }
 func propBool(_ p: [String: Any], _ k: String) -> Bool? { (p[k] as? NSNumber)?.boolValue }
 func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?.compactMap { $0 as? String } }
+func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
@@ -1791,11 +1792,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "ListView") {
     out += "        return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)\n";
   } else if (w.name === "SourceList") {
-    // Wave-2 placeholder (M11 SourceList Wave 1 is GTK-only): a real
-    // NSOutlineView/NSTableView-based source list arrives in Wave 2. Renders
-    // an empty flipped placeholder so the tree stays structurally valid.
-    out += '        FileHandle.standardError.write("ND_WARN SourceList not yet implemented on AppKit\\n".data(using: .utf8)!)\n';
-    out += "        return FlippedView()\n";
+    out += "        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)\n";
   } else if (w.name === "WebView") {
     out += '        FileHandle.standardError.write("ND_WARN WebView is a v1 stub (no WKWebView); rendering placeholder label\\n".data(using: .utf8)!)\n';
     out += '        let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")\n';
@@ -1961,10 +1958,14 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let idx = propInt(props, "selectedIndex") {\n';
       out += "            ndListViewSetSelectedIndex(view, idx)  // NDGen/ListView.swift (T3, hand-written)\n";
       out += "        }\n";
-    } else if (w.name === "SourceList" && (p.name === "items" || p.name === "selectedIndex")) {
-      // Wave-2 placeholder: the AppKit SourceList view doesn't exist yet
-      // (see genSwiftCreateBody), so there's nothing to apply `${p.name}` to.
-      out += `        // Wave 2: AppKit SourceList not yet implemented (${p.name} no-op).\n`;
+    } else if (w.name === "SourceList" && p.name === "items") {
+      out += '        if let raw = propObjArray(props, "items") {\n';
+      out += "            ndSourceListSetItems(view, raw)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)\n";
+      out += "        }\n";
+    } else if (w.name === "SourceList" && p.name === "selectedIndex") {
+      out += '        if let idx = propInt(props, "selectedIndex") {\n';
+      out += "            ndSourceListSetSelectedIndex(view, idx)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)\n";
+      out += "        }\n";
     } else if (w.name === "SplitView" && p.name === "collapsed") {
       out += '        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,\n';
       out += "           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {\n";

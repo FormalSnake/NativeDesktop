@@ -319,15 +319,16 @@ private func setErrRaw(_ out: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
     out?.pointee = mallocZ("{\"ref\":\(nodeID)}")
 }
 
-/// Checkbox/Radio/Button all construct a plain `NSButton` — AppKit gives no
-/// reliable way to read the button "type" back afterwards (`buttonType` is
-/// setter-only via `setButtonType(_:)`; the cell doesn't forward a getter
-/// either). Recorded once at create time instead of reflected after the
-/// fact, keyed by view identity (peer of `Events.swift`'s
-/// `radioGroupIdentifier` side-table, same reasoning). Only needed for the
-/// three kinds that collide on `NSButton` — every other kind (TextInput,
-/// TextArea, Slider, Select, ListView, ScrollView) is already unambiguous
-/// from its concrete AppKit class.
+/// Checkbox/Radio/Button all construct a plain `NSButton`, and ListView/
+/// SourceList both construct a plain `NSScrollView`+`NSTableView` — AppKit
+/// gives no reliable way to read either distinction back structurally
+/// afterwards (`buttonType` is setter-only via `setButtonType(_:)`, and a
+/// `.sourceList`-style NSTableView is still an NSTableView). Recorded once
+/// at create time instead of reflected after the fact, keyed by view
+/// identity (peer of `Events.swift`'s `radioGroupIdentifier` side-table,
+/// same reasoning). Only needed for kinds that collide on a shared concrete
+/// class — every other kind (TextInput, TextArea, Slider, Select,
+/// ScrollView) is already unambiguous from its concrete AppKit class.
 nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] = [:]
 
 /// Called by `Backend.swift`'s `create` vtable closure right after
@@ -335,7 +336,7 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// carried — the ground truth `widgetKind` below would otherwise have to
 /// guess at via reflection.
 @MainActor func ndRecordButtonKind(_ view: NSView, _ kind: String) {
-    guard kind == "Checkbox" || kind == "Radio" || kind == "Button" else { return }
+    guard kind == "Checkbox" || kind == "Radio" || kind == "Button" || kind == "SourceList" else { return }
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
@@ -344,12 +345,16 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// not the tracked `widget_type` string (that lives in core-owned
 /// `Tree.meta`), so most kinds are read back structurally from the concrete
 /// AppKit class every `ndCreate` arm constructs; Checkbox/Radio/Button
-/// (all plain `NSButton`) consult `buttonKindOverride` instead.
+/// (all plain `NSButton`) and SourceList (an NSTableView-backed
+/// NSScrollView, same concrete shape ListView constructs — M11 Wave 2)
+/// consult `buttonKindOverride` instead.
 @MainActor private func widgetKind(_ view: NSView) -> String {
     if view is NSTextView { return "TextArea" }
     if let scroll = view as? NSScrollView {
         if scroll.documentView is NSTextView { return "TextArea" }
-        if scroll.documentView is NSTableView { return "ListView" }
+        if scroll.documentView is NSTableView {
+            return buttonKindOverride[ObjectIdentifier(scroll)] ?? "ListView"
+        }
         return "ScrollView"
     }
     // NSPopUpButton is an NSButton subclass — must be checked before the
@@ -389,6 +394,17 @@ private func escapeJSONString(_ s: String) -> String {
     // a disabled item is a no-op, so onSelect does not fire — state unchanged).
     if ndIsMenuNode(view) {
         _ = ndMenuSemanticClick(view, nodeID)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    // SourceList (M11 Wave 2): "click" activates the currently-selected row
+    // (there's no separate NSControl to `performClick` — the tracked handle
+    // is the NSScrollView). No-op (still reports dispatched) if nothing is
+    // selected, unlike GTK's fallback-to-row-0 (deliberate deviation: v1
+    // scope, no test currently exercises the no-selection case).
+    if widgetKind(view) == "SourceList", let scroll = view as? NSScrollView,
+       let tableView = scroll.documentView as? NSTableView, tableView.selectedRow >= 0 {
+        EventDispatcher.shared.fireIndexNamed(scroll, name: "rowActivated", index: tableView.selectedRow)
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
@@ -440,6 +456,17 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
               idx >= 0, idx < pop.numberOfItems else { return invalidValue(errOut, nodeID) }
         pop.selectItem(at: idx)
         EventDispatcher.shared.fireIndex(pop)
+    case "SourceList":
+        guard let idx = (value as? NSNumber)?.intValue, let scroll = view as? NSScrollView,
+              let tableView = scroll.documentView as? NSTableView,
+              idx >= 0, idx < tableView.numberOfRows else { return invalidValue(errOut, nodeID) }
+        // NOT followed by an explicit EventDispatcher fire, unlike every arm
+        // above: `selectRowIndexes` posts `tableViewSelectionDidChange`
+        // itself (SourceList.swift's `SourceListDataSource`), which fires
+        // "selectionChanged" via `fireIndexNamed` — the one control here
+        // where AppKit's own notification already replays what a live user
+        // selection would produce, so re-firing here would double the event.
+        tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
     default:
         setErrRaw(errOut, nodeID)
         return -32602

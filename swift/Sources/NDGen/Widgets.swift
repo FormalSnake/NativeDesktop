@@ -14,6 +14,7 @@ func propInt(_ p: [String: Any], _ k: String) -> Int? { (p[k] as? NSNumber)?.int
 func propDouble(_ p: [String: Any], _ k: String) -> Double? { (p[k] as? NSNumber)?.doubleValue }
 func propBool(_ p: [String: Any], _ k: String) -> Bool? { (p[k] as? NSNumber)?.boolValue }
 func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?.compactMap { $0 as? String } }
+func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
@@ -204,8 +205,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         if let ph = propStr(props, "placeholder") { search.placeholderString = ph }
         return search
     } else if kind == "SourceList" {
-        FileHandle.standardError.write("ND_WARN SourceList not yet implemented on AppKit\n".data(using: .utf8)!)
-        return FlippedView()
+        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)
     } else if kind == "Menubar" {
         return ndMenubarCreate(propBool(props, "defaults") ?? true)
     } else if kind == "Menu" {
@@ -308,8 +308,12 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             field.placeholderString = ph
         }
     } else if kind == "SourceList" {
-        // Wave 2: AppKit SourceList not yet implemented (items no-op).
-        // Wave 2: AppKit SourceList not yet implemented (selectedIndex no-op).
+        if let raw = propObjArray(props, "items") {
+            ndSourceListSetItems(view, raw)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)
+        }
+        if let idx = propInt(props, "selectedIndex") {
+            ndSourceListSetSelectedIndex(view, idx)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)
+        }
     } else if kind == "MenuItem" {
         if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
     }
