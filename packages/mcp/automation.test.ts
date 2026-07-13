@@ -72,7 +72,9 @@ test("request/response correlation: id round-trips through a JSON-RPC result", a
   expect(receivedRequest.jsonrpc).toBe("2.0");
   expect(receivedRequest.method).toBe("getTree");
   expect(typeof receivedRequest.id).toBe("number");
-  expect(result).toEqual({ ok: true });
+  // The mock host replies with a deliberately schema-less payload — this test
+  // pins framing/correlation, not result shapes, so widen past the typed call.
+  expect(result as unknown).toEqual({ ok: true });
 });
 
 test("request/response correlation: concurrent calls resolve to their own ids, not FIFO order", async () => {
@@ -90,8 +92,9 @@ test("request/response correlation: concurrent calls resolve to their own ids, n
   const p2 = client.call("click", { ref: 1 });
   const [r1, r2] = await Promise.all([p1, p2]);
 
-  expect(r1).toEqual({ which: "first-call" });
-  expect(r2).toEqual({ which: "second-call" });
+  // Schema-less mock payloads again (correlation is the contract under test).
+  expect(r1 as unknown).toEqual({ which: "first-call" });
+  expect(r2 as unknown).toEqual({ which: "second-call" });
 });
 
 test("error responses reject the call with code and message", async () => {
@@ -138,7 +141,8 @@ test("tool-call -> JSON-RPC mapping: nd_get_tree sends getTree with no params", 
 
   expect(received.method).toBe("getTree");
   expect(received.params).toBeUndefined();
-  expect(result).toEqual({ coordinateSpace: "logical-window-topleft", root: {} });
+  // root: {} is a mock stand-in, not a full JsonNode — widen past the typed call.
+  expect(result as unknown).toEqual({ coordinateSpace: "logical-window-topleft", root: {} });
 });
 
 test("tool-call -> JSON-RPC mapping: nd_screenshot sends screenshot with {path}", async () => {

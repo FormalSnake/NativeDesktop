@@ -1,49 +1,28 @@
 const std = @import("std");
 
-pub const ndp_version: u32 = 1;
+// Frame/struct shapes are GENERATED from schema/protocol.json (the single
+// source of truth shared with the TS mirror,
+// packages/react/src/generated/protocol.ts) — a field rename or type change
+// there regenerates both sides, so drift is a compile error, not a silent
+// wire break. This file re-exports them under the existing `protocol.*`
+// names and keeps the hand-written framing/encode helpers + golden-byte
+// tests below.
+const frames = @import("generated/protocol.zig");
 
-pub const Hello = struct {
-    type: []const u8 = "hello",
-    ndpVersion: u32,
-    runtime: Runtime,
-    pub const Runtime = struct { name: []const u8, version: []const u8 };
-};
-
-pub const HelloAck = struct {
-    type: []const u8 = "helloAck",
-    ndpVersion: u32,
-    encodings: []const []const u8,
-};
-
-pub const ErrorFrame = struct {
-    type: []const u8 = "error",
-    message: []const u8,
-    expected: u32,
-    got: u32,
-};
-
-/// Typed event payload. Exactly one field is set per event name (see the
-/// schema's events[].payload): changed/activate -> text, toggled -> checked,
-/// valueChanged -> value, selectionChanged -> index, clicked -> none,
-/// styleError -> key (the offending style key, M5c-D7).
-/// Serialized with emit_null_optional_fields=false, so clicked still wires
-/// as "payload":{} — byte-compatible with M4.
-pub const EventPayload = struct {
-    text: ?[]const u8 = null,
-    checked: ?bool = null,
-    value: ?f64 = null,
-    index: ?i64 = null,
-    key: ?[]const u8 = null,
-};
-
-pub const Event = struct {
-    type: []const u8 = "event",
-    seq: u64,
-    priority: []const u8 = "discrete",
-    nodeId: u32,
-    name: []const u8, // clicked | changed | activate | toggled | valueChanged | selectionChanged
-    payload: EventPayload = .{},
-};
+pub const ndp_version = frames.ndp_version;
+pub const Runtime = frames.Runtime;
+pub const Hello = frames.Hello;
+pub const HelloAck = frames.HelloAck;
+pub const ErrorFrame = frames.ErrorFrame;
+pub const EventPayload = frames.EventPayload;
+pub const Event = frames.Event;
+pub const Op = frames.Op;
+pub const CommitBatch = frames.CommitBatch;
+pub const Ping = frames.Ping;
+pub const Pong = frames.Pong;
+pub const RuntimeError = frames.RuntimeError;
+pub const PluginCommand = frames.PluginCommand;
+pub const PluginResult = frames.PluginResult;
 
 /// Container attach metadata, extracted host-side from a child's create-op
 /// props (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel — the
@@ -70,30 +49,6 @@ pub const Attached = struct {
         if (v.object.get("slot")) |f| { if (f == .string) a.slot = f.string; }
         return a;
     }
-};
-
-/// One of create|append|setText|update. Decoded with a permissive struct:
-/// optional fields cover the union of all op shapes; the `op` string discriminates.
-pub const Op = struct {
-    op: []const u8,
-    // create
-    id: ?u32 = null,
-    widget: ?[]const u8 = null, // "Window" | "Box" | "Label" | "Button"
-    props: ?std.json.Value = null,
-    // append
-    parent: ?u32 = null,
-    child: ?u32 = null,
-    // setText
-    text: ?[]const u8 = null,
-    // insertBefore
-    before: ?u32 = null,
-};
-
-pub const CommitBatch = struct {
-    type: []const u8 = "commitBatch",
-    commitId: u64,
-    generation: u32,
-    ops: []Op,
 };
 
 /// u32 LE length prefix + UTF-8 JSON. Caller frees the returned slice.

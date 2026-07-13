@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "ndpVersion": 1,
+  "types": [
+    {
+      "name": "Runtime",
+      "doc": "Child runtime identity, carried inside the hello frame.",
+      "fields": [
+        { "name": "name", "type": "string" },
+        { "name": "version", "type": "string" }
+      ]
+    },
+    {
+      "name": "EventPayload",
+      "doc": "Typed event payload. Exactly one field is set per event name (see widgets.json events[].payload): changed/activate -> text, toggled -> checked, valueChanged -> value, selectionChanged -> index, clicked -> none, styleError -> key (the offending style key, M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as \"payload\":{} — byte-compatible with M4.",
+      "fields": [
+        { "name": "text", "type": "string", "optional": true },
+        { "name": "checked", "type": "bool", "optional": true },
+        { "name": "value", "type": "f64", "optional": true },
+        { "name": "index", "type": "i64", "optional": true },
+        { "name": "key", "type": "string", "optional": true }
+      ]
+    }
+  ],
+  "ops": [
+    {
+      "name": "create",
+      "fields": [
+        { "name": "id", "type": "u32" },
+        { "name": "widget", "type": "widgetName" },
+        { "name": "props", "type": "object" }
+      ]
+    },
+    {
+      "name": "append",
+      "fields": [
+        { "name": "parent", "type": "u32" },
+        { "name": "child", "type": "u32" }
+      ]
+    },
+    {
+      "name": "insertBefore",
+      "fields": [
+        { "name": "parent", "type": "u32" },
+        { "name": "child", "type": "u32" },
+        { "name": "before", "type": "u32", "nullable": true }
+      ]
+    },
+    {
+      "name": "remove",
+      "fields": [{ "name": "id", "type": "u32" }]
+    },
+    {
+      "name": "setText",
+      "fields": [
+        { "name": "id", "type": "u32" },
+        { "name": "text", "type": "string" }
+      ]
+    },
+    {
+      "name": "update",
+      "fields": [
+        { "name": "id", "type": "u32" },
+        { "name": "props", "type": "object" }
+      ]
+    },
+    {
+      "name": "hide",
+      "fields": [{ "name": "id", "type": "u32" }]
+    },
+    {
+      "name": "unhide",
+      "fields": [{ "name": "id", "type": "u32" }]
+    }
+  ],
+  "frames": [
+    {
+      "name": "hello",
+      "tsName": "HelloMsg",
+      "zigName": "Hello",
+      "direction": "runtimeToHost",
+      "fields": [
+        { "name": "ndpVersion", "type": "u32" },
+        { "name": "runtime", "type": "Runtime" }
+      ]
+    },
+    {
+      "name": "helloAck",
+      "tsName": "HelloAckMsg",
+      "zigName": "HelloAck",
+      "direction": "hostToRuntime",
+      "doc": "Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference order (ndp-binary spec §2); the runtime picks the first one it supports.",
+      "fields": [
+        { "name": "ndpVersion", "type": "u32" },
+        { "name": "encodings", "type": "stringList" }
+      ]
+    },
+    {
+      "name": "error",
+      "tsName": "ErrorMsg",
+      "zigName": "ErrorFrame",
+      "direction": "hostToRuntime",
+      "fields": [
+        { "name": "message", "type": "string" },
+        { "name": "expected", "type": "u32" },
+        { "name": "got", "type": "u32" }
+      ]
+    },
+    {
+      "name": "event",
+      "tsName": "EventMsg",
+      "zigName": "Event",
+      "direction": "hostToRuntime",
+      "doc": "`name` is one of widgets.json's event ndpNames (clicked | changed | activate | toggled | valueChanged | selectionChanged | ...) or styleError.",
+      "fields": [
+        { "name": "seq", "type": "u64" },
+        { "name": "priority", "type": "string", "default": "discrete" },
+        { "name": "nodeId", "type": "u32" },
+        { "name": "name", "type": "string" },
+        { "name": "payload", "type": "EventPayload", "default": {} }
+      ]
+    },
+    {
+      "name": "commitBatch",
+      "tsName": "CommitBatch",
+      "zigName": "CommitBatch",
+      "direction": "runtimeToHost",
+      "fields": [
+        { "name": "commitId", "type": "u64" },
+        { "name": "generation", "type": "u32" },
+        { "name": "ops", "type": "opList" }
+      ]
+    },
+    {
+      "name": "ping",
+      "tsName": "PingMsg",
+      "zigName": "Ping",
+      "direction": "runtimeToHost",
+      "fields": []
+    },
+    {
+      "name": "pong",
+      "tsName": "PongMsg",
+      "zigName": "Pong",
+      "direction": "hostToRuntime",
+      "fields": []
+    },
+    {
+      "name": "runtimeError",
+      "tsName": "RuntimeErrorMsg",
+      "zigName": "RuntimeError",
+      "direction": "runtimeToHost",
+      "doc": "Best-effort report of an uncaught exception / unhandled rejection, sent before the child exits so the host's crash overlay (M8) shows the real error instead of a bare disconnect.",
+      "fields": [
+        { "name": "message", "type": "string" },
+        { "name": "stack", "type": "string" }
+      ]
+    },
+    {
+      "name": "pluginCommand",
+      "tsName": "PluginCommandMsg",
+      "zigName": "PluginCommand",
+      "direction": "runtimeToHost",
+      "doc": "Dispatches a loaded native plugin's command (M10); gated on the plugin:<plugin>.<command> capability host-side.",
+      "fields": [
+        { "name": "plugin", "type": "string" },
+        { "name": "command", "type": "string" },
+        { "name": "arg", "type": "any" }
+      ]
+    },
+    {
+      "name": "pluginResult",
+      "tsName": "PluginResultMsg",
+      "zigName": "PluginResult",
+      "direction": "hostToRuntime",
+      "doc": "Reply to pluginCommand, carrying the plugin's JSON result verbatim (host-validated to be well-formed JSON before splicing).",
+      "fields": [{ "name": "result", "type": "any" }]
+    }
+  ]
+}

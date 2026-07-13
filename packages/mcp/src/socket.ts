@@ -1,7 +1,12 @@
 // Framed JSON-RPC 2.0 client for the NativeDesktop automation socket.
 // Wire format matches NDP: u32 LE length prefix + UTF-8 JSON (runtime/ndp.ts),
 // but the payload here is a JSON-RPC 2.0 request/response, not an NDP message.
-// Field names are a contract with the Zig host (src/automation.zig) — verbatim, no renaming.
+// Method names and params/result shapes are GENERATED from schema/rpc.json
+// (the single source of truth shared with the Zig host, src/automation.zig via
+// src/generated/rpc.zig) — `call` is constrained by the generated RpcMethods
+// map, so a schema change is a compile error here, tRPC-style.
+
+import type { RpcMethodName, RpcParams, RpcResult } from "../../react/src/generated/rpc.ts";
 
 interface JsonRpcError {
   code: number;
@@ -74,14 +79,17 @@ export class AutomationClient {
     else pending.resolve(msg.result);
   }
 
-  call(method: string, params?: unknown): Promise<unknown> {
+  call<M extends RpcMethodName>(
+    method: M,
+    ...params: RpcParams<M> extends undefined ? [] : [RpcParams<M>]
+  ): Promise<RpcResult<M>> {
     const id = this.nextId++;
-    const json = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+    const json = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id, method, params: params[0] }));
     const frame = new Uint8Array(4 + json.length);
     new DataView(frame.buffer).setUint32(0, json.length, true);
     frame.set(json, 4);
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+    return new Promise<RpcResult<M>>((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
       this.socket.write(frame);
     });
   }

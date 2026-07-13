@@ -1,7 +1,11 @@
 #!/usr/bin/env bun
 // tools/codegen.ts — reads schema/widgets.json and emits the generated
-// TS/JSX intrinsics, Zig widget appliers, docs, and automation meta tables.
-// Deterministic: widgets and props are emitted in schema-declaration order.
+// TS/JSX intrinsics, Zig widget appliers, docs, and automation meta tables;
+// reads schema/protocol.json + schema/rpc.json and emits BOTH sides of the
+// NDP frame / automation-RPC contracts (Zig structs into src/generated/,
+// TS types into packages/react/src/generated/) so a field rename or type
+// change is a compile error on whichever side still uses the old shape.
+// Deterministic: everything is emitted in schema-declaration order.
 // Run: `bun tools/codegen.ts`. Never hand-edit the generated files.
 
 import { resolve } from "node:path";
@@ -2141,30 +2145,26 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        let window = parent.window ?? gWindow\n" +
       "        parent.subviews.forEach { $0.removeFromSuperview() }\n" +
       "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {\n" +
-      // Assigning contentViewController resizes the window to the
-      // controller's preferredContentSize (default zero -> the split view's
-      // tiny fitting size), clobbering Window defaultWidth/Height — measured
-      // 900x600 -> 500x500. Feed the mechanism the intended size (the current
-      // contentView, i.e. the Window handle, still holds it) so the assignment
-      // lands at the right size.
+      // Assigning contentViewController resizes the window to the controller
+      // view's fitting size (measured 900x600 -> 500x500), clobbering Window
+      // defaultWidth/Height. Save the frame first and reassert it right after
+      // (display:true) — the split view's fitting size is only a floor, so the
+      // reasserted 1100x700 sticks with no lingering size constraint.
       //
-      // But a non-zero preferredContentSize makes AppKit install fixed
+      // Do NOT steer the initial size via `controller.preferredContentSize`
+      // instead: a non-zero preferred size makes AppKit install fixed
       // width/height constraints on the controller's view
-      // (`NSViewController.preferredContentSize.{width,height}` @ priority
-      // 501). Those pin the window to the windowed size through a fullscreen
-      // transition — the window reports .fullScreen but its frame never grows
-      // to the screen, leaving a small app box in a black fullscreen space
-      // (the split view can't fill what the window won't grow to). Setting
-      // preferredContentSize back to .zero does NOT drop the constraints, so
-      // remove them explicitly (they are the only absolute-size constraints on
-      // this view — the SplitView edge pins all have a secondItem) and
-      // reassert the intended size via the frame. Now the window fullscreens
-      // to fill the screen while still opening at defaultWidth/Height.
+      // (`NSViewController.preferredContentSize.{width,height}` @ priority 501)
+      // that AppKit re-syncs on every layout pass. Those pin the window to the
+      // windowed size through a fullscreen transition — the window reports
+      // .fullScreen but its frame never grows to the screen, leaving a small
+      // app box in a black fullscreen space. Zeroing preferredContentSize does
+      // not drop the constraints, and removing them by hand only holds until
+      // the next layout pass re-derives them from the still-non-zero property,
+      // so the plain save/reassert-frame path is the one that survives
+      // fullscreen.
       "            let ndSavedFrame = win.frame\n" +
-      "            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size\n" +
       "            win.contentViewController = controller\n" +
-      "            let ndPinned = controller.view.constraints.filter { ($0.firstAttribute == .width || $0.firstAttribute == .height) && $0.secondItem == nil }\n" +
-      "            controller.view.removeConstraints(ndPinned)\n" +
       "            win.setFrame(ndSavedFrame, display: true)\n" +
       "        } else {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
@@ -2462,6 +2462,325 @@ function genWidgetTypesZig(s: Schema): string {
   return out;
 }
 
+// ---- artifacts (g)+(h): NDP protocol frames + automation RPC (tRPC-style dual emission) ----
+// schema/protocol.json and schema/rpc.json are the single sources of truth for
+// the Zig<->Bun wire contracts that used to be hand-mirrored (src/protocol.zig
+// vs runtime/ndp.ts; src/automation.zig vs packages/mcp). Both sides are
+// emitted from the same schema, so a field rename or type change becomes a
+// compile error on whichever side still uses the old shape instead of a
+// silent runtime break. Zig field DECLARATION ORDER is wire byte order
+// (std.json.Stringify emits struct fields in declaration order), so the
+// schemas declare fields in the exact order the hand-written structs had.
+
+type WireTypeName =
+  | "u32" | "u64" | "i32" | "i64" | "f64" | "bool" | "string" | "stringList"
+  | "object" // JSON object: TS Record<string, unknown>, Zig std.json.Value
+  | "any" // arbitrary JSON: TS unknown, Zig std.json.Value
+  | "widgetName" // widgets.json name union in TS; opaque string in Zig
+  | "opList" // Op[] / []Op
+  | (string & {}); // capitalized = reference to a schema-declared type
+
+interface WireField {
+  name: string;
+  type: WireTypeName;
+  /** omitted from the wire when unset (TS `?:`; Zig `?T = null` under emit_null_optional_fields=false) */
+  optional?: boolean;
+  /** the wire carries an explicit null (TS `T | null`; Zig `?T = null`) */
+  nullable?: boolean;
+  /** list of `type` (TS `T[]`; Zig `[]T`) */
+  list?: boolean;
+  default?: string | number | boolean | Record<string, never>;
+  doc?: string;
+}
+interface WireStruct { name: string; doc?: string; fields: WireField[] }
+interface OpDef { name: string; doc?: string; fields: WireField[] }
+interface FrameDef {
+  name: string;
+  tsName: string;
+  zigName: string;
+  direction: "runtimeToHost" | "hostToRuntime";
+  doc?: string;
+  fields: WireField[];
+}
+interface ProtocolSchema { schemaVersion: number; ndpVersion: number; types: WireStruct[]; ops: OpDef[]; frames: FrameDef[] }
+interface RpcErrorDef { name: string; code: number; message: string; doc?: string }
+interface RpcMethodDef { name: string; doc?: string; params: WireField[]; result: string }
+interface RpcSchema { schemaVersion: number; transport: string; types: WireStruct[]; methods: RpcMethodDef[]; errors: RpcErrorDef[] }
+
+function assertKnownType(t: WireTypeName, declared: WireStruct[]): void {
+  if (!declared.some((x) => x.name === t)) throw new Error(`unknown wire type ${JSON.stringify(t)}`);
+}
+
+function tsWireType(t: WireTypeName, declared: WireStruct[]): string {
+  switch (t) {
+    case "u32": case "u64": case "i32": case "i64": case "f64": return "number";
+    case "bool": return "boolean";
+    case "string": return "string";
+    case "stringList": return "string[]";
+    case "object": return "Record<string, unknown>";
+    case "any": return "unknown";
+    case "widgetName": return "WidgetName";
+    case "opList": return "Op[]";
+    default:
+      assertKnownType(t, declared);
+      return t;
+  }
+}
+
+function zigWireType(t: WireTypeName, declared: WireStruct[]): string {
+  switch (t) {
+    case "u32": return "u32";
+    case "u64": return "u64";
+    case "i32": return "i32";
+    case "i64": return "i64";
+    case "f64": return "f64";
+    case "bool": return "bool";
+    case "string": return "[]const u8";
+    case "stringList": return "[]const []const u8";
+    case "object": case "any": return "std.json.Value";
+    case "widgetName": return "[]const u8";
+    case "opList": return "[]Op";
+    default:
+      assertKnownType(t, declared);
+      return t;
+  }
+}
+
+function tsWireField(f: WireField, declared: WireStruct[]): string {
+  let base = tsWireType(f.type, declared);
+  if (f.list) base += "[]";
+  return `${f.name}${f.optional ? "?" : ""}: ${base}${f.nullable ? " | null" : ""}`;
+}
+
+function zigWireField(f: WireField, declared: WireStruct[]): string {
+  let base = zigWireType(f.type, declared);
+  if (f.list) base = `[]${base}`;
+  if (f.optional || f.nullable) return `${f.name}: ?${base} = null`;
+  if (f.default !== undefined) {
+    if (typeof f.default === "object") return `${f.name}: ${base} = .{}`;
+    if (typeof f.default === "string") return `${f.name}: ${base} = ${JSON.stringify(f.default)}`;
+    return `${f.name}: ${base} = ${String(f.default)}`;
+  }
+  if (base === "std.json.Value") return `${f.name}: std.json.Value = .null`;
+  return `${f.name}: ${base}`;
+}
+
+function zigDocLines(doc: string | undefined): string {
+  if (!doc) return "";
+  // Greedy word-wrap at ~96 columns so generated doc comments stay readable.
+  const words = doc.split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if (cur.length > 0 && cur.length + 1 + w.length > 92) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = cur.length ? `${cur} ${w}` : w;
+    }
+  }
+  if (cur.length) lines.push(cur);
+  return lines.map((l) => `/// ${l}\n`).join("");
+}
+
+function tsDocLine(doc: string | undefined): string {
+  return doc ? `/** ${doc} */\n` : "";
+}
+
+const ZIG_KEYWORDS = new Set([
+  "align", "and", "anyframe", "anytype", "asm", "break", "catch", "comptime", "const", "continue",
+  "defer", "else", "enum", "error", "export", "extern", "fn", "for", "if", "inline", "noalias",
+  "opaque", "or", "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch",
+  "test", "threadlocal", "try", "type", "union", "unreachable", "var", "volatile", "while",
+]);
+function zigIdent(name: string): string {
+  return ZIG_KEYWORDS.has(name) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? `@"${name}"` : name;
+}
+function camelToSnake(name: string): string {
+  return name.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+}
+function capitalize(name: string): string {
+  return name[0]!.toUpperCase() + name.slice(1);
+}
+
+// ---- artifact (g): NDP protocol frames ----
+function genProtocolZig(s: ProtocolSchema): string {
+  let out = HEADER_ZIG;
+  out += "// Single source of truth: schema/protocol.json (consumed via src/protocol.zig,\n";
+  out += "// which owns the framing/encode helpers). Field DECLARATION ORDER is wire byte\n";
+  out += "// order — std.json.Stringify emits struct fields in declaration order — so\n";
+  out += "// reordering fields here changes bytes on the wire.\n";
+  out += "const std = @import(\"std\");\n\n";
+  out += `pub const ndp_version: u32 = ${s.ndpVersion};\n\n`;
+  for (const t of s.types) {
+    out += zigDocLines(t.doc);
+    out += `pub const ${t.name} = struct {\n`;
+    for (const f of t.fields) out += `    ${zigWireField(f, s.types)},\n`;
+    out += "};\n\n";
+  }
+  // The Zig Op is decode-side: one permissive struct whose optional fields
+  // cover the union of all op shapes; the `op` string discriminates (the TS
+  // side is the real discriminated union).
+  const opFieldOwners = new Map<string, string[]>();
+  const opFieldOrder: WireField[] = [];
+  for (const op of s.ops) {
+    for (const f of op.fields) {
+      const owners = opFieldOwners.get(f.name);
+      if (!owners) {
+        opFieldOwners.set(f.name, [op.name]);
+        opFieldOrder.push(f);
+      } else {
+        const first = opFieldOrder.find((x) => x.name === f.name)!;
+        if (first.type !== f.type) throw new Error(`op field ${JSON.stringify(f.name)} redeclared with incompatible type (${first.type} vs ${f.type})`);
+        owners.push(op.name);
+      }
+    }
+  }
+  out += `/// One of ${s.ops.map((o) => o.name).join("|")}. Decoded with a permissive struct:\n`;
+  out += "/// optional fields cover the union of all op shapes; the `op` string discriminates.\n";
+  out += "pub const Op = struct {\n";
+  out += "    op: []const u8,\n";
+  for (const f of opFieldOrder) {
+    out += `    ${f.name}: ?${zigWireType(f.type, s.types)} = null, // ${opFieldOwners.get(f.name)!.join("/")}\n`;
+  }
+  out += "};\n\n";
+  for (const fr of s.frames) {
+    out += zigDocLines(fr.doc);
+    out += `pub const ${fr.zigName} = struct {\n`;
+    out += `    type: []const u8 = ${JSON.stringify(fr.name)},\n`;
+    for (const f of fr.fields) out += `    ${zigWireField(f, s.types)},\n`;
+    out += "};\n\n";
+  }
+  return out;
+}
+
+function genProtocolTs(s: ProtocolSchema, widgets: Schema): string {
+  let out = HEADER_TS;
+  out += "// Single source of truth: schema/protocol.json — the Zig mirror is\n";
+  out += "// src/generated/protocol.zig. Field names are the wire contract with the\n";
+  out += "// Zig host — verbatim, no renaming.\n\n";
+  out += `export const NDP_VERSION = ${s.ndpVersion};\n\n`;
+  // Same union genIntrinsics emits — duplicated here (from the same schema, so
+  // no drift is possible) to keep this module dependency-free: runtime/ndp.ts
+  // imports it and must not drag react types into the runtime's typecheck.
+  out += "export type WidgetName = " + widgets.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n\n";
+  for (const t of s.types) {
+    out += tsDocLine(t.doc);
+    out += `export interface ${t.name} {\n`;
+    for (const f of t.fields) out += `  ${tsWireField(f, s.types)};\n`;
+    out += "}\n\n";
+  }
+  out += "export type Op =\n";
+  out += s.ops
+    .map((op) => `  | { op: ${JSON.stringify(op.name)}; ${op.fields.map((f) => tsWireField(f, s.types)).join("; ")} }`)
+    .join("\n");
+  out += ";\n\n";
+  for (const fr of s.frames) {
+    out += tsDocLine(fr.doc);
+    out += `export interface ${fr.tsName} {\n`;
+    out += `  type: ${JSON.stringify(fr.name)};\n`;
+    for (const f of fr.fields) out += `  ${tsWireField(f, s.types)};\n`;
+    out += "}\n\n";
+  }
+  const toHost = s.frames.filter((f) => f.direction === "runtimeToHost").map((f) => f.tsName);
+  const toRuntime = s.frames.filter((f) => f.direction === "hostToRuntime").map((f) => f.tsName);
+  out += `export type RuntimeToHostMsg = ${toHost.join(" | ")};\n`;
+  out += `export type HostToRuntimeMsg = ${toRuntime.join(" | ")};\n`;
+  return out;
+}
+
+// ---- artifact (h): automation RPC router (method -> params -> result -> error codes) ----
+function genRpcZig(s: RpcSchema): string {
+  let out = HEADER_ZIG;
+  out += "// Single source of truth: schema/rpc.json (consumed by src/automation.zig).\n";
+  out += `// Transport: ${s.transport}.\n`;
+  out += "// Field DECLARATION ORDER in result structs is wire byte order.\n";
+  out += "const std = @import(\"std\");\n\n";
+  out += `pub const Method = enum { ${s.methods.map((m) => zigIdent(m.name)).join(", ")} };\n\n`;
+  out += "const MethodEntry = struct { name: []const u8, method: Method };\n";
+  out += "pub const method_table = [_]MethodEntry{\n";
+  for (const m of s.methods) out += `    .{ .name = ${JSON.stringify(m.name)}, .method = .${zigIdent(m.name)} },\n`;
+  out += "};\n\n";
+  out += "pub fn methodFromString(name: []const u8) ?Method {\n";
+  out += "    for (method_table) |e| if (std.mem.eql(u8, e.name, name)) return e.method;\n";
+  out += "    return null;\n}\n\n";
+  out += "// JSON-RPC error codes (+ the canonical message where one exists).\n";
+  for (const e of s.errors) {
+    const snake = camelToSnake(e.name);
+    if (e.doc) out += `// ${e.name}: ${e.doc}\n`;
+    out += `pub const code_${snake}: i32 = ${e.code};\n`;
+    out += `pub const msg_${snake} = ${JSON.stringify(e.message)};\n`;
+  }
+  out += "\n";
+  for (const t of s.types) {
+    out += zigDocLines(t.doc);
+    out += `pub const ${t.name} = struct {\n`;
+    for (const f of t.fields) out += `    ${zigWireField(f, s.types)},\n`;
+    out += "};\n\n";
+  }
+  // Params structs: every non-defaulted field is optional (`?T = null`) so the
+  // dispatcher can answer a missing required param with the exact
+  // "missing params.<x>" invalid-params message instead of a parse failure.
+  for (const m of s.methods) {
+    if (m.params.length === 0) continue;
+    if (m.doc) out += zigDocLines(`${m.name}: ${m.doc}`);
+    out += `pub const ${capitalize(m.name)}Params = struct {\n`;
+    for (const f of m.params) {
+      if (f.default !== undefined) {
+        out += `    ${zigWireField(f, s.types)},\n`;
+      } else {
+        let base = zigWireType(f.type, s.types);
+        if (f.list) base = `[]${base}`;
+        out += `    ${f.name}: ?${base} = null,\n`;
+      }
+    }
+    out += "};\n\n";
+  }
+  return out;
+}
+
+function genRpcTs(s: RpcSchema): string {
+  let out = HEADER_TS;
+  out += "// Single source of truth: schema/rpc.json — the Zig mirror is\n";
+  out += "// src/generated/rpc.zig (consumed by src/automation.zig). Typed client:\n";
+  out += "// packages/mcp/src/socket.ts constrains AutomationClient.call with the\n";
+  out += "// RpcMethods map below, tRPC-style.\n\n";
+  for (const t of s.types) {
+    out += tsDocLine(t.doc);
+    out += `export interface ${t.name} {\n`;
+    for (const f of t.fields) out += `  ${tsWireField(f, s.types)};\n`;
+    out += "}\n\n";
+  }
+  for (const m of s.methods) {
+    if (m.params.length === 0) continue;
+    out += tsDocLine(m.doc);
+    out += `export interface ${capitalize(m.name)}Params {\n`;
+    for (const f of m.params) {
+      const opt = f.optional || f.default !== undefined;
+      let base = tsWireType(f.type, s.types);
+      if (f.list) base += "[]";
+      out += `  ${f.name}${opt ? "?" : ""}: ${base};\n`;
+    }
+    out += "}\n\n";
+  }
+  out += "export interface RpcMethods {\n";
+  for (const m of s.methods) {
+    const params = m.params.length === 0 ? "undefined" : `${capitalize(m.name)}Params`;
+    out += `  ${m.name}: { params: ${params}; result: ${m.result} };\n`;
+  }
+  out += "}\n";
+  out += "export type RpcMethodName = keyof RpcMethods;\n";
+  out += "export type RpcParams<M extends RpcMethodName> = RpcMethods[M][\"params\"];\n";
+  out += "export type RpcResult<M extends RpcMethodName> = RpcMethods[M][\"result\"];\n\n";
+  out += "export const RPC_ERRORS = {\n";
+  for (const e of s.errors) {
+    if (e.doc) out += `  /** ${e.doc} */\n`;
+    out += `  ${e.name}: { code: ${e.code}, message: ${JSON.stringify(e.message)} },\n`;
+  }
+  out += "} as const;\n";
+  return out;
+}
+
 async function writeIfChanged(rel: string, content: string): Promise<void> {
   const path = resolve(ROOT, rel);
   await Bun.write(path, content);
@@ -2477,4 +2796,12 @@ await writeIfChanged("docs/styling.md", genStyleDocs(schema));
 await writeIfChanged("swift/Sources/NDGen/Widgets.swift", genSwift(schema));
 await writeIfChanged("packages/react/src/generated/widget-types.ts", genWidgetTypesTs(schema));
 await writeIfChanged("src/generated/widget_types.zig", genWidgetTypesZig(schema));
+
+const protocolSchema = (await Bun.file(resolve(ROOT, "schema/protocol.json")).json()) as ProtocolSchema;
+await writeIfChanged("packages/react/src/generated/protocol.ts", genProtocolTs(protocolSchema, schema));
+await writeIfChanged("src/generated/protocol.zig", genProtocolZig(protocolSchema));
+
+const rpcSchema = (await Bun.file(resolve(ROOT, "schema/rpc.json")).json()) as RpcSchema;
+await writeIfChanged("packages/react/src/generated/rpc.ts", genRpcTs(rpcSchema));
+await writeIfChanged("src/generated/rpc.zig", genRpcZig(rpcSchema));
 console.log("codegen complete");

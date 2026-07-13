@@ -8,26 +8,14 @@
 // host's crash overlay shows the real error instead of a bare disconnect.
 
 import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
-
-type Runtime = { name: string; version: string };
-type Op =
-  | { op: "create"; id: number; widget: "Window" | "Box" | "Label" | "Button"; props: Record<string, unknown> }
-  | { op: "append"; parent: number; child: number }
-  | { op: "insertBefore"; parent: number; child: number; before: number | null }
-  | { op: "remove"; id: number }
-  | { op: "setText"; id: number; text: string }
-  | { op: "update"; id: number; props: Record<string, unknown> }
-  | { op: "hide"; id: number }
-  | { op: "unhide"; id: number };
-type CommitBatch = { type: "commitBatch"; commitId: number; generation: number; ops: Op[] };
-type EventMsg = { type: "event"; seq: number; priority: string; nodeId: number; name: string; payload: object };
-type HelloAckMsg = { type: "helloAck"; ndpVersion: number; encodings: string[] };
-type ErrorMsg = { type: "error"; message: string; expected: number; got: number };
-type PongMsg = { type: "pong" };
-type InboundMsg = HelloAckMsg | ErrorMsg | EventMsg | PongMsg;
+// Message shapes are GENERATED from schema/protocol.json (the single source
+// of truth shared with the Zig mirror, src/generated/protocol.zig) — a field
+// rename or type change there regenerates both sides, so drift is a compile
+// error, not a silent wire break.
+import { NDP_VERSION } from "../packages/react/src/generated/protocol";
+import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "../packages/react/src/generated/protocol";
 
 const TRACE = process.env.NDP_TRACE === "1";
-const NDP_VERSION = 1;
 
 export class Ndp {
   private socket: import("bun").Socket;
@@ -109,11 +97,11 @@ export class Ndp {
       const json = new TextDecoder().decode(this.inbox.subarray(4, 4 + len));
       this.inbox = this.inbox.subarray(4 + len);
       if (TRACE) console.error("<< " + json); // host->runtime = received here
-      this.dispatch(JSON.parse(json) as InboundMsg);
+      this.dispatch(JSON.parse(json) as HostToRuntimeMsg);
     }
   }
 
-  private dispatch(msg: InboundMsg): void {
+  private dispatch(msg: HostToRuntimeMsg): void {
     if (msg.type === "helloAck") {
       if (msg.ndpVersion !== NDP_VERSION) throw new Error(`ndp mismatch: host ${msg.ndpVersion}`);
       // Selection rule (spec §2): first host-advertised encoding this runtime

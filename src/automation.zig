@@ -1,55 +1,37 @@
 const std = @import("std");
 const protocol = @import("protocol.zig");
+// Method names, params/result shapes, and error codes are GENERATED from
+// schema/rpc.json (the single source of truth shared with the TS mirror,
+// packages/react/src/generated/rpc.ts) — a method/param/result change there
+// regenerates both sides, so drift is a compile error, not a silent break.
+const rpc = @import("generated/rpc.zig");
 const Tree = @import("tree.zig").Tree;
 const Widget = @import("backend.zig").impl.Widget;
 const abi = @import("abi.zig");
 const abi_backend = @import("abi_backend.zig");
 
-fn paramStr(params: ?std.json.Value, key: []const u8) ?[]const u8 {
-    const v = params orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .string => field.string,
-        else => null,
+/// A typed view over a request's `params` object plus the `std.json.Parsed`
+/// arena that owns its strings/values (kept alive until `deinit`, i.e. for
+/// the whole synchronous dispatch of the method).
+fn ParsedParams(comptime T: type) type {
+    return struct {
+        value: T,
+        parsed: ?std.json.Parsed(T),
+        fn deinit(self: @This()) void {
+            if (self.parsed) |p| p.deinit();
+        }
     };
 }
 
-fn paramInt(params: ?std.json.Value, key: []const u8) ?i64 {
-    const v = params orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .integer => field.integer,
-        else => null,
-    };
-}
-
-fn paramObj(params: ?std.json.Value, key: []const u8) ?std.json.Value {
-    const v = params orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .object => field,
-        else => null,
-    };
-}
-
-fn paramAny(params: ?std.json.Value, key: []const u8) ?std.json.Value {
-    const v = params orelse return null;
-    if (v != .object) return null;
-    return v.object.get(key);
-}
-
-fn paramFloat(params: ?std.json.Value, key: []const u8) ?f64 {
-    const v = params orelse return null;
-    if (v != .object) return null;
-    const field = v.object.get(key) orelse return null;
-    return switch (field) {
-        .float => field.float,
-        .integer => @floatFromInt(field.integer),
-        else => null,
-    };
+/// Decodes `params` into the generated schema/rpc.json param struct. Absent
+/// `params` decodes as the struct's defaults (all-null), so dispatch can
+/// answer each missing required param with the exact "missing params.<x>"
+/// message; a type-mismatched param fails the parse (the caller maps that to
+/// a generic invalid-params error).
+fn parseParams(comptime T: type, gpa: std.mem.Allocator, params: ?std.json.Value) !ParsedParams(T) {
+    const v = params orelse return .{ .value = .{}, .parsed = null };
+    const parsed = try std.json.parseFromValue(T, gpa, v, .{ .ignore_unknown_fields = true });
+    return .{ .value = parsed.value, .parsed = parsed };
 }
 
 /// The kinds of work a `UiJob` can carry.
@@ -163,34 +145,26 @@ fn handleWaitPoll(job: *UiJob) void {
 /// decision — the embedder reports false there for an unmapped widget too).
 fn checkActionable(job: *UiJob) ?*Widget {
     const widget = job.tree.get(job.ref) orelse {
-        job.err_code = -32001;
-        job.err_msg = "not actionable";
+        job.err_code = rpc.code_not_actionable;
+        job.err_msg = rpc.msg_not_actionable;
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{job.ref}) catch null;
         return null;
     };
     if (!abi_backend.vtable.node_visible(abi_backend.ctx, widget)) {
-        job.err_code = -32001;
-        job.err_msg = "not actionable";
+        job.err_code = rpc.code_not_actionable;
+        job.err_msg = rpc.msg_not_actionable;
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"invisible\"}}", .{job.ref}) catch null;
         return null;
     }
     var rect: abi.NdRect = undefined;
     const has_bounds = abi_backend.vtable.node_bounds(abi_backend.ctx, widget, &rect);
     if (!has_bounds or rect.w <= 0 or rect.h <= 0) {
-        job.err_code = -32001;
-        job.err_msg = "not actionable";
+        job.err_code = rpc.code_not_actionable;
+        job.err_msg = rpc.msg_not_actionable;
         job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"offscreen\"}}", .{job.ref}) catch null;
         return null;
     }
     return widget;
-}
-
-/// Sets `job.err_code = -32602` with a `{ref}` data payload — the wrong-
-/// widget-kind / bad-value-type error shape shared by setValue/type/scroll.
-fn jobInvalidParams(job: *UiJob, msg: []const u8) void {
-    job.err_code = -32602;
-    job.err_msg = msg;
-    job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d}}}", .{job.ref}) catch null;
 }
 
 /// `std.json.Stringify.valueAlloc` returns a plain `[]u8` (no sentinel);
@@ -238,14 +212,12 @@ fn handleSemanticAction(job: *UiJob, action: []const u8) void {
         return;
     }
     job.err_code = code;
-    job.err_msg = "not actionable";
+    job.err_msg = rpc.msg_not_actionable;
     if (err_out) |e| {
         job.err_data_json = job.gpa.dupe(u8, std.mem.span(e)) catch null;
         abi.nd_free(e);
     }
 }
-
-const ScreenshotResult = struct { path: []const u8, width: i32, height: i32 };
 
 /// Reads width/height straight from the PNG's IHDR chunk (portable, no GTK):
 /// an 8-byte signature, then a 4-byte chunk length, 4-byte "IHDR" tag, then
@@ -273,52 +245,23 @@ fn readPngDimensions(io: std.Io, path: [:0]const u8) ?struct { w: i32, h: i32 } 
 /// code verbatim; Mac supplies the fidelity-ladder solution in M6b).
 fn handleScreenshot(job: *UiJob) void {
     const path = job.path orelse {
-        job.err_code = -32602;
+        job.err_code = rpc.code_invalid_params;
         job.err_msg = "missing path";
         return;
     };
     if (!abi_backend.vtable.snapshot(abi_backend.ctx, path)) {
-        job.err_code = -32603;
+        job.err_code = rpc.code_internal_error;
         job.err_msg = "failed to save png";
         return;
     }
     const dims = readPngDimensions(job.io, path) orelse {
-        job.err_code = -32603;
+        job.err_code = rpc.code_internal_error;
         job.err_msg = "failed to read png dimensions";
         return;
     };
-    const result = ScreenshotResult{ .path = path, .width = dims.w, .height = dims.h };
+    const result = rpc.ScreenshotResult{ .path = path, .width = dims.w, .height = dims.h };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
-
-/// Owned tree-node JSON shape (matches the RPC surface contract exactly).
-const Geometry = struct { x: i32, y: i32, w: i32, h: i32 };
-
-/// SourceList's per-row shape on the wire (M11 SourceList Wave 1) —
-/// `iconName` here (camelCase, matching the schema prop shape), renamed
-/// from `Tree.NodeMeta.Row`'s `icon_name` (Zig-idiomatic snake_case).
-const RowJson = struct { title: []const u8, badge: ?[]const u8, iconName: ?[]const u8 };
-
-const JsonNode = struct {
-    ref: u32,
-    type: []const u8,
-    testID: ?[]const u8,
-    text: ?[]const u8,
-    visible: bool,
-    geometry: ?Geometry,
-    children: []JsonNode,
-    /// ListView's row count (M5c-D4). Null for every widget that isn't
-    /// data-driven; never derived from walking recycled row widgets.
-    itemCount: ?u32 = null,
-    /// SourceList's ordered row data (M11 SourceList Wave 1). Null for every
-    /// widget that isn't row-driven.
-    rows: ?[]RowJson = null,
-};
-
-const GetTreeResult = struct {
-    coordinateSpace: []const u8 = "logical-window-topleft",
-    root: JsonNode,
-};
 
 /// Builds the nested snapshot on the UI thread. Task 3: child order now
 /// comes from `Tree.childrenOf` — the ordered per-parent sibling list
@@ -329,7 +272,7 @@ const GetTreeResult = struct {
 fn handleGetTree(job: *UiJob) void {
     const tree = job.tree;
     const root_id = tree.rootId() orelse {
-        job.err_code = -32603;
+        job.err_code = rpc.code_internal_error;
         job.err_msg = "no root";
         return;
     };
@@ -363,7 +306,7 @@ fn handleGetTree(job: *UiJob) void {
     std.mem.sort(u32, orphans.items, {}, std.sort.asc(u32));
 
     if (tree.get(root_id) == null) {
-        job.err_code = -32603;
+        job.err_code = rpc.code_internal_error;
         job.err_msg = "root widget missing";
         return;
     }
@@ -376,12 +319,12 @@ fn handleGetTree(job: *UiJob) void {
         root_children.appendSlice(arena, orphans.items) catch {};
         break :id root_children.items;
     }, root_id) catch {
-        job.err_code = -32603;
+        job.err_code = rpc.code_internal_error;
         job.err_msg = "failed to build tree";
         return;
     };
 
-    const result = GetTreeResult{ .root = root_node };
+    const result = rpc.GetTreeResult{ .root = root_node };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
@@ -390,15 +333,15 @@ fn buildNode(
     tree: *Tree,
     ordered_children: []const u32,
     id: u32,
-) !JsonNode {
+) !rpc.JsonNode {
     const meta = tree.metaGet(id);
     const widget_type = if (meta) |m| m.widget_type else "";
     const test_id = if (meta) |m| m.test_id else null;
     const text = if (meta) |m| m.text else null;
     const item_count = if (meta) |m| m.item_count else null;
-    const rows: ?[]RowJson = if (meta) |m| blk: {
+    const rows: ?[]rpc.RowJson = if (meta) |m| blk: {
         const r = m.rows orelse break :blk null;
-        const out = try arena.alloc(RowJson, r.len);
+        const out = try arena.alloc(rpc.RowJson, r.len);
         for (r, 0..) |row, i| {
             out[i] = .{ .title = row.title, .badge = row.badge, .iconName = row.icon_name };
         }
@@ -410,12 +353,12 @@ fn buildNode(
 
     var rect: abi.NdRect = undefined;
     const has_bounds = if (widget) |w| abi_backend.vtable.node_bounds(abi_backend.ctx, w, &rect) else false;
-    const geometry: ?Geometry = if (has_bounds)
+    const geometry: ?rpc.Geometry = if (has_bounds)
         .{ .x = rect.x, .y = rect.y, .w = rect.w, .h = rect.h }
     else
         null;
 
-    var children: std.ArrayList(JsonNode) = .empty;
+    var children: std.ArrayList(rpc.JsonNode) = .empty;
     for (ordered_children) |child_id| {
         const child_node = try buildNode(arena, tree, tree.childrenOf(child_id), child_id);
         try children.append(arena, child_node);
@@ -490,7 +433,8 @@ pub const Server = struct {
         }
     }
 
-    /// Parses `{jsonrpc,id,method,params}`, routes on `method`, and returns an
+    /// Parses `{jsonrpc,id,method,params}`, routes on the generated
+    /// `rpc.Method` enum with generated typed params, and returns an
     /// already-serialized JSON-RPC response envelope (`gpa`-owned).
     fn dispatch(self: *Server, req_bytes: []const u8) ![]u8 {
         const Req = struct {
@@ -499,67 +443,81 @@ pub const Server = struct {
             params: ?std.json.Value = null,
         };
         const parsed = std.json.parseFromSlice(Req, self.gpa, req_bytes, .{ .ignore_unknown_fields = true }) catch {
-            return errorEnvelope(self.gpa, .null, -32700, "parse error", null);
+            return errorEnvelope(self.gpa, .null, rpc.code_parse_error, rpc.msg_parse_error, null);
         };
         defer parsed.deinit();
         const id = parsed.value.id;
-        const method = parsed.value.method;
-        std.debug.print("ND_RPC method={s} id={any}\n", .{ method, id });
+        std.debug.print("ND_RPC method={s} id={any}\n", .{ parsed.value.method, id });
+        const method = rpc.methodFromString(parsed.value.method) orelse {
+            return errorEnvelope(self.gpa, id, rpc.code_method_not_found, rpc.msg_method_not_found, null);
+        };
 
-        if (std.mem.eql(u8, method, "getTree")) {
-            var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io };
-            return self.runJobAndEnvelope(&job, id);
-        }
-
-        if (std.mem.eql(u8, method, "screenshot")) {
-            const path = paramStr(parsed.value.params, "path") orelse {
-                return errorEnvelope(self.gpa, id, -32602, "missing params.path", null);
-            };
-            if (paramInt(parsed.value.params, "window")) |window_ref| {
-                const root_id = self.tree.rootId();
-                if (root_id == null or @as(u32, @intCast(window_ref)) != root_id.?) {
-                    return errorEnvelope(self.gpa, id, -32602, "unknown window ref", null);
+        switch (method) {
+            .getTree => {
+                var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .screenshot => {
+                const p = parseParams(rpc.ScreenshotParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const path = p.value.path orelse {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.path", null);
+                };
+                if (p.value.window) |window_ref| {
+                    const root_id = self.tree.rootId();
+                    if (root_id == null or window_ref != root_id.?) {
+                        return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "unknown window ref", null);
+                    }
                 }
-            }
-            const path_z = self.gpa.dupeZ(u8, path) catch return error.OutOfMemory;
-            defer self.gpa.free(path_z);
-            var job = UiJob{ .tree = self.tree, .kind = .screenshot, .gpa = self.gpa, .io = self.io, .path = path_z };
-            return self.runJobAndEnvelope(&job, id);
+                const path_z = self.gpa.dupeZ(u8, path) catch return error.OutOfMemory;
+                defer self.gpa.free(path_z);
+                var job = UiJob{ .tree = self.tree, .kind = .screenshot, .gpa = self.gpa, .io = self.io, .path = path_z };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .click => {
+                const p = parseParams(rpc.ClickParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const ref = p.value.ref orelse {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.ref", null);
+                };
+                var job = UiJob{ .tree = self.tree, .kind = .click, .gpa = self.gpa, .io = self.io, .ref = ref };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .waitFor => return self.dispatchWaitFor(id, parsed.value.params),
+            .setValue => {
+                const p = parseParams(rpc.SetValueParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const ref = p.value.ref orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.ref", null);
+                const value = p.value.value orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.value", null);
+                var job = UiJob{ .tree = self.tree, .kind = .set_value, .gpa = self.gpa, .io = self.io, .ref = ref, .value = value };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .@"type" => {
+                const p = parseParams(rpc.TypeParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const ref = p.value.ref orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.ref", null);
+                const text = p.value.text orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.text", null);
+                var job = UiJob{ .tree = self.tree, .kind = .type_text, .gpa = self.gpa, .io = self.io, .ref = ref, .text = text };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .scroll => {
+                const p = parseParams(rpc.ScrollParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const ref = p.value.ref orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.ref", null);
+                var job = UiJob{ .tree = self.tree, .kind = .scroll, .gpa = self.gpa, .io = self.io, .ref = ref, .dx = p.value.dx, .dy = p.value.dy };
+                return self.runJobAndEnvelope(&job, id);
+            },
         }
-
-        if (std.mem.eql(u8, method, "click")) {
-            const ref = paramInt(parsed.value.params, "ref") orelse {
-                return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
-            };
-            var job = UiJob{ .tree = self.tree, .kind = .click, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref) };
-            return self.runJobAndEnvelope(&job, id);
-        }
-
-        if (std.mem.eql(u8, method, "waitFor")) {
-            return self.dispatchWaitFor(id, parsed.value.params);
-        }
-
-        if (std.mem.eql(u8, method, "setValue")) {
-            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
-            const value = paramAny(parsed.value.params, "value") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.value", null);
-            var job = UiJob{ .tree = self.tree, .kind = .set_value, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .value = value };
-            return self.runJobAndEnvelope(&job, id);
-        }
-
-        if (std.mem.eql(u8, method, "type")) {
-            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
-            const text = paramStr(parsed.value.params, "text") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.text", null);
-            var job = UiJob{ .tree = self.tree, .kind = .type_text, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .text = text };
-            return self.runJobAndEnvelope(&job, id);
-        }
-
-        if (std.mem.eql(u8, method, "scroll")) {
-            const ref = paramInt(parsed.value.params, "ref") orelse return errorEnvelope(self.gpa, id, -32602, "missing params.ref", null);
-            var job = UiJob{ .tree = self.tree, .kind = .scroll, .gpa = self.gpa, .io = self.io, .ref = @intCast(ref), .dx = paramFloat(parsed.value.params, "dx"), .dy = paramFloat(parsed.value.params, "dy") };
-            return self.runJobAndEnvelope(&job, id);
-        }
-
-        return errorEnvelope(self.gpa, id, -32601, "method not found", null);
     }
 
     /// Polls the tree on the UI thread at ~50ms until the condition holds or
@@ -567,14 +525,18 @@ pub const Server = struct {
     /// (`handleWaitPoll`); the sleep/deadline live here on the automation
     /// thread so tree access stays UI-thread-only.
     fn dispatchWaitFor(self: *Server, id: std.json.Value, params: ?std.json.Value) ![]u8 {
-        const condition = paramObj(params, "condition") orelse {
-            return errorEnvelope(self.gpa, id, -32602, "missing params.condition", null);
+        const p = parseParams(rpc.WaitForParams, self.gpa, params) catch {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
         };
-        const timeout_ms: i64 = paramInt(params, "timeoutMs") orelse 2000;
-        const text_contains = paramStr(condition, "textContains");
-        const ref_visible = paramInt(condition, "refVisible");
+        defer p.deinit();
+        const condition = p.value.condition orelse {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.condition", null);
+        };
+        const timeout_ms: i64 = p.value.timeoutMs;
+        const text_contains = condition.textContains;
+        const ref_visible = condition.refVisible;
         if (text_contains == null and ref_visible == null) {
-            return errorEnvelope(self.gpa, id, -32602, "condition must have textContains or refVisible", null);
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "condition must have textContains or refVisible", null);
         }
 
         const poll_interval_ms = 50;
@@ -587,7 +549,7 @@ pub const Server = struct {
                 .gpa = self.gpa,
                 .io = self.io,
                 .text_contains = text_contains,
-                .ref_visible = if (ref_visible) |r| @intCast(r) else null,
+                .ref_visible = ref_visible,
             };
             runOnUi(&job);
             if (job.matched) {
@@ -597,7 +559,7 @@ pub const Server = struct {
             if (polls >= max_polls) {
                 const data = try std.fmt.allocPrint(self.gpa, "{{\"timeoutMs\":{d}}}", .{timeout_ms});
                 defer self.gpa.free(data);
-                return errorEnvelope(self.gpa, id, -32002, "waitFor timeout", data);
+                return errorEnvelope(self.gpa, id, rpc.code_wait_for_timeout, rpc.msg_wait_for_timeout, data);
             }
             // Sleeps the automation thread only (never the UI thread); `.awake`
             // is the monotonic clock, unaffected by wall-clock adjustments.
@@ -613,7 +575,7 @@ pub const Server = struct {
         if (job.result_json) |result| {
             return resultEnvelope(self.gpa, id, result);
         }
-        return errorEnvelope(self.gpa, id, job.err_code, job.err_msg orelse "internal error", job.err_data_json);
+        return errorEnvelope(self.gpa, id, job.err_code, job.err_msg orelse rpc.msg_internal_error, job.err_data_json);
     }
 };
 

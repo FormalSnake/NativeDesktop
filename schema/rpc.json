@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "transport": "framed JSON-RPC 2.0 (u32 LE length prefix + UTF-8 JSON) over the unix socket at $XDG_RUNTIME_DIR/nd-automation-<host-pid>.sock, gated on NATIVE_AUTOMATION=1",
+  "types": [
+    {
+      "name": "Geometry",
+      "doc": "Logical units (not device pixels), relative to the window's top-left corner (coordinateSpace \"logical-window-topleft\").",
+      "fields": [
+        { "name": "x", "type": "i32" },
+        { "name": "y", "type": "i32" },
+        { "name": "w", "type": "i32" },
+        { "name": "h", "type": "i32" }
+      ]
+    },
+    {
+      "name": "RowJson",
+      "doc": "SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape.",
+      "fields": [
+        { "name": "title", "type": "string" },
+        { "name": "badge", "type": "string", "nullable": true },
+        { "name": "iconName", "type": "string", "nullable": true }
+      ]
+    },
+    {
+      "name": "JsonNode",
+      "doc": "One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "type", "type": "string" },
+        { "name": "testID", "type": "string", "nullable": true },
+        { "name": "text", "type": "string", "nullable": true },
+        { "name": "visible", "type": "bool" },
+        { "name": "geometry", "type": "Geometry", "nullable": true },
+        { "name": "children", "type": "JsonNode", "list": true },
+        { "name": "itemCount", "type": "u32", "nullable": true },
+        { "name": "rows", "type": "RowJson", "list": true, "nullable": true }
+      ]
+    },
+    {
+      "name": "GetTreeResult",
+      "fields": [
+        { "name": "coordinateSpace", "type": "string", "default": "logical-window-topleft" },
+        { "name": "root", "type": "JsonNode" }
+      ]
+    },
+    {
+      "name": "ScreenshotResult",
+      "fields": [
+        { "name": "path", "type": "string" },
+        { "name": "width", "type": "i32" },
+        { "name": "height", "type": "i32" }
+      ]
+    },
+    {
+      "name": "ClickResult",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "dispatched", "type": "bool" }
+      ]
+    },
+    {
+      "name": "WaitForResult",
+      "fields": [{ "name": "matched", "type": "bool" }]
+    },
+    {
+      "name": "SetValueResult",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "applied", "type": "bool" }
+      ]
+    },
+    {
+      "name": "TypeResult",
+      "doc": "text is the full text after the insert.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "text", "type": "string" }
+      ]
+    },
+    {
+      "name": "ScrollResult",
+      "doc": "x/y are the resulting adjustment values.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "x", "type": "f64" },
+        { "name": "y", "type": "f64" }
+      ]
+    },
+    {
+      "name": "WaitCondition",
+      "doc": "Exactly one of textContains / refVisible must be set.",
+      "fields": [
+        { "name": "textContains", "type": "string", "optional": true },
+        { "name": "refVisible", "type": "u32", "optional": true }
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "name": "getTree",
+      "doc": "Full tree snapshot with stable refs, testIDs, text, and logical geometry.",
+      "params": [],
+      "result": "GetTreeResult"
+    },
+    {
+      "name": "screenshot",
+      "doc": "In-process render of the window to a PNG at the given absolute path; window (if given) must match the root ref.",
+      "params": [
+        { "name": "path", "type": "string" },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "ScreenshotResult"
+    },
+    {
+      "name": "click",
+      "doc": "Actionability-checked semantic click; emits clicked exactly like real user input.",
+      "params": [{ "name": "ref", "type": "u32" }],
+      "result": "ClickResult"
+    },
+    {
+      "name": "waitFor",
+      "doc": "Polls the tree at ~50ms until the condition holds or timeoutMs elapses.",
+      "params": [
+        { "name": "condition", "type": "WaitCondition" },
+        { "name": "timeoutMs", "type": "i64", "default": 2000 }
+      ],
+      "result": "WaitForResult"
+    },
+    {
+      "name": "setValue",
+      "doc": "Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index.",
+      "params": [
+        { "name": "ref", "type": "u32" },
+        { "name": "value", "type": "any" }
+      ],
+      "result": "SetValueResult"
+    },
+    {
+      "name": "type",
+      "doc": "TextInput only; semantic append via GtkEditable.insertText, never synthetic keysyms.",
+      "params": [
+        { "name": "ref", "type": "u32" },
+        { "name": "text", "type": "string" }
+      ],
+      "result": "TypeResult"
+    },
+    {
+      "name": "scroll",
+      "doc": "ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy.",
+      "params": [
+        { "name": "ref", "type": "u32" },
+        { "name": "dx", "type": "f64", "optional": true },
+        { "name": "dy", "type": "f64", "optional": true }
+      ],
+      "result": "ScrollResult"
+    }
+  ],
+  "errors": [
+    { "name": "notActionable", "code": -32001, "message": "not actionable", "doc": "data: {ref, reason: \"unknown\" | \"invisible\" | \"unmapped\" | \"offscreen\"}" },
+    { "name": "waitForTimeout", "code": -32002, "message": "waitFor timeout", "doc": "data: {timeoutMs}" },
+    { "name": "methodNotFound", "code": -32601, "message": "method not found" },
+    { "name": "invalidParams", "code": -32602, "message": "invalid params", "doc": "data: {ref} where applicable; message may carry the specific missing/invalid param" },
+    { "name": "internalError", "code": -32603, "message": "internal error" },
+    { "name": "parseError", "code": -32700, "message": "parse error" }
+  ]
+}
