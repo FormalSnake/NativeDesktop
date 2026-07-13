@@ -267,6 +267,24 @@ private struct NDTypography {
 }
 nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypography] = [:]
 
+/// Box views (`NSStackView`) carrying the `navigation-sidebar` structural
+/// class. Their child buttons render as native source-list rows on the Mac
+/// (uniform height, borderless, accent selection pill) instead of a stack of
+/// generic push buttons — see `ndPromoteSidebarRow` and the sidebar-row
+/// branches in `ndApplyCssClasses`. Set-replace like `ndNodeTypography`:
+/// inserted when the class is present, removed when it drops. NOT private —
+/// read from `ndBoxChildAttached` (Layout.swift) at child-attach time. Same
+/// accepted leak profile as `ndLayoutFlags` (bounded by live widget count).
+nonisolated(unsafe) var ndNavigationSidebars: Set<ObjectIdentifier> = []
+
+/// Box views (`NSStackView`) carrying the `boxed-list` structural class. They
+/// render as iOS-style grouped inset cards on the Mac (a rounded, elevated
+/// rounded-rect over the pane) and their `<separator>` children become inset
+/// hairline row dividers — see `ndApplyBoxedListCard` / `ndStyleBoxedListDivider`.
+/// Set-replace and NOT private for the same reasons as `ndNavigationSidebars`
+/// (read from `ndBoxChildAttached` in Layout.swift).
+nonisolated(unsafe) var ndBoxedLists: Set<ObjectIdentifier> = []
+
 /// `ndApplyCssClasses` (Task 6 — a real semantic mapping, not a no-op): maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
 /// properties. Every color used is a dynamic system color
@@ -286,29 +304,51 @@ nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypograph
 /// `ndRecomputeTypography`, which also layers in any standing `style` font/
 /// color (see that function's doc comment for the full cascade order).
 ///
-/// Structural classes (`navigation-sidebar`, `card`, `view`, `toolbar`,
-/// `boxed-list`, `osd`, ...) are silently ignored — those roles come from
-/// the SplitView/HeaderBar widgets themselves on the Mac (later M11 tasks),
-/// not from class strings.
+/// Most structural classes (`card`, `view`, `toolbar`, `boxed-list`, `osd`,
+/// ...) are silently ignored — those roles come from the SplitView/HeaderBar
+/// widgets themselves on the Mac, not from class strings. `navigation-sidebar`
+/// is the exception: it's recorded into `ndNavigationSidebars` and turns its
+/// child buttons into native source-list rows (uniform height, borderless,
+/// accent selection pill) via `ndPromoteSidebarRow` and the sidebar-row
+/// branches below — the box-of-flat-buttons sidebar the app declares thus
+/// renders natively on both backends without any per-platform app code.
 func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // Set-replace, not additive (mirrors GTK's applyCssClasses, which removes
     // every allowlist class not in `value`): reset the button properties the
     // switch below can touch to their baseline FIRST, so a class dropped from
     // the list actually clears its effect.
     if let btn = view as? NSButton {
-        btn.bezelColor = nil
-        btn.keyEquivalent = ""
-        btn.hasDestructiveAction = false
-        btn.isBordered = true
-        btn.showsBorderOnlyWhileMouseInside = false
+        if let row = btn as? NDButton, row.ndIsSidebarRow {
+            // Sidebar-row baseline: a borderless source-list row. Clear the
+            // default-button idioms (bezelColor/keyEquivalent) and any standing
+            // selection pill; the `suggested-action` arm below re-adds the pill
+            // if this row is the selected one.
+            row.bezelColor = nil
+            row.keyEquivalent = ""
+            row.hasDestructiveAction = false
+            ndEnsureSidebarRowMetrics(row)
+            ndApplySidebarRowSelection(row, selected: false)
+        } else {
+            btn.bezelColor = nil
+            btn.keyEquivalent = ""
+            btn.hasDestructiveAction = false
+            btn.isBordered = true
+            btn.showsBorderOnlyWhileMouseInside = false
+        }
     }
 
     for cls in classes {
         switch cls {
         case "suggested-action":
             guard let btn = view as? NSButton else { continue }
-            btn.bezelColor = .controlAccentColor
-            btn.keyEquivalent = "\r"
+            if let row = btn as? NDButton, row.ndIsSidebarRow {
+                // Selected source-list row: an accent pill, NOT the
+                // default-button bezel/keyEquivalent idiom.
+                ndApplySidebarRowSelection(row, selected: true)
+            } else {
+                btn.bezelColor = .controlAccentColor
+                btn.keyEquivalent = "\r"
+            }
         case "destructive-action":
             guard let btn = view as? NSButton else { continue }
             btn.bezelColor = .systemRed
@@ -318,14 +358,53 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             break
         case "flat":
             guard let btn = view as? NSButton else { continue }
+            // A sidebar row is already a borderless source-list row — `flat`
+            // adds nothing and must not turn on the hover-border behavior.
+            if let row = btn as? NDButton, row.ndIsSidebarRow { break }
             btn.isBordered = false
             btn.showsBorderOnlyWhileMouseInside = true
         default:
             // Typography classes are handled by ndRecomputeTypography below,
-            // not this switch. navigation-sidebar, card, view, toolbar,
-            // boxed-list, osd, ...: structural roles owned by the
+            // not this switch. `navigation-sidebar`/`boxed-list` are structural
+            // and handled in the NSStackView blocks after this loop. The rest
+            // (card, view, toolbar, osd, ...) are roles owned by the
             // SplitView/HeaderBar widgets on the Mac — silently ignored here.
             break
+        }
+    }
+
+    // Record the `navigation-sidebar` structural class (set-replace), then
+    // promote any child buttons that already attached before the class landed
+    // — the parent's style/classes and the child appends can arrive in either
+    // order on create (see Layout.swift's header comment).
+    if let stack = view as? NSStackView {
+        let id = ObjectIdentifier(stack)
+        if classes.contains("navigation-sidebar") {
+            ndNavigationSidebars.insert(id)
+            for sub in stack.arrangedSubviews {
+                if let btn = sub as? NDButton { ndPromoteSidebarRow(btn) }
+            }
+        } else {
+            ndNavigationSidebars.remove(id)
+        }
+    }
+
+    // Record `boxed-list` (set-replace) and apply the grouped-card treatment,
+    // retro-styling any `<separator>` children that already attached before
+    // the class landed (either create order — see Layout.swift's header).
+    if let stack = view as? NSStackView {
+        let id = ObjectIdentifier(stack)
+        if classes.contains("boxed-list") {
+            ndBoxedLists.insert(id)
+            ndApplyBoxedListCard(stack, enabled: true)
+            for sub in stack.arrangedSubviews {
+                if let sep = sub as? NSBox { ndStyleBoxedListDivider(sep, in: stack) }
+            }
+        } else if ndBoxedLists.remove(id) != nil {
+            ndApplyBoxedListCard(stack, enabled: false)
+            for sub in stack.arrangedSubviews {
+                if let sep = sub as? NSBox { ndUnstyleBoxedListDivider(sep, in: stack) }
+            }
         }
     }
 
@@ -333,6 +412,157 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     typography.classes = classes
     ndNodeTypography[ObjectIdentifier(view)] = typography
     ndRecomputeTypography(view)
+}
+
+/// Marks `btn` a source-list row and replays its standing `cssClasses` so the
+/// accent selection pill (not the generic default-button bezel) is applied now
+/// that sidebar-row-ness is known. Called from `ndBoxChildAttached`
+/// (Layout.swift) when the button attaches to a `navigation-sidebar` stack,
+/// and from the retro-apply loop above when the class lands after children
+/// already attached. Idempotent — a no-op once the button is already a row.
+func ndPromoteSidebarRow(_ btn: NDButton) {
+    guard !btn.ndIsSidebarRow else { return }
+    btn.ndIsSidebarRow = true
+    ndApplyCssClasses(btn, ndNodeTypography[ObjectIdentifier(btn)]?.classes ?? [])
+}
+
+/// One-time source-list metrics for a sidebar row: borderless, a uniform
+/// native row height (source-list metrics), and the 13pt system font.
+/// Left alignment comes from the button's own `labelAlign` (Widgets.swift).
+/// Idempotent — the height constraint is installed only once.
+func ndEnsureSidebarRowMetrics(_ btn: NDButton) {
+    btn.isBordered = false
+    btn.font = .systemFont(ofSize: NSFont.systemFontSize)
+    if btn.ndHeightConstraint == nil {
+        let c = btn.heightAnchor.constraint(equalToConstant: 28)
+        c.priority = NSLayoutConstraint.Priority(999)
+        c.isActive = true
+        btn.ndHeightConstraint = c
+    }
+}
+
+/// Source-list selection pill for a sidebar row (set-replace, mirroring the
+/// bezel baseline in `ndApplyCssClasses`). Records the selected flag, (re)wires
+/// the window key-state observers, then paints via `ndRefreshSidebarRowSelection`
+/// — the actual colors are focus-responsive, so the paint lives there and is
+/// replayed on every key/resign-key transition too.
+func ndApplySidebarRowSelection(_ btn: NDButton, selected: Bool) {
+    btn.ndIsSelectedRow = selected
+    ndUpdateSidebarRowKeyObservers(btn)
+    ndRefreshSidebarRowSelection(btn)
+}
+
+/// Paints the selection pill for the row's current selected + window-key state
+/// — native source-list behavior: accent fill + white label when the window is
+/// key, the neutral `unemphasizedSelectedContentBackgroundColor` gray +
+/// `.labelColor` when it isn't; nothing when the row is unselected. Colors are
+/// resolved for the button's current appearance so dark mode stays correct
+/// without a hardcoded hex. Called on selection change AND from the row's
+/// window key/resign-key notifications and `viewDidMoveToWindow`.
+func ndRefreshSidebarRowSelection(_ btn: NDButton) {
+    btn.wantsLayer = true
+    btn.layer?.cornerRadius = 6
+    guard btn.ndIsSelectedRow else {
+        btn.layer?.backgroundColor = nil
+        ndApplySidebarRowTitle(btn, color: .labelColor)
+        return
+    }
+    let key = btn.window?.isKeyWindow ?? false
+    btn.effectiveAppearance.performAsCurrentDrawingAppearance {
+        btn.layer?.backgroundColor = (key ? NSColor.controlAccentColor
+                                          : NSColor.unemphasizedSelectedContentBackgroundColor).cgColor
+    }
+    ndApplySidebarRowTitle(btn, color: key ? .white : .labelColor)
+}
+
+/// (Re)registers `btn` for its window's key/resign-key notifications when it's
+/// the selected row, and clears any prior registration first (a row can change
+/// windows or lose selection). Only the selected row needs to react to focus.
+func ndUpdateSidebarRowKeyObservers(_ btn: NDButton) {
+    let nc = NotificationCenter.default
+    nc.removeObserver(btn, name: NSWindow.didBecomeKeyNotification, object: nil)
+    nc.removeObserver(btn, name: NSWindow.didResignKeyNotification, object: nil)
+    guard btn.ndIsSelectedRow, let win = btn.window else { return }
+    nc.addObserver(btn, selector: #selector(NDButton.ndWindowKeyStateChanged(_:)),
+                   name: NSWindow.didBecomeKeyNotification, object: win)
+    nc.addObserver(btn, selector: #selector(NDButton.ndWindowKeyStateChanged(_:)),
+                   name: NSWindow.didResignKeyNotification, object: win)
+}
+
+/// Native source-list leading/trailing text inset for a sidebar row, folded
+/// into the title's paragraph style rather than padding (sidebar rows ignore
+/// the app's per-row padding). A left-aligned borderless NSButton hugs its
+/// left edge no matter how wide `intrinsicContentSize` is — the slack goes to
+/// the right — so widening can't inset the text; `firstLineHeadIndent`/
+/// `headIndent` do it, with a matching negative `tailIndent` for symmetry. The
+/// selected-white / unselected-`.labelColor` color travels in the same
+/// attributed title so both survive `ndRecomputeTypography` (a no-op for
+/// buttons).
+func ndApplySidebarRowTitle(_ btn: NDButton, color: NSColor) {
+    let inset: CGFloat = 10
+    let para = NSMutableParagraphStyle()
+    para.alignment = .left
+    para.firstLineHeadIndent = inset
+    para.headIndent = inset
+    para.tailIndent = -inset
+    let attributed = NSMutableAttributedString(string: btn.title)
+    attributed.addAttributes([.foregroundColor: color, .paragraphStyle: para],
+                             range: NSRange(location: 0, length: attributed.length))
+    btn.attributedTitle = attributed
+}
+
+/// Grouped-card treatment for a `boxed-list` box: a rounded rounded-rect with
+/// a soft drop shadow that reads as raised over the pane, and NO drawn outline
+/// (real System Settings cards have no border). `enabled` false clears it
+/// (set-replace when the class drops). The shadow is what carries the elevation
+/// in light mode — there the pane is pure white and the card fill is white too,
+/// so fill contrast alone can't lift it (in dark mode the fill IS distinctly
+/// lighter, and the shadow just adds a little depth). `ndApplyStyle`'s
+/// background/border set-replace is guarded off for boxed-list boxes so a
+/// per-render `style` re-apply can't wipe this fill (same discipline as the
+/// pill).
+func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
+    box.wantsLayer = true
+    guard enabled else {
+        box.layer?.backgroundColor = nil
+        box.layer?.borderWidth = 0
+        box.layer?.borderColor = nil
+        box.layer?.cornerRadius = 0
+        box.layer?.shadowOpacity = 0
+        return
+    }
+    box.layer?.cornerRadius = 10
+    // masksToBounds must stay false (the default) for the shadow to draw
+    // outside the card's bounds; the rounded fill still clips visually because
+    // backgroundColor + cornerRadius rounds on its own.
+    box.layer?.shadowColor = NSColor.black.cgColor
+    box.layer?.shadowOpacity = 0.18
+    box.layer?.shadowRadius = 5
+    // NSStackView's layer is not flipped (y-up), so a negative height casts the
+    // shadow visually downward.
+    box.layer?.shadowOffset = CGSize(width: 0, height: -1)
+    let dark = box.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    // Light mode: pane and card are both white, so a hairline separator border
+    // defines the card's edge (the shadow alone is too faint on white-on-white).
+    // Dark mode: the fill is distinctly lighter than the pane, so no outline is
+    // needed (and a border there reads heavy) — matches System Settings.
+    box.layer?.borderWidth = dark ? 0 : 1
+    box.effectiveAppearance.performAsCurrentDrawingAppearance {
+        box.layer?.backgroundColor = ndBoxedListCardFill(box.effectiveAppearance).cgColor
+        box.layer?.borderColor = dark ? nil : NSColor.separatorColor.cgColor
+    }
+}
+
+/// The card fill. In dark mode the semantic panel colors (`controlBackground`
+/// et al.) resolve DARKER than this split's pane, so they'd read recessed;
+/// instead a translucent white lift composites over the dark pane to a
+/// distinctly lighter gray. In light mode the pane is white, so the opaque
+/// control background (white) is the card and the drop shadow does the lifting
+/// — matching System Settings' white grouped cards. Both are dynamic system
+/// colors (white + `controlBackgroundColor`), no hex.
+private func ndBoxedListCardFill(_ appearance: NSAppearance) -> NSColor {
+    let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    return dark ? NSColor.white.withAlphaComponent(0.09) : NSColor.controlBackgroundColor
 }
 
 /// Recomputes the full per-node typography cascade for `view`'s text target
@@ -466,11 +696,22 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     // class typography behind, and a cssClasses-only update no longer wipes
     // a standing style font (see `ndRecomputeTypography`'s doc comment for
     // the full cascade order).
-    if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
-        view.wantsLayer = true
-        view.layer?.backgroundColor = color.cgColor
-    } else if let layer = view.layer {
-        layer.backgroundColor = nil
+    // A sidebar row's `layer.backgroundColor`/`cornerRadius` are the source-
+    // list selection pill, and a `boxed-list` box's are its grouped-card fill
+    // — both owned by the structural-class code, NOT the `background`/`border`
+    // style keys. The example re-passes a fresh `style` literal every render,
+    // so this function runs on every re-selection and its set-replace baselines
+    // would otherwise wipe those layers. Neither carries app background/border,
+    // so skipping the two blocks for them is safe.
+    let ownsLayerTreatment = (view as? NDButton)?.ndIsSidebarRow == true
+        || ((view as? NSStackView).map { ndBoxedLists.contains(ObjectIdentifier($0)) } ?? false)
+    if !ownsLayerTreatment {
+        if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
+            view.wantsLayer = true
+            view.layer?.backgroundColor = color.cgColor
+        } else if let layer = view.layer {
+            layer.backgroundColor = nil
+        }
     }
     var typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
     typography.fontObj = style["font"] as? [String: Any]
@@ -481,15 +722,17 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     let borderWidth = (borderObj?["borderWidth"] as? NSNumber)?.doubleValue ?? 0
     let borderColor = (borderObj?["borderColor"] as? String).flatMap { nsColor(fromHexOrName: $0) }
     let borderRadius = (borderObj?["borderRadius"] as? NSNumber)?.doubleValue ?? 0
-    if borderWidth != 0 || borderColor != nil || borderRadius != 0 {
-        view.wantsLayer = true
-        view.layer?.borderWidth = CGFloat(borderWidth)
-        view.layer?.borderColor = borderColor?.cgColor
-        view.layer?.cornerRadius = CGFloat(borderRadius)
-    } else if let layer = view.layer {
-        layer.borderWidth = 0
-        layer.borderColor = nil
-        layer.cornerRadius = 0
+    if !ownsLayerTreatment {
+        if borderWidth != 0 || borderColor != nil || borderRadius != 0 {
+            view.wantsLayer = true
+            view.layer?.borderWidth = CGFloat(borderWidth)
+            view.layer?.borderColor = borderColor?.cgColor
+            view.layer?.cornerRadius = CGFloat(borderRadius)
+        } else if let layer = view.layer {
+            layer.borderWidth = 0
+            layer.borderColor = nil
+            layer.cornerRadius = 0
+        }
     }
     // NSEdgeInsets() (all-zero) is the baseline when `padding` drops out of
     // the style object, so this always runs. (Aside: NDButton's ndPadding

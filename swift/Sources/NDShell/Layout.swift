@@ -34,9 +34,45 @@ nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLay
 /// non-zero padding switches to it — a real AppKit bezel style change, not a
 /// layer hack.
 final class NDButton: NSButton {
+    /// True once this button belongs to a `navigation-sidebar` box — it then
+    /// renders as a native source-list row (uniform height, borderless, accent
+    /// selection pill) rather than a generic push button. Set by
+    /// `ndPromoteSidebarRow` (Backend.swift). A sidebar row owns its metrics,
+    /// so it opts out of the padding-driven bezel switch and height inflation
+    /// below.
+    var ndIsSidebarRow = false {
+        didSet { invalidateIntrinsicContentSize() }
+    }
+    /// The uniform source-list row-height constraint, installed once by
+    /// `ndEnsureSidebarRowMetrics` (tracked so re-apply doesn't duplicate it).
+    var ndHeightConstraint: NSLayoutConstraint?
+    /// True while this row is the selected one (carries `suggested-action`).
+    /// Drives the focus-responsive selection pill: accent + white text when
+    /// the window is key, neutral gray + `.labelColor` when it isn't (native
+    /// source-list behavior). Managed by `ndApplySidebarRowSelection`.
+    var ndIsSelectedRow = false
+
+    /// Re-registers window key-state observers for the new window and
+    /// re-resolves the selection appearance — a selected row painted while its
+    /// window wasn't yet key (construction time) flips to accent here once it
+    /// lands in a now-key window.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard ndIsSidebarRow else { return }
+        ndUpdateSidebarRowKeyObservers(self)
+        ndRefreshSidebarRowSelection(self)
+    }
+
+    @objc func ndWindowKeyStateChanged(_ note: Notification) {
+        ndRefreshSidebarRowSelection(self)
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
     var ndPadding = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) {
         didSet {
             invalidateIntrinsicContentSize()
+            guard !ndIsSidebarRow else { return }
             let nonzero = ndPadding.top != 0 || ndPadding.left != 0 || ndPadding.bottom != 0 || ndPadding.right != 0
             if nonzero && bezelStyle == .rounded {
                 if #available(macOS 14.0, *) {
@@ -48,6 +84,9 @@ final class NDButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
+        // Sidebar rows ignore the app's per-row padding — the framework owns
+        // the source-list row metrics (see `ndEnsureSidebarRowMetrics`).
+        if ndIsSidebarRow { return s }
         return NSSize(width: s.width + ndPadding.left + ndPadding.right, height: s.height + ndPadding.top + ndPadding.bottom)
     }
 }
@@ -216,6 +255,70 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
         FileHandle.standardError.write(
             "ND_WARN halign/valign \"\(align)\" is not a recognized alignment value (expected fill/start/center/end)\n".data(using: .utf8)!)
     }
+
+    // A button attaching to a `navigation-sidebar` box becomes a source-list
+    // row. Style is applied to a node BEFORE it appends on create (see this
+    // file's header comment), so the button's own `suggested-action`/`flat`
+    // class ran through the generic bezel path already — promoting here (and
+    // in ndApplyCssClasses's retro-apply loop) re-runs it sidebar-aware.
+    if let btn = child as? NDButton, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
+        ndPromoteSidebarRow(btn)
+    }
+
+    // A separator inside a `boxed-list` card renders as an inset hairline row
+    // divider (vs a standalone separator's full-bleed line). Same both-orders
+    // rationale as the sidebar promote above.
+    if let sep = child as? NSBox, ndBoxedLists.contains(ObjectIdentifier(stack)) {
+        ndStyleBoxedListDivider(sep, in: stack)
+    }
+}
+
+/// The leading/trailing inset pins installed on a `boxed-list` separator (see
+/// `ndStyleBoxedListDivider`), tracked so a reconcile (padding change) or a
+/// class drop can replace/deactivate them rather than stacking duplicates.
+nonisolated(unsafe) private var ndBoxedListDividerPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+
+/// Turns a `boxed-list` separator into a faint, leading-inset hairline row
+/// divider (vs a standalone separator's full-bleed system line): a 1pt
+/// `.separatorColor` fill, inset ~12pt on the leading edge (under the row
+/// text) and flush to the trailing card edge. Uses a `.custom` NSBox so the
+/// line is a true hairline — `NSBox.fillColor` takes the dynamic
+/// `.separatorColor` directly, so it tracks dark mode without a CALayer color.
+/// Replaces the default cross-axis fill constraint with fully-pinned
+/// leading/trailing + a 1pt height (both edges pinned fully determine the
+/// width, so no ballooning). Idempotent: re-pins on reconcile.
+func ndStyleBoxedListDivider(_ sep: NSBox, in stack: NSStackView) {
+    let id = ObjectIdentifier(sep)
+    sep.boxType = .custom
+    sep.borderWidth = 0
+    sep.borderColor = .clear
+    sep.fillColor = .separatorColor
+    sep.titlePosition = .noTitle
+    sep.contentViewMargins = .zero
+
+    if let fill = ndCrossAxisConstraints[id] {
+        fill.isActive = false
+        ndCrossAxisConstraints[id] = nil
+    }
+    for pin in ndBoxedListDividerPins[id] ?? [] { pin.isActive = false }
+    let lead = sep.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: stack.edgeInsets.left + 12)
+    let trail = sep.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -stack.edgeInsets.right)
+    let height = sep.heightAnchor.constraint(equalToConstant: 1)
+    for c in [lead, trail, height] { c.priority = NSLayoutConstraint.Priority(999) }
+    NSLayoutConstraint.activate([lead, trail, height])
+    ndBoxedListDividerPins[id] = [lead, trail, height]
+}
+
+/// Restores a separator to a full-bleed system line when its box drops
+/// `boxed-list` (set-replace) — reverts the box type and lets
+/// `ndBoxChildAttached` reinstall the default fill constraint.
+func ndUnstyleBoxedListDivider(_ sep: NSBox, in stack: NSStackView) {
+    let id = ObjectIdentifier(sep)
+    for pin in ndBoxedListDividerPins[id] ?? [] { pin.isActive = false }
+    ndBoxedListDividerPins[id] = nil
+    sep.boxType = .separator
+    sep.fillColor = .clear
+    ndBoxChildAttached(stack, sep)
 }
 
 /// Undoes `ndBoxChildAttached`'s cross-axis constraint and, if no remaining
