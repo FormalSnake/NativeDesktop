@@ -116,6 +116,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value)
     generated.applyProps(widget, kind, props, &dupeZ);
 }
 
+pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
+    if (!isRealWidget(widget)) return; // menu node: commands target real widgets only
+    generated.widgetCommand(widget, kind, command, arg);
+}
+
 pub fn initStyle(sink_err: style.StyleErrorFn) void {
     style.init(arena, sink_err);
 }
@@ -221,6 +226,12 @@ fn vtApplyStyle(_: *abi.NdContext, widget: ?*anyopaque, node_id: u32, style_json
 
 fn vtConnectEvents(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, node_id: u32) callconv(.c) void {
     connectEvents(@ptrCast(@alignCast(widget)), std.mem.span(kind), node_id);
+}
+
+fn vtWidgetCommand(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, command: [*:0]const u8, arg_json: [*:0]const u8) callconv(.c) void {
+    const parsed = parseJson(arg_json);
+    const arg: ?std.json.Value = if (parsed) |p| p.value else null;
+    widgetCommand(@ptrCast(@alignCast(widget)), std.mem.span(kind), std.mem.span(command), arg);
 }
 
 fn vtHasParent(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
@@ -643,5 +654,6 @@ pub fn ndBackend() abi.NdBackend {
         .node_bounds = &vtNodeBounds,
         .snapshot = &vtSnapshot,
         .semantic_action = &vtSemanticAction,
+        .widget_command = &vtWidgetCommand,
     };
 }

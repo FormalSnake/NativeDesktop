@@ -5,7 +5,9 @@ description: What NativeDesktop is, why it exists, and the principles it holds t
 
 NativeDesktop is a cross-platform desktop framework where you write **React 19 in TypeScript** and
 get **real native widgets** back — GTK4/libadwaita on Linux today, AppKit on macOS today, Win32 on
-Windows planned. There is no embedded browser on the UI path: no DOM, no WebView, no Electron.
+Windows planned. There is no embedded browser on the UI path: no DOM, no Electron. (Apps that
+need to show web content get a `<webview>` widget backed by the platform's own engine —
+WKWebView on macOS, WebKitGTK on Linux — while the UI around it stays native.)
 
 ## Two processes, one protocol
 

@@ -105,6 +105,16 @@ pub fn connectEvents(widget: *Widget, kind: []const u8, node_id: u32) void {
     vtable.connect_events(ctx, widget, kz, node_id);
 }
 
+pub fn widgetCommand(widget: *Widget, kind: []const u8, command: []const u8, arg: std.json.Value) void {
+    const kz = dupeZ(kind);
+    defer gpa.free(kz);
+    const cz = dupeZ(command);
+    defer gpa.free(cz);
+    const az = allocZFromValue(arg);
+    defer gpa.free(az);
+    vtable.widget_command(ctx, widget, kz, cz, az);
+}
+
 pub fn hasParent(widget: *Widget) bool {
     return vtable.has_parent(ctx, widget);
 }

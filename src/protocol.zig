@@ -23,6 +23,7 @@ pub const Pong = frames.Pong;
 pub const RuntimeError = frames.RuntimeError;
 pub const PluginCommand = frames.PluginCommand;
 pub const PluginResult = frames.PluginResult;
+pub const WidgetCommand = frames.WidgetCommand;
 
 /// Container attach metadata, extracted host-side from a child's create-op
 /// props (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel — the

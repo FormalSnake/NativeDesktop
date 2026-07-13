@@ -170,6 +170,13 @@ export class Ndp {
     if (wasEmpty) this.pump(this.socket);
   }
 
+  /// Imperative command on a live widget node (widgetCommand frame, M14 —
+  /// e.g. WebView goBack/reload). Rides the same FIFO outbox as commits, so
+  /// a command sent after a commit is applied after that commit host-side.
+  sendWidgetCommand(nodeId: number, command: string, arg: unknown = null): void {
+    this.send({ type: "widgetCommand", nodeId, command, arg });
+  }
+
   onEvent(cb: (e: EventMsg) => void): void {
     this.eventCb = cb;
   }

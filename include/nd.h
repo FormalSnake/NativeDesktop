@@ -53,6 +53,12 @@ typedef struct nd_backend {
   int32_t (*semantic_action)(nd_context*, nd_widget, uint32_t node_id,
                              const char* action, const char* arg_json,
                              char** result_json_out, char** err_json_out);
+
+  /* app -> widget imperative command (M14, widgetCommand NDP frame): `command`
+     is one of the widget's schema-declared commands (widgets.json commands[]),
+     `arg_json` its JSON argument (or "null"). Arrives on the UI thread. */
+  void (*widget_command)(nd_context*, nd_widget, const char* kind,
+                         const char* command, const char* arg_json);
 } nd_backend;
 
 /* lifecycle */

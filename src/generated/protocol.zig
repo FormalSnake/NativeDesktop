@@ -14,7 +14,8 @@ pub const Runtime = struct {
 };
 
 /// Typed event payload. Exactly one field is set per event name (see widgets.json
-/// events[].payload): changed/activate -> text, toggled -> checked, valueChanged -> value,
+/// events[].payload): changed/activate/navigate/titleChanged -> text,
+/// toggled/loadingChanged/backAvailable/forwardAvailable -> checked, valueChanged -> value,
 /// selectionChanged -> index, clicked -> none, styleError -> key (the offending style key,
 /// M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as
 /// "payload":{} — byte-compatible with M4.
@@ -108,5 +109,16 @@ pub const PluginCommand = struct {
 pub const PluginResult = struct {
     type: []const u8 = "pluginResult",
     result: std.json.Value = .null,
+};
+
+/// Imperative command on a live widget node (M14 WebView: goBack/goForward/reload/stop).
+/// `command` must be one of the node's widget's schema-declared commands (widgets.json
+/// commands[]); unknown commands are dropped host-side with ND_WARN. Ordered on the same socket
+/// as commitBatch, so a command sent after a commit always sees that commit applied.
+pub const WidgetCommand = struct {
+    type: []const u8 = "widgetCommand",
+    nodeId: u32,
+    command: []const u8,
+    arg: std.json.Value = .null,
 };
 

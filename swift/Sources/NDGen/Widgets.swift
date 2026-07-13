@@ -73,6 +73,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         default: break
         }
         return b
+    } else if kind == "Terminal" {
+        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? 13, cols: propInt(props, "cols") ?? 80, rows: propInt(props, "rows") ?? 24)
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { field.placeholderString = ph }
@@ -176,9 +178,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ListView" {
         return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)
     } else if kind == "WebView" {
-        FileHandle.standardError.write("ND_WARN WebView is a v1 stub (no WKWebView); rendering placeholder label\n".data(using: .utf8)!)
-        let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")
-        return placeholder
+        return NDWebView(url: propStr(props, "url"))  // WKWebView subclass (M14, NDShell/NDWebView.swift)
     } else if kind == "SplitView" {
         let controller = NSSplitViewController()
         controller.splitView.isVertical = true
@@ -197,6 +197,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "HeaderBar" {
         let bar = NDHeaderBarView()
         bar.ndTitle = propStr(props, "title") ?? ""
+        ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         return bar
     } else if kind == "ToolbarView" {
         return NDToolbarPaneView()
@@ -295,10 +296,16 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let idx = propInt(props, "selectedIndex") {
             ndListViewSetSelectedIndex(view, idx)  // NDGen/ListView.swift (T3, hand-written)
         }
+    } else if kind == "WebView" {
+        if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }
     } else if kind == "SplitView" {
         if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,
            let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {
             sidebarItem.isCollapsed = c
+        }
+    } else if kind == "HeaderBar" {
+        if let bar = view as? NDHeaderBarView {
+            ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         }
     } else if kind == "SearchInput" {
         if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {
@@ -337,6 +344,10 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "valueChanged", payload: .value, action: #selector(EventDispatcher.fireValue(_:)))
     } else if kind == "ListView" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
+    } else if kind == "WebView" {
+        ndWebViewConnect(view, nodeID: nodeID)
+    } else if kind == "HeaderBar" {
+        ndHeaderBarConnectNav(view, nodeID: nodeID)
     } else if kind == "SearchInput" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
@@ -345,6 +356,15 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
     } else if kind == "MenuItem" {
         ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
+    }
+}
+
+/// App -> widget imperative commands (widgetCommand NDP frame, M14).
+func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {
+    if kind == "WebView" {
+        ndWebViewCommand(view, command, argJson)
+    } else {
+        FileHandle.standardError.write("ND_WARN widgetCommand on kind=\(kind) with no commands\n".data(using: .utf8)!)
     }
 }
 

@@ -49,6 +49,19 @@ Automation role: `button`. Text source: `label`. Children: none.
 |---|---|---|
 | `clicked` | `onClick` | none |
 
+## Terminal (`<terminal>`)
+
+Automation role: `terminal`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `command` | string | — | create |
+| `cwd` | string | — | create |
+| `fontSize` | int | 13 | create |
+| `cols` | int | 80 | create |
+| `rows` | int | 24 | create |
+| `testID` | string | — | meta |
+
 ## TextInput (`<textinput>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -241,14 +254,22 @@ Automation role: `list`. Text source: none. Children: none.
 
 ## WebView (`<webview>`)
 
-> **v1 stub** — renders a placeholder Label; see M5b-D7.
-
 Automation role: `webview`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `url` | string | — | create |
+| `url` | string |  | createAndUpdate |
 | `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `navigate` | `onNavigate` | text |
+| `titleChanged` | `onTitleChanged` | text |
+| `loadingChanged` | `onLoadingChanged` | checked |
+| `backAvailable` | `onBackAvailable` | checked |
+| `forwardAvailable` | `onForwardAvailable` | checked |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`.
 
 ## SplitView (`<splitview>`)
 
@@ -276,7 +297,14 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `title` | string |  | create |
+| `canGoBack` | bool | false | createAndUpdate |
+| `canGoForward` | bool | false | createAndUpdate |
 | `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `back` | `onBack` | none |
+| `forward` | `onForward` | none |
 
 Attached props (set on children):
 

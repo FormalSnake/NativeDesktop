@@ -28,8 +28,10 @@ for _ in $(seq 1 80); do
 done
 grep -q "ND_AUTOMATION_LISTENING" "$LOG" || { echo "FAIL: no automation listener"; cat "$LOG"; exit 1; }
 grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL: no commit applied"; cat "$LOG"; exit 1; }
-# WebView stub must announce itself at create.
-grep -q "ND_WARN WebView is a v1 stub" "$LOG" || { echo "FAIL: webview stub marker missing"; cat "$LOG"; exit 1; }
+# WebView must announce its engine resolution at create (M14): either a real
+# dlopen'd webkitgtk or the graceful placeholder fallback (the pinned flake
+# deliberately ships no webkitgtk, so CI normally sees the fallback).
+grep -qE "ND_WEBVIEW_ENGINE webkitgtk|ND_WARN WebView unavailable" "$LOG" || { echo "FAIL: webview engine marker missing"; cat "$LOG"; exit 1; }
 SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
 export ND_AUTOMATION_SOCKET="$SOCK"
 

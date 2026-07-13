@@ -48,6 +48,12 @@ const defaults = {
 
 function App(): React.ReactNode {
   const [category, setCategory] = useState<Category>("general");
+  // Minimal visited-category history so the content header's native back/
+  // forward chevrons have something to drive. `historyIndex` points at the
+  // current entry; picking a category truncates any forward entries (standard
+  // browser-history semantics).
+  const [history, setHistory] = useState<Category[]>(["general"]);
+  const [historyIndex, setHistoryIndex] = useState(0);
   // Radio.group is a process-lifetime key on both backends (GTK's
   // radio_groups map, src/generated/widgets.zig, never releases its stored
   // "first" CheckButton pointer on unmount) — reusing the same group string
@@ -81,6 +87,28 @@ function App(): React.ReactNode {
     setCategory(next);
   }
 
+  // Sidebar pick: navigate AND record history.
+  function pickCategory(next: Category): void {
+    if (next === category) return;
+    setHistory((h) => [...h.slice(0, historyIndex + 1), next]);
+    setHistoryIndex((i) => i + 1);
+    selectCategory(next);
+  }
+
+  function goBack(): void {
+    if (historyIndex <= 0) return;
+    const i = historyIndex - 1;
+    setHistoryIndex(i);
+    selectCategory(history[i]);
+  }
+
+  function goForward(): void {
+    if (historyIndex >= history.length - 1) return;
+    const i = historyIndex + 1;
+    setHistoryIndex(i);
+    selectCategory(history[i]);
+  }
+
   const themeGroup = `theme-${appearanceEpoch}`;
 
   return (
@@ -100,7 +128,7 @@ function App(): React.ReactNode {
                 testID={`category-${c.id}`}
                 label={c.label}
                 labelAlign="start"
-                onClick={() => selectCategory(c.id)}
+                onClick={() => pickCategory(c.id)}
                 cssClasses={category === c.id ? ["suggested-action"] : ["flat"]}
                 style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
               />
@@ -109,10 +137,17 @@ function App(): React.ReactNode {
         </toolbarview>
 
         <toolbarview slot="content" testID="settings-content-toolbar">
-          {/* "Shows nothing fancy": an empty headerbar, no title, no
-              buttons — the whole point is that native chrome (unified
-              toolbar / AdwHeaderBar) still exists for free even when unused. */}
-          <headerbar testID="settings-content-header" />
+          {/* The content header carries the native floating back/forward
+              chevrons (System Settings' leading `< >`), driven by the visited-
+              category history above. Each segment greys out at the ends of the
+              history — the framework renders the NSSegmentedControl. */}
+          <headerbar
+            testID="settings-content-header"
+            canGoBack={historyIndex > 0}
+            canGoForward={historyIndex < history.length - 1}
+            onBack={goBack}
+            onForward={goForward}
+          />
           <scrollview testID="settings-content-scroll" minContentHeight={380} style={{ vexpand: true }}>
             <box
               orientation="vertical"

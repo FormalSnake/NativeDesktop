@@ -1,4 +1,5 @@
 import AppKit
+import CNd
 
 // M11 Phase B: macOS uses the REAL native idiom (Notes.app/Mail) — a SINGLE
 // unified NSToolbar spanning the top, with the sidebar reaching the very top
@@ -22,6 +23,26 @@ final class NDHeaderBarView: NSView {
     var startViews: [NSView] = []
     var endViews: [NSView] = []
     weak var pane: NDToolbarPaneView?
+    /// The floating back/forward control (System Settings' leading `< >`),
+    /// materialized by `ndHeaderBarApplyNav` when the app sets `canGoBack`/
+    /// `canGoForward`. It's a synthesized toolbar item — not a declared child —
+    /// so it's rendered as a LEADING item ahead of `startViews` (see
+    /// `NDToolbarManager.defaultItemIdentifiers`).
+    var navControl: NSSegmentedControl?
+    /// This header's node id, recorded by `ndHeaderBarConnectNav` so the
+    /// segmented control's action can emit `back`/`forward` back to the runtime.
+    var ndNodeID: UInt32 = 0
+
+    @objc func ndNavSegmentClicked(_ sender: NSSegmentedControl) {
+        let seg = sender.selectedSegment
+        guard seg == 0 || seg == 1, sender.isEnabled(forSegment: seg) else { return }
+        let name = seg == 0 ? "back" : "forward"
+        name.withCString { cName in
+            "{}".withCString { cJson in
+                nd_emit_event(gCtx, ndNodeID, cName, cJson)
+            }
+        }
+    }
 }
 
 /// Host-rendered handle for a mounted `<toolbarview>` pane — a LOGICAL holder
@@ -152,6 +173,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     private func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         var ids: [NSToolbarItem.Identifier] = []
         if let h = sidebarHeader {
+            if let nav = h.navControl { ids.append(identifier(for: nav)) }
             ids += h.startViews.map { identifier(for: $0) }
             ids += h.endViews.map { identifier(for: $0) }
         }
@@ -163,6 +185,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             ids.append(trackingSeparatorID0)
         }
         if let h = listHeader {
+            if let nav = h.navControl { ids.append(identifier(for: nav)) }
             ids += h.startViews.map { identifier(for: $0) }
             ids += h.endViews.map { identifier(for: $0) }
             if split != nil {
@@ -170,6 +193,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             }
         }
         if let h = contentHeader {
+            if let nav = h.navControl { ids.append(identifier(for: nav)) }
             ids += h.startViews.map { identifier(for: $0) }
             ids.append(.flexibleSpace)
             ids += h.endViews.map { identifier(for: $0) }
@@ -202,9 +226,9 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // three optional-map terms combined that way pushed the type checker
         // over its time budget ("unable to type-check in reasonable time").
         var allViews: [NSView] = []
-        if let h = sidebarHeader { allViews += h.startViews + h.endViews }
-        if let h = listHeader { allViews += h.startViews + h.endViews }
-        if let h = contentHeader { allViews += h.startViews + h.endViews }
+        if let h = sidebarHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
+        if let h = listHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
+        if let h = contentHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
         guard let view = allViews.first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier }) else {
             return nil
         }
@@ -224,6 +248,49 @@ func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String) {
         bar.startViews.append(child)
     }
     bar.pane?.manager?.scheduleRebuild()
+}
+
+/// Materializes / updates the header's floating back/forward control from the
+/// `canGoBack`/`canGoForward` props (generated HeaderBar create + applyProps
+/// arms). The control appears when either prop is PRESENT (the app opts in),
+/// with each segment enabled per its flag — matching System Settings, where the
+/// `< >` always show and grey out when navigation isn't available. When neither
+/// prop is present it's torn down. A new control triggers a toolbar rebuild;
+/// enabled-state-only changes update in place (the item is already installed).
+func ndHeaderBarApplyNav(_ bar: NDHeaderBarView, canGoBack: Bool?, canGoForward: Bool?) {
+    guard canGoBack != nil || canGoForward != nil else {
+        if bar.navControl != nil {
+            bar.navControl = nil
+            bar.pane?.manager?.scheduleRebuild()
+        }
+        return
+    }
+    let seg: NSSegmentedControl
+    if let existing = bar.navControl {
+        seg = existing
+    } else {
+        seg = NSSegmentedControl()
+        seg.segmentCount = 2
+        seg.trackingMode = .momentary
+        seg.segmentStyle = .separated
+        seg.setImage(NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: "Back"), forSegment: 0)
+        seg.setImage(NSImage(systemSymbolName: "chevron.forward", accessibilityDescription: "Forward"), forSegment: 1)
+        seg.target = bar
+        seg.action = #selector(NDHeaderBarView.ndNavSegmentClicked(_:))
+        bar.navControl = seg
+        bar.pane?.manager?.scheduleRebuild()
+    }
+    seg.setEnabled(canGoBack ?? false, forSegment: 0)
+    seg.setEnabled(canGoForward ?? false, forSegment: 1)
+}
+
+/// Records the header's node id so `ndNavSegmentClicked` can emit `back`/
+/// `forward` (generated `ndConnectEvents` HeaderBar arm). The segmented
+/// control's own target/action is wired in `ndHeaderBarApplyNav`; this only
+/// supplies the id the action needs.
+func ndHeaderBarConnectNav(_ view: NSView, nodeID: UInt32) {
+    guard let bar = view as? NDHeaderBarView else { return }
+    bar.ndNodeID = nodeID
 }
 
 /// Removes `child` from whichever slot array holds it (generated HeaderBar

@@ -2,6 +2,8 @@ import ReconcilerFactory from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
 import type { ReactNode } from "react";
 import { Ndp, type EventMsg } from "../../../runtime/ndp.ts";
+import type { NdNodeRef, WidgetType } from "./generated/intrinsics.ts";
+import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta.ts";
 import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from "./host-config.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
@@ -100,4 +102,24 @@ export async function render(element: ReactNode): Promise<void> {
   // Only the first boot awaits this — a hot re-eval must return so the
   // re-run entry doesn't pile up a second forever-pending promise.
   if (state.bootCount === 1) await new Promise<void>(() => {});
+}
+
+/// Sends an imperative command to a mounted widget (widgetCommand NDP frame,
+/// M14). `node` is what a host-element `ref` resolves to — e.g.
+/// `const wv = useRef<NdNodeRef<"webview">>(null)` then
+/// `sendCommand(wv.current!, "goBack")`. Command names are schema-typed per
+/// widget (WidgetCommandNames) and validated again at runtime so a stale
+/// string fails loudly here, not silently host-side.
+export function sendCommand<T extends keyof WidgetCommandNames & WidgetType>(
+  node: NdNodeRef<T>,
+  command: WidgetCommandNames[T],
+  arg?: unknown,
+): void {
+  const state = getHmrState();
+  if (!state) throw new Error("sendCommand() before render(): no NDP connection yet");
+  const allowed = widgetCommands[node.type] ?? [];
+  if (!allowed.includes(command)) {
+    throw new Error(`<${node.type}> does not accept command "${command}" (valid: ${allowed.join(", ") || "none"})`);
+  }
+  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
 }

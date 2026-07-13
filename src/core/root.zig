@@ -15,6 +15,12 @@
 // `src/abi.zig`'s module.
 pub const abi = @import("abi");
 
+// Terminal core (Phase A): a PTY + libghostty-vt behind the ndterm C ABI
+// (include/ndterm.h), consumed by both backends. Lives in src/core/ so both
+// libnd (the Swift shell) and the GTK exe reach it; its `export fn ndterm_*`
+// symbols are force-retained below exactly like abi's C-ABI surface.
+pub const terminal = @import("terminal.zig");
+
 // Force retention of the `export fn` C-ABI symbols in `libnd.a`: Zig's
 // lazy compilation only emits code reachable from something the compiler
 // keeps, and a static-lib artifact has no "keep everything exported"
@@ -32,6 +38,15 @@ comptime {
     _ = &abi.nd_free;
     _ = &abi.nd_set_acl;
     _ = &abi.nd_load_plugin;
+    _ = &terminal.ndterm_open;
+    _ = &terminal.ndterm_close;
+    _ = &terminal.ndterm_resize;
+    _ = &terminal.ndterm_write_input;
+    _ = &terminal.ndterm_render_lock;
+    _ = &terminal.ndterm_cell;
+    _ = &terminal.ndterm_cursor;
+    _ = &terminal.ndterm_default_colors;
+    _ = &terminal.ndterm_render_unlock;
 }
 
 test {

@@ -6,6 +6,8 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
+const ndterm_gtk = @import("../gtk/terminal.zig");
+const ndweb_gtk = @import("../gtk/webview.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     const v = props orelse return null;
@@ -469,6 +471,17 @@ pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
     ndMenuRefresh();
 }
 
+/// <headerbar> back/forward navigation (canGoBack/canGoForward + onBack/onForward)
+/// is a Mac-only affordance for now; on GTK it is a v1 stub. The schema props
+/// and events exist so the both-backends contract compiles — connectEvents
+/// routes the back/forward events here (like ndMenuItemConnect) rather than to a
+/// GtkWidget signal, and this no-op keeps the GTK build green until a native
+/// AdwHeaderBar back-button rendering is wired.
+pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
+    _ = widget;
+    _ = node_id;
+}
+
 /// backend.zig routes a non-widget node handle's semantic click here.
 pub fn menuSemanticClick(node_id: u32) bool {
     const item_ptr = menu_node_ids.get(node_id) orelse return false;
@@ -547,6 +560,13 @@ pub fn create(
             }
         }
         return button.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Terminal")) {
+        const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
+        const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
+        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
+        const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
+        const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
+        return ndterm_gtk.create(command, cwd, font_size, cols, rows);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
         const editable = entry.as(gtk.Editable);
@@ -645,9 +665,10 @@ pub fn create(
         gtk.ScrolledWindow.setChild(sw, list.as(gtk.Widget));
         return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "WebView")) {
-        std.debug.print("ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\n", .{});
-        const label = gtk.Label.new("WebView unavailable (v1 stub)");
-        return label.as(gtk.Widget);
+        // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at
+        // runtime; placeholder label otherwise (M5b-D7: no hard link dep).
+        const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
+        return ndweb_gtk.create(url);
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         const sv = adw.OverlaySplitView.new();
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
@@ -801,8 +822,13 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
             if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));
         }
+    } else if (std.mem.eql(u8, kind, "WebView")) {
+        if (propStr(props, "url")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
+    } else if (std.mem.eql(u8, kind, "HeaderBar")) {
+        _ = propBool(props, "canGoBack"); // GTK back/forward is a v1 stub (Mac-only)
+        _ = propBool(props, "canGoForward"); // GTK back/forward is a v1 stub (Mac-only)
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         if (propStr(props, "text")) |t| {
             const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
@@ -963,6 +989,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_ListView_rowActivated = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
         const hid_ListView_rowActivated = gobject.signalConnectData(obj_ListView_rowActivated, "activate", @ptrCast(&cbListActivate), data, null, .{});
         _ = hid_ListView_rowActivated;
+    } else if (std.mem.eql(u8, kind, "WebView")) {
+        if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "HeaderBar")) {
+        ndHeaderBarConnectNav(widget, node_id);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         const obj_SearchInput_changed = asObject(widget);
         const hid_SearchInput_changed = gobject.signalConnectData(obj_SearchInput_changed, "search-changed", @ptrCast(&cbEditableChanged), data, null, .{});
@@ -979,6 +1009,15 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         _ = hid_SourceList_rowActivated;
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal
+    }
+}
+
+/// App -> widget imperative commands (widgetCommand NDP frame, M14).
+pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
+    if (std.mem.eql(u8, kind, "WebView")) {
+        ndweb_gtk.command(widget, command, arg);
+    } else {
+        std.debug.print("ND_WARN widgetCommand on kind={s} with no commands\n", .{kind});
     }
 }
 

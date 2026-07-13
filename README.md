@@ -2,7 +2,9 @@
 
 NativeDesktop is a cross-platform desktop framework where you write **React 19 in TypeScript** and
 get **real native widgets** back — GTK4/libadwaita on Linux, AppKit on macOS, Win32 planned. There
-is no embedded browser on the UI path: no DOM, no WebView, no Electron. The widgets your JSX
+is no embedded browser on the UI path: no DOM, no Electron. (Apps can still *show* web content:
+the `<webview>` widget wraps the platform's own engine — WKWebView on macOS, WebKitGTK on
+Linux — the UI around it stays native.) The widgets your JSX
 describes *are* the platform's own widget classes — `GtkBox`, `AdwHeaderBar`, `NSButton`,
 `NSSplitView` — so one React tree automatically renders in each platform's current design language
 (Liquid Glass on macOS, Adwaita on GNOME) instead of a facsimile layer approximating either one.

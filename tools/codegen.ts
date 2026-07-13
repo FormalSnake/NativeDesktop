@@ -36,6 +36,10 @@ interface Widget {
   stub?: boolean;
   props: Prop[];
   events: Event[];
+  /** Imperative commands the widget accepts via the widgetCommand NDP frame
+   *  (M14) — e.g. WebView's goBack/goForward/reload/stop. Each named command
+   *  needs a dispatch arm in the ZIG_COMMANDS/SWIFT_COMMANDS templates. */
+  commands?: string[];
   automation: { role: string; textFrom: string | null };
 }
 type StyleKeyKind = "color" | "int" | "bool" | "enum" | "string" | "object" | "spacing";
@@ -143,10 +147,14 @@ function genZigCssClassSpec(s: Schema): string {
 // ---- artifact (a): TS/JSX intrinsics ----
 function genIntrinsics(s: Schema): string {
   let out = HEADER_TS;
-  out += 'import type { ReactNode } from "react";\n\n';
+  out += 'import type { ReactNode, Ref } from "react";\n\n';
   out += "export { jsx, jsxs, Fragment } from \"react/jsx-runtime\";\n\n";
   out += "export type WidgetName = " + s.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n";
   out += "export type WidgetType = " + s.widgets.map((w) => JSON.stringify(w.intrinsic)).join(" | ") + ";\n\n";
+  out += "/** What a host-element `ref` resolves to (the reconciler's public\n";
+  out += " *  instance): the node's wire id + intrinsic type — the handle\n";
+  out += " *  sendCommand() (M14) addresses imperative widget commands with. */\n";
+  out += "export interface NdNodeRef<T extends WidgetType = WidgetType> {\n  id: number;\n  type: T;\n}\n\n";
   out += genStyleProp(s);
   out += genCssClassSpec(s);
   out += "\n";
@@ -161,6 +169,7 @@ function genIntrinsics(s: Schema): string {
     fields.push("style?: StyleProp");
     fields.push("cssClasses?: string[]");
     fields.push("key?: string | number | null");
+    fields.push(`ref?: Ref<NdNodeRef<${JSON.stringify(w.intrinsic)}>>`);
     fields.push("children?: ReactNode");
     out += `    ${w.intrinsic}: { ${fields.join("; ")} };\n`;
   }
@@ -199,6 +208,21 @@ function genSchemaMeta(s: Schema): string {
   out += "\nexport const handlerPropNames: Record<string, string[]> = {\n";
   for (const w of s.widgets) {
     out += `  ${JSON.stringify(w.intrinsic)}: [${w.events.map((e) => JSON.stringify(e.ndpName ?? e.name)).join(", ")}],\n`;
+  }
+  out += "};\n";
+
+  out += "\n/** Imperative commands each widget accepts via the widgetCommand NDP frame\n";
+  out += " *  (M14) — the runtime validation table behind sendCommand(). */\n";
+  out += "export const widgetCommands: Record<string, readonly string[]> = {\n";
+  for (const w of s.widgets) {
+    out += `  ${JSON.stringify(w.intrinsic)}: [${(w.commands ?? []).map((c) => JSON.stringify(c)).join(", ")}],\n`;
+  }
+  out += "};\n";
+  const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
+  out += "\n/** Compile-time command-name map (only widgets with commands appear). */\n";
+  out += "export type WidgetCommandNames = {\n";
+  for (const w of withCommands) {
+    out += `  ${JSON.stringify(w.intrinsic)}: ${w.commands!.map((c) => JSON.stringify(c)).join(" | ")};\n`;
   }
   out += "};\n";
   return out;
@@ -680,6 +704,17 @@ pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
     ndMenuRefresh();
 }
 
+/// <headerbar> back/forward navigation (canGoBack/canGoForward + onBack/onForward)
+/// is a Mac-only affordance for now; on GTK it is a v1 stub. The schema props
+/// and events exist so the both-backends contract compiles — connectEvents
+/// routes the back/forward events here (like ndMenuItemConnect) rather than to a
+/// GtkWidget signal, and this no-op keeps the GTK build green until a native
+/// AdwHeaderBar back-button rendering is wired.
+pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
+    _ = widget;
+    _ = node_id;
+}
+
 /// backend.zig routes a non-widget node handle's semantic click here.
 pub fn menuSemanticClick(node_id: u32) bool {
     const item_ptr = menu_node_ids.get(node_id) orelse return false;
@@ -709,7 +744,9 @@ function genZig(s: Schema): string {
   out += "const glib = @import(\"glib\");\n";
   out += "const gobject = @import(\"gobject\");\n";
   out += "const adw = @import(\"adw\");\n";
-  out += "const protocol = @import(\"../protocol.zig\");\n\n";
+  out += "const protocol = @import(\"../protocol.zig\");\n";
+  out += "const ndterm_gtk = @import(\"../gtk/terminal.zig\");\n";
+  out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
   out += ZIG_EVENT_STATE;
@@ -749,9 +786,43 @@ function genZig(s: Schema): string {
   if (!firstApply) out += "    }\n";
   out += "}\n\n";
   out += genZigEvents(s);
+  out += genZigCommands(s);
   out += genZigStructural(s);
   out += genZigStyleTable(s);
   out += genZigCssClassSpec(s);
+  return out;
+}
+
+/** Per-widget bodies for the imperative widgetCommand dispatcher (M14). Keyed
+ *  by widget name; every schema entry with a non-empty `commands` array needs
+ *  one — genZigCommands throws otherwise (same fail-loud contract as the
+ *  create/apply templates). Bodies see `widget`, `command`, and `arg`. */
+const ZIG_COMMANDS: Record<string, string> = {
+  WebView: "        ndweb_gtk.command(widget, command, arg);\n",
+};
+
+function genZigCommands(s: Schema): string {
+  let out = "/// App -> widget imperative commands (widgetCommand NDP frame, M14).\n";
+  out += "pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {\n";
+  const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
+  if (withCommands.length === 0) {
+    out += "    _ = widget;\n    _ = command;\n    _ = arg;\n";
+    out += "    std.debug.print(\"ND_WARN widgetCommand on kind={s} with no commands\\n\", .{kind});\n";
+    out += "}\n\n";
+    return out;
+  }
+  let first = true;
+  for (const w of withCommands) {
+    const body = ZIG_COMMANDS[w.name];
+    if (!body) throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+    out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, kind, ${JSON.stringify(w.name)})) {\n`;
+    out += body;
+    first = false;
+  }
+  out += "    } else {\n";
+  out += "        std.debug.print(\"ND_WARN widgetCommand on kind={s} with no commands\\n\", .{kind});\n";
+  out += "    }\n";
+  out += "}\n\n";
   return out;
 }
 
@@ -959,9 +1030,10 @@ function genZigCreateBody(w: Widget): string {
     out += "        gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));\n";
     out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "WebView") {
-    out += "        std.debug.print(\"ND_WARN WebView is a v1 stub (no webkitgtk); rendering placeholder label\\n\", .{});\n";
-    out += "        const label = gtk.Label.new(\"WebView unavailable (v1 stub)\");\n";
-    out += "        return label.as(gtk.Widget);\n";
+    out += "        // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at\n";
+    out += "        // runtime; placeholder label otherwise (M5b-D7: no hard link dep).\n";
+    out += "        const url: ?[*:0]const u8 = if (propStr(props, \"url\")) |u| dupeZ(u).ptr else null;\n";
+    out += "        return ndweb_gtk.create(url);\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
     out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
@@ -989,6 +1061,13 @@ function genZigCreateBody(w: Widget): string {
     out += "        return ndMenuCreate(app, label);\n";
   } else if (w.name === "MenuItem") {
     out += "        return ndMenuItemCreate(app, props, dupeZ);\n";
+  } else if (w.name === "Terminal") {
+    out += "        const command: ?[*:0]const u8 = if (propStr(props, \"command\")) |c| dupeZ(c).ptr else null;\n";
+    out += "        const cwd: ?[*:0]const u8 = if (propStr(props, \"cwd\")) |c| dupeZ(c).ptr else null;\n";
+    out += `        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse ${dflt(w, "fontSize")});\n`;
+    out += `        const cols: u16 = @intCast(propInt(props, "cols") orelse ${dflt(w, "cols")});\n`;
+    out += `        const rows: u16 = @intCast(propInt(props, "rows") orelse ${dflt(w, "rows")});\n`;
+    out += "        return ndterm_gtk.create(command, cwd, font_size, cols, rows);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -1144,6 +1223,10 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += "        if (propBool(props, \"enabled\")) |en| ndMenuItemSetEnabled(widget, en);\n";
+    } else if (w.name === "HeaderBar" && (p.name === "canGoBack" || p.name === "canGoForward")) {
+      out += `        _ = propBool(props, ${JSON.stringify(p.name)}); // GTK back/forward is a v1 stub (Mac-only)\n`;
+    } else if (w.name === "WebView" && p.name === "url") {
+      out += "        if (propStr(props, \"url\")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));\n";
     } else {
       throw new Error(`no applyProps template for ${w.name}.${p.name} — add one when introducing it (M5b)`);
     }
@@ -1151,7 +1234,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -1169,6 +1252,17 @@ const SIGNALS: Record<string, SignalTemplate> = {
   // MenuItem's "selected" is not a GtkWidget signal: connectEvents routes it to
   // the injected ndMenuItemConnect (GSimpleAction), so there is no callback body.
   "MenuItem.selected":           { signal: "",              target: "menuitem", cb: "", suppress: false },
+  // HeaderBar back/forward are not GtkWidget signals: connectEvents routes them
+  // to ndHeaderBarConnectNav (a GTK v1 stub), so there is no callback body.
+  "HeaderBar.back":              { signal: "",              target: "headerbarnav", cb: "", suppress: false },
+  "HeaderBar.forward":           { signal: "",              target: "headerbarnav", cb: "", suppress: false },
+  // WebView events fire from WebKit signals wired inside the hand-written
+  // src/gtk/webview.zig — connectEvents hands it the node id + emit fn once.
+  "WebView.navigate":            { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.titleChanged":        { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.loadingChanged":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.backAvailable":       { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.forwardAvailable":    { signal: "",              target: "webview", cb: "", suppress: false },
 };
 
 const CALLBACK_BODIES: Record<string, string> = {
@@ -1268,7 +1362,7 @@ function genZigEvents(s: Schema): string {
     const key = `${w.name}.${e.name}`;
     const t = SIGNALS[key];
     if (!t) throw new Error(`no signal template for event ${key} — add one when introducing it`);
-    if (t.target === "menuitem") continue; // wired via ndMenuItemConnect, no GTK callback body
+    if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -1289,10 +1383,27 @@ function genZigEvents(s: Schema): string {
     if (w.events.length === 0) continue;
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, kind, ${JSON.stringify(w.name)})) {\n`;
     first = false;
+    let navConnected = false;
     for (const e of w.events) {
       const t = SIGNALS[`${w.name}.${e.name}`]!;
       if (t.target === "menuitem") {
         out += "        ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal\n";
+        continue;
+      }
+      if (t.target === "headerbarnav") {
+        // Both back+forward route to one connect call (a GTK v1 stub) — emit once.
+        if (!navConnected) {
+          out += "        ndHeaderBarConnectNav(widget, node_id);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "webview") {
+        // All WebView events wire inside webview.zig from one connect call.
+        if (!navConnected) {
+          out += "        if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
         continue;
       }
       const objExpr = t.target === "buffer"
@@ -1625,6 +1736,7 @@ function genSwift(s: Schema): string {
   out += "}\n\n";
   out += genSwiftApplyProps(s);
   out += genSwiftEvents(s);
+  out += genSwiftCommands(s);
   out += genSwiftStructural(s);
   return out;
 }
@@ -1798,9 +1910,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "SourceList") {
     out += "        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)\n";
   } else if (w.name === "WebView") {
-    out += '        FileHandle.standardError.write("ND_WARN WebView is a v1 stub (no WKWebView); rendering placeholder label\\n".data(using: .utf8)!)\n';
-    out += '        let placeholder = NSTextField(labelWithString: "WebView unavailable (v1 stub)")\n';
-    out += "        return placeholder\n";
+    out += '        return NDWebView(url: propStr(props, "url"))  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
   } else if (w.name === "SplitView") {
     // NSSplitViewController (not a bare NSSplitView) is what earns the
     // automatic Liquid Glass sidebar treatment on macOS 26 — see
@@ -1824,6 +1934,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "HeaderBar") {
     out += "        let bar = NDHeaderBarView()\n";
     out += `        bar.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
+    out += '        ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))\n';
     out += "        return bar\n";
   } else if (w.name === "ToolbarView") {
     // A pane wrapper: its non-header child is its content (what SplitView adds
@@ -1844,6 +1955,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        return ndMenuCreate(propStr(props, "label") ?? ${swiftDefaultStr(w, "label")})\n`;
   } else if (w.name === "MenuItem") {
     out += "        return ndMenuItemCreate(props)\n";
+  } else if (w.name === "Terminal") {
+    out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? ${swiftDefaultInt(w, "fontSize")}, cols: propInt(props, "cols") ?? ${swiftDefaultInt(w, "cols")}, rows: propInt(props, "rows") ?? ${swiftDefaultInt(w, "rows")})\n`;
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -1881,6 +1994,7 @@ function genSwiftApplyProps(s: Schema): string {
 
 function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
   let out = "";
+  let navEmitted = false;
   for (const p of updProps) {
     const key = `${w.name}.${p.name}`;
     if (w.name === "Window" && p.name === "title") {
@@ -1977,6 +2091,16 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += '        if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }\n';
+    } else if (w.name === "HeaderBar" && (p.name === "canGoBack" || p.name === "canGoForward")) {
+      // Both nav flags feed one NSSegmentedControl — apply once, reading both.
+      if (!navEmitted) {
+        out += "        if let bar = view as? NDHeaderBarView {\n";
+        out += '            ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))\n';
+        out += "        }\n";
+        navEmitted = true;
+      }
+    } else if (w.name === "WebView" && p.name === "url") {
+      out += '        if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }\n';
     } else {
       throw new Error(`no applyProps template for ${key} — add one when introducing it (M6b)`);
     }
@@ -2002,6 +2126,18 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   // MenuItem's "selected" fires via NSMenuItem target/action (NDMenuDispatcher),
   // not EventDispatcher — connectEvents routes it to ndMenuItemConnect instead.
   "MenuItem.selected":           { selector: "menuitem", payload: "none" },
+  // HeaderBar back/forward fire from a synthesized NSSegmentedControl, not the
+  // header view — connectEvents routes them to ndHeaderBarConnectNav (which
+  // records the nodeID) instead of EventDispatcher.
+  "HeaderBar.back":              { selector: "headerbarnav", payload: "none" },
+  "HeaderBar.forward":           { selector: "headerbarnav", payload: "none" },
+  // WebView events fire from WKWebView KVO inside NDShell/NDWebView.swift —
+  // connectEvents records the nodeID once via ndWebViewConnect.
+  "WebView.navigate":            { selector: "webview", payload: "text" },
+  "WebView.titleChanged":        { selector: "webview", payload: "text" },
+  "WebView.loadingChanged":      { selector: "webview", payload: "checked" },
+  "WebView.backAvailable":       { selector: "webview", payload: "checked" },
+  "WebView.forwardAvailable":    { selector: "webview", payload: "checked" },
 };
 
 /** Emits `ndConnectEvents`, wiring each widget's controls to
@@ -2026,16 +2162,64 @@ function genSwiftEvents(s: Schema): string {
     if (w.events.length === 0) continue;
     out += `    ${first ? "if" : "} else if"} kind == ${JSON.stringify(w.name)} {\n`;
     first = false;
+    let navConnected = false;
     for (const e of w.events) {
       const t = SWIFT_SIGNALS[`${w.name}.${e.name}`]!;
       if (t.selector === "menuitem") {
         out += "        ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher\n";
         continue;
       }
+      if (t.selector === "headerbarnav") {
+        // back+forward both fire from one NSSegmentedControl — record the
+        // nodeID once (the control's target/action is wired in ndHeaderBarApplyNav).
+        if (!navConnected) {
+          out += "        ndHeaderBarConnectNav(view, nodeID: nodeID)\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.selector === "webview") {
+        // All WebView events wire from KVO inside NDWebView — record the id once.
+        if (!navConnected) {
+          out += "        ndWebViewConnect(view, nodeID: nodeID)\n";
+          navConnected = true;
+        }
+        continue;
+      }
       out += `        EventDispatcher.shared.wire(view, nodeID: nodeID, name: ${JSON.stringify(e.name)}, payload: .${t.payload}, action: #selector(EventDispatcher.${t.selector}(_:)))\n`;
     }
   }
   if (!first) out += "    }\n";
+  out += "}\n\n";
+  return out;
+}
+
+/** Per-widget bodies for the imperative widgetCommand dispatcher (M14) —
+ *  AppKit peer of ZIG_COMMANDS, same fail-loud contract. Bodies see `view`,
+ *  `command`, and `argJson`. */
+const SWIFT_COMMANDS: Record<string, string> = {
+  WebView: "        ndWebViewCommand(view, command, argJson)\n",
+};
+
+function genSwiftCommands(s: Schema): string {
+  let out = "/// App -> widget imperative commands (widgetCommand NDP frame, M14).\n";
+  out += "func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {\n";
+  const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
+  let first = true;
+  for (const w of withCommands) {
+    const body = SWIFT_COMMANDS[w.name];
+    if (!body) throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+    out += `    ${first ? "if" : "} else if"} kind == ${JSON.stringify(w.name)} {\n`;
+    out += body;
+    first = false;
+  }
+  if (!first) {
+    out += "    } else {\n";
+    out += '        FileHandle.standardError.write("ND_WARN widgetCommand on kind=\\(kind) with no commands\\n".data(using: .utf8)!)\n';
+    out += "    }\n";
+  } else {
+    out += '    FileHandle.standardError.write("ND_WARN widgetCommand on kind=\\(kind) with no commands\\n".data(using: .utf8)!)\n';
+  }
   out += "}\n\n";
   return out;
 }
@@ -2399,6 +2583,9 @@ function genDocs(s: Schema): string {
         out += `| \`${e.name}\` | \`${e.ndpName ?? e.name}\` | ${e.payload ?? "none"} |\n`;
       }
       out += "\n";
+    }
+    if ((w.commands ?? []).length) {
+      out += `Imperative commands (via \`sendCommand(ref.current, …)\` from \`@nativedesktop/react\`): ${w.commands!.map((c) => "`" + c + "`").join(", ")}.\n\n`;
     }
     if (w.container?.attachedProps?.length) {
       out += "Attached props (set on children):\n\n";

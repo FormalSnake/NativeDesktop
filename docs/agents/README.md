@@ -8,7 +8,8 @@ Entry point for coding agents working on or building with NativeDesktop. See als
 
 NativeDesktop is a two-process framework: a Zig host owns a real native window (GTK4 on Linux,
 AppKit/Win32 planned) and a Bun/TypeScript child renders a React tree into it over a local
-protocol (NDP) — no DOM, no WebView, no Electron. The host is automation-first: every widget the
+protocol (NDP) — no DOM, no Electron (the `<webview>` widget embeds the platform's own engine
+for web content; the UI itself never renders through a browser). The host is automation-first: every widget the
 React tree creates is tracked and answerable over a JSON-RPC socket, so an agent can inspect and
 drive the app the same way a user would. Full design: `docs/superpowers/specs/2026-07-09-nativedesktop-design.md`.
 

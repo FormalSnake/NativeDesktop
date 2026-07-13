@@ -227,6 +227,17 @@ func buildVTable() -> nd_backend {
         }
     }
 
+    vt.widget_command = { _, w, kind, command, argJson in
+        let widgetBits = Int(bitPattern: w)
+        let kindStr = cstr(kind)
+        let commandStr = cstr(command)
+        let argStr = cstr(argJson)
+        MainActor.assumeIsolated {
+            guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
+            ndWidgetCommand(viewFrom(widgetPtr), kindStr, commandStr, argStr)
+        }
+    }
+
     return vt
 }
 
@@ -244,7 +255,7 @@ func ndApplyTestID(_ view: NSView, _ propsJson: String) {
 
 /// cssClasses (Task 6): decodes `props.cssClasses` — Task 2's validated
 /// Adwaita-class allowlist, riding in the ordinary props JSON rather than a
-/// dedicated vtable field (the C-ABI vtable is frozen at 18 fields) — and
+/// dedicated vtable field (the C-ABI vtable stays minimal) — and
 /// applies AppKit's mapped subset via `ndApplyCssClasses`. Called from both
 /// `create` and `apply_props`, mirroring `ndApplyTestID`.
 func ndApplyCssClassesIfPresent(_ view: NSView, _ propsJson: String) {
@@ -284,6 +295,11 @@ nonisolated(unsafe) var ndNavigationSidebars: Set<ObjectIdentifier> = []
 /// Set-replace and NOT private for the same reasons as `ndNavigationSidebars`
 /// (read from `ndBoxChildAttached` in Layout.swift).
 nonisolated(unsafe) var ndBoxedLists: Set<ObjectIdentifier> = []
+
+/// The native background `NSBox` that draws each `boxed-list` box's grouped
+/// card (keyed by the box's identity), tracked so it's reused on re-apply and
+/// removed when the class drops. See `ndApplyBoxedListCard`.
+nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] = [:]
 
 /// `ndApplyCssClasses` (Task 6 — a real semantic mapping, not a no-op): maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
@@ -522,47 +538,42 @@ func ndApplySidebarRowTitle(_ btn: NDButton, color: NSColor) {
 /// per-render `style` re-apply can't wipe this fill (same discipline as the
 /// pill).
 func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
-    box.wantsLayer = true
+    guard let stack = box as? NSStackView else { return }
+    let id = ObjectIdentifier(stack)
     guard enabled else {
-        box.layer?.backgroundColor = nil
-        box.layer?.borderWidth = 0
-        box.layer?.borderColor = nil
-        box.layer?.cornerRadius = 0
-        box.layer?.shadowOpacity = 0
+        if let backing = ndBoxedListBackings[id] {
+            backing.removeFromSuperview()
+            ndBoxedListBackings[id] = nil
+        }
         return
     }
-    box.layer?.cornerRadius = 10
-    // masksToBounds must stay false (the default) for the shadow to draw
-    // outside the card's bounds; the rounded fill still clips visually because
-    // backgroundColor + cornerRadius rounds on its own.
-    box.layer?.shadowColor = NSColor.black.cgColor
-    box.layer?.shadowOpacity = 0.18
-    box.layer?.shadowRadius = 5
-    // NSStackView's layer is not flipped (y-up), so a negative height casts the
-    // shadow visually downward.
-    box.layer?.shadowOffset = CGSize(width: 0, height: -1)
-    let dark = box.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    // Light mode: pane and card are both white, so a hairline separator border
-    // defines the card's edge (the shadow alone is too faint on white-on-white).
-    // Dark mode: the fill is distinctly lighter than the pane, so no outline is
-    // needed (and a border there reads heavy) — matches System Settings.
-    box.layer?.borderWidth = dark ? 0 : 1
-    box.effectiveAppearance.performAsCurrentDrawingAppearance {
-        box.layer?.backgroundColor = ndBoxedListCardFill(box.effectiveAppearance).cgColor
-        box.layer?.borderColor = dark ? nil : NSColor.separatorColor.cgColor
+    // A native NSBox drawn behind the stack's rows IS the card — its
+    // `fillColor` takes a dynamic semantic NSColor and redraws itself on an
+    // appearance change, so light/dark track for free with no CALayer cgColor
+    // to hand-resolve. Added as a non-arranged background subview pinned to the
+    // stack's bounds (the rows are inset inside it by their own padding).
+    let backing: NSBox
+    if let existing = ndBoxedListBackings[id] {
+        backing = existing
+    } else {
+        backing = NSBox()
+        backing.boxType = .custom
+        backing.borderWidth = 0
+        backing.borderColor = .clear
+        backing.cornerRadius = 10
+        backing.titlePosition = .noTitle
+        backing.contentViewMargins = .zero
+        backing.translatesAutoresizingMaskIntoConstraints = false
+        stack.addSubview(backing, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            backing.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            backing.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            backing.topAnchor.constraint(equalTo: stack.topAnchor),
+            backing.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
+        ])
+        ndBoxedListBackings[id] = backing
     }
-}
-
-/// The card fill. In dark mode the semantic panel colors (`controlBackground`
-/// et al.) resolve DARKER than this split's pane, so they'd read recessed;
-/// instead a translucent white lift composites over the dark pane to a
-/// distinctly lighter gray. In light mode the pane is white, so the opaque
-/// control background (white) is the card and the drop shadow does the lifting
-/// — matching System Settings' white grouped cards. Both are dynamic system
-/// colors (white + `controlBackgroundColor`), no hex.
-private func ndBoxedListCardFill(_ appearance: NSAppearance) -> NSColor {
-    let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    return dark ? NSColor.white.withAlphaComponent(0.09) : NSColor.controlBackgroundColor
+    backing.fillColor = .underPageBackgroundColor
 }
 
 /// Recomputes the full per-node typography cascade for `view`'s text target
@@ -697,14 +708,14 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     // a standing style font (see `ndRecomputeTypography`'s doc comment for
     // the full cascade order).
     // A sidebar row's `layer.backgroundColor`/`cornerRadius` are the source-
-    // list selection pill, and a `boxed-list` box's are its grouped-card fill
-    // — both owned by the structural-class code, NOT the `background`/`border`
-    // style keys. The example re-passes a fresh `style` literal every render,
-    // so this function runs on every re-selection and its set-replace baselines
-    // would otherwise wipe those layers. Neither carries app background/border,
-    // so skipping the two blocks for them is safe.
+    // list selection pill, owned by the structural-class code, NOT the
+    // `background`/`border` style keys. The example re-passes a fresh `style`
+    // literal every render, so this function runs on every re-selection and its
+    // set-replace baselines would otherwise wipe the pill. Sidebar rows never
+    // carry app background/border, so skipping the two blocks for them is safe.
+    // (The `boxed-list` card fill lives on its own background NSBox subview, not
+    // the stack's layer, so it needs no such guard.)
     let ownsLayerTreatment = (view as? NDButton)?.ndIsSidebarRow == true
-        || ((view as? NSStackView).map { ndBoxedLists.contains(ObjectIdentifier($0)) } ?? false)
     if !ownsLayerTreatment {
         if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
             view.wantsLayer = true

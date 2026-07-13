@@ -5,7 +5,7 @@
 
 export const NDP_VERSION = 1;
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem";
 
 /** Child runtime identity, carried inside the hello frame. */
 export interface Runtime {
@@ -13,7 +13,7 @@ export interface Runtime {
   version: string;
 }
 
-/** Typed event payload. Exactly one field is set per event name (see widgets.json events[].payload): changed/activate -> text, toggled -> checked, valueChanged -> value, selectionChanged -> index, clicked -> none, styleError -> key (the offending style key, M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as "payload":{} — byte-compatible with M4. */
+/** Typed event payload. Exactly one field is set per event name (see widgets.json events[].payload): changed/activate/navigate/titleChanged -> text, toggled/loadingChanged/backAvailable/forwardAvailable -> checked, valueChanged -> value, selectionChanged -> index, clicked -> none, styleError -> key (the offending style key, M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as "payload":{} — byte-compatible with M4. */
 export interface EventPayload {
   text?: string;
   checked?: boolean;
@@ -98,5 +98,13 @@ export interface PluginResultMsg {
   result: unknown;
 }
 
-export type RuntimeToHostMsg = HelloMsg | CommitBatch | PingMsg | RuntimeErrorMsg | PluginCommandMsg;
+/** Imperative command on a live widget node (M14 WebView: goBack/goForward/reload/stop). `command` must be one of the node's widget's schema-declared commands (widgets.json commands[]); unknown commands are dropped host-side with ND_WARN. Ordered on the same socket as commitBatch, so a command sent after a commit always sees that commit applied. */
+export interface WidgetCommandMsg {
+  type: "widgetCommand";
+  nodeId: number;
+  command: string;
+  arg: unknown;
+}
+
+export type RuntimeToHostMsg = HelloMsg | CommitBatch | PingMsg | RuntimeErrorMsg | PluginCommandMsg | WidgetCommandMsg;
 export type HostToRuntimeMsg = HelloAckMsg | ErrorMsg | EventMsg | PongMsg | PluginResultMsg;

@@ -257,6 +257,8 @@ pub const Runtime = struct {
                 self.stashRuntimeError(bytes);
             } else if (std.mem.eql(u8, kind, "pluginCommand")) {
                 self.handlePluginCommand(bytes);
+            } else if (std.mem.eql(u8, kind, "widgetCommand")) {
+                self.marshalWidgetCommand(bytes); // ownership transfers
             } else {
                 self.gpa.free(bytes);
             }
@@ -469,6 +471,47 @@ pub const Runtime = struct {
                 self.writeRawJson(framed);
             }
         }
+    }
+
+    /// Routes a `widgetCommand {"nodeId","command","arg"}` NDP frame. Unlike
+    /// pluginCommand this touches live widgets, so it marshals to the UI
+    /// thread exactly like commit application; socket FIFO ordering means a
+    /// command sent after a commit is applied after that commit, so a node
+    /// created in the previous batch is always resolvable here.
+    fn marshalWidgetCommand(self: *Runtime, bytes: []u8) void {
+        const job = self.gpa.create(CommitJob) catch {
+            self.gpa.free(bytes);
+            return;
+        };
+        job.* = .{ .rt = self, .bytes = bytes };
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &widgetCommandOnUi, job);
+    }
+
+    fn widgetCommandOnUi(data: ?*anyopaque) callconv(.c) void {
+        const job: *CommitJob = @ptrCast(@alignCast(data.?));
+        const self = job.rt;
+        defer {
+            self.gpa.free(job.bytes);
+            self.gpa.destroy(job);
+        }
+        const parsed = std.json.parseFromSlice(protocol.WidgetCommand, self.gpa, job.bytes, .{ .ignore_unknown_fields = true }) catch return;
+        defer parsed.deinit();
+        // Same core-UI gate as commit application: a widget command is an
+        // ordinary UI op on an already-committed node.
+        const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
+        if (!the_acl.isAllowed(0, "core:commit")) {
+            std.debug.print("ND_ACL_DENY permission=core:commit\n", .{});
+            self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
+            return;
+        }
+        const cmd = parsed.value;
+        const widget = self.tree.get(cmd.nodeId) orelse {
+            std.debug.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
+            return;
+        };
+        const kind = if (self.tree.metaGet(cmd.nodeId)) |m| m.widget_type else "";
+        backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
+        std.debug.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
     }
 
     fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {

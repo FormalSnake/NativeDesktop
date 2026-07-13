@@ -5,3 +5,4 @@
 // Point at the source tree instead, where nd_plugin.h is a real sibling of
 // nd.h, until the header-install step is fixed to copy both.
 #include "../../../include/nd.h"
+#include "../../../include/ndterm.h"

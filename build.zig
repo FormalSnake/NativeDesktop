@@ -31,8 +31,16 @@ pub fn build(b: *std.Build) void {
         .{ .name = "gdk", .module = gobject.module("gdk4") },
         .{ .name = "graphene", .module = gobject.module("graphene1") },
         .{ .name = "adw", .module = gobject.module("adw1") },
+        .{ .name = "cairo", .module = gobject.module("cairo1") },
+        .{ .name = "pango", .module = gobject.module("pango1") },
+        .{ .name = "pangocairo", .module = gobject.module("pangocairo1") },
         .{ .name = "build_options", .module = build_options_mod },
     };
+
+    // Prebuilt libghostty-vt static archive (Phase 0). Linked into every artifact
+    // that compiles the generated GTK create dispatcher — which now reaches
+    // src/gtk/terminal.zig -> src/core/terminal.zig and its ghostty_* externs.
+    const ghostty_vt_lib = b.path("vendor/libghostty-vt/lib/libghostty-vt.a");
 
     // ---- The core (M6a-D4): `src/abi.zig` transitively reaches every other
     // GTK-free core file via ordinary same-directory relative imports (abi
@@ -84,6 +92,7 @@ pub fn build(b: *std.Build) void {
         .imports = &gtk_imports,
     });
     exe_mod.addImport("generated", exe_mod);
+    linkTerminalDeps(exe_mod, ghostty_vt_lib, target);
     const exe = b.addExecutable(.{ .name = "nd-hello", .root_module = exe_mod });
     b.installArtifact(exe);
 
@@ -99,6 +108,7 @@ pub fn build(b: *std.Build) void {
         .imports = &gtk_imports,
     });
     tests_mod.addImport("generated", tests_mod);
+    linkTerminalDeps(tests_mod, ghostty_vt_lib, target);
     const tests = b.addTest(.{ .root_module = tests_mod });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -141,16 +151,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &gtk_imports,
     });
-    const style_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/gtk/style.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &(gtk_imports ++ [_]std.Build.Module.Import{
-                .{ .name = "generated", .module = style_test_generated_mod },
-            }),
+    linkTerminalDeps(style_test_generated_mod, ghostty_vt_lib, target);
+    const style_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/gtk/style.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &(gtk_imports ++ [_]std.Build.Module.Import{
+            .{ .name = "generated", .module = style_test_generated_mod },
         }),
     });
+    linkTerminalDeps(style_tests_mod, ghostty_vt_lib, target);
+    const style_tests = b.addTest(.{ .root_module = style_tests_mod });
     test_step.dependOn(&b.addRunArtifact(style_tests).step);
 
     // `@embedFile` cannot cross a module's package-path boundary (the directory
@@ -286,6 +297,15 @@ pub fn build(b: *std.Build) void {
     });
     const plugin_step = b.step("plugin-hello", "Build the hello demo plugin (.so)");
     plugin_step.dependOn(&b.addInstallArtifact(plugin_hello, .{}).step);
+}
+
+// Link the terminal core's native deps into any artifact that compiles
+// src/core/terminal.zig: the prebuilt libghostty-vt archive, libc (forkpty +
+// threads), and libutil on Linux (forkpty lives there; on macOS it's libSystem).
+fn linkTerminalDeps(mod: *std.Build.Module, ghostty_lib: std.Build.LazyPath, target: std.Build.ResolvedTarget) void {
+    mod.link_libc = true;
+    mod.addObjectFile(ghostty_lib);
+    if (target.result.os.tag == .linux) mod.linkSystemLibrary("util", .{});
 }
 
 fn checkZigVersion() void {

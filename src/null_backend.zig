@@ -138,6 +138,8 @@ pub fn applyProps(widget: *Node, kind: []const u8, props: ?std.json.Value) void 
     }
 }
 
+pub fn widgetCommand(_: *Node, _: []const u8, _: []const u8, _: std.json.Value) void {}
+
 pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {
     _ = node_id;
     const def = defs.get(kind) orelse return;

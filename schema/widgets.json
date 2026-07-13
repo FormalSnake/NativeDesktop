@@ -91,6 +91,21 @@
       "automation": { "role": "button", "textFrom": "label" }
     },
     {
+      "name": "Terminal",
+      "intrinsic": "terminal",
+      "container": null,
+      "props": [
+        { "name": "command", "type": "string", "appliesTo": "create" },
+        { "name": "cwd", "type": "string", "appliesTo": "create" },
+        { "name": "fontSize", "type": "int", "default": 13, "appliesTo": "create" },
+        { "name": "cols", "type": "int", "default": 80, "appliesTo": "create" },
+        { "name": "rows", "type": "int", "default": 24, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "terminal", "textFrom": null }
+    },
+    {
       "name": "TextInput",
       "intrinsic": "textinput",
       "container": null,
@@ -288,12 +303,18 @@
       "name": "WebView",
       "intrinsic": "webview",
       "container": null,
-      "stub": true,
       "props": [
-        { "name": "url", "type": "string", "appliesTo": "create" },
+        { "name": "url", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "navigate", "ndpName": "onNavigate", "payload": "text" },
+        { "name": "titleChanged", "ndpName": "onTitleChanged", "payload": "text" },
+        { "name": "loadingChanged", "ndpName": "onLoadingChanged", "payload": "checked" },
+        { "name": "backAvailable", "ndpName": "onBackAvailable", "payload": "checked" },
+        { "name": "forwardAvailable", "ndpName": "onForwardAvailable", "payload": "checked" }
+      ],
+      "commands": ["goBack", "goForward", "reload", "stop"],
       "automation": { "role": "webview", "textFrom": null }
     },
     {
@@ -325,9 +346,14 @@
       },
       "props": [
         { "name": "title", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "canGoBack", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "canGoForward", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "back", "ndpName": "onBack" },
+        { "name": "forward", "ndpName": "onForward" }
+      ],
       "automation": { "role": "toolbar", "textFrom": "title" }
     },
     {

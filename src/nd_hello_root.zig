@@ -30,6 +30,7 @@ pub const initEvents = g.initEvents;
 pub const create = g.create;
 pub const applyProps = g.applyProps;
 pub const connectEvents = g.connectEvents;
+pub const widgetCommand = g.widgetCommand;
 pub const appendChild = g.appendChild;
 pub const insertBefore = g.insertBefore;
 pub const removeChild = g.removeChild;

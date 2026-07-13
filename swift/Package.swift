@@ -31,10 +31,15 @@ let package = Package(
                 .unsafeFlags([
                     "-L", "\(repoRoot)zig-out/lib",
                     "-lnd",
+                    // libghostty-vt (Phase 0): resolves the ghostty_* externs that
+                    // libnd's terminal core (ndterm_*) references. After -lnd so the
+                    // archive satisfies libnd's undefined symbols.
+                    "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt.a",
                 ]),
                 .linkedFramework("AppKit"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),  // CALayer for the T5 fidelity ladder
+                .linkedFramework("WebKit"),      // WKWebView for the <webview> widget (M14)
             ]
         ),
     ]

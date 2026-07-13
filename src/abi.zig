@@ -36,6 +36,10 @@ pub const NdBackend = extern struct {
     node_bounds: *const fn (*NdContext, ?*anyopaque, *NdRect) callconv(.c) bool,
     snapshot: *const fn (*NdContext, [*:0]const u8) callconv(.c) bool,
     semantic_action: *const fn (*NdContext, ?*anyopaque, u32, [*:0]const u8, [*:0]const u8, *?[*:0]u8, *?[*:0]u8) callconv(.c) i32,
+
+    // App -> widget imperative command (M14, widgetCommand NDP frame). Arrives
+    // on the UI thread (runtime.zig marshals before calling).
+    widget_command: *const fn (*NdContext, ?*anyopaque, [*:0]const u8, [*:0]const u8, [*:0]const u8) callconv(.c) void,
 };
 
 // The core instance: owns the Tree and the Runtime (once nd_start_runtime
@@ -72,9 +76,10 @@ fn currentEnviron() std.process.Environ {
 }
 
 comptime {
-    // 18 function pointers (16 from Task 1 + marshal_async/show_overlay
-    // added in Task 3) + no padding on a 64-bit target.
-    std.debug.assert(@sizeOf(NdBackend) == 18 * @sizeOf(usize));
+    // 19 function pointers (16 from Task 1 + marshal_async/show_overlay
+    // added in Task 3 + widget_command added in M14) + no padding on a
+    // 64-bit target.
+    std.debug.assert(@sizeOf(NdBackend) == 19 * @sizeOf(usize));
     std.debug.assert(@alignOf(NdBackend) == @alignOf(usize));
     std.debug.assert(@sizeOf(NdRect) == 16);
 }

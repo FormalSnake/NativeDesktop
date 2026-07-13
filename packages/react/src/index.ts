@@ -1,5 +1,6 @@
-export { render } from "./renderer.ts";
+export { render, sendCommand } from "./renderer.ts";
 export type { Instance } from "./host-config.ts";
+export type { NdNodeRef, WidgetType } from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {
   useState,
