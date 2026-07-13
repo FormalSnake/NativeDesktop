@@ -23,14 +23,15 @@ pub const widget_types = [_]Entry{
     .{ .name = "Grid", .value = 18 },
     .{ .name = "ListView", .value = 19 },
     .{ .name = "WebView", .value = 20 },
-    .{ .name = "SplitView", .value = 21 },
-    .{ .name = "HeaderBar", .value = 22 },
-    .{ .name = "ToolbarView", .value = 23 },
-    .{ .name = "SearchInput", .value = 24 },
-    .{ .name = "SourceList", .value = 25 },
-    .{ .name = "Menubar", .value = 26 },
-    .{ .name = "Menu", .value = 27 },
-    .{ .name = "MenuItem", .value = 28 },
+    .{ .name = "NativeView", .value = 21 },
+    .{ .name = "SplitView", .value = 22 },
+    .{ .name = "HeaderBar", .value = 23 },
+    .{ .name = "ToolbarView", .value = 24 },
+    .{ .name = "SearchInput", .value = 25 },
+    .{ .name = "SourceList", .value = 26 },
+    .{ .name = "Menubar", .value = 27 },
+    .{ .name = "Menu", .value = 28 },
+    .{ .name = "MenuItem", .value = 29 },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {

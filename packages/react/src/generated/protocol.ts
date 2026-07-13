@@ -5,7 +5,7 @@
 
 export const NDP_VERSION = 1;
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem";
 
 /** Child runtime identity, carried inside the hello frame. */
 export interface Runtime {

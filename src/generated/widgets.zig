@@ -8,6 +8,7 @@ const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ndterm_gtk = @import("../gtk/terminal.zig");
 const ndweb_gtk = @import("../gtk/webview.zig");
+const nd_plugin = @import("../plugin.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     const v = props orelse return null;
@@ -471,15 +472,68 @@ pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
     ndMenuRefresh();
 }
 
-/// <headerbar> back/forward navigation (canGoBack/canGoForward + onBack/onForward)
-/// is a Mac-only affordance for now; on GTK it is a v1 stub. The schema props
-/// and events exist so the both-backends contract compiles — connectEvents
-/// routes the back/forward events here (like ndMenuItemConnect) rather than to a
-/// GtkWidget signal, and this no-op keeps the GTK build green until a native
-/// AdwHeaderBar back-button rendering is wired.
+// ---- <headerbar> back/forward navigation (canGoBack/canGoForward +
+// onBack/onForward). The GNOME idiom is two flat GtkButtons packed at the
+// AdwHeaderBar START (go-previous-symbolic / go-next-symbolic). Buttons
+// materialize when either prop is PRESENT (the app opts in) — a header with no
+// nav props gets none. `node_id` (for emitting back/forward) arrives via
+// ndHeaderBarConnectNav, decoupled from button creation, so any create/connect
+// order works: the click callbacks look the id up by AdwHeaderBar pointer. ----
+const HeaderBarNav = struct { back: *gtk.Button, forward: *gtk.Button };
+var headerbar_navs: std.AutoHashMapUnmanaged(usize, HeaderBarNav) = .empty; // AdwHeaderBar ptr -> buttons
+var headerbar_nav_ids: std.AutoHashMapUnmanaged(usize, u32) = .empty; // AdwHeaderBar ptr -> node id
+
+fn cbHeaderBarBack(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
+    const id = headerbar_nav_ids.get(@intFromPtr(data)) orelse return;
+    if (emit) |f| f(id, "back", .{});
+}
+
+fn cbHeaderBarForward(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
+    const id = headerbar_nav_ids.get(@intFromPtr(data)) orelse return;
+    if (emit) |f| f(id, "forward", .{});
+}
+
+/// Evict a header's nav entries when it is finalized. A `key`-based remount
+/// (the settings example re-keys the content header per page) destroys the old
+/// AdwHeaderBar and GLib readily reuses its address for the new one; without
+/// this the stale entry's dangling button pointers would reach setSensitive.
+fn cbHeaderBarDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    const key = @intFromPtr(w);
+    _ = headerbar_navs.remove(key);
+    _ = headerbar_nav_ids.remove(key);
+}
+
+/// Materializes / updates the header's flat back/forward buttons from the
+/// canGoBack/canGoForward props (generated HeaderBar create + applyProps arms).
+/// The buttons appear on the first call carrying either flag and persist; each
+/// flag only drives its own button's `sensitive`, so a one-sided diffed update
+/// can't clobber the other (mirrors the AppKit segmented-control behaviour).
+pub fn ndHeaderBarApplyNav(hb: *adw.HeaderBar, can_back: ?bool, can_forward: ?bool) void {
+    if (can_back == null and can_forward == null) return; // untouched: not a teardown
+    const gop = headerbar_navs.getOrPut(events_gpa, @intFromPtr(hb)) catch return;
+    if (!gop.found_existing) {
+        const back = gtk.Button.new();
+        gtk.Button.setIconName(back, "go-previous-symbolic");
+        gtk.Widget.addCssClass(back.as(gtk.Widget), "flat");
+        const forward = gtk.Button.new();
+        gtk.Button.setIconName(forward, "go-next-symbolic");
+        gtk.Widget.addCssClass(forward.as(gtk.Widget), "flat");
+        _ = gtk.Button.signals.clicked.connect(back, ?*anyopaque, &cbHeaderBarBack, @ptrCast(hb), .{});
+        _ = gtk.Button.signals.clicked.connect(forward, ?*anyopaque, &cbHeaderBarForward, @ptrCast(hb), .{});
+        adw.HeaderBar.packStart(hb, back.as(gtk.Widget)); // back leftmost, forward to its right
+        adw.HeaderBar.packStart(hb, forward.as(gtk.Widget));
+        _ = gtk.Widget.signals.destroy.connect(hb.as(gtk.Widget), ?*anyopaque, &cbHeaderBarDestroyed, null, .{});
+        gop.value_ptr.* = .{ .back = back, .forward = forward };
+    }
+    if (can_back) |b| gtk.Widget.setSensitive(gop.value_ptr.back.as(gtk.Widget), @intFromBool(b));
+    if (can_forward) |f| gtk.Widget.setSensitive(gop.value_ptr.forward.as(gtk.Widget), @intFromBool(f));
+}
+
+/// Records the header's node id so the back/forward click callbacks can emit
+/// (generated connectEvents HeaderBar arm). The buttons' click handlers are
+/// wired in ndHeaderBarApplyNav; this only supplies the id they look up.
 pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
-    _ = widget;
-    _ = node_id;
+    headerbar_nav_ids.put(events_gpa, @intFromPtr(widget), node_id) catch {};
 }
 
 /// backend.zig routes a non-widget node handle's semantic click here.
@@ -669,6 +723,16 @@ pub fn create(
         // runtime; placeholder label otherwise (M5b-D7: no hard link dep).
         const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
         return ndweb_gtk.create(url);
+    } else if (std.mem.eql(u8, kind, "NativeView")) {
+        const view_kind = propStr(props, "viewKind") orelse "";
+        const props_json = propStr(props, "props") orelse "{}";
+        if (nd_plugin.viewCreate(view_kind, props_json)) |v| {
+            const nv: *gtk.Widget = @ptrCast(@alignCast(v));
+            gobject.Object.setData(asObject(nv), "nd-view-kind", @ptrCast(@constCast(dupeZ(view_kind).ptr)));
+            return nv;
+        }
+        std.debug.print("ND_WARN nativeView: no module registered viewKind={s}; rendering empty box\n", .{view_kind});
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         const sv = adw.OverlaySplitView.new();
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
@@ -684,6 +748,7 @@ pub fn create(
             }
         }
         ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)
+        ndHeaderBarApplyNav(hb, propBool(props, "canGoBack"), propBool(props, "canGoForward"));
         return hb.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ToolbarView")) {
         const tv = adw.ToolbarView.new();
@@ -824,11 +889,17 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (propStr(props, "url")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));
+    } else if (std.mem.eql(u8, kind, "NativeView")) {
+        if (propStr(props, "props")) |pj| {
+            if (gobject.Object.getData(asObject(widget), "nd-view-kind")) |raw| {
+                nd_plugin.viewApplyProps(std.mem.span(@as([*:0]const u8, @ptrCast(raw))), widget, pj);
+            }
+        }
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
-        _ = propBool(props, "canGoBack"); // GTK back/forward is a v1 stub (Mac-only)
-        _ = propBool(props, "canGoForward"); // GTK back/forward is a v1 stub (Mac-only)
+        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, "canGoBack"), null);
+        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, "canGoForward"));
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         if (propStr(props, "text")) |t| {
             const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);

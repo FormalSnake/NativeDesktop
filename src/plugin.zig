@@ -8,9 +8,20 @@ const acl = @import("acl.zig");
 
 const NdCommandFn = *const fn ([*:0]const u8, *?[*:0]u8) callconv(.c) i32;
 
+// Mirrors nd_view_impl (include/nd_plugin.h, v2) field-for-field: a native-view
+// factory a plugin registers under a view_kind string. The handles are opaque
+// backend widgets (GtkWidget*/NSView*) the core never dereferences.
+const NdViewImpl = extern struct {
+    create: *const fn ([*:0]const u8) callconv(.c) ?*anyopaque,
+    apply_props: *const fn (?*anyopaque, [*:0]const u8) callconv(.c) void,
+    command: *const fn (?*anyopaque, [*:0]const u8, [*:0]const u8) callconv(.c) void,
+    destroy: *const fn (?*anyopaque) callconv(.c) void,
+};
+
 const NdPluginRegistry = extern struct {
     host: ?*anyopaque,
     register_command: *const fn (*NdPluginRegistry, [*:0]const u8, NdCommandFn) callconv(.c) void,
+    register_view: *const fn (*NdPluginRegistry, [*:0]const u8, *const NdViewImpl) callconv(.c) void,
 };
 const NdPluginV1 = extern struct {
     abi_version: u32,
@@ -24,12 +35,26 @@ const EntryFn = *const fn () callconv(.c) *const NdPluginV1;
 // Single-plugin registry (v1). A real multi-plugin host keys by plugin name;
 // v1 loads one demo plugin, so a flat command map suffices.
 var g_commands: std.StringHashMapUnmanaged(NdCommandFn) = .{};
+// Native-view factories keyed by view_kind (v2). The generic <nativeView>
+// widget's create/apply/command/destroy route here (GTK: the generated Zig
+// dispatcher calls viewCreate/…; AppKit: the Swift shell calls the nd_plugin_
+// view_* C wrappers below). Copies of the plugin's nd_view_impl by value.
+var g_views: std.StringHashMapUnmanaged(NdViewImpl) = .{};
 var g_gpa: std.mem.Allocator = undefined;
 var g_registry: NdPluginRegistry = undefined;
 
 fn registerCommandC(_: *NdPluginRegistry, command: [*:0]const u8, fn_ptr: NdCommandFn) callconv(.c) void {
     const name = g_gpa.dupe(u8, std.mem.span(command)) catch return;
     g_commands.put(g_gpa, name, fn_ptr) catch {};
+}
+
+fn registerViewC(_: *NdPluginRegistry, view_kind: [*:0]const u8, impl: *const NdViewImpl) callconv(.c) void {
+    const name = g_gpa.dupe(u8, std.mem.span(view_kind)) catch return;
+    g_views.put(g_gpa, name, impl.*) catch {
+        g_gpa.free(name);
+        return;
+    };
+    std.debug.print("ND_PLUGIN_VIEW_REGISTERED view_kind={s}\n", .{name});
 }
 
 pub const Loaded = struct {
@@ -44,6 +69,9 @@ pub const Loaded = struct {
         var it = g_commands.keyIterator();
         while (it.next()) |k| g_gpa.free(k.*);
         g_commands.clearAndFree(g_gpa);
+        var vit = g_views.keyIterator();
+        while (vit.next()) |k| g_gpa.free(k.*);
+        g_views.clearAndFree(g_gpa);
         g_gpa.destroy(self);
     }
     /// Runs a registered command; returns a malloc'd JSON result the CALLER
@@ -66,8 +94,8 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8, acl_ptr: *acl.Acl) !*Loade
     errdefer lib.close();
     const entry = lib.lookup(EntryFn, "nd_plugin_entry") orelse return error.NoPluginEntry;
     const plugin = entry();
-    if (plugin.abi_version != 1) {
-        std.debug.print("ND_PLUGIN_ABI_MISMATCH got={d} want=1\n", .{plugin.abi_version});
+    if (plugin.abi_version != 1 and plugin.abi_version != 2) {
+        std.debug.print("ND_PLUGIN_ABI_MISMATCH got={d} want=1|2\n", .{plugin.abi_version});
         return error.AbiMismatch;
     }
     // Verify every declared capability is grantable (else the plugin's
@@ -80,12 +108,67 @@ pub fn load(gpa: std.mem.Allocator, path: []const u8, acl_ptr: *acl.Acl) !*Loade
             return error.CapabilityDenied;
         }
     }
-    g_registry = .{ .host = null, .register_command = &registerCommandC };
+    g_registry = .{ .host = null, .register_command = &registerCommandC, .register_view = &registerViewC };
     if (plugin.init(&g_registry) != 0) return error.PluginInitFailed;
     const loaded = try gpa.create(Loaded);
     loaded.* = .{ .lib = lib, .plugin = plugin };
     std.debug.print("ND_PLUGIN_LOADED name={s}\n", .{std.mem.span(plugin.name)});
     return loaded;
+}
+
+// ---- Native-view dispatch (v2). The generic <nativeView> widget routes here
+// by view_kind. GTK's generated create/apply dispatcher calls these Zig fns
+// directly (@import("../plugin.zig")); the Swift shell calls the nd_plugin_
+// view_* C wrappers. A lookup miss (no plugin loaded, or unknown kind) returns
+// null / no-ops — the backend renders a placeholder rather than crashing. ----
+
+/// Look up the factory for `view_kind` and build its native widget. Null when
+/// unregistered. `g_gpa` is only touched after a successful lookup, which
+/// implies a plugin loaded (so `g_gpa` is set).
+pub fn viewCreate(view_kind: []const u8, props_json: []const u8) ?*anyopaque {
+    const impl = g_views.get(view_kind) orelse return null;
+    const argz = g_gpa.dupeZ(u8, props_json) catch return null;
+    defer g_gpa.free(argz);
+    return impl.create(argz.ptr);
+}
+
+pub fn viewApplyProps(view_kind: []const u8, view: *anyopaque, props_json: []const u8) void {
+    const impl = g_views.get(view_kind) orelse return;
+    const argz = g_gpa.dupeZ(u8, props_json) catch return;
+    defer g_gpa.free(argz);
+    impl.apply_props(view, argz.ptr);
+}
+
+pub fn viewCommand(view_kind: []const u8, view: *anyopaque, command: []const u8, arg_json: []const u8) void {
+    const impl = g_views.get(view_kind) orelse return;
+    const cmdz = g_gpa.dupeZ(u8, command) catch return;
+    defer g_gpa.free(cmdz);
+    const argz = g_gpa.dupeZ(u8, arg_json) catch return;
+    defer g_gpa.free(argz);
+    impl.command(view, cmdz.ptr, argz.ptr);
+}
+
+pub fn viewDestroy(view_kind: []const u8, view: *anyopaque) void {
+    const impl = g_views.get(view_kind) orelse return;
+    impl.destroy(view);
+}
+
+// C-ABI wrappers retained into libnd.a (src/abi.zig comptime block) for the
+// Swift shell's generated <nativeView> arms.
+pub export fn nd_plugin_view_create(view_kind: [*:0]const u8, props: [*:0]const u8) callconv(.c) ?*anyopaque {
+    return viewCreate(std.mem.span(view_kind), std.mem.span(props));
+}
+pub export fn nd_plugin_view_apply_props(view_kind: [*:0]const u8, view: ?*anyopaque, props: [*:0]const u8) callconv(.c) void {
+    const v = view orelse return;
+    viewApplyProps(std.mem.span(view_kind), v, std.mem.span(props));
+}
+pub export fn nd_plugin_view_command(view_kind: [*:0]const u8, view: ?*anyopaque, command: [*:0]const u8, arg: [*:0]const u8) callconv(.c) void {
+    const v = view orelse return;
+    viewCommand(std.mem.span(view_kind), v, std.mem.span(command), std.mem.span(arg));
+}
+pub export fn nd_plugin_view_destroy(view_kind: [*:0]const u8, view: ?*anyopaque) callconv(.c) void {
+    const v = view orelse return;
+    viewDestroy(std.mem.span(view_kind), v);
 }
 
 fn currentEnviron() std.process.Environ {

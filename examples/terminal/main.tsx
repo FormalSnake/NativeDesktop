@@ -1,15 +1,40 @@
 import { render } from "@nativedesktop/react";
 
-// A real terminal emulator built with the framework: the <terminal> widget hosts
-// a native drawing surface (GtkDrawingArea on GTK, NDTerminalView/CoreText on
-// AppKit) driven by libghostty-vt over the ndterm core — a PTY runs $SHELL, its
-// output is parsed into the terminal grid, and keystrokes are fed straight back
-// to the PTY host-side. Phase A: the widget owns its own PTY + input; no props
-// beyond the shell/geometry are required.
+// A terminal app with REAL native chrome. The <toolbarview> + <headerbar> pair
+// sits directly under <window>, so the header lands in the platform's real
+// titlebar — a unified NSToolbar with the traffic lights inline on macOS, a real
+// AdwHeaderBar (window controls included) on GTK — exactly like the browser
+// example. Below it, a dark padded frame holds the terminal so the emulator reads
+// as an intentional app surface, Ghostty-style, rather than a bare grid.
+//
+// The <terminal> widget hosts a native drawing surface (GtkDrawingArea on GTK,
+// NDTerminalView/CoreText on AppKit) driven by libghostty-vt over the ndterm core:
+// a PTY runs $SHELL and its output is parsed into the cell grid, with keystrokes
+// fed straight back to the PTY host-side.
 function App(): React.ReactNode {
   return (
-    <window title="NativeDesktop Terminal" defaultWidth={720} defaultHeight={460}>
-      <terminal cols={80} rows={24} fontSize={13} />
+    <window title="Terminal" defaultWidth={860} defaultHeight={560}>
+      <toolbarview>
+        <headerbar title="Terminal" testID="chrome" />
+        <box
+          orientation="vertical"
+          style={{
+            background: "#0e0e12",
+            padding: 14,
+            hexpand: true,
+            vexpand: true,
+            halign: "fill",
+            valign: "fill",
+          }}
+        >
+          <terminal
+            cols={100}
+            rows={30}
+            fontSize={13}
+            style={{ hexpand: true, vexpand: true }}
+          />
+        </box>
+      </toolbarview>
     </window>
   );
 }

@@ -34,45 +34,9 @@ nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLay
 /// non-zero padding switches to it — a real AppKit bezel style change, not a
 /// layer hack.
 final class NDButton: NSButton {
-    /// True once this button belongs to a `navigation-sidebar` box — it then
-    /// renders as a native source-list row (uniform height, borderless, accent
-    /// selection pill) rather than a generic push button. Set by
-    /// `ndPromoteSidebarRow` (Backend.swift). A sidebar row owns its metrics,
-    /// so it opts out of the padding-driven bezel switch and height inflation
-    /// below.
-    var ndIsSidebarRow = false {
-        didSet { invalidateIntrinsicContentSize() }
-    }
-    /// The uniform source-list row-height constraint, installed once by
-    /// `ndEnsureSidebarRowMetrics` (tracked so re-apply doesn't duplicate it).
-    var ndHeightConstraint: NSLayoutConstraint?
-    /// True while this row is the selected one (carries `suggested-action`).
-    /// Drives the focus-responsive selection pill: accent + white text when
-    /// the window is key, neutral gray + `.labelColor` when it isn't (native
-    /// source-list behavior). Managed by `ndApplySidebarRowSelection`.
-    var ndIsSelectedRow = false
-
-    /// Re-registers window key-state observers for the new window and
-    /// re-resolves the selection appearance — a selected row painted while its
-    /// window wasn't yet key (construction time) flips to accent here once it
-    /// lands in a now-key window.
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard ndIsSidebarRow else { return }
-        ndUpdateSidebarRowKeyObservers(self)
-        ndRefreshSidebarRowSelection(self)
-    }
-
-    @objc func ndWindowKeyStateChanged(_ note: Notification) {
-        ndRefreshSidebarRowSelection(self)
-    }
-
-    deinit { NotificationCenter.default.removeObserver(self) }
-
     var ndPadding = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) {
         didSet {
             invalidateIntrinsicContentSize()
-            guard !ndIsSidebarRow else { return }
             let nonzero = ndPadding.top != 0 || ndPadding.left != 0 || ndPadding.bottom != 0 || ndPadding.right != 0
             if nonzero && bezelStyle == .rounded {
                 if #available(macOS 14.0, *) {
@@ -84,9 +48,6 @@ final class NDButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
-        // Sidebar rows ignore the app's per-row padding — the framework owns
-        // the source-list row metrics (see `ndEnsureSidebarRowMetrics`).
-        if ndIsSidebarRow { return s }
         return NSSize(width: s.width + ndPadding.left + ndPadding.right, height: s.height + ndPadding.top + ndPadding.bottom)
     }
 }
@@ -257,12 +218,13 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
     }
 
     // A button attaching to a `navigation-sidebar` box becomes a source-list
-    // row. Style is applied to a node BEFORE it appends on create (see this
-    // file's header comment), so the button's own `suggested-action`/`flat`
-    // class ran through the generic bezel path already — promoting here (and
-    // in ndApplyCssClasses's retro-apply loop) re-runs it sidebar-aware.
+    // table row (SidebarTable.swift): mark/hide it and reload the table so the
+    // new row shows. Style/class are applied BEFORE append on create (see this
+    // file's header comment), so marking here strips any generic bezel the
+    // pre-attach `suggested-action` gave it.
     if let btn = child as? NDButton, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
-        ndPromoteSidebarRow(btn)
+        ndMarkSidebarRowButton(btn)
+        ndSidebarTables[ObjectIdentifier(stack)]?.reload()
     }
 
     // A separator inside a `boxed-list` card renders as an inset hairline row
@@ -328,6 +290,13 @@ func ndBoxChildDetached(_ stack: NSStackView, _ child: NSView) {
     if let existing = ndCrossAxisConstraints[ObjectIdentifier(child)] {
         existing.isActive = false
         ndCrossAxisConstraints[ObjectIdentifier(child)] = nil
+    }
+
+    // A row removed from a `navigation-sidebar` box: drop it from the row set
+    // and reload the source-list table (SidebarTable.swift).
+    if ndNavigationSidebars.contains(ObjectIdentifier(stack)), let table = ndSidebarTables[ObjectIdentifier(stack)] {
+        ndSidebarRowButtons.remove(ObjectIdentifier(child))
+        table.reload()
     }
 
     let vertical = stack.orientation == .vertical

@@ -84,6 +84,18 @@ comptime {
     std.debug.assert(@sizeOf(NdRect) == 16);
 }
 
+comptime {
+    // Force-retain the plugin native-view C-ABI wrappers (plugin.zig) into
+    // libnd.a for the Swift shell's generated <nativeView> arms — same
+    // rationale as terminal's ndterm_* retention in src/core/root.zig (a
+    // static-lib artifact emits only what something the compiler keeps
+    // reaches; taking each export's address forces emission).
+    _ = &plugin.nd_plugin_view_create;
+    _ = &plugin.nd_plugin_view_apply_props;
+    _ = &plugin.nd_plugin_view_command;
+    _ = &plugin.nd_plugin_view_destroy;
+}
+
 pub export fn nd_init() callconv(.c) ?*NdContext {
     const gpa = std.heap.page_allocator;
     const self = gpa.create(NdContext) catch return null;

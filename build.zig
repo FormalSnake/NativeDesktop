@@ -297,6 +297,26 @@ pub fn build(b: *std.Build) void {
     });
     const plugin_step = b.step("plugin-hello", "Build the hello demo plugin (.so)");
     plugin_step.dependOn(&b.addInstallArtifact(plugin_hello, .{}).step);
+
+    // Demo native-view module (Phase B): a C-ABI shared lib exporting
+    // nd_plugin_entry that registers its OWN GtkWidget under the "colorview"
+    // view kind via the v2 plugin ABI (register_view). Links the GTK imports
+    // (their pkg-config system libs propagate to the .dylib; GtkWidget/cairo
+    // resolve against the same libgtk the host already loaded). Proves a
+    // third-party module can host a native view with zero core schema edits.
+    const plugin_colorview = b.addLibrary(.{
+        .name = "nd_plugin_colorview",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("plugins/colorview/plugin.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &gtk_imports,
+        }),
+    });
+    const plugin_colorview_step = b.step("plugin-colorview", "Build the colorview demo native-view module (.so)");
+    plugin_colorview_step.dependOn(&b.addInstallArtifact(plugin_colorview, .{}).step);
 }
 
 // Link the terminal core's native deps into any artifact that compiles

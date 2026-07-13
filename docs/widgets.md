@@ -271,6 +271,16 @@ Automation role: `webview`. Text source: none. Children: none.
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`.
 
+## NativeView (`<nativeview>`)
+
+Automation role: `custom`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `viewKind` | string | — | create |
+| `props` | string | {} | createAndUpdate |
+| `testID` | string | — | meta |
+
 ## SplitView (`<splitview>`)
 
 Automation role: `group`. Text source: none. Children: multi.

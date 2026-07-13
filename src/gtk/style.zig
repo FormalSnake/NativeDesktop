@@ -226,6 +226,22 @@ pub fn applyCssClasses(widget: *gtk.Widget, value: std.json.Value) void {
             gtk.Widget.removeCssClass(widget, z);
         }
     }
+
+    // libadwaita's `.boxed-list` styles a GtkListBox (`list.boxed-list`); on a
+    // plain GtkBox it draws nothing. Pair it with `.card` — which styles ANY
+    // widget as a rounded grouped container — so a `<box class="boxed-list">`
+    // renders as GNOME's grouped-list card, its `<separator>` children reading
+    // as the card's internal dividers. Emitted after the reconcile loop so it
+    // wins even when the app doesn't also request `card`; when `boxed-list` is
+    // later dropped, the loop above removes `card` (unless requested outright).
+    var boxed_list = false;
+    for (value.array.items) |item| {
+        if (item == .string and std.mem.eql(u8, item.string, "boxed-list")) {
+            boxed_list = true;
+            break;
+        }
+    }
+    if (boxed_list) gtk.Widget.addCssClass(widget, "card");
 }
 
 test "compileCss emits scoped block, splits margin out, rejects unknown key" {

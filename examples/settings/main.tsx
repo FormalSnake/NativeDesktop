@@ -140,9 +140,14 @@ function App(): React.ReactNode {
           {/* The content header carries the native floating back/forward
               chevrons (System Settings' leading `< >`), driven by the visited-
               category history above. Each segment greys out at the ends of the
-              history — the framework renders the NSSegmentedControl. */}
+              history — the framework renders the NSSegmentedControl. The `title`
+              is the current page, shown as a small title right of the chevrons;
+              `title` is a create-only prop, so `key={category}` remounts the
+              header on navigation to pick up the new title. */}
           <headerbar
+            key={category}
             testID="settings-content-header"
+            title={categories.find((c) => c.id === category)?.label}
             canGoBack={historyIndex > 0}
             canGoForward={historyIndex < history.length - 1}
             onBack={goBack}

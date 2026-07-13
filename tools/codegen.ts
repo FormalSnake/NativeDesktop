@@ -704,15 +704,68 @@ pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
     ndMenuRefresh();
 }
 
-/// <headerbar> back/forward navigation (canGoBack/canGoForward + onBack/onForward)
-/// is a Mac-only affordance for now; on GTK it is a v1 stub. The schema props
-/// and events exist so the both-backends contract compiles — connectEvents
-/// routes the back/forward events here (like ndMenuItemConnect) rather than to a
-/// GtkWidget signal, and this no-op keeps the GTK build green until a native
-/// AdwHeaderBar back-button rendering is wired.
+// ---- <headerbar> back/forward navigation (canGoBack/canGoForward +
+// onBack/onForward). The GNOME idiom is two flat GtkButtons packed at the
+// AdwHeaderBar START (go-previous-symbolic / go-next-symbolic). Buttons
+// materialize when either prop is PRESENT (the app opts in) — a header with no
+// nav props gets none. \`node_id\` (for emitting back/forward) arrives via
+// ndHeaderBarConnectNav, decoupled from button creation, so any create/connect
+// order works: the click callbacks look the id up by AdwHeaderBar pointer. ----
+const HeaderBarNav = struct { back: *gtk.Button, forward: *gtk.Button };
+var headerbar_navs: std.AutoHashMapUnmanaged(usize, HeaderBarNav) = .empty; // AdwHeaderBar ptr -> buttons
+var headerbar_nav_ids: std.AutoHashMapUnmanaged(usize, u32) = .empty; // AdwHeaderBar ptr -> node id
+
+fn cbHeaderBarBack(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
+    const id = headerbar_nav_ids.get(@intFromPtr(data)) orelse return;
+    if (emit) |f| f(id, "back", .{});
+}
+
+fn cbHeaderBarForward(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
+    const id = headerbar_nav_ids.get(@intFromPtr(data)) orelse return;
+    if (emit) |f| f(id, "forward", .{});
+}
+
+/// Evict a header's nav entries when it is finalized. A \`key\`-based remount
+/// (the settings example re-keys the content header per page) destroys the old
+/// AdwHeaderBar and GLib readily reuses its address for the new one; without
+/// this the stale entry's dangling button pointers would reach setSensitive.
+fn cbHeaderBarDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    const key = @intFromPtr(w);
+    _ = headerbar_navs.remove(key);
+    _ = headerbar_nav_ids.remove(key);
+}
+
+/// Materializes / updates the header's flat back/forward buttons from the
+/// canGoBack/canGoForward props (generated HeaderBar create + applyProps arms).
+/// The buttons appear on the first call carrying either flag and persist; each
+/// flag only drives its own button's \`sensitive\`, so a one-sided diffed update
+/// can't clobber the other (mirrors the AppKit segmented-control behaviour).
+pub fn ndHeaderBarApplyNav(hb: *adw.HeaderBar, can_back: ?bool, can_forward: ?bool) void {
+    if (can_back == null and can_forward == null) return; // untouched: not a teardown
+    const gop = headerbar_navs.getOrPut(events_gpa, @intFromPtr(hb)) catch return;
+    if (!gop.found_existing) {
+        const back = gtk.Button.new();
+        gtk.Button.setIconName(back, "go-previous-symbolic");
+        gtk.Widget.addCssClass(back.as(gtk.Widget), "flat");
+        const forward = gtk.Button.new();
+        gtk.Button.setIconName(forward, "go-next-symbolic");
+        gtk.Widget.addCssClass(forward.as(gtk.Widget), "flat");
+        _ = gtk.Button.signals.clicked.connect(back, ?*anyopaque, &cbHeaderBarBack, @ptrCast(hb), .{});
+        _ = gtk.Button.signals.clicked.connect(forward, ?*anyopaque, &cbHeaderBarForward, @ptrCast(hb), .{});
+        adw.HeaderBar.packStart(hb, back.as(gtk.Widget)); // back leftmost, forward to its right
+        adw.HeaderBar.packStart(hb, forward.as(gtk.Widget));
+        _ = gtk.Widget.signals.destroy.connect(hb.as(gtk.Widget), ?*anyopaque, &cbHeaderBarDestroyed, null, .{});
+        gop.value_ptr.* = .{ .back = back, .forward = forward };
+    }
+    if (can_back) |b| gtk.Widget.setSensitive(gop.value_ptr.back.as(gtk.Widget), @intFromBool(b));
+    if (can_forward) |f| gtk.Widget.setSensitive(gop.value_ptr.forward.as(gtk.Widget), @intFromBool(f));
+}
+
+/// Records the header's node id so the back/forward click callbacks can emit
+/// (generated connectEvents HeaderBar arm). The buttons' click handlers are
+/// wired in ndHeaderBarApplyNav; this only supplies the id they look up.
 pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
-    _ = widget;
-    _ = node_id;
+    headerbar_nav_ids.put(events_gpa, @intFromPtr(widget), node_id) catch {};
 }
 
 /// backend.zig routes a non-widget node handle's semantic click here.
@@ -746,7 +799,8 @@ function genZig(s: Schema): string {
   out += "const adw = @import(\"adw\");\n";
   out += "const protocol = @import(\"../protocol.zig\");\n";
   out += "const ndterm_gtk = @import(\"../gtk/terminal.zig\");\n";
-  out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n\n";
+  out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n";
+  out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
   out += ZIG_EVENT_STATE;
@@ -1049,6 +1103,7 @@ function genZigCreateBody(w: Widget): string {
     out += "            }\n";
     out += "        }\n";
     out += "        ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)\n";
+    out += "        ndHeaderBarApplyNav(hb, propBool(props, \"canGoBack\"), propBool(props, \"canGoForward\"));\n";
     out += "        return hb.as(gtk.Widget);\n";
   } else if (w.name === "ToolbarView") {
     out += "        const tv = adw.ToolbarView.new();\n";
@@ -1068,6 +1123,21 @@ function genZigCreateBody(w: Widget): string {
     out += `        const cols: u16 = @intCast(propInt(props, "cols") orelse ${dflt(w, "cols")});\n`;
     out += `        const rows: u16 = @intCast(propInt(props, "rows") orelse ${dflt(w, "rows")});\n`;
     out += "        return ndterm_gtk.create(command, cwd, font_size, cols, rows);\n";
+  } else if (w.name === "NativeView") {
+    // Generic native-view host: a third-party dlopen'd plugin registered a
+    // factory under `viewKind` via the v2 plugin ABI (register_view). No core
+    // schema/codegen edit is needed per module — this one arm serves them all.
+    // The viewKind is stashed on the widget so applyProps can route back to the
+    // module (prop updates carry only the changed `props`, not viewKind).
+    out += "        const view_kind = propStr(props, \"viewKind\") orelse \"\";\n";
+    out += `        const props_json = propStr(props, "props") orelse ${zigDefaultStr(w, "props")};\n`;
+    out += "        if (nd_plugin.viewCreate(view_kind, props_json)) |v| {\n";
+    out += "            const nv: *gtk.Widget = @ptrCast(@alignCast(v));\n";
+    out += "            gobject.Object.setData(asObject(nv), \"nd-view-kind\", @ptrCast(@constCast(dupeZ(view_kind).ptr)));\n";
+    out += "            return nv;\n";
+    out += "        }\n";
+    out += "        std.debug.print(\"ND_WARN nativeView: no module registered viewKind={s}; rendering empty box\\n\", .{view_kind});\n";
+    out += "        return gtk.Box.new(.vertical, 0).as(gtk.Widget);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -1223,10 +1293,18 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += "        if (propBool(props, \"enabled\")) |en| ndMenuItemSetEnabled(widget, en);\n";
-    } else if (w.name === "HeaderBar" && (p.name === "canGoBack" || p.name === "canGoForward")) {
-      out += `        _ = propBool(props, ${JSON.stringify(p.name)}); // GTK back/forward is a v1 stub (Mac-only)\n`;
+    } else if (w.name === "HeaderBar" && p.name === "canGoBack") {
+      out += "        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, \"canGoBack\"), null);\n";
+    } else if (w.name === "HeaderBar" && p.name === "canGoForward") {
+      out += "        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, \"canGoForward\"));\n";
     } else if (w.name === "WebView" && p.name === "url") {
       out += "        if (propStr(props, \"url\")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));\n";
+    } else if (w.name === "NativeView" && p.name === "props") {
+      out += "        if (propStr(props, \"props\")) |pj| {\n";
+      out += "            if (gobject.Object.getData(asObject(widget), \"nd-view-kind\")) |raw| {\n";
+      out += "                nd_plugin.viewApplyProps(std.mem.span(@as([*:0]const u8, @ptrCast(raw))), widget, pj);\n";
+      out += "            }\n";
+      out += "        }\n";
     } else {
       throw new Error(`no applyProps template for ${w.name}.${p.name} — add one when introducing it (M5b)`);
     }
@@ -1670,6 +1748,7 @@ const HEADER_SWIFT = "// GENERATED by tools/codegen.ts — do not edit\n";
 
 const SWIFT_HELPERS = `import AppKit
 import Foundation
+import CNd  // libnd C surface (nd_plugin_view_* for the <nativeView> arms)
 
 // JSON-string -> [String: Any] (M6b-D1: JSONSerialization, not a typed decoder).
 func parseProps(_ json: String) -> [String: Any] {
@@ -1750,17 +1829,18 @@ function genSwiftCreateBody(w: Widget): string {
     // .fullSizeContentView + transparent titlebar: the content (the split's
     // vibrancy sidebar) reaches the very top so traffic lights float over the
     // sidebar, native Notes/Mail idiom. The single unified NSToolbar the pane
-    // <headerbar>s feed is created and assigned here (empty until the panes
-    // register their items); see ndWindowToolbarManager / NDToolbarManager.
-    out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)\n";
+    // <headerbar>s feed is created here but NOT assigned to the window —
+    // NDToolbarManager attaches it when the first pane registers. An assigned
+    // unified toolbar (even hidden/empty) reserves full toolbar height in the
+    // safe area, which would push plain (no-headerbar) apps' content down by
+    // a blank strip instead of the standard titlebar.
+    out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)\n";
     out += '        if let t = propStr(props, "title") { win.title = t }\n';
     out += "        win.titlebarAppearsTransparent = true\n";
     out += "        win.contentView = content\n";
     out += "        gWindow = win\n";
     out += "        let manager = NDToolbarManager()\n";
     out += "        ndWindowToolbarManager = manager\n";
-    out += "        win.toolbar = manager.toolbar\n";
-    out += "        win.toolbarStyle = .unified\n";
     out += "        ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)\n";
     out += "        win.center(); win.makeKeyAndOrderFront(nil)\n";
     out += "        return content\n";
@@ -1795,7 +1875,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        if let e = propBool(props, "editable") { field.isEditable = e }\n';
     out += "        return field\n";
   } else if (w.name === "SearchInput") {
-    out += `        let search = NSSearchField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
+    // NDSearchField (HeaderBar.swift): NSSearchField + a settable preferred
+    // intrinsic width, which is how the toolbar manager stretches a
+    // header-slotted search field across the free run (address bar).
+    out += `        let search = NDSearchField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
     out += '        if let ph = propStr(props, "placeholder") { search.placeholderString = ph }\n';
     out += "        return search\n";
   } else if (w.name === "TextArea") {
@@ -1957,6 +2040,16 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return ndMenuItemCreate(props)\n";
   } else if (w.name === "Terminal") {
     out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? ${swiftDefaultInt(w, "fontSize")}, cols: propInt(props, "cols") ?? ${swiftDefaultInt(w, "cols")}, rows: propInt(props, "rows") ?? ${swiftDefaultInt(w, "rows")})\n`;
+  } else if (w.name === "NativeView") {
+    // Generic native-view host (GTK-first): route to the plugin's AppKit
+    // nd_view_impl if one registered `viewKind`, else an empty NSView (no
+    // AppKit impl — a GTK-only module returns nothing here).
+    out += `        let viewKind = propStr(props, "viewKind") ?? ""\n`;
+    out += `        let propsJson = propStr(props, "props") ?? ${swiftDefaultStr(w, "props")}\n`;
+    out += "        if let p = nd_plugin_view_create(viewKind, propsJson) {\n";
+    out += "            return unsafeBitCast(p, to: NSView.self)\n";
+    out += "        }\n";
+    out += "        return NSView()\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -2101,6 +2194,14 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       }
     } else if (w.name === "WebView" && p.name === "url") {
       out += '        if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }\n';
+    } else if (w.name === "NativeView" && p.name === "props") {
+      // GTK-first: on AppKit the view is an empty placeholder (a GTK-only
+      // module registers nothing here), so this is a no-op unless a module
+      // ships an AppKit impl. viewKind rides in the update payload only when it
+      // changed; skip when absent (AppKit hosting is a follow-up).
+      out += '        if let pj = propStr(props, "props"), let vk = propStr(props, "viewKind") {\n';
+      out += "            nd_plugin_view_apply_props(vk, Unmanaged.passUnretained(view).toOpaque(), pj)\n";
+      out += "        }\n";
     } else {
       throw new Error(`no applyProps template for ${key} — add one when introducing it (M6b)`);
     }
@@ -2328,6 +2429,30 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        if ndMenuAttachToWindow(child) { return } // M13: a <menubar> child is app chrome (NSApp.mainMenu), not window content\n" +
       "        let window = parent.window ?? gWindow\n" +
       "        parent.subviews.forEach { $0.removeFromSuperview() }\n" +
+      // A <toolbarview> directly under <window> (no SplitView): its header
+      // items feed the SAME unified window toolbar the split panes use, so
+      // the app's chrome row lives IN the titlebar with the traffic lights
+      // inline — the AppKit peer of GTK's AdwToolbarView-as-window-content.
+      // Its content box is what actually enters the hierarchy (the pane view
+      // is a logical holder, same as in the SplitView arm), pinned below the
+      // safe area so it clears the toolbar strip.
+      "        if let pane = child as? NDToolbarPaneView {\n" +
+      "            if let win = window, win.contentViewController != nil {\n" +
+      "                win.contentViewController = nil\n" +
+      "                win.contentView = parent\n" +
+      "            }\n" +
+      "            ndToolbarPaneAttachedToWindow(pane)\n" +
+      "            let content = pane.contentView ?? pane\n" +
+      "            parent.addSubview(content)\n" +
+      "            content.translatesAutoresizingMaskIntoConstraints = false\n" +
+      "            NSLayoutConstraint.activate([\n" +
+      "                content.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),\n" +
+      "                content.leadingAnchor.constraint(equalTo: parent.leadingAnchor),\n" +
+      "                content.trailingAnchor.constraint(equalTo: parent.trailingAnchor),\n" +
+      "                content.bottomAnchor.constraint(equalTo: parent.bottomAnchor),\n" +
+      "            ])\n" +
+      "            return\n" +
+      "        }\n" +
       "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {\n" +
       // Assigning contentViewController resizes the window to the controller
       // view's fitting size (measured 900x600 -> 500x500), clobbering Window
@@ -2355,9 +2480,22 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "                win.contentViewController = nil\n" +
       "                win.contentView = parent\n" +
       "            }\n" +
+      // Plain (non-split) content respects the window safe area: in a
+      // .fullSizeContentView window the contentView reaches the very top, so
+      // a frame=bounds fill would put the app's first row of controls under
+      // the floating traffic lights (observed: the browser example's back
+      // button). SplitView panes get this pin from ndMakePaneViewController;
+      // this is the same safe-area top pin for the plain-subview path. Only
+      // the TOP goes through the guide — leading/trailing/bottom have no
+      // window chrome to clear.
       "            parent.addSubview(child)\n" +
-      "            child.frame = parent.bounds\n" +
-      "            child.autoresizingMask = [.width, .height]\n" +
+      "            child.translatesAutoresizingMaskIntoConstraints = false\n" +
+      "            NSLayoutConstraint.activate([\n" +
+      "                child.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),\n" +
+      "                child.leadingAnchor.constraint(equalTo: parent.leadingAnchor),\n" +
+      "                child.trailingAnchor.constraint(equalTo: parent.trailingAnchor),\n" +
+      "                child.bottomAnchor.constraint(equalTo: parent.bottomAnchor),\n" +
+      "            ])\n" +
       "        }\n",
     // A registered split currently installed as contentViewController has no
     // superview to remove from (removeFromSuperview() would no-op or, worse,
@@ -2373,6 +2511,11 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     // kind land in a live hierarchy.
     remove: () =>
       "        if ndIsMenuNode(child) { return } // M13: menubar detach is a no-op (mainMenu rebuilt on next change)\n" +
+      "        if let pane = child as? NDToolbarPaneView {\n" +
+      "            ndToolbarPaneDetachedFromSplit(pane) // same unregister path as the split arm\n" +
+      "            (pane.contentView ?? pane).removeFromSuperview()\n" +
+      "            return\n" +
+      "        }\n" +
       "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),\n" +
       "           let window = parent.window ?? gWindow, window.contentViewController === controller {\n" +
       "            window.contentViewController = nil\n" +

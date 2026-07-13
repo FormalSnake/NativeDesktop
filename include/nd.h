@@ -73,6 +73,18 @@ void nd_set_acl(nd_context*, const char* grants_json);
 /* Load a native nd_plugin_v1 shared library (opt-in). Returns 0 ok, negative
    on ABI mismatch / missing entry / capability-denied. */
 int32_t nd_load_plugin(nd_context*, const char* path);
+
+/* Host-side native-view bridge (plugin ABI v2): the generic <nativeView>
+   widget's create/apply/command/destroy route through these into the loaded
+   plugin's nd_view_impl registered under `view_kind`. The GTK backend calls the
+   Zig fns in src/plugin.zig directly; the AppKit/Swift shell calls these C
+   wrappers. create returns NULL when no module registered `view_kind` (the
+   backend then renders an empty placeholder). */
+nd_widget nd_plugin_view_create(const char* view_kind, const char* props_json);
+void nd_plugin_view_apply_props(const char* view_kind, nd_widget, const char* props_json);
+void nd_plugin_view_command(const char* view_kind, nd_widget, const char* command, const char* arg_json);
+void nd_plugin_view_destroy(const char* view_kind, nd_widget);
+
 void nd_free(void* p);                                      /* free a core-allocated string */
 
 /* embedder -> core: a native event happened (button clicked, text changed, …).

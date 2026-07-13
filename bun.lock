@@ -41,6 +41,17 @@
         "@types/react": "19.2.17",
       },
     },
+    "examples/nativeview-demo": {
+      "name": "nativeview-demo-example",
+      "dependencies": {
+        "@nativedesktop/react": "workspace:*",
+        "nd": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
     "examples/notes": {
       "name": "notes-example",
       "dependencies": {
@@ -331,6 +342,8 @@
     "mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
 
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
+
+    "nativeview-demo-example": ["nativeview-demo-example@workspace:examples/nativeview-demo"],
 
     "nd": ["nd@workspace:packages/nd"],
 

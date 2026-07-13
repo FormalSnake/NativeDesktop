@@ -32,6 +32,19 @@ final class NDHeaderBarView: NSView {
     /// This header's node id, recorded by `ndHeaderBarConnectNav` so the
     /// segmented control's action can emit `back`/`forward` back to the runtime.
     var ndNodeID: UInt32 = 0
+    /// The header's `title` rendered as a small toolbar label (System Settings'
+    /// page title), positioned right of `navControl` (see
+    /// `NDToolbarManager.defaultItemIdentifiers`). Lazily built from `ndTitle`,
+    /// which is set once at create; an empty title is never shown. To change a
+    /// create-only title an app remounts the header (`key=`), so a fresh header
+    /// carries the new title.
+    lazy var titleField: NSTextField = {
+        let tf = NSTextField(labelWithString: ndTitle)
+        tf.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        tf.textColor = .labelColor
+        tf.lineBreakMode = .byTruncatingTail
+        return tf
+    }()
 
     @objc func ndNavSegmentClicked(_ sender: NSSegmentedControl) {
         let seg = sender.selectedSegment
@@ -69,6 +82,24 @@ private func ndHeaderBarFreshID() -> Int {
     return ndHeaderBarNextID
 }
 
+/// NSSearchField with a settable preferred intrinsic width. The generated
+/// SearchInput create arm builds this subclass so a header-slotted field can
+/// be stretched across the toolbar's free run by `updateSearchFieldWidths()`
+/// — intrinsicContentSize is the only sizing channel the toolbar's private
+/// item layout honors for custom views. Outside a toolbar (a search field in
+/// pane content) `ndPreferredWidth` stays nil and this behaves exactly like
+/// NSSearchField.
+final class NDSearchField: NSSearchField {
+    var ndPreferredWidth: CGFloat? {
+        didSet { if ndPreferredWidth != oldValue { invalidateIntrinsicContentSize() } }
+    }
+    override var intrinsicContentSize: NSSize {
+        var s = super.intrinsicContentSize
+        if let w = ndPreferredWidth { s.width = w }
+        return s
+    }
+}
+
 /// The window's single toolbar manager (set by the generated Window create arm
 /// via `ndWindowToolbarManager`). Owns the one live `NSToolbar`, both pane
 /// groups, and the tracking separator bound to the split's divider.
@@ -91,6 +122,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     private let trackingSeparatorID0 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator")
     private let trackingSeparatorID1 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator-1")
     private var rebuildScheduled = false
+    private var resizeObserver: NSObjectProtocol?
+    /// Last computed search-field run (updateSearchFieldWidths) — the seed
+    /// for freshly-inserted search items so the convergence rebuild lands
+    /// them at the right width.
+    private var lastSearchWidth: CGFloat?
 
     override init() {
         self.toolbar = NSToolbar(identifier: "nd-toolbar-\(ndHeaderBarFreshID())")
@@ -98,6 +134,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
+        // Hidden until a pane registers items (rebuild() flips it): a VISIBLE
+        // empty unified toolbar reserves full toolbar height in the window's
+        // safe area, pushing plain (no-headerbar) apps' content down by a
+        // blank ~52px strip instead of the standard titlebar.
+        toolbar.isVisible = false
     }
 
     /// Records `header` under `slot` and captures the split for the tracking
@@ -105,8 +146,34 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// (its slot known). Panes can arrive in either order and either before or
     /// after their headers finish packing children, so a single deferred
     /// rebuild coalesces whatever state exists once the run loop settles.
-    func register(header: NDHeaderBarView, slot: String, split: NSSplitView) {
-        self.split = split
+    func register(header: NDHeaderBarView, slot: String, split: NSSplitView?) {
+        // nil split = a <toolbarview> attached directly under <window> (no
+        // panes to track) — tracking separators are already guarded on
+        // `self.split` being present.
+        if let split { self.split = split }
+        // Lazy toolbar attachment (see the generated Window create arm): only
+        // headerbar apps get the unified toolbar strip; plain apps keep the
+        // standard titlebar height in their safe area.
+        if let win = gWindow, win.toolbar !== toolbar {
+            win.toolbar = toolbar
+            win.toolbarStyle = .unified
+            // Hide the redundant window-title text: with a sidebar + unified
+            // toolbar the title would otherwise sit at the content pane's
+            // LEADING edge and push toolbar items (the back/forward nav) to the
+            // trailing edge. Native sidebar apps (System Settings, Notes, Mail)
+            // hide it for exactly this reason — the sidebar/content give context.
+            // Purely visual; `win.title` is retained for Mission Control / a11y.
+            win.titleVisibility = .hidden
+        }
+        if resizeObserver == nil, let win = gWindow {
+            // Same capture-nothing idiom as scheduleRebuild: resolve the
+            // manager through the global at fire time.
+            resizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: win, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { ndWindowToolbarManager?.updateSearchFieldWidths() }
+            }
+        }
         if slot == "sidebar" {
             sidebarHeader = header
         } else if slot == "list" {
@@ -168,6 +235,39 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             toolbar.insertItem(withItemIdentifier: id, at: pos)
             pos += 1
         }
+        // Visible iff it has items (see init) — plain apps keep the standard
+        // titlebar; headerbar apps get the unified toolbar strip.
+        toolbar.isVisible = pos > 0
+        updateSearchFieldWidths()
+    }
+
+    /// Stretches every header search field across the toolbar's free run
+    /// (window width minus the other items' fitting widths and the
+    /// traffic-light / margin region). Called after each rebuild and from the
+    /// window-resize observer `register` installs — see the search branch of
+    /// `toolbar(_:itemForItemIdentifier:...)` for why the width is owned here
+    /// instead of negotiated with the toolbar's private layout.
+    func updateSearchFieldWidths() {
+        guard let win = gWindow else { return }
+        var searches: [NDSearchField] = []
+        var others: CGFloat = 0
+        for item in toolbar.items {
+            if let s = item.view as? NDSearchField { searches.append(s); continue }
+            if item.itemIdentifier == .flexibleSpace { continue }
+            others += (item.view?.fittingSize.width ?? 40) + 12 // + inter-item gap
+        }
+        guard !searches.isEmpty else { return }
+        let lightsAndMargins: CGFloat = 116
+        let free = max(160, (win.frame.width - lightsAndMargins - others) / CGFloat(searches.count))
+        let changed = lastSearchWidth.map { abs($0 - free) > 1 } ?? true
+        lastSearchWidth = free
+        for s in searches { s.ndPreferredWidth = free }
+        // NSSearchToolbarItem captures its width at INSERTION (later preferred/
+        // intrinsic writes don't relayout a live item — measured) — when the
+        // computed run differs from what the items were seeded with, one
+        // coalesced re-insert lands them at the right width. Converges in a
+        // single extra pass: same items ⇒ same computation ⇒ changed=false.
+        if changed { scheduleRebuild() }
     }
 
     private func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
@@ -194,6 +294,9 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
         if let h = contentHeader {
             if let nav = h.navControl { ids.append(identifier(for: nav)) }
+            // The content pane's page title sits right of the back/forward nav
+            // (System Settings' small leading title), before any app start items.
+            if !h.ndTitle.isEmpty { ids.append(identifier(for: h.titleField)) }
             ids += h.startViews.map { identifier(for: $0) }
             ids.append(.flexibleSpace)
             ids += h.endViews.map { identifier(for: $0) }
@@ -228,9 +331,33 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         var allViews: [NSView] = []
         if let h = sidebarHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
         if let h = listHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
-        if let h = contentHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
+        if let h = contentHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) }; if !h.ndTitle.isEmpty { allViews.append(h.titleField) } }
         guard let view = allViews.first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier }) else {
             return nil
+        }
+        if let search = view as? NDSearchField {
+            // A search/address field absorbs all free toolbar width (browser
+            // address bar, Min-style). The toolbar's item layout is private
+            // and frame-based for custom views — NSSearchToolbarItem caps its
+            // unfocused width, the deprecated min/maxSize path grew the
+            // WINDOW, and Auto Layout on the item's root view (TAMIC=false)
+            // removes it from layout entirely — so the field rides a plain
+            // frame-sized wrapper whose width updateSearchFieldWidths() owns
+            // (recomputed after each rebuild and on window resize).
+            // Width: the toolbar sizes custom-view items from
+            // intrinsicContentSize AT INSERTION (NSSearchField's own intrinsic
+            // width is noIntrinsicMetric; NSSearchToolbarItem hard-caps at
+            // ~320 regardless of preferredWidthForSearchField — both
+            // measured), so seed NDSearchField's overridden intrinsic width
+            // BEFORE the item lands; updateSearchFieldWidths() converges it to
+            // the free run. Glass: isBordered opts the view item into the
+            // system toolbar treatment (the Tahoe capsule) a bare view item
+            // lacks.
+            if search.ndPreferredWidth == nil { search.ndPreferredWidth = lastSearchWidth ?? 320 }
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = search
+            item.isBordered = true
+            return item
         }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = view
@@ -258,13 +385,13 @@ func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String) {
 /// prop is present it's torn down. A new control triggers a toolbar rebuild;
 /// enabled-state-only changes update in place (the item is already installed).
 func ndHeaderBarApplyNav(_ bar: NDHeaderBarView, canGoBack: Bool?, canGoForward: Bool?) {
-    guard canGoBack != nil || canGoForward != nil else {
-        if bar.navControl != nil {
-            bar.navControl = nil
-            bar.pane?.manager?.scheduleRebuild()
-        }
-        return
-    }
+    // A diffed `update` op only carries the props that CHANGED — absence here
+    // means "untouched", never "torn down" (teardown-on-absent destroyed the
+    // control on any unrelated HeaderBar update, e.g. a title change while a
+    // page navigates). The control materializes on the first call carrying
+    // either flag (normally the create op) and persists; each flag only
+    // updates its own segment so a one-sided diff can't clobber the other.
+    guard canGoBack != nil || canGoForward != nil else { return }
     let seg: NSSegmentedControl
     if let existing = bar.navControl {
         seg = existing
@@ -280,8 +407,8 @@ func ndHeaderBarApplyNav(_ bar: NDHeaderBarView, canGoBack: Bool?, canGoForward:
         bar.navControl = seg
         bar.pane?.manager?.scheduleRebuild()
     }
-    seg.setEnabled(canGoBack ?? false, forSegment: 0)
-    seg.setEnabled(canGoForward ?? false, forSegment: 1)
+    if let b = canGoBack { seg.setEnabled(b, forSegment: 0) }
+    if let f = canGoForward { seg.setEnabled(f, forSegment: 1) }
 }
 
 /// Records the header's node id so `ndNavSegmentClicked` can emit `back`/
@@ -309,6 +436,15 @@ func ndToolbarPanePack(_ pane: NDToolbarPaneView, _ child: NSView) {
     if let header = child as? NDHeaderBarView {
         pane.header = header
         header.pane = pane
+        // If the pane already landed in the split (manager set), a header added
+        // AFTER that must register now — otherwise a `key`-driven remount (used
+        // to change a create-only prop like `title`) would leave the new header
+        // invisible, since ndToolbarPaneAttachedToSplit only fires for the
+        // header present when the PANE first attaches. `split: nil` keeps the
+        // manager's existing split reference.
+        if let manager = pane.manager {
+            manager.register(header: header, slot: pane.slot, split: nil)
+        }
     } else {
         // Logical only — the pane VIEW never enters the hierarchy. The SplitView
         // arm adds THIS content box (an NSStackView) directly to the split slot,
@@ -347,4 +483,18 @@ func ndToolbarPaneAttachedToSplit(_ pane: NDToolbarPaneView, split: NSSplitView,
 func ndToolbarPaneDetachedFromSplit(_ pane: NDToolbarPaneView) {
     if let header = pane.header { pane.manager?.unregister(header: header) }
     pane.manager = nil
+}
+
+/// Window-level peer of `ndToolbarPaneAttachedToSplit` (generated Window
+/// append arm): a `<toolbarview>` directly under `<window>` feeds the SAME
+/// unified toolbar, so its header items land in the titlebar with the
+/// traffic lights inline — matching AdwToolbarView as the window content on
+/// GTK. No split ⇒ no tracking separators; the header registers under the
+/// content slot.
+func ndToolbarPaneAttachedToWindow(_ pane: NDToolbarPaneView) {
+    guard let manager = ndWindowToolbarManager else { return }
+    pane.slot = "content"
+    pane.manager = manager
+    guard let header = pane.header else { return }
+    manager.register(header: header, slot: "content", split: nil)
 }

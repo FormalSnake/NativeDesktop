@@ -318,6 +318,18 @@
       "automation": { "role": "webview", "textFrom": null }
     },
     {
+      "name": "NativeView",
+      "intrinsic": "nativeview",
+      "container": null,
+      "props": [
+        { "name": "viewKind", "type": "string", "appliesTo": "create" },
+        { "name": "props", "type": "string", "default": "{}", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "custom", "textFrom": null }
+    },
+    {
       "name": "SplitView",
       "intrinsic": "splitview",
       "container": {
