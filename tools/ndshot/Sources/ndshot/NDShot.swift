@@ -30,6 +30,7 @@ let usageText = """
 @main
 struct NDShot {
     static func main() async {
+        respawnDisclaimedIfNeeded()
         let arguments = Array(CommandLine.arguments.dropFirst())
 
         guard let command = arguments.first else {

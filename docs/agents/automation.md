@@ -136,6 +136,11 @@ identifier (`codesign -f -s - -i com.nativedesktop.ndshot bin/ndshot`) so the Sc
 grant sticks across rebuilds — as long as the compiled bytes don't actually change; a rebuild that
 changes the binary's content counts as a new identity to TCC and needs re-granting either way.
 
+ndshot re-spawns itself once with `responsibility_spawnattrs_setdisclaim` so it is its own TCC
+"responsible process" — without that, macOS attributes a CLI's permission checks to the terminal
+that spawned it, the prompt names the terminal, and a Settings grant for the binary itself is
+silently ignored (`ndshot doctor` prints which mode it is running in).
+
 Three subcommands, all under `tools/ndshot/bin/ndshot`:
 
 - **`ndshot doctor`** — reports current Screen Recording permission state (and the binary's

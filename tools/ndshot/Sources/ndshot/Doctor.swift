@@ -95,6 +95,10 @@ func cmdDoctor() async -> Int32 {
     print("ndshot doctor")
     print("  binary: \(path)")
     print(codesignSummary(path: path))
+    // Disclaimed = ndshot is its own responsible process, so TCC checks and
+    // prompts target THIS binary. Undisclaimed = they roll up to the terminal
+    // that spawned it, and a Settings grant for ndshot itself is ignored.
+    print("  responsible process: \(isDisclaimed() ? "self (disclaimed)" : "the terminal (disclaim unavailable!)")")
 
     if await probeAccess() {
         print("  Screen Recording: GRANTED (verified via ScreenCaptureKit)")
