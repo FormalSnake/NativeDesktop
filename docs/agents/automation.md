@@ -128,12 +128,15 @@ toolchain breaks):
 cd tools/ndshot && ./build.sh
 ```
 
-`build.sh` runs `swift build -c release` and then ad-hoc signs the binary with a stable identifier
-(`codesign -f -s - -i com.nativedesktop.ndshot .build/release/ndshot`) so the Screen Recording grant
-sticks across rebuilds — as long as the compiled bytes don't actually change; a rebuild that changes
-the binary's content counts as a new identity to TCC and needs re-granting either way.
+`build.sh` runs `swift build -c release`, installs the binary to the VISIBLE
+`tools/ndshot/bin/ndshot` (the System Settings > Screen Recording file picker hides dot-folders
+like `.build/`, so the grantable copy must live somewhere Finder can reach — in any macOS file
+picker, ⌘⇧. toggles hidden files and ⌘⇧G jumps to a typed path), and ad-hoc signs it with a stable
+identifier (`codesign -f -s - -i com.nativedesktop.ndshot bin/ndshot`) so the Screen Recording
+grant sticks across rebuilds — as long as the compiled bytes don't actually change; a rebuild that
+changes the binary's content counts as a new identity to TCC and needs re-granting either way.
 
-Three subcommands, all under `.build/release/ndshot`:
+Three subcommands, all under `tools/ndshot/bin/ndshot`:
 
 - **`ndshot doctor`** — reports current Screen Recording permission state (and the binary's
   codesign identity, to help spot a stale grant after a rebuild). Exit 0 if granted, 2 if not.
@@ -146,7 +149,7 @@ Three subcommands, all under `.build/release/ndshot`:
 Example capturing the ND Notes window:
 
 ```
-.build/release/ndshot capture --title "ND Notes" --out /tmp/nd.png
+tools/ndshot/bin/ndshot capture --title "ND Notes" --out /tmp/nd.png
 ```
 
 Exit codes across all three subcommands: `0` success, `2` no Screen Recording access (grant
