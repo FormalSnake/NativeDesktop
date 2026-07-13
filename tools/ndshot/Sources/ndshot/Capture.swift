@@ -108,12 +108,29 @@ func cmdCapture(_ args: [String]) async -> Int32 {
         return 4
     }
 
-    guard let target = selectWindow(windows, options: options) else {
+    guard var target = selectWindow(windows, options: options) else {
         eprint("ndshot: no window matched the given filters. Candidates:")
         for window in windows {
             eprint(window.jsonLine)
         }
         return 3
+    }
+
+    // A window mid-open-animation reports its animating (shrunken) frame —
+    // observed ~102x104 for an 1100x700 window captured right after app
+    // launch — and ScreenCaptureKit sizes the output from that snapshot.
+    // Re-sample until the frame is stable across two consecutive reads
+    // (250ms apart, ~3s cap), re-locating the same windowID each time.
+    var settled = target.frame
+    for _ in 0..<12 {
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard let freshWindows = try? await fetchCapturableWindows(),
+            let fresh = freshWindows.first(where: { $0.windowID == target.windowID })
+        else { break }
+        let stable = fresh.frame == settled
+        settled = fresh.frame
+        target = fresh
+        if stable { break }
     }
 
     let filter = SCContentFilter(desktopIndependentWindow: target.window)
