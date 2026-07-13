@@ -362,10 +362,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         parent.subviews.forEach { $0.removeFromSuperview() }
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {
             let ndSavedFrame = win.frame
-            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size
             win.contentViewController = controller
-            let ndPinned = controller.view.constraints.filter { ($0.firstAttribute == .width || $0.firstAttribute == .height) && $0.secondItem == nil }
-            controller.view.removeConstraints(ndPinned)
             win.setFrame(ndSavedFrame, display: true)
         } else {
             if let win = window, win.contentViewController != nil {
