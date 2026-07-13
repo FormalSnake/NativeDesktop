@@ -66,7 +66,17 @@ if let fsDelay = ProcessInfo.processInfo.environment["ND_TEST_FULLSCREEN"], let 
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + secs - 0.5) { logFrames("WINDOWED") }
     DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
-        FileHandle.standardError.write("ND_TEST_FULLSCREEN toggling now\n".data(using: .utf8)!)
+        FileHandle.standardError.write("ND_TEST_FULLSCREEN toggling now isActive=\(NSApp.isActive)\n".data(using: .utf8)!)
+        if let v = gWindow?.contentViewController?.view {
+            for c in v.constraints {
+                FileHandle.standardError.write("ND_TEST_CON attr=\(c.firstAttribute.rawValue) const=\(c.constant) prio=\(c.priority.rawValue) id=\(c.identifier ?? "nil") first=\(type(of: c.firstItem)) second=\(c.secondItem.map { String(describing: type(of: $0)) } ?? "nil")\n".data(using: .utf8)!)
+            }
+            if ProcessInfo.processInfo.environment["ND_TEST_RMCONS"] == "1" {
+                let sizeCons = v.constraints.filter { ($0.firstAttribute == .width || $0.firstAttribute == .height) && $0.secondItem == nil }
+                v.removeConstraints(sizeCons)
+                FileHandle.standardError.write("ND_TEST_RMCONS removed \(sizeCons.count)\n".data(using: .utf8)!)
+            }
+        }
         gWindow?.toggleFullScreen(nil)
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + secs + 2.0) { logFrames("FULLSCREEN") }
