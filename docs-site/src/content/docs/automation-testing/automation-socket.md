@@ -32,9 +32,10 @@ opens. `packages/mcp` is a stdio MCP server that bridges this socket to MCP tool
 | `scroll` | `{ref, dx?, dy?}` | `{ref, x, y}` (resulting adjustment values) | `ScrollView` only |
 
 `JsonNode` (from `getTree`, nested under `root`/`children`):
-`{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount}`. `itemCount`
+`{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount, rows}`. `itemCount`
 is non-null only for data-driven widgets (currently `ListView`) — the row count, never a walk of
-recycled row widgets.
+recycled row widgets. `rows` is non-null only for row-driven widgets (currently `SourceList`) and
+carries each row's `{title, badge: string | null, iconName: string | null}`.
 
 ## Error codes
 

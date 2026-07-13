@@ -7,7 +7,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'NativeDesktop',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/nativedesktop/nativedesktop' }],
+			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/FormalSnake/NativeDesktop' }],
 			sidebar: [
 				{
 					label: 'Get Started',

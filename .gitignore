@@ -7,3 +7,4 @@ swift/.build/
 swift/.swiftpm/
 .superpowers/
 dist/
+packages/host/bin/
