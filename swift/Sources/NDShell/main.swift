@@ -53,4 +53,22 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
         FileHandle.standardError.write("ND_AUTOMATION_ERROR nd_start_automation failed\n".data(using: .utf8)!)
     }
 }
+// TEMP probe: enter fullscreen after N seconds so the fullscreen layout can be
+// inspected via automation getTree. Remove before finishing.
+if let fsDelay = ProcessInfo.processInfo.environment["ND_TEST_FULLSCREEN"], let secs = Double(fsDelay) {
+    func logFrames(_ tag: String) {
+        let w = gWindow
+        let ctrlView = w?.contentViewController?.view
+        let split = (w?.contentViewController as? NSSplitViewController)?.splitView
+        let cons = ctrlView?.constraints.map { "\($0.firstAttribute.rawValue)=\($0.constant)@\($0.priority.rawValue)" }.joined(separator: ",") ?? "nil"
+        let msg = "ND_TEST_FS_FRAMES \(tag) window=\(w?.frame ?? .zero) screen=\(w?.screen?.frame ?? .zero) split=\(split?.frame ?? .zero) fs=\(w?.styleMask.contains(.fullScreen) ?? false) collBehav=\(w?.collectionBehavior.rawValue ?? 0) minSize=\(w?.contentMinSize ?? .zero) maxSize=\(w?.contentMaxSize ?? .zero) ctrlViewCons=[\(cons)]\n"
+        FileHandle.standardError.write(msg.data(using: .utf8)!)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + secs - 0.5) { logFrames("WINDOWED") }
+    DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
+        FileHandle.standardError.write("ND_TEST_FULLSCREEN toggling now\n".data(using: .utf8)!)
+        gWindow?.toggleFullScreen(nil)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + secs + 2.0) { logFrames("FULLSCREEN") }
+}
 app.run()

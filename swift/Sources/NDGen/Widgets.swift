@@ -361,8 +361,11 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         let window = parent.window ?? gWindow
         parent.subviews.forEach { $0.removeFromSuperview() }
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {
+            let ndSavedFrame = win.frame
             controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size
             win.contentViewController = controller
+            controller.preferredContentSize = .zero
+            win.setFrame(ndSavedFrame, display: true)
         } else {
             if let win = window, win.contentViewController != nil {
                 win.contentViewController = nil

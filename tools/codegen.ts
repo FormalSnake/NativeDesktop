@@ -2144,11 +2144,20 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       // Assigning contentViewController resizes the window to the
       // controller's preferredContentSize (default zero -> the split view's
       // tiny fitting size), clobbering Window defaultWidth/Height — measured
-      // 900x600 -> 500x500, and a post-assignment setFrame gets re-clobbered
-      // on a later layout pass. Feed the mechanism instead: the current
-      // contentView (the Window handle) still holds the intended size.
+      // 900x600 -> 500x500. Feed the mechanism the intended size (the current
+      // contentView, i.e. the Window handle, still holds it) so the assignment
+      // lands at the right size — then IMMEDIATELY clear preferredContentSize:
+      // a lingering fixed preferred size pins the split at the windowed size
+      // through a fullscreen transition (window reports .fullScreen but its
+      // frame never grows to the screen — a small app box in a black space),
+      // so it must only steer the initial assignment, not persist. The
+      // explicit setFrame reasserts the intended size against the fitting-size
+      // snap-back that clearing to zero would otherwise invite.
+      "            let ndSavedFrame = win.frame\n" +
       "            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size\n" +
       "            win.contentViewController = controller\n" +
+      "            controller.preferredContentSize = .zero\n" +
+      "            win.setFrame(ndSavedFrame, display: true)\n" +
       "        } else {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
       "                win.contentViewController = nil\n" +
