@@ -1,21 +1,46 @@
 {
   "name": "@nativedesktop/react",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/react"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/packages/react/src/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./jsx-runtime": "./src/jsx-runtime.ts"
+    ".": {
+      "types": "./dist/packages/react/src/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/packages/react/src/jsx-runtime.d.ts",
+      "default": "./dist/jsx-runtime.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/packages/react/src/jsx-dev-runtime.d.ts",
+      "default": "./dist/jsx-dev-runtime.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh",
+    "postinstall": "bun run build"
+  },
+  "peerDependencies": {
+    "react": "^19.2.7"
   },
   "dependencies": {
-    "react": "19.2.7",
     "react-reconciler": "0.33.0",
     "react-refresh": "0.17.0"
   },
   "devDependencies": {
     "@types/react": "19.2.17",
     "@types/react-reconciler": "0.33.0",
-    "@types/react-refresh": "0.14.7"
+    "@types/react-refresh": "0.14.7",
+    "react": "19.2.7",
+    "typescript": "7.0.2"
   }
 }

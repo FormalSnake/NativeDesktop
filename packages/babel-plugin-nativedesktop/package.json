@@ -1,0 +1,11 @@
+{
+  "name": "babel-plugin-nativedesktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./bun-plugin": "./bun-plugin.js"
+  },
+  "files": ["index.js", "bun-plugin.js", "rewrite.js", "hooks.js"]
+}

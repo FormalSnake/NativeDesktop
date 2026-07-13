@@ -1,0 +1,16 @@
+{
+  "name": "nd",
+  "version": "0.1.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/nd"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["src"],
+  "bin": { "nd": "src/index.ts" },
+  "dependencies": {
+    "@nativedesktop/host": "file:../host"
+  }
+}
