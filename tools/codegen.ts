@@ -2146,17 +2146,25 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       // tiny fitting size), clobbering Window defaultWidth/Height — measured
       // 900x600 -> 500x500. Feed the mechanism the intended size (the current
       // contentView, i.e. the Window handle, still holds it) so the assignment
-      // lands at the right size — then IMMEDIATELY clear preferredContentSize:
-      // a lingering fixed preferred size pins the split at the windowed size
-      // through a fullscreen transition (window reports .fullScreen but its
-      // frame never grows to the screen — a small app box in a black space),
-      // so it must only steer the initial assignment, not persist. The
-      // explicit setFrame reasserts the intended size against the fitting-size
-      // snap-back that clearing to zero would otherwise invite.
+      // lands at the right size.
+      //
+      // But a non-zero preferredContentSize makes AppKit install fixed
+      // width/height constraints on the controller's view
+      // (`NSViewController.preferredContentSize.{width,height}` @ priority
+      // 501). Those pin the window to the windowed size through a fullscreen
+      // transition — the window reports .fullScreen but its frame never grows
+      // to the screen, leaving a small app box in a black fullscreen space
+      // (the split view can't fill what the window won't grow to). Setting
+      // preferredContentSize back to .zero does NOT drop the constraints, so
+      // remove them explicitly (they are the only absolute-size constraints on
+      // this view — the SplitView edge pins all have a secondItem) and
+      // reassert the intended size via the frame. Now the window fullscreens
+      // to fill the screen while still opening at defaultWidth/Height.
       "            let ndSavedFrame = win.frame\n" +
       "            controller.preferredContentSize = win.contentView?.frame.size ?? win.frame.size\n" +
       "            win.contentViewController = controller\n" +
-      "            controller.preferredContentSize = .zero\n" +
+      "            let ndPinned = controller.view.constraints.filter { ($0.firstAttribute == .width || $0.firstAttribute == .height) && $0.secondItem == nil }\n" +
+      "            controller.view.removeConstraints(ndPinned)\n" +
       "            win.setFrame(ndSavedFrame, display: true)\n" +
       "        } else {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
