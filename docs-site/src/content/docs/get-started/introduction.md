@@ -37,6 +37,18 @@ named classes (borrowed from libadwaita's vocabulary) that map onto real AppKit 
 on macOS and real GTK CSS classes on Linux. See
 [Styling & Design Language](/core-concepts/styling-design-language/).
 
+## Shares code with web and React Native
+
+`@nativedesktop/react` declares `react` as a `peerDependency`, not a vendored copy — so in a
+monorepo, a NativeDesktop app hoists the *same* `react` instance as a web (`react-dom`) app or a
+React Native app living alongside it. That single-instance guarantee is what lets a hooks/logic
+package be shared verbatim across all three: author a hook the normal way,
+`import { useState } from "react"`, and NativeDesktop's build pipeline rewrites that import to the
+pinned `@nativedesktop/react` automatically, both for a production build and for `bun --hot` dev.
+Desktop-only UI stays visually separated in `.desktop.tsx` files, the same platform-suffix
+convention React Native uses for `.native.tsx`. See
+[Monorepo & Code Sharing](/get-started/monorepo/) for the full mechanics.
+
 ## Principles
 
 - **Native chrome must be real.** Sidebars are `NSSplitView`/`AdwOverlaySplitView`, not a styled
@@ -63,4 +75,5 @@ on macOS and real GTK CSS classes on Linux. See
 
 - [Quick Start](/get-started/quick-start/) — run an example app in a few commands.
 - [Project Layout](/get-started/project-layout/) — where the schema, codegen output, and app code live.
+- [Monorepo & Code Sharing](/get-started/monorepo/) — share hooks/logic with web and React Native.
 - [App Model](/core-concepts/app-model/) — how a window and its chrome are built from JSX.

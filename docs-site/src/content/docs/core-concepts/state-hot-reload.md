@@ -3,7 +3,7 @@ title: State & Hot Reload
 description: The hooks re-export contract that makes hot reload state-preserving, and React Compiler's opt-in status.
 ---
 
-**Status: landed**, with one required convention.
+**Status: landed**, with one required convention for component files.
 
 ## The one rule: import hooks from `@nativedesktop/react`
 
@@ -22,6 +22,17 @@ reconciler actually drives.
 ```ts
 import { useState, useEffect, useMemo } from "@nativedesktop/react"; // correct, every time
 ```
+
+This rule is required for `.tsx`/`.desktop.tsx` component files. Shared, platform-agnostic hooks
+(also consumed by web/React Native code in the same monorepo) are the one exception: they can be
+authored the normal way, `import { useState } from "react"`, in a plain `.ts` module —
+`babel-plugin-nativedesktop` rewrites that import to `@nativedesktop/react` automatically, both for
+`bun run compile` and for `bun --hot` (via a `bunfig.toml`-preloaded Bun plugin). The Bun dev-path
+rewrite only touches `.ts` files, never `.tsx`/`.desktop.tsx` — intercepting a component file in
+Bun's `onLoad` would drop it from `--hot`'s watch set and break its hot reload — so a shared `.ts`
+hook is pinned at first eval (editing it needs a host restart) while its `.tsx` consumers keep
+hot-reloading normally. Component files still must import hooks from `@nativedesktop/react` directly
+per the rule above.
 
 ## What actually preserves state across an edit
 
@@ -44,12 +55,13 @@ uses genuine ESM `import`.
 **Status: landed (opt-in).** `babel-plugin-react-compiler@1.0.0` runs cleanly as a build pre-pass
 and the compiled output runs correctly against `@nativedesktop/react`. It's a pre-pass, not inline,
 because Bun's runtime transpiler doesn't run Babel plugins and `bun --hot` re-evaluates modules
-through Bun's own transpiler only. The compile step runs two Babel plugins in one pass:
-`babel-plugin-react-compiler` (the memoization transform) and `@babel/plugin-transform-react-jsx`
+through Bun's own transpiler only. The compile step runs three Babel plugins in one pass:
+`babel-plugin-react-compiler` (the memoization transform), `@babel/plugin-transform-react-jsx`
 (JSX → `@nativedesktop/react/jsx-runtime` calls, chosen deliberately so the compiled output contains
-no JSX syntax left for Bun to pragma-select on).
+no JSX syntax left for Bun to pragma-select on), and `babel-plugin-nativedesktop` (the hook-import
+rewrite above, applied to every extension in the compiled path).
 
-`bun run dev` (`ND_DEV=1` + `--hot`) still points at uncompiled `src/`, so hot reload and
+`bun run dev`/`nd dev` (`ND_DEV=1` + `--hot`) still points at uncompiled `src/`, so hot reload and
 react-refresh are unaffected by whether the compiler is enabled. Use the compiled path for a
 production-style run:
 

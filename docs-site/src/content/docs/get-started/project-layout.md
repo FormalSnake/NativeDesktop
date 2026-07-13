@@ -22,10 +22,19 @@ hand-written binding.
 
 ## `packages/react` — the React renderer
 
-`@nativedesktop/react` is the package app code imports. It vendors a matched `react` +
-`react-reconciler` pair, implements the host config that turns React commits into NDP
-`CommitBatch` operations, and re-exports the hooks your app uses (see
-[State & Hot Reload](/core-concepts/state-hot-reload/) for why the re-export matters).
+`@nativedesktop/react` is the package app code imports. It implements the host config that turns
+React commits into NDP `CommitBatch` operations and re-exports the hooks your app uses (see
+[State & Hot Reload](/core-concepts/state-hot-reload/) for why the re-export matters). `react` is a
+`peerDependency` (not vendored), so a single hoisted `react` instance is shared across an app and
+the linked package.
+
+## `packages/nd` and `packages/host` — the `nd` CLI
+
+`nd dev [entry]` / `nd build` (`packages/nd`) wrap the raw `ND_DEV=1 ND_SCRIPT=<entry>
+<host-binary>` invocation and the babel/react-compiler pre-pass, respectively — see
+[Quick Start](/get-started/quick-start/). `@nativedesktop/host`'s `resolveHostBinary()` finds the
+prebuilt `nd-hello` for the current platform under `bin/<os>-<arch>/`; there's no CI binary matrix
+yet, so today that binary comes from a local `zig build` copied in by hand.
 
 ## `src/` — the Zig core
 
@@ -57,16 +66,18 @@ Real, driven apps used as framework-suitability stress tests, not toy snippets:
 ## `template/` — the app scaffold
 
 What `scripts/new-app.sh` copies to start a new app: a `package.json` that links
-`@nativedesktop/react` via a `file:` path into this checkout (not yet published to npm — that lands
-with packaging), a `src/main.tsx` entry point, and a `babel.config.json` for the opt-in React
-Compiler pre-pass.
+`@nativedesktop/react`, `nd`, and (transitively) `@nativedesktop/host` via `file:` paths into this
+checkout (none are published to npm yet), a `src/main.tsx` entry point, a `babel.config.json` for the
+opt-in React Compiler + hook-import-rewrite pre-pass, and a `bunfig.toml` that preloads the
+`bun --hot`-path twin of that hook rewrite.
 
 ## `tools/`
 
-Build-time scripts invoked as documented conventions, not through a packaged CLI (there is no
-`bin/nd` dispatcher yet): `tools/codegen.ts` (schema → bindings + docs), `tools/package.ts` /
-`tools/package-linux.ts` / `tools/package-mac.ts` (see [Packaging](/packaging/)), `tools/manifest.ts`
-(update manifests).
+Build-time scripts invoked as documented conventions: `tools/codegen.ts` (schema → bindings + docs),
+`tools/package.ts` / `tools/package-linux.ts` / `tools/package-mac.ts` (see
+[Packaging](/packaging/)), `tools/manifest.ts` (update manifests). The `nd` CLI (`packages/nd`) only
+covers running/building an *app* (`nd dev`/`nd build`) — these `tools/` scripts have no `nd`
+subcommand equivalent (no `nd package`, `nd codegen`, etc.) and are invoked directly with `bun`.
 
 ## `packages/mcp`
 

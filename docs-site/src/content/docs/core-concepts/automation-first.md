@@ -10,7 +10,13 @@ same way a human would.
 
 ## The RPC surface, in brief
 
-The host exposes a framed JSON-RPC 2.0 socket, gated on `NATIVE_AUTOMATION=1`:
+Every method's params/result shape and every error code is generated from `schema/rpc.json` — the
+single source of truth shared by the Zig host (`src/generated/rpc.zig`, consumed by
+`src/automation.zig`) and the TS client (`packages/react/src/generated/rpc.ts`). Renaming or
+retyping a field there regenerates both sides, so a Zig↔Bun mismatch is a compile error, not a
+silent wire break — the same `tools/codegen.ts` pipeline that generates widget bindings from
+`schema/widgets.json`. The host exposes this as a framed JSON-RPC 2.0 socket, gated on
+`NATIVE_AUTOMATION=1`:
 
 - `getTree` — a full snapshot of the widget tree: refs, `testID`s, text, visibility, geometry.
 - `screenshot` — render the window to a PNG.

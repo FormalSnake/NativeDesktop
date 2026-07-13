@@ -3,9 +3,11 @@ title: Packaging
 description: nd package, the update manifest format, and how the auto-update flow verifies what it downloads.
 ---
 
-`nd package <platform>` is a documented convention, not a shipped binary — same convention as
-`nd codegen` (≡ `bun tools/codegen.ts`). There is no `bin/nd` dispatcher yet; `nd package <platform>`
-means `bun tools/package.ts <platform>`.
+`nd package <platform>` is a documented convention, not a shipped subcommand — same convention as
+`nd codegen` (≡ `bun tools/codegen.ts`). A `bin/nd` dispatcher does exist now (`packages/nd`, see
+[Project Layout](/get-started/project-layout/)), but it only implements `nd dev`/`nd build` for
+running and compiling an *app*; `nd package <platform>` still means `bun tools/package.ts
+<platform>` directly.
 
 ## Commands
 

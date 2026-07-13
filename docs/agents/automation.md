@@ -1,7 +1,13 @@
 # Automation — the full RPC surface
 
-Ground truth for everything below is `src/automation.zig`; this doc is a human/agent-readable
-mirror of it, not an independent spec — if the two disagree, the Zig source wins.
+Ground truth for the method surface, param/result shapes, and error codes below is
+`schema/rpc.json` (M8-D8) — the single source of truth `tools/codegen.ts` compiles into both
+`src/generated/rpc.zig` (consumed by `src/automation.zig`'s dispatch) and
+`packages/react/src/generated/rpc.ts` (consumed by `packages/mcp/src/socket.ts`'s typed
+`AutomationClient.call<M>`). A method/param/result rename in the schema is a compile error on
+whichever side still references the old shape, not a silent wire mismatch — the same
+schema-to-dual-codegen pattern already used for `schema/widgets.json`. This doc is a
+human/agent-readable mirror of the schema; if the two disagree, `schema/rpc.json` wins.
 
 ## Transport
 
@@ -25,8 +31,11 @@ opens). `packages/mcp` is a stdio MCP server that bridges this socket to MCP too
 
 `JsonNode` shape (from `getTree`/nested in `root`/`children`): `{ref: number, type: string, testID:
 string \| null, text: string \| null, visible: boolean, geometry: {x,y,w,h} \| null, children:
-JsonNode[], itemCount: number \| null}`. `itemCount` is non-null only for data-driven widgets
-(currently `ListView`); it is the row count, never a walk of GTK's recycled row widgets.
+JsonNode[], itemCount: number \| null, rows: {title: string, badge: string \| null, iconName:
+string \| null}[] \| null}`. `itemCount` is non-null only for data-driven widgets (currently
+`ListView`); it is the row count, never a walk of GTK's recycled row widgets. `rows` is non-null
+only for row-driven widgets (currently `SourceList`, M11) and carries each row's ordered
+`{title, badge, iconName}`.
 
 ## Error codes
 
@@ -38,6 +47,14 @@ JsonNode[], itemCount: number \| null}`. `itemCount` is non-null only for data-d
 | `-32602` | invalid params | `{ref}` where applicable (e.g. missing/wrong-typed value, unsupported widget kind for `setValue`/`type`/`scroll`) |
 | `-32603` | internal error | none (or a message describing the failure, e.g. screenshot renderer/surface errors) |
 | `-32700` | parse error | none |
+
+**Params are schema-typed, not hand-checked (M8-D8).** `src/automation.zig`'s dispatch decodes each
+method's `params` through the matching generated struct from `src/generated/rpc.zig`
+(`std.json.parseFromValue`, wrapped by `parseParams`) instead of the old per-field
+`paramInt`/`paramStr` helpers. A param that fails to typecheck against its schema type — including a
+negative `ref` where the schema declares `u32` (previously an unchecked `@intCast`, now a clean
+parse failure) — resolves to `-32602` rather than reaching widget-dispatch code with an
+out-of-range value.
 
 Actionability (`-32001`) is checked before every action-dispatch method (`click`, `setValue`,
 `type`, `scroll`): the ref must exist, be visible, be mapped, and have non-degenerate on-screen
@@ -63,6 +80,11 @@ above:
 `setValue`/`type`/`scroll` exist on the raw socket but do not yet have MCP tool wrappers — drive
 them by talking to the automation socket directly (see `packages/mcp/src/socket.ts`'s
 `AutomationClient` for the client-side pattern, used by every `scripts/*-drive.ts` script).
+`AutomationClient.call<M extends RpcMethodName>(method, ...params): Promise<RpcResult<M>>` is
+schema-typed, tRPC-style (M8-D8): the method name, its params shape, and its result type are all
+constrained by the generated `packages/react/src/generated/rpc.ts`, so `call("click", { ref })`
+returns a typed `ClickResult` and a schema rename is a `tsc` error at the call site, not a runtime
+surprise.
 
 ## Deltas (known gaps — do not assume these work)
 

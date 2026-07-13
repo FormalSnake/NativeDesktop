@@ -14,13 +14,27 @@ drive the app the same way a user would. Full design: `docs/superpowers/specs/20
 
 ## Running an app
 
+**Landed (M8-D8): the `nd` CLI (`packages/nd`).** A scaffolded app or `examples/*` package declares
+`"dev": "nd dev"` (or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `bun run dev` /
+`nd dev [entry]` is the canonical way to run it — `entry` defaults to `src/main.tsx`. `nd dev`
+resolves the host binary for the current platform via `@nativedesktop/host`'s `resolveHostBinary()`
+(a **prebuilt** binary at `packages/host/bin/<os>-<arch>/nd-hello`, populated from a local `zig
+build` today — see `packages/host/src/index.ts`) and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>`.
+`nd build` runs `bun run compile` (the babel/react-compiler pre-pass below). `nd dev` does **not**
+set `NATIVE_AUTOMATION=1` itself — export it in the environment before running `nd dev`/`bun run dev`
+if you need the automation socket.
+
+`nd dev` runs the *prebuilt* binary bundled with `@nativedesktop/host`, not a fresh `zig build`
+output — if you're iterating on the Zig host itself rather than app code, invoke the raw form
+directly against `zig-out/bin/nd-hello` so host changes take effect immediately:
+
 ```
 ND_SCRIPT=<entry.tsx> NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello
 ```
 
 `ND_SCRIPT` points at the Bun/TSX entry point (e.g. `src/main.tsx`); `NATIVE_AUTOMATION=1` turns on
-the automation RPC socket. Marker vocabulary to grep for in the host's stderr (all `ND_*` markers
-print to stderr — capture `2>&1`):
+the automation RPC socket. This raw invocation is the mechanism `nd dev` wraps. Marker vocabulary to
+grep for in the host's stderr (all `ND_*` markers print to stderr — capture `2>&1`):
 
 | Marker | Meaning | Status |
 |---|---|---|
@@ -36,14 +50,12 @@ print to stderr — capture `2>&1`):
 commit isn't showing up as expected.
 
 `ND_DEV=1` (env var on the host) selects `bun --hot` for the child process and enables the
-crash-overlay's Restart button. A packaged `nd dev` command that wraps `ND_DEV=1` plus toolchain
-discovery is **M9 scope** (packaging), not M8 — do not attempt to build an `nd` CLI binary against
-this doc set.
+crash-overlay's Restart button — this is what `nd dev` sets for you.
 
 ## HMR: what actually preserves state
 
-**Landed, with one required convention: import hooks from `@nativedesktop/react`, not `react`.**
-`ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and socket across
+**Landed, with one required convention for component files: import hooks from
+`@nativedesktop/react`, not `react`.** `ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and socket across
 an edit, but re-evaluates the *entire* module graph on every edit — `react`, `react-reconciler`,
 and `@nativedesktop/react` included (verified empirically against Bun 1.3.13 with a
 `globalThis`-identity probe). Two mechanisms were tried and rejected before landing on the one
@@ -76,12 +88,63 @@ that same first-eval `react` instance internally, so a hook resolved through
 `@nativedesktop/react` always talks to the dispatcher the live reconciler actually drives. A hook
 imported from `react` directly would resolve against a fresh, re-evaluated instance whose
 dispatcher is never attached to any reconciler — that's the `Invalid hook call:
-resolveDispatcher().useState` crash this convention avoids. **Convention:** app code must write
-`import { useState } from "@nativedesktop/react"`, not `from "react"` — `examples/counter` and
-`template/` both follow this; `scripts/headless-m8.sh`'s HMR leg exercises the real
-`examples/counter` app (not a synthetic fixture) end to end: click to a known state, edit a label
-string in a temp copy, and assert the label changed, the click count survived, and the child never
-disconnected.
+resolveDispatcher().useState` crash this convention avoids. **Convention:** `.tsx`/`.desktop.tsx`
+component files must write `import { useState } from "@nativedesktop/react"`, not `from "react"` —
+`examples/counter`, `template/src/App.tsx`, and `template/src/Panel.desktop.tsx` all follow this.
+Shared, non-component `.ts` modules are the one exception (see the hook-rewrite transform below);
+`scripts/headless-m8.sh`'s HMR leg exercises the real `examples/counter` app (not a synthetic
+fixture) end to end: click to a known state, edit a label string in a temp copy, and assert the
+label changed, the click count survived, and the child never disconnected.
+
+## Hook imports: sharing hooks with web/React Native (M8-D8)
+
+**Landed.** The convention above is a hard requirement for `.tsx`/`.desktop.tsx` component files,
+but shared, platform-agnostic logic — a hook also meant to be consumed by a web or React Native
+codebase in the same monorepo — can now be authored the normal way, `import { useState } from
+"react"`, and still resolve to the pinned instance. `babel-plugin-nativedesktop`
+(`packages/babel-plugin-nativedesktop/`) rewrites named hook imports `from "react"` to `from
+"@nativedesktop/react"` at both places this framework transforms source:
+
+- **`bun run compile`/`nd build`** — the babel plugin (`index.js`) runs as an ordinary Babel visitor
+  alongside `babel-plugin-react-compiler` and the JSX transform (`template/babel.config.json`); it
+  rewrites every file's `ImportDeclaration` for `"react"`, splitting hook specifiers out into a
+  second `import … from "@nativedesktop/react"` and leaving default/namespace/type-only specifiers
+  on `"react"`.
+- **`bun --hot`/`nd dev`** — babel never runs under Bun's own transpiler, so a Bun `onLoad` plugin
+  (`bun-plugin.js`, string-rewriting the same import shape via `rewrite.js`) does the equivalent job,
+  registered once per process via `template/bunfig.toml`'s `preload =
+  ["babel-plugin-nativedesktop/bun-plugin"]`.
+
+Only the hook subset `packages/react/src/dev-react.ts` pins gets rewritten — the exact list is
+`packages/babel-plugin-nativedesktop/hooks.js`'s `PINNED_HOOKS`: `useState`, `useEffect`,
+`useLayoutEffect`, `useMemo`, `useCallback`, `useRef`, `useContext`, `useReducer`, `useTransition`,
+`useDeferredValue`, `useSyncExternalStore`, `useId`, `use`, `startTransition`.
+
+**Critical asymmetry — the dev-path Bun plugin only rewrites `.ts` files, never
+`.tsx`/`.desktop.tsx`.** Bun's runtime `onLoad` has no fall-through (a matched file must return
+contents), and once a plugin returns contents for a file, `bun --hot` drops that file from its watch
+set — so intercepting a component file would silently kill its hot reload. `bun-plugin.js`'s
+`filter: /\.ts$/` therefore excludes every `.tsx`, which means **`.tsx`/`.desktop.tsx` components
+must still import hooks from `@nativedesktop/react` directly** (the convention above, unchanged) —
+importing a hook from raw `"react"` in a component still crashes under `bun --hot` with the same
+`Invalid hook call` this whole mechanism exists to avoid. Shared, non-component `.ts` hooks are where
+`from "react"` is safe: they get rewritten and pinned at first eval, but because the dev-path rewrite
+only runs once per process (not per hot-reload), editing a shared `.ts` hook needs a host restart to
+take effect — its `.tsx` consumers keep hot-reloading normally in the meantime.
+`template/src/hooks/useToggle.ts` (consumed by `template/src/Panel.desktop.tsx`) is the worked
+example. The babel/compiled path has no watcher to preserve, so it rewrites every extension
+including `.tsx`/`.desktop.tsx` — the `.ts`-only restriction is purely a `bun --hot` dev-mode
+constraint.
+
+## `.desktop.tsx` — the platform-suffix convention
+
+`template/src/Panel.desktop.tsx` is the NativeDesktop mirror of React Native's `.native.tsx`: an
+ordinary `.tsx` file — TypeScript, ESLint, Prettier, and Bun all understand it with no extra config —
+that resolves via extensionless imports (`import { Panel } from "./Panel.desktop"` finds
+`Panel.desktop.tsx`). The babel JSX transform (`importSource: "@nativedesktop/react"`) and the
+hook-rewrite transform above both apply to it exactly as they do to a plain `.tsx`. Use the suffix to
+keep NativeDesktop-only UI visually separated from source shared with web/React Native in the same
+monorepo; there is nothing else framework-specific about it.
 
 ## React Compiler: honest status (M8-D7)
 
@@ -90,20 +153,22 @@ pre-pass over the template's `src/` and the compiled output runs correctly again
 `@nativedesktop/react` — verified headless (3 clicks, label updated, screenshot captured) this
 session. It is a pre-pass, not inline, because Bun's runtime transpiler does not run babel plugins
 and `bun --hot` re-evaluates modules through Bun's own transpiler only. The template's `bun run
-compile` script (`template/package.json`) runs two babel plugins in one pass:
-`babel-plugin-react-compiler` (the memoization transform) plus
+compile` script (`template/package.json`, also reachable as `nd build`) runs three babel plugins in
+one pass (`template/babel.config.json`): `babel-plugin-react-compiler` (the memoization transform),
 `@babel/plugin-transform-react-jsx` (JSX to `@nativedesktop/react/jsx-runtime` calls — chosen
 deliberately so the compiled output contains no JSX syntax left for Bun to pragma-select on, since
 Bun's dev-vs-prod jsx-runtime selection is undocumented and version-fragile: it depends on
-`NODE_ENV=production`, which is not honored consistently by `bun run` across 1.3.x). Fixed
+`NODE_ENV=production`, which is not honored consistently by `bun run` across 1.3.x), and
+`babel-plugin-nativedesktop` (the hook-import rewrite above, so shared hooks written `from "react"`
+still resolve to the pinned instance in the compiled output). Fixed
 alongside this: `packages/react/src/jsx-runtime.ts` re-exported the type-only `JSX` namespace as a
 value (`export { …, JSX }`), which crashed any hand-authored `import … from
 "@nativedesktop/react/jsx-runtime"` (exactly what the babel JSX transform emits) with `export 'JSX'
 not found` — Bun's own automatic-JSX-runtime injection happened to elide it, masking the bug until
 a real consumer imported the path directly. Changed to `export type { JSX }`. Not enabled by
-default: `bun run dev` (`ND_DEV=1` + `--hot`) still points at uncompiled `src/`, so hot reload and
-react-refresh are unaffected; use `bun run compile && ND_SCRIPT=dist/main.tsx <host-binary>` for a
-compiled run.
+default: `bun run dev`/`nd dev` (`ND_DEV=1` + `--hot`) still points at uncompiled `src/`, so hot
+reload and react-refresh are unaffected; use `bun run compile && ND_SCRIPT=dist/main.tsx
+<host-binary>` for a compiled run (`nd build` only compiles — it does not launch the host).
 
 ## MCP tools
 

@@ -3,8 +3,12 @@ title: Automation Socket
 description: The full JSON-RPC automation surface — transport, methods, error codes, and known gaps.
 ---
 
-Ground truth for this page is `src/automation.zig`; this is a human/agent-readable mirror of it, not
-an independent spec — if the two disagree, the Zig source wins.
+Ground truth for this page is `schema/rpc.json` — the single source of truth `tools/codegen.ts`
+generates both `src/generated/rpc.zig` (consumed by `src/automation.zig`) and
+`packages/react/src/generated/rpc.ts` from. This page is a human/agent-readable mirror of the
+schema, not an independent spec — if the two disagree, the schema (and its generated output) wins.
+A method/param/result change in the schema is a compile error on both the Zig and TypeScript side
+until every caller is updated, not a silent runtime break.
 
 ## Transport
 

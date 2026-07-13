@@ -15,6 +15,7 @@ export default defineConfig({
 						{ label: 'Introduction', slug: 'get-started/introduction' },
 						{ label: 'Quick Start', slug: 'get-started/quick-start' },
 						{ label: 'Project Layout', slug: 'get-started/project-layout' },
+						{ label: 'Monorepo & Code Sharing', slug: 'get-started/monorepo' },
 					],
 				},
 				{

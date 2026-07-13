@@ -19,7 +19,10 @@ thin pass-through to the raw RPC method of the same name:
 `setValue`, `type`, and `scroll` exist on the automation socket but don't have MCP tool wrappers
 yet. Drive them by talking to the socket directly — `packages/mcp/src/socket.ts`'s
 `AutomationClient` is the client-side pattern every `scripts/*-drive.ts` script in this repo uses,
-and is a reasonable template for a custom driver:
+and is a reasonable template for a custom driver. `AutomationClient.call` is generic over the
+method names generated from `schema/rpc.json`, so the method name, its params, and its result type
+are all checked at compile time — a typo or a stale param shape is a `tsc` error, not a runtime
+surprise:
 
 ```ts
 import { AutomationClient } from "../packages/mcp/src/socket.ts"; // path relative to your script

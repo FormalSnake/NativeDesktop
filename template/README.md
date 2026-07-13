@@ -2,35 +2,38 @@
 
 Scaffolded from the NativeDesktop template.
 
-## Linking `@nativedesktop/react`
+## Linking `@nativedesktop/react`, `@nativedesktop/host`, and `nd`
 
-`package.json` references `@nativedesktop/react` as a `file:` path into the framework checkout's
-`packages/react`. The package isn't published to npm yet (that lands with M9 packaging) — until then,
-this app must live alongside (or be scaffolded with a path pointing into) a NativeDesktop checkout. Run
-`bun install` after scaffolding to materialize the dependency.
+`package.json` references `@nativedesktop/react` and `nd` (which in turn depends on
+`@nativedesktop/host`) as `file:` paths into the framework checkout's `packages/`. None of these are
+published to npm yet — until then, this app must live alongside (or be scaffolded with a path
+pointing into) a NativeDesktop checkout; `scripts/new-app.sh` rewrites every `file:../packages/*`
+path to the correct relative location for the scaffolded destination (see "`bun create` vs
+`scripts/new-app.sh`" below). Run `bun install` after scaffolding to materialize the dependencies.
 
-**Known limitation, worked around automatically:** because the linked package stays at its real
-location inside the framework checkout, and `packages/react` currently declares `react`/
-`react-reconciler` as regular dependencies (not `peerDependencies`), Node/Bun module resolution can
-end up loading two separate copies of `react` — one for this app, one for the linked package —
-which breaks React's hooks dispatcher ("Invalid hook call"). A `postinstall` script
-(`scripts/dedupe-react.mjs`) re-points this app's own `node_modules/react` and
-`node_modules/react-reconciler` at the exact copies the linked package resolves, so only one copy of
-each ever loads. This is a workaround, not a real fix — once `packages/react` declares `react` as a
-peer dependency (or the package is npm-published in M9), this script and the `postinstall` hook can
-be deleted.
+**Fixed (M8-D8):** `@nativedesktop/react` now declares `react` as a `peerDependency` instead of a
+regular `dependency`, so Bun hoists a single shared `react` install for this app and the linked
+package. That closes the two-copies "Invalid hook call" failure a `postinstall` dedupe script used
+to work around — `scripts/dedupe-react.mjs` and its `postinstall` hook are deleted.
 
 ## Running
 
-There is no packaged `nd` CLI yet (that's M9 — see `docs/agents/README.md`). Run the app directly
-against the framework's host binary:
+```
+bun run dev   # == nd dev  (src/main.tsx, ND_DEV=1, hot reload + crash-restart overlay)
+```
+
+`nd dev [entry]` (`packages/nd`) resolves the prebuilt host binary for your platform via
+`@nativedesktop/host`'s `resolveHostBinary()` and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>` —
+`entry` defaults to `src/main.tsx`. `ND_DEV=1` is the underlying mechanism: it runs the Bun child
+under `--hot` and enables the in-window crash-restart button. `nd dev` does not set
+`NATIVE_AUTOMATION=1` itself — export it in your shell first if you need the automation socket. If
+you're iterating on the framework's Zig host rather than this app's code, invoke the raw form
+directly against a freshly built `zig-out/bin/nd-hello` instead, since `nd dev` runs the *prebuilt*
+binary bundled with `@nativedesktop/host`:
 
 ```
 ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
 ```
-
-`ND_DEV=1` is what will eventually be `nd dev`'s job: it runs the Bun child under `--hot` and enables the
-in-window crash-restart button. Leaving it unset runs the clean/production path.
 
 ## React Compiler
 
@@ -45,12 +48,16 @@ run babel plugins — `bun --hot` re-evaluates modules through Bun's own transpi
 bun run compile   # babel src -> dist, react-compiler pass + JSX-to-calls, then run dist/main.tsx
 ```
 
-`babel.config.json` runs two plugins in one pass: `babel-plugin-react-compiler` (the memoization
-transform) and `@babel/plugin-transform-react-jsx` (JSX to `@nativedesktop/react/jsx-runtime` calls
+`babel.config.json` runs three plugins in one pass: `babel-plugin-react-compiler` (the memoization
+transform), `@babel/plugin-transform-react-jsx` (JSX to `@nativedesktop/react/jsx-runtime` calls
 — this avoids Bun's undocumented, version-fragile dev-vs-prod jsx-runtime pragma selection
-entirely, since the compiled output contains no JSX syntax left for Bun to transform). `dist/` is
-not part of the dev loop — `bun run dev` (`ND_DEV=1` + `--hot`) still points at `src/`, uncompiled,
-so hot reload and react-refresh are unaffected. Use `bun run compile && ND_SCRIPT=dist/main.tsx
+entirely, since the compiled output contains no JSX syntax left for Bun to transform), and
+`babel-plugin-nativedesktop` (rewrites named hook imports `from "react"` to `from
+"@nativedesktop/react"` so shared hooks written the normal way for web/React Native still resolve to
+the pinned instance in the compiled output — see `docs/agents/README.md`'s hook-rewrite section).
+`dist/` is not part of the dev loop — `bun run dev`/`nd dev` (`ND_DEV=1` + `--hot`) still points at
+`src/`, uncompiled, so hot reload and react-refresh are unaffected. `nd build` (== `bun run compile`)
+only compiles to `dist/`; run the compiled output with `bun run compile && ND_SCRIPT=dist/main.tsx
 <path-to-nd-host-binary>` for a compiled production run.
 
 ## `bun create` vs `scripts/new-app.sh`
@@ -61,6 +68,7 @@ Bun's CLI only treats `./.bun-create/<name>` or `$HOME/.bun-create/<name>` as "l
 not an arbitrary directory). `bun create <name> <dest>` does work once the template is copied to
 `./.bun-create/<name>` first, but that's an extra manual step with no name-rewriting or
 `docs/agents/*` seeding. **`scripts/new-app.sh <dest>` is the documented, verified, primary
-scaffolder** — it copies `template/`, rewrites the app name, seeds `docs/agents/*`, and fixes up the
-`@nativedesktop/react` `file:` path, all in one step. Use `bun create` only if you've already staged
+scaffolder** — it copies `template/`, rewrites the app name, seeds `docs/agents/*`, and fixes up
+every `@nativedesktop`-family `file:` path (`@nativedesktop/react`, `nd`, and `nd`'s own
+`@nativedesktop/host` dependency), all in one step. Use `bun create` only if you've already staged
 the template under `.bun-create/` yourself.

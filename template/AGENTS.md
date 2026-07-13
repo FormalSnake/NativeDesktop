@@ -5,13 +5,16 @@ full agent docs are copied into `docs/agents/` at scaffold time — read `docs/a
 
 Three load-bearing rules:
 
-1. **Run with `ND_DEV=1` for hot reload + the crash-restart overlay.** `ND_DEV=1 ND_SCRIPT=src/main.tsx
-   <path-to-nd-host-binary>` — see `docs/agents/README.md` for the marker vocabulary and what `ND_DEV`
-   actually changes. (A packaged `nd dev` command that wraps this invocation ships in a later milestone;
-   today `ND_DEV=1` on the host binary is the whole mechanism.) **Import hooks from
+1. **Run with `bun run dev` (== `nd dev`) for hot reload + the crash-restart overlay.** This wraps
+   `ND_DEV=1 ND_SCRIPT=src/main.tsx <resolved-host-binary>` — see `docs/agents/README.md` for the
+   marker vocabulary, what `ND_DEV` actually changes, and the raw invocation to use instead when
+   iterating on the framework's Zig host itself (`nd dev` runs a prebuilt host binary, not a fresh
+   `zig build`). **`.tsx`/`.desktop.tsx` component files must still import hooks from
    `@nativedesktop/react`, not `react`** (`import { useState } from "@nativedesktop/react"`) — this is
-   what makes a hot edit preserve state instead of crashing or resetting; see `docs/agents/README.md`'s
-   HMR section for why.
+   what makes a hot edit preserve state instead of crashing or resetting. Shared, non-component `.ts`
+   hooks are the one exception: they may import from plain `"react"` and get rewritten/pinned
+   automatically; see `docs/agents/README.md`'s HMR and hook-rewrite sections for why, and for the
+   `.desktop.tsx` convention.
 2. **Styling is not web CSS.** No `flex`/`grid`/`position`/`display`/`justifyContent`. See
    `docs/agents/styling.md`.
 3. **Zig idiom in this framework is 0.16, not the pre-2025 APIs most training data assumes.** If you touch

@@ -26,7 +26,10 @@ A Bun/TypeScript child process renders a React tree over a local binary protocol
 host that owns **real** native widgets. There is no embedded browser and no DOM — the widgets your
 app renders *are* `GtkBox`, `AdwHeaderBar`, `NSButton`, `NSSplitView`. One React tree automatically
 adopts both platforms' current design languages (Liquid Glass on macOS, Adwaita on GNOME), because
-there's no facsimile layer standing between your JSX and the platform's own widget toolkit.
+there's no facsimile layer standing between your JSX and the platform's own widget toolkit. `react`
+is a `peerDependency` of the renderer, so a NativeDesktop app can live in a monorepo next to a web
+or React Native app and share a hooks/logic package with them — see
+[Monorepo & Code Sharing](/get-started/monorepo/).
 
 <CardGrid stagger>
 	<Card title="Real native widgets" icon="approve-check">
@@ -43,5 +46,9 @@ there's no facsimile layer standing between your JSX and the platform's own widg
 	</Card>
 	<Card title="React 19, for real" icon="open-book">
 		Hooks, Suspense, transitions, and hot reload — driving native widget trees instead of a DOM.
+	</Card>
+	<Card title="Share code, not UI" icon="puzzle">
+		`react` is a peer dependency, so a shared hooks/logic package resolves to one instance across
+		a NativeDesktop app, a web app, and React Native in the same monorepo.
 	</Card>
 </CardGrid>

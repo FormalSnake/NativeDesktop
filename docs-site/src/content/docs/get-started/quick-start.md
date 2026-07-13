@@ -51,6 +51,12 @@ stderr — capture with `2>&1`):
 [Windows & Chrome](/native-platform/windows-chrome/)); run it the same way with
 `ND_SCRIPT=examples/notes/main.tsx`.
 
+Every `examples/*` package also declares `"dev": "nd dev main.tsx"` (the `nd` CLI, `packages/nd`),
+so `cd examples/counter && bun run dev` is equivalent to the raw invocation above minus
+`NATIVE_AUTOMATION=1` — `nd dev` doesn't set that for you, so export it first if you need the
+automation socket. `nd dev` resolves a *prebuilt* host binary via `@nativedesktop/host` rather than
+building one, so use the raw `zig build` + `ND_SCRIPT` form above while iterating on the host itself.
+
 ## Dev mode: hot reload
 
 Set `ND_DEV=1` on the host to run the Bun child under `bun --hot` and enable the crash-overlay's
