@@ -39,7 +39,7 @@ func fetchCapturableWindows() async throws -> [CapturableWindow] {
 }
 
 func cmdList() async -> Int32 {
-    guard ensurePermission() else { return 2 }
+    guard await ensurePermission() else { return 2 }
 
     do {
         let windows = try await fetchCapturableWindows()

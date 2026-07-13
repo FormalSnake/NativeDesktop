@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ScreenCaptureKit
 
 /// Grant instructions printed to stderr any time a command needs Screen
 /// Recording access and doesn't have it (doctor, list, capture).
@@ -14,8 +15,10 @@ func doctorInstructions() -> String {
         CGRequestScreenCaptureAccess(), which shows the system permission prompt
         once per binary identity. If it didn't appear (or you dismissed it):
 
-          1. Open System Settings -> Privacy & Security -> Screen Recording.
-          2. Enable the toggle for the binary path above.
+          1. Open System Settings -> Privacy & Security -> Screen Recording
+             (named "Screen & System Audio Recording" on newer macOS).
+          2. Click +, press Cmd-Shift-G in the picker, paste the directory of
+             the binary path above, select ndshot, and enable its toggle.
           3. Re-run the command -- no restart needed on macOS 14+.
 
         The grant is tied to this binary's on-disk path and code signature, not
@@ -60,11 +63,26 @@ func codesignSummary(path: String) -> String {
     return interesting.map { "  \($0)" }.joined(separator: "\n")
 }
 
+/// Ground truth for Screen Recording access: attempt a real ScreenCaptureKit
+/// content enumeration. The legacy CGPreflightScreenCaptureAccess() returns a
+/// stale `false` for CLI binaries on macOS 15+ (approvals moved to replayd's
+/// ScreenCaptureApprovals store, which preflight doesn't consult) -- gating on
+/// it rejects perfectly valid grants. Only an actual SCShareableContent call
+/// answers truthfully.
+func probeAccess() async -> Bool {
+    do {
+        _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        return true
+    } catch {
+        return false
+    }
+}
+
 /// Returns true (and does nothing else) if Screen Recording access is
 /// already granted. Otherwise triggers the system prompt for next time,
 /// prints the grant instructions, and returns false -- callers exit 2.
-func ensurePermission() -> Bool {
-    if CGPreflightScreenCaptureAccess() {
+func ensurePermission() async -> Bool {
+    if await probeAccess() {
         return true
     }
     _ = CGRequestScreenCaptureAccess()
@@ -72,14 +90,17 @@ func ensurePermission() -> Bool {
     return false
 }
 
-func cmdDoctor() -> Int32 {
+func cmdDoctor() async -> Int32 {
     let path = executablePath()
     print("ndshot doctor")
     print("  binary: \(path)")
     print(codesignSummary(path: path))
 
-    if CGPreflightScreenCaptureAccess() {
-        print("  Screen Recording: GRANTED")
+    if await probeAccess() {
+        print("  Screen Recording: GRANTED (verified via ScreenCaptureKit)")
+        if !CGPreflightScreenCaptureAccess() {
+            print("  note: legacy CGPreflight reports false -- expected for CLI tools on macOS 15+, ignore it")
+        }
         return 0
     }
 

@@ -41,7 +41,7 @@ struct NDShot {
         let code: Int32
         switch command {
         case "doctor":
-            code = cmdDoctor()
+            code = await cmdDoctor()
         case "list":
             code = await cmdList()
         case "capture":

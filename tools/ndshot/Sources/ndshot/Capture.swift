@@ -98,7 +98,7 @@ func cmdCapture(_ args: [String]) async -> Int32 {
         return 64
     }
 
-    guard ensurePermission() else { return 2 }
+    guard await ensurePermission() else { return 2 }
 
     let windows: [CapturableWindow]
     do {
