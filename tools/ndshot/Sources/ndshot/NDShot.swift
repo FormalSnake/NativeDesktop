@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 let usageText = """
@@ -31,6 +32,12 @@ let usageText = """
 struct NDShot {
     static func main() async {
         respawnDisclaimedIfNeeded()
+        // Force CoreGraphics/window-server initialization before any
+        // ScreenCaptureKit call: SCContentFilter/SCShareableContent.info hit
+        // CGS machinery that asserts (CGS_REQUIRE_INIT) when the process was
+        // spawned outside a GUI app context — which is exactly how agents
+        // invoke ndshot.
+        _ = CGMainDisplayID()
         let arguments = Array(CommandLine.arguments.dropFirst())
 
         guard let command = arguments.first else {
