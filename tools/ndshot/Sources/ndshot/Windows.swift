@@ -14,15 +14,19 @@ struct CapturableWindow {
     var onScreen: Bool { window.isOnScreen }
 
     var jsonLine: String {
+        // Some system windows report non-finite frame coordinates, and
+        // NSJSONSerialization throws (uncaught -> process abort) on them —
+        // one weird window must not kill the whole listing.
+        func finite(_ v: CGFloat) -> Double { v.isFinite ? Double(v) : 0 }
         let object: [String: Any] = [
             "pid": pid,
             "windowID": windowID,
             "app": appName,
             "title": title,
-            "x": frame.origin.x,
-            "y": frame.origin.y,
-            "width": frame.size.width,
-            "height": frame.size.height,
+            "x": finite(frame.origin.x),
+            "y": finite(frame.origin.y),
+            "width": finite(frame.size.width),
+            "height": finite(frame.size.height),
             "onScreen": onScreen,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object) else {

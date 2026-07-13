@@ -118,10 +118,15 @@ func cmdCapture(_ args: [String]) async -> Int32 {
 
     let filter = SCContentFilter(desktopIndependentWindow: target.window)
     let info = SCShareableContent.info(for: filter)
-    let scale = CGFloat(info.pointPixelScale == 0 ? 1 : info.pointPixelScale)
-    let contentSize =
-        info.contentRect.size.width > 0 && info.contentRect.size.height > 0
-        ? info.contentRect.size : target.frame.size
+    let scale = min(max(CGFloat(info.pointPixelScale == 0 ? 1 : info.pointPixelScale), 1), 4)
+    // info.contentRect can come back degenerate (observed ~102x107 for a
+    // 1100x700 window mid-presentation) — the SCWindow frame is the reliable
+    // size for a desktop-independent window capture; take the larger of the
+    // two so a shrunken info rect can never squeeze the output.
+    let infoSize = info.contentRect.size
+    let contentSize = CGSize(
+        width: max(infoSize.width.isFinite ? infoSize.width : 0, target.frame.size.width),
+        height: max(infoSize.height.isFinite ? infoSize.height : 0, target.frame.size.height))
 
     let config = SCStreamConfiguration()
     config.width = max(1, Int((contentSize.width * scale).rounded()))

@@ -15,12 +15,6 @@ env -u SDKROOT -u DEVELOPER_DIR swift build -c release
 # from a keychain-less context (agent/CI) would downgrade to ad-hoc.
 mkdir -p bin
 bin="bin/ndshot"
-if [ -f "$bin" ] && cmp -s .build/release/ndshot "$bin".unsigned 2>/dev/null; then
-  echo "ndshot unchanged; keeping existing signed $(cd bin && pwd)/ndshot"
-  exit 0
-fi
-cp -f .build/release/ndshot "$bin".unsigned
-cp -f .build/release/ndshot "$bin"
 
 # Sign with a REAL identity when the keychain has one (Developer ID
 # preferred): a certificate-backed signature gives the binary an
@@ -28,12 +22,30 @@ cp -f .build/release/ndshot "$bin"
 # SURVIVES rebuilds. Ad-hoc (-) works but is content-hash-keyed — every
 # rebuild that changes the bytes needs a re-grant in System Settings.
 # Identity signing needs keychain access, which only a GUI session can
-# approve — from agent/SSH contexts it fails with errSecInternalComponent,
-# so fall back to ad-hoc with a loud warning.
+# approve — from agent/SSH contexts it fails with errSecInternalComponent.
 identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/ {print $2; exit}')
 if [ -z "$identity" ]; then
   identity=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')
 fi
+
+if [ -f "$bin" ] && cmp -s .build/release/ndshot "$bin".unsigned 2>/dev/null; then
+  # Bytes unchanged: never downgrade an identity signature. If the existing
+  # copy is only ad-hoc and an identity is usable NOW (GUI session), upgrade
+  # the signature in place; otherwise leave it alone (grant stays intact).
+  if codesign -dv "$bin" 2>&1 | grep -q "Signature=adhoc"; then
+    if [ -n "$identity" ] && codesign -f -s "$identity" -i com.nativedesktop.ndshot "$bin" 2>/dev/null; then
+      echo "ndshot unchanged; signature upgraded to '$identity' — re-grant once in System Settings"
+    else
+      echo "ndshot unchanged; keeping existing ad-hoc signed $(cd bin && pwd)/ndshot"
+    fi
+  else
+    echo "ndshot unchanged; keeping existing identity-signed $(cd bin && pwd)/ndshot"
+  fi
+  exit 0
+fi
+
+cp -f .build/release/ndshot "$bin".unsigned
+cp -f .build/release/ndshot "$bin"
 if [ -n "$identity" ] && codesign -f -s "$identity" -i com.nativedesktop.ndshot "$bin" 2>/dev/null; then
   echo "ndshot built, signed with '$identity': $(cd bin && pwd)/ndshot"
 else
