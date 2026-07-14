@@ -175,10 +175,10 @@ function App(): React.ReactNode {
                     />
                   </box>
                   <separator orientation="horizontal" />
-                  <box orientation="horizontal" style={{ padding: 12 }}>
-                    <checkbox
+                  <box orientation="horizontal" spacing={12} style={{ padding: 12 }}>
+                    <label text="Show status icon" style={{ hexpand: true, valign: "center" }} />
+                    <switch
                       testID="setting-status-icon"
-                      label="Show status icon"
                       checked={showStatusIcon}
                       onToggled={(e) => setShowStatusIcon(e.checked)}
                     />

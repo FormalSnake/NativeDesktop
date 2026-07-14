@@ -58,6 +58,7 @@ if (group.type !== "SettingsGroup") throw new Error(`general-card type=${group.t
 // SwiftUI-backed group. A successful setValue plus the host's follow-up commit
 // proves both event paths remain connected.
 await set("setting-launch", false);
+await set("setting-status-icon", false);
 await set("setting-folder", 2);
 
 await click("category-appearance");

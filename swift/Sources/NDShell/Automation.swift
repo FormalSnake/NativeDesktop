@@ -336,7 +336,7 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// carried — the ground truth `widgetKind` below would otherwise have to
 /// guess at via reflection.
 @MainActor func ndRecordButtonKind(_ view: NSView, _ kind: String) {
-    guard kind == "Checkbox" || kind == "Radio" || kind == "Button" || kind == "SourceList" else { return }
+    guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button" || kind == "SourceList" else { return }
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
@@ -441,7 +441,7 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
               let textView = scroll.documentView as? NSTextView else { return invalidValue(errOut, nodeID) }
         textView.string = text
         EventDispatcher.shared.fireChanged(scroll, text: text) // wired key is the NSScrollView (M6b-D2)
-    case "Checkbox", "Radio":
+    case "Checkbox", "Radio", "Switch":
         guard let boolValue = value as? Bool, let btn = view as? NSButton else { return invalidValue(errOut, nodeID) }
         btn.state = boolValue ? .on : .off
         EventDispatcher.shared.fireChecked(btn)

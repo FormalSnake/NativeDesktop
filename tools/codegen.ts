@@ -997,6 +997,10 @@ function genZigCreateBody(w: Widget): string {
     out += `        const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));\n`;
     out += "        if (propBool(props, \"checked\") orelse false) gtk.CheckButton.setActive(cb, 1);\n";
     out += "        return cb.as(gtk.Widget);\n";
+  } else if (w.name === "Switch") {
+    out += "        const sw = gtk.Switch.new();\n";
+    out += "        gtk.Switch.setActive(sw, @intFromBool(propBool(props, \"checked\") orelse false));\n";
+    out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "Radio") {
     out += `        const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));\n`;
     out += "        if (propStr(props, \"group\")) |g| {\n";
@@ -1213,6 +1217,15 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "                unblockEcho(asObject(widget));\n";
       out += "            }\n";
       out += "        }\n";
+    } else if (w.name === "Switch" && p.name === "checked") {
+      out += "        if (propBool(props, \"checked\")) |c| {\n";
+      out += "            const sw: *gtk.Switch = @ptrCast(@alignCast(widget));\n";
+      out += "            if ((gtk.Switch.getActive(sw) != 0) != c) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.Switch.setActive(sw, @intFromBool(c));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
     } else if ((w.name === "Checkbox" || w.name === "Radio") && p.name === "label") {
       out += "        if (propStr(props, \"label\")) |l| gtk.CheckButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
     } else if (w.name === "Select" && p.name === "selectedIndex") {
@@ -1327,6 +1340,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "TextArea.changed":        { signal: "changed",          target: "buffer", cb: "cbBufferChanged",    suppress: true },
   "Checkbox.toggled":        { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
   "Radio.toggled":           { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
+  "Switch.toggled":          { signal: "notify::active",   target: "widget", cb: "cbSwitchToggled",    suppress: true },
   "Select.selectionChanged": { signal: "notify::selected", target: "widget", cb: "cbDropDownSelected", suppress: true },
   "Slider.valueChanged":     { signal: "value-changed",    target: "widget", cb: "cbScaleValueChanged", suppress: true },
   "ListView.rowActivated":   { signal: "activate",         target: "listview-inner", cb: "cbListActivate", suppress: false },
@@ -1384,6 +1398,13 @@ const CALLBACK_BODIES: Record<string, string> = {
     const node_id: u32 = @intCast(@intFromPtr(data));
     const cb: *gtk.CheckButton = @ptrCast(@alignCast(obj));
     if (emit) |f| f(node_id, "toggled", .{ .checked = gtk.CheckButton.getActive(cb) != 0 });
+}
+`,
+  cbSwitchToggled: `// notify:: handlers get (object, pspec, user_data).
+fn cbSwitchToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const sw: *gtk.Switch = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = gtk.Switch.getActive(sw) != 0 });
 }
 `,
   cbDropDownSelected: `// notify:: handlers get (object, pspec, user_data).
@@ -1927,6 +1948,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        let cb = NSButton(checkboxWithTitle: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
     out += `        cb.state = (propBool(props, "checked") ?? ${swiftDefaultBool(w, "checked")}) ? .on : .off\n`;
     out += "        return cb\n";
+  } else if (w.name === "Switch") {
+    out += "        let toggle = NSSwitch()\n";
+    out += `        toggle.state = (propBool(props, "checked") ?? ${swiftDefaultBool(w, "checked")}) ? .on : .off\n`;
+    out += "        return toggle\n";
   } else if (w.name === "Radio") {
     out += `        let r = NSButton(radioButtonWithTitle: propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}, target: nil, action: nil)\n`;
     out += `        r.state = (propBool(props, "checked") ?? ${swiftDefaultBool(w, "checked")}) ? .on : .off\n`;
@@ -2088,6 +2113,7 @@ const SWIFT_SUPPRESSED = new Set([
   "TextArea.text",
   "Checkbox.checked",
   "Radio.checked",
+  "Switch.checked",
   "Select.selectedIndex",
   "Slider.value",
   "SearchInput.text",
@@ -2146,7 +2172,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "           let textView = scroll.documentView as? NSTextView, textView.string != t {\n";
       out += "            withEchoSuppressed(view) { textView.string = t }\n";
       out += "        }\n";
-    } else if ((w.name === "Checkbox" || w.name === "Radio") && p.name === "checked") {
+    } else if ((w.name === "Checkbox" || w.name === "Radio" || w.name === "Switch") && p.name === "checked") {
       out += '        if let c = propBool(props, "checked"), let btn = view as? NSButton {\n';
       out += "            let want: NSControl.StateValue = c ? .on : .off\n";
       out += "            if btn.state != want {\n";
@@ -2244,6 +2270,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "TextArea.changed":        { selector: "fireText",    payload: "text" },
   "Checkbox.toggled":        { selector: "fireChecked", payload: "checked" },
   "Radio.toggled":           { selector: "fireChecked", payload: "checked" },
+  "Switch.toggled":          { selector: "fireChecked", payload: "checked" },
   "Select.selectionChanged": { selector: "fireIndex",   payload: "index" },
   "Slider.valueChanged":     { selector: "fireValue",   payload: "value" },
   "ListView.rowActivated":   { selector: "fireIndex",   payload: "index" },

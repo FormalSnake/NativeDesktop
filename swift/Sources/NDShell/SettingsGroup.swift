@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// React rows currently hosted by a native grouped Form. AppKit style updates
+/// consult this registry so shared GTK-oriented padding cannot be reapplied
+/// after attachment and double SwiftUI's native row insets.
+nonisolated(unsafe) private var ndSettingsGroupRows: Set<ObjectIdentifier> = []
+
+func ndUsesNativeSettingsInsets(_ view: NSView) -> Bool {
+    view is NDSettingsGroupView || ndSettingsGroupRows.contains(ObjectIdentifier(view))
+}
+
 /// Bridges an existing React-owned AppKit view into a native SwiftUI form row.
 /// SwiftUI controls only placement: identity, props, and event handlers remain
 /// attached to the original `NSView` instance.
@@ -61,12 +70,14 @@ final class NDSettingsGroupView: NSStackView {
 
     func appendReactView(_ view: NSView) {
         guard !isStructuralSeparator(view) else { return }
+        normalizeNativeRow(view)
         rows.append(view)
         refresh()
     }
 
     func insertReactView(_ view: NSView, before sibling: NSView) {
         guard !isStructuralSeparator(view) else { return }
+        normalizeNativeRow(view)
         rows.removeAll { $0 === view }
         let index = rows.firstIndex { $0 === sibling } ?? rows.endIndex
         rows.insert(view, at: index)
@@ -76,6 +87,7 @@ final class NDSettingsGroupView: NSStackView {
     func removeReactView(_ view: NSView) {
         guard !isStructuralSeparator(view) else { return }
         rows.removeAll { $0 === view }
+        ndSettingsGroupRows.remove(ObjectIdentifier(view))
         view.removeFromSuperview()
         refresh()
     }
@@ -83,6 +95,16 @@ final class NDSettingsGroupView: NSStackView {
     private func isStructuralSeparator(_ view: NSView) -> Bool {
         guard let box = view as? NSBox else { return false }
         return box.boxType == .separator
+    }
+
+    /// A grouped Form owns its row insets. Shared trees may carry padding for
+    /// GTK's boxed-list implementation; retaining it here doubles the native
+    /// vertical inset and makes every macOS row taller than System Settings.
+    private func normalizeNativeRow(_ view: NSView) {
+        ndSettingsGroupRows.insert(ObjectIdentifier(view))
+        guard let stack = view as? NSStackView else { return }
+        stack.edgeInsets = .init()
+        ndBoxReconcileChildren(stack)
     }
 
     private func refresh() {

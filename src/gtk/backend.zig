@@ -512,6 +512,9 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
     } else if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Radio")) {
         if (value != .bool) return invalidValue(err_json_out, node_id);
         gtk.CheckButton.setActive(@ptrCast(@alignCast(widget)), @intFromBool(value.bool));
+    } else if (std.mem.eql(u8, kind, "Switch")) {
+        if (value != .bool) return invalidValue(err_json_out, node_id);
+        gtk.Switch.setActive(@ptrCast(@alignCast(widget)), @intFromBool(value.bool));
     } else if (std.mem.eql(u8, kind, "Slider")) {
         const num: f64 = switch (value) {
             .float => value.float,
@@ -559,6 +562,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     if (std.mem.eql(u8, type_name, "GtkSearchEntry")) return "SearchInput";
     if (std.mem.eql(u8, type_name, "GtkTextView")) return "TextArea";
     if (std.mem.eql(u8, type_name, "GtkCheckButton")) return "Checkbox";
+    if (std.mem.eql(u8, type_name, "GtkSwitch")) return "Switch";
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
     if (std.mem.eql(u8, type_name, "GtkDropDown")) return "Select";
     if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) {

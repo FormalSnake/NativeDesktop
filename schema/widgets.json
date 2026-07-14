@@ -457,6 +457,19 @@
       ],
       "events": [],
       "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "Switch",
+      "intrinsic": "switch",
+      "container": null,
+      "props": [
+        { "name": "checked", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "switch", "textFrom": null }
     }
   ]
 }

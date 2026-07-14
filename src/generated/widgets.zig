@@ -783,6 +783,10 @@ pub fn create(
         const box = gtk.Box.new(.vertical, spacing);
         gtk.Widget.addCssClass(box.as(gtk.Widget), "card");
         return box.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Switch")) {
+        const sw = gtk.Switch.new();
+        gtk.Switch.setActive(sw, @intFromBool(propBool(props, "checked") orelse false));
+        return sw.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -948,6 +952,15 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             const box: *gtk.Box = @ptrCast(@alignCast(widget));
             gtk.Box.setSpacing(box, @intCast(s));
         }
+    } else if (std.mem.eql(u8, kind, "Switch")) {
+        if (propBool(props, "checked")) |c| {
+            const sw: *gtk.Switch = @ptrCast(@alignCast(widget));
+            if ((gtk.Switch.getActive(sw) != 0) != c) {
+                blockEcho(asObject(widget));
+                gtk.Switch.setActive(sw, @intFromBool(c));
+                unblockEcho(asObject(widget));
+            }
+        }
     }
 }
 
@@ -1033,6 +1046,13 @@ fn cbListBoxRowActivated(_: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyop
     if (emit) |f| f(node_id, "rowActivated", .{ .index = gtk.ListBoxRow.getIndex(row) });
 }
 
+// notify:: handlers get (object, pspec, user_data).
+fn cbSwitchToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const sw: *gtk.Switch = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = gtk.Switch.getActive(sw) != 0 });
+}
+
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Button")) {
@@ -1090,6 +1110,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         _ = hid_SourceList_rowActivated;
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal
+    } else if (std.mem.eql(u8, kind, "Switch")) {
+        const obj_Switch_toggled = asObject(widget);
+        const hid_Switch_toggled = gobject.signalConnectData(obj_Switch_toggled, "notify::active", @ptrCast(&cbSwitchToggled), data, null, .{});
+        noteSuppressible(obj_Switch_toggled, hid_Switch_toggled);
     }
 }
 

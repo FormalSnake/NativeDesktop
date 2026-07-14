@@ -223,6 +223,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let group = NDSettingsGroupView()
         group.spacing = CGFloat(propInt(props, "spacing") ?? 0)
         return group
+    } else if kind == "Switch" {
+        let toggle = NSSwitch()
+        toggle.state = (propBool(props, "checked") ?? false) ? .on : .off
+        return toggle
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -341,6 +345,13 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
             stack.spacing = CGFloat(sp)
         }
+    } else if kind == "Switch" {
+        if let c = propBool(props, "checked"), let btn = view as? NSButton {
+            let want: NSControl.StateValue = c ? .on : .off
+            if btn.state != want {
+                withEchoSuppressed(view) { btn.state = want }
+            }
+        }
     }
 }
 
@@ -374,6 +385,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
     } else if kind == "MenuItem" {
         ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
+    } else if kind == "Switch" {
+        EventDispatcher.shared.wire(view, nodeID: nodeID, name: "toggled", payload: .checked, action: #selector(EventDispatcher.fireChecked(_:)))
     }
 }
 

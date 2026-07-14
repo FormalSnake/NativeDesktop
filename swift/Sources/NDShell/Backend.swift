@@ -689,7 +689,12 @@ private func parseEdgeInsets(_ value: Any) -> NSEdgeInsets? {
 ///  - anything else -> silently ignored (no AppKit equivalent for this
 ///    widget shape in v1).
 private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
-    if let stack = view as? NSStackView {
+    if ndUsesNativeSettingsInsets(view) {
+        if let stack = view as? NSStackView {
+            stack.edgeInsets = .init()
+            ndBoxReconcileChildren(stack)
+        }
+    } else if let stack = view as? NSStackView {
         stack.edgeInsets = insets
         ndBoxReconcileChildren(stack)
     } else if let button = view as? NDButton {

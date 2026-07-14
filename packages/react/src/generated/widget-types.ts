@@ -31,4 +31,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   Menu: 28,
   MenuItem: 29,
   SettingsGroup: 30,
+  Switch: 31,
 };

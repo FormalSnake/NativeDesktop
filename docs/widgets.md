@@ -406,3 +406,16 @@ Automation role: `group`. Text source: none. Children: multi.
 | `spacing` | int | 0 | createAndUpdate |
 | `testID` | string | — | meta |
 
+## Switch (`<switch>`)
+
+Automation role: `switch`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `checked` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
