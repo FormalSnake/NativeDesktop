@@ -54,15 +54,52 @@ it for you.
 
 Every NativeDesktop app is two processes:
 
-- **A Zig host** owns `main()` and the platform's native UI loop (GLib's main loop on Linux via
-  GTK4/libadwaita, `NSApplication.run` via a thin Swift shell on macOS). It holds the authoritative,
-  retained widget tree.
+```mermaid
+flowchart TB
+    subgraph CHILD["Bun · TypeScript child process"]
+        direction TB
+        APP["Your React app · TSX"]
+        RECON["@nativedesktop/react<br/>React 19 reconciler"]
+        NDPC["NDP client<br/>runtime/ndp.ts"]
+        PLAT["Platform.backend · Platform.os"]
+        APP --> RECON --> NDPC
+        NDPC -.->|"backend from helloAck"| PLAT
+        APP -.->|reads| PLAT
+    end
+
+    subgraph HOST["Native host process · owns main + UI loop"]
+        direction TB
+        CORE["Zig core · src/<br/>NDP server · retained widget Tree · C-ABI backend seam"]
+        GTK["GTK4 / libadwaita<br/>Linux · also macOS via Quartz"]
+        APPKIT["AppKit<br/>Swift shell · macOS"]
+        CORE --> GTK
+        CORE --> APPKIT
+    end
+
+    NDPC -->|"commitBatch: widget ops"| CORE
+    CORE -->|"helloAck + events"| NDPC
+    AGENT["Coding agent / headless test"] -->|"JSON-RPC automation socket"| CORE
+
+    SCHEMA["schema/*.json<br/>widgets · protocol · rpc"] -->|tools/codegen.ts| RECON
+    SCHEMA -->|tools/codegen.ts| CORE
+```
+
+- **A native host** owns `main()` and the platform's native UI loop (GLib's main loop on Linux via
+  GTK4/libadwaita, `NSApplication.run` via a thin Swift shell on macOS). Both are the same GTK-free
+  Zig core (`src/`) — NDP server, retained widget tree, and a frozen C-ABI backend seam — with the
+  platform-specific widget layer plugged in behind it. It holds the authoritative widget tree.
 - **A Bun/TypeScript child** runs your React app. Your components never touch a widget directly —
   React's reconciler diffs your tree and sends the result to the host over **NDP**, a
   length-prefixed JSON protocol over a local socket, as one `CommitBatch` per commit.
 
 This split means a JS crash or hang doesn't take the window down: the host stays up and keeps
 answering automation requests.
+
+**Know which backend is drawing.** The OS can't tell you — GTK runs on macOS too — so the host names
+its active backend in the NDP handshake, and the child reads it as `Platform.backend` (`"gtk"` |
+`"appkit"`) alongside `Platform.os`. Branch on `backend` for renderer quirks, on `os` for OS
+conventions; `Platform.select({ gtk, appkit, default })` picks per backend. See
+[Platform Support](docs-site/src/content/docs/native-platform/platform-support.md).
 
 **App-owned native components.** Apps can compile GTK widgets, AppKit views, or SwiftUI hosted in
 `NSHostingView` as their own `.so`/`.dylib`. The prebuilt host loads those plugins at launch, while
