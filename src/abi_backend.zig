@@ -105,6 +105,24 @@ pub fn connectEvents(widget: *Widget, kind: []const u8, node_id: u32) void {
     vtable.connect_events(ctx, widget, kz, node_id);
 }
 
+pub fn nativeViewConnect(view_kind: []const u8, widget: *Widget, node_id: u32) void {
+    ctx.plugins.viewConnect(view_kind, widget, node_id);
+}
+
+pub fn nativeViewApplyProps(view_kind: []const u8, widget: *Widget, props_json: []const u8) void {
+    ctx.plugins.viewApplyProps(view_kind, widget, props_json);
+}
+
+pub fn nativeViewCommand(view_kind: []const u8, widget: *Widget, command: []const u8, arg: std.json.Value) void {
+    const json = std.json.Stringify.valueAlloc(gpa, arg, .{}) catch return;
+    defer gpa.free(json);
+    ctx.plugins.viewCommand(view_kind, widget, command, json);
+}
+
+pub fn nativeViewDestroy(view_kind: []const u8, widget: *Widget) void {
+    ctx.plugins.viewDestroy(view_kind, widget);
+}
+
 pub fn widgetCommand(widget: *Widget, kind: []const u8, command: []const u8, arg: std.json.Value) void {
     const kz = dupeZ(kind);
     defer gpa.free(kz);

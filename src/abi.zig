@@ -57,8 +57,9 @@ pub const NdContext = struct {
     // means the embedder never called it, so `runtime.zig`'s commit gate
     // falls back to its own module-level default ACL.
     acl: ?*@import("acl.zig").Acl = null,
-    // Set by `nd_load_plugin`; null until the embedder opts in.
-    plugin: ?*plugin.Loaded = null,
+    // Context-owned multi-plugin registry.
+    plugins: plugin.Manager = undefined,
+    shutting_down: bool = false,
 };
 
 /// Builds an `Environ`/`Environ.Map` pair from the process's own `environ`
@@ -84,22 +85,11 @@ comptime {
     std.debug.assert(@sizeOf(NdRect) == 16);
 }
 
-comptime {
-    // Force-retain the plugin native-view C-ABI wrappers (plugin.zig) into
-    // libnd.a for the Swift shell's generated <nativeView> arms — same
-    // rationale as terminal's ndterm_* retention in src/core/root.zig (a
-    // static-lib artifact emits only what something the compiler keeps
-    // reaches; taking each export's address forces emission).
-    _ = &plugin.nd_plugin_view_create;
-    _ = &plugin.nd_plugin_view_apply_props;
-    _ = &plugin.nd_plugin_view_command;
-    _ = &plugin.nd_plugin_view_destroy;
-}
-
 pub export fn nd_init() callconv(.c) ?*NdContext {
     const gpa = std.heap.page_allocator;
     const self = gpa.create(NdContext) catch return null;
     self.* = .{ .gpa = gpa, .vtable = undefined };
+    self.plugins = plugin.Manager.init(gpa, self, &pluginEmit);
     return self;
 }
 pub export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callconv(.c) void {
@@ -177,8 +167,7 @@ pub export fn nd_load_plugin(self: *NdContext, path: [*:0]const u8) callconv(.c)
         self.acl = a;
         break :blk a;
     };
-    const loaded = plugin.load(self.gpa, p, acl_ptr) catch return -1;
-    self.plugin = loaded;
+    self.plugins.load(p, acl_ptr) catch return -1;
     return 0;
 }
 
@@ -187,6 +176,13 @@ pub export fn nd_load_plugin(self: *NdContext, path: [*:0]const u8) callconv(.c)
 /// this with `node_id=0` instead of a normal NDP event (the child is dead —
 /// there is nothing to forward a real event to), so it routes to
 /// `Runtime.restart` instead of `Runtime.emitEvent`.
+fn pluginEmit(ctx: ?*anyopaque, node_id: u32, name: []const u8, payload_json: []const u8) void {
+    const self: *NdContext = @ptrCast(@alignCast(ctx orelse return));
+    const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, payload_json, .{}) catch return;
+    defer parsed.deinit();
+    Runtime.emitEvent(node_id, "nativeEvent", .{ .nativeName = name, .data = parsed.value });
+}
+
 pub export fn nd_emit_event(_: *NdContext, node_id: u32, name: [*:0]const u8, payload_json: [*:0]const u8) callconv(.c) void {
     const name_s = std.mem.span(name);
     if (std.mem.eql(u8, name_s, "restart")) {
@@ -211,8 +207,12 @@ fn parseEventPayload(payload_json: [*:0]const u8) protocol.EventPayload {
 /// path (last window closed) so the child dies with the parent rather than
 /// being orphaned. Safe to call before `nd_start_runtime` (no-op — no child
 /// spawned yet).
-pub export fn nd_shutdown(_: *NdContext) callconv(.c) void {
+pub export fn nd_shutdown(self: *NdContext) callconv(.c) void {
+    if (self.shutting_down) return;
+    self.shutting_down = true;
     Runtime.stop();
+    if (self.runtime != null) self.tree.clearAppNodes();
+    self.plugins.deinit();
 }
 
 /// Frees a string the embedder allocated and handed back across the ABI
@@ -220,6 +220,22 @@ pub export fn nd_shutdown(_: *NdContext) callconv(.c) void {
 /// The convention is the portable-C one: the embedder allocates with
 /// `malloc`/`strdup`, the core frees with `free` — this is what makes
 /// `nd_free` callable uniformly from a Zig, C, or Swift embedder.
+pub export fn nd_plugin_view_create(self: *NdContext, kind: [*:0]const u8, props: [*:0]const u8) callconv(.c) ?*anyopaque {
+    return self.plugins.viewCreate(std.mem.span(kind), std.mem.span(props));
+}
+pub export fn nd_plugin_view_apply_props(self: *NdContext, kind: [*:0]const u8, view: ?*anyopaque, props: [*:0]const u8) callconv(.c) void {
+    self.plugins.viewApplyProps(std.mem.span(kind), view orelse return, std.mem.span(props));
+}
+pub export fn nd_plugin_view_connect(self: *NdContext, kind: [*:0]const u8, view: ?*anyopaque, node_id: u32) callconv(.c) void {
+    self.plugins.viewConnect(std.mem.span(kind), view orelse return, node_id);
+}
+pub export fn nd_plugin_view_command(self: *NdContext, kind: [*:0]const u8, view: ?*anyopaque, command: [*:0]const u8, arg: [*:0]const u8) callconv(.c) void {
+    self.plugins.viewCommand(std.mem.span(kind), view orelse return, std.mem.span(command), std.mem.span(arg));
+}
+pub export fn nd_plugin_view_destroy(self: *NdContext, kind: [*:0]const u8, view: ?*anyopaque) callconv(.c) void {
+    self.plugins.viewDestroy(std.mem.span(kind), view orelse return);
+}
+
 pub export fn nd_free(p: ?*anyopaque) callconv(.c) void {
     std.c.free(p);
 }

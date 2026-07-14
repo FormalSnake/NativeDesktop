@@ -326,7 +326,10 @@
         { "name": "props", "type": "string", "default": "{}", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "nativeEvent", "ndpName": "onNativeEvent", "payload": "data" }
+      ],
+      "commands": [],
       "automation": { "role": "custom", "textFrom": null }
     },
     {

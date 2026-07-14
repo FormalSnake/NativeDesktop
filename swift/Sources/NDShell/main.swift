@@ -38,10 +38,14 @@ nd_register_backend(ctx, &gVTable)
 if let grants = ProcessInfo.processInfo.environment["ND_ACL_GRANTS"] {
     grants.withCString { nd_set_acl(ctx, $0) }
 }
-if ProcessInfo.processInfo.environment["ND_PLUGINS"] == "1",
-   let pluginPath = ProcessInfo.processInfo.environment["ND_PLUGIN_PATH"] {
-    let rc = pluginPath.withCString { nd_load_plugin(ctx, $0) }
-    if rc != 0 { FileHandle.standardError.write("ND_PLUGIN_LOAD_FAILED rc=\(rc)\n".data(using: .utf8)!) }
+if ProcessInfo.processInfo.environment["ND_PLUGINS"] == "1" {
+    let rawPaths = ProcessInfo.processInfo.environment["ND_PLUGIN_PATHS"]
+        ?? ProcessInfo.processInfo.environment["ND_PLUGIN_PATH"]
+        ?? ""
+    for pluginPath in rawPaths.split(separator: ":").map(String.init) {
+        let rc = pluginPath.withCString { nd_load_plugin(ctx, $0) }
+        if rc != 0 { FileHandle.standardError.write("ND_PLUGIN_LOAD_FAILED path=\(pluginPath) rc=\(rc)\n".data(using: .utf8)!) }
+    }
 }
 
 if nd_start_runtime(ctx) != 0 {
@@ -54,3 +58,4 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
     }
 }
 app.run()
+nd_shutdown(ctx)

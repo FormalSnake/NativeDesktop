@@ -138,6 +138,10 @@ pub fn applyProps(widget: *Node, kind: []const u8, props: ?std.json.Value) void 
     }
 }
 
+pub fn nativeViewConnect(_: []const u8, _: *Node, _: u32) void {}
+pub fn nativeViewApplyProps(_: []const u8, _: *Node, _: []const u8) void {}
+pub fn nativeViewCommand(_: []const u8, _: *Node, _: []const u8, _: std.json.Value) void {}
+pub fn nativeViewDestroy(_: []const u8, _: *Node) void {}
 pub fn widgetCommand(_: *Node, _: []const u8, _: []const u8, _: std.json.Value) void {}
 
 pub fn connectEvents(node: *Node, kind: []const u8, node_id: u32) void {

@@ -375,6 +375,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
     } else if kind == "WebView" {
         ndWebViewConnect(view, nodeID: nodeID)
+    } else if kind == "NativeView" {
     } else if kind == "HeaderBar" {
         ndHeaderBarConnectNav(view, nodeID: nodeID)
     } else if kind == "SearchInput" {

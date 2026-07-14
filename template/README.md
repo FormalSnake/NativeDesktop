@@ -24,7 +24,10 @@ bun run dev   # == nd dev  (src/main.tsx, ND_DEV=1, hot reload + crash-restart o
 
 `nd dev [entry]` (`packages/nd`) resolves the prebuilt host binary for your platform via
 `@nativedesktop/host`'s `resolveHostBinary()` and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>` —
-`entry` defaults to `src/main.tsx`. `ND_DEV=1` is the underlying mechanism: it runs the Bun child
+`entry` defaults to `src/main.tsx`. If `nativedesktop.config.ts` declares app-owned native plugins,
+`nd` first runs only their cached app build commands and passes their shared-library paths to that
+same prebuilt host; it never rebuilds NativeDesktop. See `docs/native-components.md` in the
+framework checkout and `native/README.md` in this app. `ND_DEV=1` is the underlying mechanism: it runs the Bun child
 under `--hot` and enables the in-window crash-restart button. `nd dev` does not set
 `NATIVE_AUTOMATION=1` itself — export it in your shell first if you need the automation socket. If
 you're iterating on the framework's Zig host rather than this app's code, invoke the raw form
@@ -69,6 +72,6 @@ not an arbitrary directory). `bun create <name> <dest>` does work once the templ
 `./.bun-create/<name>` first, but that's an extra manual step with no name-rewriting or
 `docs/agents/*` seeding. **`scripts/new-app.sh <dest>` is the documented, verified, primary
 scaffolder** — it copies `template/`, rewrites the app name, seeds `docs/agents/*`, and fixes up
-every `@nativedesktop`-family `file:` path (`@nativedesktop/react`, `nd`, and `nd`'s own
-`@nativedesktop/host` dependency), all in one step. Use `bun create` only if you've already staged
+every `@nativedesktop`-family `file:` path (`@nativedesktop/react`, `@nativedesktop/native`, `nd`, and
+`nd`'s own `@nativedesktop/host` dependency), all in one step. Use `bun create` only if you've already staged
 the template under `.bun-create/` yourself.

@@ -281,6 +281,10 @@ Automation role: `custom`. Text source: none. Children: none.
 | `props` | string | {} | createAndUpdate |
 | `testID` | string | — | meta |
 
+| Event | Handler | Payload |
+|---|---|---|
+| `nativeEvent` | `onNativeEvent` | data |
+
 ## SplitView (`<splitview>`)
 
 Automation role: `group`. Text source: none. Children: multi.

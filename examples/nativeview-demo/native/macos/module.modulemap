@@ -1,0 +1,4 @@
+module CNdPlugin {
+  header "../../../../packages/native/include/nd_plugin.h"
+  export *
+}

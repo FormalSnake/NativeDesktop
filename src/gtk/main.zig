@@ -97,11 +97,13 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     }
     if (global_environ_map.?.get("ND_PLUGINS")) |v| {
         if (std.mem.eql(u8, v, "1")) {
-            if (global_environ_map.?.get("ND_PLUGIN_PATH")) |path| {
+            const paths = global_environ_map.?.get("ND_PLUGIN_PATHS") orelse global_environ_map.?.get("ND_PLUGIN_PATH") orelse "";
+            var it = std.mem.splitScalar(u8, paths, ':');
+            while (it.next()) |path| {
+                if (path.len == 0) continue;
                 const path_z = std.heap.page_allocator.dupeZ(u8, path) catch @panic("oom");
-                if (abi.nd_load_plugin(ctx, path_z.ptr) != 0) {
-                    std.debug.print("ND_PLUGIN_LOAD_FAILED\n", .{});
-                }
+                defer std.heap.page_allocator.free(path_z);
+                if (abi.nd_load_plugin(ctx, path_z.ptr) != 0) std.debug.print("ND_PLUGIN_LOAD_FAILED path={s}\n", .{path});
             }
         }
     }

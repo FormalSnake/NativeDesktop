@@ -1,0 +1,12 @@
+{
+  "name": "@nativedesktop/native",
+  "version": "0.1.0",
+  "type": "module",
+  "files": ["include", "macos", "linux"],
+  "exports": {
+    "./include/nd.h": "./include/nd.h",
+    "./include/nd_plugin.h": "./include/nd_plugin.h",
+    "./macos": "./macos/NativeDesktopNative.swift",
+    "./linux": "./linux/nd_native_gtk.h"
+  }
+}

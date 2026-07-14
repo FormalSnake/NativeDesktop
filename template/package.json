@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@nativedesktop/react": "file:../packages/react",
+    "@nativedesktop/native": "file:../packages/native",
     "nd": "file:../packages/nd",
     "react": "19.2.7"
   },

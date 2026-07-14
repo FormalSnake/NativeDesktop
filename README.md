@@ -64,6 +64,12 @@ Every NativeDesktop app is two processes:
 This split means a JS crash or hang doesn't take the window down: the host stays up and keeps
 answering automation requests.
 
+**App-owned native components.** Apps can compile GTK widgets, AppKit views, or SwiftUI hosted in
+`NSHostingView` as their own `.so`/`.dylib`. The prebuilt host loads those plugins at launch, while
+typed React wrappers carry JSON props, events, and commands without a framework rebuild. See
+[App-owned native components](docs/native-components.md) and
+[`examples/nativeview-demo`](examples/nativeview-demo).
+
 **Schema-driven codegen, not hand-written bindings.** Three schemas are the single source of truth
 for everything that crosses the Zig↔Bun boundary, all fed through `tools/codegen.ts`:
 

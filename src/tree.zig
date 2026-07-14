@@ -10,6 +10,8 @@ const Widget = backend.Widget;
 /// never re-derived from props at query time.
 pub const NodeMeta = struct {
     widget_type: []u8,
+    /// NativeView factory key retained because update/command/remove ops omit props.
+    view_kind: ?[]u8 = null,
     test_id: ?[]u8,
     text: ?[]u8,
     parent: u32,
@@ -284,6 +286,7 @@ pub const Tree = struct {
     pub fn removeMeta(self: *Tree, id: u32) void {
         const kv = self.meta.fetchRemove(id) orelse return;
         self.gpa.free(kv.value.widget_type);
+        if (kv.value.view_kind) |v| self.gpa.free(v);
         if (kv.value.test_id) |v| self.gpa.free(v);
         if (kv.value.text) |v| self.gpa.free(v);
         if (kv.value.attached.tab_label) |v| self.gpa.free(v);
@@ -295,6 +298,7 @@ pub const Tree = struct {
         var it = self.meta.iterator();
         while (it.next()) |entry| {
             self.gpa.free(entry.value_ptr.widget_type);
+            if (entry.value_ptr.view_kind) |v| self.gpa.free(v);
             if (entry.value_ptr.test_id) |v| self.gpa.free(v);
             if (entry.value_ptr.text) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
@@ -325,6 +329,9 @@ pub const Tree = struct {
                 else
                     backend.createWidget(app, op.widget.?, op.props) catch continue;
                 backend.connectEvents(widget, op.widget.?, op.id.?);
+                if (std.mem.eql(u8, op.widget.?, "NativeView")) {
+                    if (propStr(op.props, "viewKind")) |view_kind| backend.nativeViewConnect(view_kind, widget, op.id.?);
+                }
                 self.nodes.put(self.gpa, op.id.?, widget) catch continue;
                 // testID is stored here for the automation getTree RPC (M4) and is
                 // never applied to the GTK widget itself.
@@ -332,6 +339,7 @@ pub const Tree = struct {
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
+                if (self.metaGet(op.id.?)) |m| m.view_kind = self.dupeOpt(propStr(op.props, "viewKind")) catch null;
                 if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
                 applyStyleIfPresent(widget, op.id.?, op.props);
@@ -354,8 +362,13 @@ pub const Tree = struct {
                 // kind from the retained tree's own create-time record instead of
                 // `op.widget` (always null on a real update), or every kind-
                 // dispatched prop applier would silently no-op on every update.
-                const kind = if (self.metaGet(op.id.?)) |m| m.widget_type else "";
-                backend.applyProps(widget, kind, op.props);
+                const meta = self.metaGet(op.id.?);
+                const kind = if (meta) |m| m.widget_type else "";
+                if (meta) |m| {
+                    if (m.view_kind) |view_kind| {
+                        if (propStr(op.props, "props")) |props_json| backend.nativeViewApplyProps(view_kind, widget, props_json);
+                    } else backend.applyProps(widget, kind, op.props);
+                } else backend.applyProps(widget, kind, op.props);
                 applyStyleIfPresent(widget, op.id.?, op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
@@ -387,7 +400,10 @@ pub const Tree = struct {
                         }
                     }
                 }
-                if (self.metaGet(op.id.?)) |cmeta| self.recordRemove(cmeta.parent, op.id.?);
+                if (self.metaGet(op.id.?)) |cmeta| {
+                    self.recordRemove(cmeta.parent, op.id.?);
+                    if (cmeta.view_kind) |view_kind| backend.nativeViewDestroy(view_kind, child);
+                }
                 _ = self.nodes.remove(op.id.?);
                 self.removeMeta(op.id.?);
                 std.debug.print("ND_REMOVE id={d}\n", .{op.id.?});
@@ -452,6 +468,7 @@ pub const Tree = struct {
                 // dropped wholesale below.
                 if (self.metaGet(id)) |m| self.recordRemove(m.parent, id);
             }
+            if (self.metaGet(id)) |m| if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
             _ = self.nodes.remove(id);
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
@@ -500,6 +517,7 @@ pub const Tree = struct {
                 // doomed node's own list, dropped wholesale below.
                 self.recordRemove(m.parent, id);
             }
+            if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
             _ = self.nodes.remove(id);
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);

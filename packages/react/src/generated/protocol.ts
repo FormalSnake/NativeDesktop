@@ -20,6 +20,8 @@ export interface EventPayload {
   value?: number;
   index?: number;
   key?: string;
+  nativeName?: string;
+  data?: unknown;
 }
 
 export type Op =

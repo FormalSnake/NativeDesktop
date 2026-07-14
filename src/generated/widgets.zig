@@ -1095,6 +1095,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         _ = hid_ListView_rowActivated;
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "NativeView")) {
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         ndHeaderBarConnectNav(widget, node_id);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {

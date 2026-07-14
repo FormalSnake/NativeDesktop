@@ -110,6 +110,13 @@ export async function render(element: ReactNode): Promise<void> {
 /// `sendCommand(wv.current!, "goBack")`. Command names are schema-typed per
 /// widget (WidgetCommandNames) and validated again at runtime so a stale
 /// string fails loudly here, not silently host-side.
+export function sendNativeCommand(node: NdNodeRef<"nativeview">, command: string, arg?: unknown): void {
+  const state = getHmrState();
+  if (!state) throw new Error("sendNativeCommand() before render(): no NDP connection yet");
+  if (!command) throw new Error("sendNativeCommand() requires a non-empty command");
+  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
+}
+
 export function sendCommand<T extends keyof WidgetCommandNames & WidgetType>(
   node: NdNodeRef<T>,
   command: WidgetCommandNames[T],

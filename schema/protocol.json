@@ -18,7 +18,9 @@
         { "name": "checked", "type": "bool", "optional": true },
         { "name": "value", "type": "f64", "optional": true },
         { "name": "index", "type": "i64", "optional": true },
-        { "name": "key", "type": "string", "optional": true }
+        { "name": "key", "type": "string", "optional": true },
+        { "name": "nativeName", "type": "string", "optional": true },
+        { "name": "data", "type": "any", "optional": true }
       ]
     }
   ],

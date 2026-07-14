@@ -26,3 +26,5 @@ other platform.
 Fall back to changing app/example code only when the tree genuinely cannot
 express the intent — and when you do, say so explicitly rather than editing
 silently.
+
+NEVER EDIT tools/codegen.ts ON YOUR OWN! JUST DELETE THE FILE IT SHOULD AUTO GENERATE WITH THE COMMAND

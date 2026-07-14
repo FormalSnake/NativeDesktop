@@ -445,13 +445,10 @@ pub const Runtime = struct {
             self.writeFrame(.{ .type = "error", .message = "no plugin loaded", .expected = @as(u32, 0), .got = @as(u32, 0) });
             return;
         } else {
-            const loaded = abi_backend.ctx.plugin orelse {
-                self.writeFrame(.{ .type = "error", .message = "no plugin loaded", .expected = @as(u32, 0), .got = @as(u32, 0) });
-                return;
-            };
+            const manager = &abi_backend.ctx.plugins;
             const arg_json = std.json.Stringify.valueAlloc(self.gpa, parsed.value.arg, .{}) catch return;
             defer self.gpa.free(arg_json);
-            if (loaded.dispatch(parsed.value.command, arg_json)) |result| {
+            if (manager.dispatch(parsed.value.plugin, parsed.value.command, arg_json)) |result| {
                 defer std.c.free(result.ptr);
                 // The plugin ABI returns an arbitrary NUL-terminated C string;
                 // nothing on the plugin side guarantees it's well-formed JSON.
@@ -509,8 +506,11 @@ pub const Runtime = struct {
             std.debug.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
             return;
         };
-        const kind = if (self.tree.metaGet(cmd.nodeId)) |m| m.widget_type else "";
-        backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
+        const meta = self.tree.metaGet(cmd.nodeId);
+        const kind = if (meta) |m| m.widget_type else "";
+        if (meta) |m| {
+            if (m.view_kind) |view_kind| backend.nativeViewCommand(view_kind, widget, cmd.command, cmd.arg) else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
+        } else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
         std.debug.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
     }
 

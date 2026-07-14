@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "nd dev main.tsx"
+    "dev": "nd dev main.tsx",
+    "compile": "bun build main.tsx --outdir dist --target bun"
   },
   "dependencies": {
     "@nativedesktop/react": "workspace:*",

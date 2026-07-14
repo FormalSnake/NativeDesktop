@@ -25,6 +25,8 @@ pub const EventPayload = struct {
     value: ?f64 = null,
     index: ?i64 = null,
     key: ?[]const u8 = null,
+    nativeName: ?[]const u8 = null,
+    data: ?std.json.Value = null,
 };
 
 /// One of create|append|insertBefore|remove|setText|update|hide|unhide. Decoded with a permissive struct:

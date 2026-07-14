@@ -1,27 +1,22 @@
-// Native-plugin dlopen loader (M10 T9): loads a C-ABI shared lib exporting
-// nd_plugin_entry, verifies its ABI version + declared capabilities against
-// the ACL, and dispatches pluginCommand NDP frames to registered handlers.
-// Mirrors the nd_plugin_v1/nd_plugin_registry layout from include/nd_plugin.h
-// field-for-field (same order) so the extern struct ABI matches the header.
+// Context-owned native plugin manager. The C layouts mirror include/nd_plugin.h.
 const std = @import("std");
 const acl = @import("acl.zig");
 
 const NdCommandFn = *const fn ([*:0]const u8, *?[*:0]u8) callconv(.c) i32;
-
-// Mirrors nd_view_impl (include/nd_plugin.h, v2) field-for-field: a native-view
-// factory a plugin registers under a view_kind string. The handles are opaque
-// backend widgets (GtkWidget*/NSView*) the core never dereferences.
 const NdViewImpl = extern struct {
     create: *const fn ([*:0]const u8) callconv(.c) ?*anyopaque,
     apply_props: *const fn (?*anyopaque, [*:0]const u8) callconv(.c) void,
     command: *const fn (?*anyopaque, [*:0]const u8, [*:0]const u8) callconv(.c) void,
     destroy: *const fn (?*anyopaque) callconv(.c) void,
+    // ABI v3, append-only. Read only for a v3 plugin.
+    connect: ?*const fn (?*anyopaque, u32) callconv(.c) void,
 };
-
 const NdPluginRegistry = extern struct {
     host: ?*anyopaque,
     register_command: *const fn (*NdPluginRegistry, [*:0]const u8, NdCommandFn) callconv(.c) void,
     register_view: *const fn (*NdPluginRegistry, [*:0]const u8, *const NdViewImpl) callconv(.c) void,
+    // ABI v3, append-only generic event callback.
+    emit_event: *const fn (*NdPluginRegistry, u32, [*:0]const u8, [*:0]const u8) callconv(.c) void,
 };
 const NdPluginV1 = extern struct {
     abi_version: u32,
@@ -32,204 +27,307 @@ const NdPluginV1 = extern struct {
 };
 const EntryFn = *const fn () callconv(.c) *const NdPluginV1;
 
-// Single-plugin registry (v1). A real multi-plugin host keys by plugin name;
-// v1 loads one demo plugin, so a flat command map suffices.
-var g_commands: std.StringHashMapUnmanaged(NdCommandFn) = .{};
-// Native-view factories keyed by view_kind (v2). The generic <nativeView>
-// widget's create/apply/command/destroy route here (GTK: the generated Zig
-// dispatcher calls viewCreate/…; AppKit: the Swift shell calls the nd_plugin_
-// view_* C wrappers below). Copies of the plugin's nd_view_impl by value.
-var g_views: std.StringHashMapUnmanaged(NdViewImpl) = .{};
-var g_gpa: std.mem.Allocator = undefined;
-var g_registry: NdPluginRegistry = undefined;
-
-fn registerCommandC(_: *NdPluginRegistry, command: [*:0]const u8, fn_ptr: NdCommandFn) callconv(.c) void {
-    const name = g_gpa.dupe(u8, std.mem.span(command)) catch return;
-    g_commands.put(g_gpa, name, fn_ptr) catch {};
-}
-
-fn registerViewC(_: *NdPluginRegistry, view_kind: [*:0]const u8, impl: *const NdViewImpl) callconv(.c) void {
-    const name = g_gpa.dupe(u8, std.mem.span(view_kind)) catch return;
-    g_views.put(g_gpa, name, impl.*) catch {
-        g_gpa.free(name);
-        return;
-    };
-    std.debug.print("ND_PLUGIN_VIEW_REGISTERED view_kind={s}\n", .{name});
-}
-
-pub const Loaded = struct {
+const View = struct { impl: NdViewImpl, abi_version: u32, owner: *Loaded };
+const Loaded = struct {
     lib: std.DynLib,
     plugin: *const NdPluginV1,
-    pub fn deinit(self: *Loaded) void {
-        self.plugin.deinit();
-        self.lib.close();
-        // Free the command names duped into the global registry by
-        // registerCommandC (g_gpa-owned) so testing.allocator's leak check
-        // stays clean across repeated load/deinit cycles in one process.
-        var it = g_commands.keyIterator();
-        while (it.next()) |k| g_gpa.free(k.*);
-        g_commands.clearAndFree(g_gpa);
-        var vit = g_views.keyIterator();
-        while (vit.next()) |k| g_gpa.free(k.*);
-        g_views.clearAndFree(g_gpa);
-        g_gpa.destroy(self);
+    name: []u8,
+    commands: std.StringHashMapUnmanaged(NdCommandFn) = .{},
+    registry_host: ?*RegistryHost = null,
+    registry: NdPluginRegistry = undefined,
+};
+const RegistryHost = struct {
+    manager: *Manager,
+    loaded: *Loaded,
+    loading: bool = true,
+    failed: bool = false,
+};
+
+pub const Manager = struct {
+    gpa: std.mem.Allocator,
+    ctx: ?*anyopaque,
+    emit: ?*const fn (?*anyopaque, u32, []const u8, []const u8) void,
+    plugins: std.StringHashMapUnmanaged(*Loaded) = .{},
+    views: std.StringHashMapUnmanaged(View) = .{},
+
+    pub fn init(gpa: std.mem.Allocator, ctx: ?*anyopaque, emit: ?*const fn (?*anyopaque, u32, []const u8, []const u8) void) Manager {
+        return .{ .gpa = gpa, .ctx = ctx, .emit = emit };
     }
-    /// Runs a registered command; returns a malloc'd JSON result the CALLER
-    /// frees with std.c.free (the plugin allocated it with libc malloc).
-    pub fn dispatch(self: *Loaded, command: []const u8, arg_json: []const u8) ?[]u8 {
-        _ = self;
-        const handler = g_commands.get(command) orelse return null;
-        const argz = g_gpa.dupeZ(u8, arg_json) catch return null;
-        defer g_gpa.free(argz);
+    pub fn deinit(self: *Manager) void {
+        var vit = self.views.keyIterator();
+        while (vit.next()) |k| self.gpa.free(k.*);
+        self.views.deinit(self.gpa);
+        var it = self.plugins.iterator();
+        while (it.next()) |e| {
+            const p = e.value_ptr.*;
+            p.plugin.deinit();
+            var cit = p.commands.keyIterator();
+            while (cit.next()) |k| self.gpa.free(k.*);
+            p.commands.deinit(self.gpa);
+            p.lib.close();
+            if (p.registry_host) |host| self.gpa.destroy(host);
+            self.gpa.free(p.name);
+            self.gpa.destroy(p);
+        }
+        self.plugins.deinit(self.gpa);
+    }
+
+    pub fn load(self: *Manager, path: []const u8, a: *acl.Acl) !void {
+        var lib = try std.DynLib.open(path);
+        errdefer lib.close();
+        const entry = lib.lookup(EntryFn, "nd_plugin_entry") orelse return error.NoPluginEntry;
+        const desc = entry();
+        if (desc.abi_version < 1 or desc.abi_version > 3) return error.AbiMismatch;
+        const plugin_name = std.mem.span(desc.name);
+        if (plugin_name.len == 0 or self.plugins.contains(plugin_name)) return error.DuplicatePlugin;
+        var i: usize = 0;
+        while (desc.capabilities[i]) |cap| : (i += 1) if (!a.isAllowed(0, std.mem.span(cap))) return error.CapabilityDenied;
+
+        const loaded = try self.gpa.create(Loaded);
+        loaded.* = .{ .lib = lib, .plugin = desc, .name = self.gpa.dupe(u8, plugin_name) catch |err| {
+            self.gpa.destroy(loaded);
+            return err;
+        } };
+        const registry_host = self.gpa.create(RegistryHost) catch |err| {
+            self.gpa.free(loaded.name);
+            self.gpa.destroy(loaded);
+            return err;
+        };
+        registry_host.* = .{ .manager = self, .loaded = loaded };
+        loaded.registry_host = registry_host;
+        loaded.registry = .{ .host = registry_host, .register_command = &registerCommandC, .register_view = &registerViewC, .emit_event = &emitEventC };
+        var init_called = false;
+        errdefer cleanupUncommitted(self, loaded, init_called);
+        init_called = true;
+        if (desc.init(&loaded.registry) != 0 or registry_host.failed) {
+            if (registry_host.failed) return error.DuplicateRegistration;
+            return error.PluginInitFailed;
+        }
+        registry_host.loading = false;
+        try self.plugins.put(self.gpa, loaded.name, loaded);
+        std.debug.print("ND_PLUGIN_LOADED name={s}\n", .{loaded.name});
+    }
+
+    pub fn dispatch(self: *Manager, plugin_name: []const u8, command: []const u8, arg_json: []const u8) ?[]u8 {
+        const p = self.plugins.get(plugin_name) orelse return null;
+        const handler = p.commands.get(command) orelse return null;
+        const argz = self.gpa.dupeZ(u8, arg_json) catch return null;
+        defer self.gpa.free(argz);
         var out: ?[*:0]u8 = null;
         if (handler(argz, &out) != 0) return null;
-        const o = out orelse return null;
-        return std.mem.span(o);
+        return std.mem.span(out orelse return null);
+    }
+    pub fn viewCreate(self: *Manager, kind: []const u8, props: []const u8) ?*anyopaque {
+        const v = self.views.get(kind) orelse return null;
+        const z = self.gpa.dupeZ(u8, props) catch return null;
+        defer self.gpa.free(z);
+        return v.impl.create(z.ptr);
+    }
+    pub fn viewApplyProps(self: *Manager, kind: []const u8, view: *anyopaque, props: []const u8) void {
+        const v = self.views.get(kind) orelse return;
+        const z = self.gpa.dupeZ(u8, props) catch return;
+        defer self.gpa.free(z);
+        v.impl.apply_props(view, z.ptr);
+    }
+    pub fn viewCommand(self: *Manager, kind: []const u8, view: *anyopaque, command: []const u8, arg: []const u8) void {
+        const v = self.views.get(kind) orelse return;
+        const cz = self.gpa.dupeZ(u8, command) catch return;
+        defer self.gpa.free(cz);
+        const az = self.gpa.dupeZ(u8, arg) catch return;
+        defer self.gpa.free(az);
+        v.impl.command(view, cz.ptr, az.ptr);
+    }
+    pub fn viewConnect(self: *Manager, kind: []const u8, view: *anyopaque, node_id: u32) void {
+        const v = self.views.get(kind) orelse return;
+        if (v.abi_version >= 3) if (v.impl.connect) |f| f(view, node_id);
+    }
+    pub fn viewDestroy(self: *Manager, kind: []const u8, view: *anyopaque) void {
+        const v = self.views.get(kind) orelse return;
+        v.impl.destroy(view);
     }
 };
 
-pub fn load(gpa: std.mem.Allocator, path: []const u8, acl_ptr: *acl.Acl) !*Loaded {
-    g_gpa = gpa;
-    var lib = try std.DynLib.open(path);
-    errdefer lib.close();
-    const entry = lib.lookup(EntryFn, "nd_plugin_entry") orelse return error.NoPluginEntry;
-    const plugin = entry();
-    if (plugin.abi_version != 1 and plugin.abi_version != 2) {
-        std.debug.print("ND_PLUGIN_ABI_MISMATCH got={d} want=1|2\n", .{plugin.abi_version});
-        return error.AbiMismatch;
+fn registryHost(reg: *NdPluginRegistry) *RegistryHost {
+    return @ptrCast(@alignCast(reg.host.?));
+}
+fn registerCommandC(reg: *NdPluginRegistry, name_z: [*:0]const u8, f: NdCommandFn) callconv(.c) void {
+    const s = registryHost(reg);
+    if (!s.loading) return;
+    const name = std.mem.span(name_z);
+    if (name.len == 0 or s.loaded.commands.contains(name)) {
+        s.failed = true;
+        return;
     }
-    // Verify every declared capability is grantable (else the plugin's
-    // commands could never run — fail loud at load, spec §9).
-    var i: usize = 0;
-    while (plugin.capabilities[i]) |cap| : (i += 1) {
-        const cap_s = std.mem.span(cap);
-        if (!acl_ptr.isAllowed(0, cap_s)) {
-            std.debug.print("ND_PLUGIN_CAP_DENIED name={s} cap={s}\n", .{ std.mem.span(plugin.name), cap_s });
-            return error.CapabilityDenied;
-        }
+    const copy = s.manager.gpa.dupe(u8, name) catch {
+        s.failed = true;
+        return;
+    };
+    s.loaded.commands.put(s.manager.gpa, copy, f) catch {
+        s.manager.gpa.free(copy);
+        s.failed = true;
+    };
+}
+fn registerViewC(reg: *NdPluginRegistry, kind_z: [*:0]const u8, impl: *const NdViewImpl) callconv(.c) void {
+    const s = registryHost(reg);
+    if (!s.loading) return;
+    const kind = std.mem.span(kind_z);
+    if (kind.len == 0 or s.manager.views.contains(kind)) {
+        s.failed = true;
+        return;
     }
-    g_registry = .{ .host = null, .register_command = &registerCommandC, .register_view = &registerViewC };
-    if (plugin.init(&g_registry) != 0) return error.PluginInitFailed;
-    const loaded = try gpa.create(Loaded);
-    loaded.* = .{ .lib = lib, .plugin = plugin };
-    std.debug.print("ND_PLUGIN_LOADED name={s}\n", .{std.mem.span(plugin.name)});
+    const copy = s.manager.gpa.dupe(u8, kind) catch {
+        s.failed = true;
+        return;
+    };
+    // A v1/v2 struct has no appended connect field: never read it.
+    var value: NdViewImpl = undefined;
+    value.create = impl.create;
+    value.apply_props = impl.apply_props;
+    value.command = impl.command;
+    value.destroy = impl.destroy;
+    value.connect = if (s.loaded.plugin.abi_version >= 3) impl.connect else null;
+    s.manager.views.put(s.manager.gpa, copy, .{ .impl = value, .abi_version = s.loaded.plugin.abi_version, .owner = s.loaded }) catch {
+        s.manager.gpa.free(copy);
+        s.failed = true;
+    };
+}
+fn emitEventC(reg: *NdPluginRegistry, node_id: u32, name: [*:0]const u8, payload: [*:0]const u8) callconv(.c) void {
+    const s = registryHost(reg);
+    if (s.manager.emit) |f| f(s.manager.ctx, node_id, std.mem.span(name), std.mem.span(payload));
+}
+fn cleanupUncommitted(m: *Manager, p: *Loaded, init_called: bool) void {
+    var cit = p.commands.keyIterator();
+    while (cit.next()) |k| m.gpa.free(k.*);
+    p.commands.deinit(m.gpa);
+    var doomed: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer doomed.deinit(m.gpa);
+    var vit = m.views.iterator();
+    while (vit.next()) |e| if (e.value_ptr.owner == p) doomed.append(m.gpa, e.key_ptr.*) catch {};
+    for (doomed.items) |key| {
+        const removed = m.views.fetchRemove(key).?;
+        m.gpa.free(removed.key);
+    }
+    if (init_called) p.plugin.deinit();
+    if (p.registry_host) |host| m.gpa.destroy(host);
+    m.gpa.free(p.name);
+    m.gpa.destroy(p);
+}
+
+// Direct Zig backend compatibility: context is the ABI backend's current context.
+fn current() ?*Manager {
+    const ab = @import("abi_backend.zig");
+    return &ab.ctx.plugins;
+}
+pub fn viewCreate(k: []const u8, p: []const u8) ?*anyopaque {
+    return (current() orelse return null).viewCreate(k, p);
+}
+pub fn viewApplyProps(k: []const u8, v: *anyopaque, p: []const u8) void {
+    (current() orelse return).viewApplyProps(k, v, p);
+}
+pub fn viewConnect(k: []const u8, v: *anyopaque, node_id: u32) void {
+    (current() orelse return).viewConnect(k, v, node_id);
+}
+pub fn viewCommand(k: []const u8, v: *anyopaque, c: []const u8, a: []const u8) void {
+    (current() orelse return).viewCommand(k, v, c, a);
+}
+pub fn viewDestroy(k: []const u8, v: *anyopaque) void {
+    (current() orelse return).viewDestroy(k, v);
+}
+
+var test_connected: u32 = 0;
+var test_destroyed: u32 = 0;
+var test_event_node: u32 = 0;
+var test_event_name: []const u8 = "";
+var test_event_payload: []const u8 = "";
+
+fn testCreate(_: [*:0]const u8) callconv(.c) ?*anyopaque {
+    return @ptrFromInt(1);
+}
+fn testApply(_: ?*anyopaque, _: [*:0]const u8) callconv(.c) void {}
+fn testCommand(_: ?*anyopaque, _: [*:0]const u8, _: [*:0]const u8) callconv(.c) void {}
+fn testDestroy(_: ?*anyopaque) callconv(.c) void {
+    test_destroyed += 1;
+}
+fn testConnect(_: ?*anyopaque, node_id: u32) callconv(.c) void {
+    test_connected = node_id;
+}
+fn testDeinit() callconv(.c) void {}
+fn testInit(_: *NdPluginRegistry) callconv(.c) i32 {
+    return 0;
+}
+fn testEmit(_: ?*anyopaque, node_id: u32, name: []const u8, payload: []const u8) void {
+    test_event_node = node_id;
+    test_event_name = name;
+    test_event_payload = payload;
+}
+const test_caps = [_:null]?[*:0]const u8{null};
+const test_plugin_v3 = NdPluginV1{ .abi_version = 3, .name = "test", .capabilities = &test_caps, .init = &testInit, .deinit = &testDeinit };
+const test_plugin_v2 = NdPluginV1{ .abi_version = 2, .name = "test-v2", .capabilities = &test_caps, .init = &testInit, .deinit = &testDeinit };
+
+fn testLoaded(manager: *Manager, plugin_desc: *const NdPluginV1) !*Loaded {
+    const loaded = try manager.gpa.create(Loaded);
+    loaded.* = .{ .lib = undefined, .plugin = plugin_desc, .name = try manager.gpa.dupe(u8, std.mem.span(plugin_desc.name)) };
+    const host = try manager.gpa.create(RegistryHost);
+    host.* = .{ .manager = manager, .loaded = loaded };
+    loaded.registry_host = host;
+    loaded.registry = .{ .host = host, .register_command = &registerCommandC, .register_view = &registerViewC, .emit_event = &emitEventC };
     return loaded;
 }
 
-// ---- Native-view dispatch (v2). The generic <nativeView> widget routes here
-// by view_kind. GTK's generated create/apply dispatcher calls these Zig fns
-// directly (@import("../plugin.zig")); the Swift shell calls the nd_plugin_
-// view_* C wrappers. A lookup miss (no plugin loaded, or unknown kind) returns
-// null / no-ops — the backend renders a placeholder rather than crashing. ----
-
-/// Look up the factory for `view_kind` and build its native widget. Null when
-/// unregistered. `g_gpa` is only touched after a successful lookup, which
-/// implies a plugin loaded (so `g_gpa` is set).
-pub fn viewCreate(view_kind: []const u8, props_json: []const u8) ?*anyopaque {
-    const impl = g_views.get(view_kind) orelse return null;
-    const argz = g_gpa.dupeZ(u8, props_json) catch return null;
-    defer g_gpa.free(argz);
-    return impl.create(argz.ptr);
-}
-
-pub fn viewApplyProps(view_kind: []const u8, view: *anyopaque, props_json: []const u8) void {
-    const impl = g_views.get(view_kind) orelse return;
-    const argz = g_gpa.dupeZ(u8, props_json) catch return;
-    defer g_gpa.free(argz);
-    impl.apply_props(view, argz.ptr);
-}
-
-pub fn viewCommand(view_kind: []const u8, view: *anyopaque, command: []const u8, arg_json: []const u8) void {
-    const impl = g_views.get(view_kind) orelse return;
-    const cmdz = g_gpa.dupeZ(u8, command) catch return;
-    defer g_gpa.free(cmdz);
-    const argz = g_gpa.dupeZ(u8, arg_json) catch return;
-    defer g_gpa.free(argz);
-    impl.command(view, cmdz.ptr, argz.ptr);
-}
-
-pub fn viewDestroy(view_kind: []const u8, view: *anyopaque) void {
-    const impl = g_views.get(view_kind) orelse return;
-    impl.destroy(view);
-}
-
-// C-ABI wrappers retained into libnd.a (src/abi.zig comptime block) for the
-// Swift shell's generated <nativeView> arms.
-pub export fn nd_plugin_view_create(view_kind: [*:0]const u8, props: [*:0]const u8) callconv(.c) ?*anyopaque {
-    return viewCreate(std.mem.span(view_kind), std.mem.span(props));
-}
-pub export fn nd_plugin_view_apply_props(view_kind: [*:0]const u8, view: ?*anyopaque, props: [*:0]const u8) callconv(.c) void {
-    const v = view orelse return;
-    viewApplyProps(std.mem.span(view_kind), v, std.mem.span(props));
-}
-pub export fn nd_plugin_view_command(view_kind: [*:0]const u8, view: ?*anyopaque, command: [*:0]const u8, arg: [*:0]const u8) callconv(.c) void {
-    const v = view orelse return;
-    viewCommand(std.mem.span(view_kind), v, std.mem.span(command), std.mem.span(arg));
-}
-pub export fn nd_plugin_view_destroy(view_kind: [*:0]const u8, view: ?*anyopaque) callconv(.c) void {
-    const v = view orelse return;
-    viewDestroy(std.mem.span(view_kind), v);
-}
-
-fn currentEnviron() std.process.Environ {
-    const c_environ = std.c.environ;
-    var count: usize = 0;
-    while (c_environ[count] != null) : (count += 1) {}
-    const slice: [:null]?[*:0]const u8 = @ptrCast(c_environ[0..count :null]);
-    return .{ .block = .{ .slice = slice } };
-}
-
-test "load hello plugin and dispatch greet" {
-    const path = std.process.Environ.getPosix(currentEnviron(), "ND_TEST_PLUGIN_SO") orelse return error.SkipZigTest;
+test "v3 view registration connects, emits, and destroys exactly once per call" {
     const gpa = std.testing.allocator;
-    var acl_grant = try acl.Acl.parse(gpa,
-        \\{"grants":[{"window":0,"permissions":["plugin:hello.greet"]}]}
-    );
-    defer acl_grant.deinit();
-    var loaded = try load(gpa, path, &acl_grant);
-    defer loaded.deinit();
-    const result = loaded.dispatch("greet", "{\"name\":\"m10\"}") orelse return error.NoResult;
-    defer std.c.free(result.ptr);
-    try std.testing.expect(std.mem.indexOf(u8, result, "hello, m10") != null);
+    var manager = Manager.init(gpa, null, &testEmit);
+    defer manager.views.deinit(gpa);
+    const loaded = try testLoaded(&manager, &test_plugin_v3);
+    defer cleanupUncommitted(&manager, loaded, false);
+    var impl = NdViewImpl{ .create = &testCreate, .apply_props = &testApply, .command = &testCommand, .destroy = &testDestroy, .connect = &testConnect };
+    registerViewC(&loaded.registry, "app.test", &impl);
+    try std.testing.expect(!loaded.registry_host.?.failed);
+
+    const view = manager.viewCreate("app.test", "{}").?;
+    test_connected = 0;
+    manager.viewConnect("app.test", view, 42);
+    try std.testing.expectEqual(@as(u32, 42), test_connected);
+    emitEventC(&loaded.registry, 42, "pressed", "{\"ok\":true}");
+    try std.testing.expectEqual(@as(u32, 42), test_event_node);
+    try std.testing.expectEqualStrings("pressed", test_event_name);
+    try std.testing.expectEqualStrings("{\"ok\":true}", test_event_payload);
+    test_destroyed = 0;
+    manager.viewDestroy("app.test", view);
+    try std.testing.expectEqual(@as(u32, 1), test_destroyed);
 }
 
-test "ABI mismatch is rejected loudly" {
-    const path = std.process.Environ.getPosix(currentEnviron(), "ND_TEST_PLUGIN_SO") orelse return error.SkipZigTest;
+test "duplicate view kinds fail without replacing the first owner" {
     const gpa = std.testing.allocator;
-    var acl_grant = acl.Acl.initDefault(gpa);
-    defer acl_grant.deinit();
-    var lib = try std.DynLib.open(path);
-    defer lib.close();
-    const entry = lib.lookup(EntryFn, "nd_plugin_entry") orelse return error.NoPluginEntry;
-    const plugin = entry();
-    try std.testing.expectEqual(@as(u32, 1), plugin.abi_version);
-    // Simulate what `load` does when the ABI doesn't match: force a mismatch
-    // check against a version the demo plugin does not declare.
-    try std.testing.expect(plugin.abi_version != 2);
+    var manager = Manager.init(gpa, null, null);
+    defer manager.views.deinit(gpa);
+    const first = try testLoaded(&manager, &test_plugin_v3);
+    defer cleanupUncommitted(&manager, first, false);
+    const second = try testLoaded(&manager, &test_plugin_v3);
+    defer cleanupUncommitted(&manager, second, false);
+    var impl = NdViewImpl{ .create = &testCreate, .apply_props = &testApply, .command = &testCommand, .destroy = &testDestroy, .connect = &testConnect };
+    registerViewC(&first.registry, "app.duplicate", &impl);
+    registerViewC(&second.registry, "app.duplicate", &impl);
+    try std.testing.expect(!first.registry_host.?.failed);
+    try std.testing.expect(second.registry_host.?.failed);
+    try std.testing.expect(manager.views.get("app.duplicate").?.owner == first);
 }
 
-test "capability-gated dispatch: granted allows, withheld denies at load" {
-    const path = std.process.Environ.getPosix(currentEnviron(), "ND_TEST_PLUGIN_SO") orelse return error.SkipZigTest;
+test "v2 view registration never enables the appended connect callback" {
+    const LegacyViewImpl = extern struct {
+        create: *const fn ([*:0]const u8) callconv(.c) ?*anyopaque,
+        apply_props: *const fn (?*anyopaque, [*:0]const u8) callconv(.c) void,
+        command: *const fn (?*anyopaque, [*:0]const u8, [*:0]const u8) callconv(.c) void,
+        destroy: *const fn (?*anyopaque) callconv(.c) void,
+    };
     const gpa = std.testing.allocator;
-
-    // Granted: load succeeds and dispatch works.
-    {
-        var granted = try acl.Acl.parse(gpa,
-            \\{"grants":[{"window":0,"permissions":["plugin:hello.greet"]}]}
-        );
-        defer granted.deinit();
-        var loaded = try load(gpa, path, &granted);
-        defer loaded.deinit();
-        const result = loaded.dispatch("greet", "{\"name\":\"acl\"}") orelse return error.NoResult;
-        defer std.c.free(result.ptr);
-        try std.testing.expect(std.mem.indexOf(u8, result, "hello, acl") != null);
-    }
-
-    // Withheld: the plugin's declared capability isn't granted, so load
-    // itself fails loud (ND_PLUGIN_CAP_DENIED) rather than allowing dispatch.
-    {
-        var denied = acl.Acl.initDefault(gpa); // core-only default, no plugin:* grants
-        defer denied.deinit();
-        try std.testing.expectError(error.CapabilityDenied, load(gpa, path, &denied));
-    }
+    var manager = Manager.init(gpa, null, null);
+    defer manager.views.deinit(gpa);
+    const loaded = try testLoaded(&manager, &test_plugin_v2);
+    defer cleanupUncommitted(&manager, loaded, false);
+    const legacy = LegacyViewImpl{ .create = &testCreate, .apply_props = &testApply, .command = &testCommand, .destroy = &testDestroy };
+    registerViewC(&loaded.registry, "app.legacy", @ptrCast(&legacy));
+    test_connected = 0;
+    manager.viewConnect("app.legacy", @ptrFromInt(1), 99);
+    try std.testing.expectEqual(@as(u32, 0), test_connected);
 }
