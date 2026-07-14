@@ -1,5 +1,7 @@
 /* include/nd.h — the ONLY public surface of libnd. Hand-written; kept in
-   lockstep with src/abi.zig by compile-time @sizeOf asserts. */
+   lockstep with src/abi.zig by compile-time @sizeOf asserts. Canonical copy
+   lives in include/; packages/native/include/ carries a machine-synced copy
+   (scripts/sync-native-headers.sh, cmp-checked in CI) — edit include/ only. */
 #ifndef ND_H
 #define ND_H
 #include <stdint.h>
@@ -59,11 +61,48 @@ typedef struct nd_backend {
      `arg_json` its JSON argument (or "null"). Arrives on the UI thread. */
   void (*widget_command)(nd_context*, nd_widget, const char* kind,
                          const char* command, const char* arg_json);
+
+  /* multi-window reconstruction (per-window generalization of get_window):
+     given a Window node's stored handle, return the handle to REBIND to when a
+     crash/dev-Restart respawn re-creates that window, so the core reuses the
+     surviving OS window instead of opening a duplicate. GTK returns the handle
+     unchanged (its gtk.Window handle is stable); the AppKit shell resolves it
+     to the window's CURRENT content view (which differs once a SplitView took
+     over as contentViewController). */
+  nd_widget (*resolve_window)(nd_context*, nd_widget);
+
+  /* widget-preserving cross-window move (drag a tab between windows): relocate
+     an EXISTING live native widget from `old_parent` to `new_parent` WITHOUT
+     destroying it, so a <webview>'s loaded page / scroll / JS state survives —
+     a remove+create would reload it. Reuses each backend's ordinary remove +
+     append/insert per parent kind, so the target attaches correctly whatever
+     the parent (Box slot, Window, ...). `before` (nullable) positions the child;
+     NULL appends. `old_parent` may be NULL (the child is a detached pool node
+     not yet shown in any window). The handle stays alive across the unparent
+     (GTK g_object_ref brackets the move; the AppKit shell relies on the core's
+     create-time retain). Arrives on the UI thread. Appended (append-only
+     vtable) — bumps @sizeOf(NdBackend) to 21 words in src/abi.zig. */
+  void (*reparent_child)(nd_context*, nd_widget child,
+                         nd_widget old_parent /* nullable */, const char* old_parent_kind,
+                         nd_widget new_parent, const char* new_parent_kind,
+                         nd_widget before /* nullable */, const char* attached_json);
+
+  /* app -> host system capability request (systemRequest NDP frame). `method`
+     is a dotted capability (e.g. "dialog.openFile"), `params_json` its JSON
+     argument. Fire-and-forget: the backend delivers the (possibly async)
+     result later via nd_system_response. Arrives on the UI thread. Appended
+     (append-only vtable) — bumps @sizeOf(NdBackend) to 22 words in src/abi.zig. */
+  void (*system_request)(nd_context*, uint32_t id, const char* method, const char* params_json);
 } nd_backend;
 
 /* lifecycle */
 nd_context* nd_init(void);                                  /* create core, spawn nothing yet */
 void nd_register_backend(nd_context*, const nd_backend*);   /* store the vtable */
+/* Name the active widget backend ("gtk" | "appkit"). The core echoes it in the
+   NDP helloAck so the Bun child's Platform.backend can branch on the renderer
+   (which the OS alone can't reveal — GTK runs on macOS too). Call before
+   nd_start_runtime; absent = "unknown". */
+void nd_set_backend_name(nd_context*, const char* name);
 int32_t nd_start_runtime(nd_context*);                      /* open NDP socket, spawn bun child */
 int32_t nd_start_automation(nd_context*);                   /* open automation socket + thread */
 void nd_shutdown(nd_context*);                              /* stop runtime; destroy views/plugins */
@@ -74,6 +113,10 @@ void nd_set_acl(nd_context*, const char* grants_json);
 /* Load a native nd_plugin_v1 shared library (opt-in). Returns 0 ok, negative
    on ABI mismatch / missing entry / capability-denied. */
 int32_t nd_load_plugin(nd_context*, const char* path);
+/* Load every plugin listed in ND_PLUGIN_PATHS (colon-separated; legacy
+   single-path ND_PLUGIN_PATH as fallback), skipping empty segments. Prints
+   one "ND_PLUGIN_LOAD_FAILED path=... rc=..." diagnostic per failed path. */
+void nd_load_plugins_from_env(nd_context*);
 
 /* Host-side native-view bridge (plugin ABI v2): the generic <nativeView>
    widget's create/apply/command/destroy route through these into the loaded
@@ -92,5 +135,15 @@ void nd_free(void* p);                                      /* free a core-alloc
 /* embedder -> core: a native event happened (button clicked, text changed, …).
    `payload_json` is a NUL-terminated JSON object or "{}". */
 void nd_emit_event(nd_context*, uint32_t node_id, const char* name, const char* payload_json);
+
+/* backend -> core: the (possibly async) result of an earlier system_request,
+   correlated by `id`. ok=true splices `json` verbatim into the systemResponse
+   `result`; ok=false carries `json` as the error message string. */
+void nd_system_response(nd_context*, uint32_t id, bool ok, const char* json);
+/* backend -> core: an app-level event not tied to a widget node (app
+   activation, OS open-url/open-file launch, notification click, file drop,
+   capability event stream). `channel` names the stream; `data_json` is its
+   NUL-terminated JSON payload. */
+void nd_system_event(nd_context*, const char* channel, const char* data_json);
 
 #endif /* ND_H */

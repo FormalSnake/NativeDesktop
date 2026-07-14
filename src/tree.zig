@@ -137,6 +137,14 @@ pub const Tree = struct {
     // `remove` op handlers in `apply`; this is the sole ordering source for
     // `getTree` (see automation.zig's `handleGetTree`).
     children: std.AutoHashMapUnmanaged(u32, std.ArrayList(u32)) = .{},
+    // Native window handles orphaned by `clearAppNodes` (a crash / dev-mode
+    // Restart respawn), keyed by the Window node id that owned them. The
+    // respawned tree re-emits `create Window` with the SAME ids (a
+    // deterministic render replays ids in order), so each rebinds to the
+    // window it left open instead of opening a duplicate OS window (M8-D9a,
+    // generalized from one window to N). Empty in steady state — so a
+    // genuinely new `<window>` in a live tree always opens a fresh window.
+    window_reuse: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
 
     pub fn init(gpa: std.mem.Allocator, app: *anyopaque) Tree {
         return .{ .gpa = gpa, .app = app };
@@ -156,7 +164,9 @@ pub const Tree = struct {
         return self.meta.getPtr(id);
     }
 
-    /// The sole Window node id, or null if none registered yet.
+    /// The first Window node id (getTree's root), or null if none registered
+    /// yet. With multiple `<window>` roots this returns whichever window the
+    /// meta map yields first; per-window automation targeting is future work.
     pub fn rootId(self: *Tree) ?u32 {
         var it = self.meta.iterator();
         while (it.next()) |entry| {
@@ -315,23 +325,29 @@ pub const Tree = struct {
         for (batch.ops) |op| {
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
-                // M8-D9a: a post-crash respawn mounts a brand-new reconciler
-                // root, whose first commit re-emits a `create Window` op —
-                // but the generated Window arm unconditionally constructs a
-                // new native window. Bind to the surviving window widget
-                // instead of opening a second OS window; this is the only
-                // Window `create` this branch ever sees post-crash (a live
-                // --hot edit never re-creates the window at all, since the
-                // reconciler root/container survive — see hmr.ts's
-                // globalThis singleton guard).
-                const widget = if (std.mem.eql(u8, op.widget.?, "Window") and backend.getWindow() != null)
-                    backend.getWindow().?
-                else
-                    backend.createWidget(app, op.widget.?, op.props) catch continue;
+                // M8-D9a: a post-crash / dev-mode Restart respawn mounts a
+                // brand-new reconciler root, whose first commit re-emits a
+                // `create Window` op for every window — but the generated
+                // Window arm unconditionally constructs a new native window.
+                // Rebind each re-emitted window (matched by node id, which a
+                // deterministic replay reproduces) to the native window it left
+                // orphaned in `window_reuse` rather than opening a duplicate OS
+                // window. A live --hot edit never re-creates a window at all
+                // (the reconciler root/container survive — see hmr.ts's
+                // globalThis singleton guard), and the pool is empty in steady
+                // state, so a genuinely new `<window>` falls through to
+                // `createWidget` and opens a fresh window — this is what lets
+                // one tree present N independent OS windows.
+                const widget = if (std.mem.eql(u8, op.widget.?, "Window")) blk: {
+                    if (self.window_reuse.fetchRemove(op.id.?)) |kv| break :blk backend.resolveWindow(kv.value);
+                    break :blk backend.createWidget(app, op.widget.?, op.props) catch continue;
+                } else backend.createWidget(app, op.widget.?, op.props) catch continue;
                 backend.connectEvents(widget, op.widget.?, op.id.?);
-                if (std.mem.eql(u8, op.widget.?, "NativeView")) {
-                    if (propStr(op.props, "viewKind")) |view_kind| backend.nativeViewConnect(view_kind, widget, op.id.?);
-                }
+                // viewKind only means anything on a NativeView — never route
+                // another kind's widget into the plugin because a stray
+                // client put a viewKind prop on it.
+                const view_kind: ?[]const u8 = if (std.mem.eql(u8, op.widget.?, "NativeView")) propStr(op.props, "viewKind") else null;
+                if (view_kind) |vk| backend.nativeViewConnect(vk, widget, op.id.?);
                 self.nodes.put(self.gpa, op.id.?, widget) catch continue;
                 // testID is stored here for the automation getTree RPC (M4) and is
                 // never applied to the GTK widget itself.
@@ -339,7 +355,9 @@ pub const Tree = struct {
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
-                if (self.metaGet(op.id.?)) |m| m.view_kind = self.dupeOpt(propStr(op.props, "viewKind")) catch null;
+                if (view_kind != null) if (self.metaGet(op.id.?)) |m| {
+                    m.view_kind = self.dupeOpt(view_kind) catch null;
+                };
                 if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
                 applyStyleIfPresent(widget, op.id.?, op.props);
@@ -364,11 +382,18 @@ pub const Tree = struct {
                 // dispatched prop applier would silently no-op on every update.
                 const meta = self.metaGet(op.id.?);
                 const kind = if (meta) |m| m.widget_type else "";
+                // A NativeView's nested plugin props route straight to the
+                // plugin manager via the retained view_kind (update ops never
+                // carry viewKind). Host-level props (cssClasses/testID) still
+                // cross the backend's ordinary apply path below — the GTK
+                // backend skips its generated NativeView forwarding so the
+                // plugin isn't applied twice.
                 if (meta) |m| {
                     if (m.view_kind) |view_kind| {
                         if (propStr(op.props, "props")) |props_json| backend.nativeViewApplyProps(view_kind, widget, props_json);
-                    } else backend.applyProps(widget, kind, op.props);
-                } else backend.applyProps(widget, kind, op.props);
+                    }
+                }
+                backend.applyProps(widget, kind, op.props);
                 applyStyleIfPresent(widget, op.id.?, op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
@@ -387,23 +412,26 @@ pub const Tree = struct {
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {
                 const child = self.nodes.get(op.id.?) orelse continue;
+                const cmeta = self.metaGet(op.id.?);
+                // Destroy the plugin's view while the widget is still alive —
+                // removeChild below finalizes it (the container held the only
+                // ref; the host takes none of its own on plugin views), so
+                // destroying after would hand the plugin a freed widget.
+                if (cmeta) |m| if (m.view_kind) |view_kind| backend.nativeViewDestroy(view_kind, child);
                 // Portable parent lookup (Task 3): the meta map already tracks
                 // each child's parent id (set by append/insertBefore), so the
                 // live parent widget comes from `self.nodes`, not a backend
                 // "get live GTK parent" call. `backend.hasParent` still guards
                 // against double-remove (mirrors gcOldGenerations/clearAppNodes).
                 if (backend.hasParent(child)) {
-                    if (self.metaGet(op.id.?)) |cmeta| {
-                        if (self.nodes.get(cmeta.parent)) |parent| {
-                            const parent_kind = if (self.metaGet(cmeta.parent)) |pmeta| pmeta.widget_type else "";
+                    if (cmeta) |m| {
+                        if (self.nodes.get(m.parent)) |parent| {
+                            const parent_kind = if (self.metaGet(m.parent)) |pmeta| pmeta.widget_type else "";
                             backend.removeChild(parent, parent_kind, child);
                         }
                     }
                 }
-                if (self.metaGet(op.id.?)) |cmeta| {
-                    self.recordRemove(cmeta.parent, op.id.?);
-                    if (cmeta.view_kind) |view_kind| backend.nativeViewDestroy(view_kind, child);
-                }
+                if (cmeta) |m| self.recordRemove(m.parent, op.id.?);
                 _ = self.nodes.remove(op.id.?);
                 self.removeMeta(op.id.?);
                 std.debug.print("ND_REMOVE id={d}\n", .{op.id.?});
@@ -451,24 +479,32 @@ pub const Tree = struct {
             doomed.append(self.gpa, id) catch continue;
             doomed_set.put(self.gpa, id, {}) catch {};
         }
+        // Destroy plugin-created native views first, while every doomed
+        // widget is still alive: unparenting a doomed subtree root below
+        // cascade-destroys its interior children (GTK), and the host holds
+        // no ref of its own on plugin views.
+        for (doomed.items) |id| {
+            const m = self.metaGet(id) orelse continue;
+            if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
+        }
         var swept: u32 = 0;
         for (doomed.items) |id| {
-            // Only unparent a "root" of the swept subtree (see clearAppNodes
-            // for the full rationale) — unparenting an interior widget
-            // cascades GTK's own destruction of its children, so touching
-            // those children afterward would be a use-after-free.
-            const parent_also_doomed = if (self.metaGet(id)) |m| doomed_set.contains(m.parent) else false;
-            if (!parent_also_doomed) {
-                if (self.nodes.get(id)) |w| {
-                    if (backend.hasParent(w)) backend.unparentWidget(w);
+            if (self.metaGet(id)) |m| {
+                // Only unparent a "root" of the swept subtree (see clearAppNodes
+                // for the full rationale) — unparenting an interior widget
+                // cascades GTK's own destruction of its children, so touching
+                // those children afterward would be a use-after-free.
+                if (!doomed_set.contains(m.parent)) {
+                    if (self.nodes.get(id)) |w| {
+                        if (backend.hasParent(w)) backend.unparentWidget(w);
+                    }
+                    // Only the doomed subtree's own root needs unlinking from
+                    // its (surviving) parent's ordered list — a doomed interior
+                    // node's entry lives in another doomed node's list, which is
+                    // dropped wholesale below.
+                    self.recordRemove(m.parent, id);
                 }
-                // Only the doomed subtree's own root needs unlinking from
-                // its (surviving) parent's ordered list — a doomed interior
-                // node's entry lives in another doomed node's list, which is
-                // dropped wholesale below.
-                if (self.metaGet(id)) |m| self.recordRemove(m.parent, id);
             }
-            if (self.metaGet(id)) |m| if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
             _ = self.nodes.remove(id);
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
@@ -481,12 +517,16 @@ pub const Tree = struct {
     /// Clears every non-overlay node's bookkeeping (M8 dev-mode Restart):
     /// a respawned child mounts a brand-new reconciler root at generation 0,
     /// which collides with the dead child's stale gen-0 ids, so the dead
-    /// tree's entries must be dropped before the fresh mount rebuilds. The
-    /// Window widget itself is NOT unparented/destroyed here — `apply`'s
-    /// create-op arm rebinds the next Window `create` op to the surviving
-    /// widget by identity (M8-D9a); only its now-stale meta entry is
-    /// dropped here, same as every other non-overlay node.
+    /// tree's entries must be dropped before the fresh mount rebuilds. Each
+    /// Window widget itself is NOT unparented/destroyed here — it's stashed in
+    /// `window_reuse` keyed by its node id so `apply`'s create-op arm rebinds
+    /// the respawned tree's matching `create Window` to it (M8-D9a); only its
+    /// now-stale meta entry is dropped here, same as every other non-overlay
+    /// node.
     pub fn clearAppNodes(self: *Tree) void {
+        // Drop any handles a prior respawn left unclaimed before repopulating;
+        // the just-installed tree's `create Window` ops drain this pass's set.
+        self.window_reuse.clearRetainingCapacity();
         var doomed: std.ArrayList(u32) = .empty;
         defer doomed.deinit(self.gpa);
         var doomed_set: std.AutoHashMapUnmanaged(u32, void) = .empty;
@@ -498,9 +538,20 @@ pub const Tree = struct {
             doomed.append(self.gpa, id) catch continue;
             doomed_set.put(self.gpa, id, {}) catch {};
         }
+        // Destroy plugin-created native views first, while every doomed
+        // widget is still alive — mirrors gcOldGenerations: the unparents
+        // below cascade-destroy interior children, and the host holds no
+        // ref of its own on plugin views.
+        for (doomed.items) |id| {
+            const m = self.metaGet(id) orelse continue;
+            if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
+        }
         for (doomed.items) |id| {
             const m = self.metaGet(id) orelse continue;
             const is_window = std.mem.eql(u8, m.widget_type, "Window");
+            // Stash the surviving native window so the respawned tree's matching
+            // `create Window` rebinds to it instead of opening a duplicate.
+            if (is_window) if (self.nodes.get(id)) |w| self.window_reuse.put(self.gpa, id, w) catch {};
             // Only unparent a "root" of the doomed subtree — a node whose
             // parent is NOT itself being cleared this pass. Unparenting an
             // interior node (e.g. a Box) destroys it and, via GTK's own
@@ -517,7 +568,6 @@ pub const Tree = struct {
                 // doomed node's own list, dropped wholesale below.
                 self.recordRemove(m.parent, id);
             }
-            if (m.view_kind) |view_kind| if (self.nodes.get(id)) |w| backend.nativeViewDestroy(view_kind, w);
             _ = self.nodes.remove(id);
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
@@ -525,6 +575,34 @@ pub const Tree = struct {
         }
         self.generation = 0;
         std.debug.print("ND_CLEAR_APP_NODES removed={d}\n", .{doomed.items.len});
+    }
+
+    /// Widget-preserving cross-window move: relocate a live node's native widget
+    /// under `new_parent_id` (optionally before `before_id`) WITHOUT destroying
+    /// it. React tears a subtree down when it moves to a different parent
+    /// (unmount+remount → the host would remove+create, reloading a <webview>),
+    /// so the moved node must stay pinned at a stable React position (a
+    /// `createPortal(..., pool)` off-window host) and never actually change React
+    /// parent. This is the imperative escape hatch that then relocates only the
+    /// LIVE native widget — the loaded page / scroll / JS state survive. Driven
+    /// by the reserved `"__ndReparent"` widgetCommand (runtime.zig), itself
+    /// issued by the app's `moveNode()` after a drag between windows. The
+    /// bookkeeping mirrors the append/insertBefore op arms exactly (detach from
+    /// the old sibling list, insert into the new, retarget meta.parent).
+    pub fn reparent(self: *Tree, child_id: u32, new_parent_id: u32, before_id: ?u32) void {
+        const child = self.nodes.get(child_id) orelse return;
+        const new_parent = self.nodes.get(new_parent_id) orelse return;
+        const cmeta = self.metaGet(child_id) orelse return;
+        const nmeta = self.metaGet(new_parent_id) orelse return;
+        // old_parent may be absent — a still-pooled node (meta.parent 0, never
+        // appended in React terms) is being shown in a window for the first time.
+        const old_parent = self.nodes.get(cmeta.parent);
+        const old_parent_kind = if (self.metaGet(cmeta.parent)) |m| m.widget_type else "";
+        const before: ?*Widget = if (before_id) |b| self.nodes.get(b) else null;
+        backend.reparentChild(child, old_parent, old_parent_kind, new_parent, nmeta.widget_type, before, cmeta.attached);
+        if (before_id) |b| self.recordInsertBefore(new_parent_id, child_id, b) else self.recordAppend(new_parent_id, child_id);
+        self.setMetaParent(child_id, new_parent_id);
+        std.debug.print("ND_REPARENT child={d} parent={d}\n", .{ child_id, new_parent_id });
     }
 };
 

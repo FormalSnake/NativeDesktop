@@ -29,21 +29,27 @@ fn overlayId() u32 {
     return (OVERLAY_GENERATION << 24) | (overlay_seq & 0xffffff);
 }
 
-/// The panel `GtkBox` is the ONLY overlay widget actually attached to the
-/// live widget tree (via `gtk.Overlay.addOverlay`); title/error/restart are
-/// its children, owned solely by it. Tracked separately (not in `tree.nodes`
-/// under its own extra bookkeeping) so `clear()` can detach exactly this one
-/// widget via `gtk.Overlay.removeOverlay` — the dedicated teardown function
-/// for `addOverlay`'d children (a raw `Widget.unparent()` leaves GtkOverlay's
-/// internal overlay-child bookkeeping holding a stale pointer, which crashed
-/// with a `GTK_IS_WIDGET` assertion the next time GTK measured/allocated the
-/// overlay — verified this session). GTK's normal container teardown then
-/// destroys the box's children for us; this module must NOT call any GTK
-/// function on those children afterward (they are dangling pointers once the
-/// box is removed).
-var panel_box: ?*gtk.Widget = null;
-var overlay_widget: ?*gtk.Overlay = null;
-var original_content: ?*gtk.Widget = null;
+/// One crash overlay per window (multi-window): a JS crash is a single Bun
+/// process failing, so it takes down every window's UI at once — the overlay
+/// therefore paints on ALL open windows, and `clearAll` restores all of them.
+/// Each state's `panel_box` (a `GtkBox`) is the ONLY overlay widget actually
+/// attached to that window's live tree (via `gtk.Overlay.addOverlay`);
+/// title/error/restart are its children, owned solely by it. Tracked here (not
+/// in `tree.nodes`) so `clearAll` can detach exactly that one widget via
+/// `gtk.Overlay.removeOverlay` — the dedicated teardown for `addOverlay`'d
+/// children (a raw `Widget.unparent()` leaves GtkOverlay's internal
+/// overlay-child bookkeeping holding a stale pointer, which crashed with a
+/// `GTK_IS_WIDGET` assertion the next time GTK measured/allocated the overlay —
+/// verified this session). GTK's normal container teardown then destroys the
+/// box's children for us; this module must NOT call any GTK function on those
+/// children afterward (they are dangling pointers once the box is removed).
+const OverlayState = struct {
+    window: *adw.ApplicationWindow,
+    overlay_widget: *gtk.Overlay,
+    panel_box: *gtk.Widget,
+    original_content: ?*gtk.Widget,
+};
+var states: std.ArrayListUnmanaged(OverlayState) = .empty;
 
 /// Registers a host-created overlay widget in the tree under the reserved
 /// 0xFFFF generation (parent 0 — overlay chrome is flat, not nested in the
@@ -68,15 +74,32 @@ fn onRestartClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
     _ = glib.idleAdd(&Ctx.call, @constCast(@ptrCast(restart)));
 }
 
-/// Builds and shows the crash panel over the window's current content.
-/// `dev` gates the Restart button (M8-D4: Restart/respawn are dev-only).
-pub fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, restart: RestartFn) void {
+/// Paints a crash panel on EVERY open window (multi-window): a JS crash is one
+/// Bun process dying, so all windows lose their live UI simultaneously. Clears
+/// any existing overlays first so a second crash message replaces rather than
+/// stacks. `dev` gates the Restart button (M8-D4: Restart/respawn are dev-only).
+pub fn showAll(tree: *Tree, app: *gtk.Application, message: []const u8, dev: bool, restart: RestartFn) void {
+    clearAll(tree);
+    var node: ?*glib.List = gtk.Application.getWindows(app);
+    while (node) |n| : (node = n.f_next) {
+        const data = n.f_data orelse continue;
+        const window: *gtk.Window = @ptrCast(@alignCast(data));
+        show(tree, window, message, dev, restart);
+    }
+    std.debug.print("ND_OVERLAY_SHOWN dev={}\n", .{dev});
+}
+
+/// Builds and shows the crash panel over one window's current content, pushing
+/// its teardown state. Internal to `showAll` — never call standalone, or the
+/// per-window states leak from `clearAll`'s reach.
+fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, restart: RestartFn) void {
     // The window is an adw.ApplicationWindow (edge-to-edge): its content is
     // owned via setContent/getContent, NOT gtk.Window.getChild/setChild —
     // those target the internal handle AdwApplicationWindow wraps.
     const app_win: *adw.ApplicationWindow = @ptrCast(@alignCast(window));
     const content = adw.ApplicationWindow.getContent(app_win);
     const overlay = gtk.Overlay.new();
+    var original_content: ?*gtk.Widget = null;
     if (content) |c| {
         // Ref before detaching so the widget survives the brief
         // parent-less window between setContent(null) and Overlay.setChild.
@@ -87,7 +110,6 @@ pub fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, re
         original_content = c;
     }
     adw.ApplicationWindow.setContent(app_win, overlay.as(gtk.Widget));
-    overlay_widget = overlay;
 
     const box = gtk.Box.new(.vertical, 8);
     const title = gtk.Label.new(dupeZ("Runtime crashed"));
@@ -104,19 +126,23 @@ pub fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, re
         registerOverlayNode(tree, btn.as(gtk.Widget), "Button", "nd-overlay-restart", "Restart");
     }
     gtk.Overlay.addOverlay(overlay, box.as(gtk.Widget));
-    panel_box = box.as(gtk.Widget);
-    std.debug.print("ND_OVERLAY_SHOWN dev={}\n", .{dev});
+    states.append(arena, .{
+        .window = app_win,
+        .overlay_widget = overlay,
+        .panel_box = box.as(gtk.Widget),
+        .original_content = original_content,
+    }) catch {};
 }
 
-/// Drops every 0xFFFF-generation node's tree bookkeeping (the overlay
-/// chrome), removes the panel box from the `GtkOverlay` via the dedicated
-/// `removeOverlay` teardown (see `panel_box`'s doc comment for why a raw
-/// `unparent()` is wrong here), and restores the window's pre-crash content
-/// as its direct child again (undoing `show()`'s wrap). GTK's own container
-/// teardown destroys the box's children (title/error/restart); this
-/// function must NOT call any GTK function on those children afterward.
-/// Used after a successful Restart re-mount clears the crash panel.
-pub fn clear(tree: *Tree, window: *gtk.Window) void {
+/// Drops every 0xFFFF-generation node's tree bookkeeping (the overlay chrome
+/// across all windows), removes each window's panel box from its `GtkOverlay`
+/// via the dedicated `removeOverlay` teardown (see `OverlayState`'s doc comment
+/// for why a raw `unparent()` is wrong here), and restores every window's
+/// pre-crash content as its direct child again (undoing `showAll`'s wrap).
+/// GTK's own container teardown destroys the boxes' children (title/error/
+/// restart); this function must NOT call any GTK function on those children
+/// afterward. Used after a successful Restart re-mount clears the crash panels.
+pub fn clearAll(tree: *Tree) void {
     var doomed: std.ArrayList(u32) = .empty;
     defer doomed.deinit(tree.gpa);
     var it = tree.meta.iterator();
@@ -128,19 +154,16 @@ pub fn clear(tree: *Tree, window: *gtk.Window) void {
         _ = tree.nodes.remove(id);
         tree.removeMeta(id);
     }
-    if (overlay_widget) |ov| {
-        if (panel_box) |box| gtk.Overlay.removeOverlay(ov, box);
+    for (states.items) |st| {
+        gtk.Overlay.removeOverlay(st.overlay_widget, st.panel_box);
+        if (st.original_content) |c| {
+            _ = gobject.Object.ref(c.as(gobject.Object));
+            gtk.Overlay.setChild(st.overlay_widget, null);
+            adw.ApplicationWindow.setContent(st.window, c);
+            _ = gobject.Object.unref(c.as(gobject.Object));
+        } else {
+            adw.ApplicationWindow.setContent(st.window, null);
+        }
     }
-    panel_box = null;
-    const app_win: *adw.ApplicationWindow = @ptrCast(@alignCast(window));
-    if (original_content) |c| {
-        _ = gobject.Object.ref(c.as(gobject.Object));
-        gtk.Overlay.setChild(overlay_widget.?, null);
-        adw.ApplicationWindow.setContent(app_win, c);
-        _ = gobject.Object.unref(c.as(gobject.Object));
-    } else {
-        adw.ApplicationWindow.setContent(app_win, null);
-    }
-    overlay_widget = null;
-    original_content = null;
+    states.clearRetainingCapacity();
 }

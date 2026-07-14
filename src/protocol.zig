@@ -24,6 +24,9 @@ pub const RuntimeError = frames.RuntimeError;
 pub const PluginCommand = frames.PluginCommand;
 pub const PluginResult = frames.PluginResult;
 pub const WidgetCommand = frames.WidgetCommand;
+pub const SystemRequest = frames.SystemRequest;
+pub const SystemResponse = frames.SystemResponse;
+pub const SystemEvent = frames.SystemEvent;
 
 /// Container attach metadata, extracted host-side from a child's create-op
 /// props (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel — the

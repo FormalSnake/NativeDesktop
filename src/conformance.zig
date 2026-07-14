@@ -235,6 +235,36 @@ test "insertBefore/appendChild of an already-mounted child moves it (no duplicat
     }
 }
 
+test "reparentChild moves a live widget across parents, preserving its identity" {
+    const gpa = std.testing.allocator;
+    try nb.init(gpa, schema_json);
+    defer nb.deinitAll();
+
+    // Two window content slots (Box) and a stateful child (a webview stands in
+    // for "the tab"): the drag-a-tab-between-windows shape.
+    const slot_a = try nb.createWidget(dummyApp(), "Box", null);
+    const slot_b = try nb.createWidget(dummyApp(), "Box", null);
+    const tab = try nb.createWidget(dummyApp(), "WebView", null);
+    nb.appendChild(slot_a, "Box", tab, .{});
+    try std.testing.expectEqual(@as(usize, 1), slot_a.children.items.len);
+    try std.testing.expect(slot_a.children.items[0] == tab);
+
+    // The whole point: the SAME node handle relocates, never a destroy+recreate
+    // (a recreate would grow the backend's node registry and reload the page).
+    const nodes_before = nb.nodes.items.len;
+    nb.reparentChild(tab, slot_a, "Box", slot_b, "Box", null, .{});
+    try std.testing.expectEqual(nodes_before, nb.nodes.items.len); // no new node minted
+    try std.testing.expectEqual(@as(usize, 0), slot_a.children.items.len); // detached from A
+    try std.testing.expectEqual(@as(usize, 1), slot_b.children.items.len);
+    try std.testing.expect(slot_b.children.items[0] == tab); // same pointer under B
+
+    // And back to A, still the same handle.
+    nb.reparentChild(tab, slot_b, "Box", slot_a, "Box", null, .{});
+    try std.testing.expectEqual(@as(usize, 0), slot_b.children.items.len);
+    try std.testing.expectEqual(@as(usize, 1), slot_a.children.items.len);
+    try std.testing.expect(slot_a.children.items[0] == tab);
+}
+
 test "single-container replacement" {
     const gpa = std.testing.allocator;
     try nb.init(gpa, schema_json);

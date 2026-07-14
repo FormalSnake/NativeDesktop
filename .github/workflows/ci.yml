@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: native package headers in sync
+        run: |
+          cmp include/nd.h packages/native/include/nd.h && cmp include/nd_plugin.h packages/native/include/nd_plugin.h \
+            || { echo "packages/native/include/ drifted from include/ — run scripts/sync-native-headers.sh"; exit 1; }
       - uses: DeterminateSystems/nix-installer-action@v16
       - uses: DeterminateSystems/magic-nix-cache-action@v8
       - name: unit tests

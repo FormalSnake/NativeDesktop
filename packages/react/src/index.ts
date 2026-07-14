@@ -1,11 +1,37 @@
-export { render, sendCommand, sendNativeCommand } from "./renderer.ts";
+export { render, sendCommand, sendNativeCommand, createPortal, createPool, moveNode } from "./renderer.ts";
+export type { Pool } from "./renderer.ts";
 export { Platform } from "./platform.ts";
 export type { Backend, OS } from "./platform.ts";
 export { getAppDataDir, ensureAppDataDir } from "./paths.ts";
 export { defineNativeComponent } from "./native-component.ts";
 export type { NativeComponentOptions, NativeComponentProps, NativeComponentRef } from "./native-component.ts";
+export { executeJavaScript, onJavaScriptResult } from "./webview.ts";
+export {
+  showAlert,
+  openFile,
+  saveFile,
+  showAbout,
+  onAlertResult,
+  onOpenFileResult,
+  onSaveFileResult,
+} from "./dialogs.ts";
+// Aliased to Window* on export: system.ts's ACL-gated `dialog.openFile`/
+// `dialog.saveFile` (app-level, not window-scoped) already own the
+// unprefixed OpenFileOptions/SaveFileOptions names below.
+export type {
+  DialogButton,
+  ShowAlertOptions,
+  AlertResult,
+  OpenFileOptions as WindowOpenFileOptions,
+  OpenFileResult as WindowOpenFileResult,
+  SaveFileOptions as WindowSaveFileOptions,
+  SaveFileResult as WindowSaveFileResult,
+  ShowAboutOptions,
+} from "./dialogs.ts";
+export { showToast, dismissToast, onToastButtonClicked, onToastDismissed } from "./toast.ts";
+export type { ToastPriority, ShowToastOptions, ToastResult } from "./toast.ts";
 export type { Instance } from "./host-config.ts";
-export type { NdNodeRef, WidgetType } from "./generated/intrinsics.ts";
+export type { NdNodeRef, WidgetType, TableColumn, TableRow, TreeNode } from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {
   useState,
@@ -28,3 +54,13 @@ export {
   Suspense,
   Fragment,
 } from "./dev-react.ts";
+export { dialog, clipboard, notifications, recentDocuments, credentials, app } from "./system.ts";
+export type {
+  FileFilter,
+  OpenFileOptions,
+  SaveFileOptions,
+  MessageLevel,
+  MessageOptions,
+  NotificationOptions,
+} from "./system.ts";
+export { openExternal, openPath, revealPath } from "./shell.ts";

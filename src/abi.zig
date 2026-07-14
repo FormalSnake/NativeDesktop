@@ -40,6 +40,30 @@ pub const NdBackend = extern struct {
     // App -> widget imperative command (M14, widgetCommand NDP frame). Arrives
     // on the UI thread (runtime.zig marshals before calling).
     widget_command: *const fn (*NdContext, ?*anyopaque, [*:0]const u8, [*:0]const u8, [*:0]const u8) callconv(.c) void,
+
+    // Multi-window reconstruction: resolve a Window node's handle to the native
+    // window handle a respawned tree should rebind to (per-window generalization
+    // of get_window). GTK returns the handle unchanged; the AppKit shell
+    // resolves it to the window's current content view. Appended (append-only
+    // vtable) — bumps @sizeOf(NdBackend) to 20 words below.
+    resolve_window: *const fn (*NdContext, ?*anyopaque) callconv(.c) ?*anyopaque,
+
+    // Widget-preserving cross-window move (drag a tab between windows): relocate
+    // an EXISTING live widget from `old_parent` to `new_parent` without
+    // destroying it, so a <webview>'s loaded page/scroll/JS state survives (a
+    // remove+create would reload it). `old_parent`/`before` are nullable; the
+    // backend keeps the handle alive across the unparent. Appended (append-only
+    // vtable) — bumps @sizeOf(NdBackend) to 21 words below.
+    reparent_child: *const fn (*NdContext, ?*anyopaque, ?*anyopaque, [*:0]const u8, ?*anyopaque, [*:0]const u8, ?*anyopaque, [*:0]const u8) callconv(.c) void,
+
+    // App -> host system capability request (systemRequest NDP frame). Coarse
+    // JSON-carrying op mirroring widget_command: `method` is a dotted
+    // capability name (e.g. "dialog.openFile"), `params_json` its JSON
+    // argument. Fire-and-forget from the core's side — the backend delivers
+    // the (possibly async) result later via nd_system_response. Arrives on the
+    // UI thread (runtime.zig marshals). Appended (append-only vtable) — bumps
+    // @sizeOf(NdBackend) to 22 words below.
+    system_request: *const fn (*NdContext, u32, [*:0]const u8, [*:0]const u8) callconv(.c) void,
 };
 
 // The core instance: owns the Tree and the Runtime (once nd_start_runtime
@@ -81,10 +105,12 @@ fn currentEnviron() std.process.Environ {
 }
 
 comptime {
-    // 19 function pointers (16 from Task 1 + marshal_async/show_overlay
-    // added in Task 3 + widget_command added in M14) + no padding on a
+    // 22 function pointers (16 from Task 1 + marshal_async/show_overlay
+    // added in Task 3 + widget_command added in M14 + resolve_window for
+    // multi-window + reparent_child for the cross-window widget-preserving
+    // move + system_request for the system-capability seam) + no padding on a
     // 64-bit target.
-    std.debug.assert(@sizeOf(NdBackend) == 19 * @sizeOf(usize));
+    std.debug.assert(@sizeOf(NdBackend) == 22 * @sizeOf(usize));
     std.debug.assert(@alignOf(NdBackend) == @alignOf(usize));
     std.debug.assert(@sizeOf(NdRect) == 16);
 }
@@ -183,36 +209,83 @@ pub export fn nd_load_plugin(self: *NdContext, path: [*:0]const u8) callconv(.c)
     return 0;
 }
 
+/// Loads every plugin listed in `ND_PLUGIN_PATHS` (colon-separated; legacy
+/// single-path `ND_PLUGIN_PATH` as fallback), skipping empty segments. The
+/// core owns the env parse + `ND_PLUGIN_LOAD_FAILED path=... rc=...`
+/// diagnostic so the two embedders can't drift (each used to hand-roll this
+/// loop with differing failure formats).
+pub export fn nd_load_plugins_from_env(self: *NdContext) callconv(.c) void {
+    const real_environ = currentEnviron();
+    var env_map = std.process.Environ.createMap(real_environ, self.gpa) catch return;
+    defer env_map.deinit();
+    const paths = env_map.get("ND_PLUGIN_PATHS") orelse env_map.get("ND_PLUGIN_PATH") orelse "";
+    var it = std.mem.splitScalar(u8, paths, ':');
+    while (it.next()) |path| {
+        if (path.len == 0) continue;
+        const path_z = self.gpa.dupeZ(u8, path) catch continue;
+        defer self.gpa.free(path_z);
+        const rc = nd_load_plugin(self, path_z.ptr);
+        if (rc != 0) std.debug.print("ND_PLUGIN_LOAD_FAILED path={s} rc={d}\n", .{ path, rc });
+    }
+}
+
+/// `Manager.emit` sink for plugin-raised events (registry->emit_event, ABI
+/// v3): wraps the plugin's payload as a `nativeEvent`. The parse doubles as
+/// validation — a malformed payload is dropped with a diagnostic rather than
+/// spliced into the frame. `parsed` outlives emitEvent (the frame serializes
+/// `data` out of the parse arena), so the deinit must stay a defer.
+fn pluginEmit(ctx: ?*anyopaque, node_id: u32, name: []const u8, payload_json: []const u8) void {
+    const self: *NdContext = @ptrCast(@alignCast(ctx orelse return));
+    const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, payload_json, .{}) catch {
+        std.debug.print("ND_PLUGIN_BAD_EVENT event={s} node={d}\n", .{ name, node_id });
+        return;
+    };
+    defer parsed.deinit();
+    Runtime.emitEvent(node_id, "nativeEvent", .{ .nativeName = name, .data = parsed.value });
+}
+
 /// Embedder -> core event channel (M6a-D2). `name == "restart"` is a
 /// reserved sentinel (M6a Task 3): the crash-overlay Restart button calls
 /// this with `node_id=0` instead of a normal NDP event (the child is dead —
 /// there is nothing to forward a real event to), so it routes to
 /// `Runtime.restart` instead of `Runtime.emitEvent`.
-fn pluginEmit(ctx: ?*anyopaque, node_id: u32, name: []const u8, payload_json: []const u8) void {
-    const self: *NdContext = @ptrCast(@alignCast(ctx orelse return));
-    const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, payload_json, .{}) catch return;
-    defer parsed.deinit();
-    Runtime.emitEvent(node_id, "nativeEvent", .{ .nativeName = name, .data = parsed.value });
-}
-
 pub export fn nd_emit_event(_: *NdContext, node_id: u32, name: [*:0]const u8, payload_json: [*:0]const u8) callconv(.c) void {
     const name_s = std.mem.span(name);
     if (std.mem.eql(u8, name_s, "restart")) {
         Runtime.restart();
         return;
     }
-    const payload = parseEventPayload(payload_json);
-    Runtime.emitEvent(node_id, name_s, payload);
+    const parsed = parseEventPayload(payload_json);
+    defer if (parsed) |p| p.deinit();
+    Runtime.emitEvent(node_id, name_s, if (parsed) |p| p.value else .{});
+}
+
+/// backend -> core: the (possibly async) result of an earlier
+/// `system_request`, correlated by `id`. On success `json` is the method's
+/// JSON result spliced verbatim into `result`; on failure it is a plain
+/// message string carried in `errorMessage`. Routes to `Runtime.sendSystemResponse`.
+pub export fn nd_system_response(_: *NdContext, id: u32, ok: bool, json: [*:0]const u8) callconv(.c) void {
+    Runtime.sendSystemResponse(id, ok, std.mem.span(json));
+}
+
+/// backend -> core: an app-level event not tied to a widget node (app
+/// activation, OS open-url/open-file launch, notification click, file drop,
+/// capability event stream). `channel` names the stream, `data_json` its JSON
+/// payload. Routes to `Runtime.sendSystemEvent`.
+pub export fn nd_system_event(_: *NdContext, channel: [*:0]const u8, data_json: [*:0]const u8) callconv(.c) void {
+    Runtime.sendSystemEvent(std.mem.span(channel), std.mem.span(data_json));
 }
 
 /// Best-effort JSON -> `EventPayload` decode for the embedder->core channel;
-/// a malformed/empty payload degrades to the zero payload rather than
-/// dropping the event (mirrors the rest of the core's defensive parsing).
-fn parseEventPayload(payload_json: [*:0]const u8) protocol.EventPayload {
+/// returns the whole `Parsed` wrapper because the payload's strings (escaped
+/// input forces an unescape copy) and `data` tree live in the parse arena —
+/// the caller deinits only after the event frame has been serialized. A
+/// malformed/empty payload degrades to null and the caller sends the zero
+/// payload rather than dropping the event (mirrors the rest of the core's
+/// defensive parsing).
+fn parseEventPayload(payload_json: [*:0]const u8) ?std.json.Parsed(protocol.EventPayload) {
     const json = std.mem.span(payload_json);
-    const parsed = std.json.parseFromSlice(protocol.EventPayload, std.heap.page_allocator, json, .{ .ignore_unknown_fields = true }) catch return .{};
-    defer parsed.deinit();
-    return parsed.value;
+    return std.json.parseFromSlice(protocol.EventPayload, std.heap.page_allocator, json, .{ .ignore_unknown_fields = true }) catch null;
 }
 
 /// Terminates the bun child. The embedder calls this from its app-shutdown
@@ -258,4 +331,23 @@ test "nd_set_acl parses grants into the context" {
     nd_set_acl(self, "{\"grants\":[{\"window\":0,\"permissions\":[\"plugin:hello.greet\"]}]}");
     try std.testing.expect(self.acl != null);
     try std.testing.expect(self.acl.?.isAllowed(0, "plugin:hello.greet"));
+}
+
+test "parseEventPayload's payload survives its return through frame serialization" {
+    // Regression: the old shape deinit'd the parse arena before returning the
+    // value, so an escaped string (unescape copy) and the `data` tree (always
+    // arena-allocated) were dangling by the time sendEvent serialized the
+    // frame. Exercise both through the same encode path sendEvent uses.
+    const parsed = parseEventPayload("{\"text\":\"say \\\"hi\\\"\",\"data\":{\"items\":[1,2]}}").?;
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("say \"hi\"", parsed.value.text.?);
+
+    const gpa = std.testing.allocator;
+    const ev = protocol.Event{ .seq = 1, .nodeId = 7, .name = "nativeEvent", .payload = parsed.value };
+    const frame = try protocol.encodeFrameOpts(gpa, ev, .{ .emit_null_optional_fields = false });
+    defer gpa.free(frame);
+    try std.testing.expect(std.mem.indexOf(u8, frame, "\"text\":\"say \\\"hi\\\"\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, frame, "\"data\":{\"items\":[1,2]}") != null);
+
+    try std.testing.expect(parseEventPayload("not json") == null);
 }

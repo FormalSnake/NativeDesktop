@@ -141,6 +141,19 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         toolbar.isVisible = false
     }
 
+    /// The window that OWNS this manager's headerbars — the one its toolbar
+    /// attaches to (multi-window: NOT blindly the last-created `gWindow`, which
+    /// may have moved on to a later window). Resolved from the split or a pane's
+    /// content view once they've landed in a window; falls back to `gWindow`
+    /// before attachment (correct for the first/only window).
+    private func resolveOwnerWindow() -> NSWindow? {
+        return split?.window
+            ?? sidebarHeader?.pane?.contentView?.window
+            ?? listHeader?.pane?.contentView?.window
+            ?? contentHeader?.pane?.contentView?.window
+            ?? gWindow
+    }
+
     /// Records `header` under `slot` and captures the split for the tracking
     /// separator. Called once per pane, when the pane is appended to the split
     /// (its slot known). Panes can arrive in either order and either before or
@@ -154,7 +167,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // Lazy toolbar attachment (see the generated Window create arm): only
         // headerbar apps get the unified toolbar strip; plain apps keep the
         // standard titlebar height in their safe area.
-        if let win = gWindow, win.toolbar !== toolbar {
+        if let win = resolveOwnerWindow(), win.toolbar !== toolbar {
             win.toolbar = toolbar
             win.toolbarStyle = .unified
             // Hide the redundant window-title text: with a sidebar + unified
@@ -165,7 +178,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             // Purely visual; `win.title` is retained for Mission Control / a11y.
             win.titleVisibility = .hidden
         }
-        if resizeObserver == nil, let win = gWindow {
+        if resizeObserver == nil, let win = resolveOwnerWindow() {
             // Same capture-nothing idiom as scheduleRebuild: resolve the
             // manager through the global at fire time.
             resizeObserver = NotificationCenter.default.addObserver(
@@ -248,7 +261,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// `toolbar(_:itemForItemIdentifier:...)` for why the width is owned here
     /// instead of negotiated with the toolbar's private layout.
     func updateSearchFieldWidths() {
-        guard let win = gWindow else { return }
+        guard let win = resolveOwnerWindow() else { return }
         var searches: [NDSearchField] = []
         var others: CGFloat = 0
         for item in toolbar.items {

@@ -11,7 +11,7 @@ const DEFAULT_ENTRY = "src/main.tsx";
 
 async function nativeEnv(): Promise<Record<string, string>> {
   const paths = await buildNativePlugins(await loadConfig());
-  return paths.length ? { ND_PLUGINS: "1", ND_PLUGIN_PATHS: paths.join(process.platform === "win32" ? ";" : ":") } : {};
+  return paths.length ? { ND_PLUGINS: "1", ND_PLUGIN_PATHS: paths.join(":") } : {};
 }
 
 async function runDev(entry: string): Promise<number> {
@@ -27,7 +27,9 @@ async function runDev(entry: string): Promise<number> {
 }
 
 async function runBuild(): Promise<number> {
-  await nativeEnv();
+  // Production plugin wiring is the app's packaging responsibility; we only
+  // make sure the native artifacts are built and fresh.
+  await buildNativePlugins(await loadConfig());
   const proc = Bun.spawn(["bun", "run", "compile"], {
     cwd: process.cwd(),
     env: process.env,

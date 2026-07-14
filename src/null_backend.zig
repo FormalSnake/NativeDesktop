@@ -87,6 +87,12 @@ pub fn setEventSink(_: *const fn (u32, []const u8, protocol.EventPayload) void) 
 pub fn getWindow() ?*Node {
     return last_window;
 }
+/// Reconstruction reuse (see `Tree.window_reuse`): the null backend's node
+/// handle is stable, so resolving a window to its rebind handle is identity —
+/// mirrors the GTK backend (only the AppKit shell re-resolves live content).
+pub fn resolveWindow(node: *Node) *Node {
+    return node;
+}
 
 // Signature-parallel to gtk_backend.createWidget: same (app, kind, props) shape.
 // `app` is unused (opaque *anyopaque so callers pass whatever they hold).
@@ -229,3 +235,13 @@ pub fn hasParent(_: *Node) bool {
     return false;
 }
 pub fn unparentWidget(_: *Node) void {}
+
+/// Widget-preserving cross-window move (see `Tree.reparent`): detach from the
+/// old parent's child list and insert under the new one, KEEPING the same
+/// `*Node` handle — never a destroy+recreate. Mirrors the real backends'
+/// reuse of the ordinary remove + insert paths; conformance asserts identity
+/// survives (the same node pointer lands under the new parent).
+pub fn reparentChild(child: *Node, old_parent: ?*Node, old_parent_kind: []const u8, new_parent: *Node, new_parent_kind: []const u8, before: ?*Node, attached: protocol.Attached) void {
+    if (old_parent) |op| removeChild(op, old_parent_kind, child);
+    insertBefore(new_parent, new_parent_kind, child, before, attached);
+}

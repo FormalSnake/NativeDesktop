@@ -4,8 +4,10 @@
 // image if appimagetool isn't available), then produces a signed full-archive
 // update payload (M9-D2/D4).
 import { $ } from "bun";
-import { mkdirSync, cpSync, chmodSync } from "node:fs";
+import { mkdirSync, cpSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { buildAndSignManifest, ensureEphemeralKey } from "./manifest.ts";
+import { loadConfig } from "../packages/nd/src/config.ts";
+import { injectDesktopFile, buildMimeInfoXml } from "./app-identity.ts";
 
 const VERSION = process.env.ND_APP_VERSION ?? "0.9.0";
 const APP_ID = "com.nativedesktop.gallery";
@@ -17,6 +19,15 @@ export async function packageLinux() {
   const appdir = `${dist}/AppDir`;
   cpSync("packaging/AppDir.template", appdir, { recursive: true });
   mkdirSync(`${appdir}/usr/bin`, { recursive: true });
+  const { app: appIdentity } = await loadConfig("examples/gallery");
+  if (appIdentity) {
+    writeFileSync(`${appdir}/gallery.desktop`, injectDesktopFile(readFileSync(`${appdir}/gallery.desktop`, "utf8"), appIdentity));
+    const mimeXml = buildMimeInfoXml(appIdentity);
+    if (mimeXml) {
+      mkdirSync(`${appdir}/usr/share/mime/packages`, { recursive: true });
+      writeFileSync(`${appdir}/usr/share/mime/packages/${APP_ID}.xml`, mimeXml);
+    }
+  }
   cpSync("zig-out/bin/nd-hello", `${appdir}/usr/bin/nd-hello`);
   chmodSync(`${appdir}/usr/bin/nd-hello`, 0o755);
   chmodSync(`${appdir}/AppRun`, 0o755);

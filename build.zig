@@ -283,6 +283,12 @@ pub fn build(b: *std.Build) void {
     // the installed header tree fatally fails to resolve for any consumer.
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd_plugin.h"), .{ .custom = "include" }, "nd_plugin.h").step);
 
+    // The published @nativedesktop/native package ships a copy of the two ABI
+    // headers; ci cmp-checks it against include/. Not in the default graph —
+    // run after editing include/.
+    const sync_headers_step = b.step("sync-native-headers", "Copy include/nd*.h into packages/native/include/");
+    sync_headers_step.dependOn(&b.addSystemCommand(&.{ "scripts/sync-native-headers.sh" }).step);
+
     // First-party demo plugin (M10): a C-ABI shared lib exporting
     // nd_plugin_entry. Built as its own artifact; headless-m10.sh dlopens it.
     const plugin_hello = b.addLibrary(.{

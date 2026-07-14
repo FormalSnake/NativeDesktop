@@ -6,6 +6,7 @@ const gtk = @import("gtk");
 const adw = @import("adw");
 const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
+const system = @import("system.zig");
 
 pub const app_id = "dev.nativedesktop.hello";
 
@@ -35,11 +36,14 @@ pub fn main(init: std.process.Init) void {
     // gtk.ApplicationWindow on purpose, so the default titlebar/window
     // controls keep working until a later task hands titlebar ownership to
     // a <headerbar> widget.
-    var app = adw.Application.new(app_id, .{});
+    // HANDLES_OPEN: the OS delivers file/URI launches through the `open`
+    // signal (app.openFile / app.openUrl system events) instead of `activate`.
+    var app = adw.Application.new(app_id, .{ .handles_open = true });
     defer app.unref();
     global_app = app.as(gtk.Application);
 
     _ = gio.Application.signals.activate.connect(app.as(gtk.Application), ?*anyopaque, &onActivate, null, .{});
+    _ = gio.Application.signals.open.connect(app.as(gtk.Application), ?*anyopaque, &onOpen, null, .{});
 
     // Only forward argv[0] to GApplication so its GOptionContext doesn't choke
     // on --smoke; the flag is parsed ourselves above.
@@ -97,16 +101,7 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         } else |_| {}
     }
     if (global_environ_map.?.get("ND_PLUGINS")) |v| {
-        if (std.mem.eql(u8, v, "1")) {
-            const paths = global_environ_map.?.get("ND_PLUGIN_PATHS") orelse global_environ_map.?.get("ND_PLUGIN_PATH") orelse "";
-            var it = std.mem.splitScalar(u8, paths, ':');
-            while (it.next()) |path| {
-                if (path.len == 0) continue;
-                const path_z = std.heap.page_allocator.dupeZ(u8, path) catch @panic("oom");
-                defer std.heap.page_allocator.free(path_z);
-                if (abi.nd_load_plugin(ctx, path_z.ptr) != 0) std.debug.print("ND_PLUGIN_LOAD_FAILED path={s}\n", .{path});
-            }
-        }
+        if (std.mem.eql(u8, v, "1")) abi.nd_load_plugins_from_env(ctx);
     }
 
     if (abi.nd_start_runtime(ctx) != 0) {
@@ -125,10 +120,72 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     }
 }
 
-fn onWindowAdded(_: *gtk.Application, _: *gtk.Window, _: ?*anyopaque) callconv(.c) void {
+fn onWindowAdded(_: *gtk.Application, window: *gtk.Window, _: ?*anyopaque) callconv(.c) void {
+    // GApplication's "shutdown" signal fires only after a closed window has
+    // already finalized its children, so nd_shutdown's plugin-view teardown
+    // would touch freed widgets — run it from the last window's close-request
+    // instead, while the widget tree is still alive. nd_shutdown is
+    // idempotent; onShutdown stays as the fallback for quit() paths that
+    // never emit close-request.
+    _ = gtk.Window.signals.close_request.connect(window, ?*anyopaque, &onCloseRequest, null, .{});
+    // Track per-window active state to derive whole-app activation (below).
+    _ = gobject.signalConnectData(window.as(gobject.Object), "notify::is-active", @ptrCast(&onNotifyActive), null, null, .{});
     if (hold_released) return;
     hold_released = true;
     if (global_app) |app| gio.Application.release(app.as(gio.Application));
+}
+
+// Whole-app activation: any window active => app active. A window's
+// notify::is-active fires for both the losing and the gaining window when
+// focus moves between two of this app's windows, so the recompute is deferred
+// to idle where those paired notifications collapse into one net state — only
+// a real app-level gain/loss of focus emits app.activate/app.deactivate.
+var app_active = false;
+var active_recheck_scheduled = false;
+
+fn onNotifyActive(_: *gobject.Object, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    if (active_recheck_scheduled) return;
+    active_recheck_scheduled = true;
+    _ = glib.idleAdd(&recomputeActive, null);
+}
+
+fn recomputeActive(_: ?*anyopaque) callconv(.c) c_int {
+    active_recheck_scheduled = false;
+    const app = global_app orelse return 0; // G_SOURCE_REMOVE
+    var any_active = false;
+    var node: ?*glib.List = gtk.Application.getWindows(app);
+    while (node) |nd| : (node = nd.f_next) {
+        const win: *gtk.Window = @ptrCast(@alignCast(nd.f_data orelse continue));
+        if (gtk.Window.isActive(win) != 0) {
+            any_active = true;
+            break;
+        }
+    }
+    if (any_active != app_active) {
+        app_active = any_active;
+        if (global_ctx) |ctx| {
+            abi.nd_system_event(ctx, if (any_active) "app.activate" else "app.deactivate", "{}");
+        }
+    }
+    return 0; // G_SOURCE_REMOVE
+}
+
+/// GApplication `open` delivery (HANDLES_OPEN): the OS hands us launched
+/// files/URIs. Routed into `system.handleOpen`, which emits app.openFile /
+/// app.openUrl. A no-op before the runtime booted (nothing to deliver to).
+fn onOpen(_: *gtk.Application, files: [*]*gio.File, n_files: c_int, _: [*:0]u8, _: ?*anyopaque) callconv(.c) void {
+    const ctx = global_ctx orelse return;
+    system.handleOpen(ctx, files, n_files);
+}
+
+fn onCloseRequest(_: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
+    const app = global_app orelse return 0;
+    // Closing a non-last window must not tear the core down.
+    const windows = gtk.Application.getWindows(app);
+    if (windows.f_next == null) {
+        if (global_ctx) |ctx| abi.nd_shutdown(ctx);
+    }
+    return 0; // run the default close handler (destroy the window)
 }
 
 fn onShutdown(app: *gio.Application, _: ?*anyopaque) callconv(.c) void {

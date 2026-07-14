@@ -19,12 +19,18 @@ const style = @import("style.zig");
 const overlay = @import("overlay.zig");
 const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
+const system = @import("system.zig");
 
 pub const Widget = gtk.Widget;
 
 var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const arena = arena_state.allocator();
 var the_window: ?*gtk.Window = null;
+// The window the NEXT `snapshot` renders (multi-window). Set by
+// `vtResolveWindow` (which automation.zig's selectSnapshotWindow drives before
+// each screenshot) and consumed one-shot by `vtSnapshot`. Null falls back to
+// the primary `the_window`, keeping single-window behavior byte-identical.
+var snapshot_target_window: ?*gtk.Window = null;
 
 /// Set by `main.zig` immediately after `nd_init()` returns, before
 /// `nd_register_backend`/`nd_start_runtime` — every embedder->core call
@@ -32,6 +38,7 @@ var the_window: ?*gtk.Window = null;
 var the_ctx: ?*abi.NdContext = null;
 pub fn setCtx(ctx: *abi.NdContext) void {
     the_ctx = ctx;
+    system.setCtx(ctx);
 }
 
 /// Adapter from the generated dispatcher's typed `EmitFn` to the ABI's
@@ -113,6 +120,12 @@ pub fn setVisible(widget: *gtk.Widget, visible: bool) void {
 }
 
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value) void {
+    // A NativeView's nested plugin props are routed by the core straight to
+    // the plugin manager (tree.zig's update arm, via the retained view_kind);
+    // the generated NativeView arm would forward them a second time through
+    // its nd-view-kind stash, so skip it — that arm carries nothing else, and
+    // host-level cssClasses still apply via vtApplyProps below.
+    if (std.mem.eql(u8, kind, "NativeView")) return;
     generated.applyProps(widget, kind, props, &dupeZ);
 }
 
@@ -169,6 +182,7 @@ var global_app: *gtk.Application = undefined;
 /// exactly like `the_window`.
 pub fn setApp(app: *gtk.Application) void {
     global_app = app;
+    system.setApp(app);
 }
 
 fn parseJson(json: [*:0]const u8) ?std.json.Parsed(std.json.Value) {
@@ -182,6 +196,7 @@ fn vtCreate(_: *abi.NdContext, kind: [*:0]const u8, props_json: [*:0]const u8) c
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
     const widget = createWidget(global_app, std.mem.span(kind), props) catch return null;
     applyCssClassesIfPresent(widget, props);
+    if (std.mem.eql(u8, std.mem.span(kind), "Window")) system.attachWindowDropTarget(widget);
     return widget;
 }
 
@@ -247,6 +262,51 @@ fn vtGetWindow(_: *abi.NdContext) callconv(.c) ?*anyopaque {
     return w.as(gtk.Widget);
 }
 
+/// `vtable.resolve_window`: a GTK Window node's handle is the stable gtk.Window
+/// widget (never orphaned the way AppKit's create-time content view is once a
+/// SplitView takes over), so reconstruction rebinds to it unchanged. Also
+/// records the resolved window as the current snapshot target (multi-window):
+/// automation.zig's selectSnapshotWindow calls this before each screenshot so
+/// `vtSnapshot` renders the requested window rather than the global one.
+fn vtResolveWindow(_: *abi.NdContext, handle: ?*anyopaque) callconv(.c) ?*anyopaque {
+    if (handle) |h| snapshot_target_window = @ptrCast(@alignCast(h));
+    return handle;
+}
+
+/// `vtable.reparent_child`: relocate a live GtkWidget from `old_parent` to
+/// `new_parent` WITHOUT destroying it. GTK containers own the single ref of
+/// their child, so `gtk_widget_unparent` on the old container would drop the
+/// last ref and finalize the widget mid-move — the loaded page of a WebKitGTK
+/// view would be gone. Bracket the move in an explicit `g_object_ref`/`unref`
+/// so the handle survives the gap, then reuse the ordinary per-kind remove +
+/// insert paths so the target attaches correctly whatever the parent is. `old`
+/// may be null (a still-detached pool widget shown in a window for the first
+/// time).
+fn vtReparentChild(
+    _: *abi.NdContext,
+    child: ?*anyopaque,
+    old_parent: ?*anyopaque,
+    old_parent_kind: [*:0]const u8,
+    new_parent: ?*anyopaque,
+    new_parent_kind: [*:0]const u8,
+    before: ?*anyopaque,
+    attached_json: [*:0]const u8,
+) callconv(.c) void {
+    const child_w: *gtk.Widget = @ptrCast(@alignCast(child));
+    const new_parent_w: *gtk.Widget = @ptrCast(@alignCast(new_parent));
+    const before_w: ?*gtk.Widget = if (before) |b| @ptrCast(@alignCast(b)) else null;
+    const attached = parseAttached(attached_json);
+
+    _ = gobject.Object.ref(child_w.as(gobject.Object));
+    defer gobject.Object.unref(child_w.as(gobject.Object));
+    if (old_parent) |op| {
+        removeChild(@ptrCast(@alignCast(op)), std.mem.span(old_parent_kind), child_w);
+    } else if (gtk.Widget.getParent(child_w) != null) {
+        gtk.Widget.unparent(child_w);
+    }
+    insertBefore(new_parent_w, std.mem.span(new_parent_kind), child_w, before_w, attached);
+}
+
 const G_SOURCE_REMOVE: c_int = 0;
 
 const MarshalJob = struct { fn_ptr: *const fn (?*anyopaque) callconv(.c) void, data: ?*anyopaque };
@@ -299,13 +359,15 @@ var the_tree: ?*tree_mod.Tree = null;
 /// documented in include/nd.h).
 fn vtShowOverlay(_: *abi.NdContext, message: [*:0]const u8) callconv(.c) void {
     const tree = the_tree orelse return;
-    const window = getWindow() orelse return;
     const msg = std.mem.span(message);
+    // A JS crash kills the one Bun process, so every window loses its live UI —
+    // paint (and clear) the overlay on ALL open windows, not just the global
+    // `the_window`.
     if (msg.len == 0) {
-        overlay.clear(tree, window);
+        overlay.clearAll(tree);
         return;
     }
-    overlay.show(tree, window, msg, isDevMode(), &restartTrampoline);
+    overlay.showAll(tree, global_app, msg, isDevMode(), &restartTrampoline);
 }
 
 /// Set once by `main.zig` before the first commit (so `show_overlay` can
@@ -333,9 +395,18 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
         out.* = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
         return true;
     }
-    const win = getWindow() orelse return false;
+    // Per-window (multi-window): convert relative to the widget's OWN root
+    // window, not a single global — a widget living in window B must report
+    // its bounds in window B's coordinate space. `getRoot` is the widget's
+    // GtkWindow ancestor (the same object the pre-multi-window code assumed was
+    // the only window); an unrooted widget falls back to the primary window,
+    // where its bounds are degenerate anyway.
+    const root_widget: *gtk.Widget = if (gtk.Widget.getRoot(w)) |r|
+        r.as(gtk.Widget)
+    else
+        (getWindow() orelse return false).as(gtk.Widget);
     var rect: graphene.Rect = undefined;
-    const has_bounds = gtk.Widget.computeBounds(w, win.as(gtk.Widget), &rect) != 0;
+    const has_bounds = gtk.Widget.computeBounds(w, root_widget, &rect) != 0;
     if (has_bounds) {
         out.* = .{
             .x = @intFromFloat(rect.f_origin.f_x),
@@ -355,7 +426,11 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
 /// `vtable.snapshot` (M6a Task 6): the GTK-native WidgetPaintable render
 /// path, verbatim from pre-ABI `automation.zig`'s `handleScreenshot`.
 fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
-    const win = getWindow() orelse return false;
+    // One-shot: the target set by the preceding `resolve_window` (see
+    // selectSnapshotWindow) wins; consumed here so a later stray snapshot falls
+    // back to the primary window instead of a stale target.
+    const win = snapshot_target_window orelse getWindow() orelse return false;
+    snapshot_target_window = null;
     const win_widget = win.as(gtk.Widget);
 
     const native = gtk.Widget.getNative(win_widget) orelse return false;
@@ -636,6 +711,13 @@ fn semanticScroll(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, resu
     return 0;
 }
 
+/// `vtable.system_request`: dispatches host system-capability requests into
+/// `system.zig` (dialogs, clipboard, notifications, recent files, credentials).
+/// Runs on the UI thread; each request answers via `nd_system_response`.
+fn vtSystemRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params: [*:0]const u8) callconv(.c) void {
+    system.handleRequest(ctx, id, method, params);
+}
+
 /// Builds the complete `NdBackend` vtable for `nd_register_backend`. Called
 /// once at startup by `main.zig`.
 pub fn ndBackend() abi.NdBackend {
@@ -659,5 +741,8 @@ pub fn ndBackend() abi.NdBackend {
         .snapshot = &vtSnapshot,
         .semantic_action = &vtSemanticAction,
         .widget_command = &vtWidgetCommand,
+        .resolve_window = &vtResolveWindow,
+        .reparent_child = &vtReparentChild,
+        .system_request = &vtSystemRequest,
     };
 }

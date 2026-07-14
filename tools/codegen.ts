@@ -25,15 +25,29 @@ interface Prop {
   default?: string | number | boolean;
   required?: boolean;
   appliesTo: AppliesTo;
+  /** For `objectList` props: the name of a shared item shape declared in the
+   *  schema's top-level `types` array (ports rpc.json's `types` mechanism).
+   *  Omitted = the legacy SourceList row shape (back-compat). */
+  itemShape?: string;
 }
 interface Event { name: string; ndpName?: string; payload?: PayloadKind }
 interface AttachedProp { name: string; type: PropType; values?: string[]; default?: string | number | boolean }
 interface Container { childModel: "single" | "multi"; attachedProps?: AttachedProp[] }
+type Platform = "macos" | "linux";
 interface Widget {
   name: string;
   intrinsic: string;
   container: Container | null;
+  /** Docs-only annotation: the widget's schema/API surface is defined but its
+   *  native implementations are still placeholder stubs (see the per-platform
+   *  ZIG_STUB_WIDGETS/SWIFT_STUB_WIDGETS sets below for the compile fallback). */
   stub?: boolean;
+  /** Platform availability. Omitted = available everywhere. A widget listing
+   *  e.g. only "macos" gets an invisible no-op placeholder on every other
+   *  backend BY DESIGN (not a stub-to-be-filled) — codegen emits
+   *  ND_PLATFORM_NOOP arms there, and the availability table is exported in
+   *  schema-meta.ts (`widgetPlatforms`) so JS tooling can warn. */
+  platforms?: Platform[];
   props: Prop[];
   events: Event[];
   /** Imperative commands the widget accepts via the widgetCommand NDP frame
@@ -42,22 +56,93 @@ interface Widget {
   commands?: string[];
   automation: { role: string; textFrom: string | null };
 }
+/** Shared item shape for objectList props (top-level `types` in widgets.json —
+ *  the same mechanism rpc.json's `types` array uses). Emitted as exported TS
+ *  interfaces in intrinsics.ts and referenced by `itemShape` props. */
+interface SchemaTypeField { name: string; type: "string" | "int" | "float" | "bool"; optional?: boolean; list?: boolean }
+interface SchemaType { name: string; doc?: string; fields: SchemaTypeField[] }
 type StyleKeyKind = "color" | "int" | "bool" | "enum" | "string" | "object" | "spacing";
 interface StyleField { kind: StyleKeyKind; css?: string; unit?: string; values?: string[] }
 interface StyleKey extends StyleField { fields?: Record<string, StyleField>; target?: "css" | "widget" }
 interface StyleDef { keys: Record<string, StyleKey> }
-interface Schema { schemaVersion: number; style?: StyleDef; cssClasses?: string[]; widgets: Widget[] }
+interface Schema { schemaVersion: number; style?: StyleDef; cssClasses?: string[]; types?: SchemaType[]; widgets: Widget[] }
 
-function tsTypeOf(p: { type: PropType; values?: string[] }): string {
+// ---- per-platform stub registries (widget-expansion phase 1) ----
+// A widget listed here may be MISSING per-key templates (create/apply/signal/
+// command/structural) on that platform: instead of the usual fail-loud throw,
+// codegen emits a clearly-marked placeholder arm — grep for `ND_STUB(Name)` in
+// the generated files (and these sets) to find every pending arm. Backend
+// agents implement a widget by ADDING the real templates (which always take
+// precedence over the fallback) and finally REMOVING the name from the set to
+// restore the fail-loud contract for it. `Window` is listed ONLY for its new
+// dialog events/commands (its create/apply/structural arms are real and win).
+// Platform-EXCLUDED widgets (see `Widget.platforms`) never use these sets —
+// they get permanent ND_PLATFORM_NOOP arms instead.
+const ZIG_STUB_WIDGETS = new Set<string>([
+  "Window", "ToggleButton", "SegmentedControl", "NumberInput", "LinkButton",
+  "LevelIndicator", "ColorPicker", "Banner", "MenuButton", "SplitButton",
+  "Popover", "Expander", "StatusPage", "ToastOverlay", "DatePicker", "Table",
+  "TreeView", "FontPicker", "Video",
+]);
+const SWIFT_STUB_WIDGETS = new Set<string>([
+  "Window", "ToggleButton", "SegmentedControl", "NumberInput", "LinkButton",
+  "LevelIndicator", "ColorPicker", "Banner", "MenuButton", "SplitButton",
+  "Popover", "Expander", "StatusPage", "ToastOverlay", "DatePicker", "Table",
+  "TreeView", "FontPicker", "Video", "TrayItem", "ShareButton",
+]);
+
+/** True when the widget declares a `platforms` list that does not include
+ *  `platform` — its arms on that backend are permanent invisible no-ops. */
+function excludedOn(w: Widget, platform: Platform): boolean {
+  return w.platforms !== undefined && !w.platforms.includes(platform);
+}
+function zigFallbackKind(w: Widget): "noop" | "stub" | null {
+  if (excludedOn(w, "linux")) return "noop";
+  if (ZIG_STUB_WIDGETS.has(w.name)) return "stub";
+  return null;
+}
+function swiftFallbackKind(w: Widget): "noop" | "stub" | null {
+  if (excludedOn(w, "macos")) return "noop";
+  if (SWIFT_STUB_WIDGETS.has(w.name)) return "stub";
+  return null;
+}
+
+function tsTypeOf(p: { type: PropType; values?: string[]; itemShape?: string }): string {
   switch (p.type) {
     case "string": return "string";
     case "int": return "number";
     case "float": return "number";
     case "bool": return "boolean";
     case "stringList": return "string[]";
-    case "objectList": return "{ title: string; badge?: string; iconName?: string }[]";
+    // itemShape references a shared type from the schema's `types` array
+    // (validated against it at load); the inline literal is the legacy
+    // SourceList row shape, kept for itemShape-less objectList props.
+    case "objectList": return p.itemShape ? `${p.itemShape}[]` : "{ title: string; badge?: string; iconName?: string }[]";
     case "enum": return (p.values ?? []).map((v) => JSON.stringify(v)).join(" | ");
   }
+}
+
+function tsSchemaFieldType(f: SchemaTypeField): string {
+  let base: string;
+  switch (f.type) {
+    case "string": base = "string"; break;
+    case "int": case "float": base = "number"; break;
+    case "bool": base = "boolean"; break;
+  }
+  return f.list ? `${base}[]` : base;
+}
+
+/** Exported TS interfaces for the schema's shared item shapes (`types`),
+ *  referenced by objectList props via `itemShape`. */
+function genSharedTypes(s: Schema): string {
+  let out = "";
+  for (const t of s.types ?? []) {
+    if (t.doc) out += `/** ${t.doc} */\n`;
+    out += `export interface ${t.name} {\n`;
+    for (const f of t.fields) out += `  ${f.name}${f.optional ? "?" : ""}: ${tsSchemaFieldType(f)};\n`;
+    out += "}\n";
+  }
+  return out;
 }
 
 function tsHandlerType(e: Event): string {
@@ -158,6 +243,7 @@ function genIntrinsics(s: Schema): string {
   out += "export interface NdNodeRef<T extends WidgetType = WidgetType> {\n  id: number;\n  type: T;\n}\n\n";
   out += genStyleProp(s);
   out += genCssClassSpec(s);
+  out += genSharedTypes(s);
   out += "\n";
   out += "export namespace JSX {\n";
   out += "  export interface IntrinsicElements {\n";
@@ -197,7 +283,7 @@ function genSchemaMeta(s: Schema): string {
   for (const w of s.widgets) out += `  ${JSON.stringify(w.intrinsic)}: ${JSON.stringify(w.name)},\n`;
   out += "};\n";
 
-  out += "\nexport interface WidgetEvent {\n  name: string;\n  handler: string;\n  payload: \"none\" | \"text\" | \"checked\" | \"value\" | \"index\";\n}\n";
+  out += "\nexport interface WidgetEvent {\n  name: string;\n  handler: string;\n  payload: \"none\" | \"text\" | \"checked\" | \"value\" | \"index\" | \"data\";\n}\n";
   out += "export const widgetEvents: Record<string, WidgetEvent[]> = {\n";
   for (const w of s.widgets) {
     const evs = w.events.map((e) =>
@@ -224,6 +310,16 @@ function genSchemaMeta(s: Schema): string {
   out += "export type WidgetCommandNames = {\n";
   for (const w of withCommands) {
     out += `  ${JSON.stringify(w.intrinsic)}: ${w.commands!.map((c) => JSON.stringify(c)).join(" | ")};\n`;
+  }
+  out += "};\n";
+
+  out += "\n/** Platform availability (schema `platforms`): null = every platform. A\n";
+  out += " *  widget listing only some platforms renders natively there and is an\n";
+  out += " *  invisible no-op placeholder everywhere else — JS may warn but must not\n";
+  out += " *  treat mounting one on another platform as an error. */\n";
+  out += "export const widgetPlatforms: Record<string, readonly (\"macos\" | \"linux\")[] | null> = {\n";
+  for (const w of s.widgets) {
+    out += `  ${JSON.stringify(w.intrinsic)}: ${w.platforms ? JSON.stringify(w.platforms) : "null"},\n`;
   }
   out += "};\n";
   return out;
@@ -605,25 +701,99 @@ fn ndBuildGMenuItem(info: MenuItemInfo) ?*gio.MenuItem {
     }
 }
 
-fn ndBuildSubmenuModel(submenu: *gio.Menu) ?*gio.Menu {
-    const items = submenu_items.get(@intFromPtr(submenu)) orelse return null;
+/// Generic GMenuModel builder over an ordered MIXED list of menu-node handles
+/// — GMenuItem leaves (separators split sections) and nested GMenu submenus.
+/// Shared by the menubar's per-menu bodies AND every MenuButton/SplitButton
+/// popover (M15 generalization of the previously menubar-only builder); item
+/// activation routes through the same app-scoped "app.nd-menu-<node>" actions
+/// wherever the model is mounted, so MenuItem's `selected` event keeps
+/// working for all owners.
+fn ndBuildModelFromList(items: []const usize) ?*gio.Menu {
     const root = gio.Menu.new();
     var section = gio.Menu.new();
     var any = false;
-    for (items.items) |item_ptr| {
-        const info = menu_item_info.get(item_ptr) orelse continue;
-        if (info.role == .separator) {
-            gio.Menu.appendSection(root, null, section.as(gio.MenuModel));
-            section = gio.Menu.new();
-            continue;
-        }
-        if (ndBuildGMenuItem(info)) |gi| {
-            gio.Menu.appendItem(section, gi);
-            any = true;
+    for (items) |item_ptr| {
+        if (menu_item_info.get(item_ptr)) |info| {
+            if (info.role == .separator) {
+                gio.Menu.appendSection(root, null, section.as(gio.MenuModel));
+                section = gio.Menu.new();
+                continue;
+            }
+            if (ndBuildGMenuItem(info)) |gi| {
+                gio.Menu.appendItem(section, gi);
+                any = true;
+            }
+        } else if (menu_labels.contains(item_ptr) or submenu_items.contains(item_ptr)) {
+            // A <menu> child: nested submenu (menubar menus were previously
+            // item-only; buttons commonly mix items and submenus).
+            const submenu: *gio.Menu = @ptrFromInt(item_ptr);
+            if (ndBuildSubmenuModel(submenu)) |model| {
+                const label = menu_labels.get(item_ptr) orelse "";
+                const lbl: [*:0]const u8 = if (label.len > 0) label.ptr else "Menu";
+                gio.Menu.appendSubmenu(section, lbl, model.as(gio.MenuModel));
+                any = true;
+            }
         }
     }
     gio.Menu.appendSection(root, null, section.as(gio.MenuModel));
     return if (any) root else null;
+}
+
+fn ndBuildSubmenuModel(submenu: *gio.Menu) ?*gio.Menu {
+    const items = submenu_items.get(@intFromPtr(submenu)) orelse return null;
+    return ndBuildModelFromList(items.items);
+}
+
+// ---- M15 menu owners: MenuButton/SplitButton host a GMenuModel built from
+// their Menu/MenuItem children — the same node handles the menubar tracks,
+// rebuilt per owner on every structural change. Keyed by the owner WIDGET. ----
+var menu_owner_children: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty;
+
+fn ndMenuOwnerRebuild(owner: *gtk.Widget) void {
+    const children = menu_owner_children.get(@intFromPtr(owner)) orelse return;
+    const model = ndBuildModelFromList(children.items);
+    const mm: ?*gio.MenuModel = if (model) |m| m.as(gio.MenuModel) else null;
+    if (gobject.ext.isA(owner, adw.SplitButton)) {
+        adw.SplitButton.setMenuModel(@ptrCast(@alignCast(owner)), mm);
+    } else if (gobject.ext.isA(owner, gtk.MenuButton)) {
+        gtk.MenuButton.setMenuModel(@ptrCast(@alignCast(owner)), mm);
+    }
+}
+
+fn ndMenuOwnerAppend(owner: *gtk.Widget, child: *gtk.Widget) void {
+    const gop = menu_owner_children.getOrPut(events_gpa, @intFromPtr(owner)) catch return;
+    if (!gop.found_existing) gop.value_ptr.* = .empty;
+    gop.value_ptr.append(events_gpa, @intFromPtr(child)) catch {};
+    ndMenuOwnerRebuild(owner);
+}
+
+fn ndMenuOwnerRemove(owner: *gtk.Widget, child: *gtk.Widget) void {
+    const list = menu_owner_children.getPtr(@intFromPtr(owner)) orelse return;
+    for (list.items, 0..) |c, i| {
+        if (c == @intFromPtr(child)) {
+            _ = list.orderedRemove(i);
+            break;
+        }
+    }
+    ndMenuOwnerRebuild(owner);
+}
+
+/// Rebuild every registered button owner — called when a Menu's item list
+/// mutates AFTER the Menu was appended to its owner (the owner's set model
+/// was built from the old list; GMenu handles aren't live-observed here).
+fn ndMenuOwnersRefresh() void {
+    var it = menu_owner_children.iterator();
+    while (it.next()) |e| ndMenuOwnerRebuild(@ptrFromInt(e.key_ptr.*));
+}
+
+/// Destroy handler for MenuButton/SplitButton owners: drop the child list so
+/// a GLib address reuse can't resurrect a stale menu (mirrors
+/// cbHeaderBarDestroyed's eviction rationale).
+fn cbMenuOwnerDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    if (menu_owner_children.fetchRemove(@intFromPtr(w))) |kv| {
+        var list = kv.value;
+        list.deinit(events_gpa);
+    }
 }
 
 fn ndBuildMenubarModel() ?*gio.Menu {
@@ -687,6 +857,7 @@ fn ndMenuAppendItem(menu_w: *gtk.Widget, item_w: *gtk.Widget) void {
     if (!gop.found_existing) gop.value_ptr.* = .empty;
     gop.value_ptr.append(events_gpa, @intFromPtr(item_w)) catch {};
     ndMenuRefresh();
+    ndMenuOwnersRefresh(); // a button owner holding this Menu re-snapshots it
 }
 
 /// Records a headerbar so a later menubar can home its primary button in the
@@ -790,23 +961,219 @@ pub fn menuSemanticClick(node_id: u32) bool {
 }
 `;
 
+// ---- M15 widget-expansion helpers (Popover / LevelBar / ColorPicker /
+// DatePicker / Video), injected like ZIG_HELPERS/ZIG_MENU ----
+const ZIG_EXTRA = `const ND_POPOVER_PENDING_OPEN = "nd-popover-pending-open";
+
+/// Cross-cutting structural rule: a GtkPopover child attaches to its tree
+/// parent via gtk_widget_set_parent (never box-packed/slotted — GtkPopover is
+/// not a layout child). Called from the appendChild/insertBefore guards;
+/// honors a create-time open=true that had to wait for a parent to anchor on.
+fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
+    if (!gobject.ext.isA(parent, gtk.Widget)) return; // menu-node parent: nowhere to anchor
+    if (gtk.Widget.getParent(child)) |cur| {
+        if (cur == parent) return;
+        gtk.Widget.unparent(child);
+    }
+    gtk.Widget.setParent(child, parent);
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) {
+        gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
+        gtk.Popover.popup(@ptrCast(@alignCast(child)));
+    }
+}
+
+fn ndPositionFromString(s: []const u8) gtk.PositionType {
+    if (std.mem.eql(u8, s, "bottom")) return .bottom;
+    if (std.mem.eql(u8, s, "left")) return .left;
+    if (std.mem.eql(u8, s, "right")) return .right;
+    return .top;
+}
+
+// ---- LevelIndicator (GtkLevelBar) tier offsets ----
+const NdLevelOffsets = struct { warning: ?f64 = null, critical: ?f64 = null };
+var level_offsets: std.AutoHashMapUnmanaged(usize, NdLevelOffsets) = .empty;
+var level_css_installed = false;
+
+/// Adwaita styles only the stock low/high/full offsets; ND's warning/critical
+/// tiers use custom offset names, colored once app-wide from the platform
+/// palette (libadwaita's --warning-bg-color / --error-bg-color variables).
+fn ndLevelBarEnsureCss(bar: *gtk.LevelBar) void {
+    if (level_css_installed) return;
+    level_css_installed = true;
+    const provider = gtk.CssProvider.new();
+    gtk.CssProvider.loadFromString(provider, "levelbar block.warning { background-color: var(--warning-bg-color); } levelbar block.error { background-color: var(--error-bg-color); }");
+    gtk.StyleContext.addProviderForDisplay(gtk.Widget.getDisplay(bar.as(gtk.Widget)), provider.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
+}
+
+fn cbLevelBarDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    _ = level_offsets.remove(@intFromPtr(w));
+}
+
+/// Rising-is-worse tiers (NSLevelIndicator capacity semantics): value at or
+/// below warningValue keeps the plain accent fill; above it .warning; above
+/// criticalValue .error. GtkLevelBar offsets bracket DOWNWARD (an offset
+/// styles the interval it tops), so the tiers translate to: nd-ok topped at
+/// warning, warning topped at critical, error topped at max. A null param
+/// leaves that threshold as previously applied (diffed prop updates carry
+/// only the changed key — same merge ndHeaderBarApplyNav does).
+fn ndLevelBarApplyOffsets(bar: *gtk.LevelBar, warning: ?f64, critical: ?f64) void {
+    if (warning == null and critical == null) return;
+    const gop = level_offsets.getOrPut(events_gpa, @intFromPtr(bar)) catch return;
+    if (!gop.found_existing) {
+        gop.value_ptr.* = .{};
+        _ = gtk.Widget.signals.destroy.connect(bar.as(gtk.Widget), ?*anyopaque, &cbLevelBarDestroyed, null, .{});
+    }
+    if (warning) |w| gop.value_ptr.warning = w;
+    if (critical) |c| gop.value_ptr.critical = c;
+    ndLevelBarEnsureCss(bar);
+    // Drop the stock offsets so their bracket classes can't fight ND's tiers,
+    // then re-add ND's from the merged state (add-with-same-name replaces).
+    gtk.LevelBar.removeOffsetValue(bar, "low");
+    gtk.LevelBar.removeOffsetValue(bar, "high");
+    gtk.LevelBar.removeOffsetValue(bar, "full");
+    gtk.LevelBar.removeOffsetValue(bar, "nd-ok");
+    gtk.LevelBar.removeOffsetValue(bar, "warning");
+    gtk.LevelBar.removeOffsetValue(bar, "error");
+    const max = gtk.LevelBar.getMaxValue(bar);
+    if (gop.value_ptr.warning) |w| {
+        gtk.LevelBar.addOffsetValue(bar, "nd-ok", w);
+        gtk.LevelBar.addOffsetValue(bar, "warning", gop.value_ptr.critical orelse max);
+        if (gop.value_ptr.critical != null) gtk.LevelBar.addOffsetValue(bar, "error", max);
+    } else if (gop.value_ptr.critical) |c| {
+        gtk.LevelBar.addOffsetValue(bar, "nd-ok", c);
+        gtk.LevelBar.addOffsetValue(bar, "error", max);
+    }
+}
+
+// ---- ColorPicker (GtkColorDialogButton) hex round-trip ----
+
+/// #rrggbb / #rrggbbaa formatter for the wire value (style.zig's color
+/// convention). The alpha byte is included only when not fully opaque.
+fn ndRgbaToHex(rgba: *const gdk.RGBA, buf: []u8) []const u8 {
+    const r: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_red), 0, 1) * 255.0));
+    const g: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_green), 0, 1) * 255.0));
+    const b: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_blue), 0, 1) * 255.0));
+    const a: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_alpha), 0, 1) * 255.0));
+    if (a == 255) return std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ r, g, b }) catch "#000000";
+    return std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{ r, g, b, a }) catch "#000000";
+}
+
+fn ndRgbaClose(a: *const gdk.RGBA, b: *const gdk.RGBA) bool {
+    const eps: f32 = 1.0 / 255.0;
+    return @abs(a.f_red - b.f_red) < eps and @abs(a.f_green - b.f_green) < eps and @abs(a.f_blue - b.f_blue) < eps and @abs(a.f_alpha - b.f_alpha) < eps;
+}
+
+// ---- DatePicker (GtkCalendar) ISO round-trip + min/max clamp state ----
+const NdDateLimits = struct { min: ?i64 = null, max: ?i64 = null };
+var calendar_limits: std.AutoHashMapUnmanaged(usize, NdDateLimits) = .empty;
+
+fn cbCalendarDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    _ = calendar_limits.remove(@intFromPtr(w));
+}
+
+/// ISO YYYY-MM-DD -> comparable key y*10000 + m*100 + d, or null if malformed.
+fn ndDateKeyFromIso(s: []const u8) ?i64 {
+    if (s.len != 10 or s[4] != '-' or s[7] != '-') return null;
+    const y = std.fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const m = std.fmt.parseInt(i64, s[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, s[8..10], 10) catch return null;
+    if (m < 1 or m > 12 or d < 1 or d > 31) return null;
+    return y * 10000 + m * 100 + d;
+}
+
+fn ndCalendarDateKey(cal: *gtk.Calendar) i64 {
+    const dt = gtk.Calendar.getDate(cal); // transfer full
+    defer glib.DateTime.unref(dt);
+    const y: i64 = @intCast(glib.DateTime.getYear(dt));
+    const m: i64 = @intCast(glib.DateTime.getMonth(dt));
+    const d: i64 = @intCast(glib.DateTime.getDayOfMonth(dt));
+    return y * 10000 + m * 100 + d;
+}
+
+/// GTK 4.20+ deprecated the int day/month/year props; select_day with a
+/// GDateTime is the supported `date` surface (design brief 2026-07).
+fn ndCalendarSelectKey(cal: *gtk.Calendar, key: i64) void {
+    const dt = glib.DateTime.newLocal(@intCast(@divTrunc(key, 10000)), @intCast(@mod(@divTrunc(key, 100), 100)), @intCast(@mod(key, 100)), 0, 0, 0) orelse return;
+    defer glib.DateTime.unref(dt);
+    gtk.Calendar.selectDay(cal, dt);
+}
+
+fn ndIsoFromKey(key: i64, buf: []u8) []const u8 {
+    const y: u64 = @intCast(@divTrunc(key, 10000));
+    const m: u64 = @intCast(@mod(@divTrunc(key, 100), 100));
+    const d: u64 = @intCast(@mod(key, 100));
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}", .{ y, m, d }) catch "";
+}
+
+/// minDate/maxDate merge (diffed updates carry only the changed key); the
+/// empty string clears a bound. Enforcement lives in cbCalendarDaySelected —
+/// GtkCalendar has no native range clamp.
+fn ndCalendarSetLimits(cal: *gtk.Calendar, min_s: ?[]const u8, max_s: ?[]const u8) void {
+    if (min_s == null and max_s == null) return;
+    const gop = calendar_limits.getOrPut(events_gpa, @intFromPtr(cal)) catch return;
+    if (!gop.found_existing) {
+        gop.value_ptr.* = .{};
+        _ = gtk.Widget.signals.destroy.connect(cal.as(gtk.Widget), ?*anyopaque, &cbCalendarDestroyed, null, .{});
+    }
+    if (min_s) |s| gop.value_ptr.min = if (s.len == 0) null else ndDateKeyFromIso(s);
+    if (max_s) |s| gop.value_ptr.max = if (s.len == 0) null else ndDateKeyFromIso(s);
+}
+
+// ---- Video (GtkVideo) media-module detection + src routing ----
+var video_media_checked = false;
+var video_media_available = false;
+
+/// GtkMediaFile's real backend ships separately on some distros
+/// (gtk4-media-gstreamer & co.); with none installed GTK falls back to its
+/// no-op "GtkNoMediaFile" implementation (plus GTK's own one-time warning).
+fn ndVideoMediaAvailable() bool {
+    if (video_media_checked) return video_media_available;
+    video_media_checked = true;
+    const mf = gtk.MediaFile.new();
+    defer gobject.Object.unref(asObject(mf));
+    const instance: *gobject.TypeInstance = @ptrCast(@alignCast(mf));
+    const type_name = std.mem.span(gobject.typeNameFromInstance(instance));
+    video_media_available = !std.mem.eql(u8, type_name, "GtkNoMediaFile");
+    return video_media_available;
+}
+
+/// GFile wraps both plain paths and URIs (there is no gtk_video_new_for_uri).
+fn ndVideoSetSrc(video: *gtk.Video, src: [:0]const u8) void {
+    if (src.len == 0) {
+        gtk.Video.setFile(video, null);
+        return;
+    }
+    const file = if (std.mem.indexOf(u8, src, "://") != null) gio.File.newForUri(src) else gio.File.newForPath(src);
+    gtk.Video.setFile(video, file); // property setter refs; drop ours
+    gobject.Object.unref(@ptrCast(@alignCast(file)));
+}
+`;
+
 function genZig(s: Schema): string {
   let out = HEADER_ZIG;
   out += "const std = @import(\"std\");\n";
   out += "const gtk = @import(\"gtk\");\n";
+  out += "const gdk = @import(\"gdk\");\n";
   out += "const gio = @import(\"gio\");\n";
   out += "const glib = @import(\"glib\");\n";
   out += "const gobject = @import(\"gobject\");\n";
   out += "const adw = @import(\"adw\");\n";
+  out += "const pango = @import(\"pango\");\n";
   out += "const protocol = @import(\"../protocol.zig\");\n";
   out += "const ndterm_gtk = @import(\"../gtk/terminal.zig\");\n";
   out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n";
+  out += "const nddialog_gtk = @import(\"../gtk/dialogs.zig\");\n";
+  out += "const ndtable_gtk = @import(\"../gtk/table.zig\");\n";
+  out += "const ndtree_gtk = @import(\"../gtk/treeview.zig\");\n";
+  out += "const ndtoast_gtk = @import(\"../gtk/toast.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
   out += ZIG_EVENT_STATE;
   out += "\n";
   out += ZIG_MENU;
+  out += "\n";
+  out += ZIG_EXTRA;
   out += "\n";
   out += "/// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-\n";
   out += "/// terminated GTK string using the backend arena (passed by the caller).\n";
@@ -854,6 +1221,9 @@ function genZig(s: Schema): string {
  *  create/apply templates). Bodies see `widget`, `command`, and `arg`. */
 const ZIG_COMMANDS: Record<string, string> = {
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
+  // Dialogs parent on the Window node's OWN handle (multi-window correct).
+  Window: "        nddialog_gtk.command(widget, command, arg);\n",
+  ToastOverlay: "        ndtoast_gtk.command(widget, command, arg);\n",
 };
 
 function genZigCommands(s: Schema): string {
@@ -868,8 +1238,17 @@ function genZigCommands(s: Schema): string {
   }
   let first = true;
   for (const w of withCommands) {
-    const body = ZIG_COMMANDS[w.name];
-    if (!body) throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+    let body = ZIG_COMMANDS[w.name];
+    if (!body) {
+      const fb = zigFallbackKind(w);
+      if (fb === "noop") {
+        body = `        // ND_PLATFORM_NOOP(${w.name}): commands are no-ops on this platform.\n`;
+      } else if (fb === "stub") {
+        body = `        // ND_STUB(${w.name}): command dispatch pending the real GTK implementation.\n        std.debug.print("ND_STUB(${w.name}) widgetCommand '{s}' not implemented\\n", .{command});\n`;
+      } else {
+        throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+      }
+    }
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, kind, ${JSON.stringify(w.name)})) {\n`;
     out += body;
     first = false;
@@ -1151,6 +1530,170 @@ function genZigCreateBody(w: Widget): string {
     out += "        }\n";
     out += "        std.debug.print(\"ND_WARN nativeView: no module registered viewKind={s}; rendering empty box\\n\", .{view_kind});\n";
     out += "        return gtk.Box.new(.vertical, 0).as(gtk.Widget);\n";
+  } else if (w.name === "ToggleButton") {
+    out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
+    out += "        const tb = gtk.ToggleButton.new();\n";
+    out += "        if (propStr(props, \"iconName\")) |icon| {\n";
+    out += "            if (lbl.len == 0) {\n";
+    out += "                gtk.Button.setIconName(tb.as(gtk.Button), dupeZ(icon));\n";
+    out += "            } else {\n";
+    out += "                const content = adw.ButtonContent.new();\n";
+    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
+    out += "                gtk.Button.setChild(tb.as(gtk.Button), content.as(gtk.Widget));\n";
+    out += "            }\n";
+    out += "        } else {\n";
+    out += "            gtk.Button.setLabel(tb.as(gtk.Button), dupeZ(lbl));\n";
+    out += "        }\n";
+    out += `        if (propBool(props, "active") orelse ${dflt(w, "active")}) gtk.ToggleButton.setActive(tb, 1);\n`;
+    out += "        return tb.as(gtk.Widget);\n";
+  } else if (w.name === "SegmentedControl") {
+    out += "        // AdwToggleGroup (adw 1.7+): exclusive option selection within a view\n";
+    out += "        // (view switchers own page navigation). options are create-only,\n";
+    out += "        // matching Select.options.\n";
+    out += "        const group = adw.ToggleGroup.new();\n";
+    out += "        if (propArray(props, \"options\")) |arr| {\n";
+    out += "            for (arr.items) |item| {\n";
+    out += "                if (item != .string) continue;\n";
+    out += "                const toggle = adw.Toggle.new();\n";
+    out += "                adw.Toggle.setLabel(toggle, dupeZ(item.string));\n";
+    out += "                adw.ToggleGroup.add(group, toggle);\n";
+    out += "            }\n";
+    out += "        }\n";
+    out += `        const idx = propInt(props, "selectedIndex") orelse ${dflt(w, "selectedIndex")};\n`;
+    out += "        if (idx > 0) adw.ToggleGroup.setActive(group, @intCast(idx));\n";
+    out += "        return group.as(gtk.Widget);\n";
+  } else if (w.name === "NumberInput") {
+    out += `        const min = propFloat(props, "min") orelse ${dflt(w, "min")};\n`;
+    out += `        const max = propFloat(props, "max") orelse ${dflt(w, "max")};\n`;
+    out += `        const step = propFloat(props, "step") orelse ${dflt(w, "step")};\n`;
+    out += "        const spin = gtk.SpinButton.newWithRange(min, max, step);\n";
+    out += `        gtk.SpinButton.setDigits(spin, @intCast(propInt(props, "digits") orelse ${dflt(w, "digits")}));\n`;
+    out += `        gtk.SpinButton.setWrap(spin, @intFromBool(propBool(props, "wraps") orelse ${dflt(w, "wraps")}));\n`;
+    out += `        gtk.SpinButton.setValue(spin, propFloat(props, "value") orelse ${dflt(w, "value")});\n`;
+    out += "        return spin.as(gtk.Widget);\n";
+  } else if (w.name === "LinkButton") {
+    out += `        const uri = propStr(props, "uri") orelse ${zigDefaultStr(w, "uri")};\n`;
+    out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
+    out += "        const lb = gtk.LinkButton.newWithLabel(dupeZ(uri), if (lbl.len > 0) dupeZ(lbl).ptr else null); // null label: GTK shows the URI\n";
+    out += `        if (propBool(props, "visited") orelse ${dflt(w, "visited")}) gtk.LinkButton.setVisited(lb, 1);\n`;
+    out += `        if (propBool(props, "openExternal") orelse ${dflt(w, "openExternal")}) gobject.Object.setData(asObject(lb), "nd-open-external", @ptrFromInt(1));\n`;
+    out += "        return lb.as(gtk.Widget);\n";
+  } else if (w.name === "LevelIndicator") {
+    out += `        const min = propFloat(props, "min") orelse ${dflt(w, "min")};\n`;
+    out += `        const max = propFloat(props, "max") orelse ${dflt(w, "max")};\n`;
+    out += "        const bar = gtk.LevelBar.newForInterval(min, max);\n";
+    out += `        if (propBool(props, "discrete") orelse ${dflt(w, "discrete")}) gtk.LevelBar.setMode(bar, .discrete);\n`;
+    out += `        gtk.LevelBar.setValue(bar, propFloat(props, "value") orelse ${dflt(w, "value")});\n`;
+    out += "        ndLevelBarApplyOffsets(bar, propFloat(props, \"warningValue\"), propFloat(props, \"criticalValue\"));\n";
+    out += "        return bar.as(gtk.Widget);\n";
+  } else if (w.name === "ColorPicker") {
+    out += "        // GtkColorDialogButton (GTK 4.10+); the button stays insensitive\n";
+    out += "        // until a GtkColorDialog is set, so it is set unconditionally.\n";
+    out += "        const dialog = gtk.ColorDialog.new();\n";
+    out += `        gtk.ColorDialog.setWithAlpha(dialog, @intFromBool(propBool(props, "supportsAlpha") orelse ${dflt(w, "supportsAlpha")}));\n`;
+    out += "        const btn = gtk.ColorDialogButton.new(dialog); // transfer-full: button owns the dialog\n";
+    out += "        var rgba: gdk.RGBA = undefined;\n";
+    out += `        if (gdk.RGBA.parse(&rgba, dupeZ(propStr(props, "value") orelse ${zigDefaultStr(w, "value")})) != 0) gtk.ColorDialogButton.setRgba(btn, &rgba);\n`;
+    out += "        return btn.as(gtk.Widget);\n";
+  } else if (w.name === "Banner") {
+    out += `        const banner = adw.Banner.new(dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
+    out += "        if (propStr(props, \"buttonLabel\")) |bl| adw.Banner.setButtonLabel(banner, dupeZ(bl));\n";
+    out += `        if (propBool(props, "revealed") orelse ${dflt(w, "revealed")}) adw.Banner.setRevealed(banner, 1);\n`;
+    out += "        return banner.as(gtk.Widget);\n";
+  } else if (w.name === "MenuButton") {
+    out += "        const btn = gtk.MenuButton.new();\n";
+    out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
+    out += "        if (propStr(props, \"iconName\")) |icon| {\n";
+    out += "            gtk.MenuButton.setIconName(btn, dupeZ(icon));\n";
+    out += "        } else if (lbl.len > 0) {\n";
+    out += "            gtk.MenuButton.setLabel(btn, dupeZ(lbl));\n";
+    out += "        }\n";
+    out += "        // Menu/MenuItem children arrive via the MenuButton structural arm\n";
+    out += "        // (ndMenuOwnerAppend) and become this button's GMenuModel.\n";
+    out += "        _ = gtk.Widget.signals.destroy.connect(btn.as(gtk.Widget), ?*anyopaque, &cbMenuOwnerDestroyed, null, .{});\n";
+    out += "        return btn.as(gtk.Widget);\n";
+  } else if (w.name === "SplitButton") {
+    out += "        const btn = adw.SplitButton.new();\n";
+    out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
+    out += "        if (propStr(props, \"iconName\")) |icon| {\n";
+    out += "            adw.SplitButton.setIconName(btn, dupeZ(icon));\n";
+    out += "        } else if (lbl.len > 0) {\n";
+    out += "            adw.SplitButton.setLabel(btn, dupeZ(lbl));\n";
+    out += "        }\n";
+    out += "        _ = gtk.Widget.signals.destroy.connect(btn.as(gtk.Widget), ?*anyopaque, &cbMenuOwnerDestroyed, null, .{});\n";
+    out += "        return btn.as(gtk.Widget);\n";
+  } else if (w.name === "Popover") {
+    out += "        const pop = gtk.Popover.new();\n";
+    out += "        gtk.Popover.setAutohide(pop, 1); // transient: click-outside dismisses (closed syncs `open` back)\n";
+    out += `        gtk.Popover.setPosition(pop, ndPositionFromString(propStr(props, "position") orelse ${zigDefaultStr(w, "position")}));\n`;
+    out += "        // Anchoring happens when the tree parent appends this node (see the\n";
+    out += "        // ndPopoverAttach structural guard); a create-time open waits there.\n";
+    out += `        if (propBool(props, "open") orelse ${dflt(w, "open")}) gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));\n`;
+    out += "        return pop.as(gtk.Widget);\n";
+  } else if (w.name === "Expander") {
+    out += `        const ex = gtk.Expander.new(dupeZ(propStr(props, "label") orelse ${zigDefaultStr(w, "label")}));\n`;
+    out += `        if (propBool(props, "expanded") orelse ${dflt(w, "expanded")}) gtk.Expander.setExpanded(ex, 1);\n`;
+    out += "        return ex.as(gtk.Widget);\n";
+  } else if (w.name === "StatusPage") {
+    out += "        const page = adw.StatusPage.new();\n";
+    out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(page, dupeZ(ic));\n";
+    out += `        adw.StatusPage.setTitle(page, dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
+    out += "        if (propStr(props, \"description\")) |d| adw.StatusPage.setDescription(page, dupeZ(d));\n";
+    out += "        // Multi children (action buttons) fan into one wrapping GtkBox set as\n";
+    out += "        // the page's single child — same move ToolbarView/SettingsGroup make.\n";
+    out += "        const box = gtk.Box.new(.vertical, 12);\n";
+    out += "        gtk.Widget.setHalign(box.as(gtk.Widget), .center);\n";
+    out += "        adw.StatusPage.setChild(page, box.as(gtk.Widget));\n";
+    out += "        return page.as(gtk.Widget);\n";
+  } else if (w.name === "ToastOverlay") {
+    out += "        const overlay = adw.ToastOverlay.new();\n";
+    out += "        return overlay.as(gtk.Widget);\n";
+  } else if (w.name === "DatePicker") {
+    out += "        // displayStyle \"field\" has no GTK backing yet — the inline calendar\n";
+    out += "        // renders for both styles (documented asymmetry; AppKit honors it).\n";
+    out += "        const cal = gtk.Calendar.new();\n";
+    out += "        if (propStr(props, \"value\")) |v| {\n";
+    out += "            if (ndDateKeyFromIso(v)) |key| ndCalendarSelectKey(cal, key);\n";
+    out += "        }\n";
+    out += "        ndCalendarSetLimits(cal, propStr(props, \"minDate\"), propStr(props, \"maxDate\"));\n";
+    out += "        return cal.as(gtk.Widget);\n";
+  } else if (w.name === "Table") {
+    out += "        return ndtable_gtk.create(props, dupeZ);\n";
+  } else if (w.name === "TreeView") {
+    out += "        return ndtree_gtk.create(props, dupeZ);\n";
+  } else if (w.name === "FontPicker") {
+    out += "        const dialog = gtk.FontDialog.new();\n";
+    out += "        const btn = gtk.FontDialogButton.new(dialog); // transfer-full: button owns the dialog\n";
+    out += `        const desc = pango.FontDescription.fromString(dupeZ(propStr(props, "value") orelse ${zigDefaultStr(w, "value")})); // Pango font description syntax is the canonical wire value\n`;
+    out += "        gtk.FontDialogButton.setFontDesc(btn, desc);\n";
+    out += "        pango.FontDescription.free(desc); // setFontDesc copies\n";
+    out += "        return btn.as(gtk.Widget);\n";
+  } else if (w.name === "Video") {
+    out += "        if (!ndVideoMediaAvailable()) {\n";
+    out += "            // GtkMediaFile's backend is a separate package on some distros\n";
+    out += "            // (e.g. gtk4-media-gstreamer) — degrade to a placeholder, like\n";
+    out += "            // WebView does without webkitgtk.\n";
+    out += "            std.debug.print(\"ND_WARN Video unavailable (no GTK media module; install the gstreamer GTK media backend); rendering placeholder label\\n\", .{});\n";
+    out += "            const label = gtk.Label.new(\"Video unavailable (GTK media module not installed)\");\n";
+    out += "            return label.as(gtk.Widget);\n";
+    out += "        }\n";
+    out += "        const video = gtk.Video.new();\n";
+    out += "        // A video is a content surface: expand like WebView does.\n";
+    out += "        gtk.Widget.setHexpand(video.as(gtk.Widget), 1);\n";
+    out += "        gtk.Widget.setVexpand(video.as(gtk.Widget), 1);\n";
+    out += `        gtk.Video.setAutoplay(video, @intFromBool(propBool(props, "autoplay") orelse ${dflt(w, "autoplay")}));\n`;
+    out += `        gtk.Video.setLoop(video, @intFromBool(propBool(props, "loop") orelse ${dflt(w, "loop")}));\n`;
+    out += "        // `controls` is accepted but ignored: GtkVideo's overlaid controls\n";
+    out += "        // have no toggle (AppKit's AVPlayerView honors it).\n";
+    out += "        if (propStr(props, \"src\")) |s| { if (s.len > 0) ndVideoSetSrc(video, dupeZ(s)); }\n";
+    out += "        return video.as(gtk.Widget);\n";
+  } else if (excludedOn(w, "linux")) {
+    out += `        // ND_PLATFORM_NOOP(${w.name}): not available on this platform — invisible empty box by design.\n`;
+    out += "        return gtk.Box.new(.vertical, 0).as(gtk.Widget);\n";
+  } else if (ZIG_STUB_WIDGETS.has(w.name)) {
+    out += `        // ND_STUB(${w.name}): placeholder — replace with the real GTK implementation.\n`;
+    out += "        return gtk.Box.new(.vertical, 0).as(gtk.Widget);\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M5b)`);
   }
@@ -1158,6 +1701,10 @@ function genZigCreateBody(w: Widget): string {
 }
 
 function genZigApplyBody(w: Widget, updProps: Prop[]): string {
+  // Table/TreeView carry objectList props whose parse/diff logic lives in the
+  // hand-written modules — one forwarding call covers every update key.
+  if (w.name === "Table") return "        ndtable_gtk.applyProps(widget, props, dupeZ);\n";
+  if (w.name === "TreeView") return "        ndtree_gtk.applyProps(widget, props, dupeZ);\n";
   let out = "";
   for (const p of updProps) {
     if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
@@ -1327,6 +1874,156 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "                nd_plugin.viewApplyProps(std.mem.span(@as([*:0]const u8, @ptrCast(raw))), widget, pj);\n";
       out += "            }\n";
       out += "        }\n";
+    } else if (w.name === "ToggleButton" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| {\n";
+      out += "            const btn = @as(*gtk.ToggleButton, @ptrCast(@alignCast(widget))).as(gtk.Button);\n";
+      out += "            if (gtk.Button.getChild(btn)) |child| {\n";
+      out += "                if (gobject.ext.isA(child, adw.ButtonContent)) {\n";
+      out += "                    // icon+label button: setLabel would replace the whole child\n";
+      out += "                    adw.ButtonContent.setLabel(@ptrCast(@alignCast(child)), dupeZ(l));\n";
+      out += "                } else gtk.Button.setLabel(btn, dupeZ(l));\n";
+      out += "            } else gtk.Button.setLabel(btn, dupeZ(l));\n";
+      out += "        }\n";
+    } else if (w.name === "ToggleButton" && p.name === "active") {
+      out += "        if (propBool(props, \"active\")) |a| {\n";
+      out += "            const tb: *gtk.ToggleButton = @ptrCast(@alignCast(widget));\n";
+      out += "            if ((gtk.ToggleButton.getActive(tb) != 0) != a) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.ToggleButton.setActive(tb, @intFromBool(a));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "SegmentedControl" && p.name === "selectedIndex") {
+      out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
+      out += "            const group: *adw.ToggleGroup = @ptrCast(@alignCast(widget));\n";
+      out += "            if (idx >= 0 and adw.ToggleGroup.getActive(group) != @as(c_uint, @intCast(idx))) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                adw.ToggleGroup.setActive(group, @intCast(idx));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "NumberInput" && p.name === "value") {
+      out += "        if (propFloat(props, \"value\")) |v| {\n";
+      out += "            const spin: *gtk.SpinButton = @ptrCast(@alignCast(widget));\n";
+      out += "            if (@abs(gtk.SpinButton.getValue(spin) - v) > 1e-9) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.SpinButton.setValue(spin, v);\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "LinkButton" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| gtk.Button.setLabel(@as(*gtk.LinkButton, @ptrCast(@alignCast(widget))).as(gtk.Button), dupeZ(l));\n";
+    } else if (w.name === "LinkButton" && p.name === "uri") {
+      out += "        if (propStr(props, \"uri\")) |u| gtk.LinkButton.setUri(@ptrCast(@alignCast(widget)), dupeZ(u));\n";
+    } else if (w.name === "LinkButton" && p.name === "visited") {
+      out += "        if (propBool(props, \"visited\")) |v| gtk.LinkButton.setVisited(@ptrCast(@alignCast(widget)), @intFromBool(v));\n";
+    } else if (w.name === "LinkButton" && p.name === "openExternal") {
+      out += "        if (propBool(props, \"openExternal\")) |oe| gobject.Object.setData(asObject(widget), \"nd-open-external\", if (oe) @as(?*anyopaque, @ptrFromInt(1)) else null);\n";
+    } else if (w.name === "LevelIndicator" && p.name === "value") {
+      out += "        if (propFloat(props, \"value\")) |v| gtk.LevelBar.setValue(@ptrCast(@alignCast(widget)), v);\n";
+    } else if (w.name === "LevelIndicator" && p.name === "warningValue") {
+      out += "        // warning/critical merge in one call (absent keys keep prior state).\n";
+      out += "        ndLevelBarApplyOffsets(@ptrCast(@alignCast(widget)), propFloat(props, \"warningValue\"), propFloat(props, \"criticalValue\"));\n";
+    } else if (w.name === "LevelIndicator" && p.name === "criticalValue") {
+      out += "        // handled together with warningValue above (ndLevelBarApplyOffsets merges both).\n";
+    } else if (w.name === "ColorPicker" && p.name === "value") {
+      out += "        if (propStr(props, \"value\")) |v| {\n";
+      out += "            const btn: *gtk.ColorDialogButton = @ptrCast(@alignCast(widget));\n";
+      out += "            var rgba: gdk.RGBA = undefined;\n";
+      out += "            if (gdk.RGBA.parse(&rgba, dupeZ(v)) != 0) {\n";
+      out += "                if (!ndRgbaClose(gtk.ColorDialogButton.getRgba(btn), &rgba)) {\n";
+      out += "                    blockEcho(asObject(widget));\n";
+      out += "                    gtk.ColorDialogButton.setRgba(btn, &rgba);\n";
+      out += "                    unblockEcho(asObject(widget));\n";
+      out += "                }\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "Banner" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| adw.Banner.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
+    } else if (w.name === "Banner" && p.name === "buttonLabel") {
+      out += "        if (propStr(props, \"buttonLabel\")) |bl| adw.Banner.setButtonLabel(@ptrCast(@alignCast(widget)), if (bl.len > 0) dupeZ(bl).ptr else null);\n";
+    } else if (w.name === "Banner" && p.name === "revealed") {
+      out += "        if (propBool(props, \"revealed\")) |r| adw.Banner.setRevealed(@ptrCast(@alignCast(widget)), @intFromBool(r));\n";
+    } else if (w.name === "MenuButton" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| gtk.MenuButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
+    } else if (w.name === "MenuButton" && p.name === "iconName") {
+      out += "        if (propStr(props, \"iconName\")) |ic| gtk.MenuButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+    } else if (w.name === "SplitButton" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| adw.SplitButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
+    } else if (w.name === "SplitButton" && p.name === "iconName") {
+      out += "        if (propStr(props, \"iconName\")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+    } else if (w.name === "Popover" && p.name === "open") {
+      out += "        if (propBool(props, \"open\")) |o| {\n";
+      out += "            const pop: *gtk.Popover = @ptrCast(@alignCast(widget));\n";
+      out += "            const up = gtk.Widget.getVisible(widget) != 0;\n";
+      out += "            if (o and !up) {\n";
+      out += "                if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)\n";
+      out += "                else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach\n";
+      out += "            } else if (!o and up) {\n";
+      out += "                blockEcho(asObject(widget)); // programmatic popdown: `closed` must not echo\n";
+      out += "                gtk.Popover.popdown(pop);\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "Popover" && p.name === "position") {
+      out += "        if (propStr(props, \"position\")) |pos| gtk.Popover.setPosition(@ptrCast(@alignCast(widget)), ndPositionFromString(pos));\n";
+    } else if (w.name === "Expander" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| gtk.Expander.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
+    } else if (w.name === "Expander" && p.name === "expanded") {
+      out += "        if (propBool(props, \"expanded\")) |e| {\n";
+      out += "            const ex: *gtk.Expander = @ptrCast(@alignCast(widget));\n";
+      out += "            if ((gtk.Expander.getExpanded(ex) != 0) != e) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.Expander.setExpanded(ex, @intFromBool(e));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "StatusPage" && p.name === "iconName") {
+      out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+    } else if (w.name === "StatusPage" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| adw.StatusPage.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
+    } else if (w.name === "StatusPage" && p.name === "description") {
+      out += "        if (propStr(props, \"description\")) |d| adw.StatusPage.setDescription(@ptrCast(@alignCast(widget)), dupeZ(d));\n";
+    } else if (w.name === "DatePicker" && p.name === "value") {
+      out += "        if (propStr(props, \"value\")) |v| {\n";
+      out += "            if (ndDateKeyFromIso(v)) |key| {\n";
+      out += "                const cal: *gtk.Calendar = @ptrCast(@alignCast(widget));\n";
+      out += "                if (ndCalendarDateKey(cal) != key) {\n";
+      out += "                    blockEcho(asObject(widget));\n";
+      out += "                    ndCalendarSelectKey(cal, key);\n";
+      out += "                    unblockEcho(asObject(widget));\n";
+      out += "                }\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "DatePicker" && p.name === "minDate") {
+      out += "        // min/max merge in one call (absent keys keep prior state).\n";
+      out += "        ndCalendarSetLimits(@ptrCast(@alignCast(widget)), propStr(props, \"minDate\"), propStr(props, \"maxDate\"));\n";
+    } else if (w.name === "DatePicker" && p.name === "maxDate") {
+      out += "        // handled together with minDate above (ndCalendarSetLimits merges both).\n";
+    } else if (w.name === "FontPicker" && p.name === "value") {
+      out += "        if (propStr(props, \"value\")) |v| {\n";
+      out += "            const btn: *gtk.FontDialogButton = @ptrCast(@alignCast(widget));\n";
+      out += "            const new_desc = pango.FontDescription.fromString(dupeZ(v));\n";
+      out += "            const same = if (gtk.FontDialogButton.getFontDesc(btn)) |cur| pango.FontDescription.equal(cur, new_desc) != 0 else false;\n";
+      out += "            if (!same) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                gtk.FontDialogButton.setFontDesc(btn, new_desc);\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
+      out += "            pango.FontDescription.free(new_desc); // setFontDesc copies\n";
+      out += "        }\n";
+    } else if (w.name === "Video" && p.name === "src") {
+      out += "        if (propStr(props, \"src\")) |s| {\n";
+      out += "            if (gobject.ext.isA(widget, gtk.Video)) ndVideoSetSrc(@ptrCast(@alignCast(widget)), dupeZ(s)); // placeholder label when no media module\n";
+      out += "        }\n";
+    } else if (w.name === "Video" && p.name === "loop") {
+      out += "        if (propBool(props, \"loop\")) |l| {\n";
+      out += "            if (gobject.ext.isA(widget, gtk.Video)) gtk.Video.setLoop(@ptrCast(@alignCast(widget)), @intFromBool(l));\n";
+      out += "        }\n";
+    } else if (excludedOn(w, "linux")) {
+      out += `        // ND_PLATFORM_NOOP(${w.name}): prop "${p.name}" is a no-op on this platform by design.\n`;
+    } else if (ZIG_STUB_WIDGETS.has(w.name)) {
+      out += `        // ND_STUB(${w.name}): prop "${p.name}" not applied yet — pending the real GTK implementation.\n`;
     } else {
       throw new Error(`no applyProps template for ${w.name}.${p.name} — add one when introducing it (M5b)`);
     }
@@ -1334,7 +2031,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "toastoverlay" | "table" | "treeview"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -1364,8 +2061,42 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.loadingChanged":      { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.backAvailable":       { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.forwardAvailable":    { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.loadProgress":        { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.loadFailed":          { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.newWindow":           { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.downloadRequested":   { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.javaScriptResult":    { signal: "",              target: "webview", cb: "", suppress: false },
   // NativeView events originate in the app plugin and are connected by the retained tree.
   "NativeView.nativeEvent":      { signal: "",              target: "nativeview", cb: "", suppress: false },
+  // Window dialog results fire from the async dialog callbacks wired inside
+  // hand-written src/gtk/dialogs.zig — connectEvents hands it node id + emit once.
+  "Window.alertResult":          { signal: "",              target: "windowdialogs", cb: "", suppress: false },
+  "Window.openFileResult":       { signal: "",              target: "windowdialogs", cb: "", suppress: false },
+  "Window.saveFileResult":       { signal: "",              target: "windowdialogs", cb: "", suppress: false },
+  "ToggleButton.toggled":        { signal: "toggled",          target: "widget", cb: "cbToggleButtonToggled", suppress: true },
+  "SegmentedControl.selectionChanged": { signal: "notify::active", target: "widget", cb: "cbToggleGroupActive", suppress: true },
+  "NumberInput.valueChanged":    { signal: "value-changed",    target: "widget", cb: "cbSpinValueChanged", suppress: true },
+  // activate-link fires ALWAYS; the native URI-open only runs when the
+  // openExternal prop is set (handler returns TRUE to suppress it otherwise).
+  "LinkButton.activate":         { signal: "activate-link",    target: "widget", cb: "cbLinkActivate", suppress: false },
+  "ColorPicker.colorChanged":    { signal: "notify::rgba",     target: "widget", cb: "cbColorRgba", suppress: true },
+  "Banner.buttonClicked":        { signal: "button-clicked",   target: "widget", cb: "cbBannerButtonClicked", suppress: false },
+  "SplitButton.clicked":         { signal: "clicked",          target: "widget", cb: "cbClicked", suppress: false },
+  "Popover.closed":              { signal: "closed",           target: "widget", cb: "cbPopoverClosed", suppress: true },
+  "Expander.toggled":            { signal: "notify::expanded", target: "widget", cb: "cbExpanderToggled", suppress: true },
+  "DatePicker.dateChanged":      { signal: "day-selected",     target: "widget", cb: "cbCalendarDaySelected", suppress: true },
+  "FontPicker.fontChanged":      { signal: "notify::font-desc", target: "widget", cb: "cbFontDesc", suppress: true },
+  // ToastOverlay / Table / TreeView events wire inside their hand-written
+  // src/gtk/ modules from one connect call each (webview.zig's pattern).
+  "ToastOverlay.toastButtonClicked": { signal: "",           target: "toastoverlay", cb: "", suppress: false },
+  "ToastOverlay.toastDismissed":     { signal: "",           target: "toastoverlay", cb: "", suppress: false },
+  "Table.selectionChanged":      { signal: "",              target: "table", cb: "", suppress: false },
+  "Table.rowActivated":          { signal: "",              target: "table", cb: "", suppress: false },
+  "Table.sortChanged":           { signal: "",              target: "table", cb: "", suppress: false },
+  "TreeView.selectionChanged":   { signal: "",              target: "treeview", cb: "", suppress: false },
+  "TreeView.rowActivated":       { signal: "",              target: "treeview", cb: "", suppress: false },
+  "TreeView.nodeExpanded":       { signal: "",              target: "treeview", cb: "", suppress: false },
+  "TreeView.nodeCollapsed":      { signal: "",              target: "treeview", cb: "", suppress: false },
 };
 
 const CALLBACK_BODIES: Record<string, string> = {
@@ -1446,6 +2177,102 @@ fn cbListActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) cal
     if (emit) |f| f(node_id, "rowActivated", .{ .index = gtk.ListBoxRow.getIndex(row) });
 }
 `,
+  cbToggleButtonToggled: `fn cbToggleButtonToggled(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const tb: *gtk.ToggleButton = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = gtk.ToggleButton.getActive(tb) != 0 });
+}
+`,
+  cbToggleGroupActive: `// notify:: handlers get (object, pspec, user_data).
+fn cbToggleGroupActive(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const group: *adw.ToggleGroup = @ptrCast(@alignCast(obj));
+    const active = adw.ToggleGroup.getActive(group);
+    if (active == std.math.maxInt(c_uint)) return; // GTK_INVALID_LIST_POSITION: no toggle active
+    if (emit) |f| f(node_id, "selectionChanged", .{ .index = @intCast(active) });
+}
+`,
+  cbSpinValueChanged: `fn cbSpinValueChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const spin: *gtk.SpinButton = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "valueChanged", .{ .value = gtk.SpinButton.getValue(spin) });
+}
+`,
+  cbLinkActivate: `/// activate-link: onActivate ALWAYS fires (payload = uri); returning TRUE
+/// suppresses GTK's portal-backed URI open, so the native open only runs when
+/// the app opted in via openExternal.
+fn cbLinkActivate(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) c_int {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const lb: *gtk.LinkButton = @ptrCast(@alignCast(obj));
+    const uri = std.mem.span(gtk.LinkButton.getUri(lb));
+    if (emit) |f| f(node_id, "activate", .{ .text = uri });
+    const open_external = gobject.Object.getData(obj, "nd-open-external") != null;
+    return if (open_external) 0 else 1;
+}
+`,
+  cbColorRgba: `// notify:: handlers get (object, pspec, user_data).
+fn cbColorRgba(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const btn: *gtk.ColorDialogButton = @ptrCast(@alignCast(obj));
+    var buf: [10]u8 = undefined;
+    if (emit) |f| f(node_id, "colorChanged", .{ .text = ndRgbaToHex(gtk.ColorDialogButton.getRgba(btn), &buf) });
+}
+`,
+  cbBannerButtonClicked: `fn cbBannerButtonClicked(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "buttonClicked", .{});
+}
+`,
+  cbPopoverClosed: `/// GtkPopover "closed" fires for BOTH user dismissal (click-outside/Esc) and
+/// programmatic popdown; the latter is blocked via the echo map (see the
+/// Popover \`open\` apply arm), so only genuine dismissals reach the app —
+/// which then flips its controlled \`open\` state back to false.
+fn cbPopoverClosed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "closed", .{});
+}
+`,
+  cbExpanderToggled: `// notify:: handlers get (object, pspec, user_data).
+fn cbExpanderToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const ex: *gtk.Expander = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = gtk.Expander.getExpanded(ex) != 0 });
+}
+`,
+  cbCalendarDaySelected: `/// day-selected covers clicks AND month navigation (both change the selected
+/// date). min/maxDate have no native GtkCalendar enforcement, so the clamp
+/// lives here: an out-of-range pick is re-selected to the nearest bound
+/// (echo-blocked — this very handler is the suppressible one) and the CLAMPED
+/// date is what the app hears.
+fn cbCalendarDaySelected(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const cal: *gtk.Calendar = @ptrCast(@alignCast(obj));
+    var key = ndCalendarDateKey(cal);
+    if (calendar_limits.get(@intFromPtr(cal))) |lim| {
+        var clamped: ?i64 = null;
+        if (lim.min) |m| { if (key < m) clamped = m; }
+        if (lim.max) |m| { if (key > m) clamped = m; }
+        if (clamped) |c| {
+            blockEcho(obj);
+            ndCalendarSelectKey(cal, c);
+            unblockEcho(obj);
+            key = c;
+        }
+    }
+    var buf: [16]u8 = undefined;
+    if (emit) |f| f(node_id, "dateChanged", .{ .text = ndIsoFromKey(key, &buf) });
+}
+`,
+  cbFontDesc: `// notify:: handlers get (object, pspec, user_data).
+fn cbFontDesc(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const btn: *gtk.FontDialogButton = @ptrCast(@alignCast(obj));
+    const desc = gtk.FontDialogButton.getFontDesc(btn) orelse return;
+    const str = pango.FontDescription.toString(desc); // owned char*
+    defer glib.free(str);
+    if (emit) |f| f(node_id, "fontChanged", .{ .text = std.mem.span(str) });
+}
+`,
 };
 
 // ListView's row-factory callbacks connect at create time (not via
@@ -1471,8 +2298,14 @@ function genZigEvents(s: Schema): string {
   for (const w of s.widgets) for (const e of w.events) {
     const key = `${w.name}.${e.name}`;
     const t = SIGNALS[key];
-    if (!t) throw new Error(`no signal template for event ${key} — add one when introducing it`);
-    if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview") continue; // custom connect, no GTK callback body
+    if (!t) {
+      // Stubbed / platform-excluded widgets may lack signal templates; their
+      // connect arms emit a marked no-op below instead of failing loud.
+      if (zigFallbackKind(w)) continue;
+      throw new Error(`no signal template for event ${key} — add one when introducing it`);
+    }
+    if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
+      || t.target === "windowdialogs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -1495,7 +2328,15 @@ function genZigEvents(s: Schema): string {
     first = false;
     let navConnected = false;
     for (const e of w.events) {
-      const t = SIGNALS[`${w.name}.${e.name}`]!;
+      const maybeT = SIGNALS[`${w.name}.${e.name}`];
+      if (!maybeT) {
+        // Guaranteed stubbed/excluded by the validation loop above.
+        out += zigFallbackKind(w) === "noop"
+          ? `        // ND_PLATFORM_NOOP(${w.name}): "${e.name}" never fires on this platform.\n`
+          : `        // ND_STUB(${w.name}): "${e.name}" event wiring pending the real GTK implementation.\n`;
+        continue;
+      }
+      const t = maybeT;
       if (t.target === "menuitem") {
         out += "        ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal\n";
         continue;
@@ -1516,6 +2357,35 @@ function genZigEvents(s: Schema): string {
         // All WebView events wire inside webview.zig from one connect call.
         if (!navConnected) {
           out += "        if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "windowdialogs") {
+        // All dialog result events wire inside dialogs.zig from one connect call.
+        if (!navConnected) {
+          out += "        if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "toastoverlay") {
+        if (!navConnected) {
+          out += "        if (emit) |f| ndtoast_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "table") {
+        if (!navConnected) {
+          out += "        if (emit) |f| ndtable_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "treeview") {
+        if (!navConnected) {
+          out += "        if (emit) |f| ndtree_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
         }
         continue;
@@ -1738,12 +2608,31 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   },
 };
 
+/** Structural no-op template for a stubbed / platform-excluded container:
+ *  children are created but never mounted into the placeholder (a Menu child
+ *  is not even a real GtkWidget, so blind box-packing would be UB). */
+function zigStubStructural(w: Widget, kind: "noop" | "stub"): StructuralTemplate {
+  const mark = kind === "noop"
+    ? `        // ND_PLATFORM_NOOP(${w.name}): children never mount on this platform.\n`
+    : `        // ND_STUB(${w.name}): child mounting pending the real GTK implementation.\n`;
+  return { append: () => mark, remove: () => mark };
+}
+
 /** Kind-aware container ops, generated per container template. Throws if a
- *  schema widget declares `container != null` but has no structural template. */
+ *  schema widget declares `container != null` but has no structural template
+ *  (stubbed / platform-excluded containers get marked no-op arms instead). */
 function genZigStructural(s: Schema): string {
   const containers = s.widgets.filter((w) => w.container !== null);
+  const resolved: Record<string, StructuralTemplate> = {};
   for (const w of containers) {
-    if (!STRUCTURAL[w.name]) throw new Error(`no structural template for container widget ${w.name} — add one when introducing it (M5b)`);
+    const t = STRUCTURAL[w.name];
+    if (t) {
+      resolved[w.name] = t;
+      continue;
+    }
+    const fb = zigFallbackKind(w);
+    if (!fb) throw new Error(`no structural template for container widget ${w.name} — add one when introducing it (M5b)`);
+    resolved[w.name] = zigStubStructural(w, fb);
   }
 
   let out = "";
@@ -1753,7 +2642,7 @@ function genZigStructural(s: Schema): string {
   for (const w of containers) {
     appendBodies += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, parent_kind, ${JSON.stringify(w.name)})) {\n`;
     first = false;
-    appendBodies += STRUCTURAL[w.name]!.append("child");
+    appendBodies += resolved[w.name]!.append("child");
   }
   if (!appendBodies.includes("dupeZ(")) out += "    _ = dupeZ;\n";
   out += appendBodies;
@@ -1767,11 +2656,11 @@ function genZigStructural(s: Schema): string {
   out += "    // null `before` degenerates to append everywhere (matches the M4 hand-written contract).\n";
   out += "    const b = before orelse return appendChild(parent, parent_kind, child, attached, dupeZ);\n";
   first = true;
-  const withInsert = containers.filter((w) => STRUCTURAL[w.name]!.insertBefore);
+  const withInsert = containers.filter((w) => resolved[w.name]!.insertBefore);
   for (const w of withInsert) {
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, parent_kind, ${JSON.stringify(w.name)})) {\n`;
     first = false;
-    out += STRUCTURAL[w.name]!.insertBefore!("child", "b");
+    out += resolved[w.name]!.insertBefore!("child", "b");
   }
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -1785,7 +2674,7 @@ function genZigStructural(s: Schema): string {
   for (const w of containers) {
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, parent_kind, ${JSON.stringify(w.name)})) {\n`;
     first = false;
-    out += STRUCTURAL[w.name]!.remove("child");
+    out += resolved[w.name]!.remove("child");
   }
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -2110,6 +2999,12 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            return unsafeBitCast(p, to: NSView.self)\n";
     out += "        }\n";
     out += "        return NSView()\n";
+  } else if (excludedOn(w, "macos")) {
+    out += `        // ND_PLATFORM_NOOP(${w.name}): not available on this platform — invisible empty view by design.\n`;
+    out += "        return FlippedView()\n";
+  } else if (SWIFT_STUB_WIDGETS.has(w.name)) {
+    out += `        // ND_STUB(${w.name}): placeholder — replace with the real AppKit implementation.\n`;
+    out += "        return FlippedView()\n";
   } else {
     throw new Error(`no create template for widget ${w.name} — add one when introducing it (M6b)`);
   }
@@ -2263,6 +3158,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let pj = propStr(props, "props"), let vk = propStr(props, "viewKind") {\n';
       out += "            nd_plugin_view_apply_props(vk, Unmanaged.passUnretained(view).toOpaque(), pj)\n";
       out += "        }\n";
+    } else if (excludedOn(w, "macos")) {
+      out += `        // ND_PLATFORM_NOOP(${w.name}): prop "${p.name}" is a no-op on this platform by design.\n`;
+    } else if (SWIFT_STUB_WIDGETS.has(w.name)) {
+      out += `        // ND_STUB(${w.name}): prop "${p.name}" not applied yet — pending the real AppKit implementation.\n`;
     } else {
       throw new Error(`no applyProps template for ${key} — add one when introducing it (M6b)`);
     }
@@ -2301,6 +3200,11 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.loadingChanged":      { selector: "webview", payload: "checked" },
   "WebView.backAvailable":       { selector: "webview", payload: "checked" },
   "WebView.forwardAvailable":    { selector: "webview", payload: "checked" },
+  "WebView.loadProgress":        { selector: "webview", payload: "value" },
+  "WebView.loadFailed":          { selector: "webview", payload: "data" },
+  "WebView.newWindow":           { selector: "webview", payload: "text" },
+  "WebView.downloadRequested":   { selector: "webview", payload: "data" },
+  "WebView.javaScriptResult":    { selector: "webview", payload: "data" },
   "NativeView.nativeEvent":      { selector: "nativeview", payload: "data" },
 };
 
@@ -2311,7 +3215,12 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
 function genSwiftEvents(s: Schema): string {
   for (const w of s.widgets) for (const e of w.events) {
     const key = `${w.name}.${e.name}`;
-    if (!SWIFT_SIGNALS[key]) throw new Error(`no signal template for event ${key} — add one when introducing it (M6b)`);
+    if (!SWIFT_SIGNALS[key]) {
+      // Stubbed / platform-excluded widgets may lack signal templates; their
+      // connect arms emit a marked no-op below instead of failing loud.
+      if (swiftFallbackKind(w)) continue;
+      throw new Error(`no signal template for event ${key} — add one when introducing it (M6b)`);
+    }
   }
 
   let out = "func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {\n";
@@ -2328,7 +3237,15 @@ function genSwiftEvents(s: Schema): string {
     first = false;
     let navConnected = false;
     for (const e of w.events) {
-      const t = SWIFT_SIGNALS[`${w.name}.${e.name}`]!;
+      const maybeT = SWIFT_SIGNALS[`${w.name}.${e.name}`];
+      if (!maybeT) {
+        // Guaranteed stubbed/excluded by the validation loop above.
+        out += swiftFallbackKind(w) === "noop"
+          ? `        // ND_PLATFORM_NOOP(${w.name}): "${e.name}" never fires on this platform.\n`
+          : `        // ND_STUB(${w.name}): "${e.name}" event wiring pending the real AppKit implementation.\n`;
+        continue;
+      }
+      const t = maybeT;
       if (t.selector === "menuitem") {
         out += "        ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher\n";
         continue;
@@ -2375,8 +3292,17 @@ function genSwiftCommands(s: Schema): string {
   const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
   let first = true;
   for (const w of withCommands) {
-    const body = SWIFT_COMMANDS[w.name];
-    if (!body) throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+    let body = SWIFT_COMMANDS[w.name];
+    if (!body) {
+      const fb = swiftFallbackKind(w);
+      if (fb === "noop") {
+        body = `        // ND_PLATFORM_NOOP(${w.name}): commands are no-ops on this platform.\n`;
+      } else if (fb === "stub") {
+        body = `        // ND_STUB(${w.name}): command dispatch pending the real AppKit implementation.\n        FileHandle.standardError.write("ND_STUB(${w.name}) widgetCommand \\(command) not implemented\\n".data(using: .utf8)!)\n`;
+      } else {
+        throw new Error(`no command template for widget ${w.name} — add one when introducing it (M14)`);
+      }
+    }
     out += `    ${first ? "if" : "} else if"} kind == ${JSON.stringify(w.name)} {\n`;
     out += body;
     first = false;
@@ -2714,10 +3640,28 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
  *  the same fail-loud contract as `genZigStructural`. Attached-prop values
  *  (`tabLabel`, `gridRow`/`gridColumn`/`gridRowSpan`/`gridColumnSpan`) are
  *  decoded from `attachedJson` up front so every arm can read them by name. */
+/** Structural no-op template for a stubbed / platform-excluded container —
+ *  AppKit peer of `zigStubStructural` (children are created but never mounted;
+ *  Menu children are NDMenuNodeView handles that must not enter the hierarchy). */
+function swiftStubStructural(w: Widget, kind: "noop" | "stub"): SwiftStructuralTemplate {
+  const mark = kind === "noop"
+    ? `        // ND_PLATFORM_NOOP(${w.name}): children never mount on this platform.\n`
+    : `        // ND_STUB(${w.name}): child mounting pending the real AppKit implementation.\n`;
+  return { append: () => mark, remove: () => mark };
+}
+
 function genSwiftStructural(s: Schema): string {
   const containers = s.widgets.filter((w) => w.container !== null);
+  const resolved: Record<string, SwiftStructuralTemplate> = {};
   for (const w of containers) {
-    if (!SWIFT_STRUCTURAL[w.name]) throw new Error(`no structural template for container widget ${w.name} — add one when introducing it (M6b)`);
+    const t = SWIFT_STRUCTURAL[w.name];
+    if (t) {
+      resolved[w.name] = t;
+      continue;
+    }
+    const fb = swiftFallbackKind(w);
+    if (!fb) throw new Error(`no structural template for container widget ${w.name} — add one when introducing it (M6b)`);
+    resolved[w.name] = swiftStubStructural(w, fb);
   }
 
   const attachedPrelude =
@@ -2735,7 +3679,7 @@ function genSwiftStructural(s: Schema): string {
   for (const w of containers) {
     out += `    ${first ? "if" : "} else if"} parentKind == ${JSON.stringify(w.name)} {\n`;
     first = false;
-    out += SWIFT_STRUCTURAL[w.name]!.append("child");
+    out += resolved[w.name]!.append("child");
   }
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -2748,11 +3692,11 @@ function genSwiftStructural(s: Schema): string {
   out += "    guard let before = before else { return ndAppendChild(parent, parentKind, child, attachedJson) }\n";
   out += attachedPrelude;
   first = true;
-  const withInsert = containers.filter((w) => SWIFT_STRUCTURAL[w.name]!.insertBefore);
+  const withInsert = containers.filter((w) => resolved[w.name]!.insertBefore);
   for (const w of withInsert) {
     out += `    ${first ? "if" : "} else if"} parentKind == ${JSON.stringify(w.name)} {\n`;
     first = false;
-    out += SWIFT_STRUCTURAL[w.name]!.insertBefore!("child", "before");
+    out += resolved[w.name]!.insertBefore!("child", "before");
   }
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -2766,7 +3710,7 @@ function genSwiftStructural(s: Schema): string {
   for (const w of containers) {
     out += `    ${first ? "if" : "} else if"} parentKind == ${JSON.stringify(w.name)} {\n`;
     first = false;
-    out += SWIFT_STRUCTURAL[w.name]!.remove("child");
+    out += resolved[w.name]!.remove("child");
   }
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -2783,7 +3727,8 @@ function genDocs(s: Schema): string {
   out += `Schema version: ${s.schemaVersion}. Generated from \`schema/widgets.json\`.\n\n`;
   for (const w of s.widgets) {
     out += `## ${w.name} (\`<${w.intrinsic}>\`)\n\n`;
-    if (w.stub) out += `> **v1 stub** — renders a placeholder Label; see M5b-D7.\n\n`;
+    if (w.stub) out += `> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.\n\n`;
+    if (w.platforms) out += `> **Platforms:** ${w.platforms.join(", ")} only — an invisible no-op elsewhere.\n\n`;
     out += `Automation role: \`${w.automation.role}\`. `;
     out += `Text source: ${w.automation.textFrom ? "`" + w.automation.textFrom + "`" : "none"}. `;
     out += `Children: ${w.container ? w.container.childModel : "none"}.\n\n`;
@@ -3192,6 +4137,21 @@ async function writeIfChanged(rel: string, content: string): Promise<void> {
 }
 
 const schema = (await Bun.file(resolve(ROOT, "schema/widgets.json")).json()) as Schema;
+// Every objectList `itemShape` must reference a declared top-level type, and
+// no widget prop may shadow a cross-cutting prop codegen injects into every
+// intrinsic (e.g. DatePicker's display style had to be `displayStyle`).
+{
+  const typeNames = new Set((schema.types ?? []).map((t) => t.name));
+  const reserved = new Set(["style", "cssClasses", "key", "ref", "children"]);
+  for (const w of schema.widgets) for (const p of w.props) {
+    if (p.itemShape && !typeNames.has(p.itemShape)) {
+      throw new Error(`${w.name}.${p.name}: itemShape ${JSON.stringify(p.itemShape)} is not declared in widgets.json "types"`);
+    }
+    if (reserved.has(p.name)) {
+      throw new Error(`${w.name}.${p.name}: ${JSON.stringify(p.name)} is a reserved cross-cutting prop name — pick another (e.g. displayStyle)`);
+    }
+  }
+}
 await writeIfChanged("packages/react/src/generated/intrinsics.ts", genIntrinsics(schema));
 await writeIfChanged("packages/react/src/generated/schema-meta.ts", genSchemaMeta(schema));
 await writeIfChanged("src/generated/widgets.zig", genZig(schema));

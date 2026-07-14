@@ -15,6 +15,11 @@ import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 import { NDP_VERSION } from "../packages/react/src/generated/protocol";
 import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "../packages/react/src/generated/protocol";
 
+interface PendingRequest {
+  resolve: (result: unknown) => void;
+  reject: (err: Error) => void;
+}
+
 const TRACE = process.env.NDP_TRACE === "1";
 
 export class Ndp {
@@ -39,6 +44,11 @@ export class Ndp {
   // Active host widget backend, learned from the helloAck ("gtk" | "appkit").
   // "unknown" until the handshake completes.
   private backendName = "unknown";
+  // systemRequest/systemResponse correlation (system capabilities API, M15):
+  // one entry per in-flight request, keyed by the id sent on the wire.
+  private pending = new Map<number, PendingRequest>();
+  private nextRequestId = 1;
+  private systemEventCb: ((channel: string, data: unknown) => void) | null = null;
 
   private constructor(socket: import("bun").Socket) {
     this.socket = socket;
@@ -60,6 +70,10 @@ export class Ndp {
           self.onData(chunk);
         },
         close() {
+          // A dying connection must not leave callers of request() awaiting
+          // forever; reject whatever is in flight before the process exits.
+          for (const call of self.pending.values()) call.reject(new Error("ndp connection closed"));
+          self.pending.clear();
           process.exit(0);
         },
         drain(sock) {
@@ -123,6 +137,14 @@ export class Ndp {
       throw new Error(`host error: ${msg.message} (expected ${msg.expected}, got ${msg.got})`);
     } else if (msg.type === "event") {
       this.eventCb?.(msg);
+    } else if (msg.type === "systemResponse") {
+      const call = this.pending.get(msg.id);
+      if (!call) return; // unknown/already-settled id — nothing to do
+      this.pending.delete(msg.id);
+      if (msg.ok) call.resolve(msg.result);
+      else call.reject(new Error(msg.errorMessage ?? "system request failed"));
+    } else if (msg.type === "systemEvent") {
+      this.systemEventCb?.(msg.channel, msg.data);
     }
     // "pong" carries no payload and needs no handling in M2.
   }
@@ -188,6 +210,26 @@ export class Ndp {
 
   onEvent(cb: (e: EventMsg) => void): void {
     this.eventCb = cb;
+  }
+
+  /// Sends a systemRequest for a native capability method (e.g.
+  /// "dialog.openFile") and resolves/rejects with the matching
+  /// systemResponse (correlated by id, settled in dispatch()). Rejects if
+  /// the connection closes before a reply arrives.
+  request(method: string, params: unknown): Promise<unknown> {
+    const id = this.nextRequestId++;
+    return new Promise<unknown>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.send({ type: "systemRequest", id, method, params: params ?? {} });
+    });
+  }
+
+  /// Registers the callback for host-originated systemEvent frames (app
+  /// activation/deactivation, OS open-url/open-file, notification clicks,
+  /// file drops). One callback for the connection's lifetime, same shape as
+  /// onEvent().
+  onSystemEvent(cb: (channel: string, data: unknown) => void): void {
+    this.systemEventCb = cb;
   }
 
   ping(): void {

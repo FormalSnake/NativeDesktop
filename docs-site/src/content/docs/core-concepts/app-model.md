@@ -24,8 +24,9 @@ function App(): React.ReactNode {
 await render(<App />);
 ```
 
-Every example today mounts exactly one `<window>`; multi-window trees aren't exercised or
-documented yet.
+An app can also mount more than one `<window>` at once — render several `<window>` roots (e.g. in a
+fragment) and each becomes an independent OS window. See [Multi-Window](/native-platform/multi-window/)
+for the details and for how to move a live widget between windows without reloading it.
 
 ## Chrome is declarative
 

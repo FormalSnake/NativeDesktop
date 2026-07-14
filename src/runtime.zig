@@ -3,6 +3,7 @@ const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const backend = @import("backend.zig").impl;
 const acl = @import("acl.zig");
+const plugin = @import("plugin.zig");
 const ndp_binary = @import("ndp_binary.zig");
 // The UI-thread marshal + crash-overlay chrome are vtable-only concerns (not
 // part of the comptime null|abi seam every backend implements) — the core
@@ -25,11 +26,61 @@ fn commitGate(a: *acl.Acl, batch: protocol.CommitBatch) ?[]const u8 {
     for (batch.ops) |op| {
         if (std.mem.eql(u8, op.op, "create")) {
             if (op.widget) |w| if (std.mem.eql(u8, w, "Window")) {
-                if (!a.isAllowed(0, "core:window.create")) return "core:window.create";
+                // Multi-window: gate each Window create against ITS OWN target
+                // window id (the node id being created), not a hardcoded 0, so a
+                // grants manifest can scope window.create per window. window-0
+                // grants still apply everywhere (Acl.isAllowed treats 0 as
+                // "all windows"), so the default policy is unchanged.
+                const wid = op.id orelse 0;
+                if (!a.isAllowed(wid, "core:window.create")) return "core:window.create";
             };
         }
     }
     return null;
+}
+
+/// Maps a systemRequest `method` to the `core:<group>` capability that gates
+/// it, or null for an unknown method (the caller answers ok=false rather than
+/// dispatching). Coarse per-group gating — one capability per capability
+/// family, not per method — matching how the ACL grants are written.
+fn systemMethodCapability(method: []const u8) ?[]const u8 {
+    if (std.mem.startsWith(u8, method, "dialog.")) return "core:dialog";
+    if (std.mem.eql(u8, method, "clipboard.readText")) return "core:clipboard.read";
+    if (std.mem.eql(u8, method, "clipboard.writeText")) return "core:clipboard.write";
+    if (std.mem.startsWith(u8, method, "notification.")) return "core:notification";
+    if (std.mem.startsWith(u8, method, "recent.")) return "core:recent";
+    if (std.mem.startsWith(u8, method, "credentials.")) return "core:credentials";
+    if (std.mem.startsWith(u8, method, "audio.")) return "core:audio";
+    return null;
+}
+
+/// Renders the reply frame JSON for an ACL-allowed pluginCommand (caller
+/// frees; null only on OOM): a `pluginResult` splicing the plugin's validated
+/// JSON, or an `error` frame when dispatch found no handler (unknown plugin/
+/// command or the handler failed) or the result was malformed. protocol.ts
+/// documents pluginResult as pluginCommand's reply, so every path must
+/// produce a frame — a silent drop strands the child's request.
+fn pluginCommandReplyJson(gpa: std.mem.Allocator, manager: *plugin.Manager, plugin_name: []const u8, command: []const u8, arg_json: []const u8) ?[]u8 {
+    const result = manager.dispatch(plugin_name, command, arg_json) orelse {
+        std.debug.print("ND_PLUGIN_NO_HANDLER plugin={s} command={s}\n", .{ plugin_name, command });
+        const msg = std.fmt.allocPrint(gpa, "no handler for plugin command {s}.{s}", .{ plugin_name, command }) catch return null;
+        defer gpa.free(msg);
+        return std.json.Stringify.valueAlloc(gpa, .{ .type = "error", .message = msg, .expected = @as(u32, 0), .got = @as(u32, 0) }, .{}) catch null;
+    };
+    defer std.c.free(result.ptr);
+    // The plugin ABI returns an arbitrary NUL-terminated C string; nothing on
+    // the plugin side guarantees it's well-formed JSON. Splicing it
+    // unvalidated into the frame would let a buggy plugin emit a structurally
+    // invalid wire frame (crashing the Bun child's JSON.parse) — validate
+    // first, degrade to the structured error frame on failure (never splice
+    // raw).
+    const validated = std.json.parseFromSlice(std.json.Value, gpa, result, .{}) catch {
+        std.debug.print("ND_PLUGIN_BAD_RESULT plugin={s} command={s}\n", .{ plugin_name, command });
+        return std.json.Stringify.valueAlloc(gpa, .{ .type = "error", .message = "plugin returned malformed result", .expected = @as(u32, 0), .got = @as(u32, 0) }, .{}) catch null;
+    };
+    defer validated.deinit();
+    std.debug.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ plugin_name, command });
+    return std.fmt.allocPrint(gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch null;
 }
 
 pub const Runtime = struct {
@@ -265,6 +316,8 @@ pub const Runtime = struct {
                 self.handlePluginCommand(bytes);
             } else if (std.mem.eql(u8, kind, "widgetCommand")) {
                 self.marshalWidgetCommand(bytes); // ownership transfers
+            } else if (std.mem.eql(u8, kind, "systemRequest")) {
+                self.handleSystemRequest(bytes); // frees bytes; marshals a dup'd job
             } else {
                 self.gpa.free(bytes);
             }
@@ -444,36 +497,112 @@ pub const Runtime = struct {
             self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
             return;
         }
-        // `ctx.plugin` is added by T10's nd_load_plugin wiring (src/abi.zig);
-        // guarded so this file compiles whether or not that field has landed
-        // yet in the parallel wave.
-        if (comptime !@hasField(@TypeOf(abi_backend.ctx.*), "plugin")) {
-            self.writeFrame(.{ .type = "error", .message = "no plugin loaded", .expected = @as(u32, 0), .got = @as(u32, 0) });
+        const arg_json = std.json.Stringify.valueAlloc(self.gpa, parsed.value.arg, .{}) catch return;
+        defer self.gpa.free(arg_json);
+        // Direct field access (no @hasField gate): a `plugins` rename must
+        // break the build here, not silently compile dispatch out.
+        const reply = pluginCommandReplyJson(self.gpa, &abi_backend.ctx.plugins, parsed.value.plugin, parsed.value.command, arg_json) orelse return;
+        defer self.gpa.free(reply);
+        self.writeRawJson(reply);
+    }
+
+    const SystemRequestJob = struct { rt: *Runtime, id: u32, method: [:0]u8, params: [:0]u8 };
+
+    /// Routes a `systemRequest {"id","method","params"}` NDP frame: resolves the
+    /// method's `core:<group>` capability, gates it on the same ACL the commit
+    /// gate uses, then marshals the (method, params) pair to the UI thread where
+    /// the backend's `system_request` vtable op runs it (dialogs, clipboard, …
+    /// touch native state, so unlike pluginCommand this can't run on the reader
+    /// thread). An unknown method or a denied capability answers immediately
+    /// with an ok=false systemResponse rather than dispatching — every request
+    /// gets exactly one reply (the backend later calls `nd_system_response` for
+    /// the dispatched ones).
+    fn handleSystemRequest(self: *Runtime, bytes: []u8) void {
+        defer self.gpa.free(bytes);
+        const parsed = std.json.parseFromSlice(protocol.SystemRequest, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch return;
+        defer parsed.deinit();
+        const req = parsed.value;
+        const cap = systemMethodCapability(req.method) orelse {
+            sendSystemResponse(req.id, false, "unknown method");
             return;
-        } else {
-            const manager = &abi_backend.ctx.plugins;
-            const arg_json = std.json.Stringify.valueAlloc(self.gpa, parsed.value.arg, .{}) catch return;
-            defer self.gpa.free(arg_json);
-            if (manager.dispatch(parsed.value.plugin, parsed.value.command, arg_json)) |result| {
-                defer std.c.free(result.ptr);
-                // The plugin ABI returns an arbitrary NUL-terminated C string;
-                // nothing on the plugin side guarantees it's well-formed JSON.
-                // Splicing it unvalidated into the frame would let a buggy
-                // plugin emit a structurally invalid wire frame (crashing the
-                // Bun child's JSON.parse) — validate first, degrade to the
-                // structured error frame on failure (never splice raw).
-                const validated = std.json.parseFromSlice(std.json.Value, self.gpa, result, .{}) catch {
-                    std.debug.print("ND_PLUGIN_BAD_RESULT plugin={s} command={s}\n", .{ parsed.value.plugin, parsed.value.command });
-                    self.writeFrame(.{ .type = "error", .message = "plugin returned malformed result", .expected = @as(u32, 0), .got = @as(u32, 0) });
-                    return;
-                };
-                defer validated.deinit();
-                std.debug.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ parsed.value.plugin, parsed.value.command });
-                const framed = std.fmt.allocPrint(self.gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch return;
-                defer self.gpa.free(framed);
-                self.writeRawJson(framed);
-            }
+        };
+        const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
+        if (!the_acl.isAllowed(0, cap)) {
+            std.debug.print("ND_ACL_DENY permission={s}\n", .{cap});
+            sendSystemResponse(req.id, false, "capability denied");
+            return;
         }
+        // `req.method`/`req.params` borrow from `bytes` (freed on return) —
+        // dupe both into a heap job before marshaling; `params` re-serializes
+        // the parsed value back to the JSON string the backend receives.
+        const params_json = std.json.Stringify.valueAlloc(self.gpa, req.params, .{}) catch return;
+        defer self.gpa.free(params_json);
+        const method_z = self.gpa.dupeZ(u8, req.method) catch return;
+        const params_z = self.gpa.dupeZ(u8, params_json) catch {
+            self.gpa.free(method_z);
+            return;
+        };
+        const job = self.gpa.create(SystemRequestJob) catch {
+            self.gpa.free(method_z);
+            self.gpa.free(params_z);
+            return;
+        };
+        job.* = .{ .rt = self, .id = req.id, .method = method_z, .params = params_z };
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &systemRequestOnUi, job);
+    }
+
+    fn systemRequestOnUi(data: ?*anyopaque) callconv(.c) void {
+        const job: *SystemRequestJob = @ptrCast(@alignCast(data.?));
+        const self = job.rt;
+        defer {
+            self.gpa.free(job.method);
+            self.gpa.free(job.params);
+            self.gpa.destroy(job);
+        }
+        abi_backend.vtable.system_request(abi_backend.ctx, job.id, job.method.ptr, job.params.ptr);
+    }
+
+    /// backend -> core result channel for a dispatched systemRequest
+    /// (`nd_system_response`, abi.zig routes here), correlated by `id`. ok=true
+    /// splices the backend's JSON `result` verbatim (structurally typed, like
+    /// pluginResult) after validating it parses — a malformed result degrades
+    /// to an ok=false "backend returned malformed result" reply rather than a
+    /// broken wire frame. ok=false carries `json` as the `errorMessage` string
+    /// (the failure field is `errorMessage`, not `error`, since the generated
+    /// host struct can't name a Zig keyword).
+    pub fn sendSystemResponse(id: u32, ok: bool, json: []const u8) void {
+        const self = singleton orelse return;
+        if (ok) {
+            const validated = std.json.parseFromSlice(std.json.Value, self.gpa, json, .{}) catch {
+                std.debug.print("ND_SYSTEM_BAD_RESULT id={d}\n", .{id});
+                return sendSystemResponse(id, false, "backend returned malformed result");
+            };
+            validated.deinit();
+            const frame = std.fmt.allocPrint(self.gpa, "{{\"type\":\"systemResponse\",\"id\":{d},\"ok\":true,\"result\":{s}}}", .{ id, json }) catch return;
+            defer self.gpa.free(frame);
+            self.writeRawJson(frame);
+        } else {
+            self.writeFrameOpts(protocol.SystemResponse{ .id = id, .ok = false, .errorMessage = json }, .{ .emit_null_optional_fields = false });
+        }
+    }
+
+    /// backend -> core app-level event channel (`nd_system_event`, abi.zig
+    /// routes here): validates `data_json` parses, JSON-escapes `channel`, and
+    /// splices `{"type":"systemEvent","channel":<chan>,"data":<data>}` onto the
+    /// wire. A malformed payload is dropped with a diagnostic rather than
+    /// corrupting the frame.
+    pub fn sendSystemEvent(channel: []const u8, data_json: []const u8) void {
+        const self = singleton orelse return;
+        const validated = std.json.parseFromSlice(std.json.Value, self.gpa, data_json, .{}) catch {
+            std.debug.print("ND_SYSTEM_BAD_EVENT channel={s}\n", .{channel});
+            return;
+        };
+        validated.deinit();
+        const chan = std.json.Stringify.valueAlloc(self.gpa, channel, .{}) catch return;
+        defer self.gpa.free(chan);
+        const frame = std.fmt.allocPrint(self.gpa, "{{\"type\":\"systemEvent\",\"channel\":{s},\"data\":{s}}}", .{ chan, data_json }) catch return;
+        defer self.gpa.free(frame);
+        self.writeRawJson(frame);
     }
 
     /// Routes a `widgetCommand {"nodeId","command","arg"}` NDP frame. Unlike
@@ -508,16 +637,42 @@ pub const Runtime = struct {
             return;
         }
         const cmd = parsed.value;
+        // Reserved sentinel command (peer of nd_emit_event's "restart"): the
+        // app's `moveNode()` rides the widgetCommand frame to request a
+        // widget-preserving cross-window move rather than a per-widget schema
+        // command, so no protocol/schema change is needed. `arg` carries the
+        // target `{parent, before?}` node ids.
+        if (std.mem.eql(u8, cmd.command, "__ndReparent")) {
+            handleReparent(self.tree, cmd.nodeId, cmd.arg);
+            return;
+        }
         const widget = self.tree.get(cmd.nodeId) orelse {
             std.debug.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
             return;
         };
         const meta = self.tree.metaGet(cmd.nodeId);
         const kind = if (meta) |m| m.widget_type else "";
-        if (meta) |m| {
-            if (m.view_kind) |view_kind| backend.nativeViewCommand(view_kind, widget, cmd.command, cmd.arg) else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
-        } else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
+        const view_kind = if (meta) |m| m.view_kind else null;
+        if (view_kind) |vk| backend.nativeViewCommand(vk, widget, cmd.command, cmd.arg) else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
         std.debug.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
+    }
+
+    /// Decodes the `{parent, before?}` arg of a `"__ndReparent"` widgetCommand
+    /// and drives the widget-preserving cross-window move (`Tree.reparent`). A
+    /// missing/malformed parent id drops the move rather than crashing the UI
+    /// thread — same defensive posture as the rest of the command path.
+    fn handleReparent(tree: *Tree, child_id: u32, arg: std.json.Value) void {
+        if (arg != .object) return;
+        const parent_v = arg.object.get("parent") orelse return;
+        const parent_id: u32 = switch (parent_v) {
+            .integer => std.math.cast(u32, parent_v.integer) orelse return,
+            else => return,
+        };
+        const before_id: ?u32 = if (arg.object.get("before")) |b| switch (b) {
+            .integer => std.math.cast(u32, b.integer),
+            else => null,
+        } else null;
+        tree.reparent(child_id, parent_id, before_id);
     }
 
     fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {
@@ -560,6 +715,28 @@ test "commitGate denies window.create without grant, allows core:commit" {
     try std.testing.expectEqualStrings("core:window.create", commitGate(&strict, batch).?);
 }
 
+test "commitGate keys window.create by the target window id (per-window grant)" {
+    // A restrictive ACL that grants window.create to window 5 ONLY (not in the
+    // global default — the default policy would otherwise grant it everywhere).
+    // Creating window 5 is allowed; creating window 7 is denied. Proves the gate
+    // keys on each Window create op's own node id, not a hardcoded 0.
+    var acl_scoped = acl.Acl{ .arena = std.heap.ArenaAllocator.init(std.testing.allocator) };
+    defer acl_scoped.deinit();
+    const a = acl_scoped.arena.allocator();
+    _ = acl_scoped.default_perms.put(a, "core:commit", {}) catch {};
+    const gop = acl_scoped.per_window.getOrPut(a, 5) catch unreachable;
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+    _ = gop.value_ptr.put(a, "core:window.create", {}) catch {};
+
+    var ops5 = [_]protocol.Op{.{ .op = "create", .id = 5, .widget = "Window" }};
+    const batch5 = protocol.CommitBatch{ .commitId = 0, .generation = 0, .ops = &ops5 };
+    try std.testing.expect(commitGate(&acl_scoped, batch5) == null); // window 5 granted
+
+    var ops7 = [_]protocol.Op{.{ .op = "create", .id = 7, .widget = "Window" }};
+    const batch7 = protocol.CommitBatch{ .commitId = 0, .generation = 0, .ops = &ops7 };
+    try std.testing.expectEqualStrings("core:window.create", commitGate(&acl_scoped, batch7).?); // window 7 denied
+}
+
 test "plugin result JSON validation: the handlePluginCommand guard accepts well-formed JSON and rejects garbage" {
     // Mirrors the exact predicate handlePluginCommand runs on a plugin's
     // dispatch() result before splicing it into the pluginResult frame
@@ -573,4 +750,30 @@ test "plugin result JSON validation: the handlePluginCommand guard accepts well-
     try std.testing.expectError(error.SyntaxError, std.json.parseFromSlice(std.json.Value, gpa, "not json", .{}));
     try std.testing.expectError(error.UnexpectedEndOfInput, std.json.parseFromSlice(std.json.Value, gpa, "{\"truncated\":", .{}));
     try std.testing.expectError(error.UnexpectedEndOfInput, std.json.parseFromSlice(std.json.Value, gpa, "", .{}));
+}
+
+test "pluginCommand dispatch miss still answers with an error frame naming the command" {
+    const gpa = std.testing.allocator;
+    var manager = plugin.Manager.init(gpa, null, null);
+    defer manager.deinit();
+    // Nothing loaded (same null dispatch as a typo'd plugin/command name):
+    // the child must still get a reply frame, never silence.
+    const reply = pluginCommandReplyJson(gpa, &manager, "hello", "greet", "{}").?;
+    defer gpa.free(reply);
+    try std.testing.expect(std.mem.indexOf(u8, reply, "\"type\":\"error\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, reply, "hello.greet") != null);
+}
+
+test "systemMethodCapability maps each capability group and denies unknown methods" {
+    try std.testing.expectEqualStrings("core:dialog", systemMethodCapability("dialog.openFile").?);
+    try std.testing.expectEqualStrings("core:clipboard.read", systemMethodCapability("clipboard.readText").?);
+    try std.testing.expectEqualStrings("core:clipboard.write", systemMethodCapability("clipboard.writeText").?);
+    try std.testing.expectEqualStrings("core:notification", systemMethodCapability("notification.show").?);
+    try std.testing.expectEqualStrings("core:recent", systemMethodCapability("recent.add").?);
+    try std.testing.expectEqualStrings("core:credentials", systemMethodCapability("credentials.get").?);
+    try std.testing.expectEqualStrings("core:audio", systemMethodCapability("audio.play").?);
+    // The clipboard split is per-method: only the two named methods map.
+    try std.testing.expect(systemMethodCapability("clipboard.clear") == null);
+    try std.testing.expect(systemMethodCapability("unknown.method") == null);
+    try std.testing.expect(systemMethodCapability("") == null);
 }

@@ -1,11 +1,10 @@
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <string.h>
-#include "nd_plugin.h"
+#include "nd_native_gtk.h"
 
 typedef struct {
-  nd_plugin_registry* registry;
-  uint32_t node_id;
+  nd_gtk_view_state nd;
   GtkWidget* area;
   double r, g, b;
 } ColorView;
@@ -22,12 +21,14 @@ static void draw(GtkDrawingArea* area, cairo_t* cr, int width, int height, gpoin
   cairo_set_source_rgb(cr, s->r, s->g, s->b); cairo_rectangle(cr, 0, 0, width, height); cairo_fill(cr);
 }
 static void clicked(GtkGestureClick* gesture, int count, double x, double y, gpointer data) {
-  ColorView* s = data; (void)gesture; (void)count; (void)x; (void)y;
-  if (s->registry && s->registry->emit_event) s->registry->emit_event(s->registry, s->node_id, "pressed", "{\"source\":\"gtk\"}");
+  ColorView* s = data; (void)gesture; (void)count;
+  char payload[64];
+  g_snprintf(payload, sizeof payload, "{\"source\":\"gtk\",\"x\":%d,\"y\":%d}", (int)x, (int)y);
+  nd_gtk_emit(&s->nd, "pressed", payload);
 }
 static void* create_view(const char* props) {
   ColorView* s = calloc(1, sizeof(*s)); if (!s) return NULL;
-  s->registry = host_registry; parse_color(s, props);
+  s->nd.registry = host_registry; parse_color(s, props);
   s->area = gtk_drawing_area_new(); gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(s->area), 320); gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(s->area), 200);
   g_object_set_data(G_OBJECT(s->area), "nd-color-state", s);
   gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(s->area), draw, s, NULL);
@@ -35,7 +36,7 @@ static void* create_view(const char* props) {
   return s->area;
 }
 static void apply_props(void* view, const char* props) { ColorView* s = g_object_get_data(G_OBJECT(view), "nd-color-state"); if (s) { parse_color(s, props); gtk_widget_queue_draw(view); } }
-static void connect_view(void* view, uint32_t node_id) { ColorView* s = g_object_get_data(G_OBJECT(view), "nd-color-state"); if (s) s->node_id = node_id; }
+static void connect_view(void* view, uint32_t node_id) { ColorView* s = g_object_get_data(G_OBJECT(view), "nd-color-state"); if (s) nd_gtk_connect_state(&s->nd, host_registry, node_id); }
 static void command_view(void* view, const char* command, const char* arg) {
   (void)arg;
   ColorView* s = g_object_get_data(G_OBJECT(view), "nd-color-state");

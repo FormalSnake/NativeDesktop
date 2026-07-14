@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export interface NativeBuildCommand {
@@ -16,8 +16,32 @@ export interface NativePluginConfig {
   build?: NativeBuildCommand | Partial<Record<"darwin" | "linux", NativeBuildCommand>>;
 }
 
+export interface FileAssociation {
+  /** Extension without the dot, e.g. "md". */
+  ext: string;
+  /** Human-readable document type name. */
+  name?: string;
+  /** e.g. "text/markdown" — drives the Linux .desktop MimeType entry. */
+  mimeType?: string;
+  /** macOS CFBundleTypeRole. Defaults to "editor". */
+  role?: "editor" | "viewer";
+}
+
+export interface UrlScheme {
+  scheme: string;
+  name?: string;
+}
+
+export interface AppIdentity {
+  /** Reverse-DNS bundle id override. */
+  id?: string;
+  fileAssociations?: FileAssociation[];
+  urlSchemes?: UrlScheme[];
+}
+
 export interface NativeDesktopConfig {
   native?: { plugins?: NativePluginConfig[] };
+  app?: AppIdentity;
 }
 
 export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig { return config; }
@@ -25,40 +49,82 @@ export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig {
 export async function loadConfig(cwd = process.cwd()): Promise<NativeDesktopConfig> {
   const path = resolve(cwd, "nativedesktop.config.ts");
   if (!existsSync(path)) return {};
-  const mod = await import(`${pathToFileURL(path).href}?t=${statSync(path).mtimeMs}`);
-  return (mod.default ?? mod.config ?? {}) as NativeDesktopConfig;
+  const mod = await import(pathToFileURL(path).href);
+  return (mod.default ?? {}) as NativeDesktopConfig;
 }
 
 export async function buildNativePlugins(config: NativeDesktopConfig, cwd = process.cwd()): Promise<string[]> {
   const platform = process.platform;
   if (platform !== "darwin" && platform !== "linux") return [];
-  const outputs: string[] = [];
+  const jobs: { output: string; build?: NativeBuildCommand }[] = [];
   for (const plugin of config.native?.plugins ?? []) {
-    const output = resolve(cwd, plugin[platform] ?? plugin.path ?? "");
-    if (!output || output === cwd) throw new Error("nd: native plugin requires path, darwin, or linux output");
+    const declared = plugin[platform] ?? plugin.path;
+    if (!declared) {
+      if (!plugin.path && !plugin.darwin && !plugin.linux) throw new Error("nd: native plugin requires path, darwin, or linux output");
+      console.error(`nd: skipping native plugin (no ${platform} output)`);
+      continue;
+    }
+    const output = resolve(cwd, declared);
     const configured = plugin.build;
     const build = configured && "command" in configured
       ? configured as NativeBuildCommand
       : (configured as Partial<Record<"darwin" | "linux", NativeBuildCommand>> | undefined)?.[platform];
-    if (build && needsBuild(output, ["nativedesktop.config.ts", ...(build.inputs ?? [])], cwd)) {
-      const proc = Bun.spawn(build.command, { cwd, env: process.env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-      const status = await proc.exited;
-      if (status !== 0) throw new Error(`nd: native build failed (${build.command.join(" ")})`);
-    }
+    const stale = build && needsBuild(output, ["nativedesktop.config.ts", ...(build.inputs ?? [])], cwd);
+    jobs.push({ output, build: stale ? build : undefined });
+  }
+  const pending = jobs.filter((job) => job.build);
+  if (pending.length) {
+    const env = buildCommandEnv(cwd, platform);
+    await Promise.all(pending.map(async ({ build }) => {
+      const proc = Bun.spawn(build!.command, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, status] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      if (out) process.stdout.write(out);
+      if (err) process.stderr.write(err);
+      if (status !== 0) throw new Error(`nd: native build failed (${build!.command.join(" ")})`);
+    }));
+  }
+  const outputs: string[] = [];
+  for (const { output } of jobs) {
     if (!existsSync(output)) throw new Error(`nd: native plugin output not found: ${output}`);
     outputs.push(output);
   }
   return outputs;
 }
 
+/** Env for plugin build commands: on darwin, scrub Nix/SDK overrides that break
+ * xcrun/swiftc and pin DEVELOPER_DIR to the selected Xcode; everywhere, expose
+ * the installed @nativedesktop/native package root as ND_NATIVE_PACKAGE. */
+function buildCommandEnv(cwd: string, platform: "darwin" | "linux"): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  if (platform === "darwin") {
+    delete env.SDKROOT;
+    delete env.DEVELOPER_SDK_DIR;
+    delete env.NIX_CFLAGS_COMPILE;
+    delete env.NIX_LDFLAGS;
+    // xcode-select -p echoes an inherited DEVELOPER_DIR back, so query with it
+    // cleared to read the machine's actual selection.
+    const xcode = Bun.spawnSync(["xcode-select", "-p"], { env: { ...env, DEVELOPER_DIR: undefined } });
+    if (xcode.exitCode === 0) env.DEVELOPER_DIR = xcode.stdout.toString().trim();
+  }
+  try {
+    env.ND_NATIVE_PACKAGE = dirname(Bun.resolveSync("@nativedesktop/native/package.json", cwd));
+  } catch {
+    // App has no @nativedesktop/native dependency — leave the variable unset.
+  }
+  return env;
+}
+
 function needsBuild(output: string, inputs: string[], cwd: string): boolean {
+  const resolved = inputs.map((input) => resolve(cwd, input));
+  for (const input of resolved) {
+    if (!existsSync(input)) throw new Error(`nd: native build input not found: ${input}`);
+  }
   if (!existsSync(output)) return true;
   const outputTime = statSync(output).mtimeMs;
-  return inputs.some((input) => newestMtime(resolve(cwd, input)) > outputTime);
+  return resolved.some((input) => newestMtime(input) > outputTime);
 }
 
 function newestMtime(path: string): number {
-  if (!existsSync(path)) return 0;
   const stat = statSync(path);
   if (!stat.isDirectory()) return stat.mtimeMs;
   const glob = new Bun.Glob("**/*");

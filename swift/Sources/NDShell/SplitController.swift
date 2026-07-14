@@ -46,6 +46,40 @@ func ndLiveContentView() -> NSView? {
     return gWindow?.contentViewController?.view ?? gWindow?.contentView
 }
 
+/// The NSWindow a Window node's handle belongs to — the per-window peer of the
+/// `gWindow` global. A freshly-created Window's handle (its content FlippedView)
+/// is still `contentView`, so `.window` resolves directly; once a SplitView
+/// takes over as contentViewController that view is orphaned (`.window` == nil),
+/// so fall back to the create-time registry (`ndContentToWindow`, keyed by the
+/// handle's identity, populated by `gWindow`'s observer in main.swift) and
+/// finally the single-window `gWindow`.
+func ndWindow(for handle: NSView) -> NSWindow? {
+    return handle.window ?? ndContentToWindow[ObjectIdentifier(handle)] ?? gWindow
+}
+
+/// The CURRENT live content view of a specific `NSWindow` (the split's
+/// `splitView` once one took over, else the content VC's view / contentView) —
+/// the window-keyed core of `ndLiveContentView()` and `ndLiveContentView(for:)`.
+/// Automation's `node_bounds` resolves each widget's OWN window through this so a
+/// widget living in window B reports bounds in window B's space, not the single
+/// global window's.
+func ndLiveContentView(ofWindow win: NSWindow?) -> NSView? {
+    guard let win else { return nil }
+    if let split = win.contentViewController as? NSSplitViewController {
+        return split.splitView
+    }
+    return win.contentViewController?.view ?? win.contentView
+}
+
+/// Per-window peer of `ndLiveContentView()` for the multi-window reconstruction
+/// path (src/tree.zig's `resolveWindow` -> Backend.swift's `resolve_window`):
+/// resolves a Window node's handle to the CURRENT live content of the window it
+/// belongs to (which differs from the handle once a SplitView took over — same
+/// rationale as `ndLiveContentView`).
+func ndLiveContentView(for handle: NSView) -> NSView? {
+    return ndLiveContentView(ofWindow: ndWindow(for: handle))
+}
+
 /// Wraps a pane's content in a flipped plain-NSView host pinned below the
 /// safe area (generated SplitView append/insertBefore arms). The
 /// NSSplitViewItem supplies the sidebar material/glass BEHIND this host, but

@@ -2,6 +2,12 @@
   "name": "@nativedesktop/native",
   "version": "0.1.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/native"
+  },
+  "publishConfig": { "access": "public" },
   "files": ["include", "macos", "linux"],
   "exports": {
     "./include/nd.h": "./include/nd.h",

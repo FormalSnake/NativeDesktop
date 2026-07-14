@@ -16,24 +16,20 @@ private final class OverlayPanel: NSView {
 // marshals via vtable.marshal_async before calling show_overlay), so this
 // module-scope state is safe in practice — same `nonisolated(unsafe)`
 // reasoning as main.swift's `gVTable`/`gCtx`/`gWindow`.
-nonisolated(unsafe) private var overlayPanel: OverlayPanel?
+//
+// One panel per window (multi-window): a JS crash is the single Bun process
+// dying, so every window loses its live UI at once — the overlay paints on ALL
+// open windows, and clearing removes every panel.
+nonisolated(unsafe) private var overlayPanels: [OverlayPanel] = []
 
 nonisolated(unsafe) private let isDevMode: Bool = {
     ProcessInfo.processInfo.environment["ND_DEV"] == "1"
 }()
 
-func ndShowOverlay(_ message: String) {
-    // M11 Phase C (Risk 1): resolve the LIVE content — see
-    // SplitController.swift's ndLiveContentView for the full rationale.
-    guard let content = ndLiveContentView() else { return }
-    if message.isEmpty {
-        overlayPanel?.removeFromSuperview()
-        overlayPanel = nil
-        return
-    }
-    // Replace any existing panel rather than stacking a second one.
-    overlayPanel?.removeFromSuperview()
-
+/// Builds a crash panel sized to `content` and adds it as `content`'s subview.
+/// Nonisolated like `ndShowOverlay` itself (the core calls show_overlay inside
+/// `MainActor.assumeIsolated`, so it is on the UI thread at runtime).
+private func addOverlayPanel(to content: NSView, message: String) {
     let panel = OverlayPanel(frame: content.bounds)
     panel.autoresizingMask = [.width, .height]
     panel.wantsLayer = true
@@ -67,9 +63,31 @@ func ndShowOverlay(_ message: String) {
     }
 
     content.addSubview(panel)
-    overlayPanel = panel
-    // Same marker + format as the GTK embedder (src/gtk/overlay.zig:103) —
-    // the kill9-equivalent Mac leg greps for it.
+    overlayPanels.append(panel)
+}
+
+func ndShowOverlay(_ message: String) {
+    // Replace any existing panels rather than stacking (empty message = clear).
+    for panel in overlayPanels { panel.removeFromSuperview() }
+    overlayPanels.removeAll()
+    if message.isEmpty { return }
+
+    // Paint on every app window's LIVE content (see ndLiveContentView for the
+    // resolution rationale). `ndContentToWindow`'s values are the app's
+    // <window> nodes; dedup by identity and skip any that have gone away.
+    var seen = Set<ObjectIdentifier>()
+    for win in ndContentToWindow.values {
+        guard seen.insert(ObjectIdentifier(win)).inserted else { continue }
+        guard let content = ndLiveContentView(ofWindow: win) else { continue }
+        addOverlayPanel(to: content, message: message)
+    }
+    // Fallback for the pre-registry / single-window path: if nothing resolved
+    // through the registry, paint on the current global content.
+    if overlayPanels.isEmpty, let content = ndLiveContentView() {
+        addOverlayPanel(to: content, message: message)
+    }
+    // Same marker + format as the GTK embedder (src/gtk/overlay.zig) — the
+    // kill9-equivalent Mac leg greps for it.
     FileHandle.standardError.write("ND_OVERLAY_SHOWN dev=\(isDevMode)\n".data(using: .utf8)!)
 }
 

@@ -1,10 +1,12 @@
 import { DiscreteEventPriority, ContinuousEventPriority, DefaultEventPriority } from "react-reconciler/constants";
 import { nextNodeId } from "./ids.ts";
 import { Batch, NodeRegistry, type Handler } from "./ops.ts";
-import { intrinsicToName, widgetEvents, handlerPropNames } from "./generated/schema-meta.ts";
+import { intrinsicToName, widgetEvents, handlerPropNames, widgetPlatforms } from "./generated/schema-meta.ts";
 import type { WidgetType } from "./generated/intrinsics.ts";
 import { validateStyle } from "./style-validate.ts";
 import { validateCssClasses } from "./css-classes-validate.ts";
+import { isHot } from "./hmr.ts";
+import { Platform } from "./platform.ts";
 
 export type { WidgetType };
 
@@ -71,6 +73,24 @@ export function setPriorityFor(kind: "discrete" | "continuous" | "default"): voi
   currentUpdatePriority = kind === "discrete" ? DiscreteEventPriority : kind === "continuous" ? ContinuousEventPriority : DefaultEventPriority;
 }
 
+const PLATFORM_LABEL: Record<"macos" | "linux", string> = { macos: "macOS", linux: "Linux" };
+
+// One-time-per-type dev warning when an intrinsic mounts on a platform its
+// schema entry doesn't list (e.g. <trayitem> on linux) — it's not an error,
+// the widget just renders as an invisible no-op there (see schema-meta's
+// widgetPlatforms doc comment), but silently doing nothing is easy to miss.
+// Gated on isHot() (ND_DEV=1, set only by `nd dev` — see hmr.ts) so a `nd
+// build` release never pays for or prints this check.
+const warnedPlatformMismatch = new Set<WidgetType>();
+function checkPlatform(type: WidgetType): void {
+  if (!isHot() || warnedPlatformMismatch.has(type)) return;
+  const allowed = widgetPlatforms[type];
+  if (!allowed || (allowed as readonly string[]).includes(Platform.os)) return;
+  warnedPlatformMismatch.add(type);
+  const label = allowed.map((p) => PLATFORM_LABEL[p]).join("/");
+  console.warn(`<${type}> is ${label}-only; it renders nothing on ${Platform.os} — gate with Platform.os.`);
+}
+
 export const hostConfig = {
   supportsMutation: true,
   supportsPersistence: false,
@@ -87,9 +107,15 @@ export const hostConfig = {
   prepareForCommit: () => null,
   resetAfterCommit: () => {}, // renderer overrides via wrapper; see renderer.ts
   clearContainer: () => {},
+  // Required once createPortal is used (renderer.ts's moveNode mechanism): the
+  // portal's off-window pool container needs no pre-mount preparation here —
+  // its children are created as detached widgets and only attached to a window
+  // later by the host-level reparent (Tree.reparent).
+  preparePortalMount: () => {},
 
   // ---- render phase: PURE, no socket, no host widgets ----
   createInstance(type: WidgetType, props: Record<string, unknown>): Instance {
+    checkPlatform(type);
     const id = nextNodeId();
     return { id, type, props, children: [] };
   },

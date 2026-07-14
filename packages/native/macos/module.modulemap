@@ -1,0 +1,4 @@
+module CNdPlugin {
+  header "../include/nd_plugin.h"
+  export *
+}

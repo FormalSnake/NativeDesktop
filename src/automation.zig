@@ -54,6 +54,7 @@ const UiJob = struct {
     text: ?[]const u8 = null, // type_text: params.text
     dx: ?f64 = null, // scroll: params.dx
     dy: ?f64 = null, // scroll: params.dy
+    window: ?u32 = null, // screenshot: params.window (target Window node id; null = root/first)
 
     // output (filled on the UI thread by `handleOnUi`)
     result_json: ?[]u8 = null, // owned by gpa; the automation thread frees
@@ -240,6 +241,23 @@ fn readPngDimensions(io: std.Io, path: [:0]const u8) ?struct { w: i32, h: i32 } 
     return .{ .w = @intCast(w), .h = @intCast(h) };
 }
 
+/// Selects which window the following `snapshot` renders (multi-window). The
+/// `snapshot` ABI op carries no window handle, so the target is chosen out-of-
+/// band here: resolving the target Window node's handle through
+/// `resolve_window` (which every backend also uses for reconstruction) records
+/// it as the backend's current snapshot target — GTK stashes the window,
+/// AppKit caches its live content view. `job.window` picks a specific window;
+/// its absence falls back to the root/first window (`rootId`) so a plain
+/// screenshot keeps rendering the primary window rather than whichever the
+/// single-window global last pointed at. Runs on the UI thread inside the same
+/// synchronous marshaled callback as the snapshot call below, so no other
+/// window resolution can interleave between selection and render.
+fn selectSnapshotWindow(job: *UiJob) void {
+    const target_id = job.window orelse job.tree.rootId() orelse return;
+    const handle = job.tree.get(target_id) orelse return;
+    _ = abi_backend.resolveWindow(handle);
+}
+
 /// In-process render of the window to a PNG at `job.path`, via
 /// `vtable.snapshot` (M6a-D3 — GTK fills this with today's WidgetPaintable
 /// code verbatim; Mac supplies the fidelity-ladder solution in M6b).
@@ -249,6 +267,7 @@ fn handleScreenshot(job: *UiJob) void {
         job.err_msg = "missing path";
         return;
     };
+    selectSnapshotWindow(job);
     if (!abi_backend.vtable.snapshot(abi_backend.ctx, path)) {
         job.err_code = rpc.code_internal_error;
         job.err_msg = "failed to save png";
@@ -466,14 +485,16 @@ pub const Server = struct {
                     return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.path", null);
                 };
                 if (p.value.window) |window_ref| {
-                    const root_id = self.tree.rootId();
-                    if (root_id == null or window_ref != root_id.?) {
+                    // Any Window node is a valid target (multi-window), not just
+                    // the first — `metaGet` is the tree's window registry.
+                    const m = self.tree.metaGet(window_ref);
+                    if (m == null or !std.mem.eql(u8, m.?.widget_type, "Window")) {
                         return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "unknown window ref", null);
                     }
                 }
                 const path_z = self.gpa.dupeZ(u8, path) catch return error.OutOfMemory;
                 defer self.gpa.free(path_z);
-                var job = UiJob{ .tree = self.tree, .kind = .screenshot, .gpa = self.gpa, .io = self.io, .path = path_z };
+                var job = UiJob{ .tree = self.tree, .kind = .screenshot, .gpa = self.gpa, .io = self.io, .path = path_z, .window = p.value.window };
                 return self.runJobAndEnvelope(&job, id);
             },
             .click => {

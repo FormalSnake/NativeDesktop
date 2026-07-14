@@ -238,6 +238,72 @@ func buildVTable() -> nd_backend {
         }
     }
 
+    // Multi-window reconstruction: resolve a Window node's handle to its
+    // window's CURRENT live content view (the create arm's FlippedView is
+    // orphaned once a SplitView becomes contentViewController — see
+    // `ndLiveContentView(for:)`). Mirrors get_window's passUnretained handling:
+    // the returned view is retained by the live hierarchy.
+    vt.resolve_window = { _, handle in
+        let handleBits = Int(bitPattern: handle)
+        let bits: Int? = MainActor.assumeIsolated {
+            guard let handlePtr = UnsafeMutableRawPointer(bitPattern: handleBits) else { return nil }
+            guard let live = ndLiveContentView(for: viewFrom(handlePtr)) else { return nil }
+            // Doubles as the snapshot-target selector (multi-window): a
+            // screenshot's selectSnapshotWindow resolves its target window here
+            // right before calling snapshot, so record the resolved content view
+            // for ndSnapshot to render. Reconstruction also lands here, harmless
+            // — the value is refreshed before every screenshot and consumed once.
+            ndSnapshotTargetContent = live
+            return Int(bitPattern: Unmanaged.passUnretained(live).toOpaque())
+        }
+        guard let bits else { return nil }
+        return UnsafeMutableRawPointer(bitPattern: bits)
+    }
+
+    // Widget-preserving cross-window move (drag a tab between windows): relocate
+    // a live NSView from `oldParent` to `newParent` without recreating it, so a
+    // WKWebView keeps its loaded page / scroll / JS state. The core holds the
+    // create-time `passRetained` +1 on every node (see `viewFrom`), so
+    // `removeFromSuperview` inside `ndRemoveChild` never deallocates the view —
+    // no explicit AppKit retain is needed across the move (unlike GTK). Reuses
+    // the ordinary per-kind remove + insert dispatchers so the target attaches
+    // correctly whatever the parent kind. `oldParent`/`before` are nullable.
+    vt.reparent_child = { _, child, oldParent, oldKind, newParent, newKind, before, attachedJson in
+        let childBits = Int(bitPattern: child)
+        let oldParentBits = Int(bitPattern: oldParent)
+        let newParentBits = Int(bitPattern: newParent)
+        let beforeBits = Int(bitPattern: before)
+        let oldKindStr = cstr(oldKind)
+        let newKindStr = cstr(newKind)
+        let attachedStr = cstr(attachedJson)
+        MainActor.assumeIsolated {
+            guard let childPtr = UnsafeMutableRawPointer(bitPattern: childBits),
+                  let newParentPtr = UnsafeMutableRawPointer(bitPattern: newParentBits) else { return }
+            let childView = viewFrom(childPtr)
+            if let oldParentPtr = UnsafeMutableRawPointer(bitPattern: oldParentBits) {
+                ndRemoveChild(viewFrom(oldParentPtr), oldKindStr, childView)
+            } else {
+                childView.removeFromSuperview()
+            }
+            let beforeView = UnsafeMutableRawPointer(bitPattern: beforeBits).map {
+                Unmanaged<NSView>.fromOpaque($0).takeUnretainedValue()
+            }
+            ndInsertBefore(viewFrom(newParentPtr), newKindStr, childView, beforeView, attachedStr)
+        }
+    }
+
+    // System-capability seam (vtable #22): dialogs/clipboard/notifications/
+    // recent/credentials. Fire-and-forget — `NDSystem.handleRequest` answers
+    // each request with exactly one `nd_system_response`. C strings decoded
+    // before entering MainActor isolation, mirroring every closure above.
+    vt.system_request = { _, id, method, params in
+        let methodStr = cstr(method)
+        let paramsStr = cstr(params)
+        MainActor.assumeIsolated {
+            NDSystem.handleRequest(id: id, method: methodStr, paramsJson: paramsStr)
+        }
+    }
+
     return vt
 }
 

@@ -38,6 +38,38 @@
     "navigation-sidebar", "selection-mode", "osd",
     "dimmed", "background", "view", "frame", "compact", "menu", "inline"
   ],
+  "types": [
+    {
+      "name": "TableColumn",
+      "doc": "Table's per-column shape: stable string id (echoed in sortChanged), header title, optional fixed width in px.",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "title", "type": "string" },
+        { "name": "width", "type": "int", "optional": true }
+      ]
+    },
+    {
+      "name": "TableRow",
+      "doc": "Table's per-row shape: cells are positional, indexed by the columns array order.",
+      "fields": [
+        { "name": "id", "type": "string", "optional": true },
+        { "name": "cells", "type": "string", "list": true }
+      ]
+    },
+    {
+      "name": "TreeNode",
+      "doc": "TreeView's flat node shape, keyed by id/parentId (root nodes omit parentId). Leaf-row fields (title/badge/iconName) match SourceList's row shape so cell rendering can be shared.",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "parentId", "type": "string", "optional": true },
+        { "name": "title", "type": "string" },
+        { "name": "badge", "type": "string", "optional": true },
+        { "name": "iconName", "type": "string", "optional": true },
+        { "name": "hasChildren", "type": "bool" },
+        { "name": "expanded", "type": "bool" }
+      ]
+    }
+  ],
   "widgets": [
     {
       "name": "Window",
@@ -49,7 +81,12 @@
         { "name": "defaultHeight", "type": "int", "default": 320, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "alertResult", "ndpName": "onAlertResult", "payload": "data" },
+        { "name": "openFileResult", "ndpName": "onOpenFileResult", "payload": "data" },
+        { "name": "saveFileResult", "ndpName": "onSaveFileResult", "payload": "data" }
+      ],
+      "commands": ["showAlert", "openFile", "saveFile", "showAbout"],
       "automation": { "role": "window", "textFrom": "title" }
     },
     {
@@ -312,9 +349,14 @@
         { "name": "titleChanged", "ndpName": "onTitleChanged", "payload": "text" },
         { "name": "loadingChanged", "ndpName": "onLoadingChanged", "payload": "checked" },
         { "name": "backAvailable", "ndpName": "onBackAvailable", "payload": "checked" },
-        { "name": "forwardAvailable", "ndpName": "onForwardAvailable", "payload": "checked" }
+        { "name": "forwardAvailable", "ndpName": "onForwardAvailable", "payload": "checked" },
+        { "name": "loadProgress", "ndpName": "onLoadProgress", "payload": "value" },
+        { "name": "loadFailed", "ndpName": "onLoadFailed", "payload": "data" },
+        { "name": "newWindow", "ndpName": "onNewWindow", "payload": "text" },
+        { "name": "downloadRequested", "ndpName": "onDownloadRequested", "payload": "data" },
+        { "name": "javaScriptResult", "ndpName": "onJavaScriptResult", "payload": "data" }
       ],
-      "commands": ["goBack", "goForward", "reload", "stop"],
+      "commands": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools"],
       "automation": { "role": "webview", "textFrom": null }
     },
     {
@@ -473,6 +515,321 @@
         { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
       ],
       "automation": { "role": "switch", "textFrom": null }
+    },
+    {
+      "name": "ToggleButton",
+      "intrinsic": "togglebutton",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "active", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "button", "textFrom": "label" }
+    },
+    {
+      "name": "SegmentedControl",
+      "intrinsic": "segmentedcontrol",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "options", "type": "stringList", "appliesTo": "create" },
+        { "name": "selectedIndex", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "index" }
+      ],
+      "automation": { "role": "radiogroup", "textFrom": null }
+    },
+    {
+      "name": "NumberInput",
+      "intrinsic": "numberinput",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "value", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "min", "type": "float", "default": 0, "appliesTo": "create" },
+        { "name": "max", "type": "float", "default": 100, "appliesTo": "create" },
+        { "name": "step", "type": "float", "default": 1, "appliesTo": "create" },
+        { "name": "digits", "type": "int", "default": 0, "appliesTo": "create" },
+        { "name": "wraps", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "valueChanged", "ndpName": "onValueChanged", "payload": "value" }
+      ],
+      "automation": { "role": "spinbutton", "textFrom": null }
+    },
+    {
+      "name": "LinkButton",
+      "intrinsic": "linkbutton",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "uri", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "visited", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "openExternal", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "activate", "ndpName": "onActivate", "payload": "text" }
+      ],
+      "automation": { "role": "link", "textFrom": "label" }
+    },
+    {
+      "name": "LevelIndicator",
+      "intrinsic": "levelindicator",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "value", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "min", "type": "float", "default": 0, "appliesTo": "create" },
+        { "name": "max", "type": "float", "default": 1, "appliesTo": "create" },
+        { "name": "warningValue", "type": "float", "appliesTo": "createAndUpdate" },
+        { "name": "criticalValue", "type": "float", "appliesTo": "createAndUpdate" },
+        { "name": "discrete", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "levelbar", "textFrom": null }
+    },
+    {
+      "name": "ColorPicker",
+      "intrinsic": "colorpicker",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "value", "type": "string", "default": "#000000", "appliesTo": "createAndUpdate" },
+        { "name": "supportsAlpha", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "colorChanged", "ndpName": "onColorChanged", "payload": "text" }
+      ],
+      "automation": { "role": "colorpicker", "textFrom": null }
+    },
+    {
+      "name": "Banner",
+      "intrinsic": "banner",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "buttonLabel", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "revealed", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "buttonClicked", "ndpName": "onButtonClicked" }
+      ],
+      "automation": { "role": "banner", "textFrom": "title" }
+    },
+    {
+      "name": "MenuButton",
+      "intrinsic": "menubutton",
+      "container": { "childModel": "multi" },
+      "stub": true,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "menubutton", "textFrom": "label" }
+    },
+    {
+      "name": "SplitButton",
+      "intrinsic": "splitbutton",
+      "container": { "childModel": "multi" },
+      "stub": true,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "clicked", "ndpName": "onClick" }
+      ],
+      "automation": { "role": "splitbutton", "textFrom": "label" }
+    },
+    {
+      "name": "Popover",
+      "intrinsic": "popover",
+      "container": { "childModel": "single" },
+      "stub": true,
+      "props": [
+        { "name": "open", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "position", "type": "enum", "values": ["top", "bottom", "left", "right"], "default": "top", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "closed", "ndpName": "onClosed" }
+      ],
+      "automation": { "role": "popover", "textFrom": null }
+    },
+    {
+      "name": "Expander",
+      "intrinsic": "expander",
+      "container": { "childModel": "single" },
+      "stub": true,
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "expanded", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "expander", "textFrom": "label" }
+    },
+    {
+      "name": "StatusPage",
+      "intrinsic": "statuspage",
+      "container": { "childModel": "multi" },
+      "stub": true,
+      "props": [
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "description", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": "title" }
+    },
+    {
+      "name": "ToastOverlay",
+      "intrinsic": "toastoverlay",
+      "container": { "childModel": "single" },
+      "stub": true,
+      "props": [
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toastButtonClicked", "ndpName": "onToastButtonClicked", "payload": "data" },
+        { "name": "toastDismissed", "ndpName": "onToastDismissed", "payload": "data" }
+      ],
+      "commands": ["showToast", "dismissToast"],
+      "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "DatePicker",
+      "intrinsic": "datepicker",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "value", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "displayStyle", "type": "enum", "values": ["field", "calendar"], "default": "calendar", "appliesTo": "create" },
+        { "name": "minDate", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "maxDate", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "dateChanged", "ndpName": "onDateChanged", "payload": "text" }
+      ],
+      "automation": { "role": "datepicker", "textFrom": null }
+    },
+    {
+      "name": "Table",
+      "intrinsic": "table",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "columns", "type": "objectList", "itemShape": "TableColumn", "appliesTo": "createAndUpdate" },
+        { "name": "rows", "type": "objectList", "itemShape": "TableRow", "appliesTo": "createAndUpdate" },
+        { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "showRowSeparators", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "index" },
+        { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "index" },
+        { "name": "sortChanged", "ndpName": "onSortChanged", "payload": "data" }
+      ],
+      "automation": { "role": "table", "textFrom": null }
+    },
+    {
+      "name": "TreeView",
+      "intrinsic": "treeview",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "nodes", "type": "objectList", "itemShape": "TreeNode", "appliesTo": "createAndUpdate" },
+        { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "indentationPerLevel", "type": "int", "default": 16, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "data" },
+        { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "data" },
+        { "name": "nodeExpanded", "ndpName": "onNodeExpanded", "payload": "data" },
+        { "name": "nodeCollapsed", "ndpName": "onNodeCollapsed", "payload": "data" }
+      ],
+      "automation": { "role": "tree", "textFrom": null }
+    },
+    {
+      "name": "FontPicker",
+      "intrinsic": "fontpicker",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "value", "type": "string", "default": "Sans 12", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "fontChanged", "ndpName": "onFontChanged", "payload": "text" }
+      ],
+      "automation": { "role": "fontpicker", "textFrom": null }
+    },
+    {
+      "name": "Video",
+      "intrinsic": "video",
+      "container": null,
+      "stub": true,
+      "props": [
+        { "name": "src", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "autoplay", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "loop", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "controls", "type": "bool", "default": true, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "video", "textFrom": null }
+    },
+    {
+      "name": "TrayItem",
+      "intrinsic": "trayitem",
+      "container": { "childModel": "multi" },
+      "stub": true,
+      "platforms": ["macos"],
+      "props": [
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "trayitem", "textFrom": null }
+    },
+    {
+      "name": "ShareButton",
+      "intrinsic": "sharebutton",
+      "container": null,
+      "stub": true,
+      "platforms": ["macos"],
+      "props": [
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "items", "type": "stringList", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "button", "textFrom": "label" }
     }
   ]
 }

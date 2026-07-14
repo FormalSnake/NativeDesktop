@@ -1,6 +1,6 @@
 import ReconcilerFactory from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
-import type { ReactNode } from "react";
+import type { ReactNode, ReactPortal } from "react";
 import { Ndp, type EventMsg } from "../../../runtime/ndp.ts";
 import type { NdNodeRef, WidgetType } from "./generated/intrinsics.ts";
 import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta.ts";
@@ -8,6 +8,7 @@ import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from ".
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
 import { setBackend } from "./platform.ts";
+import { dispatchSystemEvent } from "./system.ts";
 import {
   getHmrState,
   setHmrState,
@@ -55,6 +56,7 @@ export async function render(element: ReactNode): Promise<void> {
       setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete");
       registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
     });
+    ndp.onSystemEvent((channel, data) => dispatchSystemEvent(channel, data));
 
     const Reconciler = (ReconcilerFactory as unknown as (c: typeof configWithFlush) => ReconcilerInstance)(
       configWithFlush,
@@ -106,29 +108,88 @@ export async function render(element: ReactNode): Promise<void> {
   if (state.bootCount === 1) await new Promise<void>(() => {});
 }
 
+function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string, arg: unknown): void {
+  const state = getHmrState();
+  if (!state) throw new Error(`${caller}() before render(): no NDP connection yet`);
+  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
+}
+
 /// Sends an imperative command to a mounted widget (widgetCommand NDP frame,
 /// M14). `node` is what a host-element `ref` resolves to — e.g.
 /// `const wv = useRef<NdNodeRef<"webview">>(null)` then
 /// `sendCommand(wv.current!, "goBack")`. Command names are schema-typed per
 /// widget (WidgetCommandNames) and validated again at runtime so a stale
 /// string fails loudly here, not silently host-side.
-export function sendNativeCommand(node: NdNodeRef<"nativeview">, command: string, arg?: unknown): void {
-  const state = getHmrState();
-  if (!state) throw new Error("sendNativeCommand() before render(): no NDP connection yet");
-  if (!command) throw new Error("sendNativeCommand() requires a non-empty command");
-  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
-}
-
 export function sendCommand<T extends keyof WidgetCommandNames & WidgetType>(
   node: NdNodeRef<T>,
   command: WidgetCommandNames[T],
   arg?: unknown,
 ): void {
-  const state = getHmrState();
-  if (!state) throw new Error("sendCommand() before render(): no NDP connection yet");
   const allowed = widgetCommands[node.type] ?? [];
   if (!allowed.includes(command)) {
     throw new Error(`<${node.type}> does not accept command "${command}" (valid: ${allowed.join(", ") || "none"})`);
   }
-  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
+  dispatchWidgetCommand("sendCommand", node, command, arg);
+}
+
+/// Sends an imperative command to an app-owned <nativeview>. Command names
+/// are plugin-defined (native-module ABI), not schema-validated — only a
+/// non-empty string is required; the host resolves it.
+export function sendNativeCommand(node: NdNodeRef<"nativeview">, command: string, arg?: unknown): void {
+  if (!command) throw new Error("sendNativeCommand() requires a non-empty command");
+  dispatchWidgetCommand("sendNativeCommand", node, command, arg);
+}
+
+/// A stable, off-window host container that holds nodes which must survive being
+/// moved between windows. Nodes rendered into a pool via `createPortal` become
+/// DETACHED native widgets — created and kept alive, but shown in no window
+/// until `moveNode` attaches them to a window's content. Its object identity is
+/// what keeps React from ever tearing the subtree down (see `createPortal`).
+export interface Pool {
+  readonly rootId: null;
+}
+
+// One process-lifetime pool shared by `createPortal` when no explicit pool is
+// given. A module constant so its identity is stable across every render — a
+// fresh object each render would change the portal's container and force React
+// to remount the subtree (react-reconciler's updatePortal keys on containerInfo
+// identity), which is exactly what this whole mechanism exists to avoid.
+const defaultPool: Pool = { rootId: null };
+
+/// Creates an independent pool (see `Pool`) for apps that want more than one.
+/// Call ONCE (module scope or a ref), never inside render — a new pool each
+/// render changes the portal container and remounts the subtree, defeating the
+/// point.
+export function createPool(): Pool {
+  return { rootId: null };
+}
+
+/// Renders `children` into `pool` (default: a shared process-lifetime pool)
+/// instead of the enclosing window, while keeping their React fibers at THIS
+/// position in the tree. React unmounts+remounts a subtree that moves to a
+/// different parent — which the host turns into remove+create, so a <webview>
+/// reloads and loses its page/scroll/JS state. A portal keeps the fiber's parent
+/// fixed, so the subtree is NEVER torn down when the app "moves a tab"; pair it
+/// with `moveNode` to relocate only the live NATIVE widget between windows.
+/// Render the portal at a STABLE position (e.g. one per tab, keyed by tab id, at
+/// the app root) so it outlives any single window.
+export function createPortal(children: ReactNode, pool: Pool = defaultPool): ReactPortal {
+  const state = getHmrState();
+  if (!state) throw new Error("createPortal() before render(): no reconciler yet");
+  const reconciler = state.reconciler as unknown as {
+    createPortal: (children: ReactNode, containerInfo: unknown, implementation: unknown, key?: string | null) => ReactPortal;
+  };
+  return reconciler.createPortal(children, pool, null);
+}
+
+/// Moves a live node's native widget under `toParent` (optionally before
+/// `before`) WITHOUT destroying it — the widget-preserving cross-window move.
+/// The node MUST stay mounted at a stable React position (typically inside a
+/// `createPortal(..., pool)`) so React never unmounts it; this relocates only
+/// the native widget, preserving a <webview>'s loaded page / scroll / JS state
+/// that re-parenting in the React tree (unmount+remount) would lose. `node` and
+/// `toParent` are what a host-element `ref` resolves to. Rides the widgetCommand
+/// frame with a reserved command, so no protocol/schema change is needed.
+export function moveNode(node: NdNodeRef, toParent: NdNodeRef, before?: NdNodeRef | null): void {
+  dispatchWidgetCommand("moveNode", node, "__ndReparent", { parent: toParent.id, before: before?.id ?? null });
 }

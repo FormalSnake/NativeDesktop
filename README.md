@@ -125,6 +125,18 @@ TypeScript side — never a silent runtime mismatch.
 JSON-RPC socket the moment `NATIVE_AUTOMATION=1` is set — a coding agent or a headless test drives
 an app the same way a user would, not through a bolted-on testing layer.
 
+**Multi-window, with widget-preserving reparenting.** Render more than one `<window>` root and each
+becomes an independent OS window, all driven by the same Bun/React process — no IPC needed to share
+state between them. Moving a live widget (e.g. a `<webview>` tab) to another window without
+reloading it is a dedicated primitive, `createPortal` + `moveNode`, since a plain React re-parent
+would unmount and rebuild the native widget. See
+[Multi-Window](docs-site/src/content/docs/native-platform/multi-window.md).
+
+**App data directory and a worker-backed SQLite layer.** `getAppDataDir()`/`ensureAppDataDir()`
+resolve each OS's own per-app data directory; `@nativedesktop/data` runs `bun:sqlite` inside a Bun
+`Worker` so queries never block the thread driving React's commit loop. See
+[App Data & Storage](docs-site/src/content/docs/core-concepts/app-data-storage.md).
+
 ## Docs
 
 The full documentation site lives in [`docs-site/`](docs-site) (Astro + Starlight). Run it locally:

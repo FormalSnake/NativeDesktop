@@ -39,7 +39,10 @@ import Foundation
     }
     // M11 Phase C (Risk 1 + Risk 2): resolve the LIVE, flipped content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
-    guard let content = ndLiveContentView() else { return false }
+    // Multi-window: convert into the widget's OWN window's content view, not the
+    // single global one — a widget in window B must report bounds in window B's
+    // space. A not-yet-shown widget (window == nil) falls back to the global.
+    guard let content = ndLiveContentView(ofWindow: view.window) ?? ndLiveContentView() else { return false }
     content.layoutSubtreeIfNeeded()
     let r = view.convert(view.bounds, to: content)
     out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
@@ -131,7 +134,7 @@ private extension Double {
 /// layer-render and lockFocus rungs came back truly empty. `cacheDisplay`
 /// fills its rep internally, so rung 1 + this CG flatten is the working
 /// combination.
-@MainActor func flattenOntoWindowBackground(_ rep: NSBitmapImageRep) -> NSBitmapImageRep {
+@MainActor func flattenOntoWindowBackground(_ rep: NSBitmapImageRep, _ window: NSWindow?) -> NSBitmapImageRep {
     let width = rep.pixelsWide
     let height = rep.pixelsHigh
     guard let cg = rep.cgImage,
@@ -144,10 +147,11 @@ private extension Double {
               space: CGColorSpaceCreateDeviceRGB(),
               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
           ) else { return rep }
-    // Resolve the window's dynamic background color in its own appearance
-    // (dark mode -> dark gray), falling back to the generic window color.
+    // Resolve the (multi-window: TARGET) window's dynamic background color in
+    // its own appearance (dark mode -> dark gray), falling back to the generic
+    // window color.
     var bgCG: CGColor = NSColor.windowBackgroundColor.cgColor
-    if let win = gWindow {
+    if let win = window ?? gWindow {
         win.effectiveAppearance.performAsCurrentDrawingAppearance {
             bgCG = win.backgroundColor.cgColor
         }
@@ -163,8 +167,8 @@ private extension Double {
 /// Writes `rep` as a PNG to `path` iff it's non-blank. Returns whether it
 /// wrote (i.e. whether this rung succeeded). The rep is flattened onto the
 /// window background first — see `flattenOntoWindowBackground`.
-@MainActor func writeIfNonBlank(_ rawRep: NSBitmapImageRep, _ path: String) -> Bool {
-    let rep = flattenOntoWindowBackground(rawRep)
+@MainActor func writeIfNonBlank(_ rawRep: NSBitmapImageRep, _ path: String, _ window: NSWindow?) -> Bool {
+    let rep = flattenOntoWindowBackground(rawRep, window)
     guard hasMoreThanOneColor(rep),
           let png = rep.representation(using: .png, properties: [:]) else { return false }
     do {
@@ -265,7 +269,13 @@ private extension Double {
 @MainActor func ndSnapshot(_ pngPath: String) -> Bool {
     // M11 Phase C (Risk 1): resolve the LIVE content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
-    guard let content = ndLiveContentView() else { return false }
+    // Multi-window: the target window selected by the preceding `resolve_window`
+    // (automation.zig's selectSnapshotWindow) wins; consumed one-shot so a later
+    // stray snapshot falls back to the global window rather than a stale target.
+    let content = ndSnapshotTargetContent ?? ndLiveContentView()
+    ndSnapshotTargetContent = nil
+    guard let content else { return false }
+    let targetWindow = content.window
     let bounds = content.bounds
     content.layoutSubtreeIfNeeded() // real Auto Layout pass before any capture rung
 
@@ -273,24 +283,24 @@ private extension Double {
     content.displayIfNeeded()
     if let rep = content.bitmapImageRepForCachingDisplay(in: bounds) {
         content.cacheDisplay(in: bounds, to: rep)
-        if writeIfNonBlank(rep, pngPath) {
+        if writeIfNonBlank(rep, pngPath, targetWindow) {
             FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=1\n".data(using: .utf8)!)
             return true
         }
     }
     // Rung 2: layer-back the tree, render the CALayer into a CGContext bitmap.
     setWantsLayerRecursive(content)
-    if let rep = renderLayerBitmap(content, bounds), writeIfNonBlank(rep, pngPath) {
+    if let rep = renderLayerBitmap(content, bounds), writeIfNonBlank(rep, pngPath, targetWindow) {
         FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=2\n".data(using: .utf8)!)
         return true
     }
     // Rung 3: per-view lockFocus composite.
-    if let rep = compositeLockFocus(content, bounds), writeIfNonBlank(rep, pngPath) {
+    if let rep = compositeLockFocus(content, bounds), writeIfNonBlank(rep, pngPath, targetWindow) {
         FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=3\n".data(using: .utf8)!)
         return true
     }
     // Rung 4: PDF -> raster.
-    if let rep = pdfRasterize(content, bounds), writeIfNonBlank(rep, pngPath) {
+    if let rep = pdfRasterize(content, bounds), writeIfNonBlank(rep, pngPath, targetWindow) {
         FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=4\n".data(using: .utf8)!)
         return true
     }

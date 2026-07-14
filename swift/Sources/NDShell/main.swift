@@ -15,12 +15,34 @@ import Foundation
 nonisolated(unsafe) var gVTable = nd_backend()
 nonisolated(unsafe) var gCtx: OpaquePointer? = nil
 // Set by the generated Window create arm (NDGen/Widgets.swift's `ndCreate`)
-// so get_window/show_overlay/etc. can reach the live NSWindow.
-nonisolated(unsafe) var gWindow: NSWindow? = nil
+// so get_window/show_overlay/etc. can reach the live NSWindow. Its observer
+// records every window into `ndContentToWindow` (below), so a window can still
+// be resolved from its node handle after the single `gWindow` moves on to a
+// later window — the multi-window seam that needs no edit to the generated arm.
+nonisolated(unsafe) var gWindow: NSWindow? = nil {
+    didSet {
+        guard let win = gWindow, let content = win.contentView else { return }
+        ndContentToWindow[ObjectIdentifier(content)] = win
+        ndInstallFileDrop(on: win)
+    }
+}
+// Every app window keyed by its create-time content view's identity (the handle
+// src/tree.zig binds each `<window>` node to). Lets `ndWindow(for:)` resolve a
+// window from its node handle even after a SplitView orphans that view, which is
+// what makes N `<window>` roots each present an independent OS window without a
+// single-window global standing in the way. Populated by `gWindow`'s observer.
+nonisolated(unsafe) var ndContentToWindow: [ObjectIdentifier: NSWindow] = [:]
 // The window's single unified NSToolbar manager (M11 Phase B), set by the
 // generated Window create arm. The pane <headerbar>s register their items
 // into it; it owns the tracking separator aligned to the split's divider.
 nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
+// The live content view the NEXT `snapshot` renders (multi-window). The
+// `snapshot` ABI op carries no window handle, so automation.zig's
+// selectSnapshotWindow resolves the target window through `resolve_window`
+// first, whose closure records the resolved content view here; `ndSnapshot`
+// consumes it one-shot (falling back to the global window otherwise). Weak so a
+// closed window's content view can't be pinned alive by a stale target.
+nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
@@ -40,13 +62,7 @@ if let grants = ProcessInfo.processInfo.environment["ND_ACL_GRANTS"] {
     grants.withCString { nd_set_acl(ctx, $0) }
 }
 if ProcessInfo.processInfo.environment["ND_PLUGINS"] == "1" {
-    let rawPaths = ProcessInfo.processInfo.environment["ND_PLUGIN_PATHS"]
-        ?? ProcessInfo.processInfo.environment["ND_PLUGIN_PATH"]
-        ?? ""
-    for pluginPath in rawPaths.split(separator: ":").map(String.init) {
-        let rc = pluginPath.withCString { nd_load_plugin(ctx, $0) }
-        if rc != 0 { FileHandle.standardError.write("ND_PLUGIN_LOAD_FAILED path=\(pluginPath) rc=\(rc)\n".data(using: .utf8)!) }
-    }
+    nd_load_plugins_from_env(ctx)
 }
 
 if nd_start_runtime(ctx) != 0 {
@@ -58,5 +74,46 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
         FileHandle.standardError.write("ND_AUTOMATION_ERROR nd_start_automation failed\n".data(using: .utf8)!)
     }
 }
+// Every quit path goes through NSApplication.terminate(_:) (MenuBar's Quit
+// item / Cmd-Q), which calls exit() inside run() — code after run() never
+// executes. applicationWillTerminate is the one seam where the window/view
+// hierarchy is still alive, so plugin deinit() and native-view destroy()
+// callbacks (ABI v3) receive live NSViews.
+final class NDAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        if let ctx = gCtx { nd_shutdown(ctx) }
+    }
+
+    // App-level activation stream (system-capability seam).
+    func applicationDidBecomeActive(_ notification: Notification) {
+        NDSystem.emitEvent(channel: "app.activate", dataJson: "{}")
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        NDSystem.emitEvent(channel: "app.deactivate", dataJson: "{}")
+    }
+
+    // OS launch delivery: file:// URLs collapse into one `app.openFile`
+    // {"paths":[...]}; every other scheme emits its own `app.openUrl`.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        var filePaths: [String] = []
+        for url in urls {
+            if url.isFileURL {
+                filePaths.append(url.path)
+            } else {
+                NDSystem.emitEvent(
+                    channel: "app.openUrl",
+                    dataJson: "{\"url\":\(NDSystem.jsonFragment(url.absoluteString))}")
+            }
+        }
+        if !filePaths.isEmpty {
+            NDSystem.emitEvent(
+                channel: "app.openFile",
+                dataJson: "{\"paths\":\(NDSystem.jsonFragment(filePaths))}")
+        }
+    }
+}
+// NSApplication.delegate does not retain; this top-level `let` keeps it alive.
+let appDelegate = NDAppDelegate()
+app.delegate = appDelegate
 app.run()
-nd_shutdown(ctx)

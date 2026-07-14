@@ -790,6 +790,66 @@ pub fn create(
         const sw = gtk.Switch.new();
         gtk.Switch.setActive(sw, @intFromBool(propBool(props, "checked") orelse false));
         return sw.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ToggleButton")) {
+        // ND_STUB(ToggleButton): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SegmentedControl")) {
+        // ND_STUB(SegmentedControl): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "NumberInput")) {
+        // ND_STUB(NumberInput): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "LinkButton")) {
+        // ND_STUB(LinkButton): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "LevelIndicator")) {
+        // ND_STUB(LevelIndicator): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ColorPicker")) {
+        // ND_STUB(ColorPicker): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Banner")) {
+        // ND_STUB(Banner): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "MenuButton")) {
+        // ND_STUB(MenuButton): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SplitButton")) {
+        // ND_STUB(SplitButton): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Popover")) {
+        // ND_STUB(Popover): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Expander")) {
+        // ND_STUB(Expander): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "StatusPage")) {
+        // ND_STUB(StatusPage): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
+        // ND_STUB(ToastOverlay): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "DatePicker")) {
+        // ND_STUB(DatePicker): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Table")) {
+        // ND_STUB(Table): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "TreeView")) {
+        // ND_STUB(TreeView): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "FontPicker")) {
+        // ND_STUB(FontPicker): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Video")) {
+        // ND_STUB(Video): placeholder — replace with the real GTK implementation.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "TrayItem")) {
+        // ND_PLATFORM_NOOP(TrayItem): not available on this platform — invisible empty box by design.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "ShareButton")) {
+        // ND_PLATFORM_NOOP(ShareButton): not available on this platform — invisible empty box by design.
+        return gtk.Box.new(.vertical, 0).as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -964,6 +1024,67 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 unblockEcho(asObject(widget));
             }
         }
+    } else if (std.mem.eql(u8, kind, "ToggleButton")) {
+        // ND_STUB(ToggleButton): prop "label" not applied yet — pending the real GTK implementation.
+        // ND_STUB(ToggleButton): prop "active" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "SegmentedControl")) {
+        // ND_STUB(SegmentedControl): prop "selectedIndex" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "NumberInput")) {
+        // ND_STUB(NumberInput): prop "value" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "LinkButton")) {
+        // ND_STUB(LinkButton): prop "label" not applied yet — pending the real GTK implementation.
+        // ND_STUB(LinkButton): prop "uri" not applied yet — pending the real GTK implementation.
+        // ND_STUB(LinkButton): prop "visited" not applied yet — pending the real GTK implementation.
+        // ND_STUB(LinkButton): prop "openExternal" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "LevelIndicator")) {
+        // ND_STUB(LevelIndicator): prop "value" not applied yet — pending the real GTK implementation.
+        // ND_STUB(LevelIndicator): prop "warningValue" not applied yet — pending the real GTK implementation.
+        // ND_STUB(LevelIndicator): prop "criticalValue" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "ColorPicker")) {
+        // ND_STUB(ColorPicker): prop "value" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Banner")) {
+        // ND_STUB(Banner): prop "title" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Banner): prop "buttonLabel" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Banner): prop "revealed" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "MenuButton")) {
+        // ND_STUB(MenuButton): prop "label" not applied yet — pending the real GTK implementation.
+        // ND_STUB(MenuButton): prop "iconName" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "SplitButton")) {
+        // ND_STUB(SplitButton): prop "label" not applied yet — pending the real GTK implementation.
+        // ND_STUB(SplitButton): prop "iconName" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Popover")) {
+        // ND_STUB(Popover): prop "open" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Popover): prop "position" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Expander")) {
+        // ND_STUB(Expander): prop "label" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Expander): prop "expanded" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "StatusPage")) {
+        // ND_STUB(StatusPage): prop "iconName" not applied yet — pending the real GTK implementation.
+        // ND_STUB(StatusPage): prop "title" not applied yet — pending the real GTK implementation.
+        // ND_STUB(StatusPage): prop "description" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "DatePicker")) {
+        // ND_STUB(DatePicker): prop "value" not applied yet — pending the real GTK implementation.
+        // ND_STUB(DatePicker): prop "minDate" not applied yet — pending the real GTK implementation.
+        // ND_STUB(DatePicker): prop "maxDate" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Table")) {
+        // ND_STUB(Table): prop "columns" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Table): prop "rows" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Table): prop "selectedIndex" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Table): prop "showRowSeparators" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "TreeView")) {
+        // ND_STUB(TreeView): prop "nodes" not applied yet — pending the real GTK implementation.
+        // ND_STUB(TreeView): prop "selectedIndex" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "FontPicker")) {
+        // ND_STUB(FontPicker): prop "value" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Video")) {
+        // ND_STUB(Video): prop "src" not applied yet — pending the real GTK implementation.
+        // ND_STUB(Video): prop "loop" not applied yet — pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "TrayItem")) {
+        // ND_PLATFORM_NOOP(TrayItem): prop "iconName" is a no-op on this platform by design.
+        // ND_PLATFORM_NOOP(TrayItem): prop "tooltip" is a no-op on this platform by design.
+    } else if (std.mem.eql(u8, kind, "ShareButton")) {
+        // ND_PLATFORM_NOOP(ShareButton): prop "label" is a no-op on this platform by design.
+        // ND_PLATFORM_NOOP(ShareButton): prop "items" is a no-op on this platform by design.
     }
 }
 
@@ -1058,7 +1179,11 @@ fn cbSwitchToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) call
 
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
-    if (std.mem.eql(u8, kind, "Button")) {
+    if (std.mem.eql(u8, kind, "Window")) {
+        // ND_STUB(Window): "alertResult" event wiring pending the real GTK implementation.
+        // ND_STUB(Window): "openFileResult" event wiring pending the real GTK implementation.
+        // ND_STUB(Window): "saveFileResult" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Button")) {
         const obj_Button_clicked = asObject(widget);
         const hid_Button_clicked = gobject.signalConnectData(obj_Button_clicked, "clicked", @ptrCast(&cbClicked), data, null, .{});
         _ = hid_Button_clicked;
@@ -1118,13 +1243,53 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_Switch_toggled = asObject(widget);
         const hid_Switch_toggled = gobject.signalConnectData(obj_Switch_toggled, "notify::active", @ptrCast(&cbSwitchToggled), data, null, .{});
         noteSuppressible(obj_Switch_toggled, hid_Switch_toggled);
+    } else if (std.mem.eql(u8, kind, "ToggleButton")) {
+        // ND_STUB(ToggleButton): "toggled" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "SegmentedControl")) {
+        // ND_STUB(SegmentedControl): "selectionChanged" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "NumberInput")) {
+        // ND_STUB(NumberInput): "valueChanged" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "LinkButton")) {
+        // ND_STUB(LinkButton): "activate" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "ColorPicker")) {
+        // ND_STUB(ColorPicker): "colorChanged" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Banner")) {
+        // ND_STUB(Banner): "buttonClicked" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "SplitButton")) {
+        // ND_STUB(SplitButton): "clicked" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Popover")) {
+        // ND_STUB(Popover): "closed" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Expander")) {
+        // ND_STUB(Expander): "toggled" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
+        // ND_STUB(ToastOverlay): "toastButtonClicked" event wiring pending the real GTK implementation.
+        // ND_STUB(ToastOverlay): "toastDismissed" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "DatePicker")) {
+        // ND_STUB(DatePicker): "dateChanged" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "Table")) {
+        // ND_STUB(Table): "selectionChanged" event wiring pending the real GTK implementation.
+        // ND_STUB(Table): "rowActivated" event wiring pending the real GTK implementation.
+        // ND_STUB(Table): "sortChanged" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "TreeView")) {
+        // ND_STUB(TreeView): "selectionChanged" event wiring pending the real GTK implementation.
+        // ND_STUB(TreeView): "rowActivated" event wiring pending the real GTK implementation.
+        // ND_STUB(TreeView): "nodeExpanded" event wiring pending the real GTK implementation.
+        // ND_STUB(TreeView): "nodeCollapsed" event wiring pending the real GTK implementation.
+    } else if (std.mem.eql(u8, kind, "FontPicker")) {
+        // ND_STUB(FontPicker): "fontChanged" event wiring pending the real GTK implementation.
     }
 }
 
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
-    if (std.mem.eql(u8, kind, "WebView")) {
+    if (std.mem.eql(u8, kind, "Window")) {
+        // ND_STUB(Window): command dispatch pending the real GTK implementation.
+        std.debug.print("ND_STUB(Window) widgetCommand '{s}' not implemented\n", .{command});
+    } else if (std.mem.eql(u8, kind, "WebView")) {
         ndweb_gtk.command(widget, command, arg);
+    } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
+        // ND_STUB(ToastOverlay): command dispatch pending the real GTK implementation.
+        std.debug.print("ND_STUB(ToastOverlay) widgetCommand '{s}' not implemented\n", .{command});
     } else {
         std.debug.print("ND_WARN widgetCommand on kind={s} with no commands\n", .{kind});
     }
@@ -1185,6 +1350,20 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent))
         else gtk.Box.append(box, child);
+    } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
+        // ND_STUB(MenuButton): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
+        // ND_STUB(SplitButton): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "Popover")) {
+        // ND_STUB(Popover): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "Expander")) {
+        // ND_STUB(Expander): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
+        // ND_STUB(StatusPage): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "ToastOverlay")) {
+        // ND_STUB(ToastOverlay): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
+        // ND_PLATFORM_NOOP(TrayItem): children never mount on this platform.
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -1281,6 +1460,20 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         // M13: item removal rebuilds on next refresh (v1 no-op)
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
         gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
+        // ND_STUB(MenuButton): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
+        // ND_STUB(SplitButton): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "Popover")) {
+        // ND_STUB(Popover): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "Expander")) {
+        // ND_STUB(Expander): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
+        // ND_STUB(StatusPage): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "ToastOverlay")) {
+        // ND_STUB(ToastOverlay): child mounting pending the real GTK implementation.
+    } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
+        // ND_PLATFORM_NOOP(TrayItem): children never mount on this platform.
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }

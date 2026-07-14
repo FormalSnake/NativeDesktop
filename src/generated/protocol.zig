@@ -127,3 +127,35 @@ pub const WidgetCommand = struct {
     arg: std.json.Value = .null,
 };
 
+/// App->host request for a native system capability (dialogs, clipboard, notifications,
+/// credentials, recent documents, audio). `id` correlates the eventual systemResponse; `method`
+/// is a dotted capability method (e.g. "dialog.openFile"); `params` is its JSON argument
+/// object. Gated host-side on the method's core:<group> capability.
+pub const SystemRequest = struct {
+    type: []const u8 = "systemRequest",
+    id: u32,
+    method: []const u8,
+    params: std.json.Value = .null,
+};
+
+/// Reply to a systemRequest, correlated by `id`. On success `ok` is true and `result` carries
+/// the method's JSON result; on failure `ok` is false and `errorMessage` carries a message.
+/// (The failure field is `errorMessage`, not `error`, because `error` is a Zig keyword the
+/// generated host struct can't name.)
+pub const SystemResponse = struct {
+    type: []const u8 = "systemResponse",
+    id: u32,
+    ok: bool,
+    result: ?std.json.Value = null,
+    errorMessage: ?[]const u8 = null,
+};
+
+/// Host-originated app-level event not tied to a widget node: app activation/deactivation, OS
+/// open-url/open-file launch, notification clicks, file drops, and capability event streams.
+/// `channel` names the stream; `data` carries its JSON payload.
+pub const SystemEvent = struct {
+    type: []const u8 = "systemEvent",
+    channel: []const u8,
+    data: std.json.Value = .null,
+};
+

@@ -7,6 +7,7 @@
     "compile": "bun build main.tsx --outdir dist --target bun"
   },
   "dependencies": {
+    "@nativedesktop/native": "workspace:*",
     "@nativedesktop/react": "workspace:*",
     "nd": "workspace:*",
     "react": "19.2.7"

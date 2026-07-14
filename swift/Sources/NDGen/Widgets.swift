@@ -227,6 +227,66 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let toggle = NSSwitch()
         toggle.state = (propBool(props, "checked") ?? false) ? .on : .off
         return toggle
+    } else if kind == "ToggleButton" {
+        // ND_STUB(ToggleButton): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "SegmentedControl" {
+        // ND_STUB(SegmentedControl): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "NumberInput" {
+        // ND_STUB(NumberInput): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "LinkButton" {
+        // ND_STUB(LinkButton): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "LevelIndicator" {
+        // ND_STUB(LevelIndicator): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "ColorPicker" {
+        // ND_STUB(ColorPicker): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "Banner" {
+        // ND_STUB(Banner): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "MenuButton" {
+        // ND_STUB(MenuButton): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "SplitButton" {
+        // ND_STUB(SplitButton): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "Popover" {
+        // ND_STUB(Popover): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "Expander" {
+        // ND_STUB(Expander): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "StatusPage" {
+        // ND_STUB(StatusPage): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "ToastOverlay" {
+        // ND_STUB(ToastOverlay): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "DatePicker" {
+        // ND_STUB(DatePicker): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "Table" {
+        // ND_STUB(Table): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "TreeView" {
+        // ND_STUB(TreeView): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "FontPicker" {
+        // ND_STUB(FontPicker): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "Video" {
+        // ND_STUB(Video): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "TrayItem" {
+        // ND_STUB(TrayItem): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
+    } else if kind == "ShareButton" {
+        // ND_STUB(ShareButton): placeholder — replace with the real AppKit implementation.
+        return FlippedView()
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -352,11 +412,76 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
                 withEchoSuppressed(view) { btn.state = want }
             }
         }
+    } else if kind == "ToggleButton" {
+        // ND_STUB(ToggleButton): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(ToggleButton): prop "active" not applied yet — pending the real AppKit implementation.
+    } else if kind == "SegmentedControl" {
+        // ND_STUB(SegmentedControl): prop "selectedIndex" not applied yet — pending the real AppKit implementation.
+    } else if kind == "NumberInput" {
+        // ND_STUB(NumberInput): prop "value" not applied yet — pending the real AppKit implementation.
+    } else if kind == "LinkButton" {
+        // ND_STUB(LinkButton): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(LinkButton): prop "uri" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(LinkButton): prop "visited" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(LinkButton): prop "openExternal" not applied yet — pending the real AppKit implementation.
+    } else if kind == "LevelIndicator" {
+        // ND_STUB(LevelIndicator): prop "value" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(LevelIndicator): prop "warningValue" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(LevelIndicator): prop "criticalValue" not applied yet — pending the real AppKit implementation.
+    } else if kind == "ColorPicker" {
+        // ND_STUB(ColorPicker): prop "value" not applied yet — pending the real AppKit implementation.
+    } else if kind == "Banner" {
+        // ND_STUB(Banner): prop "title" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Banner): prop "buttonLabel" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Banner): prop "revealed" not applied yet — pending the real AppKit implementation.
+    } else if kind == "MenuButton" {
+        // ND_STUB(MenuButton): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(MenuButton): prop "iconName" not applied yet — pending the real AppKit implementation.
+    } else if kind == "SplitButton" {
+        // ND_STUB(SplitButton): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(SplitButton): prop "iconName" not applied yet — pending the real AppKit implementation.
+    } else if kind == "Popover" {
+        // ND_STUB(Popover): prop "open" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Popover): prop "position" not applied yet — pending the real AppKit implementation.
+    } else if kind == "Expander" {
+        // ND_STUB(Expander): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Expander): prop "expanded" not applied yet — pending the real AppKit implementation.
+    } else if kind == "StatusPage" {
+        // ND_STUB(StatusPage): prop "iconName" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(StatusPage): prop "title" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(StatusPage): prop "description" not applied yet — pending the real AppKit implementation.
+    } else if kind == "DatePicker" {
+        // ND_STUB(DatePicker): prop "value" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(DatePicker): prop "minDate" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(DatePicker): prop "maxDate" not applied yet — pending the real AppKit implementation.
+    } else if kind == "Table" {
+        // ND_STUB(Table): prop "columns" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Table): prop "rows" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Table): prop "selectedIndex" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Table): prop "showRowSeparators" not applied yet — pending the real AppKit implementation.
+    } else if kind == "TreeView" {
+        // ND_STUB(TreeView): prop "nodes" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(TreeView): prop "selectedIndex" not applied yet — pending the real AppKit implementation.
+    } else if kind == "FontPicker" {
+        // ND_STUB(FontPicker): prop "value" not applied yet — pending the real AppKit implementation.
+    } else if kind == "Video" {
+        // ND_STUB(Video): prop "src" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(Video): prop "loop" not applied yet — pending the real AppKit implementation.
+    } else if kind == "TrayItem" {
+        // ND_STUB(TrayItem): prop "iconName" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(TrayItem): prop "tooltip" not applied yet — pending the real AppKit implementation.
+    } else if kind == "ShareButton" {
+        // ND_STUB(ShareButton): prop "label" not applied yet — pending the real AppKit implementation.
+        // ND_STUB(ShareButton): prop "items" not applied yet — pending the real AppKit implementation.
     }
 }
 
 func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
-    if kind == "Button" {
+    if kind == "Window" {
+        // ND_STUB(Window): "alertResult" event wiring pending the real AppKit implementation.
+        // ND_STUB(Window): "openFileResult" event wiring pending the real AppKit implementation.
+        // ND_STUB(Window): "saveFileResult" event wiring pending the real AppKit implementation.
+    } else if kind == "Button" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "clicked", payload: .none, action: #selector(EventDispatcher.fireNone(_:)))
     } else if kind == "TextInput" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
@@ -388,13 +513,53 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
     } else if kind == "Switch" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "toggled", payload: .checked, action: #selector(EventDispatcher.fireChecked(_:)))
+    } else if kind == "ToggleButton" {
+        // ND_STUB(ToggleButton): "toggled" event wiring pending the real AppKit implementation.
+    } else if kind == "SegmentedControl" {
+        // ND_STUB(SegmentedControl): "selectionChanged" event wiring pending the real AppKit implementation.
+    } else if kind == "NumberInput" {
+        // ND_STUB(NumberInput): "valueChanged" event wiring pending the real AppKit implementation.
+    } else if kind == "LinkButton" {
+        // ND_STUB(LinkButton): "activate" event wiring pending the real AppKit implementation.
+    } else if kind == "ColorPicker" {
+        // ND_STUB(ColorPicker): "colorChanged" event wiring pending the real AppKit implementation.
+    } else if kind == "Banner" {
+        // ND_STUB(Banner): "buttonClicked" event wiring pending the real AppKit implementation.
+    } else if kind == "SplitButton" {
+        // ND_STUB(SplitButton): "clicked" event wiring pending the real AppKit implementation.
+    } else if kind == "Popover" {
+        // ND_STUB(Popover): "closed" event wiring pending the real AppKit implementation.
+    } else if kind == "Expander" {
+        // ND_STUB(Expander): "toggled" event wiring pending the real AppKit implementation.
+    } else if kind == "ToastOverlay" {
+        // ND_STUB(ToastOverlay): "toastButtonClicked" event wiring pending the real AppKit implementation.
+        // ND_STUB(ToastOverlay): "toastDismissed" event wiring pending the real AppKit implementation.
+    } else if kind == "DatePicker" {
+        // ND_STUB(DatePicker): "dateChanged" event wiring pending the real AppKit implementation.
+    } else if kind == "Table" {
+        // ND_STUB(Table): "selectionChanged" event wiring pending the real AppKit implementation.
+        // ND_STUB(Table): "rowActivated" event wiring pending the real AppKit implementation.
+        // ND_STUB(Table): "sortChanged" event wiring pending the real AppKit implementation.
+    } else if kind == "TreeView" {
+        // ND_STUB(TreeView): "selectionChanged" event wiring pending the real AppKit implementation.
+        // ND_STUB(TreeView): "rowActivated" event wiring pending the real AppKit implementation.
+        // ND_STUB(TreeView): "nodeExpanded" event wiring pending the real AppKit implementation.
+        // ND_STUB(TreeView): "nodeCollapsed" event wiring pending the real AppKit implementation.
+    } else if kind == "FontPicker" {
+        // ND_STUB(FontPicker): "fontChanged" event wiring pending the real AppKit implementation.
     }
 }
 
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {
-    if kind == "WebView" {
+    if kind == "Window" {
+        // ND_STUB(Window): command dispatch pending the real AppKit implementation.
+        FileHandle.standardError.write("ND_STUB(Window) widgetCommand \(command) not implemented\n".data(using: .utf8)!)
+    } else if kind == "WebView" {
         ndWebViewCommand(view, command, argJson)
+    } else if kind == "ToastOverlay" {
+        // ND_STUB(ToastOverlay): command dispatch pending the real AppKit implementation.
+        FileHandle.standardError.write("ND_STUB(ToastOverlay) widgetCommand \(command) not implemented\n".data(using: .utf8)!)
     } else {
         FileHandle.standardError.write("ND_WARN widgetCommand on kind=\(kind) with no commands\n".data(using: .utf8)!)
     }
@@ -515,6 +680,20 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.appendReactView(child)
+    } else if parentKind == "MenuButton" {
+        // ND_STUB(MenuButton): child mounting pending the real AppKit implementation.
+    } else if parentKind == "SplitButton" {
+        // ND_STUB(SplitButton): child mounting pending the real AppKit implementation.
+    } else if parentKind == "Popover" {
+        // ND_STUB(Popover): child mounting pending the real AppKit implementation.
+    } else if parentKind == "Expander" {
+        // ND_STUB(Expander): child mounting pending the real AppKit implementation.
+    } else if parentKind == "StatusPage" {
+        // ND_STUB(StatusPage): child mounting pending the real AppKit implementation.
+    } else if parentKind == "ToastOverlay" {
+        // ND_STUB(ToastOverlay): child mounting pending the real AppKit implementation.
+    } else if parentKind == "TrayItem" {
+        // ND_STUB(TrayItem): child mounting pending the real AppKit implementation.
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -652,6 +831,20 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.removeReactView(child)
+    } else if parentKind == "MenuButton" {
+        // ND_STUB(MenuButton): child mounting pending the real AppKit implementation.
+    } else if parentKind == "SplitButton" {
+        // ND_STUB(SplitButton): child mounting pending the real AppKit implementation.
+    } else if parentKind == "Popover" {
+        // ND_STUB(Popover): child mounting pending the real AppKit implementation.
+    } else if parentKind == "Expander" {
+        // ND_STUB(Expander): child mounting pending the real AppKit implementation.
+    } else if parentKind == "StatusPage" {
+        // ND_STUB(StatusPage): child mounting pending the real AppKit implementation.
+    } else if parentKind == "ToastOverlay" {
+        // ND_STUB(ToastOverlay): child mounting pending the real AppKit implementation.
+    } else if parentKind == "TrayItem" {
+        // ND_STUB(TrayItem): child mounting pending the real AppKit implementation.
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

@@ -3,7 +3,10 @@
    returns a pointer to a statically-lived nd_plugin_v1. Capability strings are
    checked against the NDP-dispatch ACL; a command runs only if its plugin's
    declared permission is granted for the window. Opt-in: nothing loads a
-   plugin unless the embedder calls nd_load_plugin (include/nd.h). */
+   plugin unless the embedder calls nd_load_plugin (include/nd.h). Canonical
+   copy lives in include/; packages/native/include/ carries a machine-synced
+   copy (scripts/sync-native-headers.sh, cmp-checked in CI) — edit include/
+   only. */
 #ifndef ND_PLUGIN_H
 #define ND_PLUGIN_H
 #include <stdint.h>

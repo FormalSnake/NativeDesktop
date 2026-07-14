@@ -31,6 +31,7 @@ export default defineConfig({
 						{ label: 'Styling & Design Language', slug: 'core-concepts/styling-design-language' },
 						{ label: 'Automation-First', slug: 'core-concepts/automation-first' },
 						{ label: 'Imperative Commands & Refs', slug: 'core-concepts/imperative-commands' },
+						{ label: 'App Data & Storage', slug: 'core-concepts/app-data-storage' },
 					],
 				},
 				{
@@ -46,6 +47,7 @@ export default defineConfig({
 					label: 'Native Platform',
 					items: [
 						{ label: 'Windows & Chrome', slug: 'native-platform/windows-chrome' },
+						{ label: 'Multi-Window', slug: 'native-platform/multi-window' },
 						{ label: 'Menu Bar', slug: 'native-platform/menu-bar' },
 						{ label: 'Split Views', slug: 'native-platform/split-views' },
 						{ label: 'Icons', slug: 'native-platform/icons' },

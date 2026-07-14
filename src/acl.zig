@@ -25,6 +25,15 @@ pub const Acl = struct {
         const a = self.arena.allocator();
         self.default_perms.put(a, "core:commit", {}) catch {};
         self.default_perms.put(a, "core:window.create", {}) catch {};
+        // Low-risk, user-initiated system capabilities granted by default so
+        // apps get file dialogs / notifications / recent-doc registration /
+        // clipboard writes with no manifest. Reading the clipboard, credential
+        // access, and audio capture are privileged (default-deny) — an app
+        // must be granted those explicitly.
+        self.default_perms.put(a, "core:dialog", {}) catch {};
+        self.default_perms.put(a, "core:notification", {}) catch {};
+        self.default_perms.put(a, "core:recent", {}) catch {};
+        self.default_perms.put(a, "core:clipboard.write", {}) catch {};
         return self;
     }
 
@@ -102,6 +111,15 @@ test "default policy grants core ops, denies plugin ops" {
     try std.testing.expect(acl.isAllowed(7, "core:window.create")); // any window
     try std.testing.expect(!acl.isAllowed(0, "plugin:hello.greet")); // default-deny
     try std.testing.expect(!acl.isAllowed(0, "core:fs.write")); // unknown privileged
+    // Low-risk system capabilities granted by default.
+    try std.testing.expect(acl.isAllowed(0, "core:dialog"));
+    try std.testing.expect(acl.isAllowed(3, "core:notification")); // any window
+    try std.testing.expect(acl.isAllowed(0, "core:recent"));
+    try std.testing.expect(acl.isAllowed(0, "core:clipboard.write"));
+    // Privileged system capabilities stay default-deny.
+    try std.testing.expect(!acl.isAllowed(0, "core:clipboard.read"));
+    try std.testing.expect(!acl.isAllowed(0, "core:credentials"));
+    try std.testing.expect(!acl.isAllowed(0, "core:audio"));
 }
 
 test "parsed grants extend the default" {

@@ -6,8 +6,10 @@
 // is set) with the hardened runtime + allow-jit entitlements (M9-D3), and
 // gates notarization on Apple credential presence.
 import { $ } from "bun";
-import { mkdirSync, cpSync, chmodSync } from "node:fs";
+import { mkdirSync, cpSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { buildAndSignManifest, ensureEphemeralKey } from "./manifest.ts";
+import { loadConfig } from "../packages/nd/src/config.ts";
+import { injectInfoPlist } from "./app-identity.ts";
 
 const VERSION = process.env.ND_APP_VERSION ?? "0.9.0";
 const APP_ID = "com.nativedesktop.gallery";
@@ -21,6 +23,8 @@ export async function packageMac() {
   mkdirSync(updDir, { recursive: true });
 
   cpSync("packaging/macos/Info.plist", `${c}/Info.plist`);
+  const { app: appIdentity } = await loadConfig("examples/gallery");
+  if (appIdentity) writeFileSync(`${c}/Info.plist`, injectInfoPlist(readFileSync(`${c}/Info.plist`, "utf8"), appIdentity));
   cpSync("swift/.build/release/NDShell", `${c}/MacOS/NDShell`);
   chmodSync(`${c}/MacOS/NDShell`, 0o755);
   const bunPath = Bun.which("bun");

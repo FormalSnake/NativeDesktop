@@ -41,6 +41,8 @@ let package = Package(
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),  // CALayer for the T5 fidelity ladder
                 .linkedFramework("WebKit"),      // WKWebView for the <webview> widget (M14)
+                .linkedFramework("Security"),    // Keychain (SecItem*) for credentials.* (system seam)
+                .linkedFramework("UserNotifications"),  // UNUserNotificationCenter for notification.show
             ]
         ),
     ]

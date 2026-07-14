@@ -15,6 +15,14 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `defaultHeight` | int | 320 | create |
 | `testID` | string | — | meta |
 
+| Event | Handler | Payload |
+|---|---|---|
+| `alertResult` | `onAlertResult` | data |
+| `openFileResult` | `onOpenFileResult` | data |
+| `saveFileResult` | `onSaveFileResult` | data |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`.
+
 ## Box (`<box>`)
 
 Automation role: `group`. Text source: none. Children: multi.
@@ -268,8 +276,13 @@ Automation role: `webview`. Text source: none. Children: none.
 | `loadingChanged` | `onLoadingChanged` | checked |
 | `backAvailable` | `onBackAvailable` | checked |
 | `forwardAvailable` | `onForwardAvailable` | checked |
+| `loadProgress` | `onLoadProgress` | value |
+| `loadFailed` | `onLoadFailed` | data |
+| `newWindow` | `onNewWindow` | text |
+| `downloadRequested` | `onDownloadRequested` | data |
+| `javaScriptResult` | `onJavaScriptResult` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`.
 
 ## NativeView (`<nativeview>`)
 
@@ -422,4 +435,330 @@ Automation role: `switch`. Text source: none. Children: none.
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+
+## ToggleButton (`<togglebutton>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `button`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `iconName` | string | — | create |
+| `active` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
+## SegmentedControl (`<segmentedcontrol>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `radiogroup`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `options` | stringList | — | create |
+| `selectedIndex` | int | 0 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+
+## NumberInput (`<numberinput>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `spinbutton`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `value` | float | 0 | createAndUpdate |
+| `min` | float | 0 | create |
+| `max` | float | 100 | create |
+| `step` | float | 1 | create |
+| `digits` | int | 0 | create |
+| `wraps` | bool | false | create |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `valueChanged` | `onValueChanged` | value |
+
+## LinkButton (`<linkbutton>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `link`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `uri` | string |  | createAndUpdate |
+| `visited` | bool | false | createAndUpdate |
+| `openExternal` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `activate` | `onActivate` | text |
+
+## LevelIndicator (`<levelindicator>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `levelbar`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `value` | float | 0 | createAndUpdate |
+| `min` | float | 0 | create |
+| `max` | float | 1 | create |
+| `warningValue` | float | — | createAndUpdate |
+| `criticalValue` | float | — | createAndUpdate |
+| `discrete` | bool | false | create |
+| `testID` | string | — | meta |
+
+## ColorPicker (`<colorpicker>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `colorpicker`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `value` | string | #000000 | createAndUpdate |
+| `supportsAlpha` | bool | false | create |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `colorChanged` | `onColorChanged` | text |
+
+## Banner (`<banner>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `banner`. Text source: `title`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `title` | string |  | createAndUpdate |
+| `buttonLabel` | string | — | createAndUpdate |
+| `revealed` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `buttonClicked` | `onButtonClicked` | none |
+
+## MenuButton (`<menubutton>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `menubutton`. Text source: `label`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `iconName` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+## SplitButton (`<splitbutton>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `splitbutton`. Text source: `label`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `iconName` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `clicked` | `onClick` | none |
+
+## Popover (`<popover>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `popover`. Text source: none. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `open` | bool | false | createAndUpdate |
+| `position` | top \| bottom \| left \| right | top | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `closed` | `onClosed` | none |
+
+## Expander (`<expander>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `expander`. Text source: `label`. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `expanded` | bool | false | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
+## StatusPage (`<statuspage>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `group`. Text source: `title`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `iconName` | string | — | createAndUpdate |
+| `title` | string |  | createAndUpdate |
+| `description` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+## ToastOverlay (`<toastoverlay>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `group`. Text source: none. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toastButtonClicked` | `onToastButtonClicked` | data |
+| `toastDismissed` | `onToastDismissed` | data |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showToast`, `dismissToast`.
+
+## DatePicker (`<datepicker>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `datepicker`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `value` | string |  | createAndUpdate |
+| `displayStyle` | field \| calendar | calendar | create |
+| `minDate` | string | — | createAndUpdate |
+| `maxDate` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dateChanged` | `onDateChanged` | text |
+
+## Table (`<table>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `table`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `columns` | objectList | — | createAndUpdate |
+| `rows` | objectList | — | createAndUpdate |
+| `selectedIndex` | int | -1 | createAndUpdate |
+| `showRowSeparators` | bool | true | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+| `rowActivated` | `onRowActivated` | index |
+| `sortChanged` | `onSortChanged` | data |
+
+## TreeView (`<treeview>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `tree`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `nodes` | objectList | — | createAndUpdate |
+| `selectedIndex` | int | -1 | createAndUpdate |
+| `indentationPerLevel` | int | 16 | create |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | data |
+| `rowActivated` | `onRowActivated` | data |
+| `nodeExpanded` | `onNodeExpanded` | data |
+| `nodeCollapsed` | `onNodeCollapsed` | data |
+
+## FontPicker (`<fontpicker>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `fontpicker`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `value` | string | Sans 12 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `fontChanged` | `onFontChanged` | text |
+
+## Video (`<video>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+Automation role: `video`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `src` | string |  | createAndUpdate |
+| `autoplay` | bool | false | create |
+| `loop` | bool | false | createAndUpdate |
+| `controls` | bool | true | create |
+| `testID` | string | — | meta |
+
+## TrayItem (`<trayitem>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+> **Platforms:** macos only — an invisible no-op elsewhere.
+
+Automation role: `trayitem`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `iconName` | string | — | createAndUpdate |
+| `tooltip` | string | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+## ShareButton (`<sharebutton>`)
+
+> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
+
+> **Platforms:** macos only — an invisible no-op elsewhere.
+
+Automation role: `button`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `iconName` | string | — | create |
+| `items` | stringList | — | createAndUpdate |
+| `testID` | string | — | meta |
 

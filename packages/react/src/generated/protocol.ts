@@ -5,7 +5,7 @@
 
 export const NDP_VERSION = 1;
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton";
 
 /** Child runtime identity, carried inside the hello frame. */
 export interface Runtime {
@@ -109,5 +109,29 @@ export interface WidgetCommandMsg {
   arg: unknown;
 }
 
-export type RuntimeToHostMsg = HelloMsg | CommitBatch | PingMsg | RuntimeErrorMsg | PluginCommandMsg | WidgetCommandMsg;
-export type HostToRuntimeMsg = HelloAckMsg | ErrorMsg | EventMsg | PongMsg | PluginResultMsg;
+/** App->host request for a native system capability (dialogs, clipboard, notifications, credentials, recent documents, audio). `id` correlates the eventual systemResponse; `method` is a dotted capability method (e.g. "dialog.openFile"); `params` is its JSON argument object. Gated host-side on the method's core:<group> capability. */
+export interface SystemRequestMsg {
+  type: "systemRequest";
+  id: number;
+  method: string;
+  params: unknown;
+}
+
+/** Reply to a systemRequest, correlated by `id`. On success `ok` is true and `result` carries the method's JSON result; on failure `ok` is false and `errorMessage` carries a message. (The failure field is `errorMessage`, not `error`, because `error` is a Zig keyword the generated host struct can't name.) */
+export interface SystemResponseMsg {
+  type: "systemResponse";
+  id: number;
+  ok: boolean;
+  result?: unknown;
+  errorMessage?: string;
+}
+
+/** Host-originated app-level event not tied to a widget node: app activation/deactivation, OS open-url/open-file launch, notification clicks, file drops, and capability event streams. `channel` names the stream; `data` carries its JSON payload. */
+export interface SystemEventMsg {
+  type: "systemEvent";
+  channel: string;
+  data: unknown;
+}
+
+export type RuntimeToHostMsg = HelloMsg | CommitBatch | PingMsg | RuntimeErrorMsg | PluginCommandMsg | WidgetCommandMsg | SystemRequestMsg;
+export type HostToRuntimeMsg = HelloAckMsg | ErrorMsg | EventMsg | PongMsg | PluginResultMsg | SystemResponseMsg | SystemEventMsg;

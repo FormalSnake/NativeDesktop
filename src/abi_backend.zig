@@ -145,6 +145,29 @@ pub fn getWindow() ?*Widget {
     return vtable.get_window(ctx);
 }
 
+/// Resolves a Window node's handle to the native window handle a respawned tree
+/// should rebind to (see `Tree.window_reuse`). Falls back to the handle itself
+/// if the embedder returns null (e.g. the window is gone) so the caller always
+/// gets a usable handle.
+pub fn resolveWindow(handle: *Widget) *Widget {
+    return @ptrCast(vtable.resolve_window(ctx, handle) orelse handle);
+}
+
+/// Relocates a live widget from `old_parent` to `new_parent` without destroying
+/// it (the widget-preserving cross-window move — see `Tree.reparent`). Crosses
+/// the ABI with both parent kinds + attach metadata so each backend can reuse
+/// its ordinary per-kind remove + append/insert; `old_parent`/`before` are
+/// nullable.
+pub fn reparentChild(child: *Widget, old_parent: ?*Widget, old_parent_kind: []const u8, new_parent: *Widget, new_parent_kind: []const u8, before: ?*Widget, attached: protocol.Attached) void {
+    const okz = dupeZ(old_parent_kind);
+    defer gpa.free(okz);
+    const nkz = dupeZ(new_parent_kind);
+    defer gpa.free(nkz);
+    const az = attachedJsonZ(attached);
+    defer gpa.free(az);
+    vtable.reparent_child(ctx, child, old_parent, okz, new_parent, nkz, before, az);
+}
+
 /// Serializes `Attached` to the same JSON shape a create-op's props carry
 /// (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel/slot) — the embedder's
 /// `append_child`/`insert_before` re-derive attach metadata the same way
