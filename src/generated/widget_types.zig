@@ -32,6 +32,7 @@ pub const widget_types = [_]Entry{
     .{ .name = "Menubar", .value = 27 },
     .{ .name = "Menu", .value = 28 },
     .{ .name = "MenuItem", .value = 29 },
+    .{ .name = "SettingsGroup", .value = 30 },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {

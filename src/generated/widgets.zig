@@ -778,6 +778,11 @@ pub fn create(
         return ndMenuCreate(app, label);
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         return ndMenuItemCreate(app, props, dupeZ);
+    } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
+        const spacing: c_int = @intCast(propInt(props, "spacing") orelse 0);
+        const box = gtk.Box.new(.vertical, spacing);
+        gtk.Widget.addCssClass(box.as(gtk.Widget), "card");
+        return box.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -938,6 +943,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         if (propBool(props, "enabled")) |en| ndMenuItemSetEnabled(widget, en);
+    } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
+        if (propInt(props, "spacing")) |s| {
+            const box: *gtk.Box = @ptrCast(@alignCast(widget));
+            gtk.Box.setSpacing(box, @intCast(s));
+        }
     }
 }
 
@@ -1143,6 +1153,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         ndMenubarAppendMenu(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
         ndMenuAppendItem(parent, child);
+    } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
+        const box: *gtk.Box = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent))
+        else gtk.Box.append(box, child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -1192,6 +1206,11 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
             else adw.HeaderBar.packStart(hb, child);
         } else adw.HeaderBar.packStart(hb, child);
+    } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
+        const box: *gtk.Box = @ptrCast(@alignCast(parent));
+        const prev = gtk.Widget.getPrevSibling(b);
+        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)
+        else gtk.Box.insertChildAfter(box, child, prev);
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         appendChild(parent, parent_kind, child, attached, dupeZ);
@@ -1232,6 +1251,8 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         // M13: submenu removal rebuilds on next refresh (v1 no-op)
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
         // M13: item removal rebuilds on next refresh (v1 no-op)
+    } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
+        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }

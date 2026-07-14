@@ -32,9 +32,8 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     weak var box: NSStackView?
     let scrollView: NSScrollView
     let tableView: NSTableView
-    /// Guards `tableViewSelectionDidChange` so a programmatic `selectRowIndexes`
-    /// (selection following the app's `suggested-action`) doesn't fire the
-    /// row's `onClick` and loop.
+    /// Guards native row activation while selection is being synchronized from
+    /// the app's `suggested-action` state.
     private var updatingSelection = false
 
     init(box: NSStackView) {
@@ -52,6 +51,13 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
         tableView.autoresizingMask = [.width]
         tableView.dataSource = self
         tableView.delegate = self
+        // Route user activation through NSTableView's action and `clickedRow`,
+        // which is the row AppKit actually hit-tested for the mouse event.
+        // `tableViewSelectionDidChange`/`selectedRow` is not an activation API:
+        // it can describe an earlier selection during delegate callbacks and it
+        // does not fire at all when the already-selected row is clicked again.
+        tableView.target = self
+        tableView.action = #selector(rowClicked(_:))
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.documentView = tableView
@@ -90,6 +96,11 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// Rebuilds the rows and re-syncs the selection (rows changed: attach/
     /// detach/reorder).
     func reload() {
+        // The table may be installed before React appends the backing buttons.
+        // Every later addArrangedSubview becomes a newer sibling and can sit
+        // above the table despite the install-time `.above` positioning. Move
+        // the table back to the front whenever the row model changes.
+        box?.addSubview(scrollView, positioned: .above, relativeTo: nil)
         tableView.reloadData()
         syncSelection()
     }
@@ -115,14 +126,20 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard !updatingSelection else { return }   // programmatic sync, not a user click
-        let sel = tableView.selectedRow
+        // Selection is visual state only. User activation is handled by
+        // `rowClicked`, whose `clickedRow` comes from the native mouse hit-test.
+        // Keeping this delegate method intentionally side-effect-free also
+        // prevents programmatic selection sync from echoing an app click.
+    }
+
+    @objc private func rowClicked(_ sender: NSTableView) {
+        guard !updatingSelection else { return }
+        let row = sender.clickedRow
         let buttons = rowButtons
-        guard sel >= 0, sel < buttons.count else { return }
-        let btn = buttons[sel]
-        // Route the user's selection to the backing button's wired `clicked`
-        // action — the exact same path a real click on the button would take,
-        // so the app's onClick (category switch) runs unchanged.
+        guard row >= 0, row < buttons.count else { return }
+        let btn = buttons[row]
+        // Route the native row click to the backing button's wired `clicked`
+        // action so the unchanged app tree receives its normal onClick event.
         if let action = btn.action, let target = btn.target {
             NSApp.sendAction(action, to: target, from: btn)
         }
@@ -159,23 +176,24 @@ func ndRemoveSidebarTable(_ box: NSStackView) {
     ndSidebarTables[id] = nil
     for btn in box.arrangedSubviews.compactMap({ $0 as? NDButton }) {
         ndSidebarRowButtons.remove(ObjectIdentifier(btn))
+        btn.ndIsSidebarRowModel = false
+        btn.setAccessibilityHidden(false)
         btn.alphaValue = 1
     }
 }
 
-/// Marks `btn` a source-list row: made invisible (the table draws the row) and
-/// stripped of any generic `suggested-action` default-button idiom it may have
-/// picked up before it was known to be a row (create applies its class before
-/// attach). Uses `alphaValue = 0` rather than `isHidden` so the button stays
-/// ACTIONABLE — the automation/accessibility harness (`checkActionable`:
-/// `!isHidden && window != nil`) can still drive the sidebar by testID, and a
-/// semantic click fires the row's `onClick` exactly as a table-row click does.
-/// The button sits behind the source-list table (added `.above`), so real
-/// clicks land on the table, not it.
+/// Marks `btn` as a source-list row model. The table draws and physically
+/// handles the row; the backing button remains mounted only so semantic
+/// automation can target its testID and dispatch its existing onClick action.
+/// It is explicitly excluded from AppKit hit testing and accessibility because
+/// its padded NSStackView frame differs from the table's native row geometry;
+/// alpha alone does not make an NSView non-interactive.
 func ndMarkSidebarRowButton(_ btn: NDButton) {
     let id = ObjectIdentifier(btn)
     guard !ndSidebarRowButtons.contains(id) else { return }
     ndSidebarRowButtons.insert(id)
+    btn.ndIsSidebarRowModel = true
+    btn.setAccessibilityHidden(true)
     btn.alphaValue = 0
     btn.keyEquivalent = ""
     btn.bezelColor = nil

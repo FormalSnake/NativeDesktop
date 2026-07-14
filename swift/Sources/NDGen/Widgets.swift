@@ -219,6 +219,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return ndMenuCreate(propStr(props, "label") ?? "")
     } else if kind == "MenuItem" {
         return ndMenuItemCreate(props)
+    } else if kind == "SettingsGroup" {
+        let group = NDSettingsGroupView()
+        group.spacing = CGFloat(propInt(props, "spacing") ?? 0)
+        return group
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -333,6 +337,10 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         }
     } else if kind == "MenuItem" {
         if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
+    } else if kind == "SettingsGroup" {
+        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
+            stack.spacing = CGFloat(sp)
+        }
     }
 }
 
@@ -490,6 +498,9 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
         ndMenuAppendChild(parent, child)
+    } else if parentKind == "SettingsGroup" {
+        let group = parent as! NDSettingsGroupView
+        group.appendReactView(child)
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -562,6 +573,9 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
         ndMenuAppendChild(parent, child)
+    } else if parentKind == "SettingsGroup" {
+        let group = parent as! NDSettingsGroupView
+        group.insertReactView(child, before: before)
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -621,6 +635,9 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndMenuRemoveChild(parent, child)
     } else if parentKind == "Menu" {
         ndMenuRemoveChild(parent, child)
+    } else if parentKind == "SettingsGroup" {
+        let group = parent as! NDSettingsGroupView
+        group.removeReactView(child)
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

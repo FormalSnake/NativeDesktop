@@ -35,6 +35,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "Menubar": { role: "menubar", textFrom: null, childModel: "multi" },
   "Menu": { role: "menu", textFrom: "label", childModel: "multi" },
   "MenuItem": { role: "menuitem", textFrom: "label", childModel: null },
+  "SettingsGroup": { role: "group", textFrom: null, childModel: "multi" },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -67,6 +68,7 @@ export const intrinsicToName: Record<string, string> = {
   "menubar": "Menubar",
   "menu": "Menu",
   "menuitem": "MenuItem",
+  "settingsgroup": "SettingsGroup",
 };
 
 export interface WidgetEvent {
@@ -104,6 +106,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "menubar": [],
   "menu": [],
   "menuitem": [{ name: "selected", handler: "onSelect", payload: "none" }],
+  "settingsgroup": [],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -136,6 +139,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "menubar": [],
   "menu": [],
   "menuitem": ["onSelect"],
+  "settingsgroup": [],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
@@ -170,6 +174,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "menubar": [],
   "menu": [],
   "menuitem": [],
+  "settingsgroup": [],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */

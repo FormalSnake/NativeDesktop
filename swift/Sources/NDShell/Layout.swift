@@ -34,6 +34,17 @@ nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLay
 /// non-zero padding switches to it — a real AppKit bezel style change, not a
 /// layer hack.
 final class NDButton: NSButton {
+    /// A button promoted into a native source-list row remains the React/tree
+    /// model and semantic-action target, but must not compete with the visible
+    /// NSTableView for physical hit testing. Its padded stack-layout frame does
+    /// not match the table's native row geometry, which otherwise makes clicks
+    /// resolve to a neighboring invisible button.
+    var ndIsSidebarRowModel = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        ndIsSidebarRowModel ? nil : super.hitTest(point)
+    }
+
     var ndPadding = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) {
         didSet {
             invalidateIntrinsicContentSize()

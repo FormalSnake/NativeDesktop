@@ -98,15 +98,19 @@ function App(): React.ReactNode {
   function goBack(): void {
     if (historyIndex <= 0) return;
     const i = historyIndex - 1;
+    const previous = history[i];
+    if (!previous) return;
     setHistoryIndex(i);
-    selectCategory(history[i]);
+    selectCategory(previous);
   }
 
   function goForward(): void {
     if (historyIndex >= history.length - 1) return;
     const i = historyIndex + 1;
+    const next = history[i];
+    if (!next) return;
     setHistoryIndex(i);
-    selectCategory(history[i]);
+    selectCategory(next);
   }
 
   const themeGroup = `theme-${appearanceEpoch}`;
@@ -161,7 +165,7 @@ function App(): React.ReactNode {
               style={{ hexpand: true, padding: 24 }}
             >
               {category === "general" && (
-                <box orientation="vertical" spacing={0} cssClasses={["boxed-list"]} testID="general-card">
+                <settingsgroup spacing={0} testID="general-card">
                   <box orientation="horizontal" style={{ padding: 12 }}>
                     <checkbox
                       testID="setting-launch"
@@ -189,12 +193,12 @@ function App(): React.ReactNode {
                       onSelectionChanged={(e) => setFolderIndex(e.index)}
                     />
                   </box>
-                </box>
+                </settingsgroup>
               )}
 
               {category === "appearance" && (
                 <box orientation="vertical" spacing={20} testID="appearance-card">
-                  <box orientation="vertical" spacing={0} cssClasses={["boxed-list"]}>
+                  <settingsgroup spacing={0}>
                     <box orientation="horizontal" style={{ padding: 12 }}>
                       <radio
                         testID="setting-theme-system"
@@ -230,13 +234,8 @@ function App(): React.ReactNode {
                         }}
                       />
                     </box>
-                  </box>
-                  <box
-                    orientation="vertical"
-                    spacing={8}
-                    cssClasses={["boxed-list"]}
-                    style={{ padding: 12 }}
-                  >
+                  </settingsgroup>
+                  <settingsgroup spacing={8} style={{ padding: 12 }}>
                     <label text="Text size" cssClasses={["heading"]} />
                     <slider
                       testID="setting-textsize"
@@ -251,13 +250,13 @@ function App(): React.ReactNode {
                       text={`${Math.round(textSize)}pt`}
                       cssClasses={["dimmed", "caption"]}
                     />
-                  </box>
+                  </settingsgroup>
                 </box>
               )}
 
               {category === "advanced" && (
                 <box orientation="vertical" spacing={20} testID="advanced-card">
-                  <box orientation="vertical" spacing={0} cssClasses={["boxed-list"]}>
+                  <settingsgroup spacing={0}>
                     <box orientation="horizontal" style={{ padding: 12 }}>
                       <checkbox
                         testID="setting-devmode"
@@ -266,7 +265,7 @@ function App(): React.ReactNode {
                         onToggled={(e) => setDevMode(e.checked)}
                       />
                     </box>
-                  </box>
+                  </settingsgroup>
                   <button
                     testID="reset-button"
                     label="Reset All Settings"
@@ -276,6 +275,7 @@ function App(): React.ReactNode {
                   />
                 </box>
               )}
+
             </box>
           </scrollview>
         </toolbarview>

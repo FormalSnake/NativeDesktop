@@ -3,8 +3,8 @@ import type { ReactNode, Ref } from "react";
 
 export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem";
-export type WidgetType = "window" | "box" | "label" | "button" | "terminal" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "nativeview" | "splitview" | "headerbar" | "toolbarview" | "searchinput" | "sourcelist" | "menubar" | "menu" | "menuitem";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup";
+export type WidgetType = "window" | "box" | "label" | "button" | "terminal" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "nativeview" | "splitview" | "headerbar" | "toolbarview" | "searchinput" | "sourcelist" | "menubar" | "menu" | "menuitem" | "settingsgroup";
 
 /** What a host-element `ref` resolves to (the reconciler's public
  *  instance): the node's wire id + intrinsic type — the handle
@@ -71,6 +71,7 @@ export namespace JSX {
     menubar: { defaults?: boolean; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menubar">>; children?: ReactNode };
     menu: { label?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menu">>; children?: ReactNode };
     menuitem: { label?: string; iconName?: string; accelerator?: string; role?: "none" | "separator" | "about" | "settings" | "quit" | "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll" | "close" | "minimize" | "zoom" | "fullscreen"; enabled?: boolean; testID?: string; onSelect?: () => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menuitem">>; children?: ReactNode };
+    settingsgroup: { spacing?: number; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"settingsgroup">>; children?: ReactNode };
   }
   export type Element = ReactNode;
   export interface IntrinsicAttributes {

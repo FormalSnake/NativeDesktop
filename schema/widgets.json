@@ -446,6 +446,17 @@
         { "name": "selected", "ndpName": "onSelect" }
       ],
       "automation": { "role": "menuitem", "textFrom": "label" }
+    },
+    {
+      "name": "SettingsGroup",
+      "intrinsic": "settingsgroup",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "spacing", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": null }
     }
   ]
 }

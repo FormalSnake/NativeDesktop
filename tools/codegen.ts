@@ -936,6 +936,11 @@ function genZigCreateBody(w: Widget): string {
     out += `        const spacing: c_int = @intCast(propInt(props, "spacing") orelse ${dflt(w, "spacing")});\n`;
     out += "        const box = gtk.Box.new(orientation, spacing);\n";
     out += "        return box.as(gtk.Widget);\n";
+  } else if (w.name === "SettingsGroup") {
+    out += `        const spacing: c_int = @intCast(propInt(props, "spacing") orelse ${dflt(w, "spacing")});\n`;
+    out += "        const box = gtk.Box.new(.vertical, spacing);\n";
+    out += "        gtk.Widget.addCssClass(box.as(gtk.Widget), \"card\");\n";
+    out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Label") {
     out += `        const text = propStr(props, "text") orelse ${zigDefaultStr(w, "text")};\n`;
     out += "        const label = gtk.Label.new(dupeZ(text));\n";
@@ -1147,7 +1152,7 @@ function genZigCreateBody(w: Widget): string {
 function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   let out = "";
   for (const p of updProps) {
-    if (w.name === "Box" && p.name === "spacing") {
+    if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
       out += "        if (propInt(props, \"spacing\")) |s| {\n";
       out += "            const box: *gtk.Box = @ptrCast(@alignCast(widget));\n";
       out += "            gtk.Box.setSpacing(box, @intCast(s));\n";
@@ -1522,6 +1527,22 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     },
     remove: () => "        if (gobject.ext.isA(child, gtk.Widget)) adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);\n",
   },
+  SettingsGroup: {
+    append: () => {
+      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent))\n";
+      s += "        else gtk.Box.append(box, child);\n";
+      return s;
+    },
+    insertBefore: () => {
+      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
+      s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
+      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)\n";
+      s += "        else gtk.Box.insertChildAfter(box, child, prev);\n";
+      return s;
+    },
+    remove: () => "        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);\n",
+  },
   Box: {
     append: () => {
       let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
@@ -1852,6 +1873,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        stack.alignment = vertical ? .leading : .centerY\n";
     out += "        stack.distribution = .gravityAreas\n";
     out += "        return stack\n";
+  } else if (w.name === "SettingsGroup") {
+    out += "        let group = NDSettingsGroupView()\n";
+    out += `        group.spacing = CGFloat(propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")})\n`;
+    out += "        return group\n";
   } else if (w.name === "Label") {
     out += `        let text = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        let label = NDTextField(labelWithString: text)\n";
@@ -2092,7 +2117,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     const key = `${w.name}.${p.name}`;
     if (w.name === "Window" && p.name === "title") {
       out += '        if let t = propStr(props, "title"), let win = view.window { win.title = t }\n';
-    } else if (w.name === "Box" && p.name === "spacing") {
+    } else if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
       out += '        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {\n';
       out += "            stack.spacing = CGFloat(sp)\n";
       out += "        }\n";
@@ -2523,6 +2548,13 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        } else {\n" +
       "            child.removeFromSuperview()\n" +
       "        }\n",
+  },
+  SettingsGroup: {
+    append: () => "        let group = parent as! NDSettingsGroupView\n        group.appendReactView(child)\n",
+    insertBefore: () =>
+      "        let group = parent as! NDSettingsGroupView\n" +
+      "        group.insertReactView(child, before: before)\n",
+    remove: () => "        let group = parent as! NDSettingsGroupView\n        group.removeReactView(child)\n",
   },
   Box: {
     // Cross-axis "fill" + main-axis expand are both handled by

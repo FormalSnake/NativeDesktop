@@ -397,3 +397,12 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 |---|---|---|
 | `selected` | `onSelect` | none |
 
+## SettingsGroup (`<settingsgroup>`)
+
+Automation role: `group`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `spacing` | int | 0 | createAndUpdate |
+| `testID` | string | — | meta |
+

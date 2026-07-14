@@ -37,6 +37,7 @@ let package = Package(
                     "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt.a",
                 ]),
                 .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),  // CALayer for the T5 fidelity ladder
                 .linkedFramework("WebKit"),      // WKWebView for the <webview> widget (M14)
