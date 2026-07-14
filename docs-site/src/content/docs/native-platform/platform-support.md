@@ -9,6 +9,35 @@ description: What's landed, what's planned, and how each platform is verified.
 | macOS | AppKit (Swift shell over a GTK-free `libnd.a`) | **Landed** | `mac.yml`'s `macos-appkit` job (stretch, **non-blocking** — `continue-on-error: true`, never blocks a merge) builds `libnd.a` + the Swift shell on a stock `macos-latest` runner and drives the counter example headfully (no Screen Recording/TCC dependency); locally, `scripts/mac/mac-m11.sh` and related mac scripts run the fuller native-chrome + notes gate |
 | Windows | Win32 + Direct2D/DirectWrite (custom-drawn, UIA-provided widgets) | **Planned, not implemented** | design spec only (`docs/superpowers/specs/2026-07-09-nativedesktop-design.md`, decision D8) |
 
+## Detecting the platform at runtime
+
+`Platform` from `@nativedesktop/react` exposes two **independent** axes, because they can disagree:
+
+```tsx
+import { Platform } from "@nativedesktop/react";
+
+Platform.backend; // "gtk" | "appkit" — the native widget layer actually drawing
+Platform.os;      // "macos" | "linux" | "windows" — where the process runs
+
+// Branch on the renderer:
+const inset = Platform.select({ gtk: 6, appkit: 8, default: 6 });
+if (Platform.backend === "appkit") {
+  /* AppKit-specific tweak */
+}
+```
+
+Branch on **`backend`** for renderer-specific behavior and on **`os`** for OS conventions (paths,
+keybindings, menu placement). They're separate because the GTK backend also runs on macOS (via
+GTK's Quartz `gdk`), so `Platform.os === "macos"` does **not** imply AppKit — `process.platform`
+alone can't tell you which widgets are drawing.
+
+`backend` is authoritative from the host: it arrives in the NDP `helloAck` (the core learns it from
+each embedder's `nd_set_backend_name` and echoes it back), and the renderer installs it *before*
+your tree mounts — so reading `Platform.backend` inside a component, effect, or handler is always
+safe. It reads `"unknown"` only before `render()`'s handshake completes. `os` derives from the Bun
+child's own `process.platform`. See [Architecture](/core-concepts/architecture/) for where the
+handshake sits in the system.
+
 ## Linux: the reference backend
 
 Linux is where the full gate runs and blocks merges. The GTK4 backend also runs natively on macOS

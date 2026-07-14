@@ -40,11 +40,12 @@ export interface HelloMsg {
   runtime: Runtime;
 }
 
-/** Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference order (ndp-binary spec §2); the runtime picks the first one it supports. */
+/** Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference order (ndp-binary spec §2); the runtime picks the first one it supports. `backend` names the host's active widget backend ("gtk" | "appkit") — the authoritative source for `Platform.backend`, since the OS alone can't distinguish it (GTK runs on macOS too). */
 export interface HelloAckMsg {
   type: "helloAck";
   ndpVersion: number;
   encodings: string[];
+  backend: string;
 }
 
 export interface ErrorMsg {

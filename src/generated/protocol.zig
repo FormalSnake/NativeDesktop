@@ -49,11 +49,14 @@ pub const Hello = struct {
 };
 
 /// Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference
-/// order (ndp-binary spec §2); the runtime picks the first one it supports.
+/// order (ndp-binary spec §2); the runtime picks the first one it supports. `backend` names the
+/// host's active widget backend ("gtk" | "appkit") — the authoritative source for
+/// `Platform.backend`, since the OS alone can't distinguish it (GTK runs on macOS too).
 pub const HelloAck = struct {
     type: []const u8 = "helloAck",
     ndpVersion: u32,
     encodings: []const []const u8,
+    backend: []const u8,
 };
 
 pub const ErrorFrame = struct {

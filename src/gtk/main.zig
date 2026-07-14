@@ -86,6 +86,7 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
 
     the_vtable = backend.ndBackend();
     abi.nd_register_backend(ctx, &the_vtable);
+    abi.nd_set_backend_name(ctx, "gtk");
 
     // M10: opt-in capability ACL + native plugin. Absent env = safe default
     // (core UI ops granted), byte-identical to pre-M10 behavior. Mirrors

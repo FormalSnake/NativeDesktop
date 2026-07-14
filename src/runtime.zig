@@ -44,6 +44,10 @@ pub const Runtime = struct {
     write_buf: [4096]u8 = undefined,
     seq: u64 = 0,
     sock_path: [:0]u8,
+    // Active widget backend name ("gtk" | "appkit"), supplied by the embedder
+    // via `nd_set_backend_name` and sent verbatim in the helloAck so the child
+    // can populate `Platform.backend`.
+    backend_name: []const u8 = "unknown",
     // ND_DEV=1 (M8-D4): gates the `--hot` spawn flag and the overlay's
     // Restart button ONLY. The overlay itself paints regardless.
     dev: bool = false,
@@ -65,6 +69,7 @@ pub const Runtime = struct {
         tree: *Tree,
         parent_env: *const std.process.Environ.Map,
         real_environ: std.process.Environ,
+        backend_name: []const u8,
     ) !*Runtime {
         _ = app; // window is owned by the child's `create Window` op via the embedder/tree
         trace = parent_env.get("NDP_TRACE") != null;
@@ -73,6 +78,7 @@ pub const Runtime = struct {
         self.* = undefined;
         self.gpa = gpa;
         self.tree = tree;
+        self.backend_name = backend_name;
         self.writer_mutex = .init;
         self.seq = 0;
         self.last_error_message = null;
@@ -222,7 +228,7 @@ pub const Runtime = struct {
                 return;
             }
         }
-        self.writeFrame(protocol.HelloAck{ .ndpVersion = protocol.ndp_version, .encodings = &.{ "binary", "json" } });
+        self.writeFrame(protocol.HelloAck{ .ndpVersion = protocol.ndp_version, .encodings = &.{ "binary", "json" }, .backend = self.backend_name });
         std.debug.print("ND_HELLO_OK\n", .{});
 
         // Frame loop.

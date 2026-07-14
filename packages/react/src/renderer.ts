@@ -7,6 +7,7 @@ import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta
 import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from "./host-config.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
+import { setBackend } from "./platform.ts";
 import {
   getHmrState,
   setHmrState,
@@ -34,6 +35,7 @@ export async function render(element: ReactNode): Promise<void> {
   if (!state) {
     const ndp = await Ndp.connect();
     await ndp.handshake({ name: "bun", version: Bun.version });
+    setBackend(ndp.backend);
     installErrorReporting(ndp);
 
     const batch = new Batch();

@@ -64,6 +64,11 @@ typedef struct nd_backend {
 /* lifecycle */
 nd_context* nd_init(void);                                  /* create core, spawn nothing yet */
 void nd_register_backend(nd_context*, const nd_backend*);   /* store the vtable */
+/* Name the active widget backend ("gtk" | "appkit"). The core echoes it in the
+   NDP helloAck so the Bun child's Platform.backend can branch on the renderer
+   (which the OS alone can't reveal — GTK runs on macOS too). Call before
+   nd_start_runtime; absent = "unknown". */
+void nd_set_backend_name(nd_context*, const char* name);
 int32_t nd_start_runtime(nd_context*);                      /* open NDP socket, spawn bun child */
 int32_t nd_start_automation(nd_context*);                   /* open automation socket + thread */
 void nd_shutdown(nd_context*);                              /* stop runtime; destroy views/plugins */

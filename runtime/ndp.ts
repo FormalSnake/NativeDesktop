@@ -36,9 +36,17 @@ export class Ndp {
   // "binary" only if the host advertises it in HelloAck.encodings AND this
   // runtime supports it. Fixed for the connection's lifetime.
   private encoding: "json" | "binary" = "json";
+  // Active host widget backend, learned from the helloAck ("gtk" | "appkit").
+  // "unknown" until the handshake completes.
+  private backendName = "unknown";
 
   private constructor(socket: import("bun").Socket) {
     this.socket = socket;
+  }
+
+  /** The host's active widget backend, valid after `handshake()` resolves. */
+  get backend(): string {
+    return this.backendName;
   }
 
   static async connect(): Promise<Ndp> {
@@ -109,6 +117,7 @@ export class Ndp {
       // ND_FORCE_JSON=1 (M10 bench) makes the runtime ignore an advertised
       // "binary" so the JSON leg can be measured against the same host build.
       if (msg.encodings?.includes("binary") && process.env.ND_FORCE_JSON !== "1") this.encoding = "binary";
+      this.backendName = msg.backend;
       this.helloAckResolve?.();
     } else if (msg.type === "error") {
       throw new Error(`host error: ${msg.message} (expected ${msg.expected}, got ${msg.got})`);

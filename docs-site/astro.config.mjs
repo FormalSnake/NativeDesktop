@@ -1,10 +1,14 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import mermaid from 'astro-mermaid';
 
 // https://astro.build/config
 export default defineConfig({
 	integrations: [
+		// Must precede starlight so its rehype pass sees `mermaid` code blocks
+		// first. autoTheme follows Starlight's light/dark toggle.
+		mermaid({ autoTheme: true }),
 		starlight({
 			title: 'NativeDesktop',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/FormalSnake/NativeDesktop' }],
@@ -21,6 +25,7 @@ export default defineConfig({
 				{
 					label: 'Core Concepts',
 					items: [
+						{ label: 'Architecture', slug: 'core-concepts/architecture' },
 						{ label: 'App Model', slug: 'core-concepts/app-model' },
 						{ label: 'State & Hot Reload', slug: 'core-concepts/state-hot-reload' },
 						{ label: 'Styling & Design Language', slug: 'core-concepts/styling-design-language' },

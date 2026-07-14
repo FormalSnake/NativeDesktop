@@ -32,6 +32,7 @@ guard let ctx = nd_init() else {
 gCtx = ctx
 gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
+nd_set_backend_name(ctx, "appkit")
 
 // M10: opt-in capability ACL + native plugin. Absent env = safe default
 // (core UI ops granted), byte-identical to pre-M10 behavior.

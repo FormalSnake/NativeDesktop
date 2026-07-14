@@ -1,4 +1,4 @@
-import { render, useState } from "@nativedesktop/react";
+import { render, useState, Platform } from "@nativedesktop/react";
 
 // ND Settings — a two-pane preferences window, proving the M13 chrome
 // machinery renders grouped forms as native Adwaita "boxed-list" cards on
@@ -162,7 +162,10 @@ function App(): React.ReactNode {
               orientation="vertical"
               spacing={20}
               cssClasses={["view"]}
-              style={{ hexpand: true, padding: { top: 12, right: 24, bottom: 24, left: 24 } }}
+              // AppKit aligns the first card with the sidebar's leading item
+              // (System Settings), so its top inset matches the sidebar's;
+              // Adwaita wants even margins on every side. Same tree, native each.
+              style={{ hexpand: true, padding: { top: Platform.select({ appkit: 6, gtk: 24 }), right: 24, bottom: 24, left: 24 } }}
             >
               {category === "general" && (
                 <settingsgroup spacing={0} testID="general-card">

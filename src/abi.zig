@@ -53,6 +53,10 @@ pub const NdContext = struct {
     tree: Tree = undefined,
     runtime: ?*Runtime = null,
     automation_server: ?*automation.Server = null,
+    // Active widget backend name, set by the embedder's `nd_set_backend_name`
+    // before `nd_start_runtime` and echoed in the helloAck so the Bun child's
+    // `Platform.backend` can branch on the renderer. "unknown" until set.
+    backend_name: []const u8 = "unknown",
     // Set by T10's `nd_set_acl` (pending) before `nd_start_runtime`; null
     // means the embedder never called it, so `runtime.zig`'s commit gate
     // falls back to its own module-level default ACL.
@@ -123,7 +127,7 @@ pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     // continue` early-exit in `Tree.apply`.
     self.tree = Tree.init(self.gpa, self);
 
-    const rt = Runtime.start(self.gpa, self, &self.tree, parent_env, real_environ) catch return -1;
+    const rt = Runtime.start(self.gpa, self, &self.tree, parent_env, real_environ, self.backend_name) catch return -1;
     self.runtime = rt;
     return 0;
 }
@@ -138,6 +142,14 @@ pub export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
     const server = automation.Server.start(self.gpa, rt.getIo(), &self.tree, runtime_dir) catch return -1;
     self.automation_server = server;
     return 0;
+}
+
+/// Names the active widget backend ("gtk" | "appkit"), echoed in the helloAck
+/// (see `Runtime` handshake) so the Bun child's `Platform.backend` can branch
+/// on the renderer — which the OS alone can't reveal, since GTK also runs on
+/// macOS. Call before `nd_start_runtime`; the duped copy lives for the process.
+pub export fn nd_set_backend_name(self: *NdContext, name: [*:0]const u8) callconv(.c) void {
+    self.backend_name = self.gpa.dupe(u8, std.mem.span(name)) catch return;
 }
 
 /// Installs a per-window capability grants manifest (D12). Call before
