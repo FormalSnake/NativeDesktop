@@ -36,11 +36,14 @@ private struct NDSettingsGroupSurface: View {
         }
         .formStyle(.grouped)
         // The shared content column already owns its pane inset. Grouped Form
-        // keeps a native 20 pt section gutter even with zero scroll-content
-        // margins, so expand only the host boundary to avoid doubling that
-        // outer inset relative to sibling controls such as Reset.
+        // still keeps a native 20 pt section gutter on every side even with
+        // zero scroll-content margins, so collapse it symmetrically: the card's
+        // visible bounds then equal this host view's frame, and the surrounding
+        // tree's padding/spacing is the ONLY thing that positions it — no
+        // phantom strip above the first card, no extra gap to a sibling like
+        // Reset, and no lopsided negative inset that would clip a card's top.
         .contentMargins(.all, 0, for: .scrollContent)
-        .padding(.horizontal, -20)
+        .padding(-20)
         .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
     }

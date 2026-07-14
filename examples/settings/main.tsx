@@ -162,7 +162,7 @@ function App(): React.ReactNode {
               orientation="vertical"
               spacing={20}
               cssClasses={["view"]}
-              style={{ hexpand: true, padding: 24 }}
+              style={{ hexpand: true, padding: { top: 12, right: 24, bottom: 24, left: 24 } }}
             >
               {category === "general" && (
                 <settingsgroup spacing={0} testID="general-card">
