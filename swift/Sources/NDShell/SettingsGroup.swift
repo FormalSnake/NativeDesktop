@@ -36,9 +36,11 @@ private struct NDSettingsGroupSurface: View {
         }
         .formStyle(.grouped)
         // The shared content column already owns its pane inset. Grouped Form
-        // otherwise adds a second outer margin around every section, leaving
-        // cards indented relative to sibling controls such as Reset.
+        // keeps a native 20 pt section gutter even with zero scroll-content
+        // margins, so expand only the host boundary to avoid doubling that
+        // outer inset relative to sibling controls such as Reset.
         .contentMargins(.all, 0, for: .scrollContent)
+        .padding(.horizontal, -20)
         .scrollDisabled(true)
         .fixedSize(horizontal: false, vertical: true)
     }

@@ -134,9 +134,17 @@ final class EventDispatcher: NSObject {
         emit(sender, name: name, json: jsonObject(["text": .string(text)]))
     }
 
-    @objc func fireChecked(_ sender: NSButton) {
+    @objc func fireChecked(_ sender: NSControl) {
         guard let name = soleEventName(sender) else { return }
-        emit(sender, name: name, json: jsonObject(["checked": .bool(sender.state == .on)]))
+        let state: NSControl.StateValue
+        if let button = sender as? NSButton {
+            state = button.state
+        } else if let toggle = sender as? NSSwitch {
+            state = toggle.state
+        } else {
+            return
+        }
+        emit(sender, name: name, json: jsonObject(["checked": .bool(state == .on)]))
     }
 
     @objc func fireValue(_ sender: NSSlider) {

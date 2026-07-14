@@ -357,6 +357,9 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
         }
         return "ScrollView"
     }
+    // NSSwitch is an NSControl rather than an NSButton despite sharing the
+    // button state API, so classify it explicitly before the generic button.
+    if view is NSSwitch { return "Switch" }
     // NSPopUpButton is an NSButton subclass — must be checked before the
     // generic NSButton arm below, or every Select misclassifies as Button.
     if view is NSPopUpButton { return "Select" }
@@ -441,10 +444,14 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
               let textView = scroll.documentView as? NSTextView else { return invalidValue(errOut, nodeID) }
         textView.string = text
         EventDispatcher.shared.fireChanged(scroll, text: text) // wired key is the NSScrollView (M6b-D2)
-    case "Checkbox", "Radio", "Switch":
-        guard let boolValue = value as? Bool, let btn = view as? NSButton else { return invalidValue(errOut, nodeID) }
-        btn.state = boolValue ? .on : .off
-        EventDispatcher.shared.fireChecked(btn)
+    case "Checkbox", "Radio":
+        guard let boolValue = value as? Bool, let button = view as? NSButton else { return invalidValue(errOut, nodeID) }
+        button.state = boolValue ? .on : .off
+        EventDispatcher.shared.fireChecked(button)
+    case "Switch":
+        guard let boolValue = value as? Bool, let toggle = view as? NSSwitch else { return invalidValue(errOut, nodeID) }
+        toggle.state = boolValue ? .on : .off
+        EventDispatcher.shared.fireChecked(toggle)
     case "Slider":
         let num: Double?
         if let n = value as? NSNumber { num = n.doubleValue } else { num = nil }
