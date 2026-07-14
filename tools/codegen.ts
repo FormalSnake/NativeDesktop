@@ -944,6 +944,9 @@ function genZigCreateBody(w: Widget): string {
   } else if (w.name === "Label") {
     out += `        const text = propStr(props, "text") orelse ${zigDefaultStr(w, "text")};\n`;
     out += "        const label = gtk.Label.new(dupeZ(text));\n";
+    out += "        // GtkLabel defaults to centered text when it is allocated extra width.\n";
+    out += "        // Native form rows expect their expanding title labels to stay leading-aligned.\n";
+    out += "        gtk.Label.setXalign(label, 0.0);\n";
     out += "        return label.as(gtk.Widget);\n";
   } else if (w.name === "Button") {
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;

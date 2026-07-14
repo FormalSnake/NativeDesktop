@@ -584,6 +584,9 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "Label")) {
         const text = propStr(props, "text") orelse "";
         const label = gtk.Label.new(dupeZ(text));
+        // GtkLabel defaults to centered text when it is allocated extra width.
+        // Native form rows expect their expanding title labels to stay leading-aligned.
+        gtk.Label.setXalign(label, 0.0);
         return label.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Button")) {
         const lbl = propStr(props, "label") orelse "Button";
