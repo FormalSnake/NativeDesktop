@@ -268,6 +268,17 @@ pub const Tree = struct {
         return list.items;
     }
 
+    /// Appends `root` and every descendant (depth-first) to `out`. React emits
+    /// exactly one `remove` op for a removed subtree's root but creates the
+    /// subtree recursively (`emitCreateIfNew`), so the host must walk the
+    /// tracked child lists itself to purge the whole subtree's bookkeeping.
+    fn collectSubtree(self: *Tree, root: u32, out: *std.ArrayList(u32)) void {
+        out.append(self.gpa, root) catch return;
+        if (self.children.getPtr(root)) |list| {
+            for (list.items) |c| self.collectSubtree(c, out);
+        }
+    }
+
     pub fn deinitChildren(self: *Tree) void {
         var it = self.children.iterator();
         while (it.next()) |entry| entry.value_ptr.deinit(self.gpa);
@@ -421,13 +432,25 @@ pub const Tree = struct {
                 if (op.before) |b| self.recordInsertBefore(op.parent.?, op.child.?, b) else self.recordAppend(op.parent.?, op.child.?);
                 self.setMetaParent(op.child.?, op.parent.?);
             } else if (std.mem.eql(u8, op.op, "remove")) {
-                const child = self.nodes.get(op.id.?) orelse continue;
-                const cmeta = self.metaGet(op.id.?);
-                // Destroy the plugin's view while the widget is still alive —
-                // removeChild below finalizes it (the container held the only
-                // ref; the host takes none of its own on plugin views), so
-                // destroying after would hand the plugin a freed widget.
-                if (cmeta) |m| if (m.view_kind) |view_kind| backend.nativeViewDestroy(view_kind, child);
+                const id = op.id.?;
+                const child = self.nodes.get(id) orelse continue;
+                const cmeta = self.metaGet(id);
+                // React emits ONE remove for the subtree root; unparenting it
+                // cascade-destroys every descendant widget, so their bookkeeping
+                // must be purged here too — otherwise stale (id -> freed-widget)
+                // entries linger, alias later-recycled addresses, and crash
+                // clearAppNodes/getTree with a use-after-free.
+                var subtree: std.ArrayList(u32) = .empty;
+                defer subtree.deinit(self.gpa);
+                self.collectSubtree(id, &subtree);
+                // Destroy plugin views across the whole subtree while every
+                // widget is still alive — removeChild below finalizes them (the
+                // container held the only ref; the host takes none of its own on
+                // plugin views), so destroying after would hand a freed widget.
+                for (subtree.items) |sid| {
+                    const m = self.metaGet(sid) orelse continue;
+                    if (m.view_kind) |view_kind| if (self.nodes.get(sid)) |w| backend.nativeViewDestroy(view_kind, w);
+                }
                 // Portable parent lookup: the meta map already tracks
                 // each child's parent id (set by append/insertBefore), so the
                 // live parent widget comes from `self.nodes`, not a backend
@@ -441,10 +464,16 @@ pub const Tree = struct {
                         }
                     }
                 }
-                if (cmeta) |m| self.recordRemove(m.parent, op.id.?);
-                _ = self.nodes.remove(op.id.?);
-                self.removeMeta(op.id.?);
-                std.debug.print("ND_REMOVE id={d}\n", .{op.id.?});
+                if (cmeta) |m| self.recordRemove(m.parent, id);
+                // Purge bookkeeping for the entire doomed subtree (no backend
+                // calls — the widgets are already gone via the cascade above).
+                for (subtree.items) |sid| {
+                    _ = self.nodes.remove(sid);
+                    self.removeMeta(sid);
+                    if (self.children.getPtr(sid)) |list| list.deinit(self.gpa);
+                    _ = self.children.remove(sid);
+                }
+                std.debug.print("ND_REMOVE id={d}\n", .{id});
             } else if (std.mem.eql(u8, op.op, "hide")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
                 backend.setVisible(widget, false);

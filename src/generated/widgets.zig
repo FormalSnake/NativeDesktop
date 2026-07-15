@@ -9,6 +9,7 @@ const adw = @import("adw");
 const pango = @import("pango");
 const protocol = @import("../protocol.zig");
 const ndterm_gtk = @import("../gtk/terminal.zig");
+const ndicons = @import("../gtk/icons.zig");
 const ndweb_gtk = @import("../gtk/webview.zig");
 const nddialog_gtk = @import("../gtk/dialogs.zig");
 const ndtable_gtk = @import("../gtk/table.zig");
@@ -490,13 +491,77 @@ fn ndBuildMenubarModel() ?*gio.Menu {
     return if (any) root else null;
 }
 
+fn ndMenuFindSplit(widget: *gtk.Widget, out: *?*adw.OverlaySplitView) void {
+    if (out.* != null) return;
+    if (gobject.ext.isA(widget, adw.OverlaySplitView)) {
+        out.* = @ptrCast(@alignCast(widget));
+        return;
+    }
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        ndMenuFindSplit(c, out);
+        if (out.* != null) return;
+    }
+}
+
+fn ndMenuFirstHeaderBar(widget: *gtk.Widget, out: *?*adw.HeaderBar) void {
+    if (out.* != null) return;
+    if (gobject.ext.isA(widget, adw.HeaderBar)) {
+        out.* = @ptrCast(@alignCast(widget));
+        return;
+    }
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        ndMenuFirstHeaderBar(c, out);
+        if (out.* != null) return;
+    }
+}
+
+/// The AdwHeaderBar of the split layout's innermost CONTENT pane — the header the
+/// app declares last, where GNOME homes the primary menu button. Found
+/// structurally (drill `getContent` through the nested-split pair), so it is
+/// stable no matter what order headerbars were created/remounted in — a re-keyed
+/// list/sidebar header re-registering last can no longer hijack the button.
+/// Returns null (caller falls back to the last-registered header) when the
+/// window is not a split layout.
+///
+/// The window root is taken from the first ALREADY-ROOTED recorded header, not
+/// from the header that triggered this refresh: a remount calls here from the
+/// new header's create arm, before it is parented, so its `getRoot` is null —
+/// anchoring on it would bail to the fallback and let the remounted header steal
+/// the button (the exact folder-switch jump this avoids).
+fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
+    var root: *gtk.Widget = undefined;
+    var found_root = false;
+    for (menu_headerbars.items) |hb| {
+        if (gtk.Widget.getRoot(hb.as(gtk.Widget))) |r| {
+            root = @ptrCast(@alignCast(r));
+            found_root = true;
+            break;
+        }
+    }
+    if (!found_root) return null;
+    var split_opt: ?*adw.OverlaySplitView = null;
+    ndMenuFindSplit(@ptrCast(@alignCast(root)), &split_opt);
+    var split = split_opt orelse return null;
+    var content = adw.OverlaySplitView.getContent(split) orelse return null;
+    while (gobject.ext.isA(content, adw.OverlaySplitView)) {
+        split = @ptrCast(@alignCast(content));
+        content = adw.OverlaySplitView.getContent(split) orelse return null;
+    }
+    var hb_opt: ?*adw.HeaderBar = null;
+    ndMenuFirstHeaderBar(content, &hb_opt);
+    return hb_opt;
+}
+
 fn ndMenuRefresh() void {
     const app = menu_app orelse return;
     if (the_menubar == null) return;
     ndMenuEnsureAbout();
     const model = ndBuildMenubarModel() orelse return;
     if (menu_headerbars.items.len > 0) {
-        const target = menu_headerbars.items[menu_headerbars.items.len - 1];
+        const any_hb = menu_headerbars.items[menu_headerbars.items.len - 1];
+        const target = ndMenuContentHeaderBar() orelse any_hb;
         if (menu_primary_button == null) {
             const btn = gtk.MenuButton.new();
             // Own a strong ref (sinks the floating ref): rehoming does
@@ -884,11 +949,11 @@ pub fn create(
         if (propStr(props, "iconName")) |icon| {
             if (lbl.len == 0) {
                 button = gtk.Button.new();
-                gtk.Button.setIconName(button, dupeZ(icon));
+                gtk.Button.setIconName(button, ndicons.symbolic(dupeZ(icon)));
             } else {
                 button = gtk.Button.new();
                 const content = adw.ButtonContent.new();
-                adw.ButtonContent.setIconName(content, dupeZ(icon));
+                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));
                 adw.ButtonContent.setLabel(content, dupeZ(lbl));
                 gtk.Button.setChild(button, content.as(gtk.Widget));
             }
@@ -968,7 +1033,7 @@ pub fn create(
         if (propStr(props, "path")) |p| {
             gtk.Image.setFromFile(img, dupeZ(p));
         } else if (propStr(props, "iconName")) |n| {
-            gtk.Image.setFromIconName(img, dupeZ(n));
+            gtk.Image.setFromIconName(img, ndicons.symbolic(dupeZ(n)));
         }
         return img.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ScrollView")) {
@@ -1082,10 +1147,10 @@ pub fn create(
         const tb = gtk.ToggleButton.new();
         if (propStr(props, "iconName")) |icon| {
             if (lbl.len == 0) {
-                gtk.Button.setIconName(tb.as(gtk.Button), dupeZ(icon));
+                gtk.Button.setIconName(tb.as(gtk.Button), ndicons.symbolic(dupeZ(icon)));
             } else {
                 const content = adw.ButtonContent.new();
-                adw.ButtonContent.setIconName(content, dupeZ(icon));
+                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));
                 adw.ButtonContent.setLabel(content, dupeZ(lbl));
                 gtk.Button.setChild(tb.as(gtk.Button), content.as(gtk.Widget));
             }
@@ -1153,14 +1218,14 @@ pub fn create(
         const lbl = propStr(props, "label") orelse "";
         if (propStr(props, "iconName")) |icon| {
             if (lbl.len == 0) {
-                gtk.MenuButton.setIconName(btn, dupeZ(icon));
+                gtk.MenuButton.setIconName(btn, ndicons.symbolic(dupeZ(icon)));
             } else {
                 // icon+label both set: a plain icon_name/label assignment can only
                 // show one of them, so give the button a custom AdwButtonContent
                 // child (mirrors Button's create arm) and force the dropdown arrow
                 // back on since a custom child would otherwise hide it.
                 const content = adw.ButtonContent.new();
-                adw.ButtonContent.setIconName(content, dupeZ(icon));
+                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));
                 adw.ButtonContent.setLabel(content, dupeZ(lbl));
                 gtk.MenuButton.setChild(btn, content.as(gtk.Widget));
                 gtk.MenuButton.setAlwaysShowArrow(btn, 1);
@@ -1182,7 +1247,7 @@ pub fn create(
         const lbl = propStr(props, "label") orelse "";
         if (propStr(props, "iconName")) |icon| {
             if (lbl.len == 0) {
-                adw.SplitButton.setIconName(btn, dupeZ(icon));
+                adw.SplitButton.setIconName(btn, ndicons.symbolic(dupeZ(icon)));
             } else {
                 // icon+label both set: AdwSplitButton's label/icon_name/child
                 // properties are mutually exclusive (setting one clears the other
@@ -1190,7 +1255,7 @@ pub fn create(
                 // both at once (mirrors Button's create arm). The dropdown arrow is
                 // its own separate button on AdwSplitButton, so it always survives.
                 const content = adw.ButtonContent.new();
-                adw.ButtonContent.setIconName(content, dupeZ(icon));
+                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));
                 adw.ButtonContent.setLabel(content, dupeZ(lbl));
                 adw.SplitButton.setChild(btn, content.as(gtk.Widget));
             }
@@ -1218,7 +1283,7 @@ pub fn create(
         return ex.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "StatusPage")) {
         const page = adw.StatusPage.new();
-        if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(page, dupeZ(ic));
+        if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
         adw.StatusPage.setTitle(page, dupeZ(propStr(props, "title") orelse ""));
         if (propStr(props, "description")) |d| adw.StatusPage.setDescription(page, dupeZ(d));
         // Multi children (action buttons) fan into one wrapping GtkBox set as
@@ -1369,7 +1434,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propFloat(props, "fraction")) |f| gtk.ProgressBar.setFraction(@ptrCast(@alignCast(widget)), f);
     } else if (std.mem.eql(u8, kind, "Image")) {
         if (propStr(props, "path")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));
-        if (propStr(props, "iconName")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), dupeZ(n));
+        if (propStr(props, "iconName")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));
     } else if (std.mem.eql(u8, kind, "Spinner")) {
         if (propBool(props, "spinning")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));
     } else if (std.mem.eql(u8, kind, "TabView")) {
@@ -1520,10 +1585,10 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propBool(props, "revealed")) |r| adw.Banner.setRevealed(@ptrCast(@alignCast(widget)), @intFromBool(r));
     } else if (std.mem.eql(u8, kind, "MenuButton")) {
         if (propStr(props, "label")) |l| gtk.MenuButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));
-        if (propStr(props, "iconName")) |ic| gtk.MenuButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));
+        if (propStr(props, "iconName")) |ic| gtk.MenuButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
     } else if (std.mem.eql(u8, kind, "SplitButton")) {
         if (propStr(props, "label")) |l| adw.SplitButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));
-        if (propStr(props, "iconName")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));
+        if (propStr(props, "iconName")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
     } else if (std.mem.eql(u8, kind, "Popover")) {
         if (propBool(props, "open")) |o| {
             const pop: *gtk.Popover = @ptrCast(@alignCast(widget));
@@ -1549,7 +1614,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             }
         }
     } else if (std.mem.eql(u8, kind, "StatusPage")) {
-        if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));
+        if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
         if (propStr(props, "title")) |t| adw.StatusPage.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
         if (propStr(props, "description")) |d| adw.StatusPage.setDescription(@ptrCast(@alignCast(widget)), dupeZ(d));
     } else if (std.mem.eql(u8, kind, "DatePicker")) {

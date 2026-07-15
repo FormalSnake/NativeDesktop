@@ -806,13 +806,77 @@ fn ndBuildMenubarModel() ?*gio.Menu {
     return if (any) root else null;
 }
 
+fn ndMenuFindSplit(widget: *gtk.Widget, out: *?*adw.OverlaySplitView) void {
+    if (out.* != null) return;
+    if (gobject.ext.isA(widget, adw.OverlaySplitView)) {
+        out.* = @ptrCast(@alignCast(widget));
+        return;
+    }
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        ndMenuFindSplit(c, out);
+        if (out.* != null) return;
+    }
+}
+
+fn ndMenuFirstHeaderBar(widget: *gtk.Widget, out: *?*adw.HeaderBar) void {
+    if (out.* != null) return;
+    if (gobject.ext.isA(widget, adw.HeaderBar)) {
+        out.* = @ptrCast(@alignCast(widget));
+        return;
+    }
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        ndMenuFirstHeaderBar(c, out);
+        if (out.* != null) return;
+    }
+}
+
+/// The AdwHeaderBar of the split layout's innermost CONTENT pane — the header the
+/// app declares last, where GNOME homes the primary menu button. Found
+/// structurally (drill \`getContent\` through the nested-split pair), so it is
+/// stable no matter what order headerbars were created/remounted in — a re-keyed
+/// list/sidebar header re-registering last can no longer hijack the button.
+/// Returns null (caller falls back to the last-registered header) when the
+/// window is not a split layout.
+///
+/// The window root is taken from the first ALREADY-ROOTED recorded header, not
+/// from the header that triggered this refresh: a remount calls here from the
+/// new header's create arm, before it is parented, so its \`getRoot\` is null —
+/// anchoring on it would bail to the fallback and let the remounted header steal
+/// the button (the exact folder-switch jump this avoids).
+fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
+    var root: *gtk.Widget = undefined;
+    var found_root = false;
+    for (menu_headerbars.items) |hb| {
+        if (gtk.Widget.getRoot(hb.as(gtk.Widget))) |r| {
+            root = @ptrCast(@alignCast(r));
+            found_root = true;
+            break;
+        }
+    }
+    if (!found_root) return null;
+    var split_opt: ?*adw.OverlaySplitView = null;
+    ndMenuFindSplit(@ptrCast(@alignCast(root)), &split_opt);
+    var split = split_opt orelse return null;
+    var content = adw.OverlaySplitView.getContent(split) orelse return null;
+    while (gobject.ext.isA(content, adw.OverlaySplitView)) {
+        split = @ptrCast(@alignCast(content));
+        content = adw.OverlaySplitView.getContent(split) orelse return null;
+    }
+    var hb_opt: ?*adw.HeaderBar = null;
+    ndMenuFirstHeaderBar(content, &hb_opt);
+    return hb_opt;
+}
+
 fn ndMenuRefresh() void {
     const app = menu_app orelse return;
     if (the_menubar == null) return;
     ndMenuEnsureAbout();
     const model = ndBuildMenubarModel() orelse return;
     if (menu_headerbars.items.len > 0) {
-        const target = menu_headerbars.items[menu_headerbars.items.len - 1];
+        const any_hb = menu_headerbars.items[menu_headerbars.items.len - 1];
+        const target = ndMenuContentHeaderBar() orelse any_hb;
         if (menu_primary_button == null) {
             const btn = gtk.MenuButton.new();
             // Own a strong ref (sinks the floating ref): rehoming does
@@ -1178,6 +1242,7 @@ function genZig(s: Schema): string {
   out += "const pango = @import(\"pango\");\n";
   out += "const protocol = @import(\"../protocol.zig\");\n";
   out += "const ndterm_gtk = @import(\"../gtk/terminal.zig\");\n";
+  out += "const ndicons = @import(\"../gtk/icons.zig\");\n";
   out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n";
   out += "const nddialog_gtk = @import(\"../gtk/dialogs.zig\");\n";
   out += "const ndtable_gtk = @import(\"../gtk/table.zig\");\n";
@@ -1351,11 +1416,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
     out += "            if (lbl.len == 0) {\n";
     out += "                button = gtk.Button.new();\n";
-    out += "                gtk.Button.setIconName(button, dupeZ(icon));\n";
+    out += "                gtk.Button.setIconName(button, ndicons.symbolic(dupeZ(icon)));\n";
     out += "            } else {\n";
     out += "                button = gtk.Button.new();\n";
     out += "                const content = adw.ButtonContent.new();\n";
-    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));\n";
     out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
     out += "                gtk.Button.setChild(button, content.as(gtk.Widget));\n";
     out += "            }\n";
@@ -1445,7 +1510,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propStr(props, \"path\")) |p| {\n";
     out += "            gtk.Image.setFromFile(img, dupeZ(p));\n";
     out += "        } else if (propStr(props, \"iconName\")) |n| {\n";
-    out += "            gtk.Image.setFromIconName(img, dupeZ(n));\n";
+    out += "            gtk.Image.setFromIconName(img, ndicons.symbolic(dupeZ(n)));\n";
     out += "        }\n";
     out += "        return img.as(gtk.Widget);\n";
   } else if (w.name === "ScrollView") {
@@ -1556,10 +1621,10 @@ function genZigCreateBody(w: Widget): string {
     out += "        const tb = gtk.ToggleButton.new();\n";
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
     out += "            if (lbl.len == 0) {\n";
-    out += "                gtk.Button.setIconName(tb.as(gtk.Button), dupeZ(icon));\n";
+    out += "                gtk.Button.setIconName(tb.as(gtk.Button), ndicons.symbolic(dupeZ(icon)));\n";
     out += "            } else {\n";
     out += "                const content = adw.ButtonContent.new();\n";
-    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));\n";
     out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
     out += "                gtk.Button.setChild(tb.as(gtk.Button), content.as(gtk.Widget));\n";
     out += "            }\n";
@@ -1627,14 +1692,14 @@ function genZigCreateBody(w: Widget): string {
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
     out += "            if (lbl.len == 0) {\n";
-    out += "                gtk.MenuButton.setIconName(btn, dupeZ(icon));\n";
+    out += "                gtk.MenuButton.setIconName(btn, ndicons.symbolic(dupeZ(icon)));\n";
     out += "            } else {\n";
     out += "                // icon+label both set: a plain icon_name/label assignment can only\n";
     out += "                // show one of them, so give the button a custom AdwButtonContent\n";
     out += "                // child (mirrors Button's create arm) and force the dropdown arrow\n";
     out += "                // back on since a custom child would otherwise hide it.\n";
     out += "                const content = adw.ButtonContent.new();\n";
-    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));\n";
     out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
     out += "                gtk.MenuButton.setChild(btn, content.as(gtk.Widget));\n";
     out += "                gtk.MenuButton.setAlwaysShowArrow(btn, 1);\n";
@@ -1656,7 +1721,7 @@ function genZigCreateBody(w: Widget): string {
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
     out += "            if (lbl.len == 0) {\n";
-    out += "                adw.SplitButton.setIconName(btn, dupeZ(icon));\n";
+    out += "                adw.SplitButton.setIconName(btn, ndicons.symbolic(dupeZ(icon)));\n";
     out += "            } else {\n";
     out += "                // icon+label both set: AdwSplitButton's label/icon_name/child\n";
     out += "                // properties are mutually exclusive (setting one clears the other\n";
@@ -1664,7 +1729,7 @@ function genZigCreateBody(w: Widget): string {
     out += "                // both at once (mirrors Button's create arm). The dropdown arrow is\n";
     out += "                // its own separate button on AdwSplitButton, so it always survives.\n";
     out += "                const content = adw.ButtonContent.new();\n";
-    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setIconName(content, ndicons.symbolic(dupeZ(icon)));\n";
     out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
     out += "                adw.SplitButton.setChild(btn, content.as(gtk.Widget));\n";
     out += "            }\n";
@@ -1692,7 +1757,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        return ex.as(gtk.Widget);\n";
   } else if (w.name === "StatusPage") {
     out += "        const page = adw.StatusPage.new();\n";
-    out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(page, dupeZ(ic));\n";
+    out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
     out += `        adw.StatusPage.setTitle(page, dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
     out += "        if (propStr(props, \"description\")) |d| adw.StatusPage.setDescription(page, dupeZ(d));\n";
     out += "        // Multi children (action buttons) fan into one wrapping GtkBox set as\n";
@@ -1857,7 +1922,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Image" && p.name === "path") {
       out += "        if (propStr(props, \"path\")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "Image" && p.name === "iconName") {
-      out += "        if (propStr(props, \"iconName\")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), dupeZ(n));\n";
+      out += "        if (propStr(props, \"iconName\")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
@@ -2002,11 +2067,11 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "MenuButton" && p.name === "label") {
       out += "        if (propStr(props, \"label\")) |l| gtk.MenuButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
     } else if (w.name === "MenuButton" && p.name === "iconName") {
-      out += "        if (propStr(props, \"iconName\")) |ic| gtk.MenuButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+      out += "        if (propStr(props, \"iconName\")) |ic| gtk.MenuButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));\n";
     } else if (w.name === "SplitButton" && p.name === "label") {
       out += "        if (propStr(props, \"label\")) |l| adw.SplitButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
     } else if (w.name === "SplitButton" && p.name === "iconName") {
-      out += "        if (propStr(props, \"iconName\")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+      out += "        if (propStr(props, \"iconName\")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));\n";
     } else if (w.name === "Popover" && p.name === "open") {
       out += "        if (propBool(props, \"open\")) |o| {\n";
       out += "            const pop: *gtk.Popover = @ptrCast(@alignCast(widget));\n";
@@ -2034,7 +2099,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            }\n";
       out += "        }\n";
     } else if (w.name === "StatusPage" && p.name === "iconName") {
-      out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), dupeZ(ic));\n";
+      out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));\n";
     } else if (w.name === "StatusPage" && p.name === "title") {
       out += "        if (propStr(props, \"title\")) |t| adw.StatusPage.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
     } else if (w.name === "StatusPage" && p.name === "description") {

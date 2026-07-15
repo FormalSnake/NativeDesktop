@@ -45,6 +45,15 @@ pub fn main(init: std.process.Init) void {
     _ = gio.Application.signals.activate.connect(app.as(gtk.Application), ?*anyopaque, &onActivate, null, .{});
     _ = gio.Application.signals.open.connect(app.as(gtk.Application), ?*anyopaque, &onOpen, null, .{});
 
+    // GApplication is single-instance: a second launch registers as "remote",
+    // forwards its activation to the already-running primary, and run() then
+    // returns 0 with no output — which reads as the app silently failing to
+    // start. Detect that case and say so instead of exiting mutely.
+    _ = gio.Application.register(app.as(gio.Application), null, null);
+    if (gio.Application.getIsRemote(app.as(gio.Application)) != 0) {
+        std.debug.print("ND_ALREADY_RUNNING another instance of {s} is already running; activated it and exiting\n", .{app_id});
+    }
+
     // Only forward argv[0] to GApplication so its GOptionContext doesn't choke
     // on --smoke; the flag is parsed ourselves above.
     const status = gio.Application.run(app.as(gio.Application), 0, null);
