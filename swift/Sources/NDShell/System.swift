@@ -42,8 +42,14 @@ enum NDSystem {
         case "credentials.set": credentialsSet(id, params)
         case "credentials.get": credentialsGet(id, params)
         case "credentials.delete": credentialsDelete(id, params)
+        case "audio.play": NDAudio.play(id, params)
+        case "audio.pause": NDAudio.pause(id, params)
+        case "audio.resume": NDAudio.resume(id, params)
+        case "audio.stop": NDAudio.stop(id, params)
+        case "audio.seek": NDAudio.seek(id, params)
+        case "audio.setVolume": NDAudio.setVolume(id, params)
         default:
-            // audio.* is phase 2; the core already gates truly unknown methods.
+            // The core already gates truly unknown methods before dispatch here.
             respondError(id, "not implemented")
         }
     }

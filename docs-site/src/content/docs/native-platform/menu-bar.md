@@ -101,6 +101,14 @@ menu whose items all drop is omitted entirely. The two roles that do survive get
 treatment instead of a plain menu item: `about` opens an `AdwAboutDialog`, and `settings` renders as
 a "Preferences" item that emits `onSelect` like any custom item.
 
+## Beyond the menu bar
+
+`<menu>`/`<menuitem>` aren't exclusive to `<menubar>` — the same elements are also the dropdown
+content for [`<menubutton>` and `<splitbutton>`](/components/menus-and-popovers/), and for a macOS
+[`<trayitem>`](/native-platform/platform-support/#platform-only-widgets)'s right-click menu. The prop
+set, `role`/`onSelect` exclusivity, and accelerator grammar documented above apply identically in all
+three places — only the owning widget differs.
+
 ## Automation
 
 Menu nodes appear in `getTree` (see [Automation Socket](/automation-testing/automation-socket/)) —

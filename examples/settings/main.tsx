@@ -43,7 +43,9 @@ const defaults = {
   folderIndex: 0,
   theme: "system" as Theme,
   textSize: 14,
+  listDensityIndex: 0,
   devMode: false,
+  autosaveInterval: 5,
 };
 
 function App(): React.ReactNode {
@@ -69,7 +71,9 @@ function App(): React.ReactNode {
   const [folderIndex, setFolderIndex] = useState(defaults.folderIndex);
   const [theme, setTheme] = useState<Theme>(defaults.theme);
   const [textSize, setTextSize] = useState(defaults.textSize);
+  const [listDensityIndex, setListDensityIndex] = useState(defaults.listDensityIndex);
   const [devMode, setDevMode] = useState(defaults.devMode);
+  const [autosaveInterval, setAutosaveInterval] = useState(defaults.autosaveInterval);
 
   function resetAll(): void {
     setLaunchAtLogin(defaults.launchAtLogin);
@@ -77,7 +81,9 @@ function App(): React.ReactNode {
     setFolderIndex(defaults.folderIndex);
     setTheme(defaults.theme);
     setTextSize(defaults.textSize);
+    setListDensityIndex(defaults.listDensityIndex);
     setDevMode(defaults.devMode);
+    setAutosaveInterval(defaults.autosaveInterval);
   }
 
   function selectCategory(next: Category): void {
@@ -254,6 +260,20 @@ function App(): React.ReactNode {
                       cssClasses={["dimmed", "caption"]}
                     />
                   </settingsgroup>
+                  <settingsgroup spacing={8} style={{ padding: 12 }}>
+                    <label text="List density" cssClasses={["heading"]} />
+                    <segmentedcontrol
+                      testID="setting-list-density"
+                      options={["Comfortable", "Compact"]}
+                      selectedIndex={listDensityIndex}
+                      onSelectionChanged={(e) => setListDensityIndex(e.index)}
+                    />
+                    <label
+                      testID="setting-list-density-caption"
+                      text={listDensityIndex === 0 ? "More breathing room between rows." : "Tighter rows, more content per screen."}
+                      cssClasses={["dimmed", "caption"]}
+                    />
+                  </settingsgroup>
                 </box>
               )}
 
@@ -267,6 +287,21 @@ function App(): React.ReactNode {
                         checked={devMode}
                         onToggled={(e) => setDevMode(e.checked)}
                       />
+                    </box>
+                  </settingsgroup>
+                  <settingsgroup spacing={8} style={{ padding: 12 }}>
+                    <label text="Autosave interval" cssClasses={["heading"]} />
+                    <box orientation="horizontal" spacing={8}>
+                      <numberinput
+                        testID="setting-autosave-interval"
+                        value={autosaveInterval}
+                        min={1}
+                        max={60}
+                        step={1}
+                        digits={0}
+                        onValueChanged={(e) => setAutosaveInterval(e.value)}
+                      />
+                      <label text="minutes" style={{ valign: "center" }} cssClasses={["dimmed"]} />
                     </box>
                   </settingsgroup>
                   <button

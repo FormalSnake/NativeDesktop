@@ -41,6 +41,13 @@ export default defineConfig({
 						{ label: 'Widget Reference', slug: 'components/widget-reference' },
 						{ label: 'Terminal', slug: 'components/terminal' },
 						{ label: 'WebView', slug: 'components/webview' },
+						{ label: 'Form Controls', slug: 'components/form-controls' },
+						{ label: 'Pickers', slug: 'components/pickers' },
+						{ label: 'Menus & Popovers', slug: 'components/menus-and-popovers' },
+						{ label: 'Feedback', slug: 'components/feedback' },
+						{ label: 'Data Views', slug: 'components/data-views' },
+						{ label: 'Video', slug: 'components/video' },
+						{ label: 'Dialogs', slug: 'components/dialogs' },
 					],
 				},
 				{
@@ -48,6 +55,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Windows & Chrome', slug: 'native-platform/windows-chrome' },
 						{ label: 'Multi-Window', slug: 'native-platform/multi-window' },
+						{ label: 'System Capabilities', slug: 'native-platform/system-capabilities' },
 						{ label: 'Menu Bar', slug: 'native-platform/menu-bar' },
 						{ label: 'Split Views', slug: 'native-platform/split-views' },
 						{ label: 'Icons', slug: 'native-platform/icons' },

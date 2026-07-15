@@ -28,8 +28,11 @@ names it accepts:
 `WidgetCommandNames` map that types `sendCommand`, the runtime `widgetCommands` validation table, and
 a per-backend dispatch arm on each host (Zig and Swift). A widget with a non-empty `commands` array
 that lacks a host dispatch template makes codegen throw — the same fail-loud contract the create/apply
-templates use — so the three sides can never drift. Today `<webview>` is the only widget with
-commands.
+templates use — so the three sides can never drift. `<webview>` (`goBack`/`goForward`/`reload`/`stop`)
+was the first widget on this channel; `<window>` (`showAlert`/`openFile`/`saveFile`/`showAbout`, see
+[Dialogs](/components/dialogs/)) and `<toastoverlay>` (`showToast`/`dismissToast`, see
+[Feedback](/components/feedback/)) followed, both
+wrapped in a promise-correlating helper rather than called through raw `sendCommand`.
 
 ## Getting a ref and calling sendCommand
 

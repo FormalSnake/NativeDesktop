@@ -38,6 +38,32 @@ safe. It reads `"unknown"` only before `render()`'s handshake completes. `os` de
 child's own `process.platform`. See [Architecture](/core-concepts/architecture/) for where the
 handshake sits in the system.
 
+## Platform-only widgets
+
+A widget's schema entry can declare a `platforms` list (e.g. `["macos"]`) restricting it to specific
+OSes — today's two are `<trayitem>` (a macOS menu-bar extra, `NSStatusItem`) and `<sharebutton>` (the
+macOS system share picker, `NSSharingServicePicker`). Neither has a native counterpart on GNOME, so
+GTK mounts them as an **invisible no-op placeholder** rather than refusing to render — a tree that
+uses one still builds and runs on Linux, it just shows nothing there.
+
+This is a deliberate, supported pattern for platform-specific polish — not every widget has to look
+identical on every OS, as long as omitting it on other platforms is itself the platform-correct
+choice. Gate the surrounding UI with `Platform.os === "macos"` so Linux users don't see empty space
+where the widget would have been:
+
+```tsx
+{Platform.os === "macos" ? (
+  <trayitem iconName="face-smile-symbolic" tooltip="My App" />
+) : null}
+```
+
+In development (`nd dev`, `ND_DEV=1`), mounting a platform-excluded widget on a platform it doesn't
+list logs a one-time console warning — `<trayitem> is macOS-only; it renders nothing on linux — gate
+with Platform.os.` — so a missing `Platform.os` gate doesn't fail silently. The warning is skipped
+entirely in a production build (`nd build`). See [Overview](/components/overview/#what-each-widget-declaration-carries)
+for the schema mechanic and [Menu Bar](/native-platform/menu-bar/#beyond-the-menu-bar) for how
+`<trayitem>`'s own dropdown menu is built from `<menu>`/`<menuitem>` children.
+
 ## Linux: the reference backend
 
 Linux is where the full gate runs and blocks merges. The GTK4 backend also runs natively on macOS

@@ -142,9 +142,35 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
     private var rebuildScheduled = false
     // NSMenuItem -> node, for custom items only (validation + fire).
     private var itemNodes: [ObjectIdentifier: NDMenuNode] = [:]
+    // M15 generalization (the GTK menu-owner-registry mirror): any view that
+    // hosts a menu built from Menu/MenuItem children — MenuButton/SplitButton
+    // (NSComboButton.menu) and TrayItem (NSStatusItem.menu). Owners are held
+    // weakly so a dropped node can't be pinned alive by this registry; dead
+    // entries are pruned on rebuild. MenuItem `selected` keeps working for
+    // every owner because rebuild() re-registers ALL owners' items into the
+    // one `itemNodes` table it just cleared.
+    private struct NDMenuOwner {
+        weak var view: NSView?
+        var children: [NDMenuNode] = []
+    }
+    private var owners: [ObjectIdentifier: NDMenuOwner] = [:]
 
     func setDeclaredMenubar(_ node: NDMenuNode) {
         declaredMenubar = node
+        scheduleRebuild()
+    }
+
+    func ownerAppend(_ view: NSView, _ node: NDMenuNode) {
+        var entry = owners[ObjectIdentifier(view)] ?? NDMenuOwner(view: view)
+        entry.children.append(node)
+        owners[ObjectIdentifier(view)] = entry
+        scheduleRebuild()
+    }
+
+    func ownerRemove(_ view: NSView, _ node: NDMenuNode) {
+        guard var entry = owners[ObjectIdentifier(view)] else { return }
+        entry.children.removeAll { $0 === node }
+        owners[ObjectIdentifier(view)] = entry
         scheduleRebuild()
     }
 
@@ -214,6 +240,40 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         if useDefaults {
             NSApp.windowsMenu = windowMenu
             NSApp.helpMenu = helpMenu
+        }
+
+        // M15: rebuild every registered menu owner from the same declared
+        // nodes in this one pass — itemNodes was cleared above, so the
+        // item->node routing for menubar AND owners is always re-registered
+        // together (a Menu list mutation after append refreshes all hosts).
+        var dead: [ObjectIdentifier] = []
+        for (key, entry) in owners {
+            guard let view = entry.view else {
+                dead.append(key)
+                continue
+            }
+            let menu = NSMenu()
+            for node in entry.children { addOwnerChild(node, to: menu) }
+            ndMenuAssign(menu, to: view)
+        }
+        for key in dead { owners[key] = nil }
+    }
+
+    /// Owner menus commonly mix items and nested <menu> submenus (unlike the
+    /// menubar, whose top level is menu-only).
+    private func addOwnerChild(_ node: NDMenuNode, to menu: NSMenu) {
+        switch node.kind {
+        case .item:
+            addMenuItem(node, to: menu)
+        case .menu:
+            let submenu = NSMenu(title: node.label)
+            for child in node.children { addOwnerChild(child, to: submenu) }
+            let holder = NSMenuItem()
+            holder.title = node.label
+            holder.submenu = submenu
+            menu.addItem(holder)
+        case .menubar:
+            break
         }
     }
 

@@ -520,7 +520,6 @@
       "name": "ToggleButton",
       "intrinsic": "togglebutton",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
@@ -536,7 +535,6 @@
       "name": "SegmentedControl",
       "intrinsic": "segmentedcontrol",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "options", "type": "stringList", "appliesTo": "create" },
         { "name": "selectedIndex", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
@@ -551,7 +549,6 @@
       "name": "NumberInput",
       "intrinsic": "numberinput",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "value", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
         { "name": "min", "type": "float", "default": 0, "appliesTo": "create" },
@@ -570,7 +567,6 @@
       "name": "LinkButton",
       "intrinsic": "linkbutton",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "uri", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
@@ -587,7 +583,6 @@
       "name": "LevelIndicator",
       "intrinsic": "levelindicator",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "value", "type": "float", "default": 0, "appliesTo": "createAndUpdate" },
         { "name": "min", "type": "float", "default": 0, "appliesTo": "create" },
@@ -604,7 +599,6 @@
       "name": "ColorPicker",
       "intrinsic": "colorpicker",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "value", "type": "string", "default": "#000000", "appliesTo": "createAndUpdate" },
         { "name": "supportsAlpha", "type": "bool", "default": false, "appliesTo": "create" },
@@ -619,7 +613,6 @@
       "name": "Banner",
       "intrinsic": "banner",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "buttonLabel", "type": "string", "appliesTo": "createAndUpdate" },
@@ -635,7 +628,6 @@
       "name": "MenuButton",
       "intrinsic": "menubutton",
       "container": { "childModel": "multi" },
-      "stub": true,
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
@@ -648,7 +640,6 @@
       "name": "SplitButton",
       "intrinsic": "splitbutton",
       "container": { "childModel": "multi" },
-      "stub": true,
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
@@ -663,7 +654,6 @@
       "name": "Popover",
       "intrinsic": "popover",
       "container": { "childModel": "single" },
-      "stub": true,
       "props": [
         { "name": "open", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "position", "type": "enum", "values": ["top", "bottom", "left", "right"], "default": "top", "appliesTo": "createAndUpdate" },
@@ -678,7 +668,6 @@
       "name": "Expander",
       "intrinsic": "expander",
       "container": { "childModel": "single" },
-      "stub": true,
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "expanded", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -693,7 +682,6 @@
       "name": "StatusPage",
       "intrinsic": "statuspage",
       "container": { "childModel": "multi" },
-      "stub": true,
       "props": [
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
@@ -707,7 +695,6 @@
       "name": "ToastOverlay",
       "intrinsic": "toastoverlay",
       "container": { "childModel": "single" },
-      "stub": true,
       "props": [
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
@@ -722,7 +709,6 @@
       "name": "DatePicker",
       "intrinsic": "datepicker",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "value", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "displayStyle", "type": "enum", "values": ["field", "calendar"], "default": "calendar", "appliesTo": "create" },
@@ -739,7 +725,6 @@
       "name": "Table",
       "intrinsic": "table",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "columns", "type": "objectList", "itemShape": "TableColumn", "appliesTo": "createAndUpdate" },
         { "name": "rows", "type": "objectList", "itemShape": "TableRow", "appliesTo": "createAndUpdate" },
@@ -758,7 +743,6 @@
       "name": "TreeView",
       "intrinsic": "treeview",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "nodes", "type": "objectList", "itemShape": "TreeNode", "appliesTo": "createAndUpdate" },
         { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
@@ -777,7 +761,6 @@
       "name": "FontPicker",
       "intrinsic": "fontpicker",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "value", "type": "string", "default": "Sans 12", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
@@ -791,7 +774,6 @@
       "name": "Video",
       "intrinsic": "video",
       "container": null,
-      "stub": true,
       "props": [
         { "name": "src", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "autoplay", "type": "bool", "default": false, "appliesTo": "create" },
@@ -806,7 +788,6 @@
       "name": "TrayItem",
       "intrinsic": "trayitem",
       "container": { "childModel": "multi" },
-      "stub": true,
       "platforms": ["macos"],
       "props": [
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
@@ -820,7 +801,6 @@
       "name": "ShareButton",
       "intrinsic": "sharebutton",
       "container": null,
-      "stub": true,
       "platforms": ["macos"],
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },

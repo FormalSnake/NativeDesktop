@@ -134,8 +134,18 @@ would unmount and rebuild the native widget. See
 
 **App data directory and a worker-backed SQLite layer.** `getAppDataDir()`/`ensureAppDataDir()`
 resolve each OS's own per-app data directory; `@nativedesktop/data` runs `bun:sqlite` inside a Bun
-`Worker` so queries never block the thread driving React's commit loop. See
+`Worker` so queries never block the thread driving React's commit loop. It depends on zero ORMs —
+`query`/`mutate`/`transaction` (the `SqliteExecutor` interface) is a stable seam any ORM adapts to
+as a userland adapter, with worked Drizzle and Kysely examples. See
 [App Data & Storage](docs-site/src/content/docs/core-concepts/app-data-storage.md).
+
+**A broad widget set, plus native dialogs and toasts.** Beyond the form/layout basics, NativeDesktop
+ships pickers (color, date, font), menus/popovers, Table and TreeView for structured data, Video, and
+macOS-only polish widgets (`<trayitem>`, `<sharebutton>`) gated with `Platform.os`. Per-window native
+dialogs (`showAlert`/`openFile`/`saveFile`/`showAbout`) and in-app toasts (`showToast`/`dismissToast`
+on a `<toastoverlay>`) round out the app-facing surface. See the
+[Widget Reference](docs-site/src/content/docs/components/widget-reference.md) and
+[Dialogs](docs-site/src/content/docs/components/dialogs.md).
 
 ## Docs
 

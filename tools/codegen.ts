@@ -78,18 +78,11 @@ interface Schema { schemaVersion: number; style?: StyleDef; cssClasses?: string[
 // dialog events/commands (its create/apply/structural arms are real and win).
 // Platform-EXCLUDED widgets (see `Widget.platforms`) never use these sets —
 // they get permanent ND_PLATFORM_NOOP arms instead.
-const ZIG_STUB_WIDGETS = new Set<string>([
-  "Window", "ToggleButton", "SegmentedControl", "NumberInput", "LinkButton",
-  "LevelIndicator", "ColorPicker", "Banner", "MenuButton", "SplitButton",
-  "Popover", "Expander", "StatusPage", "ToastOverlay", "DatePicker", "Table",
-  "TreeView", "FontPicker", "Video",
-]);
-const SWIFT_STUB_WIDGETS = new Set<string>([
-  "Window", "ToggleButton", "SegmentedControl", "NumberInput", "LinkButton",
-  "LevelIndicator", "ColorPicker", "Banner", "MenuButton", "SplitButton",
-  "Popover", "Expander", "StatusPage", "ToastOverlay", "DatePicker", "Table",
-  "TreeView", "FontPicker", "Video", "TrayItem", "ShareButton",
-]);
+// Empty since M15: every schema widget has real templates on BOTH backends
+// (TrayItem/ShareButton are platform-EXCLUDED on Linux, not stubbed — they
+// get ND_PLATFORM_NOOP arms via `Widget.platforms`, never these sets).
+const ZIG_STUB_WIDGETS = new Set<string>([]);
+const SWIFT_STUB_WIDGETS = new Set<string>([]);
 
 /** True when the widget declares a `platforms` list that does not include
  *  `platform` — its arms on that backend are permanent invisible no-ops. */
@@ -706,7 +699,7 @@ fn ndBuildGMenuItem(info: MenuItemInfo) ?*gio.MenuItem {
 /// Shared by the menubar's per-menu bodies AND every MenuButton/SplitButton
 /// popover (M15 generalization of the previously menubar-only builder); item
 /// activation routes through the same app-scoped "app.nd-menu-<node>" actions
-/// wherever the model is mounted, so MenuItem's `selected` event keeps
+/// wherever the model is mounted, so MenuItem's \`selected\` event keeps
 /// working for all owners.
 fn ndBuildModelFromList(items: []const usize) ?*gio.Menu {
     const root = gio.Menu.new();
@@ -1091,7 +1084,7 @@ fn ndCalendarDateKey(cal: *gtk.Calendar) i64 {
 }
 
 /// GTK 4.20+ deprecated the int day/month/year props; select_day with a
-/// GDateTime is the supported `date` surface (design brief 2026-07).
+/// GDateTime is the supported \`date\` surface (design brief 2026-07).
 fn ndCalendarSelectKey(cal: *gtk.Calendar, key: i64) void {
     const dt = glib.DateTime.newLocal(@intCast(@divTrunc(key, 10000)), @intCast(@mod(@divTrunc(key, 100), 100)), @intCast(@mod(key, 100)), 0, 0, 0) orelse return;
     defer glib.DateTime.unref(dt);
@@ -1605,10 +1598,27 @@ function genZigCreateBody(w: Widget): string {
     out += "        const btn = gtk.MenuButton.new();\n";
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
-    out += "            gtk.MenuButton.setIconName(btn, dupeZ(icon));\n";
+    out += "            if (lbl.len == 0) {\n";
+    out += "                gtk.MenuButton.setIconName(btn, dupeZ(icon));\n";
+    out += "            } else {\n";
+    out += "                // icon+label both set: a plain icon_name/label assignment can only\n";
+    out += "                // show one of them, so give the button a custom AdwButtonContent\n";
+    out += "                // child (mirrors Button's create arm) and force the dropdown arrow\n";
+    out += "                // back on since a custom child would otherwise hide it.\n";
+    out += "                const content = adw.ButtonContent.new();\n";
+    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
+    out += "                gtk.MenuButton.setChild(btn, content.as(gtk.Widget));\n";
+    out += "                gtk.MenuButton.setAlwaysShowArrow(btn, 1);\n";
+    out += "            }\n";
     out += "        } else if (lbl.len > 0) {\n";
     out += "            gtk.MenuButton.setLabel(btn, dupeZ(lbl));\n";
     out += "        }\n";
+    out += "        // Content-sized like Button/ToggleButton, not stretched to fill a\n";
+    out += "        // parent GtkBox — GtkMenuButton's composite internals otherwise\n";
+    out += "        // compute hexpand=true from its own child.\n";
+    out += "        gtk.Widget.setHexpand(btn.as(gtk.Widget), 0);\n";
+    out += "        gtk.Widget.setHalign(btn.as(gtk.Widget), .start);\n";
     out += "        // Menu/MenuItem children arrive via the MenuButton structural arm\n";
     out += "        // (ndMenuOwnerAppend) and become this button's GMenuModel.\n";
     out += "        _ = gtk.Widget.signals.destroy.connect(btn.as(gtk.Widget), ?*anyopaque, &cbMenuOwnerDestroyed, null, .{});\n";
@@ -1617,10 +1627,27 @@ function genZigCreateBody(w: Widget): string {
     out += "        const btn = adw.SplitButton.new();\n";
     out += `        const lbl = propStr(props, "label") orelse ${zigDefaultStr(w, "label")};\n`;
     out += "        if (propStr(props, \"iconName\")) |icon| {\n";
-    out += "            adw.SplitButton.setIconName(btn, dupeZ(icon));\n";
+    out += "            if (lbl.len == 0) {\n";
+    out += "                adw.SplitButton.setIconName(btn, dupeZ(icon));\n";
+    out += "            } else {\n";
+    out += "                // icon+label both set: AdwSplitButton's label/icon_name/child\n";
+    out += "                // properties are mutually exclusive (setting one clears the other\n";
+    out += "                // two), so a custom AdwButtonContent child is the only way to show\n";
+    out += "                // both at once (mirrors Button's create arm). The dropdown arrow is\n";
+    out += "                // its own separate button on AdwSplitButton, so it always survives.\n";
+    out += "                const content = adw.ButtonContent.new();\n";
+    out += "                adw.ButtonContent.setIconName(content, dupeZ(icon));\n";
+    out += "                adw.ButtonContent.setLabel(content, dupeZ(lbl));\n";
+    out += "                adw.SplitButton.setChild(btn, content.as(gtk.Widget));\n";
+    out += "            }\n";
     out += "        } else if (lbl.len > 0) {\n";
     out += "            adw.SplitButton.setLabel(btn, dupeZ(lbl));\n";
     out += "        }\n";
+    out += "        // Content-sized like Button/ToggleButton, not stretched to fill a\n";
+    out += "        // parent GtkBox — AdwSplitButton's composite internals otherwise\n";
+    out += "        // compute hexpand=true from its own children.\n";
+    out += "        gtk.Widget.setHexpand(btn.as(gtk.Widget), 0);\n";
+    out += "        gtk.Widget.setHalign(btn.as(gtk.Widget), .start);\n";
     out += "        _ = gtk.Widget.signals.destroy.connect(btn.as(gtk.Widget), ?*anyopaque, &cbMenuOwnerDestroyed, null, .{});\n";
     out += "        return btn.as(gtk.Widget);\n";
   } else if (w.name === "Popover") {
@@ -2606,6 +2633,58 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     append: () => "        ndMenuAppendItem(parent, child);\n",
     remove: () => "        // M13: item removal rebuilds on next refresh (v1 no-op)\n",
   },
+  // M15: MenuButton/SplitButton children are GMenu/GMenuItem handles (never
+  // GtkWidgets) — routed to the generalized menu-owner registry, which
+  // rebuilds this button's GMenuModel on every structural change.
+  MenuButton: {
+    append: () => "        ndMenuOwnerAppend(parent, child);\n",
+    remove: () => "        ndMenuOwnerRemove(parent, child);\n",
+  },
+  SplitButton: {
+    append: () => "        ndMenuOwnerAppend(parent, child);\n",
+    remove: () => "        ndMenuOwnerRemove(parent, child);\n",
+  },
+  Popover: {
+    // The popover's own single content child. (The popover ITSELF attaching
+    // to its tree parent is the cross-cutting ndPopoverAttach guard at the
+    // top of appendChild/insertBefore — parents don't need Popover arms.)
+    append: () => "        gtk.Popover.setChild(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        gtk.Popover.setChild(@ptrCast(@alignCast(parent)), null);\n",
+  },
+  Expander: {
+    append: () => "        gtk.Expander.setChild(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        gtk.Expander.setChild(@ptrCast(@alignCast(parent)), null);\n",
+  },
+  ToastOverlay: {
+    append: () => "        adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), null);\n",
+  },
+  // StatusPage fans its multi children (action buttons) into the wrapping
+  // GtkBox its create arm installed as the page's single child — the Box
+  // structural ops replayed against that inner box.
+  StatusPage: {
+    append: () => {
+      let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
+      s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
+      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)))\n";
+      s += "        else gtk.Box.append(box, child);\n";
+      return s;
+    },
+    insertBefore: () => {
+      let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
+      s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
+      s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
+      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)\n";
+      s += "        else gtk.Box.insertChildAfter(box, child, prev);\n";
+      return s;
+    },
+    remove: () => {
+      let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
+      s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
+      s += "        gtk.Box.remove(box, child);\n";
+      return s;
+    },
+  },
 };
 
 /** Structural no-op template for a stubbed / platform-excluded container:
@@ -2645,6 +2724,9 @@ function genZigStructural(s: Schema): string {
     appendBodies += resolved[w.name]!.append("child");
   }
   if (!appendBodies.includes("dupeZ(")) out += "    _ = dupeZ;\n";
+  out += "    // Cross-cutting: a Popover child anchors on its tree parent via\n";
+  out += "    // gtk_widget_set_parent, whatever the parent kind (M15).\n";
+  out += "    if (gobject.ext.isA(child, gtk.Popover)) return ndPopoverAttach(child, parent);\n";
   out += appendBodies;
   if (!first) out += "    } else {\n";
   else out += "    {\n";
@@ -2655,6 +2737,9 @@ function genZigStructural(s: Schema): string {
   out += "pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget, before: ?*gtk.Widget, attached: protocol.Attached, dupeZ: *const fn ([]const u8) [:0]const u8) void {\n";
   out += "    // null `before` degenerates to append everywhere (matches the M4 hand-written contract).\n";
   out += "    const b = before orelse return appendChild(parent, parent_kind, child, attached, dupeZ);\n";
+  out += "    // Cross-cutting: a Popover child is position-independent — sibling order\n";
+  out += "    // never matters for an anchored popover (M15).\n";
+  out += "    if (gobject.ext.isA(child, gtk.Popover)) return ndPopoverAttach(child, parent);\n";
   first = true;
   const withInsert = containers.filter((w) => resolved[w.name]!.insertBefore);
   for (const w of withInsert) {
@@ -2670,6 +2755,12 @@ function genZigStructural(s: Schema): string {
   out += "}\n\n";
 
   out += "pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Widget) void {\n";
+  out += "    // Cross-cutting: detach an anchored Popover with gtk_widget_unparent —\n";
+  out += "    // it was never a layout child of any container (M15).\n";
+  out += "    if (gobject.ext.isA(child, gtk.Popover)) {\n";
+  out += "        if (gtk.Widget.getParent(child) == parent) gtk.Widget.unparent(child);\n";
+  out += "        return;\n";
+  out += "    }\n";
   first = true;
   for (const w of containers) {
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, parent_kind, ${JSON.stringify(w.name)})) {\n`;
@@ -2999,6 +3090,68 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            return unsafeBitCast(p, to: NSView.self)\n";
     out += "        }\n";
     out += "        return NSView()\n";
+  } else if (w.name === "ToggleButton") {
+    // NSButton .pushOnPushOff — NSSwitch is a different HIG semantic (M15).
+    out += `        let lbl = propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}\n`;
+    out += "        let b = NDButton(title: lbl, target: nil, action: nil)\n";
+    out += "        b.setButtonType(.pushOnPushOff); b.bezelStyle = .rounded\n";
+    out += '        if let icon = propStr(props, "iconName") {\n';
+    out += "            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
+    out += "        }\n";
+    out += `        b.state = (propBool(props, "active") ?? ${swiftDefaultBool(w, "active")}) ? .on : .off\n`;
+    out += "        return b\n";
+  } else if (w.name === "SegmentedControl") {
+    // .selectOne tracking; `options` create-only (same limitation Select accepts).
+    out += '        let seg = NSSegmentedControl(labels: propArray(props, "options") ?? [], trackingMode: .selectOne, target: nil, action: nil)\n';
+    out += `        let idx = propInt(props, "selectedIndex") ?? ${swiftDefaultInt(w, "selectedIndex")}\n`;
+    out += "        if idx >= 0 && idx < seg.segmentCount { seg.selectedSegment = idx }\n";
+    out += "        return seg\n";
+  } else if (w.name === "NumberInput") {
+    out += "        return makeNumberInput(props)  // NSTextField+NSStepper composite (M15, NDShell/NumberInput.swift)\n";
+  } else if (w.name === "LinkButton") {
+    out += "        return makeLinkButton(props)  // SwiftUI .buttonStyle(.link) in NSHostingView (M15, NDShell/LinkButtons.swift)\n";
+  } else if (w.name === "LevelIndicator") {
+    out += "        let li = NSLevelIndicator()\n";
+    out += `        li.levelIndicatorStyle = (propBool(props, "discrete") ?? ${swiftDefaultBool(w, "discrete")}) ? .discreteCapacity : .continuousCapacity\n`;
+    out += `        li.minValue = propDouble(props, "min") ?? ${swiftDefaultDouble(w, "min")}\n`;
+    out += `        li.maxValue = propDouble(props, "max") ?? ${swiftDefaultDouble(w, "max")}\n`;
+    // Absent warning/critical tiers park above max so the plain accent fill
+    // never trips them (NSLevelIndicator's own defaults are 0, which would
+    // paint everything critical).
+    out += '        li.warningValue = propDouble(props, "warningValue") ?? (li.maxValue + 1)\n';
+    out += '        li.criticalValue = propDouble(props, "criticalValue") ?? (li.maxValue + 1)\n';
+    out += `        li.doubleValue = propDouble(props, "value") ?? ${swiftDefaultDouble(w, "value")}\n`;
+    out += "        return li\n";
+  } else if (w.name === "ColorPicker") {
+    out += "        return makeColorPicker(props)  // NSColorWell .minimal (M15, NDShell/ColorWells.swift)\n";
+  } else if (w.name === "Banner") {
+    out += "        return makeBanner(props)  // SwiftUI chrome in NSHostingView (M15, NDShell/Banners.swift)\n";
+  } else if (w.name === "MenuButton") {
+    out += "        return makeMenuButton(props)  // NSComboButton .unified (M15, NDShell/ComboButtons.swift)\n";
+  } else if (w.name === "SplitButton") {
+    out += "        return makeSplitButton(props)  // NSComboButton .split (M15, NDShell/ComboButtons.swift)\n";
+  } else if (w.name === "Popover") {
+    out += "        return makePopover(props)  // host-only handle owning a lazy .transient NSPopover (M15, NDShell/Popovers.swift)\n";
+  } else if (w.name === "Expander") {
+    out += "        return makeExpander(props)  // .pushDisclosure + collapsible section (M15, NDShell/Expanders.swift)\n";
+  } else if (w.name === "StatusPage") {
+    out += "        return makeStatusPage(props)  // SwiftUI ContentUnavailableView + actions row (M15, NDShell/StatusPages.swift)\n";
+  } else if (w.name === "ToastOverlay") {
+    out += "        return makeToastOverlay(props)  // child-window toast presenter (M15, NDShell/Toasts.swift)\n";
+  } else if (w.name === "DatePicker") {
+    out += "        return makeDatePicker(props)  // NSDatePicker .yearMonthDay, pinned UTC (M15, NDShell/DatePickers.swift)\n";
+  } else if (w.name === "Table") {
+    out += "        return makeTable(props)  // view-based NSTableView in NSScrollView (M15, NDShell/Tables.swift)\n";
+  } else if (w.name === "TreeView") {
+    out += "        return makeTreeView(props)  // NSOutlineView in NSScrollView (M15, NDShell/TreeViews.swift)\n";
+  } else if (w.name === "FontPicker") {
+    out += "        return makeFontPicker(props)  // shared NSFontPanel + coordinator (M15, NDShell/FontPickers.swift)\n";
+  } else if (w.name === "Video") {
+    out += "        return makeVideoView(props)  // AVKit AVPlayerView (M15, NDShell/Videos.swift)\n";
+  } else if (w.name === "TrayItem") {
+    out += "        return makeTrayItem(props)  // NSStatusItem behind a host-only handle (M15, NDShell/TrayItems.swift)\n";
+  } else if (w.name === "ShareButton") {
+    out += "        return makeShareButton(props)  // NSSharingServicePicker anchor button (M15, NDShell/ShareButtons.swift)\n";
   } else if (excludedOn(w, "macos")) {
     out += `        // ND_PLATFORM_NOOP(${w.name}): not available on this platform — invisible empty view by design.\n`;
     out += "        return FlippedView()\n";
@@ -3022,6 +3175,19 @@ const SWIFT_SUPPRESSED = new Set([
   "Select.selectedIndex",
   "Slider.value",
   "SearchInput.text",
+  // M15 controlled props (suppression lives in the arm or the hand-written helper).
+  "ToggleButton.active",
+  "SegmentedControl.selectedIndex",
+  "NumberInput.value",
+  "ColorPicker.value",
+  "Popover.open",
+  "Expander.expanded",
+  "DatePicker.value",
+  "Table.rows",
+  "Table.selectedIndex",
+  "TreeView.nodes",
+  "TreeView.selectedIndex",
+  "FontPicker.value",
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
@@ -3158,6 +3324,92 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let pj = propStr(props, "props"), let vk = propStr(props, "viewKind") {\n';
       out += "            nd_plugin_view_apply_props(vk, Unmanaged.passUnretained(view).toOpaque(), pj)\n";
       out += "        }\n";
+    } else if (w.name === "ToggleButton" && p.name === "label") {
+      out += '        if let l = propStr(props, "label"), let btn = view as? NSButton {\n';
+      out += "            btn.title = l\n";
+      out += "        }\n";
+    } else if (w.name === "ToggleButton" && p.name === "active") {
+      out += '        if let a = propBool(props, "active"), let btn = view as? NSButton {\n';
+      out += "            let want: NSControl.StateValue = a ? .on : .off\n";
+      out += "            if btn.state != want {\n";
+      out += "                withEchoSuppressed(view) { btn.state = want }\n";
+      out += "            }\n";
+      out += "        }\n";
+    } else if (w.name === "SegmentedControl" && p.name === "selectedIndex") {
+      out += '        if let idx = propInt(props, "selectedIndex"), let seg = view as? NSSegmentedControl,\n';
+      out += "           idx >= 0 && idx < seg.segmentCount && seg.selectedSegment != idx {\n";
+      out += "            withEchoSuppressed(view) { seg.selectedSegment = idx }\n";
+      out += "        }\n";
+    } else if (w.name === "NumberInput" && p.name === "value") {
+      out += '        if let v = propDouble(props, "value") {\n';
+      out += "            withEchoSuppressed(view) { ndNumberInputSetValue(view, v) }\n";
+      out += "        }\n";
+    } else if (w.name === "LinkButton" && p.name === "label") {
+      // All four LinkButton props merge into one apply (absent keys keep state).
+      out += "        ndLinkButtonApply(view, props)\n";
+    } else if (w.name === "LinkButton") {
+      out += `        // "${p.name}" handled by ndLinkButtonApply above (merged).\n`;
+    } else if (w.name === "LevelIndicator" && p.name === "value") {
+      out += '        if let v = propDouble(props, "value"), let li = view as? NSLevelIndicator { li.doubleValue = v }\n';
+    } else if (w.name === "LevelIndicator" && p.name === "warningValue") {
+      out += '        if let wv = propDouble(props, "warningValue"), let li = view as? NSLevelIndicator { li.warningValue = wv }\n';
+    } else if (w.name === "LevelIndicator" && p.name === "criticalValue") {
+      out += '        if let cv = propDouble(props, "criticalValue"), let li = view as? NSLevelIndicator { li.criticalValue = cv }\n';
+    } else if (w.name === "ColorPicker" && p.name === "value") {
+      out += '        if let v = propStr(props, "value") { ndColorPickerSetValue(view, v) }\n';
+    } else if (w.name === "Banner" && p.name === "title") {
+      out += "        ndBannerApply(view, props)  // title/buttonLabel/revealed merged\n";
+    } else if (w.name === "Banner") {
+      out += `        // "${p.name}" handled by ndBannerApply above (merged).\n`;
+    } else if ((w.name === "MenuButton" || w.name === "SplitButton") && p.name === "label") {
+      out += '        if let l = propStr(props, "label"), let combo = view as? NSComboButton { combo.title = l }\n';
+    } else if ((w.name === "MenuButton" || w.name === "SplitButton") && p.name === "iconName") {
+      out += '        if let ic = propStr(props, "iconName"), let combo = view as? NSComboButton { ndApplyComboIcon(combo, ic) }\n';
+    } else if (w.name === "Popover" && p.name === "open") {
+      out += '        if let o = propBool(props, "open") { ndPopoverApplyOpen(view, o) }\n';
+    } else if (w.name === "Popover" && p.name === "position") {
+      out += '        if let pos = propStr(props, "position") { ndPopoverApplyPosition(view, pos) }\n';
+    } else if (w.name === "Expander" && p.name === "label") {
+      out += "        ndExpanderApply(view, props)  // label/expanded merged (expanded is echo-suppressed inside)\n";
+    } else if (w.name === "Expander") {
+      out += `        // "${p.name}" handled by ndExpanderApply above (merged).\n`;
+    } else if (w.name === "StatusPage" && p.name === "iconName") {
+      out += "        ndStatusPageApply(view, props)  // iconName/title/description merged\n";
+    } else if (w.name === "StatusPage") {
+      out += `        // "${p.name}" handled by ndStatusPageApply above (merged).\n`;
+    } else if (w.name === "DatePicker" && p.name === "value") {
+      out += '        if let v = propStr(props, "value") { ndDatePickerSetValue(view, v) }\n';
+    } else if (w.name === "DatePicker" && p.name === "minDate") {
+      out += "        // min/max merge in one call (absent keys keep prior state).\n";
+      out += '        ndDatePickerSetLimits(view, propStr(props, "minDate"), propStr(props, "maxDate"))\n';
+    } else if (w.name === "DatePicker" && p.name === "maxDate") {
+      out += "        // handled together with minDate above (ndDatePickerSetLimits merges both).\n";
+    } else if (w.name === "Table" && p.name === "columns") {
+      out += '        if let cols = propObjArray(props, "columns") { ndTableSetColumns(view, cols) }\n';
+    } else if (w.name === "Table" && p.name === "rows") {
+      out += '        if let rows = propObjArray(props, "rows") { ndTableSetRows(view, rows) }\n';
+    } else if (w.name === "Table" && p.name === "selectedIndex") {
+      out += '        if let idx = propInt(props, "selectedIndex") { ndTableSetSelectedIndex(view, idx) }\n';
+    } else if (w.name === "Table" && p.name === "showRowSeparators") {
+      out += '        if let sep = propBool(props, "showRowSeparators") { ndTableSetShowRowSeparators(view, sep) }\n';
+    } else if (w.name === "TreeView" && p.name === "nodes") {
+      out += '        if let nodes = propObjArray(props, "nodes") { ndTreeViewSetNodes(view, nodes) }\n';
+    } else if (w.name === "TreeView" && p.name === "selectedIndex") {
+      out += '        if let idx = propInt(props, "selectedIndex") { ndTreeViewSetSelectedIndex(view, idx) }\n';
+    } else if (w.name === "FontPicker" && p.name === "value") {
+      out += '        if let v = propStr(props, "value") { ndFontPickerSetValue(view, v) }\n';
+    } else if (w.name === "Video" && p.name === "src") {
+      out += '        if let s = propStr(props, "src") { ndVideoSetSrc(view, s) }\n';
+    } else if (w.name === "Video" && p.name === "loop") {
+      out += '        if let l = propBool(props, "loop") { ndVideoSetLoop(view, l) }\n';
+    } else if (w.name === "TrayItem" && p.name === "iconName") {
+      out += "        ndTrayItemApply(view, props)  // iconName/tooltip merged\n";
+    } else if (w.name === "TrayItem") {
+      out += `        // "${p.name}" handled by ndTrayItemApply above (merged).\n`;
+    } else if (w.name === "ShareButton" && p.name === "label") {
+      out += "        ndShareButtonApply(view, props)  // label/items merged\n";
+    } else if (w.name === "ShareButton") {
+      out += `        // "${p.name}" handled by ndShareButtonApply above (merged).\n`;
     } else if (excludedOn(w, "macos")) {
       out += `        // ND_PLATFORM_NOOP(${w.name}): prop "${p.name}" is a no-op on this platform by design.\n`;
     } else if (SWIFT_STUB_WIDGETS.has(w.name)) {
@@ -3206,6 +3458,47 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.downloadRequested":   { selector: "webview", payload: "data" },
   "WebView.javaScriptResult":    { selector: "webview", payload: "data" },
   "NativeView.nativeEvent":      { selector: "nativeview", payload: "data" },
+  // M15 additions. Plain NSControl target/action where a fire selector fits;
+  // everything else routes to a hand-written connect (SWIFT_CUSTOM_CONNECT).
+  "ToggleButton.toggled":        { selector: "fireChecked",   payload: "checked" },
+  "SegmentedControl.selectionChanged": { selector: "fireIndex", payload: "index" },
+  "ColorPicker.colorChanged":    { selector: "fireColorText", payload: "text" },
+  "DatePicker.dateChanged":      { selector: "fireDateText",  payload: "text" },
+  "SplitButton.clicked":         { selector: "fireNone",      payload: "none" },
+  "NumberInput.valueChanged":    { selector: "numberinput",   payload: "value" },
+  "LinkButton.activate":         { selector: "linkbutton",    payload: "text" },
+  "Banner.buttonClicked":        { selector: "banner",        payload: "none" },
+  "Popover.closed":              { selector: "popover",       payload: "none" },
+  "Expander.toggled":            { selector: "expander",      payload: "checked" },
+  "FontPicker.fontChanged":      { selector: "fontpicker",    payload: "text" },
+  "ToastOverlay.toastButtonClicked": { selector: "toastoverlay", payload: "data" },
+  "ToastOverlay.toastDismissed":     { selector: "toastoverlay", payload: "data" },
+  "Table.selectionChanged":      { selector: "table",         payload: "index" },
+  "Table.rowActivated":          { selector: "table",         payload: "index" },
+  "Table.sortChanged":           { selector: "table",         payload: "data" },
+  "TreeView.selectionChanged":   { selector: "treeview",      payload: "data" },
+  "TreeView.rowActivated":       { selector: "treeview",      payload: "data" },
+  "TreeView.nodeExpanded":       { selector: "treeview",      payload: "data" },
+  "TreeView.nodeCollapsed":      { selector: "treeview",      payload: "data" },
+  "Window.alertResult":          { selector: "windowdialogs", payload: "data" },
+  "Window.openFileResult":       { selector: "windowdialogs", payload: "data" },
+  "Window.saveFileResult":       { selector: "windowdialogs", payload: "data" },
+};
+
+/// M15 hand-written connect routes (webview-idiom: ONE call records the node
+/// id; the widget's own code emits directly via ndEmitEvent). Keyed by the
+/// SWIFT_SIGNALS selector string; emitted once per widget in ndConnectEvents.
+const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
+  numberinput: "ndNumberInputConnect",
+  linkbutton: "ndLinkButtonConnect",
+  banner: "ndBannerConnect",
+  popover: "ndPopoverConnect",
+  expander: "ndExpanderConnect",
+  fontpicker: "ndFontPickerConnect",
+  toastoverlay: "ndToastOverlayConnect",
+  table: "ndTableConnect",
+  treeview: "ndTreeViewConnect",
+  windowdialogs: "ndWindowDialogsConnect",
 };
 
 /** Emits `ndConnectEvents`, wiring each widget's controls to
@@ -3271,6 +3564,15 @@ function genSwiftEvents(s: Schema): string {
         }
         continue;
       }
+      if (SWIFT_CUSTOM_CONNECT[t.selector]) {
+        // M15 hand-written connect: one call records the node id for every
+        // event this widget emits directly (the webview idiom).
+        if (!navConnected) {
+          out += `        ${SWIFT_CUSTOM_CONNECT[t.selector]}(view, nodeID: nodeID)\n`;
+          navConnected = true;
+        }
+        continue;
+      }
       out += `        EventDispatcher.shared.wire(view, nodeID: nodeID, name: ${JSON.stringify(e.name)}, payload: .${t.payload}, action: #selector(EventDispatcher.${t.selector}(_:)))\n`;
     }
   }
@@ -3284,6 +3586,10 @@ function genSwiftEvents(s: Schema): string {
  *  `command`, and `argJson`. */
 const SWIFT_COMMANDS: Record<string, string> = {
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
+  // Dialogs resolve the owning NSWindow from the node's OWN handle
+  // (ndWindow(for:)) — multi-window correct, no gWindow (M15).
+  Window: "        ndWindowCommand(view, command, argJson)\n",
+  ToastOverlay: "        ndToastOverlayCommand(view, command, argJson)\n",
 };
 
 function genSwiftCommands(s: Schema): string {
@@ -3633,6 +3939,46 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     insertBefore: () => "        ndMenuAppendChild(parent, child)\n",
     remove: () => "        ndMenuRemoveChild(parent, child)\n",
   },
+  // M15: MenuButton/SplitButton/TrayItem children are Menu/MenuItem host
+  // handles (NDMenuNodeView) — routed to the generalized NDMenuManager owner
+  // registry, which rebuilds this owner's NSMenu on every structural change.
+  MenuButton: {
+    append: () => "        ndMenuOwnerAppend(parent, child)\n",
+    insertBefore: () => "        ndMenuOwnerAppend(parent, child)\n",
+    remove: () => "        ndMenuOwnerRemove(parent, child)\n",
+  },
+  SplitButton: {
+    append: () => "        ndMenuOwnerAppend(parent, child)\n",
+    insertBefore: () => "        ndMenuOwnerAppend(parent, child)\n",
+    remove: () => "        ndMenuOwnerRemove(parent, child)\n",
+  },
+  TrayItem: {
+    append: () => "        ndMenuOwnerAppend(parent, child)\n",
+    insertBefore: () => "        ndMenuOwnerAppend(parent, child)\n",
+    remove: () => "        ndMenuOwnerRemove(parent, child)\n",
+  },
+  // The popover's own single content child. (The popover ITSELF attaching to
+  // its tree parent is the cross-cutting ndPopoverStructuralAttach guard at
+  // the top of ndAppendChild/ndInsertBefore — parents don't need Popover arms.)
+  Popover: {
+    append: () => "        ndPopoverSetChild(parent, child)\n",
+    remove: () => "        ndPopoverClearChild(parent, child)\n",
+  },
+  Expander: {
+    append: () => "        (parent as! NDExpanderView).setContentChild(child)\n",
+    remove: () => "        (parent as! NDExpanderView).clearContentChild(child)\n",
+  },
+  ToastOverlay: {
+    append: () => "        ndToastOverlaySetChild(parent, child)\n",
+    remove: () => "        ndToastOverlayClearChild(parent, child)\n",
+  },
+  // StatusPage fans its multi children (action buttons) into the actions
+  // NSStackView below the hosted ContentUnavailableView (StatusPages.swift).
+  StatusPage: {
+    append: () => "        ndStatusPagePack(parent, child, before: nil)\n",
+    insertBefore: () => "        ndStatusPagePack(parent, child, before: before)\n",
+    remove: () => "        ndStatusPageUnpack(parent, child)\n",
+  },
 };
 
 /** Emits `ndAppendChild`/`ndInsertBefore`/`ndRemoveChild`, one arm per
@@ -3674,6 +4020,10 @@ function genSwiftStructural(s: Schema): string {
     '    let attachedSlot = propStr(attached, "slot") ?? "content"\n';
 
   let out = "func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ attachedJson: String) {\n";
+  out += "    // Cross-cutting (M15): a Popover child anchors on its tree parent\n";
+  out += "    // (never box-packed); a TrayItem is menu-bar chrome, never content.\n";
+  out += "    if ndPopoverStructuralAttach(child, parent) { return }\n";
+  out += "    if ndTrayItemStructuralAttach(child) { return }\n";
   out += attachedPrelude;
   let first = true;
   for (const w of containers) {
@@ -3690,6 +4040,9 @@ function genSwiftStructural(s: Schema): string {
   out += "func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ before: NSView?, _ attachedJson: String) {\n";
   out += "    // nil `before` degenerates to append everywhere (matches the M4 hand-written contract).\n";
   out += "    guard let before = before else { return ndAppendChild(parent, parentKind, child, attachedJson) }\n";
+  out += "    // Cross-cutting (M15): Popover/TrayItem children are position-independent.\n";
+  out += "    if ndPopoverStructuralAttach(child, parent) { return }\n";
+  out += "    if ndTrayItemStructuralAttach(child) { return }\n";
   out += attachedPrelude;
   first = true;
   const withInsert = containers.filter((w) => resolved[w.name]!.insertBefore);
@@ -3706,6 +4059,10 @@ function genSwiftStructural(s: Schema): string {
   out += "}\n\n";
 
   out += "func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {\n";
+  out += "    // Cross-cutting (M15): detach an anchored Popover / tear down a\n";
+  out += "    // TrayItem's NSStatusItem — neither was ever a layout child.\n";
+  out += "    if ndPopoverStructuralDetach(child, parent) { return }\n";
+  out += "    if ndTrayItemStructuralDetach(child) { return }\n";
   first = true;
   for (const w of containers) {
     out += `    ${first ? "if" : "} else if"} parentKind == ${JSON.stringify(w.name)} {\n`;

@@ -102,8 +102,109 @@ function NoteList({ db }: { db: SqliteDatabase | null }) {
 Pass a nullish `db` (e.g. while `openDatabase()` is still resolving) to stay in the loading state
 without querying.
 
-### What this doesn't cover yet
+### Bringing your own ORM
 
-The worker's protocol is deliberately raw SQL — `query`/`mutate`/`transaction`/`close` — not an ORM
-hook. Nothing in `sqlite.worker.ts` wires up `drizzle-orm` or any other query builder today; if you
-want one, build the SQL yourself (or generate it) and pass it through `query`/`mutate` as above.
+`@nativedesktop/data` depends on zero ORMs — `packages/data/package.json`'s `dependencies` and
+`optionalDependencies` are both null, and `drizzle-orm`/`kysely` show up only under
+`devDependencies`, where they're exercised by the package's own adapter tests. Raw SQL through
+`query`/`mutate`/`transaction` stays first-class; reach for an ORM only when you actually want one.
+
+The seam that makes that possible is `SqliteExecutor` (`packages/data/src/client.ts`, re-exported
+from `index.ts`) — the three async methods above, minus `close`:
+
+```ts
+export interface SqliteExecutor {
+  query<Row = Record<string, unknown>>(sql: string, params?: SqlParams): Promise<Row[]>;
+  mutate(sql: string, params?: SqlParams): Promise<RunResult>;
+  transaction(steps: readonly TxStep[]): Promise<RunResult[]>;
+}
+```
+
+`SqliteDatabase` implements it, so anything written against `SqliteExecutor` works against a real
+`openDatabase()` connection. An ORM adapter is a small **userland** function that drives its own
+query builder's async driver hooks through these three methods — the app installs the ORM as its
+own dependency and owns its version; the framework never depends on one. Two adapters are proven
+end-to-end in `packages/data/src/adapters.test.ts` (`bun test packages/data/src/adapters.test.ts`),
+including a test that a heavy query through the ORM doesn't block the main thread.
+
+**Drizzle**, via `drizzle-orm/sqlite-proxy` — Drizzle's official async *remote* driver. You hand it
+a callback and the whole query builder returns Promises, even though Drizzle's own bun-sqlite
+dialect is synchronous; that's what makes an async, worker-backed connection possible without
+forking Drizzle:
+
+```ts
+function drizzleOverWorker<TSchema extends Record<string, unknown>>(exec: SqliteExecutor, schema: TSchema) {
+  return drizzle(
+    async (sql, params, method) => {
+      if (method === "run") {
+        await exec.mutate(sql, params);
+        return { rows: [] };
+      }
+      const rows = (await exec.query(sql, params)).map((row) => Object.values(row));
+      return { rows: method === "get" ? (rows[0] as unknown[]) : rows };
+    },
+    { schema },
+  );
+}
+```
+
+sqlite-proxy reconstructs each row from a *positional* value array, so the adapter re-keys
+`query()`'s named-column rows via `Object.values()` in projected-column order — correct for
+ordinary selects. The one honest caveat: a join that selects two same-named columns collapses under
+`Object.values()` (a plain object can't hold two keys with the same name), so alias one of them in
+the SQL.
+
+**Kysely**, via a custom `Dialect`/`Driver` — Kysely's driver model is async from the start
+(`DatabaseConnection.executeQuery` already returns `Promise<{ rows }>`), so it maps onto
+`SqliteExecutor` with no row-shape conversion at all: Kysely keys rows by column name, exactly what
+`query()` returns. Reuse Kysely's own SQLite compiler/adapter/introspector and supply only the
+driver:
+
+```ts
+class WorkerConnection implements DatabaseConnection {
+  constructor(private readonly exec: SqliteExecutor) {}
+
+  async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+    // INSERT/UPDATE/DELETE/MERGE without a RETURNING clause -> exec.mutate(),
+    // mapped into { numAffectedRows, insertId }; everything else -> exec.query().
+  }
+
+  async *streamQuery<R>(): AsyncIterableIterator<QueryResult<R>> {
+    throw new Error("streaming is not supported by the worker-backed SQLite driver");
+  }
+}
+```
+
+wired into a `Dialect` whose `createDriver()` returns a `Driver` that acquires a single
+`WorkerConnection` and turns `beginTransaction`/`commitTransaction`/`rollbackTransaction` into plain
+`BEGIN`/`COMMIT`/`ROLLBACK` statements through it.
+
+### Migrations
+
+Two ways to apply schema changes, both compatible with the worker-backed connection:
+
+- **`drizzle-kit` unchanged** — `drizzle-kit generate` and `drizzle-kit migrate` run as their own
+  process directly against the SQLite file, off the hot path entirely; they don't know or care that
+  the app's own queries route through a worker.
+- **Apply at startup, in-process**, via `drizzle-orm/sqlite-proxy/migrator`:
+
+  ```ts
+  import { migrate } from "drizzle-orm/sqlite-proxy/migrator";
+
+  await migrate(
+    db,
+    async (queries) => {
+      await executor.transaction(queries.map((sql) => ({ sql })));
+    },
+    { migrationsFolder: "./drizzle" },
+  );
+  ```
+
+  `queries` arrives as `string[]`; mapping each one to `{ sql }` turns it into a `TxStep`, so the
+  whole migration runs as one `transaction()` call — atomic through the same worker every other
+  query goes through.
+
+The framework owns exactly one seam — `query`/`mutate`/`transaction`, running off the thread that
+drives React's commit loop. Which ORM sits on top of it, if any, is the app's call and the app's
+dependency: `@nativedesktop/data` carries no ORM version liability, and an ORM this page doesn't
+mention adapts the same way, in about the same number of lines.

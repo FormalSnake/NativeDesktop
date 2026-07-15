@@ -16,6 +16,7 @@ const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const abi = @import("../abi.zig");
+const audio = @import("audio.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -45,11 +46,12 @@ pub fn setApp(app: *gtk.Application) void {
 // ============================================================================
 
 /// vtable `system_request` body: routes a whitelisted method (the core already
-/// ACL-gated it and rejected unknown methods) to its implementation. `audio.*`
-/// is phase 2.
+/// ACL-gated it and rejected unknown methods) to its implementation. The
+/// `audio.*` family lives in audio.zig (GStreamer, dlopen'd like webview.zig).
 pub fn handleRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params: [*:0]const u8) void {
     const m = std.mem.span(method);
     const p = std.mem.span(params);
+    if (std.mem.startsWith(u8, m, "audio.")) return audio.handleRequest(ctx, id, m, p);
     if (std.mem.eql(u8, m, "dialog.openFile")) return openFile(ctx, id, p);
     if (std.mem.eql(u8, m, "dialog.saveFile")) return saveFile(ctx, id, p);
     if (std.mem.eql(u8, m, "dialog.showMessage")) return showMessage(ctx, id, p);

@@ -24,6 +24,10 @@ backends and this documentation can never drift from each other.
 - **Automation role + text source** — every widget declares an automation `role` (`button`,
   `textbox`, `list`, …) and, where applicable, which prop `getTree` reports as its `text` — this is
   what makes the tree an agent reads meaningful rather than a bag of opaque refs.
+- **Platform availability** — an optional `platforms` list restricts a widget to specific OSes (e.g.
+  `<trayitem>` and `<sharebutton>` are `macos`-only). Elsewhere it mounts as an invisible no-op, and
+  `nd dev` logs a one-time console warning telling you to gate it with `Platform.os`. See
+  [Platform Support](/native-platform/platform-support/#platform-only-widgets).
 
 ## Styling applies uniformly
 

@@ -64,6 +64,46 @@ packaging always takes the skip path and prints `ND_PACKAGE_NOTARIZE_SKIPPED rea
 **Mac prerequisite:** the Mac packaging flow signs update archives with `minisign`, which is not
 part of Xcode or the system toolchain — install it with `brew install minisign`.
 
+## File associations and URL schemes
+
+`nd package` stamps an app's identity — a bundle id override, document types, and custom URL
+schemes — into the platform packaging outputs, driven by the `app` field of
+`nativedesktop.config.ts` (`AppIdentity`, `packages/nd/src/config.ts`):
+
+```ts
+export default defineConfig({
+  app: {
+    id: "com.example.myapp",
+    fileAssociations: [{ ext: "md", name: "Markdown Document", mimeType: "text/markdown", role: "editor" }],
+    urlSchemes: [{ scheme: "myapp" }],
+  },
+});
+```
+
+- **`id`** overrides `CFBundleIdentifier` on macOS. There's no Linux equivalent — the `.desktop`
+  file's identity comes from its filename.
+- **`fileAssociations`** — each entry is one document type: `ext` (no dot), an optional
+  human-readable `name`, an optional `mimeType`, and `role` (`"editor"` or `"viewer"`, default
+  `"editor"`).
+- **`urlSchemes`** — each entry is one custom scheme (`{ scheme, name? }`), e.g. `myapp://...`.
+
+On macOS, `tools/app-identity.ts` injects `CFBundleDocumentTypes` (one `<dict>` per file
+association) and `CFBundleURLTypes` (one per URL scheme) into `Info.plist`, alongside the
+`CFBundleIdentifier` override when `id` is set. `fileAssociations` work here even without a
+`mimeType` — macOS keys document types off the extension and `UTType`, not a MIME type.
+
+On Linux, the same config extends the AppDir's `.desktop` entry: a `MimeType=` line built from every
+file association's `mimeType` plus `x-scheme-handler/<scheme>` for each URL scheme, and an `Exec=...
+%U` argument so the launched app receives the opened path/URL. A `usr/share/mime/packages/<app>.xml`
+shared-mime-info file is also generated for any file association that declares a `mimeType`. **A file
+association without a `mimeType` is silently skipped on Linux** — `MimeType=` needs a real MIME type,
+there's no extension-only fallback the way macOS has one. If you want a file association to register
+on both platforms, always set `mimeType`.
+
+Launches routed through either mechanism arrive in your React tree via
+[`app.onOpenFile`/`app.onOpenUrl`](/native-platform/system-capabilities/#app-level-events) — register
+those handlers early, since events fired before the app's first render aren't buffered.
+
 ## Update manifest schema
 
 A manifest is a small JSON document, produced by `tools/manifest.ts` (`buildAndSignManifest`) and

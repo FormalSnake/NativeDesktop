@@ -39,7 +39,8 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
 }
 
 /// ListView's `itemCount` (M5c-D4) is derived from `items.len`, never from
-/// walking GTK's recycled row widgets.
+/// walking GTK's recycled row widgets. M15 extends the same derivation to
+/// Table (`rows`) and TreeView (`nodes`) — see `rowCountOf`.
 fn propArrayLen(props: ?std.json.Value, key: []const u8) ?u32 {
     const v = props orelse return null;
     if (v != .object) return null;
@@ -96,6 +97,15 @@ fn freeRows(gpa: std.mem.Allocator, rows: ?[]NodeMeta.Row) void {
         if (row.icon_name) |i| gpa.free(i);
     }
     gpa.free(r);
+}
+
+/// The data-driven widgets' row count for `NodeMeta.item_count`, whichever
+/// objectList/stringList prop the widget carries: ListView `items` (M5c-D4),
+/// Table `rows`, TreeView `nodes` (M15). No widget declares more than one.
+fn rowCountOf(props: ?std.json.Value) ?u32 {
+    return propArrayLen(props, "items") orelse
+        propArrayLen(props, "rows") orelse
+        propArrayLen(props, "nodes");
 }
 
 /// Invoked from both the create and update arms of `apply` — style is only
@@ -358,7 +368,7 @@ pub const Tree = struct {
                 if (view_kind != null) if (self.metaGet(op.id.?)) |m| {
                     m.view_kind = self.dupeOpt(view_kind) catch null;
                 };
-                if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
+                if (rowCountOf(op.props)) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
                 applyStyleIfPresent(widget, op.id.?, op.props);
             } else if (std.mem.eql(u8, op.op, "append")) {
@@ -399,7 +409,7 @@ pub const Tree = struct {
                 if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
                     self.setMetaText(op.id.?, t);
                 }
-                if (propArrayLen(op.props, "items")) |n| self.setMetaItemCount(op.id.?, n);
+                if (rowCountOf(op.props)) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
                 const parent_widget = self.nodes.get(op.parent.?) orelse continue;

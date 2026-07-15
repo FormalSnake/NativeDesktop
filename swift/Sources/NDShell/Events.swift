@@ -157,10 +157,29 @@ final class EventDispatcher: NSObject {
         let idx: Int
         if let pop = sender as? NSPopUpButton {
             idx = pop.indexOfSelectedItem
+        } else if let seg = sender as? NSSegmentedControl {
+            idx = seg.selectedSegment
         } else {
             idx = 0
         }
         emit(sender, name: name, json: jsonObject(["index": .int(idx)]))
+    }
+
+    /// ColorPicker's `colorChanged` (M15): NSColorWell target/action, hex
+    /// round-trip via ndHexFromColor (ColorWells.swift). Fires continuously
+    /// while dragging in the shared NSColorPanel — high-frequency by design.
+    @objc func fireColorText(_ sender: NSControl) {
+        guard let name = soleEventName(sender), let well = sender as? NSColorWell else { return }
+        emit(sender, name: name, json: jsonObject(["text": .string(ndHexFromColor(well.color))]))
+    }
+
+    /// DatePicker's `dateChanged` (M15): NSDatePicker target/action, pinned-UTC
+    /// ISO YYYY-MM-DD via ndDatePickerISO (DatePickers.swift). Out-of-range
+    /// entries are clamped natively by minDate/maxDate BEFORE the action fires,
+    /// so the clamped date is what JS hears (GTK clamp parity).
+    @objc func fireDateText(_ sender: NSControl) {
+        guard let name = soleEventName(sender), let picker = sender as? NSDatePicker else { return }
+        emit(sender, name: name, json: jsonObject(["text": .string(ndDatePickerISO(picker))]))
     }
 
     /// Most wired views have exactly one event name; `preferring` picks
@@ -249,6 +268,40 @@ func withEchoSuppressed(_ view: NSView, _ body: () -> Void) {
     EventDispatcher.shared.suppressed.insert(key)
     body()
     if !wasSuppressed { EventDispatcher.shared.suppressed.remove(key) }
+}
+
+// MARK: - shared emit path for hand-written composite widgets (M15)
+
+/// Direct emit for widgets whose events don't ride NSControl target/action
+/// (NumberInput/LinkButton/Banner/Popover/Expander/Toast/Table/TreeView/
+/// FontPicker/Window dialogs) — the shared peer of NDWebView's private
+/// emitEvent. nodeID 0 = not yet connected; nothing fires into node 0.
+func ndEmitEvent(_ nodeID: UInt32, _ name: String, _ json: String) {
+    guard nodeID != 0 else { return }
+    json.withCString { cJson in
+        name.withCString { cName in
+            nd_emit_event(gCtx, nodeID, cName, cJson)
+        }
+    }
+}
+
+/// Same minimal escaping as the private jsonObject above (all free-form
+/// strings on these paths are titles/uris/ids).
+func ndJsonEscape(_ value: String) -> String {
+    value
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "\n", with: "\\n")
+}
+
+func ndJsonString(_ value: String) -> String { "\"\(ndJsonEscape(value))\"" }
+
+/// Suppression probe for hand-written composites that emit directly instead
+/// of through `EventDispatcher.emit` (which checks this internally): call
+/// before ndEmitEvent so React-driven prop writes wrapped in
+/// `withEchoSuppressed` don't echo back.
+func ndIsEchoSuppressed(_ view: NSView) -> Bool {
+    EventDispatcher.shared.suppressed.contains(ObjectIdentifier(view))
 }
 
 /// Radio group membership (`ObjectIdentifier(button) -> group name`),

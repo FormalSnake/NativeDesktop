@@ -168,7 +168,7 @@ fn rebuildColumns(view: *gtk.ColumnView, arr: std.json.Array, dupeZ: *const fn (
     const columns = gtk.ColumnView.getColumns(view);
     var n = gio.ListModel.getNItems(columns);
     while (n > 0) : (n -= 1) {
-        const item = gio.ListModel.getItem(columns, n - 1) orelse continue;
+        const item = gio.ListModel.getObject(columns, n - 1) orelse continue;
         defer gobject.Object.unref(item);
         gtk.ColumnView.removeColumn(view, @ptrCast(@alignCast(item)));
     }
@@ -207,6 +207,11 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     const selection = gtk.SingleSelection.new(model.as(gio.ListModel)); // transfer-full: selection owns model
     gtk.SingleSelection.setAutoselect(selection, 0);
     gtk.SingleSelection.setCanUnselect(selection, 1);
+    // gtk_single_selection_new() auto-selects position 0 as part of
+    // constructing the selection over the model, before autoselect above
+    // takes effect — clear it explicitly so selectedIndex: -1 (the default)
+    // means no row is visibly selected, not a phantom row-0 highlight.
+    gtk.SingleSelection.setSelected(selection, std.math.maxInt(c_uint));
     const sel_idx = propInt(props, "selectedIndex") orelse -1;
     if (sel_idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(sel_idx));
 

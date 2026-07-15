@@ -43,6 +43,11 @@ let package = Package(
                 .linkedFramework("WebKit"),      // WKWebView for the <webview> widget (M14)
                 .linkedFramework("Security"),    // Keychain (SecItem*) for credentials.* (system seam)
                 .linkedFramework("UserNotifications"),  // UNUserNotificationCenter for notification.show
+                .linkedFramework("AVFoundation"),  // AVPlayer for audio.* playback (system seam)
+                .linkedFramework("AVKit"),         // AVPlayerView for the <video> widget (M15)
+                .linkedFramework("UniformTypeIdentifiers"),  // UTType for open/save panel filters (M15)
+                .linkedFramework("MediaToolbox"),  // MTAudioProcessingTap for audio.* spectrum analysis
+                .linkedFramework("Accelerate"),    // vDSP FFT for audio.* spectrum analysis
             ]
         ),
     ]

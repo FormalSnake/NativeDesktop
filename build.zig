@@ -277,7 +277,21 @@ pub fn build(b: *std.Build) void {
     // support code. Self-contained archive, no downstream linker flags needed.
     libnd.bundle_compiler_rt = true;
     const libnd_step = b.step("libnd", "Build libnd.a (static, GTK-free, -Dbackend=abi)");
-    libnd_step.dependOn(&b.addInstallArtifact(libnd, .{}).step);
+    const libnd_install = b.addInstallArtifact(libnd, .{});
+    libnd_step.dependOn(&libnd_install.step);
+    // Zig 0.16 emits archive members the new Apple ld rejects ("libnd_zcu.o
+    // is not 8-byte aligned"); repack the installed archive with libtool so
+    // swiftc/SwiftPM can link it. Host-gated: only Apple's linker cares, and
+    // libtool only exists on macOS. Repacking is idempotent.
+    if (builtin.os.tag == .macos) {
+        const lib_path = b.getInstallPath(.lib, "libnd.a");
+        const repack = b.addSystemCommand(&.{
+            "/bin/sh", "-c",
+            b.fmt("libtool -static -o '{s}.repacked' '{s}' && mv '{s}.repacked' '{s}'", .{ lib_path, lib_path, lib_path, lib_path }),
+        });
+        repack.step.dependOn(&libnd_install.step);
+        libnd_step.dependOn(&repack.step);
+    }
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
     // nd.h now nests `#include "nd_plugin.h"` (M10) — install it alongside or
     // the installed header tree fatally fails to resolve for any consumer.

@@ -4,8 +4,8 @@
 // file drop). Every method below rides a systemRequest/systemResponse round
 // trip over NDP (runtime/ndp.ts's `request()`); every `on*` subscribes to a
 // systemEvent channel. Methods are gated host-side by ACL — dialog/
-// notification/recent/clipboard.writeText are default-granted; readText,
-// credentials.*, and audio.* are default-denied and reject with "capability
+// notification/recent/clipboard.writeText/audio.* are default-granted;
+// readText and credentials.* are default-denied and reject with "capability
 // denied" unless the app's ND_ACL_GRANTS manifest lists them.
 
 import { getHmrState } from "./hmr.ts";
@@ -183,5 +183,65 @@ export const app = {
   /** Subscribes to files dropped onto a window. Returns an unsubscribe function. */
   onFileDrop(handler: (e: { paths: string[]; windowId: number }) => void): () => void {
     return subscribe("fileDrop", "app.onFileDrop", (data) => handler(data as { paths: string[]; windowId: number }));
+  },
+};
+
+// --- audio -----------------------------------------------------------------
+
+export interface AudioPlayOptions {
+  path?: string;
+  url?: string;
+  volume?: number;
+  spectrum?: boolean;
+}
+
+export type AudioState = "playing" | "paused" | "ended" | "stopped" | "error";
+
+export interface AudioStateEvent {
+  handle: string;
+  state: AudioState;
+  position: number;
+  duration: number | null;
+  error?: string;
+}
+
+export interface AudioSpectrumEvent {
+  handle: string;
+  bins: number[];
+}
+
+/** Audio playback. `core:audio` is default-granted (ND_ACL_GRANTS manifests extend the default set — they cannot revoke it). */
+export const audio = {
+  /** Starts playback from exactly one of `path` (local file) or `url` (remote). Resolves to a handle used by the other methods below. */
+  play(options: AudioPlayOptions): Promise<string> {
+    return call("audio.play", options) as Promise<string>;
+  },
+  /** Pauses playback for `handle`. */
+  async pause(handle: string): Promise<void> {
+    await call("audio.pause", { handle });
+  },
+  /** Resumes playback for `handle`. */
+  async resume(handle: string): Promise<void> {
+    await call("audio.resume", { handle });
+  },
+  /** Stops playback and releases `handle` — it is no longer valid afterward. */
+  async stop(handle: string): Promise<void> {
+    await call("audio.stop", { handle });
+  },
+  /** Seeks `handle` to `positionMs` milliseconds. */
+  async seek(handle: string, positionMs: number): Promise<void> {
+    await call("audio.seek", { handle, position: positionMs });
+  },
+  /** Sets playback volume (0..1) for `handle`. */
+  async setVolume(handle: string, volume: number): Promise<void> {
+    await call("audio.setVolume", { handle, volume });
+  },
+  /** Subscribes to playback state transitions (not position ticks). Returns an unsubscribe function. */
+  onState(handler: (e: AudioStateEvent) => void): () => void {
+    return subscribe("audio.state", "audio.onState", (data) => handler(data as AudioStateEvent));
+  },
+  /** Subscribes to spectrum frames (32 bins, 0..1, ~15 Hz) — only emitted for handles played with `spectrum: true`. Returns an unsubscribe function. */
+  onSpectrum(handler: (e: AudioSpectrumEvent) => void): () => void {
+    return subscribe("audio.spectrum", "audio.onSpectrum", (data) => handler(data as AudioSpectrumEvent));
   },
 };

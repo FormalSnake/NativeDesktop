@@ -438,8 +438,6 @@ Automation role: `switch`. Text source: none. Children: none.
 
 ## ToggleButton (`<togglebutton>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `button`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -455,8 +453,6 @@ Automation role: `button`. Text source: `label`. Children: none.
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `radiogroup`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -470,8 +466,6 @@ Automation role: `radiogroup`. Text source: none. Children: none.
 | `selectionChanged` | `onSelectionChanged` | index |
 
 ## NumberInput (`<numberinput>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `spinbutton`. Text source: none. Children: none.
 
@@ -491,8 +485,6 @@ Automation role: `spinbutton`. Text source: none. Children: none.
 
 ## LinkButton (`<linkbutton>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `link`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -509,8 +501,6 @@ Automation role: `link`. Text source: `label`. Children: none.
 
 ## LevelIndicator (`<levelindicator>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `levelbar`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -525,8 +515,6 @@ Automation role: `levelbar`. Text source: none. Children: none.
 
 ## ColorPicker (`<colorpicker>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `colorpicker`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -540,8 +528,6 @@ Automation role: `colorpicker`. Text source: none. Children: none.
 | `colorChanged` | `onColorChanged` | text |
 
 ## Banner (`<banner>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `banner`. Text source: `title`. Children: none.
 
@@ -558,8 +544,6 @@ Automation role: `banner`. Text source: `title`. Children: none.
 
 ## MenuButton (`<menubutton>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `menubutton`. Text source: `label`. Children: multi.
 
 | Prop | Type | Default | Applied |
@@ -569,8 +553,6 @@ Automation role: `menubutton`. Text source: `label`. Children: multi.
 | `testID` | string | — | meta |
 
 ## SplitButton (`<splitbutton>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `splitbutton`. Text source: `label`. Children: multi.
 
@@ -586,8 +568,6 @@ Automation role: `splitbutton`. Text source: `label`. Children: multi.
 
 ## Popover (`<popover>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `popover`. Text source: none. Children: single.
 
 | Prop | Type | Default | Applied |
@@ -601,8 +581,6 @@ Automation role: `popover`. Text source: none. Children: single.
 | `closed` | `onClosed` | none |
 
 ## Expander (`<expander>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `expander`. Text source: `label`. Children: single.
 
@@ -618,8 +596,6 @@ Automation role: `expander`. Text source: `label`. Children: single.
 
 ## StatusPage (`<statuspage>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `group`. Text source: `title`. Children: multi.
 
 | Prop | Type | Default | Applied |
@@ -630,8 +606,6 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `testID` | string | — | meta |
 
 ## ToastOverlay (`<toastoverlay>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `group`. Text source: none. Children: single.
 
@@ -648,8 +622,6 @@ Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/re
 
 ## DatePicker (`<datepicker>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `datepicker`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -665,8 +637,6 @@ Automation role: `datepicker`. Text source: none. Children: none.
 | `dateChanged` | `onDateChanged` | text |
 
 ## Table (`<table>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 Automation role: `table`. Text source: none. Children: none.
 
@@ -686,8 +656,6 @@ Automation role: `table`. Text source: none. Children: none.
 
 ## TreeView (`<treeview>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `tree`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -706,8 +674,6 @@ Automation role: `tree`. Text source: none. Children: none.
 
 ## FontPicker (`<fontpicker>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `fontpicker`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -721,8 +687,6 @@ Automation role: `fontpicker`. Text source: none. Children: none.
 
 ## Video (`<video>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 Automation role: `video`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
@@ -735,8 +699,6 @@ Automation role: `video`. Text source: none. Children: none.
 
 ## TrayItem (`<trayitem>`)
 
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
-
 > **Platforms:** macos only — an invisible no-op elsewhere.
 
 Automation role: `trayitem`. Text source: none. Children: multi.
@@ -748,8 +710,6 @@ Automation role: `trayitem`. Text source: none. Children: multi.
 | `testID` | string | — | meta |
 
 ## ShareButton (`<sharebutton>`)
-
-> **Stub** — schema/API defined; native implementations pending. Renders an invisible placeholder.
 
 > **Platforms:** macos only — an invisible no-op elsewhere.
 

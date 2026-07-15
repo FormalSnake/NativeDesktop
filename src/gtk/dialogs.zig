@@ -305,7 +305,7 @@ fn cbFileMany(source: ?*gobject.Object, res: *gio.AsyncResult, data: ?*anyopaque
         const n = gio.ListModel.getNItems(model);
         var i: c_uint = 0;
         while (i < n) : (i += 1) {
-            const item = gio.ListModel.getItem(model, i) orelse continue;
+            const item = gio.ListModel.getObject(model, i) orelse continue;
             defer gobject.Object.unref(item);
             const file: *gio.File = @ptrCast(@alignCast(item));
             if (gio.File.getPath(file)) |p| {

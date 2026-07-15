@@ -129,15 +129,24 @@ widget-level `onKeyDown` yet.
   `system_request` vtable op (#22); backends reply async via
   `nd_system_response` / push via `nd_system_event`. ACL-gated per method
   group: `core:dialog`, `core:notification`, `core:recent`,
-  `core:clipboard.write` are default-granted; `core:clipboard.read`,
-  `core:credentials`, `core:audio` (reserved, phase 2) need an
-  `ND_ACL_GRANTS` manifest (`{"defaultWindow":[...]}` or per-window
-  `grants`). Pure-TS helpers (no host round-trip, unsandboxed by design):
-  `openExternal` / `openPath` / `revealPath` (`packages/react/src/shell.ts`).
-  Known gaps: `fileDrop.windowId` is always 0; `notification.click` needs a
-  bundled app on macOS (bare NDShell uses the legacy NSUserNotification
-  path); no host-side buffering of `app.openUrl`/`openFile` delivered before
-  the child connects; audio playback/spectrum deferred (methods reserved).
+  `core:clipboard.write`, `core:audio` are default-granted;
+  `core:clipboard.read` and `core:credentials` need an `ND_ACL_GRANTS`
+  manifest (`{"defaultWindow":[...]}` or per-window `grants`). Pure-TS
+  helpers (no host round-trip, unsandboxed by design): `openExternal` /
+  `openPath` / `revealPath` (`packages/react/src/shell.ts`).
+- **Audio playback + spectrum** — `audio.play({path|url, volume?, spectrum?})`
+  → handle; `pause/resume/stop/seek/setVolume`; `audio.onState` (transition
+  events: playing/paused/ended/stopped/error, position/duration ms) and
+  `audio.onSpectrum` (32 log-spaced bins 0..1, ~15 Hz, opt-in per handle).
+  macOS: AVPlayer + MTAudioProcessingTap + vDSP FFT
+  (`swift/Sources/NDShell/Audio.swift`); Linux: GStreamer playbin + spectrum
+  element, dlopen'd per the no-link rule (`src/gtk/audio.zig`), degrades to
+  "audio unavailable" without GStreamer. Rides systemRequest/systemEvent —
+  no ABI/protocol additions.
+  Known gaps across system APIs: `fileDrop.windowId` is always 0;
+  `notification.click` needs a bundled app on macOS (bare NDShell uses the
+  legacy NSUserNotification path); no host-side buffering of
+  `app.openUrl`/`openFile` delivered before the child connects.
 - **File associations + URL schemes** — `app: { id, fileAssociations,
   urlSchemes }` in `nativedesktop.config.ts` (`packages/nd/src/config.ts`),
   injected at package time into Info.plist (`CFBundleDocumentTypes` /
@@ -163,6 +172,47 @@ widget-level `onKeyDown` yet.
   first-class. Migrations: drizzle-kit unchanged (own process against the file)
   or `migrate()` at startup via the sqlite-proxy migrator. `drizzle-orm`/`kysely`
   are devDependencies only — never a library dep to keep updated.
+- **Per-window dialogs + toasts** — `showAlert`/`openFile`/`saveFile`/`showAbout`
+  (`packages/react/src/dialogs.ts`) and `showToast`/`dismissToast`
+  (`packages/react/src/toast.ts`) are promise-wrapped imperative commands on
+  `<window>`/`<toastoverlay>`: `sendCommand` kicks the native dialog/toast off,
+  a matching `*Result`/`toast*` event settles the promise. Dialogs correlate by
+  the window's own wire id (only one pending per window — a second call
+  rejects immediately; `showAbout` has no result event so it doesn't claim the
+  slot); toasts correlate by a generated `id` so the overlay can queue several.
+  Distinct from `system.ts`'s ACL-gated `dialog.*` above — that one is
+  app-level, not window-scoped, and has no About panel. Docs:
+  `docs-site/src/content/docs/components/dialogs.md` and `.../feedback.md`.
+- **Platform-only widgets** — a schema `platforms: ["macos"]` list
+  (`Widget.platforms` in `tools/codegen.ts`) permanently no-ops a widget's
+  create/apply/structural arms on excluded backends (`ND_PLATFORM_NOOP` —
+  distinct from the temporary stub registry below) and is exported to JS as
+  `schema-meta.ts`'s `widgetPlatforms`. `host-config.ts`'s `checkPlatform` logs
+  a one-time `console.warn` in `nd dev` (`isHot()`-gated, absent from `nd
+  build`) when such a widget mounts on an excluded platform. Gate app code with
+  `Platform.os` (an OS-level API like `NSStatusItem` exists or doesn't),
+  never `Platform.backend` (that's a renderer difference). Today's two:
+  `<trayitem>`, `<sharebutton>`.
+- **Table/TreeView data conventions** — `<table>` takes `columns:
+  TableColumn[]` (`{id,title,width?}`) and `rows: TableRow[]` (`{id?,cells:
+  string[]}`, cells positional by column order); header-click sorting fires
+  `onSortChanged({columnId,direction})` and the native widget never reorders
+  `rows` itself — the app re-sorts and feeds the new array back down.
+  `<treeview>` takes a **flat** `nodes: TreeNode[]` (`{id,parentId?,title,
+  badge?,iconName?,hasChildren,expanded}`, root nodes omit `parentId`);
+  `onNodeExpanded`/`onNodeCollapsed` fire `{nodeId}` and expansion is
+  app-controlled state, never native state, so an unrelated re-render can't
+  silently collapse a branch the user opened.
+- **Codegen per-widget template protocol** — every widget needs a
+  create/applyProps/signal template on both Zig and Swift (containers also
+  need a structural attach/detach template); one missing makes
+  `tools/codegen.ts` throw at generation time rather than drift silently.
+  `ZIG_STUB_WIDGETS`/`SWIFT_STUB_WIDGETS` (top of `tools/codegen.ts`) name
+  widgets still mid-implementation on one backend — they get a `ND_STUB(Name)`
+  placeholder arm instead of the throw; both sets are empty as of M15 (every
+  widget now has real templates on both backends). Platform-excluded widgets
+  never use this registry — they get the permanent `ND_PLATFORM_NOOP` arms
+  above instead, which is a different mechanism from a stub-to-be-filled.
 
 ### File map
 - **Core (Zig):** `src/tree.zig` (reconciler), `src/abi.zig` +

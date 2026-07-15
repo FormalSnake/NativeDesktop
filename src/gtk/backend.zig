@@ -652,6 +652,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
             const child_instance: *gobject.TypeInstance = @ptrCast(@alignCast(child));
             const child_type_name = std.mem.span(gobject.typeNameFromInstance(child_instance));
             if (std.mem.eql(u8, child_type_name, "GtkListBox")) return "SourceList";
+            if (std.mem.eql(u8, child_type_name, "GtkColumnView")) return "Table"; // M15 (TreeView's GtkListView stays "" like ListView's)
         }
         return "ScrollView";
     }

@@ -35,10 +35,22 @@ window. Because every window is rendered by the same tree in one process, sharin
 is just ordinary React state and closures — there's no IPC to wire up, unlike a multi-window
 Electron app where each window is its own renderer process.
 
-**Known limitation:** several pieces of window-scoped machinery still target only the *last*
-rendered window — the overlay, automation's `getTree`/screenshot, and the toolbar/headerbar manager.
-Per-window ACL also still checks window 0. Don't rely on automation or the crash-restart overlay
-being window-aware yet in a multi-window app.
+Automation, the crash overlay, window chrome, and the ACL are all per-window correct: a node's
+geometry and visibility (and therefore the bounds `getTree` reports, plus `click`, `setValue`,
+`type`, `scroll`, and `waitFor`'s `refVisible` check) resolve against *that widget's own* window,
+never a single global — on GTK via `gtk_widget_get_root()`, on AppKit by resolving the live content
+view of `view.window` instead of a cached global. `screenshot` renders whichever window
+`params.window` names. A JS crash brings down every window's UI at once, so the crash overlay now
+paints — and, on restart, clears — on every open window, not just one. Each `<toolbarview>`/headerbar
+attaches to its own owning `NSWindow`/`GtkWindow`, not whichever window happened to be created last.
+And `core:window.create` is ACL-gated per target window id, so a grants manifest can scope window
+creation to a specific window (a window-0 grant still applies everywhere, matching the default
+policy).
+
+**Remaining limitation:** `getTree` itself still has no `window` parameter — it always returns the
+root/first window's tree, with every other window's nodes attached as orphans directly under that
+root. Each orphan's own `geometry` is still correct (resolved against its own window, as above); you
+just can't yet ask the RPC for "window B's tree" as its own subtree.
 
 ## Moving a widget between windows without reloading it
 

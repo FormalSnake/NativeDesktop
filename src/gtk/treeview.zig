@@ -186,6 +186,11 @@ fn buildSelection(tree: *TreeData) *gtk.SingleSelection {
     const selection = gtk.SingleSelection.new(tlm.as(gio.ListModel)); // transfer-full: selection owns model
     gtk.SingleSelection.setAutoselect(selection, 0);
     gtk.SingleSelection.setCanUnselect(selection, 1);
+    // gtk_single_selection_new() auto-selects position 0 as part of
+    // constructing the selection over the model, before autoselect above
+    // takes effect — clear it explicitly so selectedIndex: -1 (the default)
+    // means no row is visibly selected, not a phantom row-0 highlight.
+    gtk.SingleSelection.setSelected(selection, std.math.maxInt(c_uint));
     return selection;
 }
 
@@ -384,7 +389,7 @@ fn cbActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) callcon
     const node_id: u32 = @intCast(@intFromPtr(data));
     const lv: *gtk.ListView = @ptrCast(@alignCast(obj));
     const model = gtk.ListView.getModel(lv) orelse return;
-    const item = gio.ListModel.getItem(model.as(gio.ListModel), position) orelse return; // transfer full
+    const item = gio.ListModel.getObject(model.as(gio.ListModel), position) orelse return; // transfer full
     defer gobject.Object.unref(item);
     const row: *gtk.TreeListRow = @ptrCast(@alignCast(item));
     var buf: [256]u8 = undefined;
