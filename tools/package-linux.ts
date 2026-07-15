@@ -5,6 +5,7 @@
 // update payload.
 import { $ } from "bun";
 import { mkdirSync, cpSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 import { buildAndSignManifest, ensureEphemeralKey } from "./manifest.ts";
 import { loadConfig } from "../packages/nd/src/config.ts";
 import { injectDesktopFile, buildMimeInfoXml } from "./app-identity.ts";
@@ -38,17 +39,26 @@ export async function packageLinux() {
   // package level — only Bun's own resolver knows how to find them there).
   // Rather than hand-roll that resolution, reproduce the workspace root
   // (package.json + bun.lock + sources) inside the AppDir and let `bun
-  // install` populate a real, self-contained node_modules for it.
+  // install` populate a real, self-contained node_modules for it. Any
+  // pre-existing per-package node_modules (e.g. packages/react's own dev
+  // install) must be excluded from the copy — dereference:true would flatten
+  // their .bin/* symlink chains into files whose relative requires no longer
+  // resolve, and they'd be stale/dangling anyway once relocated.
+  const skipNodeModules = (src: string) => basename(src) !== "node_modules";
   const appRoot = `${appdir}/app`;
   mkdirSync(appRoot, { recursive: true });
   cpSync("package.json", `${appRoot}/package.json`);
   cpSync("bun.lock", `${appRoot}/bun.lock`);
-  cpSync("examples", `${appRoot}/examples`, { recursive: true, dereference: true });
-  cpSync("packages", `${appRoot}/packages`, { recursive: true, dereference: true });
+  cpSync("examples", `${appRoot}/examples`, { recursive: true, dereference: true, filter: skipNodeModules });
+  cpSync("packages", `${appRoot}/packages`, { recursive: true, dereference: true, filter: skipNodeModules });
   // packages/react's src imports "../../../runtime/ndp.ts" — bundle runtime/
   // at the matching relative depth so that resolves inside the AppDir too.
-  cpSync("runtime", `${appRoot}/runtime`, { recursive: true, dereference: true });
-  await $`bun install --frozen-lockfile --production`.cwd(appRoot).quiet();
+  cpSync("runtime", `${appRoot}/runtime`, { recursive: true, dereference: true, filter: skipNodeModules });
+  // --ignore-scripts: packages/react ships a pre-built dist/ (copied above
+  // along with its source); its postinstall re-runs `tsc` to rebuild that
+  // dist, which needs the `typescript` devDependency that --production
+  // deliberately excludes. Nothing in the AppDir needs rebuilding.
+  await $`bun install --frozen-lockfile --production --ignore-scripts`.cwd(appRoot).quiet();
   // Bundle the Bun runtime the host spawns.
   const bunPath = Bun.which("bun");
   if (!bunPath) throw new Error("bun not found on PATH");

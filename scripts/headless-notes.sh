@@ -8,7 +8,9 @@ export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
 export NATIVE_AUTOMATION=1
 
-weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
+# Weston's headless output defaults to 1024x640 — too small for the app's
+# defaultWidth=1100, which the drive script asserts (window would be clamped).
+weston --backend=headless --width=1280 --height=800 --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
 trap 'kill "$WESTON_PID" 2>/dev/null || true; kill "$HOST_PID" 2>/dev/null || true' EXIT
 

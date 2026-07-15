@@ -537,12 +537,36 @@ fn ndMenuAppendItem(menu_w: *gtk.Widget, item_w: *gtk.Widget) void {
     ndMenuOwnersRefresh(); // a button owner holding this Menu re-snapshots it
 }
 
+/// GObject weak-ref notify: a recorded headerbar is being finalized (the
+/// retained tree holds no ref of its own — structural remove drops the
+/// container's only ref, src/tree.zig). Purge every unowned pointer to it
+/// BEFORE anything dereferences it: menu_primary_parent outliving its
+/// headerbar was a real use-after-free (GPF inside adw_header_bar_remove
+/// whenever a keyed <headerbar> remounts, e.g. notes' per-folder list header).
+fn ndMenuHeaderBarGone(_: ?*anyopaque, where_the_object_was: *gobject.Object) callconv(.c) void {
+    const dead: *adw.HeaderBar = @ptrCast(@alignCast(where_the_object_was)); // identity only — never dereferenced
+    var i: usize = 0;
+    while (i < menu_headerbars.items.len) {
+        if (menu_headerbars.items[i] == dead) {
+            _ = menu_headerbars.orderedRemove(i);
+        } else i += 1;
+    }
+    if (menu_primary_parent == dead) {
+        // The dying container already unparented the button (widget dispose
+        // runs before weak notifies fire); the strong ref taken in
+        // ndMenuRefresh keeps the button itself alive for re-homing.
+        menu_primary_parent = null;
+        if (the_menubar != null) ndMenuRefresh();
+    }
+}
+
 /// Records a headerbar so a later menubar can home its primary button in the
 /// LAST one (GNOME convention: the content pane's header). No-op for menu-less
 /// apps beyond the record — the button is only created/moved once a <menubar>
 /// exists, so counter/gallery/two-pane trees are behaviorally unchanged.
 pub fn ndMenuNoteHeaderBar(hb: *adw.HeaderBar) void {
     menu_headerbars.append(events_gpa, hb) catch {};
+    gobject.Object.weakRef(hb.as(gobject.Object), &ndMenuHeaderBarGone, null);
     if (the_menubar != null) ndMenuRefresh();
 }
 
@@ -1003,11 +1027,15 @@ pub fn create(
         return sv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         const hb = adw.HeaderBar.new();
-        if (propStr(props, "title")) |t| {
-            if (t.len > 0) {
-                const wt = adw.WindowTitle.new(dupeZ(t), "");
-                adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
-            }
+        // Matching the AppKit shell: an absent/empty `title` shows NO title.
+        // AdwHeaderBar's default title widget would otherwise fall back to
+        // the window title, which the app never declared on this header.
+        const t = propStr(props, "title") orelse "";
+        if (t.len > 0) {
+            const wt = adw.WindowTitle.new(dupeZ(t), "");
+            adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+        } else {
+            adw.HeaderBar.setShowTitle(hb, 0);
         }
         ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)
         ndHeaderBarApplyNav(hb, propBool(props, "canGoBack"), propBool(props, "canGoForward"));
@@ -1927,7 +1955,11 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else adw.OverlaySplitView.setContent(sv, child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
-        if (attached.slot) |sl| {
+        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
+            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
+            adw.HeaderBar.setTitleWidget(hb, child);
+            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+        } else if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
             else adw.HeaderBar.packStart(hb, child);
         } else adw.HeaderBar.packStart(hb, child);
@@ -2008,7 +2040,11 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         } else adw.OverlaySplitView.setContent(sv, child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
-        if (attached.slot) |sl| {
+        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
+            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
+            adw.HeaderBar.setTitleWidget(hb, child);
+            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+        } else if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
             else adw.HeaderBar.packStart(hb, child);
         } else adw.HeaderBar.packStart(hb, child);

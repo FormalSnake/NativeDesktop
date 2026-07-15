@@ -486,7 +486,7 @@ fn vtSemanticAction(
     }
 
     if (std.mem.eql(u8, action_s, "click")) {
-        return semanticClick(w, node_id, result_json_out);
+        return semanticClick(w, node_id, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "setValue")) {
         return semanticSetValue(w, node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "type")) {
@@ -575,7 +575,7 @@ fn setErr(out: *?[*:0]u8, node_id: u32) void {
     out.* = mallocZ(json);
 }
 
-fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i32 {
+fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
     if (!isRealWidget(widget)) {
         // Menu node: dispatch the item's GAction (custom onSelect fires
         // "selected"; a disabled item's action is a no-op, so onSelect does
@@ -598,6 +598,26 @@ fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) 
         if (row) |r| gobject.signalEmitByName(@ptrCast(@alignCast(box)), "row-activated", r);
         setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
         return 0;
+    }
+    const kind = widgetKind(widget);
+    if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Switch")) {
+        // GtkCheckButton and GtkSwitch are not GtkButton subclasses in GTK4 —
+        // they have no `clicked` signal, so the generic emit below is a silent
+        // no-op for them. Widget.activate runs their real activation path:
+        // toggles `active`, fires `toggled`/state change, and keeps
+        // radio-group semantics (an already-active grouped radio stays
+        // active, exactly like a user click).
+        _ = gtk.Widget.activate(widget);
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
+    // A widget without a `clicked` signal (GtkNotebook, GtkListBoxRow, plain
+    // containers) must fail honestly: emitting anyway raises a GLib CRITICAL
+    // and the client would get dispatched=true for a click that did nothing.
+    const winstance: *gobject.TypeInstance = @ptrCast(@alignCast(widget));
+    if (gobject.signalLookup("clicked", winstance.f_g_class.?.f_g_type) == 0) {
+        setErr(err_json_out, node_id);
+        return -32001;
     }
     // Semantic dispatch: emit `clicked` directly. `gtk.Widget.activate` was
     // tried first but only re-emits `clicked` on the first call per main-loop
