@@ -1,6 +1,6 @@
 import { render, useState } from "@nativedesktop/react";
 
-// Regression probe for the M13 radio-group use-after-free: a conditionally
+// Regression probe for the radio-group use-after-free: a conditionally
 // rendered radio group that unmounts and remounts under the SAME group name.
 // Before the fix (radio_groups eviction on anchor destroy), the second mount
 // joined a freed GtkCheckButton and segfaulted in _gtk_check_button_set_group.

@@ -1,6 +1,6 @@
 // GTK4 surface for the <webview> widget: a real WebKitGTK WebKitWebView when
 // libwebkitgtk-6.0 is present at runtime, a placeholder GtkLabel otherwise.
-// WebKitGTK is deliberately NOT a link-time dependency (M5b-D7: ~1GB closure,
+// WebKitGTK is deliberately NOT a link-time dependency (a ~1GB closure,
 // soname churn, no headless-CI story inside the weston harness) — the handful
 // of C entry points this file needs are resolved once with std.DynLib, so the
 // pinned flake and the mac GTK build (brew has no webkitgtk) stay untouched
@@ -280,10 +280,10 @@ fn cmdOpenDevTools(v: *anyopaque) void {
     show(inspector);
 }
 
-/// Async completion context for executeJavaScript (M?? browser-grade
-/// webview): the request/response pair is correlated by `id` across the NDP
-/// round trip, so it has to survive past the synchronous command call —
-/// heap-allocated here, freed in `cbJsEvalReady`.
+/// Async completion context for executeJavaScript: the request/response
+/// pair is correlated by `id` across the NDP round trip, so it has to
+/// survive past the synchronous command call — heap-allocated here, freed
+/// in `cbJsEvalReady`.
 const JsEvalCtx = struct {
     node_id: u32,
     id: []u8,

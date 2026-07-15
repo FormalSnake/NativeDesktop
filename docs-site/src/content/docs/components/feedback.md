@@ -8,7 +8,7 @@ Three widgets cover the feedback spectrum from "always visible until dismissed" 
 
 ## Banner (`<banner>`)
 
-A dismissible, in-flow strip — `AdwBanner` on GTK, an equivalent bar on macOS — for a persistent
+A dismissible, in-flow strip (`AdwBanner` on GTK, an equivalent bar on macOS) for a persistent
 notice ("a new version is available") that should stay visible until the user acts or you hide it.
 
 ```tsx
@@ -33,8 +33,8 @@ if clicking the button should dismiss the banner.
 
 ## StatusPage (`<statuspage>`)
 
-A full-pane empty/error/success state — `AdwStatusPage` on GTK — for when there's nothing else to
-show in a view (an empty list, a failed load). It takes children, typically a `<button>` for the
+A full-pane empty/error/success state (`AdwStatusPage` on GTK) for when there's nothing else to
+show in a view: an empty list, a failed load. It takes children, typically a `<button>` for the
 page's call to action.
 
 ```tsx
@@ -53,9 +53,9 @@ No events of its own — wire up whatever action widget you place inside it.
 
 ## ToastOverlay (`<toastoverlay>`) and the toast helpers
 
-`<toastoverlay>` is a **wrapping container** (`childModel: single`) — mount it around your whole
-window content, not around one tab or panel, so a toast can float above every screen the user might
-be on when you queue it:
+`<toastoverlay>` is a wrapping container (`childModel: single`). Mount it around your whole window
+content, not around one tab or panel, so a toast can float above every screen the user might be on
+when you queue it:
 
 ```tsx
 import { showToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/react";
@@ -97,9 +97,9 @@ instead of waiting behind an already-showing one. `showToast`'s promise resolves
 toast goes away: `{ buttonClicked: true }` if the user clicks the action button, `{ buttonClicked:
 false }` for a timeout, Escape, or the queue advancing past it.
 
-The two handlers, `onToastButtonClicked` and `onToastDismissed`, are passed **directly** as the
-`<toastoverlay>`'s event props (not wrapped in an inline arrow function) — they read the `id` off the
-event payload themselves and settle whichever `showToast()` call is still pending for it.
+Pass the two handlers, `onToastButtonClicked` and `onToastDismissed`, directly as the
+`<toastoverlay>`'s event props rather than wrapping them in an inline arrow function. They read the
+`id` off the event payload themselves and settle whichever `showToast()` call is still pending for it.
 
 See `examples/gallery/main.tsx`'s "Status & Banner" and "Toasts" tabs, and the
 [Widget Reference](/components/widget-reference/) for the generated prop tables.

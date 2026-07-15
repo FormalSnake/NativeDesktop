@@ -7,9 +7,9 @@ const abi = @import("abi.zig");
 // NSView* on the Mac shell). The core never dereferences it.
 pub const Widget = anyopaque;
 
-// Set by `bind` (called from `nd_register_backend`, Task 2) — the core's
-// single instance. A real embedder registers exactly one backend per
-// process; tests rebind for each fake-vtable case.
+// Set by `bind` (called from `nd_register_backend`) — the core's single
+// instance. A real embedder registers exactly one backend per process;
+// tests rebind for each fake-vtable case.
 pub var ctx: *abi.NdContext = undefined;
 pub var vtable: *const abi.NdBackend = undefined;
 var gpa: std.mem.Allocator = undefined;
@@ -30,7 +30,7 @@ fn allocZFromValue(v: anytype) [:0]const u8 {
 }
 
 /// Stringifies a prop/style value to NUL-terminated JSON for the ABI
-/// boundary (M6a-D2). Caller frees with `gpa.free`. `null` props serialize
+/// boundary. Caller frees with `gpa.free`. `null` props serialize
 /// as `"{}"`, matching how the GTK embedder already treats an absent props
 /// object as "nothing to apply".
 fn jsonZ(v: ?std.json.Value) [:0]const u8 {
@@ -172,7 +172,7 @@ pub fn reparentChild(child: *Widget, old_parent: ?*Widget, old_parent_kind: []co
 /// (gridRow/gridColumn/gridRowSpan/gridColumnSpan/tabLabel/slot) — the embedder's
 /// `append_child`/`insert_before` re-derive attach metadata the same way
 /// `protocol.Attached.fromProps` does today, just crossing the ABI as JSON
-/// per M6a-D2 instead of a Zig struct.
+/// instead of a Zig struct.
 fn attachedJsonZ(attached: protocol.Attached) [:0]const u8 {
     const Shape = struct {
         gridRow: i64,

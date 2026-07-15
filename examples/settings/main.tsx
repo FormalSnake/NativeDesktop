@@ -1,8 +1,8 @@
 import { render, useState, Platform } from "@nativedesktop/react";
 
-// ND Settings — a two-pane preferences window, proving the M13 chrome
-// machinery renders grouped forms as native Adwaita "boxed-list" cards on
-// GTK and clean, chrome-free forms on the Mac from the SAME tree.
+// ND Settings — a two-pane preferences window. The SAME tree renders grouped
+// forms as native Adwaita "boxed-list" cards on GTK and as clean, chrome-free
+// forms on the Mac.
 //
 // Visual approach, mirroring examples/notes/main.tsx's doctrine:
 //   - `<splitview>` is the real sidebar/content split (AdwOverlaySplitView on
@@ -25,7 +25,7 @@ import { render, useState, Platform } from "@nativedesktop/react";
 //     in `cssClasses`, docs/styling.md) on a vertical box holding one row
 //     per setting, `<separator>`s between rows standing in for the list's
 //     internal dividers. `style` stays geometry-only (padding, hexpand/
-//     vexpand, halign) — no color literals; dark mode is automatic.
+//     vexpand, halign), with no color literals; dark mode is automatic.
 type Category = "general" | "appearance" | "advanced";
 type Theme = "system" | "light" | "dark";
 
@@ -56,15 +56,12 @@ function App(): React.ReactNode {
   // browser-history semantics).
   const [history, setHistory] = useState<Category[]>(["general"]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  // Radio.group is a process-lifetime key on both backends (GTK's
-  // radio_groups map, src/generated/widgets.zig, never releases its stored
-  // "first" CheckButton pointer on unmount) — reusing the same group string
-  // across a destroy+remount cycle dereferences a freed widget and crashes.
-  // The Appearance card's theme radios ARE destroyed/remounted every time
-  // this conditionally-rendered category is left and re-entered, so each
-  // re-entry gets a fresh, never-before-seen group name instead of reusing
-  // "theme" (a real backend bug, not an app concern to route around
-  // otherwise — see the header comment).
+  // Gives the theme radios a fresh group name each time the Appearance
+  // category is re-entered. This routed around a GTK use-after-free:
+  // remounting radios under the same group name joined a freed CheckButton.
+  // The backend now evicts a group's anchor on destroy
+  // (cbRadioGroupDestroyed, src/generated/widgets.zig), so reusing "theme"
+  // would be safe; the epoch stays as a harmless guard.
   const [appearanceEpoch, setAppearanceEpoch] = useState(0);
   const [launchAtLogin, setLaunchAtLogin] = useState(defaults.launchAtLogin);
   const [showStatusIcon, setShowStatusIcon] = useState(defaults.showStatusIcon);

@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Banner (M15): SwiftUI chrome in an NSHostingView — a content-layer strip,
+/// Banner: SwiftUI chrome in an NSHostingView. It's a content-layer strip,
 /// so system colors only and NO Liquid Glass (HIG: glass belongs to the
 /// control/navigation layer). `revealed` animates a clipping height
-/// constraint via NSAnimationContext — slide/clip, not fade — mirroring
+/// constraint via NSAnimationContext (slide/clip, not fade) to match
 /// AdwBanner's built-in reveal animation.
 struct NDBannerBody: View {
     var title: String

@@ -1,10 +1,9 @@
-// `bun --hot`-safe HMR state (M8). Verified this session: `bun --hot` keeps
-// the same OS pid + unix socket across edits, but re-runs every top-level
-// statement in the module graph on any edit (see docs/superpowers/plans —
-// M8 empirically-verified findings). Module-local `let`/`const` bindings are
-// re-initialized on each re-eval; only `globalThis`-keyed state survives.
-// `render()` must therefore stash its connect+mount state here so a hot
-// re-eval reuses the live Ndp/root instead of double-connecting.
+// `bun --hot`-safe HMR state. `bun --hot` keeps the same OS pid + unix
+// socket across edits, but re-runs every top-level statement in the module
+// graph on any edit. Module-local `let`/`const` bindings are re-initialized
+// on each re-eval; only `globalThis`-keyed state survives. `render()` must
+// therefore stash its connect+mount state here so a hot re-eval reuses the
+// live Ndp/root instead of double-connecting.
 
 import type { Ndp } from "../../../runtime/ndp.ts";
 import * as RefreshRuntimeFirstEval from "react-refresh/runtime";
@@ -12,21 +11,19 @@ import { newGeneration } from "./ids.ts";
 
 // react-refresh/runtime keeps its family registry (allFamiliesByID,
 // mountedRoots, helpersByRoot, ...) in module-local closures, not on any
-// object it hands out — verified by reading its bundled source this
-// session. A fresh `import * as RefreshRuntime from "react-refresh/runtime"`
-// therefore starts every one of those maps EMPTY, same as any other module
-// under `--hot`'s full-graph re-eval (ids.ts's generation counter is the
-// same shape of reset, just intentional there). Unlike `react`/
-// `react-reconciler`, this package has NO internal `require()`s of its own
-// (verified — grepped its bundled cjs), so it can be pinned via a plain
-// globalThis stash entirely within this module, no Bun.plugin/preload
-// aliasing needed (that mechanism was tried and abandoned for react/
-// react-reconciler — see dev-react.ts's header — because it collides with
-// their internal `require()`s; this package has none, so the collision
-// doesn't apply). Pinning it is required for register()/performReactRefresh
-// to ever match an old family against a new one: the "old" family must have
-// been registered by the SAME runtime instance that "new" registration and
-// performReactRefresh() run against.
+// object it hands out. A fresh `import * as RefreshRuntime from
+// "react-refresh/runtime"` therefore starts every one of those maps EMPTY,
+// same as any other module under `--hot`'s full-graph re-eval (ids.ts's
+// generation counter is the same shape of reset, just intentional there).
+// Unlike `react`/`react-reconciler`, this package has NO internal
+// `require()`s of its own, so it can be pinned via a plain globalThis stash
+// entirely within this module. The Bun.plugin/preload aliasing used for
+// react/react-reconciler (see dev-react.ts's header) exists because those
+// packages' internal `require()`s defeat a plain stash; this package has
+// none, so the stash suffices. Pinning is required for register()/
+// performReactRefresh to ever match an old family against a new one: the
+// "old" family must have been registered by the SAME runtime instance that
+// "new" registration and performReactRefresh() run against.
 declare global {
   // eslint-disable-next-line no-var
   var __nd_refresh_runtime: typeof RefreshRuntimeFirstEval | undefined;
@@ -82,21 +79,19 @@ interface RefreshableReconciler {
   // Registers the reconciler's commit/schedule hooks with the object at
   // globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__ (installed by
   // injectIntoGlobalHook below). Without this call, react-refresh's
-  // `mountedRoots` stays empty and performReactRefresh() is a silent no-op —
-  // verified empirically this session (a probe with everything else wired
-  // produced updatedFamilies.size === 1 but no re-render without this call).
+  // `mountedRoots` stays empty and performReactRefresh() is a silent no-op.
   injectIntoDevTools?: () => unknown;
 }
 
 let refreshReady = false;
 
-/** Wires react-refresh's runtime into the reconciler (M8-D2 primary path).
+/** Wires react-refresh's runtime into the reconciler.
  *  `injectIntoGlobalHook`/`injectIntoDevTools`/`setRefreshHandler`/manual
  *  `$RefreshReg$`/`$RefreshSig$` must all be installed before any app React
  *  code runs — render() calls this before createContainer, and the app
  *  module's import of @nativedesktop/react runs this module first, so
- *  ordering holds. Bun's `--hot` does NOT inject `$RefreshReg$`/`$RefreshSig$`
- *  (verified this session), so they are installed manually here. */
+ *  ordering holds. Bun's `--hot` does NOT inject `$RefreshReg$`/`$RefreshSig$`,
+ *  so they are installed manually here. */
 export function setupRefresh(reconciler: RefreshableReconciler): void {
   if (refreshReady) return;
   // The upstream type targets a browser `Window`; react-refresh's runtime
@@ -122,9 +117,8 @@ export function performRefresh(): void {
 }
 
 /** Registers a module's exported components by name — the babel Fast Refresh
- *  transform's job, done manually because Bun's `--hot` does not run it
- *  (M8-D2 / verified finding). Call once per hot re-eval, before
- *  performRefresh(). */
+ *  transform's job, done manually because Bun's `--hot` does not run it.
+ *  Call once per hot re-eval, before performRefresh(). */
 export function registerExports(mod: Record<string, unknown>, moduleId: string): void {
   for (const [name, val] of Object.entries(mod)) {
     if (typeof val === "function" && /^[A-Z]/.test(name)) {
@@ -138,14 +132,13 @@ export function registerExports(mod: Record<string, unknown>, moduleId: string):
 // module-id-derived one) is enough to let react-refresh match the OLD root
 // component type (registered on the previous eval) against the NEW one
 // (registered on this eval) and patch the live fiber in place instead of
-// remounting it — verified empirically this session: calling
-// `reconciler.updateContainer(newElement, ...)` again on a hot re-eval
-// resets all hook state (the new element's `.type` is a different function
-// reference than the old one, so the reconciler treats it as a type change,
-// not an update) even though `react`/`react-reconciler` module identity is
-// correctly pinned (dev-react.ts) — pinning identity alone does not give
-// state-preserving re-renders; react-refresh's family-based fiber patch is
-// what actually does that.
+// remounting it. Calling `reconciler.updateContainer(newElement, ...)` again
+// on a hot re-eval resets all hook state: the new element's `.type` is a
+// different function reference than the old one, so the reconciler treats it
+// as a type change, not an update, even though `react`/`react-reconciler`
+// module identity is correctly pinned (dev-react.ts). Pinning identity alone
+// does not give state-preserving re-renders; react-refresh's family-based
+// fiber patch is what actually does that.
 const ROOT_FAMILY_KEY = "nd-root";
 
 /** Called by render() on first boot, before the first updateContainer, so a
@@ -166,8 +159,8 @@ export function hotUpdateRoot(rootComponentType: unknown): void {
 }
 
 /** Bumps the generation counter (ids.ts) so the next commit's CommitBatch
- *  carries a higher generation, triggering the host's generation GC (Task 3)
- *  of orphaned widgets. Used for structural / non-refreshable edits that
+ *  carries a higher generation, triggering the host's generation GC of
+ *  orphaned widgets. Used for structural / non-refreshable edits that
  *  react-refresh cannot preserve state across. */
 export function fullReload(): void {
   newGeneration();

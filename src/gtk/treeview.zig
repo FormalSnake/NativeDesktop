@@ -1,5 +1,5 @@
 // GtkListView + GtkTreeListModel + GtkTreeExpander surface for the <treeview>
-// widget (M15). Nodes arrive as a FLAT id/parentId objectList (TreeNode
+// widget. Nodes arrive as a FLAT id/parentId objectList (TreeNode
 // shape); the module owns a parsed side copy (TreeData) whose lifetime is
 // tied to its GtkTreeListModel via the model's DestroyNotify. passthrough and
 // autoexpand are both FALSE (required for GtkTreeExpander; expansion is
@@ -237,7 +237,7 @@ fn tvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callcon
     gobject.Object.setData(eobj, "nd-label", @ptrCast(label));
     gobject.Object.setData(eobj, "nd-badge", @ptrCast(badge));
     gtk.ListItem.setChild(list_item, expander.as(gtk.Widget));
-    // Let the expander's own keybindings handle navigation (design brief).
+    // Let the expander's own keybindings handle navigation.
     gtk.ListItem.setFocusable(list_item, 0);
 }
 

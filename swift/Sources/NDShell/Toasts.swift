@@ -1,14 +1,14 @@
 import AppKit
 
-/// ToastOverlay (M15): fully host-implemented on the Mac (AppKit has no
-/// native toast — verified HIG gap). The tracked handle is a plain container
+/// ToastOverlay: fully host-implemented on the Mac (AppKit has no native
+/// toast). The tracked handle is a plain container
 /// the single React child fills; toasts are non-activating borderless
 /// NSPanels attached as CHILD WINDOWS of the node's OWN window (multi-window
-/// correct — resolved via view.window, never a global), bottom-center,
+/// correct: resolved via view.window, never a global), bottom-center,
 /// slide/fade via NSAnimationContext. Chrome: NSGlassEffectView (macOS 26)
 /// with an NSVisualEffectView `.hudWindow` fallback. Queue contract follows
 /// AdwToastOverlay: one visible toast, FIFO, HIGH priority interrupts (the
-/// interrupted toast is dismissed — its `toastDismissed` fires).
+/// interrupted toast is dismissed and its `toastDismissed` fires).
 /// Caller-supplied ids are echoed back in `toastButtonClicked` /
 /// `toastDismissed` payloads (the executeJavaScript correlation pattern);
 /// `timeoutSeconds` 0 persists until dismissed (default 5, AdwToast parity).

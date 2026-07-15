@@ -3,9 +3,9 @@ import Foundation
 import WebKit
 import CNd
 
-/// WKWebView-backed surface for the `<webview>` widget (M14, peer of the GTK
-/// surface in `src/gtk/webview.zig`). The system engine IS the widget — no
-/// bundled browser, matching the toolkit's real-native-widgets contract.
+/// WKWebView-backed surface for the `<webview>` widget (peer of the GTK
+/// surface in `src/gtk/webview.zig`). The system engine IS the widget: no
+/// browser is bundled, per the toolkit's real-native-widgets contract.
 ///
 /// Event flow: the schema's navigate/titleChanged/loadingChanged/
 /// backAvailable/forwardAvailable events are derived by polling the view's
@@ -107,10 +107,10 @@ final class NDWebView: WKWebView {
         }
     }
 
-    /// `executeJavaScript` completion (M14+): builds the `javaScriptResult`
+    /// `executeJavaScript` completion: builds the `javaScriptResult`
     /// "data"-envelope `{id, ok, value?, error?}`. `value` is always a string
-    /// — dictionaries/arrays JSON-serialize, everything else goes through
-    /// `String(describing:)` — and is omitted when the JS result is nil.
+    /// (dictionaries/arrays JSON-serialize, everything else goes through
+    /// `String(describing:)`) and is omitted when the JS result is nil.
     private func ndEmitJavaScriptResult(id: String, result: Any?, error: Error?) {
         var fields: [(String, NDWebViewJSONValue)] = [("id", .string(id))]
         if let error {
@@ -235,7 +235,7 @@ func ndWebViewConnect(_ view: NSView, nodeID: UInt32) {
     wv.ndNodeID = nodeID
 }
 
-/// Generated `ndWidgetCommand` WebView arm (widgetCommand NDP frame, M14+).
+/// Generated `ndWidgetCommand` WebView arm (widgetCommand NDP frame).
 func ndWebViewCommand(_ view: NSView, _ command: String, _ argJson: String) {
     guard let wv = view as? NDWebView else { return }
     wv.ndHandleCommand(command, argJson: argJson)
@@ -272,7 +272,7 @@ extension NDWebView: WKNavigationDelegate, WKUIDelegate {
         ndEmitLoadFailed(error)
     }
 
-    /// Download detection (M14+): a response the engine can't render itself
+    /// Download detection: a response the engine can't render itself
     /// (`canShowMIMEType == false`) is the app's cue to hand the URL to Bun
     /// for the real download — cancel it here instead of letting WebKit try to
     /// display it. Every OTHER response must still explicitly `.allow`; this
@@ -293,8 +293,8 @@ extension NDWebView: WKNavigationDelegate, WKUIDelegate {
         return .allow
     }
 
-    /// `target="_blank"`/`window.open` popups (M14+): no native window gets
-    /// created — the app opens a native tab from the emitted URL instead —
+    /// `target="_blank"`/`window.open` popups: no native window gets
+    /// created; the app opens a native tab from the emitted URL instead,
     /// so this always returns nil.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let u = navigationAction.request.url?.absoluteString {

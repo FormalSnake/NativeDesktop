@@ -3,11 +3,11 @@ title: Terminal
 description: The <terminal> widget embeds a real terminal emulator (libghostty-vt) as a native drawing surface on every backend.
 ---
 
-`<terminal>` embeds a **real terminal emulator** — the same VT engine that powers
-[Ghostty](https://ghostty.org), `libghostty-vt` — as a native drawing surface. It spawns a PTY
-running your shell, parses the escape-sequence stream into a cell grid, and draws that grid with the
-platform's own text stack: **CoreText on macOS**, **cairo/Pango on GTK**. Keystrokes are captured by
-the surface and written straight to the PTY.
+`<terminal>` embeds a real terminal emulator as a native drawing surface: `libghostty-vt`, the same
+VT engine that powers [Ghostty](https://ghostty.org). It spawns a PTY running your shell, parses the
+escape-sequence stream into a cell grid, and draws that grid with the platform's own text stack —
+CoreText on macOS, cairo/Pango on GTK. The surface captures keystrokes and writes them straight to
+the PTY.
 
 ```tsx
 import { render } from "@nativedesktop/react";
@@ -23,8 +23,8 @@ function App() {
 await render(<App />);
 ```
 
-That is a complete, working terminal — a shell prompt you can type into, run `vim`, see colors and
-the cursor — with no native code in your app.
+That is a complete, working terminal with no native code in your app: you can type at the shell
+prompt, run `vim`, and see colors and the cursor.
 
 ## Props
 
@@ -37,29 +37,29 @@ the cursor — with no native code in your app.
 | `rows`     | number   | `24`      | Initial rows.                                                |
 
 All props are `create`-time — the terminal owns its PTY for the life of the widget, so changing them
-means remounting (give the widget a different `key`). Keystrokes are handled **host-side** in the
+means remounting (give the widget a different `key`). Keystrokes are handled host-side in the
 surface and fed directly to the PTY; they never cross the NDP protocol, which keeps the interactive
 hot path off the socket entirely.
 
-## How it works — a shared core, a surface per backend
+## How it works
 
-The design mirrors Ghostty's own split of a shared terminal **core** from a per-platform **app
-runtime**, which maps cleanly onto NativeDesktop's two backends:
+The design mirrors Ghostty's own split of a shared terminal core from a per-platform app runtime,
+which maps cleanly onto NativeDesktop's two backends:
 
-- **`libghostty-vt`** is terminal *emulation only* — it parses the VT stream and maintains the grid,
-  scrollback, cursor, colors, and reflow. It does **not** spawn a PTY, render, or touch OS input.
+- **`libghostty-vt`** is terminal emulation only: it parses the VT stream and maintains the grid,
+  scrollback, cursor, colors, and reflow. It does not spawn a PTY, render, or touch OS input.
 - **The `ndterm` core** (`src/core/terminal.zig`, GTK-free) owns those three: it runs `forkpty`,
   pumps the PTY into `libghostty-vt` on a reader thread behind a mutex, and exposes a tiny C ABI
-  (`include/ndterm.h`) that hides all of the emulator's complexity behind a flat, cross-language
-  surface — `ndterm_open`/`close`/`resize`, `ndterm_write_input(bytes)`, and a lock-snapshot render
+  (`include/ndterm.h`) that hides the emulator behind a flat, cross-language surface:
+  `ndterm_open`/`close`/`resize`, `ndterm_write_input(bytes)`, and a lock-snapshot render
   model (`ndterm_render_lock` → `ndterm_cell(x, y)` / `ndterm_cursor` → `ndterm_render_unlock`).
 - **The surface** is the only per-backend piece: a `GtkDrawingArea` painting cells with cairo on
-  Linux, an `NSView` painting with CoreText on macOS. Both call *only* the `ndterm` C ABI — neither
+  Linux, an `NSView` painting with CoreText on macOS. Both call only the `ndterm` C ABI; neither
   touches `libghostty-vt` directly.
 
-This is the same **native escape-hatch** pattern the widget system describes as its last rung: a
+This is the same native escape-hatch pattern the widget system describes as its last rung: a
 widget that owns a custom-drawn native subtree instead of composing from primitives. The terminal is
-its first real inhabitant.
+the first widget built on it.
 
 ## The engine is vendored, not fetched
 
@@ -71,7 +71,7 @@ or run time.
 
 ## Current scope
 
-The first cut renders the grid and routes keyboard input on both backends. Not yet wired:
-terminal-initiated **events** back to React (title changes, bell, child-exit) — the core already
-raises them internally; surfacing them as `onTitle`/`onBell`/`onExit` handlers is a small follow-up.
+The terminal renders the grid and routes keyboard input on both backends. Terminal-initiated events
+back to React (title changes, bell, child exit) are not exposed yet: the core already raises them
+internally, but the `onTitle`/`onBell`/`onExit` handlers that would surface them are a follow-up.
 Mouse reporting, IME/dead-key composition, and live font-size changes are also future work.

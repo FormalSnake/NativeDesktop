@@ -1,10 +1,10 @@
 import AppKit
 import CNd
 
-/// Host-rendered crash overlay (peer of `src/gtk/overlay.zig` / M8-D5,
-/// wired through `vtable.show_overlay`). Empty `message` clears; non-empty
+/// Host-rendered crash overlay (peer of `src/gtk/overlay.zig`, wired
+/// through `vtable.show_overlay`). Empty `message` clears; non-empty
 /// shows a semi-opaque panel over the window's `contentView` with the crash
-/// text and — dev-mode only — a Restart button whose action emits the
+/// text and, in dev mode only, a Restart button whose action emits the
 /// reserved `nd_emit_event(gCtx, 0, "restart", "{}")` sentinel that
 /// `abi.zig` routes to `Runtime.restart` (src/gtk/backend.zig:246's
 /// `onRestartIdle` contract, mirrored here).

@@ -1,4 +1,4 @@
-// GtkColumnView surface for the <table> widget (M15): columns/rows objectList
+// GtkColumnView surface for the <table> widget: columns/rows objectList
 // props, single selection, header-click sort *indication*.
 //
 // Data model: each TableRow's cells are joined with the ASCII unit separator
@@ -156,7 +156,7 @@ fn cellBind(_: *gobject.Object, list_item: *gtk.ListItem, data: ?*anyopaque) cal
 
 /// Trivial sorter compare: never reorders anything — it exists purely so the
 /// column header is clickable and the view-side GtkColumnViewSorter records
-/// the clicked column + direction (verified mechanism, design brief 2026-07).
+/// the clicked column + direction.
 fn noopCompare(_: ?*const anyopaque, _: ?*const anyopaque, _: ?*anyopaque) callconv(.c) c_int {
     return 0; // GTK_ORDERING_EQUAL
 }

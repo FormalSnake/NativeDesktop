@@ -72,8 +72,6 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         default: break
         }
         return b
-    } else if kind == "Terminal" {
-        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? 13, cols: propInt(props, "cols") ?? 80, rows: propInt(props, "rows") ?? 24)
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { field.placeholderString = ph }
@@ -284,6 +282,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return makeTrayItem(props)  // NSStatusItem behind a host-only handle (M15, NDShell/TrayItems.swift)
     } else if kind == "ShareButton" {
         return makeShareButton(props)  // NSSharingServicePicker anchor button (M15, NDShell/ShareButtons.swift)
+    } else if kind == "Terminal" {
+        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? 13, cols: propInt(props, "cols") ?? 80, rows: propInt(props, "rows") ?? 24)
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil

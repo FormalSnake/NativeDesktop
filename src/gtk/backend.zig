@@ -6,7 +6,7 @@ const gobject = @import("gobject");
 const glib = @import("glib");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
-// Named import, not a relative path (M6a Task 5): `style.zig`'s dedicated
+// Named import, not a relative path: `style.zig`'s dedicated
 // test root can't reach `src/generated/widgets.zig` via `../` (see that
 // file's import + build.zig for the full rationale), so it uses the named
 // module "generated" instead. `style.zig` and `backend.zig` share one
@@ -29,7 +29,7 @@ var the_window: ?*gtk.Window = null;
 // The window the NEXT `snapshot` renders (multi-window). Set by
 // `vtResolveWindow` (which automation.zig's selectSnapshotWindow drives before
 // each screenshot) and consumed one-shot by `vtSnapshot`. Null falls back to
-// the primary `the_window`, keeping single-window behavior byte-identical.
+// the primary `the_window`, so single-window behavior is unchanged.
 var snapshot_target_window: ?*gtk.Window = null;
 
 /// Set by `main.zig` immediately after `nd_init()` returns, before
@@ -42,11 +42,9 @@ pub fn setCtx(ctx: *abi.NdContext) void {
 }
 
 /// Adapter from the generated dispatcher's typed `EmitFn` to the ABI's
-/// embedder->core event channel (M6a Task 5): stringifies `payload` and
-/// calls `nd_emit_event` directly — there is no more core-installed sink
-/// function pointer (that was M5c's `setEventSink`, retired when events
-/// started flowing across the C boundary instead of a same-process Zig
-/// closure, M6a Task 3).
+/// embedder->core event channel: stringifies `payload` and calls
+/// `nd_emit_event` directly — there is no core-installed sink function
+/// pointer.
 fn emitEventAdapter(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
     const ctx = the_ctx orelse return; // no context registered yet (shouldn't happen post-init)
     const name_z = arena.dupeZ(u8, name) catch return;
@@ -58,9 +56,8 @@ fn emitEventAdapter(node_id: u32, name: []const u8, payload: protocol.EventPaylo
 
 /// Wires the generated dispatcher's signal handlers + the style-error
 /// reporter to the ABI event channel. Called once by `main.zig` before
-/// `nd_start_runtime` (so it precedes the first `create`, mirroring the
-/// pre-ABI ordering guarantee `generated.zig`'s `events_ready` assert relies
-/// on).
+/// `nd_start_runtime`, so it precedes the first `create` — the ordering
+/// `generated.zig`'s `events_ready` assert relies on.
 pub fn initEventsAndStyle() void {
     generated.initEvents(arena, &emitEventAdapter);
     style.init(arena, &styleErrorAdapter);
@@ -82,7 +79,7 @@ fn dupeZ(s: []const u8) [:0]const u8 {
     return arena.dupeZ(u8, s) catch @panic("OOM in gtk_backend arena");
 }
 
-/// M13 menu bar: menu nodes (Menubar/Menu/MenuItem) ride the ordinary
+/// Menu bar: menu nodes (Menubar/Menu/MenuItem) ride the ordinary
 /// create/append vtable ops but their handles are GMenu/GMenuItem GObjects,
 /// not GtkWidgets. Every generic vtable op that would cast a stored handle to
 /// *gtk.Widget must guard with this: `gobject.ext.isA` is safe on any valid
@@ -144,16 +141,16 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value
 }
 
 /// Routes `props.cssClasses` (if present) to `style.applyCssClasses`.
-/// cssClasses rides in the ordinary props JSON, not a dedicated vtable field
-/// (M11 Task 6: the C-ABI vtable is frozen at 18 fields) — called from both
-/// `vtCreate` (right after widget creation) and `vtApplyProps`.
+/// cssClasses rides in the ordinary props JSON, not a dedicated vtable
+/// field — called from both `vtCreate` (right after widget creation) and
+/// `vtApplyProps`.
 fn applyCssClassesIfPresent(widget: *gtk.Widget, props: ?std.json.Value) void {
     const v = props orelse return;
     if (v != .object) return;
     if (v.object.get("cssClasses")) |cls| style.applyCssClasses(widget, cls);
 }
 
-/// Generation GC helpers (M8-D9): detach a swept widget from its parent
+/// Generation GC helpers: detach a swept widget from its parent
 /// without destroying the parent or siblings.
 pub fn hasParent(widget: *gtk.Widget) bool {
     if (!isRealWidget(widget)) return false; // menu node: never parented into a GtkWidget tree
@@ -166,19 +163,19 @@ pub fn unparentWidget(widget: *gtk.Widget) void {
 }
 
 // ============================================================================
-// C-ABI vtable fill (M6a Task 5/6): every `abi.NdBackend` field, wrapping the
+// C-ABI vtable fill: every `abi.NdBackend` field, wrapping the
 // Zig-level functions above. `main.zig` calls `ndBackend()` once at startup
 // and passes the result to `nd_register_backend`. Widget handles cross the
 // ABI as `?*anyopaque`; every wrapper here casts back to `*gtk.Widget`
 // (never any narrower concrete type — the generated dispatcher owns the
-// per-kind casts internally, same as before the ABI existed).
+// per-kind casts internally).
 // ============================================================================
 
 var global_app: *gtk.Application = undefined;
 
 /// Set once by `main.zig` before `nd_register_backend` — `create`'s vtable
-/// signature carries no app handle (M6a-D2's structural ops are widget/kind/
-/// props only), so the GTK embedder keeps its own app reference here,
+/// signature carries no app handle (structural ops are widget/kind/props
+/// only), so the GTK embedder keeps its own app reference here,
 /// exactly like `the_window`.
 pub fn setApp(app: *gtk.Application) void {
     global_app = app;
@@ -318,10 +315,9 @@ fn marshalTrampoline(data: ?*anyopaque) callconv(.c) c_int {
     return G_SOURCE_REMOVE;
 }
 
-/// `vtable.marshal_async` (M6a Task 3): the core's commit-apply/child-exit
+/// `vtable.marshal_async`: the core's commit-apply/child-exit
 /// paths call this instead of touching glib directly. Fills with
-/// `g_main_context_invoke_full` — byte-identical scheduling to the pre-ABI
-/// direct `glib.MainContext.default().invokeFull` calls in runtime.zig.
+/// `g_main_context_invoke_full`.
 fn vtMarshalAsync(_: *abi.NdContext, fn_ptr: *const fn (?*anyopaque) callconv(.c) void, data: ?*anyopaque) callconv(.c) void {
     const job = arena.create(MarshalJob) catch return;
     job.* = .{ .fn_ptr = fn_ptr, .data = data };
@@ -340,7 +336,7 @@ fn isDevMode() bool {
 /// Restart click trampoline: defers off the click signal's call stack (the
 /// same re-entrancy reason overlay.zig's own `onRestartClicked` already
 /// documents) and emits the reserved `nd_emit_event(ctx, 0, "restart", "{}")`
-/// sentinel (M6a Task 3) so `abi.zig` routes it to `Runtime.restart` instead
+/// sentinel so `abi.zig` routes it to `Runtime.restart` instead
 /// of forwarding a normal NDP event.
 fn onRestartIdle(_: ?*anyopaque) callconv(.c) c_int {
     abi.nd_emit_event(the_ctx.?, 0, "restart", "{}");
@@ -352,7 +348,7 @@ fn restartTrampoline() void {
 
 var the_tree: ?*tree_mod.Tree = null;
 
-/// `vtable.show_overlay` (M6a Task 3): empty `message` is the clear
+/// `vtable.show_overlay`: empty `message` is the clear
 /// sentinel (see runtime.zig's `respawn`); `dev` gates the Restart button
 /// (read from the embedder's own `ND_DEV` env — the ABI's `show_overlay`
 /// carries only the message, so the embedder decides for itself, same as
@@ -382,8 +378,8 @@ fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
     // MenuItem ref survives checkActionable and reaches semanticClick.
     if (!isRealWidget(w)) return true;
     if (gtk.Widget.getVisible(w) == 0) return false;
-    // "mapped" folds into node_visible's contract (M6a Task 4 v1 decision,
-    // documented in automation.zig's checkActionable comment).
+    // "mapped" folds into node_visible's contract (documented in
+    // automation.zig's checkActionable comment).
     return gtk.Widget.getMapped(w) != 0;
 }
 
@@ -423,8 +419,7 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
     return false;
 }
 
-/// `vtable.snapshot` (M6a Task 6): the GTK-native WidgetPaintable render
-/// path, verbatim from pre-ABI `automation.zig`'s `handleScreenshot`.
+/// `vtable.snapshot`: the GTK-native WidgetPaintable render path.
 fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     // One-shot: the target set by the preceding `resolve_window` (see
     // selectSnapshotWindow) wins; consumed here so a later stray snapshot falls
@@ -464,12 +459,11 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     return gdk.Texture.saveToPng(texture, png_path) != 0;
 }
 
-/// `vtable.semantic_action` (M6a Task 6): dispatches on `action` to the
-/// exact click/setValue/type/scroll bodies pre-ABI `automation.zig` had —
-/// unchanged logic, byte-identical behaviour (including the "emit `clicked`
-/// directly, not `activate`" M4 fact and the GtkEditable `insertText(-1)`
-/// M5b fact). `result_json_out`/`err_json_out` are malloc'd (libc `free`,
-/// so `nd_free` can release them uniformly across languages, M6a-D2).
+/// `vtable.semantic_action`: dispatches on `action` to the
+/// click/setValue/type/scroll bodies (including the "emit `clicked`
+/// directly, not `activate`" quirk and the GtkEditable `insertText(-1)`
+/// contract). `result_json_out`/`err_json_out` are malloc'd (libc `free`,
+/// so `nd_free` can release them uniformly across languages).
 fn vtSemanticAction(
     _: *abi.NdContext,
     widget: ?*anyopaque,
@@ -499,9 +493,65 @@ fn vtSemanticAction(
         return semanticType(w, node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "scroll")) {
         return semanticScroll(w, node_id, args, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "a11y")) {
+        return semanticA11y(w, node_id, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "pointer") or std.mem.eql(u8, action_s, "drag") or
+        std.mem.eql(u8, action_s, "keys") or std.mem.eql(u8, action_s, "doubleClick") or
+        std.mem.eql(u8, action_s, "rightClick") or std.mem.eql(u8, action_s, "hover"))
+    {
+        // GTK4 removed app-constructible GdkEvents, so real input synthesis
+        // is impossible in-process — a documented platform gap (-32003, the
+        // rpc.json inputUnsupported code), not a missing arm. Semantic
+        // equivalents (click/setValue/type/scroll) remain the Linux path.
+        setErr(err_json_out, node_id);
+        return -32003;
     }
     setErr(err_json_out, node_id);
     return -32601;
+}
+
+/// "a11y" — the live per-node accessibility probe behind getTree's
+/// enabled/focused/value fields. Value reads mirror
+/// `semanticSetValue`'s kind dispatch so both sides of the round-trip agree
+/// on what a widget's value is.
+fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i32 {
+    const enabled = gtk.Widget.isSensitive(widget) != 0;
+    const focused = gtk.Widget.hasFocus(widget) != 0;
+    const kind = widgetKind(widget);
+
+    var value_json: []const u8 = "null";
+    var owned = false;
+    if (std.mem.eql(u8, kind, "TextInput") or std.mem.eql(u8, kind, "SearchInput")) {
+        const editable: *gtk.Editable = @ptrCast(@alignCast(widget));
+        const text = std.mem.span(gtk.Editable.getText(editable));
+        value_json = std.json.Stringify.valueAlloc(arena, text, .{}) catch "null";
+        owned = true;
+    } else if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Radio")) {
+        value_json = if (gtk.CheckButton.getActive(@ptrCast(@alignCast(widget))) != 0) "true" else "false";
+    } else if (std.mem.eql(u8, kind, "Switch")) {
+        value_json = if (gtk.Switch.getActive(@ptrCast(@alignCast(widget))) != 0) "true" else "false";
+    } else if (std.mem.eql(u8, kind, "Slider")) {
+        const range = @as(*gtk.Scale, @ptrCast(@alignCast(widget))).as(gtk.Range);
+        value_json = std.fmt.allocPrint(arena, "{d}", .{gtk.Range.getValue(range)}) catch "null";
+        owned = true;
+    } else if (std.mem.eql(u8, kind, "Select")) {
+        value_json = std.fmt.allocPrint(arena, "{d}", .{gtk.DropDown.getSelected(@ptrCast(@alignCast(widget)))}) catch "null";
+        owned = true;
+    } else if (std.mem.eql(u8, kind, "SourceList")) {
+        const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+        const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
+        if (gtk.ListBox.getSelectedRow(box)) |row| {
+            value_json = std.fmt.allocPrint(arena, "{d}", .{gtk.ListBoxRow.getIndex(row)}) catch "null";
+            owned = true;
+        }
+    }
+    defer if (owned) arena.free(@constCast(value_json));
+
+    const json = std.fmt.allocPrint(arena, "{{\"enabled\":{},\"focused\":{},\"value\":{s}}}", .{ enabled, focused, value_json }) catch return -32603;
+    defer arena.free(json);
+    result_json_out.* = mallocZ(json);
+    _ = node_id;
+    return 0;
 }
 
 /// Mallocs a NUL-terminated copy of `json` for a `*_json_out` param (freed
@@ -527,7 +577,7 @@ fn setErr(out: *?[*:0]u8, node_id: u32) void {
 
 fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i32 {
     if (!isRealWidget(widget)) {
-        // M13 menu node: dispatch the item's GAction (custom onSelect fires
+        // Menu node: dispatch the item's GAction (custom onSelect fires
         // "selected"; a disabled item's action is a no-op, so onSelect does
         // not fire and app state is unchanged).
         _ = generated.menuSemanticClick(node_id);
@@ -535,13 +585,13 @@ fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) 
         return 0;
     }
     if (std.mem.eql(u8, widgetKind(widget), "SourceList")) {
-        // SourceList (M11 SourceList Wave 1): "click" activates the
+        // SourceList: "click" activates the
         // currently-selected row, or the first row if none is selected.
         // `gtk.Widget.activate` on the GtkListBoxRow was tried first but
-        // does not reliably raise the ListBox's "row-activated" (verified
-        // live: no event observed) — same class of quirk as Button's
-        // activate() below, fixed the same way: emit the ListBox's signal
-        // directly, bypassing whatever internal activation gating drops it.
+        // does not reliably raise the ListBox's "row-activated" — same
+        // class of quirk as Button's activate() below, fixed the same
+        // way: emit the ListBox's signal directly, bypassing whatever
+        // internal activation gating drops it.
         const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
         const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
         const row = gtk.ListBox.getSelectedRow(box) orelse gtk.ListBox.getRowAtIndex(box, 0);
@@ -641,7 +691,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
     if (std.mem.eql(u8, type_name, "GtkDropDown")) return "Select";
     if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) {
-        // ScrollView and SourceList (M11 SourceList Wave 1) are both tracked
+        // ScrollView and SourceList are both tracked
         // by their GtkScrolledWindow wrapper — disambiguate by sniffing the
         // inner child's type (unwrapping the implicit GtkViewport GTK
         // inserts for SourceList's non-GtkScrollable GtkListBox, same as
@@ -652,7 +702,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
             const child_instance: *gobject.TypeInstance = @ptrCast(@alignCast(child));
             const child_type_name = std.mem.span(gobject.typeNameFromInstance(child_instance));
             if (std.mem.eql(u8, child_type_name, "GtkListBox")) return "SourceList";
-            if (std.mem.eql(u8, child_type_name, "GtkColumnView")) return "Table"; // M15 (TreeView's GtkListView stays "" like ListView's)
+            if (std.mem.eql(u8, child_type_name, "GtkColumnView")) return "Table"; // TreeView's GtkListView stays "" like ListView's
         }
         return "ScrollView";
     }
@@ -673,7 +723,7 @@ fn semanticType(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result
     var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);
     const z = arena.dupeZ(u8, text.?.string) catch return -32602;
     // Length param: bytes of `text` to insert. -1 (NUL-terminated) inserts
-    // the full string correctly against a live GtkEntry (verified M5b).
+    // the full string correctly against a live GtkEntry.
     gtk.Editable.insertText(editable, z, -1, &pos); // fires "changed"
     const full = std.mem.span(gtk.Editable.getText(editable));
     setResult(result_json_out, .{ .ref = node_id, .text = full });

@@ -31,8 +31,7 @@ nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLay
 /// instead (mirrors NDTextField below). `.rounded` bezels draw a fixed-height
 /// pill centered in a taller frame (padding would just add dead space above/
 /// below); `.flexiblePush` actually stretches to fill the frame, so a
-/// non-zero padding switches to it — a real AppKit bezel style change, not a
-/// layer hack.
+/// non-zero padding switches to it (a real AppKit bezel style change).
 final class NDButton: NSButton {
     /// A button promoted into a native source-list row remains the React/tree
     /// model and semantic-action target, but must not compete with the visible
@@ -115,10 +114,10 @@ final class NDPaneHostView: NSView {
 /// trailing edge already coincide with the stack's), so the child never
 /// actually MOVES, it balloons instead (confirmed empirically: a probe pin
 /// alone always produced a full-width/height stretch, regardless of
-/// priority 999 or 1000). Fixing the child's cross-axis size first —
-/// raising contentHuggingPriority AND contentCompressionResistancePriority
+/// priority 999 or 1000). Fixing the child's cross-axis size first
+/// (raising contentHuggingPriority AND contentCompressionResistancePriority
 /// to `.required` for that axis, so its intrinsic size becomes
-/// non-negotiable — removes that degree of freedom; with size pinned, the
+/// non-negotiable) removes that degree of freedom; with size pinned, the
 /// 999 pin is the only thing left that can move the child, and it cleanly
 /// wins over the stack's own ~260 pin (confirmed empirically: same setup
 /// with hugging fixed first reliably produced the intended
@@ -178,7 +177,7 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
         // "start" silently rendered as vertically CENTERED, not top-aligned
         // (GTK's valign="start" always means top, independent of the
         // .leading/.trailing text-direction axis that halign="start" rides
-        // on). Pinning explicitly — same hugging-fix recipe as center/end —
+        // on). Pinning explicitly (same hugging-fix recipe as center/end)
         // fixes that mismatch and costs nothing for vertical boxes, whose
         // `.leading` stack default already puts the pin's target exactly
         // where the old free-ride landed.

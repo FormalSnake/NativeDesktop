@@ -1,8 +1,8 @@
 import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
 
-// A very small Min-style browser: a back button and a search/address field in
-// the WINDOW's own chrome, and the page — nothing else. The <toolbarview> +
+// A very small Min-style browser: nothing but a back button, a search/address
+// field in the WINDOW's own chrome, and the page. The <toolbarview> +
 // <headerbar> pair sits directly under <window>, so the chrome row lands in
 // the real titlebar on macOS (unified NSToolbar, traffic lights inline) and
 // in a real AdwHeaderBar on GTK (window controls included). The page surface

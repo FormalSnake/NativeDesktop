@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, pointer, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -15,6 +15,12 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "setValue", .method = .setValue },
     .{ .name = "type", .method = .@"type" },
     .{ .name = "scroll", .method = .scroll },
+    .{ .name = "doubleClick", .method = .doubleClick },
+    .{ .name = "rightClick", .method = .rightClick },
+    .{ .name = "hover", .method = .hover },
+    .{ .name = "pointer", .method = .pointer },
+    .{ .name = "drag", .method = .drag },
+    .{ .name = "keys", .method = .keys },
 };
 
 pub fn methodFromString(name: []const u8) ?Method {
@@ -29,6 +35,9 @@ pub const msg_not_actionable = "not actionable";
 // waitForTimeout: data: {timeoutMs}
 pub const code_wait_for_timeout: i32 = -32002;
 pub const msg_wait_for_timeout = "waitFor timeout";
+// inputUnsupported: pointer/drag/keys/doubleClick/rightClick/hover on a backend without synthetic input (GTK4 removed app-constructible events)
+pub const code_input_unsupported: i32 = -32003;
+pub const msg_input_unsupported = "input synthesis unsupported on this backend";
 pub const code_method_not_found: i32 = -32601;
 pub const msg_method_not_found = "method not found";
 // invalidParams: data: {ref} where applicable; message may carry the specific missing/invalid param
@@ -58,7 +67,10 @@ pub const RowJson = struct {
 
 /// One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget
 /// that isn't data-driven; rows is SourceList's ordered row data, null for every widget that
-/// isn't row-driven.
+/// isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role
+/// is the widget's schema-declared automation role (null when the type declares none);
+/// enabled/focused/value come from a live per-node backend probe and default to true/false/null
+/// on backends without the probe.
 pub const JsonNode = struct {
     ref: u32,
     type: []const u8,
@@ -69,6 +81,10 @@ pub const JsonNode = struct {
     children: []JsonNode,
     itemCount: ?u32 = null,
     rows: ?[]RowJson = null,
+    role: ?[]const u8 = null,
+    enabled: bool,
+    focused: bool,
+    value: ?std.json.Value = null,
 };
 
 pub const GetTreeResult = struct {
@@ -115,6 +131,32 @@ pub const WaitCondition = struct {
     refVisible: ?u32 = null,
 };
 
+pub const PointerResult = struct {
+    dispatched: bool,
+};
+
+/// fromX/fromY/toX/toY are the resolved endpoints in logical-window-topleft coordinates.
+pub const DragResult = struct {
+    dispatched: bool,
+    fromX: f64,
+    fromY: f64,
+    toX: f64,
+    toY: f64,
+    steps: u32,
+};
+
+pub const KeysResult = struct {
+    dispatched: bool,
+};
+
+/// getTree: Full tree snapshot with stable refs, testIDs, text, logical geometry, and
+/// accessibility state (role/enabled/focused/value). window (if given) must be a Window node
+/// ref and scopes the snapshot to that window's subtree; absent, the root/first window is used
+/// and other windows' nodes attach as orphans.
+pub const GetTreeParams = struct {
+    window: ?u32 = null,
+};
+
 /// screenshot: In-process render of the window to a PNG at the given absolute path; window (if
 /// given) must match the root ref.
 pub const ScreenshotParams = struct {
@@ -151,5 +193,66 @@ pub const ScrollParams = struct {
     ref: ?u32 = null,
     dx: ?f64 = null,
     dy: ?f64 = null,
+};
+
+/// doubleClick: Actionability-checked double-click at the widget's center via real input
+/// synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK
+/// (-32003).
+pub const DoubleClickParams = struct {
+    ref: ?u32 = null,
+};
+
+/// rightClick: Actionability-checked right-click at the widget's center via real input
+/// synthesis; opens native context menus where the widget has one (dismiss with keys "escape").
+/// Unsupported on GTK (-32003).
+pub const RightClickParams = struct {
+    ref: ?u32 = null,
+};
+
+/// hover: Best-effort pointer hover at the widget's center (macOS: posted mouseMoved).
+/// Unsupported on GTK (-32003).
+pub const HoverParams = struct {
+    ref: ?u32 = null,
+};
+
+/// pointer: Low-level single pointer phase (down|move|up) at logical-window-topleft coordinates
+/// in the target window (default: root window). button is left|right (default left). Caution: a
+/// lone down on a tracking control (slider, button) enters the control's mouse-tracking loop
+/// until an up arrives — prefer drag for press-move-release sequences. Unsupported on GTK
+/// (-32003).
+pub const PointerParams = struct {
+    phase: ?[]const u8 = null,
+    x: ?f64 = null,
+    y: ?f64 = null,
+    button: ?[]const u8 = null,
+    clickCount: ?u32 = null,
+    window: ?u32 = null,
+};
+
+/// drag: Press-move-release gesture. Endpoints are widget refs (their centers; fromRef/toRef
+/// must share a window) or explicit coordinates (fromX/fromY/toX/toY in the target window,
+/// default root). The full down/dragged.../up sequence is posted as one batch so native
+/// mouse-tracking loops (slider thumbs, split dividers) consume it like a real drag.
+/// Unsupported on GTK (-32003).
+pub const DragParams = struct {
+    fromRef: ?u32 = null,
+    toRef: ?u32 = null,
+    fromX: ?f64 = null,
+    fromY: ?f64 = null,
+    toX: ?f64 = null,
+    toY: ?f64 = null,
+    steps: u32 = 12,
+    durationMs: i64 = 160,
+    button: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// keys: Keyboard synthesis into the target window (default: root window). A chord spec like
+/// "cmd+shift+n" / "escape" / "tab" presses one combination (driving menu key equivalents); a
+/// plain multi-character string like "hello" types each character into the focused widget.
+/// Unsupported on GTK (-32003).
+pub const KeysParams = struct {
+    keys: ?[]const u8 = null,
+    window: ?u32 = null,
 };
 

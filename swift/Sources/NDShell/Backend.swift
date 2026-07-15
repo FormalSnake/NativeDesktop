@@ -2,9 +2,8 @@ import AppKit
 import CNd
 
 // Must outlive main(): the core stores &gVTable and calls through it for the
-// process's whole life (mirrors src/gtk/main.zig's module-level `the_vtable`
-// and this file's T1 predecessor, buildStubVTable). `gWindow`/`gCtx` are
-// declared in main.swift.
+// process's whole life (mirrors src/gtk/main.zig's module-level
+// `the_vtable`). `gWindow`/`gCtx` are declared in main.swift.
 
 /// Rebuilds an `NSView` from a raw vtable handle. Handles ride the ABI as
 /// retained `Unmanaged<NSView>` pointers (`create` calls `passRetained`;
@@ -18,7 +17,7 @@ import CNd
     p.map { String(cString: $0) } ?? ""
 }
 
-/// The real AppKit backend (T3), replacing T1's `buildStubVTable`. Every
+/// The real AppKit backend. Every
 /// `@convention(c)` closure decodes its raw-pointer/C-string args and calls
 /// into the generated `NDGen.Widgets` dispatcher — never a narrower
 /// concrete type at this layer (the generated dispatcher owns per-kind
@@ -27,9 +26,9 @@ import CNd
 /// Swift 6 strict concurrency: raw pointers cross into `MainActor
 /// .assumeIsolated` closures as `Int` bit patterns (capturing
 /// `UnsafeMutableRawPointer` directly trips the sending-risk check even
-/// though the ABI guarantees every call arrives on the UI thread already —
-/// same pattern main.swift's T1 stub established). C strings are decoded to
-/// Swift `String` *before* entering the isolated closure.
+/// though the ABI guarantees every call arrives on the UI thread already).
+/// C strings are decoded to Swift `String` *before* entering the isolated
+/// closure.
 func buildVTable() -> nd_backend {
     var vt = nd_backend()
 
@@ -152,7 +151,7 @@ func buildVTable() -> nd_backend {
 
     vt.get_window = { _ in
         let bits: Int? = MainActor.assumeIsolated {
-            // M11 Phase C (Risk 1): src/tree.zig's post-crash respawn path
+            // src/tree.zig's post-crash respawn path
             // binds a fresh reconciler root's "Window" node to whatever this
             // returns (backend.getWindow()), so it must resolve to the
             // CURRENT live content (SplitController.swift's ndLiveContentView),
@@ -179,7 +178,7 @@ func buildVTable() -> nd_backend {
         }
     }
 
-    // node_visible / node_bounds / snapshot / semantic_action (Task 5): the
+    // node_visible / node_bounds / snapshot / semantic_action: the
     // automation half of the vtable, implemented in Automation.swift —
     // AppKit peers of src/gtk/backend.zig's vtNodeVisible/vtNodeBounds/
     // vtSnapshot/vtSemanticAction.
@@ -307,7 +306,7 @@ func buildVTable() -> nd_backend {
     return vt
 }
 
-/// testIDs (Task 5): mirrors the tracked `testID` prop onto AppKit's own
+/// testIDs: mirrors the tracked `testID` prop onto AppKit's own
 /// accessibility identifier for real-user/VoiceOver parity. This is NOT the
 /// getTree `testID` source — that flows from core-owned `Tree.meta`
 /// (src/tree.zig) independent of AppKit entirely — so a missing/absent
@@ -319,9 +318,9 @@ func ndApplyTestID(_ view: NSView, _ propsJson: String) {
     view.setAccessibilityIdentifier(testID)
 }
 
-/// cssClasses (Task 6): decodes `props.cssClasses` — Task 2's validated
-/// Adwaita-class allowlist, riding in the ordinary props JSON rather than a
-/// dedicated vtable field (the C-ABI vtable stays minimal) — and
+/// cssClasses: decodes `props.cssClasses` (the validated Adwaita-class
+/// allowlist, riding in the ordinary props JSON rather than a dedicated
+/// vtable field so the C-ABI vtable stays minimal) and
 /// applies AppKit's mapped subset via `ndApplyCssClasses`. Called from both
 /// `create` and `apply_props`, mirroring `ndApplyTestID`.
 func ndApplyCssClassesIfPresent(_ view: NSView, _ propsJson: String) {
@@ -368,7 +367,7 @@ nonisolated(unsafe) var ndBoxedLists: Set<ObjectIdentifier> = []
 /// removed when the class drops. See `ndApplyBoxedListCard`.
 nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] = [:]
 
-/// `ndApplyCssClasses` (Task 6 — a real semantic mapping, not a no-op): maps
+/// `ndApplyCssClasses` is a real semantic mapping: it maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
 /// properties. Every color used is a dynamic system color
 /// (`.controlAccentColor`, `.secondaryLabelColor`, ...) rather than a
@@ -628,9 +627,9 @@ private func applyCssTextColor(_ view: NSView, _ color: NSColor) {
 }
 
 /// `ndApplyStyle` (peer of GTK's `style.applyStyle`; AppKit styling is
-/// `NSColor`/`NSFont`/Auto Layout, not CSS — M6a-D5's reasoning kept
-/// `style.zig` GTK-only). Decodes the `style` JSON object per M6b-D3's
-/// style-key set (background/color/font/padding/margin/border/hexpand/
+/// `NSColor`/`NSFont`/Auto Layout, not CSS, which is why `style.zig` stays
+/// GTK-only). Decodes the `style` JSON object's
+/// key set (background/color/font/padding/margin/border/hexpand/
 /// vexpand/halign/valign). Best-effort choices, documented per key:
 ///  - `background` -> `layer.backgroundColor` (forces `wantsLayer = true`).
 ///  - `color` -> the text color of the nearest text-bearing control
@@ -809,7 +808,7 @@ private func applyFont(_ view: NSView, _ fontObj: [String: Any]) {
 
 /// Parses `#RRGGBB`/`#RRGGBBAA` hex strings (the schema's style color
 /// shape); unrecognized values are ignored (defensive — the React renderer
-/// already validates style keys, per M6b-D6's `ndApplyStyle` doc comment).
+/// already validates style keys).
 private func nsColor(fromHexOrName hex: String) -> NSColor? {
     var s = hex
     if s.hasPrefix("#") { s.removeFirst() }

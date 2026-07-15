@@ -1,4 +1,4 @@
-//! Terminal core (Phase A) — the `ndterm` C ABI (include/ndterm.h).
+//! Terminal core — the `ndterm` C ABI (include/ndterm.h).
 //!
 //! Owns one PTY (via `forkpty`) plus one libghostty-vt terminal instance behind
 //! an internal mutex, with a dedicated reader thread pumping PTY output into the

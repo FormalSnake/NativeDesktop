@@ -10,11 +10,11 @@ import CNd
 /// key events to bytes for `ndterm_write_input`, tracks pixel size onto the
 /// grid via `ndterm_resize`, and closes the handle on `deinit`.
 ///
-/// Phase A: no effect callback is registered (title/bell/child-exit events are
+/// No effect callback is registered yet (title/bell/child-exit events are
 /// deferred), so `ndterm_open` gets `nil`/`nil` for `cb`/`userdata`.
 ///
 /// Flipped like the rest of the shell (`FlippedView`, `NDPaneHostView`): the
-/// grid is top-origin — row 0 is the top row — so a top-left y-down coordinate
+/// grid is top-origin (row 0 is the top row), so a top-left y-down coordinate
 /// space lets cell (x, y) draw at `(x*cellW, y*cellH)` directly, and AppKit's
 /// string drawing stays right-side-up in a flipped view.
 final class NDTerminalView: NSView {
@@ -68,7 +68,7 @@ final class NDTerminalView: NSView {
                                  height: CGFloat(self.rows) * cellH))
 
         // The core mutates the grid on its own reader thread; there's no push
-        // signal in Phase A, so poll-repaint at 30 Hz. Weak self ⇒ the timer
+        // signal yet, so poll-repaint at 30 Hz. Weak self ⇒ the timer
         // doesn't keep the view alive; `deinit` invalidates it.
         repaintTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             self?.needsDisplay = true

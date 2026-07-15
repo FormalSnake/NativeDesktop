@@ -5,6 +5,7 @@ const protocol = @import("protocol.zig");
 // packages/react/src/generated/rpc.ts) — a method/param/result change there
 // regenerates both sides, so drift is a compile error, not a silent break.
 const rpc = @import("generated/rpc.zig");
+const widget_types = @import("generated/widget_types.zig");
 const Tree = @import("tree.zig").Tree;
 const Widget = @import("backend.zig").impl.Widget;
 const abi = @import("abi.zig");
@@ -34,8 +35,11 @@ fn parseParams(comptime T: type, gpa: std.mem.Allocator, params: ?std.json.Value
     return .{ .value = parsed.value, .parsed = parsed };
 }
 
-/// The kinds of work a `UiJob` can carry.
-const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll };
+/// The kinds of work a `UiJob` can carry. `window_action` targets a Window
+/// node's handle (pointer/drag/keys input synthesis); `probe_rect`
+/// reads one widget's bounds + owning window on the UI thread so the
+/// automation thread can resolve drag endpoints.
+const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect };
 
 /// A request/response handoff between the automation thread and the
 /// embedder's UI thread. The mutex/condition here guard only this struct,
@@ -54,11 +58,16 @@ const UiJob = struct {
     text: ?[]const u8 = null, // type_text: params.text
     dx: ?f64 = null, // scroll: params.dx
     dy: ?f64 = null, // scroll: params.dy
-    window: ?u32 = null, // screenshot: params.window (target Window node id; null = root/first)
+    window: ?u32 = null, // screenshot/getTree/window_action: target Window node id (null = root/first)
+    action: ?[]const u8 = null, // window_action: the semantic_action string ("pointer"|"drag"|"keys")
+    args_json: ?[:0]const u8 = null, // window_action: pre-serialized arg_json (owned by dispatch)
 
     // output (filled on the UI thread by `handleOnUi`)
     result_json: ?[]u8 = null, // owned by gpa; the automation thread frees
     matched: bool = false, // wait_poll only
+    rect: abi.NdRect = .{ .x = 0, .y = 0, .w = 0, .h = 0 }, // probe_rect only
+    rect_ok: bool = false, // probe_rect only
+    window_of: u32 = 0, // probe_rect only: the ref's owning Window node id (0 = not found)
     err_code: i32 = 0,
     err_msg: ?[]const u8 = null,
     err_data_json: ?[]u8 = null, // pre-serialized `data` object, owned by gpa
@@ -71,12 +80,11 @@ const UiJob = struct {
 };
 
 /// Marshals `job` onto the embedder's UI thread via the registered vtable
-/// (M6a Task 4 — was `glib.MainContext.default().invokeFull` directly) and
-/// blocks the automation thread until the embedder signals completion. This
-/// is the sole place automation touches the UI thread; the SLO guarantee
-/// (SIGSTOP-the-child still answers) holds because this call never crosses
-/// into the Bun child, only into the (fast, main-thread-marshaled) backend
-/// vtable — same as before the ABI existed, just one indirection further.
+/// and blocks the automation thread until the embedder signals completion.
+/// This is the sole place automation touches the UI thread; the SLO
+/// guarantee (SIGSTOP-the-child still answers) holds because this call never
+/// crosses into the Bun child, only into the (fast, main-thread-marshaled)
+/// backend vtable.
 fn runOnUi(job: *UiJob) void {
     abi_backend.vtable.marshal_async(abi_backend.ctx, &uiCallback, job);
     job.mutex.lockUncancelable(job.io);
@@ -104,6 +112,11 @@ fn handleOnUi(job: *UiJob) void {
         .set_value => handleSemanticAction(job, "setValue"),
         .type_text => handleSemanticAction(job, "type"),
         .scroll => handleSemanticAction(job, "scroll"),
+        .double_click => handleSemanticAction(job, "doubleClick"),
+        .right_click => handleSemanticAction(job, "rightClick"),
+        .hover => handleSemanticAction(job, "hover"),
+        .window_action => handleWindowAction(job),
+        .probe_rect => handleProbeRect(job),
     }
 }
 
@@ -111,7 +124,7 @@ fn handleOnUi(job: *UiJob) void {
 /// poll from `runOnUi` (each poll is a separate marshaled UI-thread read);
 /// the sleep/deadline bookkeeping lives on the automation thread
 /// (`dispatchWaitFor`), keeping all tree access UI-thread-only. `visible` is
-/// a vtable call (M6a Task 4) — the core no longer walks a native widget.
+/// a vtable call — the core never walks a native widget itself.
 fn handleWaitPoll(job: *UiJob) void {
     if (job.text_contains) |needle| {
         var it = job.tree.meta.valueIterator();
@@ -139,11 +152,10 @@ fn handleWaitPoll(job: *UiJob) void {
 
 /// Actionability hit-test (exists ∧ visible ∧ non-degenerate bounds), shared
 /// by click and the setValue/type/scroll automation actions — never act on
-/// what a user couldn't reach (research gotcha; full z-order/overlap
-/// testing is deferred). Fills `job.err_*` (-32001) and returns null on
-/// failure; same codes/reason strings as before the ABI (M6a Task 4:
-/// "mapped" folds into `node_visible`'s contract per the plan's v1
-/// decision — the embedder reports false there for an unmapped widget too).
+/// what a user couldn't reach (full z-order/overlap testing is deferred).
+/// Fills `job.err_*` (-32001) and returns null on failure. "mapped" folds
+/// into `node_visible`'s contract: the embedder reports false there for an
+/// unmapped widget too.
 fn checkActionable(job: *UiJob) ?*Widget {
     const widget = job.tree.get(job.ref) orelse {
         job.err_code = rpc.code_not_actionable;
@@ -178,7 +190,7 @@ fn allocZFromValue(gpa: std.mem.Allocator, v: anytype) [:0]const u8 {
 }
 
 /// Builds the `arg_json` for `vtable.semantic_action` from the job's kind-
-/// tagged fields (M6a-D2: params cross the ABI as JSON). Caller frees.
+/// tagged fields (params cross the ABI as JSON). Caller frees.
 fn buildActionArgs(job: *UiJob) [:0]const u8 {
     return switch (job.kind) {
         .set_value => allocZFromValue(job.gpa, .{ .value = job.value orelse .null }),
@@ -188,22 +200,25 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
     };
 }
 
-/// Dispatches click/setValue/type/scroll through `vtable.semantic_action`
-/// (M6a-D3: the GTK embedder fills this with today's exact signal-emit/
-/// editable/adjustment code; Mac fills it with AppKit in M6b). Never
-/// suppresses the resulting native event — automation actions must flow to
-/// React exactly like real user input (plan judgment M5b-D2, preserved
-/// through the ABI).
+/// Dispatches click/setValue/type/scroll through `vtable.semantic_action`.
+/// Never suppresses the resulting native event — automation actions must
+/// flow to React exactly like real user input.
 fn handleSemanticAction(job: *UiJob, action: []const u8) void {
     const widget = checkActionable(job) orelse return;
     const action_z = job.gpa.dupeZ(u8, action) catch return;
     defer job.gpa.free(action_z);
     const args_z = buildActionArgs(job);
     defer job.gpa.free(args_z);
+    dispatchToBackend(job, widget, job.ref, action_z, args_z);
+}
 
+/// Calls `vtable.semantic_action` and maps the outcome into the job —
+/// shared by ref-targeted actions (`handleSemanticAction`) and
+/// window-targeted input synthesis (`handleWindowAction`).
+fn dispatchToBackend(job: *UiJob, widget: *Widget, node_id: u32, action_z: [:0]const u8, args_z: [:0]const u8) void {
     var result_out: ?[*:0]u8 = null;
     var err_out: ?[*:0]u8 = null;
-    const code = abi_backend.vtable.semantic_action(abi_backend.ctx, widget, job.ref, action_z, args_z, &result_out, &err_out);
+    const code = abi_backend.vtable.semantic_action(abi_backend.ctx, widget, node_id, action_z, args_z, &result_out, &err_out);
 
     if (code == 0) {
         if (result_out) |r| {
@@ -213,10 +228,53 @@ fn handleSemanticAction(job: *UiJob, action: []const u8) void {
         return;
     }
     job.err_code = code;
-    job.err_msg = rpc.msg_not_actionable;
+    job.err_msg = switch (code) {
+        rpc.code_input_unsupported => rpc.msg_input_unsupported,
+        rpc.code_invalid_params => rpc.msg_invalid_params,
+        rpc.code_method_not_found => rpc.msg_method_not_found,
+        else => rpc.msg_not_actionable,
+    };
     if (err_out) |e| {
         job.err_data_json = job.gpa.dupe(u8, std.mem.span(e)) catch null;
         abi.nd_free(e);
+    }
+}
+
+/// Input synthesis (pointer/drag/keys) targets a WINDOW node's handle, not a
+/// widget ref, and skips `checkActionable` on purpose: a native-chrome
+/// window's create-time handle is orphaned once a SplitView takes over
+/// (Backend registry resolves it), and the backend hit-tests the coordinates
+/// itself exactly like real input would.
+fn handleWindowAction(job: *UiJob) void {
+    const target_id = job.window orelse job.tree.rootId() orelse {
+        job.err_code = rpc.code_internal_error;
+        job.err_msg = "no root";
+        return;
+    };
+    const widget = job.tree.get(target_id) orelse {
+        job.err_code = rpc.code_invalid_params;
+        job.err_msg = "unknown window ref";
+        return;
+    };
+    const action_z = job.gpa.dupeZ(u8, job.action.?) catch return;
+    defer job.gpa.free(action_z);
+    dispatchToBackend(job, widget, target_id, action_z, job.args_json orelse "{}");
+}
+
+/// Reads one actionable widget's bounds and owning Window node id on the UI
+/// thread (drag endpoint resolution — the automation thread never touches
+/// the tree directly).
+fn handleProbeRect(job: *UiJob) void {
+    const widget = checkActionable(job) orelse return;
+    job.rect_ok = abi_backend.vtable.node_bounds(abi_backend.ctx, widget, &job.rect);
+    var cur: u32 = job.ref;
+    while (job.tree.metaGet(cur)) |m| {
+        if (std.mem.eql(u8, m.widget_type, "Window")) {
+            job.window_of = cur;
+            break;
+        }
+        if (m.parent == 0 or m.parent == cur) break;
+        cur = m.parent;
     }
 }
 
@@ -224,9 +282,9 @@ fn handleSemanticAction(job: *UiJob, action: []const u8) void {
 /// an 8-byte signature, then a 4-byte chunk length, 4-byte "IHDR" tag, then
 /// width/height as big-endian u32 — a fixed layout every PNG encoder
 /// (including GTK's `gdk.Texture.saveToPng` and any future AppKit encoder)
-/// produces identically. `vtable.snapshot` only returns success/failure
-/// (M6a-D3); the core reads the file it just asked the embedder to write
-/// rather than growing the ABI for width/height.
+/// produces identically. `vtable.snapshot` only returns success/failure;
+/// the core reads the file it just asked the embedder to write rather than
+/// growing the ABI for width/height.
 fn readPngDimensions(io: std.Io, path: [:0]const u8) ?struct { w: i32, h: i32 } {
     const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return null;
     defer file.close(io);
@@ -259,8 +317,7 @@ fn selectSnapshotWindow(job: *UiJob) void {
 }
 
 /// In-process render of the window to a PNG at `job.path`, via
-/// `vtable.snapshot` (M6a-D3 — GTK fills this with today's WidgetPaintable
-/// code verbatim; Mac supplies the fidelity-ladder solution in M6b).
+/// `vtable.snapshot`.
 fn handleScreenshot(job: *UiJob) void {
     const path = job.path orelse {
         job.err_code = rpc.code_invalid_params;
@@ -282,15 +339,17 @@ fn handleScreenshot(job: *UiJob) void {
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
-/// Builds the nested snapshot on the UI thread. Task 3: child order now
-/// comes from `Tree.childrenOf` — the ordered per-parent sibling list
-/// maintained by `apply`'s append/insertBefore/remove handlers — instead of
-/// grouping over `tree.meta`'s hashmap iteration (which is bucket layout,
-/// not insertion order, and silently scrambled sibling order under
-/// `insertBefore`/reorders).
+/// Builds the nested snapshot on the UI thread. Child order comes from
+/// `Tree.childrenOf` (the ordered per-parent sibling list maintained by
+/// `apply`'s append/insertBefore/remove handlers), never from grouping over
+/// `tree.meta`'s hashmap iteration — that is bucket layout, not insertion
+/// order, and silently scrambles sibling order under
+/// `insertBefore`/reorders.
 fn handleGetTree(job: *UiJob) void {
     const tree = job.tree;
-    const root_id = tree.rootId() orelse {
+    // params.window scopes the snapshot to that Window node's subtree
+    // (validated as a Window kind in dispatch); absent, the root/first window.
+    const root_id = job.window orelse tree.rootId() orelse {
         job.err_code = rpc.code_internal_error;
         job.err_msg = "no root";
         return;
@@ -301,9 +360,9 @@ fn handleGetTree(job: *UiJob) void {
     const arena = arena_state.allocator();
 
     // Nodes never reached by the ordered `children` lists (host-created
-    // overlay chrome, M8-D5: `registerOverlayNode` in gtk/overlay.zig only
+    // overlay chrome: `registerOverlayNode` in gtk/overlay.zig only
     // calls `putMeta` with `parent == 0` — it never records into `Tree`'s
-    // ordered list) still need to surface in getTree, matching the old
+    // ordered list) still need to surface in getTree, matching the
     // live-GTK walk's behaviour (the crash panel IS a real descendant of the
     // window widget there). Collect every id already placed by some
     // parent's ordered list, then attach the rest under root, sorted by id
@@ -315,14 +374,19 @@ fn handleGetTree(job: *UiJob) void {
         for (entry.value_ptr.items) |child_id| placed.put(arena, child_id, {}) catch {};
     }
     var orphans: std.ArrayList(u32) = .empty;
-    var meta_it = tree.meta.iterator();
-    while (meta_it.next()) |entry| {
-        const id = entry.key_ptr.*;
-        if (id == root_id) continue;
-        if (placed.contains(id)) continue;
-        orphans.append(arena, id) catch {};
+    // Orphan chrome attaches under the PRIMARY window only — a snapshot
+    // explicitly scoped to another window (params.window) stays that
+    // window's own subtree.
+    if (root_id == tree.rootId()) {
+        var meta_it = tree.meta.iterator();
+        while (meta_it.next()) |entry| {
+            const id = entry.key_ptr.*;
+            if (id == root_id) continue;
+            if (placed.contains(id)) continue;
+            orphans.append(arena, id) catch {};
+        }
+        std.mem.sort(u32, orphans.items, {}, std.sort.asc(u32));
     }
-    std.mem.sort(u32, orphans.items, {}, std.sort.asc(u32));
 
     if (tree.get(root_id) == null) {
         job.err_code = rpc.code_internal_error;
@@ -377,6 +441,41 @@ fn buildNode(
     else
         null;
 
+    // Accessibility state: the schema-declared role plus a live
+    // per-node "a11y" probe through `semantic_action`. Backends without the
+    // probe (or non-widget handles like menu nodes) answer nonzero and the
+    // fields keep their defaults — the tree never fails over a11y.
+    const role = if (widget_type.len > 0) widget_types.roleOf(widget_type) else null;
+    var enabled = true;
+    var focused = false;
+    var value: ?std.json.Value = null;
+    if (widget) |w| {
+        var res: ?[*:0]u8 = null;
+        var err: ?[*:0]u8 = null;
+        const code = abi_backend.vtable.semantic_action(abi_backend.ctx, w, id, "a11y", "{}", &res, &err);
+        if (err) |e| abi.nd_free(e);
+        if (res) |r| {
+            defer abi.nd_free(r);
+            if (code == 0) {
+                // alloc_always: the Value must not alias `r`, which is freed
+                // at scope exit while the Value lives until serialization.
+                if (std.json.parseFromSliceLeaky(std.json.Value, arena, std.mem.span(r), .{ .allocate = .alloc_always }) catch null) |p| {
+                    if (p == .object) {
+                        if (p.object.get("enabled")) |v| {
+                            if (v == .bool) enabled = v.bool;
+                        }
+                        if (p.object.get("focused")) |v| {
+                            if (v == .bool) focused = v.bool;
+                        }
+                        if (p.object.get("value")) |v| {
+                            if (v != .null) value = v;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     var children: std.ArrayList(rpc.JsonNode) = .empty;
     for (ordered_children) |child_id| {
         const child_node = try buildNode(arena, tree, tree.childrenOf(child_id), child_id);
@@ -393,6 +492,10 @@ fn buildNode(
         .children = children.items,
         .itemCount = item_count,
         .rows = rows,
+        .role = role,
+        .enabled = enabled,
+        .focused = focused,
+        .value = value,
     };
 }
 
@@ -473,7 +576,14 @@ pub const Server = struct {
 
         switch (method) {
             .getTree => {
-                var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io };
+                const p = parseParams(rpc.GetTreeParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                if (p.value.window) |window_ref| {
+                    if (self.windowRefError(id, window_ref)) |env| return env;
+                }
+                var job = UiJob{ .tree = self.tree, .kind = .get_tree, .gpa = self.gpa, .io = self.io, .window = p.value.window };
                 return self.runJobAndEnvelope(&job, id);
             },
             .screenshot => {
@@ -485,12 +595,7 @@ pub const Server = struct {
                     return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.path", null);
                 };
                 if (p.value.window) |window_ref| {
-                    // Any Window node is a valid target (multi-window), not just
-                    // the first — `metaGet` is the tree's window registry.
-                    const m = self.tree.metaGet(window_ref);
-                    if (m == null or !std.mem.eql(u8, m.?.widget_type, "Window")) {
-                        return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "unknown window ref", null);
-                    }
+                    if (self.windowRefError(id, window_ref)) |env| return env;
                 }
                 const path_z = self.gpa.dupeZ(u8, path) catch return error.OutOfMemory;
                 defer self.gpa.free(path_z);
@@ -538,7 +643,140 @@ pub const Server = struct {
                 var job = UiJob{ .tree = self.tree, .kind = .scroll, .gpa = self.gpa, .io = self.io, .ref = ref, .dx = p.value.dx, .dy = p.value.dy };
                 return self.runJobAndEnvelope(&job, id);
             },
+            .doubleClick, .rightClick, .hover => {
+                const p = parseParams(rpc.ClickParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const ref = p.value.ref orelse {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.ref", null);
+                };
+                const kind: JobKind = switch (method) {
+                    .doubleClick => .double_click,
+                    .rightClick => .right_click,
+                    else => .hover,
+                };
+                var job = UiJob{ .tree = self.tree, .kind = kind, .gpa = self.gpa, .io = self.io, .ref = ref };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .pointer => {
+                const p = parseParams(rpc.PointerParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const phase = p.value.phase orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.phase", null);
+                const x = p.value.x orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.x", null);
+                const y = p.value.y orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.y", null);
+                if (!std.mem.eql(u8, phase, "down") and !std.mem.eql(u8, phase, "move") and !std.mem.eql(u8, phase, "up")) {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "params.phase must be down|move|up", null);
+                }
+                if (p.value.window) |window_ref| {
+                    if (self.windowRefError(id, window_ref)) |env| return env;
+                }
+                const args = allocZFromValue(self.gpa, .{ .phase = phase, .x = x, .y = y, .button = p.value.button orelse "left", .clickCount = p.value.clickCount orelse 1 });
+                defer self.gpa.free(args);
+                var job = UiJob{ .tree = self.tree, .kind = .window_action, .gpa = self.gpa, .io = self.io, .window = p.value.window, .action = "pointer", .args_json = args };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .keys => {
+                const p = parseParams(rpc.KeysParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const keys_spec = p.value.keys orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.keys", null);
+                if (p.value.window) |window_ref| {
+                    if (self.windowRefError(id, window_ref)) |env| return env;
+                }
+                const args = allocZFromValue(self.gpa, .{ .keys = keys_spec });
+                defer self.gpa.free(args);
+                var job = UiJob{ .tree = self.tree, .kind = .window_action, .gpa = self.gpa, .io = self.io, .window = p.value.window, .action = "keys", .args_json = args };
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .drag => return self.dispatchDrag(id, parsed.value.params),
         }
+    }
+
+    /// Validates a params.window ref as a live Window node; returns the
+    /// error envelope to send, or null when the ref is valid. Any Window
+    /// node is a valid target (multi-window), not just the first —
+    /// `metaGet` is the tree's window registry.
+    fn windowRefError(self: *Server, id: std.json.Value, window_ref: u32) ?[]u8 {
+        const m = self.tree.metaGet(window_ref);
+        if (m == null or !std.mem.eql(u8, m.?.widget_type, "Window")) {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "unknown window ref", null) catch null;
+        }
+        return null;
+    }
+
+    /// One resolved drag endpoint: window-topleft coordinates plus the
+    /// owning Window node id when the endpoint came from a widget ref.
+    const DragEndpoint = struct { x: f64, y: f64, window: ?u32 };
+
+    /// Resolves fromRef/toRef (widget center via a UI-thread bounds probe)
+    /// or explicit coordinates. Returns null after already writing the
+    /// error envelope into `out_env`.
+    fn resolveDragEndpoint(self: *Server, id: std.json.Value, ref: ?u32, x: ?f64, y: ?f64, which: []const u8, out_env: *?[]u8) ?DragEndpoint {
+        if (ref) |r| {
+            var probe = UiJob{ .tree = self.tree, .kind = .probe_rect, .gpa = self.gpa, .io = self.io, .ref = r };
+            runOnUi(&probe);
+            defer if (probe.err_data_json) |d| self.gpa.free(d);
+            if (!probe.rect_ok) {
+                out_env.* = errorEnvelope(self.gpa, id, probe.err_code, probe.err_msg orelse rpc.msg_not_actionable, probe.err_data_json) catch null;
+                return null;
+            }
+            return .{
+                .x = @as(f64, @floatFromInt(probe.rect.x)) + @as(f64, @floatFromInt(probe.rect.w)) / 2.0,
+                .y = @as(f64, @floatFromInt(probe.rect.y)) + @as(f64, @floatFromInt(probe.rect.h)) / 2.0,
+                .window = if (probe.window_of != 0) probe.window_of else null,
+            };
+        }
+        if (x != null and y != null) return .{ .x = x.?, .y = y.?, .window = null };
+        const msg = if (std.mem.eql(u8, which, "from")) "drag needs fromRef or fromX/fromY" else "drag needs toRef or toX/toY";
+        out_env.* = errorEnvelope(self.gpa, id, rpc.code_invalid_params, msg, null) catch null;
+        return null;
+    }
+
+    /// drag — resolves both endpoints, then hands the WHOLE press-move-
+    /// release sequence to the backend as one `semantic_action("drag")` on
+    /// the window handle. One batch, not per-phase marshals: AppKit controls
+    /// run nested mouse-tracking loops inside `mouseDown` dispatch that
+    /// block the main thread until the matching up-event arrives, so the
+    /// full event sequence must already sit in the app's event queue.
+    fn dispatchDrag(self: *Server, id: std.json.Value, params: ?std.json.Value) ![]u8 {
+        const p = parseParams(rpc.DragParams, self.gpa, params) catch {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+        };
+        defer p.deinit();
+
+        var env: ?[]u8 = null;
+        const from = self.resolveDragEndpoint(id, p.value.fromRef, p.value.fromX, p.value.fromY, "from", &env) orelse
+            return env orelse error.OutOfMemory;
+        const to = self.resolveDragEndpoint(id, p.value.toRef, p.value.toX, p.value.toY, "to", &env) orelse
+            return env orelse error.OutOfMemory;
+        if (from.window != null and to.window != null and from.window.? != to.window.?) {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "fromRef and toRef must share a window", null);
+        }
+        var window_id: ?u32 = from.window orelse to.window orelse p.value.window;
+        if (p.value.window) |window_ref| {
+            if (from.window == null and to.window == null) {
+                if (self.windowRefError(id, window_ref)) |e| return e;
+                window_id = window_ref;
+            }
+        }
+
+        const steps = @max(p.value.steps, 1);
+        const args = allocZFromValue(self.gpa, .{
+            .fromX = from.x,
+            .fromY = from.y,
+            .toX = to.x,
+            .toY = to.y,
+            .steps = steps,
+            .durationMs = p.value.durationMs,
+            .button = p.value.button orelse "left",
+        });
+        defer self.gpa.free(args);
+        var job = UiJob{ .tree = self.tree, .kind = .window_action, .gpa = self.gpa, .io = self.io, .window = window_id, .action = "drag", .args_json = args };
+        return self.runJobAndEnvelope(&job, id);
     }
 
     /// Polls the tree on the UI thread at ~50ms until the condition holds or

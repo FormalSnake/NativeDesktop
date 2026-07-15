@@ -3,7 +3,7 @@ const protocol = @import("protocol.zig");
 const widget_types = @import("generated/widget_types.zig");
 
 // NDP binary spec: docs/superpowers/specs/2026-07-09-ndp-binary-encoding.md
-// This file is the M10 decoder+tracer for the CommitBatch binary layout that
+// This file is the decoder+tracer for the CommitBatch binary layout that
 // spec defines (§3-§9). protocol.zig stays JSON-only (spec §10); this is the
 // sibling that decodes binary payloads into the same protocol.CommitBatch/Op
 // shapes tree.apply already consumes.

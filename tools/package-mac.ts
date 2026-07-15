@@ -3,8 +3,8 @@
 // Assembles Gallery.app around swift/.build/release/NDShell + the Zig core
 // (already linked into NDShell) + Bun + the gallery, deep-signs the nested
 // binaries inside-out (ad-hoc by default; Developer-ID if APPLE_SIGN_IDENTITY
-// is set) with the hardened runtime + allow-jit entitlements (M9-D3), and
-// gates notarization on Apple credential presence.
+// is set) with the hardened runtime + allow-jit entitlements, and gates
+// notarization on Apple credential presence.
 import { $ } from "bun";
 import { mkdirSync, cpSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { buildAndSignManifest, ensureEphemeralKey } from "./manifest.ts";
@@ -43,7 +43,7 @@ export async function packageMac() {
   // at the matching relative depth so that resolves inside the .app too.
   cpSync("runtime", `${c}/Resources/runtime`, { recursive: true, dereference: true });
 
-  // Signing identity (M9-D3): Developer-ID if set, else ad-hoc.
+  // Signing identity: Developer-ID if set, else ad-hoc.
   const identity = process.env.APPLE_SIGN_IDENTITY ?? "-";
   const ent = "packaging/macos/entitlements.plist";
   // Deep-sign inside-out: nested Mach-O first, the .app last.
@@ -54,7 +54,7 @@ export async function packageMac() {
   await $`codesign --verify --strict ${app}`;
   console.error(`ND_PACKAGE_APP_SIGNED ${app} identity=${identity === "-" ? "adhoc" : "developer-id"}`);
 
-  // Notarization gated on credentials (M9-D3).
+  // Notarization gated on credentials.
   const { APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD } = process.env;
   if (APPLE_ID && APPLE_TEAM_ID && APPLE_APP_PASSWORD) {
     const zip = `${dist}/Gallery.zip`;
@@ -66,7 +66,7 @@ export async function packageMac() {
     console.error(`ND_PACKAGE_NOTARIZE_SKIPPED reason=no-credentials`);
   }
 
-  // Full-archive update payload (.tar.gz on mac) + signed manifest (M9-D2).
+  // Full-archive update payload (.tar.gz on mac) + signed manifest.
   const archive = `${updDir}/gallery-${VERSION}-mac.tar.gz`;
   await $`tar -C ${dist} -czf ${archive} Gallery.app`;
   const { sec, pub } = await ensureEphemeralKey(updDir);

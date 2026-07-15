@@ -2,7 +2,7 @@ import AppKit
 import CNd
 import Foundation
 
-// M13 menu bar. macOS 26 renders a <menubar> as the real NSApp.mainMenu: the
+// macOS 26 renders a <menubar> as the real NSApp.mainMenu: the
 // standard default menus (App/File/Edit/View/Window/Help, responder-chain
 // selectors) that every app gets, extended by the declared <menu>/<menuitem>
 // tree. Menu nodes ride the ordinary create/append vtable ops, so each is a
@@ -142,8 +142,8 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
     private var rebuildScheduled = false
     // NSMenuItem -> node, for custom items only (validation + fire).
     private var itemNodes: [ObjectIdentifier: NDMenuNode] = [:]
-    // M15 generalization (the GTK menu-owner-registry mirror): any view that
-    // hosts a menu built from Menu/MenuItem children — MenuButton/SplitButton
+    // Generalized owner registry (the GTK menu-owner-registry mirror): any
+    // view that hosts a menu built from Menu/MenuItem children — MenuButton/SplitButton
     // (NSComboButton.menu) and TrayItem (NSStatusItem.menu). Owners are held
     // weakly so a dropped node can't be pinned alive by this registry; dead
     // entries are pruned on rebuild. MenuItem `selected` keeps working for
@@ -242,7 +242,7 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
             NSApp.helpMenu = helpMenu
         }
 
-        // M15: rebuild every registered menu owner from the same declared
+        // Rebuild every registered menu owner from the same declared
         // nodes in this one pass — itemNodes was cleared above, so the
         // item->node routing for menubar AND owners is always re-registered
         // together (a Menu list mutation after append refreshes all hosts).

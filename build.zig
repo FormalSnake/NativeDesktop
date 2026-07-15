@@ -9,9 +9,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // M6a-D5: the comptime seam is `null` (in-process conformance backend)
+    // The comptime seam is `null` (in-process conformance backend)
     // or `abi` (the C-ABI vtable seam every real embedder — GTK included —
-    // routes through). The bare `gtk` string is retired: GTK-ness now lives
+    // routes through). There is no bare `gtk` seam value: GTK-ness lives
     // in the embedder (src/gtk/), not the seam.
     const backend_kind = b.option([]const u8, "backend", "widget backend: abi|null") orelse "abi";
     const build_opts = b.addOptions();
@@ -37,18 +37,18 @@ pub fn build(b: *std.Build) void {
         .{ .name = "build_options", .module = build_options_mod },
     };
 
-    // Prebuilt libghostty-vt static archive (Phase 0). Linked into every artifact
-    // that compiles the generated GTK create dispatcher — which now reaches
+    // Prebuilt libghostty-vt static archive. Linked into every artifact
+    // that compiles the generated GTK create dispatcher — which reaches
     // src/gtk/terminal.zig -> src/core/terminal.zig and its ghostty_* externs.
     const ghostty_vt_lib = b.path("vendor/libghostty-vt/lib/libghostty-vt.a");
 
-    // ---- The core (M6a-D4): `src/abi.zig` transitively reaches every other
+    // ---- The core: `src/abi.zig` transitively reaches every other
     // GTK-free core file via ordinary same-directory relative imports (abi
     // -> {abi_backend, tree, runtime, automation, protocol}; tree/runtime/
     // automation -> backend.zig -> {null_backend, abi_backend}) — so it is
     // the one module root that covers the whole core surface. No gobject
     // imports anywhere in this module; `-lc` is needed for `std.c.environ`
-    // (abi.zig's `currentEnviron`, Task 3).
+    // (abi.zig's `currentEnviron`).
     const abi_mod = b.createModule(.{
         .root_source_file = b.path("src/abi.zig"),
         .target = target,
@@ -187,7 +187,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(conformance_tests).step);
 
-    // Header-conformance test (Task 1): `abi.zig`'s comptime layout asserts
+    // Header-conformance test: `abi.zig`'s comptime layout asserts
     // run under `zig build test` so header/struct drift fails immediately.
     // No gobject imports — this is the ABI-only test root proving `libnd`'s
     // Zig side compiles without GTK.
@@ -204,7 +204,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(abi_tests).step);
 
-    // Update-verification core (M9): its own addTest root — Zig 0.16 does not
+    // Update-verification core: its own addTest root — Zig 0.16 does not
     // collect `test {}` blocks transitively through @import, so without this
     // update.zig's minisign tests are silently skipped.
     const update_tests = b.addTest(.{
@@ -216,7 +216,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(update_tests).step);
 
-    // Binary NDP decoder (M10): own addTest root (transitive test collection
+    // Binary NDP decoder: own addTest root (transitive test collection
     // through @import does not happen in Zig 0.16).
     const ndp_binary_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -227,7 +227,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(ndp_binary_tests).step);
 
-    // Capability ACL (M10): own addTest root, std-only module.
+    // Capability ACL: own addTest root, std-only module.
     const acl_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/acl.zig"),
@@ -237,7 +237,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(acl_tests).step);
 
-    // Native-plugin dlopen loader (M10): own addTest root; link_libc because
+    // Native-plugin dlopen loader: own addTest root; link_libc because
     // the test dispatches into the demo plugin's libc-allocated result and
     // frees it with std.c.free.
     const plugin_tests = b.addTest(.{
@@ -250,7 +250,7 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(plugin_tests).step);
 
-    // `nd-update-verify` (M9): bytes-in → exit 0/1 CLI wrapping verifyMinisign,
+    // `nd-update-verify`: bytes-in → exit 0/1 CLI wrapping verifyMinisign,
     // used by scripts/m9-drive.ts to run the non-disableable signature check.
     const update_verify_mod = b.createModule(.{
         .root_source_file = b.path("src/core/update_verify_main.zig"),
@@ -262,7 +262,7 @@ pub fn build(b: *std.Build) void {
     update_verify_step.dependOn(&b.addInstallArtifact(update_verify_exe, .{}).step);
     b.installArtifact(update_verify_exe);
 
-    // ---- libnd.a (M6a-D4): the static lib for the Mac, rooted at the same
+    // ---- libnd.a: the static lib for the Mac, rooted at the same
     // GTK-free core, `-Dbackend=abi`, no gobject imports at all.
     const libnd = b.addLibrary(.{
         .name = "nd",
@@ -293,7 +293,7 @@ pub fn build(b: *std.Build) void {
         libnd_step.dependOn(&repack.step);
     }
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
-    // nd.h now nests `#include "nd_plugin.h"` (M10) — install it alongside or
+    // nd.h nests `#include "nd_plugin.h"` — install it alongside or
     // the installed header tree fatally fails to resolve for any consumer.
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd_plugin.h"), .{ .custom = "include" }, "nd_plugin.h").step);
 
@@ -303,7 +303,7 @@ pub fn build(b: *std.Build) void {
     const sync_headers_step = b.step("sync-native-headers", "Copy include/nd*.h into packages/native/include/");
     sync_headers_step.dependOn(&b.addSystemCommand(&.{ "scripts/sync-native-headers.sh" }).step);
 
-    // First-party demo plugin (M10): a C-ABI shared lib exporting
+    // First-party demo plugin: a C-ABI shared lib exporting
     // nd_plugin_entry. Built as its own artifact; headless-m10.sh dlopens it.
     const plugin_hello = b.addLibrary(.{
         .name = "nd_plugin_hello",
@@ -318,7 +318,7 @@ pub fn build(b: *std.Build) void {
     const plugin_step = b.step("plugin-hello", "Build the hello demo plugin (.so)");
     plugin_step.dependOn(&b.addInstallArtifact(plugin_hello, .{}).step);
 
-    // Demo native-view module (Phase B): a C-ABI shared lib exporting
+    // Demo native-view module: a C-ABI shared lib exporting
     // nd_plugin_entry that registers its OWN GtkWidget under the "colorview"
     // view kind via the v2 plugin ABI (register_view). Links the GTK imports
     // (their pkg-config system libs propagate to the .dylib; GtkWidget/cairo

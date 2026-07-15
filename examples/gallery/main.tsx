@@ -17,17 +17,17 @@ import {
 } from "@nativedesktop/react";
 import type { NdNodeRef, TableColumn, TableRow, TreeNode } from "@nativedesktop/react";
 
-// M5b/M5c gallery: every new widget with live controlled state + testIDs,
+// Widget gallery: every widget here has live controlled state + testIDs,
 // driven headlessly by scripts/m5b-drive.ts and scripts/m5c-drive.ts over
 // the automation socket. The original Form/Grid/Styled/List/SourceList tabs
 // are untouched (same testIDs, same structure) — the drive scripts walk the
 // automation tree by testID, so new tabs and the ToastOverlay wrapper below
 // don't disturb them.
 //
-// M15 widget wave: ~20 newly landed widgets get one showcase tab each,
-// grouped by kind (Controls / Pickers / Popovers & Menus / Status & Banner /
-// Toasts / Table / Tree / Dialogs / Video / macOS). Every control is wired
-// to real state — no dead props — matching the rest of this file's style.
+// The newer widgets get one showcase tab each, grouped by kind (Controls /
+// Pickers / Popovers & Menus / Status & Banner / Toasts / Table / Tree /
+// Dialogs / Video / macOS). Every control is wired to real state (no dead
+// props), like the rest of this file.
 
 interface Employee {
   id: string;

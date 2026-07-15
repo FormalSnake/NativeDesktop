@@ -3,15 +3,15 @@ title: Dialogs
 description: showAlert, openFile, saveFile, and showAbout — native modal dialogs scoped to one <window>, driven as promise-wrapped imperative commands.
 ---
 
-`@nativedesktop/react` exposes four native, per-window modal dialogs — a confirmation alert, an
-open-file panel, a save-file panel, and the app's About panel — as promise-returning functions layered
-over the `<window>` widget's [imperative commands](/core-concepts/imperative-commands/):
-`NSAlert`/`NSOpenPanel`/`NSSavePanel` sheets on macOS, `AdwAlertDialog`/`GtkFileDialog` on GTK.
+`@nativedesktop/react` exposes four native, per-window modal dialogs (a confirmation alert, an
+open-file panel, a save-file panel, and the app's About panel) as promise-returning functions layered
+over the `<window>` widget's [imperative commands](/core-concepts/imperative-commands/). They render
+as `NSAlert`/`NSOpenPanel`/`NSSavePanel` sheets on macOS and `AdwAlertDialog`/`GtkFileDialog` on GTK.
 
 :::note
-This is a **different mechanism** from the ACL-gated `dialog.*` API documented in
-[System Capabilities](/native-platform/system-capabilities/#dialogs). Reach for `dialog.*` for an
-app-level dialog with no particular window in mind; reach for these when the dialog is a modal sheet
+This is a different mechanism from the ACL-gated `dialog.*` API documented in
+[System Capabilities](/native-platform/system-capabilities/#dialogs). Use `dialog.*` for an
+app-level dialog with no particular window in mind; use these when the dialog is a modal sheet
 scoped to one specific `<window>` node (and, for `showAlert`/`showAbout`, when you need buttons or
 content `dialog.showMessage` doesn't cover).
 :::
@@ -61,9 +61,9 @@ function App() {
 }
 ```
 
-The `on*Result` props aren't optional boilerplate — skip one and its matching call's promise never
-settles, because the result event is how the promise learns the dialog closed. `showAbout` has no
-result event and needs no wiring; see below.
+The `on*Result` props aren't optional: skip one and its matching call's promise never settles,
+because the result event is how the promise learns the dialog closed. `showAbout` has no result
+event and needs no wiring; see below.
 
 ## API
 
@@ -80,9 +80,9 @@ red/warning treatment (`NSAlertStyle.critical`-adjacent styling, `.destructive-a
 ## One dialog per window at a time
 
 `showAlert`/`openFile`/`saveFile` each claim their window's single dialog slot for as long as they're
-pending — neither backend has a way to stack two native sheets on one window. Calling a second one
-before the first resolves **rejects immediately** with an error identifying which dialog is still
-open, rather than queueing or silently clobbering the first caller's promise:
+pending; neither backend has a way to stack two native sheets on one window. Calling a second one
+before the first resolves rejects immediately with an error naming the dialog that is still open,
+rather than queueing or silently clobbering the first caller's promise:
 
 ```
 Error: <window> already has a "showAlert" dialog pending — only one modal dialog per window is allowed at a time

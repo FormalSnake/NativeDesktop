@@ -2,7 +2,7 @@
 // current platform, the Electron-style "prebuilt native binary as an npm
 // dependency" model. Binaries live under bin/<os>-<arch>/nd-hello.
 //
-// How binaries get populated (no CI matrix yet — that's future scope):
+// How binaries get populated (there is no CI binary matrix yet):
 //   - local dev (this repo): `zig build` at the framework repo root produces
 //     zig-out/bin/nd-hello for the host's own platform; it is copied into
 //     bin/<os>-<arch>/nd-hello here so `nd dev` works against a checkout with

@@ -46,7 +46,7 @@ export default defineConfig({ native: { plugins: [{
 
 `nd dev` and `nd build` run only these app-owned commands when inputs are newer than the output. They never invoke `zig build` or rebuild the host. The resulting paths are passed through `ND_PLUGIN_PATHS`; legacy `ND_PLUGIN_PATH` remains supported.
 
-Build commands run with `ND_NATIVE_PACKAGE` set to the installed `@nativedesktop/native` package root; on macOS the child environment also drops `SDKROOT` and Nix compiler variables and sets `DEVELOPER_DIR` from `xcode-select -p`, so plain `xcrun swiftc` finds the real Xcode toolchain. `inputs` are literal paths resolved from the app directory — no env expansion — so reference the package through `node_modules/@nativedesktop/native`.
+Build commands run with `ND_NATIVE_PACKAGE` set to the installed `@nativedesktop/native` package root; on macOS the child environment also drops `SDKROOT` and Nix compiler variables and sets `DEVELOPER_DIR` from `xcode-select -p`, so plain `xcrun swiftc` finds the real Xcode toolchain. `inputs` are literal paths resolved from the app directory (no env expansion), so reference the package through `node_modules/@nativedesktop/native`.
 
 ## ABI
 

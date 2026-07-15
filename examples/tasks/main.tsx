@@ -1,8 +1,8 @@
 import { render, useMemo, useState } from "@nativedesktop/react";
 
-// ND Tasks — the "smallest real app": a single-pane task list, proving the
-// M13 chrome machinery (menu bar + toolbar/headerbar) scales DOWN to a
-// minimal shape, not just the three-pane Notes rework.
+// ND Tasks — the "smallest real app": a single-pane task list. The chrome
+// machinery (menu bar + toolbar/headerbar) behind the three-pane Notes
+// example scales DOWN to this minimal shape too.
 //
 // Visual approach, mirroring examples/notes/main.tsx's doctrine:
 //   - The window's one content child is a `<splitview>` holding exactly ONE
@@ -23,7 +23,7 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 //     declared "Task" menu for New Task / Clear Completed.
 //   - `cssClasses` reaches libadwaita's named classes (suggested-action,
 //     dimmed, caption) exactly like Notes; `style` is kept only for geometry
-//     (padding, hexpand/vexpand) — no color literals anywhere.
+//     (padding, hexpand/vexpand), with no color literals anywhere.
 interface Task {
   id: number;
   title: string;

@@ -1,10 +1,10 @@
 import AppKit
 
-/// TrayItem (M15, macOS-exclusive — ND_PLATFORM_NOOP on GTK): an
+/// TrayItem is macOS-exclusive (ND_PLATFORM_NOOP on GTK): an
 /// NSStatusBar.system status item behind a host-only NSView handle (the
-/// NDMenuNodeView idiom). HIG menu bar rules: template SF Symbol image
-/// (black-and-clear, system-tinted for light/dark/tint), and "display a
-/// menu — not a popover" — the Menu/MenuItem children build the item's menu
+/// NDMenuNodeView idiom). HIG menu bar rules apply: a template SF Symbol
+/// image (black-and-clear, system-tinted for light/dark/tint), and a menu
+/// rather than a popover. The Menu/MenuItem children build the item's menu
 /// via the generalized NDMenuManager owner registry. Lifecycle rides the
 /// node's structural ops: the cross-cutting detach guard removes the status
 /// item when the node unmounts (a tray item never enters any view hierarchy).

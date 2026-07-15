@@ -32,7 +32,7 @@ nonisolated(unsafe) var gWindow: NSWindow? = nil {
 // what makes N `<window>` roots each present an independent OS window without a
 // single-window global standing in the way. Populated by `gWindow`'s observer.
 nonisolated(unsafe) var ndContentToWindow: [ObjectIdentifier: NSWindow] = [:]
-// The window's single unified NSToolbar manager (M11 Phase B), set by the
+// The window's single unified NSToolbar manager, set by the
 // generated Window create arm. The pane <headerbar>s register their items
 // into it; it owns the tracking separator aligned to the split's divider.
 nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
@@ -56,8 +56,8 @@ gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
 nd_set_backend_name(ctx, "appkit")
 
-// M10: opt-in capability ACL + native plugin. Absent env = safe default
-// (core UI ops granted), byte-identical to pre-M10 behavior.
+// Opt-in capability ACL + native plugins. An absent env var keeps the safe
+// default: core UI ops granted, everything else unchanged.
 if let grants = ProcessInfo.processInfo.environment["ND_ACL_GRANTS"] {
     grants.withCString { nd_set_acl(ctx, $0) }
 }
@@ -78,7 +78,7 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
 // item / Cmd-Q), which calls exit() inside run() — code after run() never
 // executes. applicationWillTerminate is the one seam where the window/view
 // hierarchy is still alive, so plugin deinit() and native-view destroy()
-// callbacks (ABI v3) receive live NSViews.
+// callbacks receive live NSViews.
 final class NDAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let ctx = gCtx { nd_shutdown(ctx) }

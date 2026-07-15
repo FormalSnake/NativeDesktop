@@ -16,22 +16,22 @@ let package = Package(
             name: "NDShell",
             dependencies: ["CNd"],
             // Generated widget code (swift/Sources/NDGen/Widgets.swift +
-            // T3's hand-written NDGen/ListView.swift) references
+            // the hand-written NDGen/ListView.swift) references
             // NDShell-only symbols (EventDispatcher, withEchoSuppressed,
             // radioGroupIdentifier, gWindow, makeListView) and vice versa —
             // a separate NDGen module would be circular. Compiling both
-            // directories into one target keeps the file paths the plan
-            // mandates (swift/Sources/NDGen/Widgets.swift) while giving
-            // generated + hand-written code one shared namespace.
+            // directories into one target keeps codegen's output path
+            // (swift/Sources/NDGen/Widgets.swift) while giving generated +
+            // hand-written code one shared namespace.
             path: "Sources",
             sources: ["NDShell", "NDGen"],
             linkerSettings: [
                 // Link the prebuilt static lib + the frameworks the AppKit
-                // backend (T3+) needs. libnd.a is GTK-free pure-Zig core.
+                // backend needs. libnd.a is GTK-free pure-Zig core.
                 .unsafeFlags([
                     "-L", "\(repoRoot)zig-out/lib",
                     "-lnd",
-                    // libghostty-vt (Phase 0): resolves the ghostty_* externs that
+                    // libghostty-vt resolves the ghostty_* externs that
                     // libnd's terminal core (ndterm_*) references. After -lnd so the
                     // archive satisfies libnd's undefined symbols.
                     "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt.a",
@@ -39,13 +39,13 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("Foundation"),
-                .linkedFramework("QuartzCore"),  // CALayer for the T5 fidelity ladder
-                .linkedFramework("WebKit"),      // WKWebView for the <webview> widget (M14)
+                .linkedFramework("QuartzCore"),  // CALayer for the screenshot fidelity ladder
+                .linkedFramework("WebKit"),      // WKWebView for the <webview> widget
                 .linkedFramework("Security"),    // Keychain (SecItem*) for credentials.* (system seam)
                 .linkedFramework("UserNotifications"),  // UNUserNotificationCenter for notification.show
                 .linkedFramework("AVFoundation"),  // AVPlayer for audio.* playback (system seam)
-                .linkedFramework("AVKit"),         // AVPlayerView for the <video> widget (M15)
-                .linkedFramework("UniformTypeIdentifiers"),  // UTType for open/save panel filters (M15)
+                .linkedFramework("AVKit"),         // AVPlayerView for the <video> widget
+                .linkedFramework("UniformTypeIdentifiers"),  // UTType for open/save panel filters
                 .linkedFramework("MediaToolbox"),  // MTAudioProcessingTap for audio.* spectrum analysis
                 .linkedFramework("Accelerate"),    // vDSP FFT for audio.* spectrum analysis
             ]

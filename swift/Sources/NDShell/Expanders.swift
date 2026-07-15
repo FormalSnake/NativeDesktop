@@ -1,6 +1,6 @@
 import AppKit
 
-/// Expander (M15): NSButton `.pushDisclosure` (chevron — panel expansion per
+/// Expander: NSButton `.pushDisclosure` (the chevron for panel expansion per
 /// the HIG disclosure-controls page) + a collapsible single-child section,
 /// animated via the standard NSStackView hidden-arranged-subview pattern.
 /// `expanded` is controlled: user toggles flip natively AND emit `toggled`

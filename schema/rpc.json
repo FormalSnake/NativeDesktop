@@ -23,7 +23,7 @@
     },
     {
       "name": "JsonNode",
-      "doc": "One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven.",
+      "doc": "One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe.",
       "fields": [
         { "name": "ref", "type": "u32" },
         { "name": "type", "type": "string" },
@@ -33,7 +33,11 @@
         { "name": "geometry", "type": "Geometry", "nullable": true },
         { "name": "children", "type": "JsonNode", "list": true },
         { "name": "itemCount", "type": "u32", "nullable": true },
-        { "name": "rows", "type": "RowJson", "list": true, "nullable": true }
+        { "name": "rows", "type": "RowJson", "list": true, "nullable": true },
+        { "name": "role", "type": "string", "nullable": true },
+        { "name": "enabled", "type": "bool" },
+        { "name": "focused", "type": "bool" },
+        { "name": "value", "type": "any", "nullable": true }
       ]
     },
     {
@@ -93,13 +97,33 @@
         { "name": "textContains", "type": "string", "optional": true },
         { "name": "refVisible", "type": "u32", "optional": true }
       ]
+    },
+    {
+      "name": "PointerResult",
+      "fields": [{ "name": "dispatched", "type": "bool" }]
+    },
+    {
+      "name": "DragResult",
+      "doc": "fromX/fromY/toX/toY are the resolved endpoints in logical-window-topleft coordinates.",
+      "fields": [
+        { "name": "dispatched", "type": "bool" },
+        { "name": "fromX", "type": "f64" },
+        { "name": "fromY", "type": "f64" },
+        { "name": "toX", "type": "f64" },
+        { "name": "toY", "type": "f64" },
+        { "name": "steps", "type": "u32" }
+      ]
+    },
+    {
+      "name": "KeysResult",
+      "fields": [{ "name": "dispatched", "type": "bool" }]
     }
   ],
   "methods": [
     {
       "name": "getTree",
-      "doc": "Full tree snapshot with stable refs, testIDs, text, and logical geometry.",
-      "params": [],
+      "doc": "Full tree snapshot with stable refs, testIDs, text, logical geometry, and accessibility state (role/enabled/focused/value). window (if given) must be a Window node ref and scopes the snapshot to that window's subtree; absent, the root/first window is used and other windows' nodes attach as orphans.",
+      "params": [{ "name": "window", "type": "u32", "optional": true }],
       "result": "GetTreeResult"
     },
     {
@@ -153,11 +177,69 @@
         { "name": "dy", "type": "f64", "optional": true }
       ],
       "result": "ScrollResult"
+    },
+    {
+      "name": "doubleClick",
+      "doc": "Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003).",
+      "params": [{ "name": "ref", "type": "u32" }],
+      "result": "ClickResult"
+    },
+    {
+      "name": "rightClick",
+      "doc": "Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys \"escape\"). Unsupported on GTK (-32003).",
+      "params": [{ "name": "ref", "type": "u32" }],
+      "result": "ClickResult"
+    },
+    {
+      "name": "hover",
+      "doc": "Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003).",
+      "params": [{ "name": "ref", "type": "u32" }],
+      "result": "ClickResult"
+    },
+    {
+      "name": "pointer",
+      "doc": "Low-level single pointer phase (down|move|up) at logical-window-topleft coordinates in the target window (default: root window). button is left|right (default left). Caution: a lone down on a tracking control (slider, button) enters the control's mouse-tracking loop until an up arrives — prefer drag for press-move-release sequences. Unsupported on GTK (-32003).",
+      "params": [
+        { "name": "phase", "type": "string" },
+        { "name": "x", "type": "f64" },
+        { "name": "y", "type": "f64" },
+        { "name": "button", "type": "string", "optional": true },
+        { "name": "clickCount", "type": "u32", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "PointerResult"
+    },
+    {
+      "name": "drag",
+      "doc": "Press-move-release gesture. Endpoints are widget refs (their centers; fromRef/toRef must share a window) or explicit coordinates (fromX/fromY/toX/toY in the target window, default root). The full down/dragged.../up sequence is posted as one batch so native mouse-tracking loops (slider thumbs, split dividers) consume it like a real drag. Unsupported on GTK (-32003).",
+      "params": [
+        { "name": "fromRef", "type": "u32", "optional": true },
+        { "name": "toRef", "type": "u32", "optional": true },
+        { "name": "fromX", "type": "f64", "optional": true },
+        { "name": "fromY", "type": "f64", "optional": true },
+        { "name": "toX", "type": "f64", "optional": true },
+        { "name": "toY", "type": "f64", "optional": true },
+        { "name": "steps", "type": "u32", "default": 12 },
+        { "name": "durationMs", "type": "i64", "default": 160 },
+        { "name": "button", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "DragResult"
+    },
+    {
+      "name": "keys",
+      "doc": "Keyboard synthesis into the target window (default: root window). A chord spec like \"cmd+shift+n\" / \"escape\" / \"tab\" presses one combination (driving menu key equivalents); a plain multi-character string like \"hello\" types each character into the focused widget. Unsupported on GTK (-32003).",
+      "params": [
+        { "name": "keys", "type": "string" },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "KeysResult"
     }
   ],
   "errors": [
     { "name": "notActionable", "code": -32001, "message": "not actionable", "doc": "data: {ref, reason: \"unknown\" | \"invisible\" | \"unmapped\" | \"offscreen\"}" },
     { "name": "waitForTimeout", "code": -32002, "message": "waitFor timeout", "doc": "data: {timeoutMs}" },
+    { "name": "inputUnsupported", "code": -32003, "message": "input synthesis unsupported on this backend", "doc": "pointer/drag/keys/doubleClick/rightClick/hover on a backend without synthetic input (GTK4 removed app-constructible events)" },
     { "name": "methodNotFound", "code": -32601, "message": "method not found" },
     { "name": "invalidParams", "code": -32602, "message": "invalid params", "doc": "data: {ref} where applicable; message may carry the specific missing/invalid param" },
     { "name": "internalError", "code": -32603, "message": "internal error" },

@@ -3,8 +3,8 @@ title: Multi-Window
 description: Render more than one <window> root from a single React tree, and move a live widget between windows without reloading it.
 ---
 
-A NativeDesktop app isn't limited to one `<window>`. Render multiple `<window>` roots — a sibling
-list, typically inside a fragment — and each becomes an independent OS window on both backends, all
+A NativeDesktop app isn't limited to one `<window>`. Render multiple `<window>` roots (a sibling
+list, typically inside a fragment) and each becomes an independent OS window on both backends, all
 driven by the same Bun/React process. `examples/multiwindow/main.tsx` is the reference app for
 everything on this page.
 
@@ -32,37 +32,37 @@ await render(<App />);
 The core reconciler (`src/tree.zig`) pools window handles by node id, so a `--hot` edit rebinds
 existing windows instead of reopening them, and a genuinely new `<window>` node opens a fresh OS
 window. Because every window is rendered by the same tree in one process, sharing state between them
-is just ordinary React state and closures — there's no IPC to wire up, unlike a multi-window
+is ordinary React state and closures. There's no IPC to wire up, unlike a multi-window
 Electron app where each window is its own renderer process.
 
-Automation, the crash overlay, window chrome, and the ACL are all per-window correct: a node's
+Automation, the crash overlay, window chrome, and the ACL are all per-window correct. A node's
 geometry and visibility (and therefore the bounds `getTree` reports, plus `click`, `setValue`,
-`type`, `scroll`, and `waitFor`'s `refVisible` check) resolve against *that widget's own* window,
-never a single global — on GTK via `gtk_widget_get_root()`, on AppKit by resolving the live content
+`type`, `scroll`, and `waitFor`'s `refVisible` check) resolve against that widget's own window,
+never a single global: GTK uses `gtk_widget_get_root()`, and AppKit resolves the live content
 view of `view.window` instead of a cached global. `screenshot` renders whichever window
-`params.window` names. A JS crash brings down every window's UI at once, so the crash overlay now
-paints — and, on restart, clears — on every open window, not just one. Each `<toolbarview>`/headerbar
+`params.window` names. A JS crash brings down every window's UI at once, so the crash overlay
+paints on every open window and clears on every window on restart. Each `<toolbarview>`/headerbar
 attaches to its own owning `NSWindow`/`GtkWindow`, not whichever window happened to be created last.
 And `core:window.create` is ACL-gated per target window id, so a grants manifest can scope window
 creation to a specific window (a window-0 grant still applies everywhere, matching the default
 policy).
 
-**Remaining limitation:** `getTree` itself still has no `window` parameter — it always returns the
-root/first window's tree, with every other window's nodes attached as orphans directly under that
-root. Each orphan's own `geometry` is still correct (resolved against its own window, as above); you
-just can't yet ask the RPC for "window B's tree" as its own subtree.
+`getTree` scopes per window too: pass `window` (a Window node ref) and the snapshot covers that
+window's subtree. Without it, the RPC returns the root/first window's tree, with every other
+window's nodes attached as orphans directly under that root; each orphan's own `geometry` is still
+correct, resolved against its own window as above.
 
 ## Moving a widget between windows without reloading it
 
-Cross-window reparenting is the harder problem multi-window raises: how do you move a *live* widget
-— say, a browser tab — from Window A to Window B without losing its state?
+Cross-window reparenting is the harder problem multi-window raises: how do you move a live widget,
+say a browser tab, from Window A to Window B without losing its state?
 
 Plain React can't express this move safely. Moving a node to a new parent is a different position in
 the fiber tree, and React's model is to unmount the old instance and mount a fresh one at the new
-position. The host turns that unmount+mount into a native destroy+create — which for a `<webview>`
+position. The host turns that unmount+mount into a native destroy+create. For a `<webview>` that
 means the WKWebView/WebKitGTK instance is thrown away and rebuilt, so the page reloads and every bit
-of in-page state (scroll position, form input, JS state) is lost. This isn't a bug to fix; it's what
-`UI = f(state)` means; a plain re-render can't "know" to preserve a widget identity across a
+of in-page state (scroll position, form input, JS state) is lost. That's what
+`UI = f(state)` means: a plain re-render can't know to preserve a widget's identity across a
 parent change.
 
 The fix works around it with two functions from `@nativedesktop/react`
@@ -74,18 +74,18 @@ function createPortal(children: ReactNode, pool?: Pool): ReactPortal
 function moveNode(node: NdNodeRef, toParent: NdNodeRef, before?: NdNodeRef | null): void
 ```
 
-- **`createPortal(children, pool?)`** renders `children` into a stable, off-window **pool** instead
-  of wherever it's called from in the tree — but its React fiber stays at that call site. Because the
-  fiber's *position* never changes, React never unmounts it, no matter which window later shows it.
+- **`createPortal(children, pool?)`** renders `children` into a stable, off-window pool instead
+  of wherever it's called from in the tree, but its React fiber stays at that call site. Because the
+  fiber's position never changes, React never unmounts it, no matter which window later shows it.
   If you omit `pool`, a single process-lifetime pool shared across the app is used; call
-  `createPool()` yourself (once, at module scope or in a ref — never inside render) if you want more
+  `createPool()` yourself (once, at module scope or in a ref, never inside render) if you want more
   than one.
-- **`moveNode(node, toParent, before?)`** relocates only the *live native widget* under `toParent`
-  (optionally positioned before another node) — it never touches the React tree. `node` and
+- **`moveNode(node, toParent, before?)`** relocates only the live native widget under `toParent`
+  (optionally positioned before another node); it never touches the React tree. `node` and
   `toParent` are what a host-element `ref` resolves to (`NdNodeRef`, the same handle
   [Imperative Commands & Refs](/core-concepts/imperative-commands/) uses).
 
-A node rendered via `createPortal` is a live, real native widget the moment it mounts — it's just
+A node rendered via `createPortal` is a live, real native widget the moment it mounts. It's just
 attached to no window (the pool) until the first `moveNode` call places it somewhere visible.
 
 ```tsx
@@ -133,16 +133,16 @@ function App(): React.ReactNode {
 await render(<App />);
 ```
 
-Render the portal at a stable position — one per movable item, keyed by its own id, at (or near) the
-app root — so it outlives any single window it might currently be showing in.
+Render the portal at a stable position (one per movable item, keyed by its own id, at or near the
+app root) so it outlives any single window it might currently be showing in.
 
 ### Why this is imperative, on purpose
 
 `moveNode` deliberately breaks from the declarative "set a prop, let the reconciler figure it out"
-model the rest of the toolkit follows — because the thing being preserved (a widget's live native
+model the rest of the toolkit follows, because the thing being preserved (a widget's live native
 state) is exactly what React's own model would otherwise destroy. `moveNode` rides the same
 `widgetCommand` channel as [`sendCommand`](/core-concepts/imperative-commands/), under a reserved
-command name, into an appended `reparent_child` op on the host ABI vtable — so it reaches the native
-widget through the same C-ABI seam as every other host operation, with no protocol or schema change
-needed. On GTK the move is bracketed in a `g_object_ref`/`unref` pair; on AppKit the core takes a
-retain across the move — both exist so the widget is never transiently deallocated mid-reparent.
+command name, into an appended `reparent_child` op on the host ABI vtable. It reaches the native
+widget through the same C-ABI seam as every other host operation, with no protocol or schema change.
+On GTK the move is bracketed in a `g_object_ref`/`unref` pair; on AppKit the core takes a
+retain across the move. Both exist so the widget is never transiently deallocated mid-reparent.

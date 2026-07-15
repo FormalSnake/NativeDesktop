@@ -21,10 +21,9 @@
 //   />
 //
 // Only one dialog may be pending per window at a time — the host has no
-// queueing story for two native sheets stacked on one window (see
-// new-widget-specs.md's Dialogs API risk notes), so a second call while one
-// is outstanding REJECTS immediately rather than silently queueing or
-// clobbering the first caller's promise.
+// queueing story for two native sheets stacked on one window, so a second
+// call while one is outstanding REJECTS immediately rather than silently
+// queueing or clobbering the first caller's promise.
 
 import type { NdNodeRef } from "./generated/intrinsics.ts";
 import { sendCommand } from "./renderer.ts";

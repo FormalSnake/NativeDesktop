@@ -1,4 +1,4 @@
-// AdwToastOverlay surface for the <toastoverlay> widget (M15): showToast /
+// AdwToastOverlay surface for the <toastoverlay> widget: showToast /
 // dismissToast commands with caller-supplied id correlation — the same
 // widgetCommand → same-node result-event pattern as webview.zig's
 // executeJavaScript. AdwToastOverlay's built-in queue (one visible toast,

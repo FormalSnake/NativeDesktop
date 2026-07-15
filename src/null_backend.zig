@@ -224,10 +224,10 @@ pub fn setVisible(widget: *Node, visible: bool) void {
 
 // Keeps the backend interface uniform with gtk_backend.zig; the null backend
 // has no display to install a CSS provider on. Conformance asserts `style`
-// rides create/update props generically (Task 6) instead.
+// rides create/update props generically instead.
 pub fn applyStyle(_: *Node, _: u32, _: std.json.Value) void {}
 
-// Generation GC helpers (M8-D9): the null backend has no real widget tree to
+// Generation GC helpers: the null backend has no real widget tree to
 // unparent from — conformance for gcOldGenerations exercises tree.zig's meta
 // map directly (see the "generation bump" test in tree.zig), so these are
 // no-ops that keep the backend interface uniform.

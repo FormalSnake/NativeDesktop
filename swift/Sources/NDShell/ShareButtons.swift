@@ -1,6 +1,6 @@
 import AppKit
 
-/// ShareButton (M15, macOS-exclusive — ND_PLATFORM_NOOP on GTK, which has no
+/// ShareButton is macOS-exclusive (ND_PLATFORM_NOOP on GTK, which has no
 /// share sheet): an NSButton with the standard `square.and.arrow.up` symbol
 /// that shows NSSharingServicePicker anchored on itself (macOS 13+ shows the
 /// preview popover automatically). `items` heuristics: http(s) strings share

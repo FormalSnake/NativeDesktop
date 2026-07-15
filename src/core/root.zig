@@ -1,12 +1,12 @@
-// GTK-free re-export root for `libnd` (M6a-D4): the static-lib artifact
-// (Task 5, `-Dbackend=abi`) is rooted here instead of `src/gtk/main.zig`,
+// GTK-free re-export root for `libnd`: the static-lib artifact
+// (`-Dbackend=abi`) is rooted here instead of `src/gtk/main.zig`,
 // which is the GTK embedder's entrypoint, not the core's.
 //
 // NOTE: this is a single named-module import, not a relative-path
 // `@import` — Zig 0.16 forbids a module's `@import` from escaping its
 // root_source_file's directory (`src/core/`), so `abi.zig`, which stays
 // flat under `src/`, cannot be reached via `@import("../abi.zig")` from
-// here (verified: "import of file outside module path"). `abi.zig`
+// here ("import of file outside module path"). `abi.zig`
 // transitively reaches every other core file via ordinary same-directory
 // relative imports (abi -> {abi_backend, tree, runtime, automation,
 // protocol}; tree/runtime/automation -> backend.zig -> {null_backend,
@@ -15,7 +15,7 @@
 // `src/abi.zig`'s module.
 pub const abi = @import("abi");
 
-// Terminal core (Phase A): a PTY + libghostty-vt behind the ndterm C ABI
+// Terminal core: a PTY + libghostty-vt behind the ndterm C ABI
 // (include/ndterm.h), consumed by both backends. Lives in src/core/ so both
 // libnd (the Swift shell) and the GTK exe reach it; its `export fn ndterm_*`
 // symbols are force-retained below exactly like abi's C-ABI surface.

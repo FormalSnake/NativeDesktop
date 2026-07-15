@@ -11,8 +11,7 @@
 // directly) elides it; a syntax-only transform (Babel, or Bun evaluating
 // this file as a plain import target rather than inlining a JSX pragma)
 // cannot tell JSX has no runtime value and crashes with "export 'JSX' not
-// found" — hit empirically while probing a babel-plugin-react-compiler
-// pre-pass (M8-D7 / Task 7), which emits a hand-authored
-// `import { jsx } from "@nativedesktop/react/jsx-runtime"`.
+// found" — e.g. a babel-plugin-react-compiler pre-pass, which emits a
+// hand-authored `import { jsx } from "@nativedesktop/react/jsx-runtime"`.
 export { jsx, jsxs, Fragment } from "./generated/intrinsics.ts";
 export type { JSX } from "./generated/intrinsics.ts";

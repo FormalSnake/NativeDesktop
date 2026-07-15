@@ -5,10 +5,10 @@
 // back over NDP.
 //
 // Unlike executeJavaScript, two DIFFERENT events can settle the same pending
-// call — a click resolves `{ buttonClicked: true }`, any other dismissal
+// call: a click resolves `{ buttonClicked: true }`, any other dismissal
 // (timeout, ESC, or AdwToastOverlay's queue advancing past it) resolves
-// `{ buttonClicked: false }` — so `pending` is cleared by whichever fires
-// first and the other is a no-op.
+// `{ buttonClicked: false }`. `pending` is cleared by whichever fires first
+// and the other is a no-op.
 
 import type { NdNodeRef } from "./generated/intrinsics.ts";
 import { sendCommand } from "./renderer.ts";

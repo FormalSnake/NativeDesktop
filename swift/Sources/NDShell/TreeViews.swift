@@ -1,17 +1,17 @@
 import AppKit
 
-/// TreeView (M15): a single-column NSOutlineView in an NSScrollView (tracked
+/// TreeView: a single-column NSOutlineView in an NSScrollView (tracked
 /// handle = scroll view, SourceList convention). The schema's flat TreeNode
 /// list (id/parentId) is grouped into a parentId index and rebuilt on every
 /// `nodes` update, REUSING item instances by id — NSOutlineView tracks
 /// expansion by item identity, so stable instances keep open branches open
-/// across React updates. Events carry `{ nodeId }` (GTK-binding: flattened
-/// visible indexes are unstable across expand/collapse); `selectedIndex`
+/// across React updates. Events carry `{ nodeId }` because flattened visible
+/// indexes are unstable across expand/collapse; `selectedIndex`
 /// still addresses the flattened visible row list, matching the schema.
 /// Expansion state is driven from each node's `expanded` flag,
 /// echo-suppressed; user expands/collapses emit nodeExpanded/nodeCollapsed.
-/// Row content reuses NDSourceCell (title/badge/iconName — the SourceList
-/// row shape, shared by design).
+/// Row content reuses NDSourceCell (title/badge/iconName, the SourceList
+/// row shape).
 private let ndTreeCellID = NSUserInterfaceItemIdentifier("nd-tree-cell")
 
 /// `@unchecked Sendable`: items cross into MainActor AppKit calls

@@ -4,12 +4,10 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // (see scripts/notes-drive.ts for the headless proof). All state is in
 // memory; there is no persistence layer by design.
 //
-// M13 Feature C: Apple-Notes-style rework on the landed three-pane SplitView
-// + menu bar machinery (see docs/superpowers/plans/2026-07-12-m13-menubar-
-// threepane-examples-docs.md, Feature C). Three <splitview> panes, each its
-// own <toolbarview>+<headerbar> (own header, not one shared window titlebar):
-//   - sidebar (slot="sidebar", glass): folders — All Notes / Personal / Work
-//     / Trash — as navigation-sidebar flat buttons, counts in the label.
+// Apple-Notes-style layout: three <splitview> panes, each with its own
+// <toolbarview>+<headerbar> (own header, not one shared window titlebar):
+//   - sidebar (slot="sidebar", glass): folders (All Notes / Personal / Work
+//     / Trash) as navigation-sidebar flat buttons, counts in the label.
 //   - list (slot="list"): search + a <sourcelist> of notes + a count caption.
 //   - content (slot="content", declared LAST so GTK homes the menu bar's
 //     primary button in ITS headerbar per GNOME convention): the floating
@@ -18,13 +16,13 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // A <menubar> (File > New Note, Note > Pin/Unpin + Delete) sits alongside the
 // splitview as a Window sibling; its custom items call the EXACT SAME
 // updater functions as the matching header buttons (createNote/togglePin/
-// deleteSelected) — one mutation path per action, two triggers each.
+// deleteSelected): one mutation path per action, two triggers each.
 //
 // Visual approach: native chrome, not hand-rolled facsimiles of it.
 //   - The `<window>` is edge-to-edge (AdwApplicationWindow): the `<splitview>`
 //     fills to the very top, GNOME-style.
 //   - `<splitview>` is the real three-pane split (AdwOverlaySplitView nested
-//     pair on GTK, NSSplitView three-way on Mac) — no hand-rolled boxes.
+//     pair on GTK, NSSplitView three-way on Mac), not hand-rolled boxes.
 //   - `cssClasses` reaches libadwaita's named classes (navigation-sidebar,
 //     suggested-action, destructive-action, accent, dimmed, caption, view,
 //     flat). libadwaita is initialized host-side (src/gtk/main.zig calls
@@ -34,7 +32,7 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 //   - `style` is kept only for theme-neutral geometry (padding, font size)
 //     and layout (hexpand/vexpand/halign/valign — GTK widget properties
 //     that drive the layout engine). No color literals anywhere: dark mode
-//     is automatic on both platforms, and pin state now surfaces as the
+//     is automatic on both platforms, and pin state surfaces as the
 //     <sourcelist> row's leading star icon rather than a per-row border.
 
 type FolderId = "personal" | "work";
@@ -266,8 +264,9 @@ function App(): React.ReactNode {
             />
             {/* SourceList is its own scroll container on both backends (GTK:
                 GtkListBox in a ScrolledWindow; Mac: NSTableView .sourceList
-                in an NSScrollView) — no ScrollView wrapper needed. Selection
-                is controlled (selectedIndex/onSelectionChanged); pin state
+                in an NSScrollView), so it needs no ScrollView wrapper.
+                Selection is controlled (selectedIndex/onSelectionChanged);
+                pin state
                 surfaces as a leading star icon (source-list rows carry no
                 per-row border), and the trailing badge is the note's live
                 word count. */}
@@ -324,8 +323,8 @@ function App(): React.ReactNode {
             // already holds the value the user just typed; a cross-widget
             // push (switching to a DIFFERENT note) is not, and silently
             // no-ops without a remount. Keying on the note id forces create
-            // (not update) on note switch, sidestepping the gap; framework
-            // bug, not patched here.
+            // (not update) on note switch, which sidesteps the gap. The
+            // framework bug itself is not patched here.
             <box key={selected.id} orientation="vertical" spacing={12} style={{ vexpand: true }}>
               <textinput
                 testID="title-input"
@@ -335,8 +334,8 @@ function App(): React.ReactNode {
                 style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4 }}
               />
               <separator orientation="horizontal" />
-              {/* TextArea has its own minContentHeight floor (Task 4) — no
-                  ScrollView wrapper needed; vexpand lets it fill the pane. */}
+              {/* TextArea has its own minContentHeight floor, so it needs no
+                  ScrollView wrapper; vexpand lets it fill the pane. */}
               <textarea
                 testID="editor-textarea"
                 minContentHeight={320}

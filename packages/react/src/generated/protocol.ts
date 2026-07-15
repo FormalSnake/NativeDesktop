@@ -5,7 +5,7 @@
 
 export const NDP_VERSION = 1;
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "Terminal" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton" | "Terminal";
 
 /** Child runtime identity, carried inside the hello frame. */
 export interface Runtime {

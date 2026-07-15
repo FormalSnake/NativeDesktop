@@ -1,11 +1,11 @@
 ---
 title: System Capabilities
-description: Native file dialogs, clipboard, notifications, recent documents, credentials, and app-level OS events — one API, real native behavior on each backend.
+description: Native file dialogs, clipboard, notifications, recent documents, credentials, and app-level OS events, with one API and real native behavior on each backend.
 ---
 
-`@nativedesktop/react` exposes the OS-level surface every desktop app eventually needs — file
-pickers, clipboard, notifications, "Open Recent", the system credential store, audio playback, and
-app lifecycle events like activation and file drops — as a small set of promise-based calls. Every
+`@nativedesktop/react` exposes the OS-level surface every desktop app eventually needs as a small
+set of promise-based calls: file pickers, clipboard, notifications, "Open Recent", the system
+credential store, audio playback, and app lifecycle events like activation and file drops. Every
 call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
 `NSPasteboard`/`GdkClipboard`, `UNUserNotificationCenter`/`GNotification`, Keychain/Secret Service,
 `AVPlayer`/GStreamer) from the same app code on both backends.
@@ -34,13 +34,13 @@ async function openMarkdownFile() {
 `openFile`/`saveFile` share `title`, `defaultPath`, and `filters: { name, extensions: string[] }[]`;
 `openFile` adds `multiple` and `directories`, `saveFile` adds `defaultName`. `showMessage` takes
 `message`, an optional `detail`, `level: "info" | "warning" | "error"`, and `buttons` (defaults to
-`["OK"]`) — it resolves to the 0-based index of the clicked button.
+`["OK"]`); it resolves to the 0-based index of the clicked button.
 
 These are app-level dialogs backed by `NSOpenPanel`/`NSSavePanel`/`NSAlert` on macOS and
 `GtkFileDialog`/`GtkAlertDialog` on GTK. They're a different mechanism from the `<window>` widget's
-own `showAlert`/`openFile`/`saveFile`/`showAbout` imperative commands — see
-[Dialogs](/components/dialogs/) — reach for `dialog.*` unless you specifically need a dialog scoped to
-one window's command channel (or the About panel, which only the `<window>` version exposes).
+own `showAlert`/`openFile`/`saveFile`/`showAbout` imperative commands (see
+[Dialogs](/components/dialogs/)). Reach for `dialog.*` unless you specifically need a dialog scoped to
+one window's command channel, or the About panel, which only the `<window>` version exposes.
 
 ## Clipboard
 
@@ -51,7 +51,7 @@ import { clipboard } from "@nativedesktop/react";
 ```
 
 `clipboard.writeText(text)` is default-granted. `clipboard.readText()` resolves `""` when the
-clipboard holds no text, but reading the clipboard is default-**denied** — see
+clipboard holds no text, but reading the clipboard is default-denied; see
 [Permissions](#permissions).
 
 ## Notifications
@@ -94,7 +94,7 @@ const token = await credentials.get("my-app", "api-token"); // null if not found
 await credentials.delete("my-app", "api-token");
 ```
 
-`credentials.set/get/delete` store secrets by `(service, account)` in the OS credential store —
+`credentials.set/get/delete` store secrets by `(service, account)` in the OS credential store:
 Keychain on macOS, Secret Service (via `libsecret`) on GTK. Like clipboard reads, credential access
 is default-denied.
 
@@ -139,30 +139,30 @@ function PlayerWithMeter({ path }: { path: string }) {
 ```
 
 `audio.play(options)` starts playback immediately and resolves to a string **handle** the other
-methods take. `options` must name exactly one source — `path` (a local file) or `url` (a remote
-stream) — plus an optional `volume` (0..1, default 1) and `spectrum: true` if you want spectrum
+methods take. `options` must name exactly one source, `path` (a local file) or `url` (a remote
+stream), plus an optional `volume` (0..1, default 1) and `spectrum: true` if you want spectrum
 frames for this playback.
 
 | Method | Effect |
 | --- | --- |
 | `audio.pause(handle)` / `audio.resume(handle)` | Pause / resume playback. |
-| `audio.stop(handle)` | Stops playback and releases the handle — it's invalid afterward. |
+| `audio.stop(handle)` | Stops playback and releases the handle; it's invalid afterward. |
 | `audio.seek(handle, positionMs)` | Seeks to a position in milliseconds. |
 | `audio.setVolume(handle, volume)` | Sets volume (0..1). |
 
 All control methods resolve `void`; calling any of them with an unknown (or already-stopped) handle
 rejects with `"unknown audio handle"`.
 
-Two event subscriptions, each returning an unsubscribe function like the `app.on*` family:
+There are two event subscriptions; each returns an unsubscribe function like the `app.on*` family:
 
-- **`audio.onState(handler)`** fires on playback *transitions* only — there are no position ticks.
+- **`audio.onState(handler)`** fires on playback transitions only; there are no position ticks.
   The event is `{ handle, state, position, duration, error? }` with `state` one of
   `"playing" | "paused" | "ended" | "stopped" | "error"`; `position`/`duration` are in milliseconds,
   and `duration` is `null` until the media's length is known. Synchronous failures (bad params, a
   missing local file) reject the `play()` promise itself; asynchronous media failures (bad codec, an
   unreachable URL) arrive later as a `state: "error"` event with the message in `error`.
-- **`audio.onSpectrum(handler)`** fires at roughly 15 Hz with `{ handle, bins }` — 32 magnitudes
-  normalized 0..1, log-spaced across roughly 50 Hz–16 kHz — but only for handles played with
+- **`audio.onSpectrum(handler)`** fires at roughly 15 Hz with `{ handle, bins }`: 32 magnitudes
+  normalized 0..1, log-spaced across roughly 50 Hz–16 kHz. It fires only for handles played with
   `spectrum: true`.
 
 ## App-level events
@@ -185,8 +185,8 @@ function useFileDrop(onFiles: (paths: string[]) => void) {
 | `app.onFileDrop(h: (e: { paths: string[]; windowId: number }) => void)` | Files are dragged onto an app window. `windowId` is currently always `0`. |
 
 Every subscription returns an unsubscribe function, so it composes directly with a `useEffect`
-cleanup. `onOpenUrl`/`onOpenFile` events fired before the app's first render can be missed — there's
-no buffering yet — so register these as early as possible. See [Packaging](/packaging/) for how
+cleanup. `onOpenUrl`/`onOpenFile` events fired before the app's first render can be missed (there's
+no buffering yet), so register these as early as possible. See [Packaging](/packaging/) for how
 `fileAssociations`/`urlSchemes` get registered with the OS in the first place.
 
 ## Shell helpers
@@ -199,11 +199,11 @@ await openPath("/Users/me/notes.md");          // OS default app for the file
 await revealPath("/Users/me/notes.md");        // reveal + select in Finder/file manager
 ```
 
-`openExternal`, `openPath`, and `revealPath` are plain TypeScript — they spawn `open`/`xdg-open`
+`openExternal`, `openPath`, and `revealPath` are plain TypeScript: they spawn `open`/`xdg-open`
 (and, for `revealPath` on Linux, the freedesktop `FileManager1` D-Bus interface, falling back to
 `xdg-open` on the containing directory) directly in the app's own Bun process. They don't round-trip
-through the host and aren't gated by ACL, because the Bun child is a full, unsandboxed runtime
-already — see [Architecture](/core-concepts/architecture/).
+through the host and aren't gated by the ACL, because the Bun child is already a full, unsandboxed
+runtime; see [Architecture](/core-concepts/architecture/).
 
 ## Permissions
 
@@ -238,11 +238,11 @@ easy to trace back to the missing grant.
 
 Every `dialog`/`clipboard`/`notification`/`recentDocuments`/`credentials`/`audio` call sends an
 id-correlated `systemRequest` NDP frame to the host, which resolves the method to a `core:*` capability, runs the
-ACL check, and — for an allowed request — runs the real native API on the UI thread before replying
+ACL check, and, for an allowed request, runs the real native API on the UI thread before replying
 with a `systemResponse` frame that settles the promise. `app.on*` subscriptions instead receive
 host-initiated `systemEvent` frames, pushed whenever the OS delivers an activation, launch, or file
-drop — and `audio.onState`/`audio.onSpectrum` ride the same channel. The shell helpers (`openExternal`, `openPath`, `revealPath`) never touch this path — they run
-entirely in the Bun process.
+drop; `audio.onState`/`audio.onSpectrum` ride the same channel. The shell helpers (`openExternal`,
+`openPath`, `revealPath`) never touch this path. They run entirely in the Bun process.
 
 ## Platform notes
 
@@ -251,16 +251,16 @@ entirely in the Bun process.
   click events through `notifications.onClick`. The bare (unbundled) `nd dev` process has no bundle
   identifier, so it falls back to the deprecated `NSUserNotificationCenter` API instead — test click
   delivery against a packaged build, not the dev shell.
-- **GTK message levels.** `dialog.showMessage`'s `level` is accepted on GTK but has no visual effect
-  — `GtkAlertDialog` has no per-severity styling. Dismissing the dialog with Escape resolves to
-  `defaultButton` on both backends.
+- **GTK message levels.** `dialog.showMessage`'s `level` is accepted on GTK but has no visual
+  effect, since `GtkAlertDialog` has no per-severity styling. Dismissing the dialog with Escape
+  resolves to `defaultButton` on both backends.
 - **Linux credentials need libsecret.** `credentials.*` on GTK dlopens `libsecret-1.so` at runtime
   (never a build-time link) and rejects with a clean "credential store unavailable" error if it isn't
   installed, rather than failing to build or crashing.
-- **macOS audio.** Playback rides `AVPlayer` — local files and remote URLs go through the same code
-  path — and spectrum analysis hangs an audio tap off the player item, so `spectrum: true` works for
+- **macOS audio.** Playback rides `AVPlayer`, and local files and remote URLs go through the same
+  code path. Spectrum analysis hangs an audio tap off the player item, so `spectrum: true` works for
   both source kinds with no extra setup.
 - **Linux audio needs GStreamer.** Like libsecret, GStreamer is loaded at runtime rather than
   linked: if it isn't installed, every `audio.*` call rejects with
   `"audio unavailable: gstreamer not found"`. If GStreamer is present but its `spectrum` plugin is
-  missing, playback still works — spectrum events just never arrive (the host logs a warning).
+  missing, playback still works; spectrum events just never arrive (the host logs a warning).

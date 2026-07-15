@@ -10,8 +10,8 @@ are cross-platform (AppKit + GTK/Adwaita).
 
 ## ToggleButton (`<togglebutton>`)
 
-A button that stays pressed until clicked again — `GtkToggleButton` / an `NSButton` in
-`.pushOnPushOff` mode — for a binary setting you want to look like a button, not a switch.
+A button that stays pressed until clicked again (`GtkToggleButton` / an `NSButton` in
+`.pushOnPushOff` mode) for a binary setting you want to look like a button, not a switch.
 
 ```tsx
 const [bold, setBold] = useState(false);
@@ -29,8 +29,8 @@ const [bold, setBold] = useState(false);
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
-A fixed row of mutually-exclusive options — `AdwToggleGroup`-style on GTK, a segmented `NSSegmentedControl`
-on macOS. Unlike `<select>`, every option is visible at once; reach for it when there are 2–5 short
+A fixed row of mutually-exclusive options (`AdwToggleGroup`-style on GTK, an `NSSegmentedControl`
+on macOS). Unlike `<select>`, every option is visible at once; reach for it when there are 2–5 short
 labels, not a long list.
 
 ```tsx
@@ -48,7 +48,7 @@ fires `{ index }`.
 
 ## NumberInput (`<numberinput>`)
 
-A bounded numeric stepper — `GtkSpinButton` / `NSStepper`+text on macOS — for integer or fixed-decimal
+A bounded numeric stepper (`GtkSpinButton` / `NSStepper`+text on macOS) for integer or fixed-decimal
 values with a known range, instead of a free-text `<textinput>` you'd have to validate yourself.
 
 ```tsx
@@ -70,7 +70,7 @@ const [seats, setSeats] = useState(4);
 ## LinkButton (`<linkbutton>`)
 
 Renders as a hyperlink-styled button (`GtkLinkButton` / `NSButton` with a link-style bezel). It
-**always** fires `onActivate` with the URI when clicked — opening the link in the OS browser is a
+always fires `onActivate` with the URI when clicked; opening the link in the OS browser is a
 separate opt-in, not a side effect of clicking:
 
 ```tsx
@@ -97,8 +97,8 @@ in the handler.
 
 ## LevelIndicator (`<levelindicator>`)
 
-A read-only bar meter — `GtkLevelBar` / a custom `NSView` on macOS — for showing a bounded value with
-optional warning/critical thresholds (disk usage, battery, signal strength). There's no user
+A read-only bar meter (`GtkLevelBar` on GTK, a custom `NSView` on macOS) for showing a bounded value
+with optional warning/critical thresholds (disk usage, battery, signal strength). There's no user
 interaction; drive it from whatever produces the value, often a `<slider>` in a demo:
 
 ```tsx

@@ -1,12 +1,12 @@
 import { render, useState } from "@nativedesktop/react";
 
-// examples/notes/menubar-probe.tsx — NOT imported by main.tsx. A minimal M13
-// Feature A acceptance fixture for the <menubar>/<menu>/<menuitem> machinery,
-// driven headlessly by scripts/menubar-drive.ts on BOTH backends. Exercises:
-// a File menu with a custom accelerated+iconed item whose onSelect mutates a
-// visible label; a Probe menu with a disabled custom item, a separator, and an
-// `about` role item; and a plain counter label. This is a throwaway probe, not
-// the Feature C notes rework that will consume <menubar> next.
+// NOT imported by main.tsx. A minimal acceptance fixture for the
+// <menubar>/<menu>/<menuitem> machinery, driven headlessly by
+// scripts/menubar-drive.ts on BOTH backends. Exercises: a File menu with a
+// custom accelerated+iconed item whose onSelect mutates a visible label; a
+// Probe menu with a disabled custom item, a separator, and an `about` role
+// item; and a plain counter label. This is a throwaway probe, not the real
+// notes app in main.tsx.
 function App(): React.ReactNode {
   const [count, setCount] = useState(0);
   const [thing, setThing] = useState("no thing yet");

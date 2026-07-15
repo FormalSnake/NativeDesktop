@@ -1,4 +1,4 @@
-// Promise-based bindings for the "system capabilities" API (M15): native
+// Promise-based bindings for the "system capabilities" API: native
 // dialogs, clipboard, notifications, recent documents, credentials, and
 // app-level lifecycle/OS events (activate/deactivate, open-url, open-file,
 // file drop). Every method below rides a systemRequest/systemResponse round

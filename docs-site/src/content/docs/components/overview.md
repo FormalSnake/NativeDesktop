@@ -1,13 +1,13 @@
 ---
 title: Overview
-description: How widgets are described in the schema — intrinsics, container models, attached props, and automation roles.
+description: "How widgets are described in the schema: intrinsics, container models, attached props, and automation roles."
 ---
 
 Every widget NativeDesktop knows about is declared once in `schema/widgets.json` and rendered as a
-lowercase JSX intrinsic (`<window>`, `<box>`, `<button>`, `<splitview>`, …) — never as a capitalized
+lowercase JSX intrinsic (`<window>`, `<box>`, `<button>`, `<splitview>`, …), never as a capitalized
 component you import. `tools/codegen.ts` generates the Zig, TypeScript, and Swift bindings from that
 one schema, plus the [Widget Reference](/components/widget-reference/) page itself, so the three
-backends and this documentation can never drift from each other.
+backends and this documentation cannot drift from each other.
 
 ## What each widget declaration carries
 
@@ -22,7 +22,7 @@ backends and this documentation can never drift from each other.
   `tabLabel` on a `<tabview>`'s children. These are attach-time-only; changing one after mount is a
   no-op.
 - **Automation role + text source** — every widget declares an automation `role` (`button`,
-  `textbox`, `list`, …) and, where applicable, which prop `getTree` reports as its `text` — this is
+  `textbox`, `list`, …) and, where applicable, which prop `getTree` reports as its `text`. This is
   what makes the tree an agent reads meaningful rather than a bag of opaque refs.
 - **Platform availability** — an optional `platforms` list restricts a widget to specific OSes (e.g.
   `<trayitem>` and `<sharebutton>` are `macos`-only). Elsewhere it mounts as an invisible no-op, and
@@ -33,11 +33,11 @@ backends and this documentation can never drift from each other.
 
 Every widget accepts the same two styling props, described in
 [Styling & Design Language](/core-concepts/styling-design-language/): `style` (theme-neutral
-geometry) and `cssClasses` (named design-language classes). Neither is schema-specific per widget —
-they're validated against one shared allowlist regardless of which widget they're set on.
+geometry) and `cssClasses` (named design-language classes). Neither is declared per widget in the
+schema; both are validated against one shared allowlist regardless of which widget they're set on.
 
 ## Provenance
 
 The [Widget Reference](/components/widget-reference/) is a faithful port of the generated
-`docs/widgets.md`, which is itself generated from `schema/widgets.json` — if a widget's props ever
-look wrong here, the schema (not this page) is the thing to check first.
+`docs/widgets.md`, which is itself generated from `schema/widgets.json`. If a widget's props ever
+look wrong here, check the schema first, not this page.

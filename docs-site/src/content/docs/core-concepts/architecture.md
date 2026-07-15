@@ -1,9 +1,9 @@
 ---
 title: Architecture
-description: How a NativeDesktop app works today — two processes, the NDP socket, one shared Zig core, and two native backends.
+description: How a NativeDesktop app runs as two processes over the NDP socket, with one shared Zig core and two native backends.
 ---
 
-Every NativeDesktop app runs as **two processes**. Your React code runs in a Bun/TypeScript
+Every NativeDesktop app runs as two processes. Your React code runs in a Bun/TypeScript
 child; the native widgets live in a separate host process that owns `main()` and the platform's
 UI loop. They talk over **NDP** — a length-prefixed frame protocol (JSON, or a binary encoding
 negotiated at handshake) over a local socket. Because they're separate processes, a JavaScript
@@ -43,16 +43,16 @@ flowchart TB
 
 Your components render into a React 19 tree, but the reconciler
 (`@nativedesktop/react`) never mutates a widget directly. Each commit is diffed into a
-`CommitBatch` — a list of structural ops (`create`, `append`, `update`, `setText`, …) — and sent
+`CommitBatch` (a list of structural ops: `create`, `append`, `update`, `setText`, …) and sent
 to the host as one NDP frame. Events (`onClick`, `onChanged`) travel back the other way, keyed by
 node id, and dispatch into your handlers. The child is just Bun, so the full `process` API is
-available — which is how `Platform.os` reads `process.platform`.
+available, which is how `Platform.os` reads `process.platform`.
 
 ## The host: one Zig core, two backends
 
-The native side is not one binary but a **shared Zig core** (`src/`) with a pluggable backend
-seam. The core owns the NDP server, the authoritative retained widget tree, and a frozen C-ABI
-vtable (`include/nd.h`). Two embedders fill that vtable with real widgets:
+The native side is a **shared Zig core** (`src/`) with a pluggable backend seam, embedded by two
+different hosts. The core owns the NDP server, the authoritative retained widget tree, and a
+frozen C-ABI vtable (`include/nd.h`). Two embedders fill that vtable with real widgets:
 
 - **GTK4 + libadwaita** — the Linux backend, compiled into the `nd-hello` Zig binary. It also runs
   on macOS through GTK's Quartz `gdk` backend, which is how GTK-side changes stay verifiable on a
@@ -61,7 +61,7 @@ vtable (`include/nd.h`). Two embedders fill that vtable with real widgets:
   a static library (`libnd.a`) and registers its vtable via `nd_register_backend`.
 
 Both routes send the identical handshake and speak identical NDP, because the handshake and
-transport live entirely in the shared core — only widget creation and prop application differ per
+transport live entirely in the shared core; only widget creation and prop application differ per
 backend.
 
 ## Which backend am I in? — the handshake
@@ -77,13 +77,13 @@ it back. The child's renderer stashes it before your tree mounts and exposes it 
 
 Separately from NDP, the host answers a **JSON-RPC automation socket** whenever
 `NATIVE_AUTOMATION=1` is set. Every widget the React tree creates is tracked host-side and
-queryable — `getTree`, `click`, `setValue`, `waitFor`, `screenshot` — so a coding agent or headless
-test drives the app the same way a user would, not through a bolted-on test layer.
+queryable (`getTree`, `click`, `setValue`, `waitFor`, `screenshot`), so a coding agent or headless
+test drives the app the same way a user would.
 
 ## Schemas are the single source of truth
 
 Three JSON schemas (`schema/widgets.json`, `schema/protocol.json`, `schema/rpc.json`) feed
 `tools/codegen.ts`, which emits both sides of every boundary: the Zig structs in `src/generated/`,
 the TypeScript types in `packages/react/src/generated/`, the Swift bindings, and the widget docs.
-Renaming or retyping a field is a compile error on both sides at once, never a silent wire
+Renaming or retyping a field is a compile error on both sides at once rather than a silent wire
 mismatch.

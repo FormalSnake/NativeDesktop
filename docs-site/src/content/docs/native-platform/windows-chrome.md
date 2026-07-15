@@ -3,10 +3,10 @@ title: Windows & Chrome
 description: How <window>, <headerbar>, <toolbarview>, and <splitview> compose into real native chrome on each platform.
 ---
 
-Native chrome — window titlebars, toolbars, and sidebar splits — is built from ordinary widget
+Native chrome (window titlebars, toolbars, and sidebar splits) is built from ordinary widget
 intrinsics, declared as JSX children (see [App Model](/core-concepts/app-model/)). This page covers
-the two-pane sidebar/content `<splitview>` shape; a third `list` pane and a `<menubar>` widget also
-compose into this same chrome — see [Menu Bar](/native-platform/menu-bar/) and
+the two-pane sidebar/content `<splitview>` shape. A third `list` pane and a `<menubar>` widget
+compose into the same chrome; see [Menu Bar](/native-platform/menu-bar/) and
 [Split Views](/native-platform/split-views/). Both `examples/notes/main.tsx` and
 `examples/gallery/` exercise the two-pane shape end to end on both platforms.
 
@@ -29,9 +29,9 @@ prop table.
 </splitview>
 ```
 
-- **On Linux**, this is a real `AdwOverlaySplitView` — the window runs as an `AdwApplicationWindow`
+- On Linux, this is a real `AdwOverlaySplitView`; the window runs as an `AdwApplicationWindow`
   so the split fills edge-to-edge, GNOME-style.
-- **On macOS**, this is a real `NSSplitViewController`-managed split (using the
+- On macOS, this is a real `NSSplitViewController`-managed split (using the
   `sidebarWithViewController:` API), which is what gives the sidebar system vibrancy/Liquid Glass
   material rather than a manually composited effect view.
 
@@ -40,7 +40,7 @@ prop table.
 ## `<toolbarview>` + `<headerbar>`: per-pane headers
 
 Each pane is wrapped in a `<toolbarview>` (`AdwToolbarView` on Linux) whose first child is a
-`<headerbar>` — so the sidebar and the content pane each carry their own header, instead of one
+`<headerbar>`, so the sidebar and the content pane each carry their own header instead of one
 shared window titlebar:
 
 ```tsx
@@ -54,12 +54,12 @@ shared window titlebar:
 
 The two platforms render this identically-shaped tree differently, on purpose:
 
-- **On Linux**, each `<toolbarview>` adds its `<headerbar>` as a real top bar
-  (`AdwToolbarView.addTopBar`) — you get two independent `AdwHeaderBar`s, one per pane, which is the
+- On Linux, each `<toolbarview>` adds its `<headerbar>` as a real top bar
+  (`AdwToolbarView.addTopBar`). You get two independent `AdwHeaderBar`s, one per pane, the
   native GNOME idiom for a sidebar app.
-- **On macOS**, the two `<headerbar>`s do **not** each create their own bar. Their items merge into
-  **one** unified `NSToolbar` spanning the window's top edge, split by an
-  `NSTrackingSeparatorToolbarItem` aligned to the split's divider — the sidebar's items sit left of
+- On macOS, the two `<headerbar>`s don't each create their own bar. Their items merge into
+  one unified `NSToolbar` spanning the window's top edge, split by an
+  `NSTrackingSeparatorToolbarItem` aligned to the split's divider: the sidebar's items sit left of
   it, the content pane's items sit right of it. This is the native macOS idiom (Notes.app, Mail),
   achieved via `.fullSizeContentView` + `titlebarAppearsTransparent` so the sidebar's vibrancy
   reaches the very top, with the traffic-light window controls floating over it.
@@ -70,6 +70,6 @@ attached prop (`start`/`end`) positions items on either side of the title.
 ## Where this is headed
 
 A three-pane `<splitview>` (`sidebar`/`list`/`content`) and a dedicated `<menubar>` widget have
-landed — see [Split Views](/native-platform/split-views/) and [Menu Bar](/native-platform/menu-bar/).
-A `<window>` that composes more than one independent split remains on the roadmap; check back here
+landed; see [Split Views](/native-platform/split-views/) and [Menu Bar](/native-platform/menu-bar/).
+A `<window>` that composes more than one independent split is on the roadmap. Check back here
 once it lands rather than assuming prop names in advance.

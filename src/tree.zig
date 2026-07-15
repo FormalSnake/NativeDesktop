@@ -6,7 +6,7 @@ const Widget = backend.Widget;
 
 /// Host-side node metadata: per-node type/testID/text/parent, independent of
 /// the live widget handle. Populated in `apply` alongside `nodes.put`; this is
-/// the snapshot source of truth for the automation `getTree` RPC (M4) — it is
+/// the snapshot source of truth for the automation `getTree` RPC — it is
 /// never re-derived from props at query time.
 pub const NodeMeta = struct {
     widget_type: []u8,
@@ -16,10 +16,10 @@ pub const NodeMeta = struct {
     text: ?[]u8,
     parent: u32,
     attached: protocol.Attached = .{}, // tab_label/slot duped/owned here
-    /// ListView's row count (M5c-D4): getTree reports this instead of
+    /// ListView's row count: getTree reports this instead of
     /// dumping the recycled row widgets. Null for every non-data-driven widget.
     item_count: ?u32 = null,
-    /// SourceList's row data (M11 SourceList Wave 1): getTree reports these
+    /// SourceList's row data: getTree reports these
     /// title/badge/iconName triples directly, mirroring `item_count` — never
     /// re-derived by walking the live AdwActionRow widgets. Null for every
     /// widget that isn't row-driven.
@@ -38,8 +38,8 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     };
 }
 
-/// ListView's `itemCount` (M5c-D4) is derived from `items.len`, never from
-/// walking GTK's recycled row widgets. M15 extends the same derivation to
+/// ListView's `itemCount` is derived from `items.len`, never from
+/// walking GTK's recycled row widgets. The same derivation covers
 /// Table (`rows`) and TreeView (`nodes`) — see `rowCountOf`.
 fn propArrayLen(props: ?std.json.Value, key: []const u8) ?u32 {
     const v = props orelse return null;
@@ -100,8 +100,8 @@ fn freeRows(gpa: std.mem.Allocator, rows: ?[]NodeMeta.Row) void {
 }
 
 /// The data-driven widgets' row count for `NodeMeta.item_count`, whichever
-/// objectList/stringList prop the widget carries: ListView `items` (M5c-D4),
-/// Table `rows`, TreeView `nodes` (M15). No widget declares more than one.
+/// objectList/stringList prop the widget carries: ListView `items`,
+/// Table `rows`, TreeView `nodes`. No widget declares more than one.
 fn rowCountOf(props: ?std.json.Value) ?u32 {
     return propArrayLen(props, "items") orelse
         propArrayLen(props, "rows") orelse
@@ -109,22 +109,22 @@ fn rowCountOf(props: ?std.json.Value) ?u32 {
 }
 
 /// Invoked from both the create and update arms of `apply` — style is only
-/// compiled when `props.style` is present (regression contract: no style =
-/// zero CSS provider, zero margin call, byte-identical to M5b).
+/// compiled when `props.style` is present (regression contract: no style
+/// means zero CSS provider and zero margin call).
 fn applyStyleIfPresent(widget: *Widget, id: u32, props: ?std.json.Value) void {
     const v = props orelse return;
     if (v != .object) return;
     if (v.object.get("style")) |st| backend.applyStyle(widget, id, st);
 }
 
-/// Reserved generation for host-created overlay chrome (M8-D5): never swept
+/// Reserved generation for host-created overlay chrome: never swept
 /// by gcOldGenerations (an incoming app generation reaches 0xFF only after
 /// 255 hot-reloads — reserved in practice). NOTE: ids are
 /// `(generation << 24) | (seq & 0xFFFFFF)` (see packages/react/src/ids.ts),
 /// an 8-bit generation field — 0xFFFF (16 bits) would silently truncate to
 /// 0xFF00 through `u32` shift overflow, corrupting the reserved-generation
-/// check (caught this session: `gcOldGenerations`/`clearAppNodes` never
-/// matched overlay-tagged ids with a wider constant).
+/// check (`gcOldGenerations`/`clearAppNodes` would never match
+/// overlay-tagged ids with a wider constant).
 pub const OVERLAY_GENERATION: u32 = 0xFF;
 
 /// Node ids are (generation << 24) | (seq & 0xFFFFFF) — see packages/react/src/ids.ts.
@@ -141,7 +141,7 @@ pub const Tree = struct {
     nodes: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
     meta: std.AutoHashMapUnmanaged(u32, NodeMeta) = .{},
     generation: u32 = 0,
-    // Ordered per-parent sibling lists (Task 3): `NodeMeta.parent` alone
+    // Ordered per-parent sibling lists: `NodeMeta.parent` alone
     // cannot answer "in what order" — hashmap iteration order is bucket
     // layout, not insertion order. Maintained by the `append`/`insertBefore`/
     // `remove` op handlers in `apply`; this is the sole ordering source for
@@ -151,8 +151,8 @@ pub const Tree = struct {
     // Restart respawn), keyed by the Window node id that owned them. The
     // respawned tree re-emits `create Window` with the SAME ids (a
     // deterministic render replays ids in order), so each rebinds to the
-    // window it left open instead of opening a duplicate OS window (M8-D9a,
-    // generalized from one window to N). Empty in steady state — so a
+    // window it left open instead of opening a duplicate OS window.
+    // Empty in steady state — so a
     // genuinely new `<window>` in a live tree always opens a fresh window.
     window_reuse: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
 
@@ -335,7 +335,7 @@ pub const Tree = struct {
         for (batch.ops) |op| {
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
-                // M8-D9a: a post-crash / dev-mode Restart respawn mounts a
+                // A post-crash / dev-mode Restart respawn mounts a
                 // brand-new reconciler root, whose first commit re-emits a
                 // `create Window` op for every window — but the generated
                 // Window arm unconditionally constructs a new native window.
@@ -359,7 +359,7 @@ pub const Tree = struct {
                 const view_kind: ?[]const u8 = if (std.mem.eql(u8, op.widget.?, "NativeView")) propStr(op.props, "viewKind") else null;
                 if (view_kind) |vk| backend.nativeViewConnect(vk, widget, op.id.?);
                 self.nodes.put(self.gpa, op.id.?, widget) catch continue;
-                // testID is stored here for the automation getTree RPC (M4) and is
+                // testID is stored here for the automation getTree RPC and is
                 // never applied to the GTK widget itself.
                 const test_id = propStr(op.props, "testID");
                 const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
@@ -428,7 +428,7 @@ pub const Tree = struct {
                 // ref; the host takes none of its own on plugin views), so
                 // destroying after would hand the plugin a freed widget.
                 if (cmeta) |m| if (m.view_kind) |view_kind| backend.nativeViewDestroy(view_kind, child);
-                // Portable parent lookup (Task 3): the meta map already tracks
+                // Portable parent lookup: the meta map already tracks
                 // each child's parent id (set by append/insertBefore), so the
                 // live parent widget comes from `self.nodes`, not a backend
                 // "get live GTK parent" call. `backend.hasParent` still guards
@@ -457,13 +457,13 @@ pub const Tree = struct {
                 std.debug.print("ND_WARN unknown op={s}\n", .{op.op});
             }
         }
-        // M8-D9: a higher-generation CommitBatch means a hot reload landed a
+        // A higher-generation CommitBatch means a hot reload landed a
         // fresh tree — sweep the previous generation's orphaned widgets
         // *after* applying the new ops (so the new generation's widgets
         // exist before the old ones are removed, avoiding a blank frame).
         // Skipped when `previous_gen == OVERLAY_GENERATION` (never true for
         // a real app commit) and on the steady state (batch.generation ==
-        // previous_gen, the common case — zero cost, byte-identical to M5c).
+        // previous_gen, the common case — zero cost).
         if (batch.generation > previous_gen and previous_gen != OVERLAY_GENERATION) {
             self.gcOldGenerations(batch.generation);
         }
@@ -472,7 +472,7 @@ pub const Tree = struct {
 
     /// Sweeps every tracked node whose id-encoded generation is strictly less
     /// than `new_gen`, except the reserved overlay generation and the sole
-    /// Window node (kept per M8-D9a — the host reuses the existing native
+    /// Window node (kept because the host reuses the existing native
     /// window widget, replacing only its content, rather than opening a
     /// second OS window). Collect-then-remove: never mutate `nodes`/`meta`
     /// while iterating them.
@@ -485,7 +485,7 @@ pub const Tree = struct {
         while (it.next()) |entry| {
             const id = entry.key_ptr.*;
             if (genOf(id) >= new_gen or genOf(id) == OVERLAY_GENERATION) continue;
-            if (std.mem.eql(u8, entry.value_ptr.widget_type, "Window")) continue; // keep the window (M8-D9a)
+            if (std.mem.eql(u8, entry.value_ptr.widget_type, "Window")) continue; // keep the window
             doomed.append(self.gpa, id) catch continue;
             doomed_set.put(self.gpa, id, {}) catch {};
         }
@@ -524,13 +524,13 @@ pub const Tree = struct {
         std.debug.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
     }
 
-    /// Clears every non-overlay node's bookkeeping (M8 dev-mode Restart):
+    /// Clears every non-overlay node's bookkeeping (dev-mode Restart):
     /// a respawned child mounts a brand-new reconciler root at generation 0,
     /// which collides with the dead child's stale gen-0 ids, so the dead
     /// tree's entries must be dropped before the fresh mount rebuilds. Each
     /// Window widget itself is NOT unparented/destroyed here — it's stashed in
     /// `window_reuse` keyed by its node id so `apply`'s create-op arm rebinds
-    /// the respawned tree's matching `create Window` to it (M8-D9a); only its
+    /// the respawned tree's matching `create Window` to it; only its
     /// now-stale meta entry is dropped here, same as every other non-overlay
     /// node.
     pub fn clearAppNodes(self: *Tree) void {
@@ -566,8 +566,8 @@ pub const Tree = struct {
             // parent is NOT itself being cleared this pass. Unparenting an
             // interior node (e.g. a Box) destroys it and, via GTK's own
             // container teardown, its children too; unparenting those
-            // children afterward would be a use-after-free (verified this
-            // session — the identical bug the overlay's `clear()` hit).
+            // children afterward would be a use-after-free (the identical
+            // bug the overlay's `clear()` hit).
             const parent_also_doomed = doomed_set.contains(m.parent);
             if (!is_window and !parent_also_doomed) {
                 if (self.nodes.get(id)) |w| {

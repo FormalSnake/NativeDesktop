@@ -4,7 +4,7 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const generated = @import("generated");
 
-// ---- M5c-D1: one GtkCssProvider per styled node, unique class `nd-<id>`,
+// ---- One GtkCssProvider per styled node, unique class `nd-<id>`,
 // installed once at display level; update = replace provider content. ----
 var gpa: std.mem.Allocator = undefined;
 var providers: std.AutoHashMapUnmanaged(u32, *gtk.CssProvider) = .empty;
@@ -34,7 +34,7 @@ fn jsonInt(v: std.json.Value) i64 {
 }
 
 /// int/float -> all four sides; per-side object -> only the given sides.
-/// Margin is a GTK widget property, not CSS (M5c-D2).
+/// Margin is a GTK widget property, not CSS.
 fn applyMarginSpacing(widget: *gtk.Widget, value: std.json.Value) void {
     switch (value) {
         .integer, .float => {
@@ -55,7 +55,7 @@ fn applyMarginSpacing(widget: *gtk.Widget, value: std.json.Value) void {
 }
 
 /// halign/valign string -> GtkAlign. hexpand/vexpand/halign/valign are GTK
-/// widget properties (like margin, M5c-D2), not CSS — they drive the layout
+/// widget properties (like margin), not CSS — they drive the layout
 /// engine, so a filled window comes from setting them, not from a stylesheet.
 fn parseAlign(value: std.json.Value) ?gtk.Align {
     if (value != .string) return null;
@@ -118,7 +118,7 @@ fn emitNested(list: *std.ArrayList(u8), allocator: std.mem.Allocator, value: std
 }
 
 /// Pure CSS-body builder: walks the generated style tables, splitting margin
-/// (a widget property, M5c-D2) out of the CSS block. Unknown keys are simply
+/// (a widget property) out of the CSS block. Unknown keys are simply
 /// skipped here (the caller-facing `applyStyle` does the ND_WARN + error emit);
 /// this half is unit-testable with no GTK display.
 pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Value) ![]u8 {
@@ -151,7 +151,7 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
 /// Called from tree.apply at create AND update whenever `props.style` is
 /// present. Splits the style object: unknown keys -> ND_WARN + styleError
 /// event; `margin` -> widget properties; everything else -> the node's
-/// scoped `.nd-<id>` CSS block (M5c-D1/D2).
+/// scoped `.nd-<id>` CSS block.
 pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void {
     if (style != .object) return;
     std.debug.assert(ready); // gtk_backend.initStyle runs before any create (mirrors initEvents)
@@ -184,7 +184,7 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
     const css_z = gpa.dupeZ(u8, css) catch return;
     defer gpa.free(css_z);
 
-    // 3. Install/replace this node's provider (M5c-D1: display-level, class-scoped).
+    // 3. Install/replace this node's provider (display-level, class-scoped).
     const provider = providers.get(node_id) orelse blk: {
         const p = gtk.CssProvider.new();
         const display = gtk.Widget.getDisplay(widget);

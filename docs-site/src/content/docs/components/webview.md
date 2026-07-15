@@ -1,12 +1,12 @@
 ---
 title: WebView
-description: The <webview> widget embeds the operating system's own web engine — WKWebView on macOS, WebKitGTK on GTK — with no bundled browser.
+description: The <webview> widget embeds the operating system's own web engine (WKWebView on macOS, WebKitGTK on GTK) with no bundled browser.
 ---
 
-`<webview>` embeds the **platform's own web engine** as a native subtree — **WKWebView on macOS**,
-**WebKitGTK on GTK** — so a page renders with the same engine the rest of the system uses. There is
-no bundled Chromium: the OS engine *is* the widget, matching the toolkit's real-native-widgets
-contract.
+`<webview>` embeds the platform's own web engine as a native subtree (WKWebView on macOS,
+WebKitGTK on GTK), so a page renders with the same engine the rest of the system uses. There is
+no bundled Chromium: the OS engine is the widget, the same real-native-widgets contract the rest
+of the toolkit follows.
 
 ```tsx
 import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
@@ -52,8 +52,8 @@ The full version of this example lives at `examples/browser/main.tsx`.
 | `url`    | string | `""`    | createAndUpdate  | The page to load. Setting it navigates; empty is ignored. |
 | `testID` | string | —       | meta             | Automation handle, not rendered.                          |
 
-`url` is a **controlled prop**: the widget navigates to it whenever it changes, but the host holds an
-**echo guard** — it re-loads only when the new `url` differs from the engine's current URI, so
+`url` is a controlled prop: the widget navigates to it whenever it changes, but the host holds an
+echo guard and reloads only when the new `url` differs from the engine's current URI, so
 feeding `onNavigate` back into your `url` state does not re-trigger a load. A `<webview>` also expands
 into whatever space its parent gives it (a zero-size web view would collapse inside a `<box>`), so it
 is set to fill by default.
@@ -72,14 +72,15 @@ Navigation state comes back through five events. Their payloads follow the schem
 | `forwardAvailable` | `onForwardAvailable`| `{ checked }`     | Forward-history availability changes.        |
 
 On macOS these are derived by polling the view's navigation properties on a 10 Hz timer and emitting
-on change — the same poll-don't-push idiom the terminal surface uses, which also catches single-page
-apps that change the URL via `pushState` without a `WKNavigationDelegate` callback. On GTK they are
-wired to the corresponding WebKit signals (`load-changed`, `notify::uri`, `notify::title`).
+an event on change, the same poll-don't-push idiom the terminal surface uses. Polling also catches
+single-page apps that change the URL via `pushState` without a `WKNavigationDelegate` callback. On
+GTK the events are wired to the corresponding WebKit signals (`load-changed`, `notify::uri`,
+`notify::title`).
 
 ## Driving it with commands
 
-Navigation to a URL is the `url` prop, but *history* and *load control* are one-shot imperative
-actions with no declarative state to bind — so they are exposed as
+Navigation to a URL is the `url` prop, but history and load control are one-shot imperative
+actions with no declarative state to bind, so they are exposed as
 [imperative commands](/core-concepts/imperative-commands/). Take a `ref` on the `<webview>`, then
 call `sendCommand`:
 
@@ -102,19 +103,20 @@ again at runtime, so a stale string fails loudly. See
 [Imperative Commands & Refs](/core-concepts/imperative-commands/) for the full mechanism. There is no
 `loadURL` command — to load a page, set the `url` prop.
 
-## How it works — one engine per backend, no build dependency
+## How it works
 
-- **macOS** — the widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework, so
-  it is always present; there is nothing to detect.
-- **GTK** — WebKitGTK is resolved **at runtime**, not at link time. The surface `dlopen`s
-  `libwebkitgtk-6.0.so.4` (falling back to `libwebkitgtk-6.0.so` / `.dylib`) and looks up the handful
-  of `webkit_web_view_*` symbols it needs. If the library is present, you get a real `WebKitWebView`
-  and the log line `ND_WEBVIEW_ENGINE webkitgtk`.
+On macOS the widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework, so it is
+always present and there is nothing to detect.
+
+On GTK, WebKitGTK is resolved at runtime, not at link time. The surface `dlopen`s
+`libwebkitgtk-6.0.so.4` (falling back to `libwebkitgtk-6.0.so` / `.dylib`) and looks up the handful
+of `webkit_web_view_*` symbols it needs. If the library is present, you get a real `WebKitWebView`
+and the log line `ND_WEBVIEW_ENGINE webkitgtk`.
 
 This runtime-load design is deliberate. WebKitGTK is a ~1 GB closure with frequent soname churn and no
 headless-CI story, so making it a link-time dependency would bloat every build and break the pinned
 Nix flake and the Homebrew GTK stack (Homebrew ships no webkitgtk). Because the symbols are resolved
-with `std.DynLib` instead, the build stays untouched. When webkitgtk is **absent**, the widget
-**degrades to a placeholder label** ("WebView unavailable (webkitgtk not installed)") and logs
-`ND_WARN WebView unavailable` rather than failing to link — so an app that uses `<webview>` still
-builds and runs everywhere, just without a live page where the engine is missing.
+with `std.DynLib` instead, the build stays untouched. When webkitgtk is absent, the widget shows a
+placeholder label reading "WebView unavailable (webkitgtk not installed)" and logs
+`ND_WARN WebView unavailable` rather than failing to link. An app that uses `<webview>` still
+builds and runs everywhere; it just shows no live page where the engine is missing.

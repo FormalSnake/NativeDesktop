@@ -2,10 +2,10 @@ import { render, Suspense, use, useState, useTransition, useMemo, memo } from "@
 
 // Module-scoped (not useMemo'd): the uptime interval re-renders App every
 // 500ms, and a concurrent render can discard an in-progress suspended fiber
-// before it commits, resetting any hook-level cache (useMemo included) tied
-// to that fiber. A promise created once at module load survives every
-// discarded attempt, so `use()` keeps resolving against the same promise
-// until it settles ~1s after the process starts.
+// before it commits; that discard resets any hook-level cache (useMemo
+// included) tied to that fiber. A promise created once at module load
+// survives every discarded attempt, so `use()` keeps resolving against the
+// same promise until it settles ~1s after the process starts.
 const delayedBadgePromise = new Promise<string>((r) => setTimeout(() => r("ready:suspense-resolved"), 1000));
 
 // memo: DelayedBadge takes no props, so its fiber need not be torn down by

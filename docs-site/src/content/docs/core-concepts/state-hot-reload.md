@@ -8,12 +8,12 @@ description: The hooks re-export contract that makes hot reload state-preserving
 ## The one rule: import hooks from `@nativedesktop/react`
 
 `ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and NDP socket
-across an edit — but re-evaluates the **entire** module graph on every edit, `react` and
+across an edit but re-evaluates the entire module graph on every edit, `react` and
 `react-reconciler` included. A hook imported straight from `react` resolves against a fresh,
-re-evaluated module instance whose dispatcher was never attached to any reconciler — that's the
+re-evaluated module instance whose dispatcher was never attached to any reconciler. That's the
 `Invalid hook call: resolveDispatcher().useState` crash this convention exists to avoid.
 
-`packages/react/src/dev-react.ts` stashes the **first-eval** `react` module instance in
+`packages/react/src/dev-react.ts` stashes the first-eval `react` module instance in
 `globalThis` and re-exports its hooks through wrapper functions that always dispatch to that
 stashed instance. The reconciler created on first boot closes over that same first-eval `react`
 instance, so a hook resolved through `@nativedesktop/react` always talks to the dispatcher the live
@@ -25,28 +25,28 @@ import { useState, useEffect, useMemo } from "@nativedesktop/react"; // correct,
 
 This rule is required for `.tsx`/`.desktop.tsx` component files. Shared, platform-agnostic hooks
 (also consumed by web/React Native code in the same monorepo) are the one exception: they can be
-authored the normal way, `import { useState } from "react"`, in a plain `.ts` module —
+authored the normal way, `import { useState } from "react"`, in a plain `.ts` module;
 `babel-plugin-nativedesktop` rewrites that import to `@nativedesktop/react` automatically, both for
 `bun run compile` and for `bun --hot` (via a `bunfig.toml`-preloaded Bun plugin). The Bun dev-path
-rewrite only touches `.ts` files, never `.tsx`/`.desktop.tsx` — intercepting a component file in
-Bun's `onLoad` would drop it from `--hot`'s watch set and break its hot reload — so a shared `.ts`
-hook is pinned at first eval (editing it needs a host restart) while its `.tsx` consumers keep
+rewrite only touches `.ts` files, never `.tsx`/`.desktop.tsx`, because intercepting a component
+file in Bun's `onLoad` would drop it from `--hot`'s watch set and break its hot reload. So a shared
+`.ts` hook is pinned at first eval (editing it needs a host restart) while its `.tsx` consumers keep
 hot-reloading normally. Component files still must import hooks from `@nativedesktop/react` directly
 per the rule above.
 
 ## What actually preserves state across an edit
 
-`render()`'s hot-reload path doesn't call `updateContainer` again on re-eval — a fresh `<App/>`
+`render()`'s hot-reload path doesn't call `updateContainer` again on re-eval: a fresh `<App/>`
 element's `.type` is a new function reference every re-eval, which the reconciler would otherwise
 treat as a type change and fully remount. Instead it calls `hotUpdateRoot()`, which re-registers the
 new component type under the same `react-refresh` family key the first boot established, and asks
 `react-refresh` to patch the live fiber tree in place. `react-refresh`'s family/root registries are
-also pinned to the first-eval module instance via the same `globalThis` stash — no Bun-level module
-aliasing needed, since `react-refresh` has no internal `require()` calls of its own to trip over.
+also pinned to the first-eval module instance via the same `globalThis` stash. No Bun-level module
+aliasing is needed, since `react-refresh` has no internal `require()` calls of its own to trip over.
 
 Two alternative mechanisms were tried and rejected before landing on the above (recorded so nobody
 re-attempts them): `Bun.plugin`'s module aliasing throws `Requested module is already fetched` the
-moment an aliased specifier is touched by both ESM `import` and CJS `require()` — which
+moment an aliased specifier is touched by both ESM `import` and CJS `require()`, which
 `react-reconciler`'s bundled CJS does internally for `"react"`, unavoidably, since every app entry
 uses genuine ESM `import`.
 

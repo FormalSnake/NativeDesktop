@@ -72,7 +72,7 @@ final class EventDispatcher: NSObject {
         }
         if view is NSScrollView {
             // ListView: tracked handle is the NSScrollView wrapping the
-            // NSTableView (M6b-D2). Row selection is reported through
+            // NSTableView. Row selection is reported through
             // `ListViewDataSource.tableViewSelectionDidChange` ->
             // `wiringFireIndex`, not target/action (NSScrollView isn't an
             // NSControl) — the wiring entry recorded above is all that's
@@ -165,7 +165,7 @@ final class EventDispatcher: NSObject {
         emit(sender, name: name, json: jsonObject(["index": .int(idx)]))
     }
 
-    /// ColorPicker's `colorChanged` (M15): NSColorWell target/action, hex
+    /// ColorPicker's `colorChanged`: NSColorWell target/action, hex
     /// round-trip via ndHexFromColor (ColorWells.swift). Fires continuously
     /// while dragging in the shared NSColorPanel — high-frequency by design.
     @objc func fireColorText(_ sender: NSControl) {
@@ -173,7 +173,7 @@ final class EventDispatcher: NSObject {
         emit(sender, name: name, json: jsonObject(["text": .string(ndHexFromColor(well.color))]))
     }
 
-    /// DatePicker's `dateChanged` (M15): NSDatePicker target/action, pinned-UTC
+    /// DatePicker's `dateChanged`: NSDatePicker target/action, pinned-UTC
     /// ISO YYYY-MM-DD via ndDatePickerISO (DatePickers.swift). Out-of-range
     /// entries are clamped natively by minDate/maxDate BEFORE the action fires,
     /// so the clamped date is what JS hears (GTK clamp parity).
@@ -270,7 +270,7 @@ func withEchoSuppressed(_ view: NSView, _ body: () -> Void) {
     if !wasSuppressed { EventDispatcher.shared.suppressed.remove(key) }
 }
 
-// MARK: - shared emit path for hand-written composite widgets (M15)
+// MARK: - shared emit path for hand-written composite widgets
 
 /// Direct emit for widgets whose events don't ride NSControl target/action
 /// (NumberInput/LinkButton/Banner/Popover/Expander/Toast/Table/TreeView/

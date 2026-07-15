@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// LinkButton (M15): SwiftUI `Button` + `.buttonStyle(.link)` hosted in an
-/// NSHostingView — AppKit has no link primitive (the `.inline` bezel is the
-/// badge style and deprecated; design brief 2026-07). Cross-platform policy
-/// (GTK-agent binding): `activate` ALWAYS fires (payload = uri); the native
-/// URL open only runs when `openExternal` is true. `visited` is app-owned
-/// state approximated with system purple (no native visited-link color).
+/// LinkButton: SwiftUI `Button` + `.buttonStyle(.link)` hosted in an
+/// NSHostingView, since AppKit has no link primitive (the `.inline` bezel is
+/// the badge style and deprecated). Cross-platform policy: `activate` ALWAYS
+/// fires (payload = uri); the native URL open only runs when `openExternal`
+/// is true. `visited` is app-owned state approximated with system purple
+/// (no native visited-link color).
 struct NDLinkButtonBody: View {
     var label: String
     var visited: Bool
@@ -34,7 +34,7 @@ final class NDLinkButtonView: NSHostingView<NDLinkButtonBody> {
     required init(rootView: NDLinkButtonBody) {
         super.init(rootView: rootView)
         // Leaf widget inside an AppKit Auto Layout tree: behave like an
-        // intrinsic-sized NSControl (design brief NSHostingView practice).
+        // intrinsic-sized NSControl.
         sizingOptions = [.intrinsicContentSize]
     }
 

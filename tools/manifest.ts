@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// tools/manifest.ts — shared minisign-signing manifest builder (M9).
+// tools/manifest.ts — shared minisign-signing manifest builder.
 // Shells out to the `minisign` CLI (on PATH from the devshell). Produces the
 // update manifest JSON matching src/core/update.zig's `Manifest` struct and
 // signs both the archive and the manifest.

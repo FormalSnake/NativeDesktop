@@ -1,7 +1,7 @@
 import AppKit
 
-/// freedesktop icon name -> SF Symbol lookup for Button's `iconName` prop
-/// (M12 Feature 1). Only the names notes/main.tsx and friends are known to
+/// freedesktop icon name -> SF Symbol lookup for Button's `iconName` prop.
+/// Only the names notes/main.tsx and friends are known to
 /// use are mapped; anything else passes through verbatim at the call site
 /// (`ndApplyButtonIcon`'s `?? iconName` fallback), which covers direct SF
 /// Symbol names.
@@ -23,12 +23,12 @@ private let ndSFSymbolMap: [String: String] = [
     "document-save": "square.and.arrow.down",
     "view-refresh": "arrow.clockwise",
     "open-menu": "ellipsis.circle",
-    // M13: menu-bar / notes-rework icon names (document-new/edit-delete above;
-    // pin variants here so the foreseen <menuitem iconName> set resolves).
+    // Menu-bar icon names (document-new/edit-delete above; pin variants here
+    // so the <menuitem iconName> set resolves).
     "view-pin": "pin",
     "pin": "pin",
     "starred": "star.fill",
-    "starred-symbolic": "star.fill", // M11 SourceList Wave 3: gallery's SourceList "Starred" row icon
+    "starred-symbolic": "star.fill", // gallery's SourceList "Starred" row icon
     "non-starred": "star",
     "edit-copy": "doc.on.doc",
     "edit-cut": "scissors",

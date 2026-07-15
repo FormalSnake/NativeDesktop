@@ -57,19 +57,6 @@ Automation role: `button`. Text source: `label`. Children: none.
 |---|---|---|
 | `clicked` | `onClick` | none |
 
-## Terminal (`<terminal>`)
-
-Automation role: `terminal`. Text source: none. Children: none.
-
-| Prop | Type | Default | Applied |
-|---|---|---|---|
-| `command` | string | — | create |
-| `cwd` | string | — | create |
-| `fontSize` | int | 13 | create |
-| `cols` | int | 80 | create |
-| `rows` | int | 24 | create |
-| `testID` | string | — | meta |
-
 ## TextInput (`<textinput>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -720,5 +707,18 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string |  | createAndUpdate |
 | `iconName` | string | — | create |
 | `items` | stringList | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+## Terminal (`<terminal>`)
+
+Automation role: `terminal`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `command` | string | — | create |
+| `cwd` | string | — | create |
+| `fontSize` | int | 13 | create |
+| `cols` | int | 80 | create |
+| `rows` | int | 24 | create |
 | `testID` | string | — | meta |
 

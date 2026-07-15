@@ -128,21 +128,6 @@
       "automation": { "role": "button", "textFrom": "label" }
     },
     {
-      "name": "Terminal",
-      "intrinsic": "terminal",
-      "container": null,
-      "props": [
-        { "name": "command", "type": "string", "appliesTo": "create" },
-        { "name": "cwd", "type": "string", "appliesTo": "create" },
-        { "name": "fontSize", "type": "int", "default": 13, "appliesTo": "create" },
-        { "name": "cols", "type": "int", "default": 80, "appliesTo": "create" },
-        { "name": "rows", "type": "int", "default": 24, "appliesTo": "create" },
-        { "name": "testID", "type": "string", "appliesTo": "meta" }
-      ],
-      "events": [],
-      "automation": { "role": "terminal", "textFrom": null }
-    },
-    {
       "name": "TextInput",
       "intrinsic": "textinput",
       "container": null,
@@ -810,6 +795,21 @@
       ],
       "events": [],
       "automation": { "role": "button", "textFrom": "label" }
+    },
+    {
+      "name": "Terminal",
+      "intrinsic": "terminal",
+      "container": null,
+      "props": [
+        { "name": "command", "type": "string", "appliesTo": "create" },
+        { "name": "cwd", "type": "string", "appliesTo": "create" },
+        { "name": "fontSize", "type": "int", "default": 13, "appliesTo": "create" },
+        { "name": "cols", "type": "int", "default": 80, "appliesTo": "create" },
+        { "name": "rows", "type": "int", "default": 24, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "terminal", "textFrom": null }
     }
   ]
 }

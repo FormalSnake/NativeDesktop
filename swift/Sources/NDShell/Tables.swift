@@ -1,14 +1,14 @@
 import AppKit
 
-/// Table (M15): a view-based NSTableView in an NSScrollView (the tracked
-/// handle is the scroll view — the SourceList convention). Columns are
+/// Table: a view-based NSTableView in an NSScrollView (the tracked
+/// handle is the scroll view, the SourceList convention). Columns are
 /// rebuilt whenever the `columns` prop lands; each carries a
 /// `sortDescriptorPrototype` so header clicks produce a native sort
-/// indicator, BUT the data source NEVER reorders itself — header clicks emit
+/// indicator, BUT the data source NEVER reorders itself: header clicks emit
 /// `sortChanged { columnId, direction }` and JS owns row order (only the app
 /// knows if a column is numeric/date/lexical; cross-platform contract set by
 /// the GTK backend's no-op-sorter mechanism). Rows arrive as the schema's
-/// TableRow objectList (`{ id?, cells: [...] }` — positional cells, indexed
+/// TableRow objectList (`{ id?, cells: [...] }`, positional cells indexed
 /// by the columns array order); GTK's 0x1F cell join is its internal storage
 /// trick, not the wire format.
 private let ndTableCellID = NSUserInterfaceItemIdentifier("nd-table-cell")

@@ -1,13 +1,13 @@
 import AppKit
 
-/// DatePicker (M15): NSDatePicker restricted to `.yearMonthDay` and pinned to
+/// DatePicker: NSDatePicker restricted to `.yearMonthDay` and pinned to
 /// a UTC Gregorian calendar, so the ISO `YYYY-MM-DD` wire value round-trips
 /// with no timezone day-drift (the one date-anchor rule, enforced identically
 /// on both backends — Date is an instant; an unpinned local calendar shifts
 /// the day near midnight). min/maxDate clamp NATIVELY here: NSDatePicker
 /// refuses/clamps out-of-range values before its action fires, so the clamped
-/// date is what JS hears — the same contract the GTK backend implements by
-/// hand in cbCalendarDaySelected.
+/// date is what JS hears, matching the contract the GTK backend implements
+/// by hand in cbCalendarDaySelected.
 
 private let ndUTC = TimeZone(identifier: "UTC")!
 

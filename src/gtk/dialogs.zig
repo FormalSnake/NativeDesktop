@@ -1,5 +1,5 @@
 // GTK4/libadwaita dialog surface for the <window> widget's imperative
-// commands (M15 widget expansion): showAlert (AdwAlertDialog), openFile /
+// commands: showAlert (AdwAlertDialog), openFile /
 // saveFile (GtkFileDialog, async), showAbout (AdwAboutDialog). Results fire
 // the Window node's alertResult/openFileResult/saveFileResult events —
 // the same widgetCommand → same-node result-event pattern webview.zig's

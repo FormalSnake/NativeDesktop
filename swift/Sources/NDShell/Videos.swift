@@ -1,10 +1,10 @@
 import AppKit
 import AVKit
 
-/// Video (M15): AVKit's AVPlayerView — the system player, per HIG. `src`
+/// Video: AVKit's AVPlayerView, the system player per HIG. `src`
 /// takes a plain path or a URL (the same "://" sniff as GTK's ndVideoSetSrc);
 /// `controls` maps to controlsStyle (.inline / .none); `loop` replays on the
-/// item's end notification (AVPlayerLooper needs an AVQueuePlayer — a plain
+/// item's end notification (AVPlayerLooper needs an AVQueuePlayer; a plain
 /// seek-and-play keeps the single-player shape).
 final class NDVideoView: AVPlayerView {
     var looping = false

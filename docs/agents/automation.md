@@ -1,11 +1,11 @@
-# Automation — the full RPC surface
+# Automation: the full RPC surface
 
 Ground truth for the method surface, param/result shapes, and error codes below is
-`schema/rpc.json` (M8-D8) — the single source of truth `tools/codegen.ts` compiles into both
+`schema/rpc.json` (M8-D8), the single source of truth `tools/codegen.ts` compiles into both
 `src/generated/rpc.zig` (consumed by `src/automation.zig`'s dispatch) and
 `packages/react/src/generated/rpc.ts` (consumed by `packages/mcp/src/socket.ts`'s typed
 `AutomationClient.call<M>`). A method/param/result rename in the schema is a compile error on
-whichever side still references the old shape, not a silent wire mismatch — the same
+whichever side still references the old shape instead of a silent wire mismatch, the same
 schema-to-dual-codegen pattern already used for `schema/widgets.json`. This doc is a
 human/agent-readable mirror of the schema; if the two disagree, `schema/rpc.json` wins.
 
@@ -48,23 +48,23 @@ only for row-driven widgets (currently `SourceList`, M11) and carries each row's
 | `-32603` | internal error | none (or a message describing the failure, e.g. screenshot renderer/surface errors) |
 | `-32700` | parse error | none |
 
-**Params are schema-typed, not hand-checked (M8-D8).** `src/automation.zig`'s dispatch decodes each
+**Params are schema-typed (M8-D8).** `src/automation.zig`'s dispatch decodes each
 method's `params` through the matching generated struct from `src/generated/rpc.zig`
 (`std.json.parseFromValue`, wrapped by `parseParams`) instead of the old per-field
-`paramInt`/`paramStr` helpers. A param that fails to typecheck against its schema type — including a
-negative `ref` where the schema declares `u32` (previously an unchecked `@intCast`, now a clean
-parse failure) — resolves to `-32602` rather than reaching widget-dispatch code with an
-out-of-range value.
+`paramInt`/`paramStr` helpers. A param that fails to typecheck against its schema type resolves to
+`-32602` rather than reaching widget-dispatch code with an out-of-range value; that includes a
+negative `ref` where the schema declares `u32`, previously an unchecked `@intCast` and now a clean
+parse failure.
 
 Actionability (`-32001`) is checked before every action-dispatch method (`click`, `setValue`,
 `type`, `scroll`): the ref must exist, be visible, be mapped, and have non-degenerate on-screen
-bounds relative to the window. This mirrors what a real user could reach — automation never acts on
+bounds relative to the window. This mirrors what a real user could reach; automation never acts on
 what a user couldn't.
 
 ## Coordinate-space contract
 
 `coordinateSpace` is always `"logical-window-topleft"`: every `geometry` field in `getTree` is in
-logical units (not device pixels), relative to the window's top-left corner — computed via
+logical units (not device pixels), relative to the window's top-left corner, computed via
 `gtk.Widget.computeBounds(widget, window_widget, &rect)`.
 
 ## MCP tool names
@@ -77,19 +77,19 @@ above:
 - `nd_click({ref})` → `click`
 - `nd_wait_for({textContains?, refVisible?, timeoutMs?})` → `waitFor`
 
-`setValue`/`type`/`scroll` exist on the raw socket but do not yet have MCP tool wrappers — drive
+`setValue`/`type`/`scroll` exist on the raw socket but do not yet have MCP tool wrappers; drive
 them by talking to the automation socket directly (see `packages/mcp/src/socket.ts`'s
 `AutomationClient` for the client-side pattern, used by every `scripts/*-drive.ts` script).
 `AutomationClient.call<M extends RpcMethodName>(method, ...params): Promise<RpcResult<M>>` is
 schema-typed, tRPC-style (M8-D8): the method name, its params shape, and its result type are all
 constrained by the generated `packages/react/src/generated/rpc.ts`, so `call("click", { ref })`
-returns a typed `ClickResult` and a schema rename is a `tsc` error at the call site, not a runtime
-surprise.
+returns a typed `ClickResult` and a schema rename is a `tsc` error at the call site rather than a
+runtime surprise.
 
-## Deltas (known gaps — do not assume these work)
+## Deltas (known gaps, do not assume these work)
 
 - **`scroll` only targets `ScrollView`-typed nodes** (their wrapping `GtkScrolledWindow`
-  adjustments). A `ListView` node cannot be scrolled directly — scroll its wrapping `ScrollView`
+  adjustments). A `ListView` node cannot be scrolled directly; scroll its wrapping `ScrollView`
   instead, if one wraps it.
 - **No `TabView` page-switch RPC.** There is no automation action to change which tab is active.
 - **No `ListView` row-activate/select action.** The widget emits `onRowActivated` upward to React,
@@ -99,33 +99,32 @@ surprise.
   (`WidgetPaintable` served empty briefly in testing). If a post-scroll screenshot looks stale,
   retry (poll every ~150ms, up to ~3s) rather than treating a single failed/blank shot as final.
 - **An empty `TextArea` collapses to 0 logical height**, which fails the actionability bounds check
-  (`-32001`, non-degenerate on-screen bounds) — any action-dispatch method (`click`, `setValue`,
-  `type`, `scroll`) on it will read as not actionable until it has content or explicit sizing. Wrap
+  (`-32001`, non-degenerate on-screen bounds), so any action-dispatch method (`click`, `setValue`,
+  `type`, `scroll`) on it reads as not actionable until it has content or explicit sizing. Wrap
   it in a `ScrollView` with a `minContentHeight` (or otherwise give the `TextArea` a non-zero
   starting height) if it needs to be automation-actionable while empty; an app that only relies on
   GTK's natural-size layout for an initially-empty `TextArea` is not automation-actionable by
   construction.
 - **`Checkbox`/`Radio` should be driven with `setValue({ref, value: boolean})`, not `click`.** `click`
-  emits `GtkCheckButton`'s `clicked` signal, which *toggles* the current state — it is relative, not
+  emits `GtkCheckButton`'s `clicked` signal, which *toggles* the current state: it is relative, not
   idempotent, so scripting a specific end state (e.g. "make sure this is checked") by clicking
-  requires first knowing the current value and is one stray extra click away from landing on the
-  wrong state. `setValue` sets `checked` to an exact, deterministic value directly
+  requires knowing the current value first, and one stray extra click lands on the wrong state.
+  `setValue` sets `checked` to an exact, deterministic value directly
   (`gtk_check_button_set_active`) and is the kind-dispatched path automation was designed around for
-  these two kinds — prefer it whenever the target state (not just "flip it") is what the script
-  cares about.
+  these two kinds. Prefer it whenever the script cares about the target state rather than a toggle.
 
-## Crash/overlay contract — planned, not yet landed
+## Crash/overlay contract (planned, not yet landed)
 
 The plan for the M8 overlay task (see `docs/superpowers/plans/2026-07-10-m8-dx.md`) is: after a
 runtime crash or disconnect, the host paints an in-window overlay and registers its widgets in the
-tree under a **reserved generation `0xFFFF`**, specifically so `getTree` keeps answering through a
+tree under a reserved generation (`0xFFFF`), specifically so `getTree` keeps answering through a
 crash instead of going stale. Planned testIDs: `nd-overlay-title`, `nd-overlay-error`,
-`nd-overlay-restart` — read `nd-overlay-error`'s `text` for the failure message, and (dev-mode only)
+`nd-overlay-restart`. Read `nd-overlay-error`'s `text` for the failure message, and (dev-mode only)
 `click` the `nd-overlay-restart` ref to respawn the crashed child. The runtime is planned to report
 uncaught exceptions via an additive `runtimeError {message, stack}` NDP control frame before it
 dies, so the overlay shows the real error rather than a bare disconnect notice.
 
-**(lands with M8 overlay task)** — none of the above exists in `src/automation.zig` or
+None of the above exists in `src/automation.zig` or
 `src/runtime.zig` today. A crash today is simply `ND_CHILD_EXITED` on stderr with no tracked
 recovery node in the tree; `getTree` after a crash will fail or return stale data, not an overlay
 snapshot. Do not write agent logic that assumes `nd-overlay-*` testIDs exist until this section is
@@ -134,11 +133,11 @@ updated to say the task has landed.
 ## Screenshots on macOS (ndshot)
 
 The `screenshot` RPC (see above) renders offscreen inside the host process, and on macOS 26 that
-path draws blank editable fields for `TextInput`/`TextArea` — `_NSCoreHostingView` only paints via
+path draws blank editable fields for `TextInput`/`TextArea`: `_NSCoreHostingView` only paints via
 CoreAnimation when it's actually composited on screen, so an offscreen render ladder gets an empty
 field back. Shelling out to `screencapture` over ssh doesn't work around this either: the terminal
 environment agents run in (herdr) is blocked by TCC and cannot be granted Screen Recording, no
-matter what the ssh session does. `tools/ndshot/` is the fix — a small, dependency-free Swift
+matter what the ssh session does. `tools/ndshot/` is the fix: a small, dependency-free Swift
 package with its own stable binary identity that preflights/requests Screen Recording once, then
 captures the *live composited* window via ScreenCaptureKit. This works even when the window is
 occluded, and it doesn't touch the render ladder at all.
@@ -150,16 +149,16 @@ toolchain breaks):
 cd tools/ndshot && ./build.sh
 ```
 
-`build.sh` runs `swift build -c release`, installs the binary to the VISIBLE
+`build.sh` runs `swift build -c release`, installs the binary to the visible
 `tools/ndshot/bin/ndshot` (the System Settings > Screen Recording file picker hides dot-folders
-like `.build/`, so the grantable copy must live somewhere Finder can reach — in any macOS file
+like `.build/`, so the grantable copy must live somewhere Finder can reach; in any macOS file
 picker, ⌘⇧. toggles hidden files and ⌘⇧G jumps to a typed path), and ad-hoc signs it with a stable
 identifier (`codesign -f -s - -i com.nativedesktop.ndshot bin/ndshot`) so the Screen Recording
-grant sticks across rebuilds — as long as the compiled bytes don't actually change; a rebuild that
+grant sticks across rebuilds as long as the compiled bytes don't actually change; a rebuild that
 changes the binary's content counts as a new identity to TCC and needs re-granting either way.
 
 ndshot re-spawns itself once with `responsibility_spawnattrs_setdisclaim` so it is its own TCC
-"responsible process" — without that, macOS attributes a CLI's permission checks to the terminal
+"responsible process". Without that, macOS attributes a CLI's permission checks to the terminal
 that spawned it, the prompt names the terminal, and a Settings grant for the binary itself is
 silently ignored (`ndshot doctor` prints which mode it is running in).
 
@@ -184,9 +183,8 @@ instructions printed to stderr), `3` no window matched the given filters (the ca
 is printed to stderr so an agent can self-correct), `4` capture or PNG-write failure.
 
 **One-time grant flow:** the first invocation of `list` or `capture` calls
-`CGRequestScreenCaptureAccess()`, which triggers the system permission prompt — but that prompt is
-interactive and this is a one-time, headful step only the machine's owner can complete. Grant it via
+`CGRequestScreenCaptureAccess()`, which triggers the system permission prompt. That prompt is
+interactive, and only the machine's owner can complete it. Grant it via
 System Settings → Privacy & Security → Screen Recording once; the grant then sticks to this binary's
 path and ad hoc signature (see above) across future runs and rebuilds. Do not script around this or
-loop retrying it — `ndshot doctor` exists precisely so an agent can check the state instead of
-guessing.
+loop retrying it; `ndshot doctor` exists so an agent can check the state instead of guessing.

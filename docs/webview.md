@@ -1,8 +1,8 @@
 # Webview: browser-grade apps on native UI
 
-`<webview>` embeds the platform's web engine as an ordinary widget — WKWebView
-on macOS, WebKitGTK (dlopen'd at runtime, graceful placeholder when absent) on
-Linux. The surface is deliberately browser-grade: full web browsers with native
+`<webview>` embeds the platform's web engine as an ordinary widget: WKWebView
+on macOS, WebKitGTK on Linux (dlopen'd at runtime, with a placeholder when
+absent). The surface is deliberately browser-grade: full web browsers with native
 chrome (tabs, toolbar, address bar as real native widgets) are a supported
 target and the robustness baseline for the toolkit.
 
@@ -57,9 +57,9 @@ const ua = await executeJavaScript(wv.current!, "navigator.userAgent");
   the app decides what a "new window" means (usually a native tab).
 - **`downloadRequested`** `{ data: { url, suggestedFilename? } }` — the engine
   hit a response it can't render (or an attachment). The engine-side download
-  is cancelled; the app performs it itself — the Bun process has full
-  network/fs, so `fetch` + `node:fs` (plus `getAppDataDir()`) is the intended
-  path. `data:` URLs report `suggestedFilename: "Unknown"`.
+  is cancelled; the app performs it itself. The Bun process has full network
+  and filesystem access, so `fetch` + `node:fs` (plus `getAppDataDir()`) is
+  the intended path. `data:` URLs report `suggestedFilename: "Unknown"`.
 - **`javaScriptResult`** `{ data: { id, ok, value?, error? } }` — completion of
   `executeJavaScript`. Apps normally never touch it directly: pass the exported
   `onJavaScriptResult` handler and use the promise helper.
@@ -87,20 +87,20 @@ CEF (Chromium) is the planned opt-in alternative for apps that need Chromium
 fidelity, enabled per project *and* per platform in `nativedesktop.config.ts`
 (e.g. macOS on WebKit, Linux on CEF).
 
-The opt-in is structural, not a flag:
+The opt-in is structural rather than a runtime flag:
 
-- CEF is **never linked** into the host binary. It loads at runtime
+- CEF is never linked into the host binary. It loads at runtime
   (`cef_load_library` on macOS, `dlopen` on Linux) from the app bundle, behind
-  the same `<webview>` contract — app code does not change with the engine.
-- Packaging stages the CEF framework/helpers **only** when the config enables
-  it. An app that doesn't enable CEF ships **zero Chromium bytes** — the CEF
+  the same `<webview>` contract, so app code does not change with the engine.
+- Packaging stages the CEF framework/helpers only when the config enables it.
+  An app that doesn't enable CEF ships zero Chromium bytes: the CEF
   distribution is fetched at package time (official builds:
-  cef-builds.spotifycdn.com), never committed to the repo.
+  cef-builds.spotifycdn.com) and is never committed to the repo.
 - On Linux, `libcef.so` ships largely unstripped (>1 GB on disk); the packaging
   step must run `strip` when CEF is enabled (~200 MB after).
 - macOS additionally requires helper `.app` bundles (Renderer/GPU/Alerts/main)
-  under `Contents/Frameworks` and inside-out codesigning — a packaging concern,
-  invisible to app code.
+  under `Contents/Frameworks` and inside-out codesigning. Both are packaging
+  concerns, invisible to app code.
 - Linux caveat: CEF windowed embedding under native Wayland is still unshipped
   upstream (CEF issue #2804; ANGLE's Wayland support merged 2026-05); until it
   lands, embedded CEF on Wayland means off-screen rendering or XWayland.

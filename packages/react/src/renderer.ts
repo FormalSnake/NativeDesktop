@@ -28,8 +28,8 @@ type ReconcilerInstance = {
 
 // `bun --hot` re-runs this module's top-level statements (render()'s caller,
 // e.g. `await render(<App/>)`) on every edit in the module graph — connect +
-// mount must therefore be idempotent (M8, globalThis singleton guard). First
-// boot connects, handshakes, and creates the reconciler root; every
+// mount must therefore be idempotent (guarded by a globalThis singleton).
+// First boot connects, handshakes, and creates the reconciler root; every
 // subsequent call (a hot re-eval) reuses the surviving root instead.
 export async function render(element: ReactNode): Promise<void> {
   let state = getHmrState();
@@ -91,8 +91,7 @@ export async function render(element: ReactNode): Promise<void> {
     // A hot re-eval must NOT call updateContainer with the new element
     // directly: `element.type` is a fresh function reference every re-eval,
     // so the reconciler would see a type change at the root and fully
-    // remount (all hook state reset) instead of updating — verified
-    // empirically this session against the real examples/counter app.
+    // remount (all hook state reset) instead of updating.
     // hotUpdateRoot() registers the new type under the SAME react-refresh
     // family as the previous eval's root and asks react-refresh to patch
     // the live fiber in place, which is what actually preserves state.
@@ -114,8 +113,8 @@ function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string,
   state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
 }
 
-/// Sends an imperative command to a mounted widget (widgetCommand NDP frame,
-/// M14). `node` is what a host-element `ref` resolves to — e.g.
+/// Sends an imperative command to a mounted widget (widgetCommand NDP frame).
+/// `node` is what a host-element `ref` resolves to — e.g.
 /// `const wv = useRef<NdNodeRef<"webview">>(null)` then
 /// `sendCommand(wv.current!, "goBack")`. Command names are schema-typed per
 /// widget (WidgetCommandNames) and validated again at runtime so a stale

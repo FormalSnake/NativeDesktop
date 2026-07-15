@@ -1,10 +1,8 @@
-// Module-root shim for the `nd-hello` exe (M6a Task 5 deviation, see plan
-// self-review). The plan says `src/main.zig` moves to `src/gtk/main.zig`
-// verbatim, but Zig 0.16 forbids any `@import` within a module from
-// escaping that module's root directory (verified: "import of file outside
-// module path") — including `../`-relative imports from subdirectory files
-// back up to siblings of the root. `src/generated/widgets.zig` (codegen'd,
-// never hand-edited — M6a does not touch codegen) hardcodes
+// Module-root shim for the `nd-hello` exe. Zig 0.16 forbids any `@import`
+// within a module from escaping that module's root directory ("import of
+// file outside module path") — including `../`-relative imports from
+// subdirectory files back up to siblings of the root.
+// `src/generated/widgets.zig` (codegen'd, never hand-edited) hardcodes
 // `@import("../protocol.zig")`, assuming it sits one directory below
 // `protocol.zig`; `src/gtk/backend.zig`/`style.zig` need the same file, plus
 // `../abi.zig`/`../tree.zig` etc. For all of these relative imports to

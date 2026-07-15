@@ -10,7 +10,6 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "Box": { role: "group", textFrom: null, childModel: "multi" },
   "Label": { role: "label", textFrom: "text", childModel: null },
   "Button": { role: "button", textFrom: "label", childModel: null },
-  "Terminal": { role: "terminal", textFrom: null, childModel: null },
   "TextInput": { role: "textbox", textFrom: "text", childModel: null },
   "TextArea": { role: "textbox", textFrom: "text", childModel: null },
   "Checkbox": { role: "checkbox", textFrom: "label", childModel: null },
@@ -57,6 +56,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "Video": { role: "video", textFrom: null, childModel: null },
   "TrayItem": { role: "trayitem", textFrom: null, childModel: "multi" },
   "ShareButton": { role: "button", textFrom: "label", childModel: null },
+  "Terminal": { role: "terminal", textFrom: null, childModel: null },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -64,7 +64,6 @@ export const intrinsicToName: Record<string, string> = {
   "box": "Box",
   "label": "Label",
   "button": "Button",
-  "terminal": "Terminal",
   "textinput": "TextInput",
   "textarea": "TextArea",
   "checkbox": "Checkbox",
@@ -111,6 +110,7 @@ export const intrinsicToName: Record<string, string> = {
   "video": "Video",
   "trayitem": "TrayItem",
   "sharebutton": "ShareButton",
+  "terminal": "Terminal",
 };
 
 export interface WidgetEvent {
@@ -123,7 +123,6 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "box": [],
   "label": [],
   "button": [{ name: "clicked", handler: "onClick", payload: "none" }],
-  "terminal": [],
   "textinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }],
   "textarea": [{ name: "changed", handler: "onChanged", payload: "text" }],
   "checkbox": [{ name: "toggled", handler: "onToggled", payload: "checked" }],
@@ -170,6 +169,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
+  "terminal": [],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -177,7 +177,6 @@ export const handlerPropNames: Record<string, string[]> = {
   "box": [],
   "label": [],
   "button": ["onClick"],
-  "terminal": [],
   "textinput": ["onChanged", "onActivate"],
   "textarea": ["onChanged"],
   "checkbox": ["onToggled"],
@@ -224,6 +223,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
+  "terminal": [],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
@@ -233,7 +233,6 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "box": [],
   "label": [],
   "button": [],
-  "terminal": [],
   "textinput": [],
   "textarea": [],
   "checkbox": [],
@@ -280,6 +279,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
+  "terminal": [],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */
@@ -298,7 +298,6 @@ export const widgetPlatforms: Record<string, readonly ("macos" | "linux")[] | nu
   "box": null,
   "label": null,
   "button": null,
-  "terminal": null,
   "textinput": null,
   "textarea": null,
   "checkbox": null,
@@ -345,4 +344,5 @@ export const widgetPlatforms: Record<string, readonly ("macos" | "linux")[] | nu
   "video": null,
   "trayitem": ["macos"],
   "sharebutton": ["macos"],
+  "terminal": null,
 };

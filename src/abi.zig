@@ -8,8 +8,7 @@ const acl = @import("acl.zig");
 const plugin = @import("plugin.zig");
 
 // Mirrors include/nd.h exactly. Layout asserts below catch header/Zig drift
-// at `zig build test` time — this is the compile-time contract Task 1 pins
-// before any code moves onto the ABI.
+// at `zig build test` time.
 pub const NdRect = extern struct { x: i32, y: i32, w: i32, h: i32 };
 
 pub const NdBackend = extern struct {
@@ -26,9 +25,9 @@ pub const NdBackend = extern struct {
     unparent: *const fn (*NdContext, ?*anyopaque) callconv(.c) void,
     get_window: *const fn (*NdContext) callconv(.c) ?*anyopaque,
 
-    // Embedder UI-thread marshal + host chrome (M6a Task 3). `show_overlay`
-    // with an empty message is the clear sentinel (see runtime.zig's
-    // `respawn`) rather than a dedicated clear-overlay vtable field.
+    // Embedder UI-thread marshal + host chrome. `show_overlay` with an empty
+    // message is the clear sentinel (see runtime.zig's `respawn`) rather than
+    // a dedicated clear-overlay vtable field.
     marshal_async: *const fn (*NdContext, *const fn (?*anyopaque) callconv(.c) void, ?*anyopaque) callconv(.c) void,
     show_overlay: *const fn (*NdContext, [*:0]const u8) callconv(.c) void,
 
@@ -37,7 +36,7 @@ pub const NdBackend = extern struct {
     snapshot: *const fn (*NdContext, [*:0]const u8) callconv(.c) bool,
     semantic_action: *const fn (*NdContext, ?*anyopaque, u32, [*:0]const u8, [*:0]const u8, *?[*:0]u8, *?[*:0]u8) callconv(.c) i32,
 
-    // App -> widget imperative command (M14, widgetCommand NDP frame). Arrives
+    // App -> widget imperative command (widgetCommand NDP frame). Arrives
     // on the UI thread (runtime.zig marshals before calling).
     widget_command: *const fn (*NdContext, ?*anyopaque, [*:0]const u8, [*:0]const u8, [*:0]const u8) callconv(.c) void,
 
@@ -59,7 +58,7 @@ pub const NdBackend = extern struct {
     // App -> host system capability request (systemRequest NDP frame). Coarse
     // JSON-carrying op mirroring widget_command: `method` is a dotted
     // capability name (e.g. "dialog.openFile"), `params_json` its JSON
-    // argument. Fire-and-forget from the core's side — the backend delivers
+    // argument. Fire-and-forget from the core's side; the backend delivers
     // the (possibly async) result later via nd_system_response. Arrives on the
     // UI thread (runtime.zig marshals). Appended (append-only vtable) — bumps
     // @sizeOf(NdBackend) to 22 words below.
@@ -69,8 +68,8 @@ pub const NdBackend = extern struct {
 // The core instance: owns the Tree and the Runtime (once nd_start_runtime
 // succeeds), and the automation Server (once nd_start_automation succeeds),
 // plus the registered vtable. `app` is the opaque embedder-app handle
-// (GtkApplication* / NSApplication) threaded straight to `Tree.init` — the
-// core never dereferences it (M6a Task 3).
+// (GtkApplication* / NSApplication) threaded straight to `Tree.init`; the
+// core never dereferences it.
 pub const NdContext = struct {
     gpa: std.mem.Allocator,
     vtable: *const NdBackend,
@@ -81,9 +80,9 @@ pub const NdContext = struct {
     // before `nd_start_runtime` and echoed in the helloAck so the Bun child's
     // `Platform.backend` can branch on the renderer. "unknown" until set.
     backend_name: []const u8 = "unknown",
-    // Set by T10's `nd_set_acl` (pending) before `nd_start_runtime`; null
-    // means the embedder never called it, so `runtime.zig`'s commit gate
-    // falls back to its own module-level default ACL.
+    // Set by `nd_set_acl` before `nd_start_runtime`; null means the embedder
+    // never called it, so `runtime.zig`'s commit gate falls back to its own
+    // module-level default ACL.
     acl: ?*@import("acl.zig").Acl = null,
     // Context-owned multi-plugin registry.
     plugins: plugin.Manager = undefined,
@@ -92,7 +91,7 @@ pub const NdContext = struct {
 
 /// Builds an `Environ`/`Environ.Map` pair from the process's own `environ`
 /// global (libc), matching exactly how Zig's own non-WASI process startup
-/// populates `std.process.Init` (see std/start.zig's `mainWithoutEnv`) —
+/// populates `std.process.Init` (see std/start.zig's `mainWithoutEnv`).
 /// `nd_init(void)` takes no parameters (the frozen ABI shape), so the core
 /// reads its own environment directly rather than threading it in from the
 /// embedder.
@@ -105,11 +104,8 @@ fn currentEnviron() std.process.Environ {
 }
 
 comptime {
-    // 22 function pointers (16 from Task 1 + marshal_async/show_overlay
-    // added in Task 3 + widget_command added in M14 + resolve_window for
-    // multi-window + reparent_child for the cross-window widget-preserving
-    // move + system_request for the system-capability seam) + no padding on a
-    // 64-bit target.
+    // 22 function pointers, no padding on a 64-bit target. The vtable is
+    // append-only: every appended op bumps this count.
     std.debug.assert(@sizeOf(NdBackend) == 22 * @sizeOf(usize));
     std.debug.assert(@alignOf(NdBackend) == @alignOf(usize));
     std.debug.assert(@sizeOf(NdRect) == 16);
@@ -127,8 +123,7 @@ pub export fn nd_register_backend(self: *NdContext, vt: *const NdBackend) callco
     abi_backend.bind(self.gpa, self, vt);
 }
 
-/// Opens the NDP socket + spawns the bun child (lifted from the old
-/// `Runtime.start`, minus the unused GTK `app` param). `nd_init(void)` takes
+/// Opens the NDP socket + spawns the bun child. `nd_init(void)` takes
 /// no parameters (the frozen ABI shape), so the environment the child spawn
 /// needs (`ND_SCRIPT`/`ND_DEV`/`XDG_RUNTIME_DIR`/PATH for `bun` lookup) comes
 /// from the core reading its own process environment via `currentEnviron`,
@@ -148,9 +143,9 @@ pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
 
     // `Tree.app` rides opaquely to `backend.createWidget`'s first argument;
     // the abi backend discards it entirely (the embedder's create vtable
-    // call carries no app handle — M6a-D2's structural ops are widget/kind/
-    // props only), so any non-null placeholder satisfies the `orelse
-    // continue` early-exit in `Tree.apply`.
+    // call carries no app handle — structural ops are widget/kind/props
+    // only), so any non-null placeholder satisfies the `orelse continue`
+    // early-exit in `Tree.apply`.
     self.tree = Tree.init(self.gpa, self);
 
     const rt = Runtime.start(self.gpa, self, &self.tree, parent_env, real_environ, self.backend_name) catch return -1;
@@ -158,7 +153,7 @@ pub export fn nd_start_runtime(self: *NdContext) callconv(.c) i32 {
     return 0;
 }
 
-/// Opens the automation socket + thread (lifted from `automation.Server.start`).
+/// Opens the automation socket + thread.
 pub export fn nd_start_automation(self: *NdContext) callconv(.c) i32 {
     const rt = self.runtime orelse return -1;
     const real_environ = currentEnviron();
@@ -178,7 +173,7 @@ pub export fn nd_set_backend_name(self: *NdContext, name: [*:0]const u8) callcon
     self.backend_name = self.gpa.dupe(u8, std.mem.span(name)) catch return;
 }
 
-/// Installs a per-window capability grants manifest (D12). Call before
+/// Installs a per-window capability grants manifest. Call before
 /// `nd_start_runtime` so `runtime.zig`'s commit gate sees it from the first
 /// dispatch. A malformed manifest falls back to the safe default (core UI
 /// ops granted, plugin ops denied) rather than failing the call.
@@ -193,7 +188,7 @@ pub export fn nd_set_acl(self: *NdContext, grants_json: [*:0]const u8) callconv(
     self.acl = a;
 }
 
-/// Loads a native `nd_plugin_v1` shared library (opt-in, D12). Lazily
+/// Loads a native `nd_plugin_v1` shared library (opt-in). Lazily
 /// installs the default-deny ACL if the embedder never called `nd_set_acl`,
 /// so a plugin loaded with no manifest still gets capability-checked rather
 /// than running unchecked.
@@ -229,8 +224,8 @@ pub export fn nd_load_plugins_from_env(self: *NdContext) callconv(.c) void {
     }
 }
 
-/// `Manager.emit` sink for plugin-raised events (registry->emit_event, ABI
-/// v3): wraps the plugin's payload as a `nativeEvent`. The parse doubles as
+/// `Manager.emit` sink for plugin-raised events (registry->emit_event):
+/// wraps the plugin's payload as a `nativeEvent`. The parse doubles as
 /// validation — a malformed payload is dropped with a diagnostic rather than
 /// spliced into the frame. `parsed` outlives emitEvent (the frame serializes
 /// `data` out of the parse arena), so the deinit must stay a defer.
@@ -244,11 +239,11 @@ fn pluginEmit(ctx: ?*anyopaque, node_id: u32, name: []const u8, payload_json: []
     Runtime.emitEvent(node_id, "nativeEvent", .{ .nativeName = name, .data = parsed.value });
 }
 
-/// Embedder -> core event channel (M6a-D2). `name == "restart"` is a
-/// reserved sentinel (M6a Task 3): the crash-overlay Restart button calls
-/// this with `node_id=0` instead of a normal NDP event (the child is dead —
-/// there is nothing to forward a real event to), so it routes to
-/// `Runtime.restart` instead of `Runtime.emitEvent`.
+/// Embedder -> core event channel. `name == "restart"` is a reserved
+/// sentinel: the crash-overlay Restart button calls this with `node_id=0`
+/// instead of a normal NDP event (the child is dead; there is nothing to
+/// forward a real event to), so it routes to `Runtime.restart` instead of
+/// `Runtime.emitEvent`.
 pub export fn nd_emit_event(_: *NdContext, node_id: u32, name: [*:0]const u8, payload_json: [*:0]const u8) callconv(.c) void {
     const name_s = std.mem.span(name);
     if (std.mem.eql(u8, name_s, "restart")) {
@@ -301,7 +296,7 @@ pub export fn nd_shutdown(self: *NdContext) callconv(.c) void {
 }
 
 /// Frees a string the embedder allocated and handed back across the ABI
-/// (e.g. `semantic_action`'s `result_json_out`/`err_json_out`, M6a Task 4).
+/// (e.g. `semantic_action`'s `result_json_out`/`err_json_out`).
 /// The convention is the portable-C one: the embedder allocates with
 /// `malloc`/`strdup`, the core frees with `free` — this is what makes
 /// `nd_free` callable uniformly from a Zig, C, or Swift embedder.

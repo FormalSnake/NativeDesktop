@@ -1,16 +1,12 @@
-# Starlight Starter Kit: Basics
+# NativeDesktop docs site
 
 [![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
 
-```
-bun create astro@latest -- --template starlight
-```
+This directory contains the NativeDesktop documentation site, built with Astro and Starlight.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Project structure
 
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
+The site follows the standard Astro + Starlight layout:
 
 ```
 .
@@ -31,9 +27,9 @@ Images can be added to `src/assets/` and embedded in Markdown with a relative li
 
 Static assets, like favicons, can be placed in the `public/` directory.
 
-## 🧞 Commands
+## Commands
 
-All commands are run from the root of the project, from a terminal:
+Run these from this directory:
 
 | Command                   | Action                                           |
 | :------------------------ | :----------------------------------------------- |
@@ -44,6 +40,6 @@ All commands are run from the root of the project, from a terminal:
 | `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
 | `bun astro -- --help` | Get help using the Astro CLI                     |
 
-## 👀 Want to learn more?
+## Learn more
 
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+See [Starlight's docs](https://starlight.astro.build/), [the Astro documentation](https://docs.astro.build), or the [Astro Discord server](https://astro.build/chat).

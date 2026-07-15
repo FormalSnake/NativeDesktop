@@ -883,13 +883,6 @@ pub fn create(
             }
         }
         return button.as(gtk.Widget);
-    } else if (std.mem.eql(u8, kind, "Terminal")) {
-        const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
-        const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
-        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
-        const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
-        const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
-        return ndterm_gtk.create(command, cwd, font_size, cols, rows);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
         const editable = entry.as(gtk.Editable);
@@ -1254,6 +1247,13 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "ShareButton")) {
         // ND_PLATFORM_NOOP(ShareButton): not available on this platform — invisible empty box by design.
         return gtk.Box.new(.vertical, 0).as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Terminal")) {
+        const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
+        const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
+        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
+        const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
+        const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
+        return ndterm_gtk.create(command, cwd, font_size, cols, rows);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;

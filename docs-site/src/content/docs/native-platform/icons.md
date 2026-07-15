@@ -4,15 +4,16 @@ description: freedesktop icon names are canonical; macOS maps a known subset to 
 ---
 
 `Button.iconName` and `MenuItem.iconName` (see the [Widget Reference](/components/widget-reference/))
-both take a **freedesktop icon name** — the same vocabulary GTK/GNOME apps use — as the canonical,
+both take a **freedesktop icon name**, the same vocabulary GTK/GNOME apps use, as the canonical
 cross-platform identifier. The mapping below is shared by both widgets; see
 [Menu Bar](/native-platform/menu-bar/) for why `MenuItem.iconName` renders on macOS but is
 intentionally invisible on GNOME.
 
 ## Linux: native, direct
 
-On GTK, a freedesktop name resolves directly through the system icon theme — `gtk.Button.setIconName`
-(icon-only) or an `adw.ButtonContent` pairing an icon with a label, with no translation step.
+On GTK, a freedesktop name resolves directly through the system icon theme: `gtk.Button.setIconName`
+for icon-only buttons, or an `adw.ButtonContent` that pairs an icon with a label. There is no
+translation step.
 
 ## macOS: mapped to SF Symbols, with pass-through
 
@@ -43,10 +44,10 @@ Symbol equivalent:
 | `edit-cut` | `scissors` |
 | `edit-paste` | `doc.on.clipboard` |
 
-Only the names actually used by the framework's own examples are mapped today — this table grows as
-new names are needed, not speculatively ahead of use.
+Only the names the framework's own examples use are mapped today. The table grows as new names are
+needed.
 
-If `iconName` isn't in the table, it's passed through **verbatim** as an SF Symbol name — so a direct
-SF Symbol name (e.g. `"gearshape"`) works on macOS without needing an entry here. If neither the
+If `iconName` isn't in the table, it passes through verbatim as an SF Symbol name, so a direct
+SF Symbol name (e.g. `"gearshape"`) works on macOS without an entry here. If neither the
 mapping nor the direct name resolves to a real symbol, the macOS backend falls back to title-only
-and prints an `ND_WARN unknown iconName` diagnostic rather than failing silently.
+and prints an `ND_WARN unknown iconName` diagnostic instead of failing silently.

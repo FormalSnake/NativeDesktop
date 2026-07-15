@@ -1,10 +1,10 @@
-// Capability ACL model (M10 T6): per-window, namespaced permission grants.
+// Capability ACL model: per-window, namespaced permission grants.
 //
 // Default policy grants the core UI ops (`core:commit`, `core:window.create`)
 // for every window so existing demos never break; everything else
 // (`plugin:*` and any other explicitly-namespaced privileged permission)
-// is default-deny. A grants manifest (JSON) can extend — never shrink — the
-// default via per-window or `defaultWindow` (applies to all windows)
+// is default-deny. A grants manifest (JSON) can extend the default, never
+// shrink it, via per-window or `defaultWindow` (applies to all windows)
 // permission sets. `window: 0` is treated the same as `defaultWindow`: the
 // current single-window demos use window 0, so grants written against it
 // must apply everywhere.
@@ -85,8 +85,8 @@ pub const Acl = struct {
 
     /// True if `permission` is granted for `window_id`: either via the
     /// default set (applies to every window), the window's own explicit
-    /// grants, or — since window 0 grants are the common "all windows" case
-    /// for single-window demos — window 0's explicit grants.
+    /// grants, or window 0's explicit grants (window 0 is the common
+    /// "all windows" case for single-window demos).
     pub fn isAllowed(self: *Acl, window_id: u32, permission: []const u8) bool {
         if (self.default_perms.contains(permission)) return true;
         if (self.per_window.get(window_id)) |set| {

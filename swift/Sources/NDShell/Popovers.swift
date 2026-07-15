@@ -1,8 +1,8 @@
 import AppKit
 
-/// Popover (M15): the node's tracked handle is a host-only NSView (the
-/// NDMenuNodeView idiom — never enters the hierarchy); the real NSPopover is
-/// lazy, `.transient`, and anchors on the node's TREE PARENT via the
+/// Popover: the node's tracked handle is a host-only NSView (the
+/// NDMenuNodeView idiom; it never enters the hierarchy); the real NSPopover
+/// is lazy, `.transient`, and anchors on the node's TREE PARENT via the
 /// cross-cutting structural guard (`ndPopoverStructuralAttach`), exactly
 /// mirroring the GTK side's gtk_widget_set_parent guard. `open` is a
 /// controlled bool: click-outside/Esc dismissal syncs back through

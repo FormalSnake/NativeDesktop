@@ -1,9 +1,9 @@
-// Host-rendered crash overlay (M8-D5). UI-thread only: builds a GtkOverlay
+// Host-rendered crash overlay. UI-thread only: builds a GtkOverlay
 // wrapping the window's current child, floats a chrome panel ("Runtime
 // crashed", the error text, and — dev-mode only — a Restart button) on top,
-// and registers each chrome widget in the tree under the reserved 0xFFFF
-// generation so `getTree` exposes the crash to agents (M8-D5 rationale: an
-// untracked overlay would leave the automation tree blind exactly when an
+// and registers each chrome widget in the tree under the reserved 0xFF
+// generation so `getTree` exposes the crash to agents (an untracked
+// overlay would leave the automation tree blind exactly when an
 // agent most needs to see the failure).
 const std = @import("std");
 const gtk = @import("gtk");
@@ -39,8 +39,8 @@ fn overlayId() u32 {
 /// `gtk.Overlay.removeOverlay` — the dedicated teardown for `addOverlay`'d
 /// children (a raw `Widget.unparent()` leaves GtkOverlay's internal
 /// overlay-child bookkeeping holding a stale pointer, which crashed with a
-/// `GTK_IS_WIDGET` assertion the next time GTK measured/allocated the overlay —
-/// verified this session). GTK's normal container teardown then destroys the
+/// `GTK_IS_WIDGET` assertion the next time GTK measured/allocated the
+/// overlay). GTK's normal container teardown then destroys the
 /// box's children for us; this module must NOT call any GTK function on those
 /// children afterward (they are dangling pointers once the box is removed).
 const OverlayState = struct {
@@ -52,9 +52,9 @@ const OverlayState = struct {
 var states: std.ArrayListUnmanaged(OverlayState) = .empty;
 
 /// Registers a host-created overlay widget in the tree under the reserved
-/// 0xFFFF generation (parent 0 — overlay chrome is flat, not nested in the
+/// 0xFF generation (parent 0 — overlay chrome is flat, not nested in the
 /// automation tree's parent/child sense; `getTree` only needs each node's
-/// own type/testID/text, matched by M8-D5).
+/// own type/testID/text).
 fn registerOverlayNode(tree: *Tree, widget: *gtk.Widget, widget_type: []const u8, test_id: []const u8, text: ?[]const u8) void {
     const id = overlayId();
     tree.nodes.put(tree.gpa, id, widget) catch return;
@@ -77,7 +77,7 @@ fn onRestartClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
 /// Paints a crash panel on EVERY open window (multi-window): a JS crash is one
 /// Bun process dying, so all windows lose their live UI simultaneously. Clears
 /// any existing overlays first so a second crash message replaces rather than
-/// stacks. `dev` gates the Restart button (M8-D4: Restart/respawn are dev-only).
+/// stacks. `dev` gates the Restart button (Restart/respawn are dev-only).
 pub fn showAll(tree: *Tree, app: *gtk.Application, message: []const u8, dev: bool, restart: RestartFn) void {
     clearAll(tree);
     var node: ?*glib.List = gtk.Application.getWindows(app);
@@ -134,7 +134,7 @@ fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, restar
     }) catch {};
 }
 
-/// Drops every 0xFFFF-generation node's tree bookkeeping (the overlay chrome
+/// Drops every 0xFF-generation node's tree bookkeeping (the overlay chrome
 /// across all windows), removes each window's panel box from its `GtkOverlay`
 /// via the dedicated `removeOverlay` teardown (see `OverlayState`'s doc comment
 /// for why a raw `unparent()` is wrong here), and restores every window's

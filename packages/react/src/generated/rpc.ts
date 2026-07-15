@@ -19,7 +19,7 @@ export interface RowJson {
   iconName: string | null;
 }
 
-/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. */
+/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. */
 export interface JsonNode {
   ref: number;
   type: string;
@@ -30,6 +30,10 @@ export interface JsonNode {
   children: JsonNode[];
   itemCount: number | null;
   rows: RowJson[] | null;
+  role: string | null;
+  enabled: boolean;
+  focused: boolean;
+  value: unknown | null;
 }
 
 export interface GetTreeResult {
@@ -76,6 +80,29 @@ export interface WaitCondition {
   refVisible?: number;
 }
 
+export interface PointerResult {
+  dispatched: boolean;
+}
+
+/** fromX/fromY/toX/toY are the resolved endpoints in logical-window-topleft coordinates. */
+export interface DragResult {
+  dispatched: boolean;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  steps: number;
+}
+
+export interface KeysResult {
+  dispatched: boolean;
+}
+
+/** Full tree snapshot with stable refs, testIDs, text, logical geometry, and accessibility state (role/enabled/focused/value). window (if given) must be a Window node ref and scopes the snapshot to that window's subtree; absent, the root/first window is used and other windows' nodes attach as orphans. */
+export interface GetTreeParams {
+  window?: number;
+}
+
 /** In-process render of the window to a PNG at the given absolute path; window (if given) must match the root ref. */
 export interface ScreenshotParams {
   path: string;
@@ -112,14 +139,65 @@ export interface ScrollParams {
   dy?: number;
 }
 
+/** Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003). */
+export interface DoubleClickParams {
+  ref: number;
+}
+
+/** Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys "escape"). Unsupported on GTK (-32003). */
+export interface RightClickParams {
+  ref: number;
+}
+
+/** Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003). */
+export interface HoverParams {
+  ref: number;
+}
+
+/** Low-level single pointer phase (down|move|up) at logical-window-topleft coordinates in the target window (default: root window). button is left|right (default left). Caution: a lone down on a tracking control (slider, button) enters the control's mouse-tracking loop until an up arrives — prefer drag for press-move-release sequences. Unsupported on GTK (-32003). */
+export interface PointerParams {
+  phase: string;
+  x: number;
+  y: number;
+  button?: string;
+  clickCount?: number;
+  window?: number;
+}
+
+/** Press-move-release gesture. Endpoints are widget refs (their centers; fromRef/toRef must share a window) or explicit coordinates (fromX/fromY/toX/toY in the target window, default root). The full down/dragged.../up sequence is posted as one batch so native mouse-tracking loops (slider thumbs, split dividers) consume it like a real drag. Unsupported on GTK (-32003). */
+export interface DragParams {
+  fromRef?: number;
+  toRef?: number;
+  fromX?: number;
+  fromY?: number;
+  toX?: number;
+  toY?: number;
+  steps?: number;
+  durationMs?: number;
+  button?: string;
+  window?: number;
+}
+
+/** Keyboard synthesis into the target window (default: root window). A chord spec like "cmd+shift+n" / "escape" / "tab" presses one combination (driving menu key equivalents); a plain multi-character string like "hello" types each character into the focused widget. Unsupported on GTK (-32003). */
+export interface KeysParams {
+  keys: string;
+  window?: number;
+}
+
 export interface RpcMethods {
-  getTree: { params: undefined; result: GetTreeResult };
+  getTree: { params: GetTreeParams; result: GetTreeResult };
   screenshot: { params: ScreenshotParams; result: ScreenshotResult };
   click: { params: ClickParams; result: ClickResult };
   waitFor: { params: WaitForParams; result: WaitForResult };
   setValue: { params: SetValueParams; result: SetValueResult };
   type: { params: TypeParams; result: TypeResult };
   scroll: { params: ScrollParams; result: ScrollResult };
+  doubleClick: { params: DoubleClickParams; result: ClickResult };
+  rightClick: { params: RightClickParams; result: ClickResult };
+  hover: { params: HoverParams; result: ClickResult };
+  pointer: { params: PointerParams; result: PointerResult };
+  drag: { params: DragParams; result: DragResult };
+  keys: { params: KeysParams; result: KeysResult };
 }
 export type RpcMethodName = keyof RpcMethods;
 export type RpcParams<M extends RpcMethodName> = RpcMethods[M]["params"];
@@ -130,6 +208,8 @@ export const RPC_ERRORS = {
   notActionable: { code: -32001, message: "not actionable" },
   /** data: {timeoutMs} */
   waitForTimeout: { code: -32002, message: "waitFor timeout" },
+  /** pointer/drag/keys/doubleClick/rightClick/hover on a backend without synthetic input (GTK4 removed app-constructible events) */
+  inputUnsupported: { code: -32003, message: "input synthesis unsupported on this backend" },
   methodNotFound: { code: -32601, message: "method not found" },
   /** data: {ref} where applicable; message may carry the specific missing/invalid param */
   invalidParams: { code: -32602, message: "invalid params" },

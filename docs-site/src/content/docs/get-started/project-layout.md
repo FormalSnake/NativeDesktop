@@ -3,8 +3,8 @@ title: Project Layout
 description: Where the widget schema, generated bindings, core, and app code live in the NativeDesktop repository.
 ---
 
-NativeDesktop is a monorepo. The pieces that matter for building an app — or for building the
-framework itself — are:
+NativeDesktop is a monorepo. The pieces that matter for building an app, or for building the
+framework itself, are:
 
 ## `schema/widgets.json` — the single source of truth
 
@@ -17,8 +17,8 @@ a widget's shape is hand-written anywhere else; `tools/codegen.ts` reads this fi
 - Swift arms in the AppKit backend under `swift/Sources/NDShell/` (the generated `Widgets.swift`).
 - The generated docs themselves: `docs/widgets.md` and `docs/styling.md`.
 
-If you add or change a widget, you change `schema/widgets.json` and regenerate — never a
-hand-written binding.
+If you add or change a widget, you change `schema/widgets.json` and regenerate. You never write a
+binding by hand.
 
 ## `packages/react` — the React renderer
 
@@ -33,8 +33,8 @@ the linked package.
 `nd dev [entry]` / `nd build` (`packages/nd`) wrap the raw `ND_DEV=1 ND_SCRIPT=<entry>
 <host-binary>` invocation and the babel/react-compiler pre-pass, respectively — see
 [Quick Start](/get-started/quick-start/). `@nativedesktop/host`'s `resolveHostBinary()` finds the
-prebuilt `nd-hello` for the current platform under `bin/<os>-<arch>/`; there's no CI binary matrix
-yet, so today that binary comes from a local `zig build` copied in by hand.
+prebuilt `nd-hello` for the current platform under `bin/<os>-<arch>/`; supply that binary by
+running `zig build` locally and copying the result in.
 
 ## `src/` — the Zig core
 
@@ -55,7 +55,7 @@ generated `Widgets.swift`.
 
 ## `examples/`
 
-Real, driven apps used as framework-suitability stress tests, not toy snippets:
+Real, driven apps that stress-test the framework's suitability:
 
 - `examples/counter/` — the minimal example: state, a click handler, `Suspense`, and a `useMemo`'d
   interval, in one `<window>`.

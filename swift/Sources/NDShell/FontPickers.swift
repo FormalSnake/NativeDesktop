@@ -1,11 +1,11 @@
 import AppKit
 
-/// FontPicker (M15): a bordered NSButton showing the current font, opening
+/// FontPicker: a bordered NSButton showing the current font, opening
 /// the ONE shared NSFontPanel (Apple convention: one panel per app). The
 /// selection arrives through NSFontManager -> `changeFont(_:)`; the
 /// FontPickerCoordinator singleton is the font manager's target and tracks
-/// which node opened the panel — the process-wide-singleton wiring the spec
-/// calls out (only one FontPicker receives live updates at a time).
+/// which node opened the panel, so only one FontPicker receives live
+/// updates at a time.
 ///
 /// Wire value is canonical Pango font description syntax
 /// ("Family [Bold] [Italic] size") so GTK needs zero conversion; the NSFont

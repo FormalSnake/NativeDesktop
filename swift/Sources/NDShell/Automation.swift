@@ -3,20 +3,24 @@ import CNd
 import Foundation
 
 // The AppKit peer of src/gtk/backend.zig's vtNodeVisible/vtNodeBounds/
-// vtSnapshot/vtSemanticAction (Task 5). node_visible/node_bounds/snapshot/
+// vtSnapshot/vtSemanticAction. node_visible/node_bounds/snapshot/
 // semantic_action fill the automation half of the vtable; the socket/
-// framing/waitFor/SLO machinery is core-owned (M6a-D3) and starts answering
+// framing/waitFor/SLO machinery is core-owned and starts answering
 // the moment these are wired into buildVTable().
 
 // MARK: - node_visible / node_bounds
 
-/// `visible` folds "mapped" into the same contract GTK's vtNodeVisible uses
-/// (M6a Task 4 v1 decision): hidden OR not in a window == not visible.
+/// `visible` folds "mapped" into the same contract GTK's vtNodeVisible
+/// uses: hidden OR not in a window == not visible.
 @MainActor func ndNodeVisible(_ view: NSView) -> Bool {
-    // M13 menu nodes are host-only NDMenuNodeViews (never in a window); treat
+    // Menu nodes are host-only NDMenuNodeViews (never in a window); treat
     // them as actionable so a MenuItem ref survives checkActionable and reaches
     // semanticClick.
     if ndIsMenuNode(view) { return true }
+    // A Window node's handle is orphaned (.window == nil) once a SplitView
+    // takes over as contentViewController — resolve through the create-time
+    // registry so a chrome window's root doesn't report invisible.
+    if let win = ndContentToWindow[ObjectIdentifier(view)] { return win.isVisible }
     return !view.isHidden && view.window != nil
 }
 
@@ -25,19 +29,30 @@ import Foundation
 /// `FlippedView`, so this conversion lands directly in getTree's
 /// `logical-window-topleft` contract, no extra flip needed).
 ///
-/// NSStackView-arranged children (M6b-D3) size themselves via Auto Layout,
+/// NSStackView-arranged children size themselves via Auto Layout,
 /// not manual `setFrame` — their `.frame` is only valid after a layout pass
 /// runs. `layoutSubtreeIfNeeded()` on the content view forces that pass
 /// before we read anything, otherwise stack-arranged widgets (the counter's
 /// label/button) report all-zero geometry.
 @MainActor func ndNodeBounds(_ view: NSView, _ out: inout nd_rect) -> Bool {
-    // M13 menu nodes have no geometry; report a nominal non-degenerate rect so
+    // Menu nodes have no geometry; report a nominal non-degenerate rect so
     // checkActionable (w>0 ∧ h>0) admits a MenuItem ref for semanticClick.
     if ndIsMenuNode(view) {
         out = nd_rect(x: 0, y: 0, w: 1, h: 1)
         return true
     }
-    // M11 Phase C (Risk 1 + Risk 2): resolve the LIVE, flipped content — see
+    // A Window node's handle is its create-time content FlippedView; once a
+    // SplitView takes over as contentViewController that view is orphaned
+    // (.window == nil) and convert() below has no common window to route
+    // through, returning garbage. Window handles are identified by the
+    // create-time registry and report their window's LIVE content bounds.
+    if let win = ndContentToWindow[ObjectIdentifier(view)] {
+        guard let live = ndLiveContentView(ofWindow: win) else { return false }
+        live.layoutSubtreeIfNeeded()
+        out = nd_rect(x: 0, y: 0, w: Int32(live.bounds.width), h: Int32(live.bounds.height))
+        return true
+    }
+    // Resolve the LIVE, flipped content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
     // Multi-window: convert into the widget's OWN window's content view, not the
     // single global one — a widget in window B must report bounds in window B's
@@ -49,18 +64,18 @@ import Foundation
     return true
 }
 
-// MARK: - snapshot: the fidelity ladder (M6b-D4)
+// MARK: - snapshot: the fidelity ladder
 
 /// `non-blank ≡ the PNG bitmap has >1 distinct pixel colour` (the exact
-/// acceptance gate, M6b-D4). Un-premultiplies RGB by alpha before
+/// acceptance gate). Un-premultiplies RGB by alpha before
 /// comparing, and skips near-transparent pixels entirely. Two failure modes
 /// were measured directly against the real counter app and both would slip
 /// past a naive "any byte differs" check:
 ///  - `NSBitmapImageRep`'s buffer is PREMULTIPLIED alpha: an antialiased
 ///    edge pixel of the same true white background paints as e.g. RGB
 ///    `(151,151,151)` at alpha 151 (151 = 255 * 151/255) versus RGB
-///    `(249,249,249)` at alpha 249 elsewhere — same true colour, different
-///    stored bytes — so comparing raw stored RGB treats window-shape
+///    `(249,249,249)` at alpha 249 elsewhere (same true colour, different
+///    stored bytes), so comparing raw stored RGB treats window-shape
 ///    antialiasing as "content" and false-passes a blank rung. Dividing
 ///    each component by `alpha/255` recovers the true (unpremultiplied)
 ///    colour, which is flat white across every edge pixel, correctly
@@ -123,7 +138,7 @@ private extension Double {
 /// contentView's own draw pass. Under dark mode the controls therefore
 /// render as white-on-transparent, which flattens to white-on-white in any
 /// PNG viewer AND collapses to a single un-premultiplied color under the
-/// blank check. (The M6a probe's "blank cacheDisplay" result was exactly
+/// blank check. (An earlier probe's "blank cacheDisplay" result was exactly
 /// this illusion: the alpha channel of those PNGs contained a pixel-perfect
 /// render the whole time.) Composite every captured rep over the window's
 /// effective background color before both the blank check and the write.
@@ -255,11 +270,10 @@ private extension Double {
 /// prompt on a stock, ungranted macOS runner). Tries each rung in order,
 /// stops at the first non-blank PNG; logs which rung won to stderr as
 /// `ND_SNAPSHOT_RUNG rung=N` (the frozen ABI's `snapshot` returns only a
-/// bool — no room in the C signature for a rung field — so the drive log is
-/// the record of which path rendered, per the plan's fallback instruction).
+/// bool, with no room in the C signature for a rung field, so the drive log
+/// is the record of which path rendered).
 ///
-/// RESOLVED RISK (was "labels/buttons render blank"): the controls rendered
-/// correctly into EVERY rung all along — but as dark-mode white-on-
+/// The controls render correctly into EVERY rung — but as dark-mode white-on-
 /// TRANSPARENT pixels, because the opaque window background belongs to the
 /// window server, not the contentView's draw pass. Both the human eye (on a
 /// white viewer background) and the un-premultiplying blank check read that
@@ -267,7 +281,7 @@ private extension Double {
 /// effective background color before the check + write
 /// (`flattenOntoWindowBackground`). Rung 1 (`cacheDisplay`) wins outright.
 @MainActor func ndSnapshot(_ pngPath: String) -> Bool {
-    // M11 Phase C (Risk 1): resolve the LIVE content — see
+    // Resolve the LIVE content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
     // Multi-window: the target window selected by the preceding `resolve_window`
     // (automation.zig's selectSnapshotWindow) wins; consumed one-shot so a later
@@ -356,7 +370,7 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// `Tree.meta`), so most kinds are read back structurally from the concrete
 /// AppKit class every `ndCreate` arm constructs; Checkbox/Radio/Button
 /// (all plain `NSButton`) and SourceList (an NSTableView-backed
-/// NSScrollView, same concrete shape ListView constructs — M11 Wave 2)
+/// NSScrollView, same concrete shape ListView constructs)
 /// consult `buttonKindOverride` instead.
 @MainActor private func widgetKind(_ view: NSView) -> String {
     if view is NSTextView { return "TextArea" }
@@ -403,18 +417,18 @@ private func escapeJSONString(_ s: String) -> String {
 
 @MainActor private func semanticClick(_ view: NSView, _ nodeID: UInt32,
                             _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
-    // M13: a menu node dispatches its item (custom onSelect fires "selected";
+    // A menu node dispatches its item (custom onSelect fires "selected";
     // a disabled item is a no-op, so onSelect does not fire — state unchanged).
     if ndIsMenuNode(view) {
         _ = ndMenuSemanticClick(view, nodeID)
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
-    // SourceList (M11 Wave 2): "click" activates the currently-selected row
+    // SourceList: "click" activates the currently-selected row
     // (there's no separate NSControl to `performClick` — the tracked handle
     // is the NSScrollView). No-op (still reports dispatched) if nothing is
-    // selected, unlike GTK's fallback-to-row-0 (deliberate deviation: v1
-    // scope, no test currently exercises the no-selection case).
+    // selected, unlike GTK's fallback-to-row-0 (a deliberate deviation; no
+    // test currently exercises the no-selection case).
     if widgetKind(view) == "SourceList", let scroll = view as? NSScrollView,
        let tableView = scroll.documentView as? NSTableView, tableView.selectedRow >= 0 {
         EventDispatcher.shared.fireIndexNamed(scroll, name: "rowActivated", index: tableView.selectedRow)
@@ -453,7 +467,7 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         guard let text = value as? String, let scroll = view as? NSScrollView,
               let textView = scroll.documentView as? NSTextView else { return invalidValue(errOut, nodeID) }
         textView.string = text
-        EventDispatcher.shared.fireChanged(scroll, text: text) // wired key is the NSScrollView (M6b-D2)
+        EventDispatcher.shared.fireChanged(scroll, text: text) // wired key is the NSScrollView
     case "Checkbox", "Radio":
         guard let boolValue = value as? Bool, let button = view as? NSButton else { return invalidValue(errOut, nodeID) }
         button.state = boolValue ? .on : .off
@@ -530,8 +544,66 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     return 0
 }
 
-/// `semantic_action` — dispatch on `action`, peer of GTK's `vtSemanticAction`
-/// (M6b-D5). Returns 0 ok / -32601 unknown action / -32602 invalid value.
+/// `a11y` — the live per-node accessibility probe behind getTree's
+/// enabled/focused/value fields. Value reads mirror
+/// `semanticSetValue`'s kind dispatch so both sides of a round-trip agree
+/// on what a widget's value is. Menu nodes answer -32601 (defaults).
+@MainActor private func semanticA11y(_ view: NSView, _ nodeID: UInt32,
+                           _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                           _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    if ndIsMenuNode(view) {
+        setErrRaw(errOut, nodeID)
+        return -32601
+    }
+    var enabled = true
+    if let control = view as? NSControl { enabled = control.isEnabled }
+    let win = view.window ?? ndWindow(for: view)
+    var focused = false
+    if let fr = win?.firstResponder {
+        if let frv = fr as? NSView { focused = (frv === view) || frv.isDescendant(of: view) }
+        // An editing NSTextField's first responder is the shared field
+        // editor (hosted by the window, not the field) — currentEditor is
+        // the reliable focus signal for text fields.
+        if !focused, let field = view as? NSTextField, field.currentEditor() != nil { focused = true }
+    }
+
+    var valueJson = "null"
+    switch widgetKind(view) {
+    case "TextInput", "SearchInput":
+        if let field = view as? NSTextField { valueJson = "\"\(escapeJSONString(field.stringValue))\"" }
+    case "TextArea":
+        if let scroll = view as? NSScrollView, let tv = scroll.documentView as? NSTextView {
+            valueJson = "\"\(escapeJSONString(tv.string))\""
+        }
+    case "Checkbox", "Radio":
+        if let button = view as? NSButton { valueJson = button.state == .on ? "true" : "false" }
+    case "Switch":
+        if let toggle = view as? NSSwitch { valueJson = toggle.state == .on ? "true" : "false" }
+    case "Slider":
+        if let slider = view as? NSSlider { valueJson = "\(slider.doubleValue)" }
+    case "Select":
+        if let pop = view as? NSPopUpButton { valueJson = "\(pop.indexOfSelectedItem)" }
+    case "SourceList", "Table", "TreeView":
+        if let scroll = view as? NSScrollView, let tableView = scroll.documentView as? NSTableView,
+           tableView.selectedRow >= 0 {
+            valueJson = "\(tableView.selectedRow)"
+        }
+    default:
+        break
+    }
+    setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":\(focused),\"value\":\(valueJson)}")
+    return 0
+}
+
+private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
+    return (args?[key] as? NSNumber)?.doubleValue
+}
+
+/// `semantic_action` — dispatch on `action`, peer of GTK's
+/// `vtSemanticAction`. Returns 0 ok / -32601 unknown action / -32602 invalid
+/// value. The input-synthesis arms (pointer/drag/keys) arrive with a WINDOW
+/// node's handle and post real NSEvents (Input.swift); doubleClick/
+/// rightClick/hover target a widget ref's center.
 @MainActor func ndSemanticAction(_ view: NSView, _ nodeID: UInt32, _ action: String, _ argJson: String,
                        _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
                        _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
@@ -545,6 +617,51 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         return semanticType(view, nodeID, args, resultOut, errOut)
     case "scroll":
         return semanticScroll(view, nodeID, args, resultOut)
+    case "a11y":
+        return semanticA11y(view, nodeID, resultOut, errOut)
+    case "pointer":
+        guard let phase = args["phase"] as? String, let x = numArg(args, "x"), let y = numArg(args, "y"),
+              ndPostPointerPhase(view, phase: phase, x: x, y: y,
+                                 button: (args["button"] as? String) ?? "left",
+                                 clickCount: (args["clickCount"] as? NSNumber)?.intValue ?? 1)
+        else { return invalidValue(errOut, nodeID) }
+        setResultRaw(resultOut, "{\"dispatched\":true}")
+        return 0
+    case "drag":
+        guard let fromX = numArg(args, "fromX"), let fromY = numArg(args, "fromY"),
+              let toX = numArg(args, "toX"), let toY = numArg(args, "toY") else {
+            return invalidValue(errOut, nodeID)
+        }
+        let steps = (args["steps"] as? NSNumber)?.intValue ?? 12
+        guard ndPostDrag(view, fromX: fromX, fromY: fromY, toX: toX, toY: toY,
+                         steps: steps,
+                         durationMs: (args["durationMs"] as? NSNumber)?.intValue ?? 160,
+                         button: (args["button"] as? String) ?? "left")
+        else { return invalidValue(errOut, nodeID) }
+        setResultRaw(resultOut, "{\"dispatched\":true,\"fromX\":\(fromX),\"fromY\":\(fromY),\"toX\":\(toX),\"toY\":\(toY),\"steps\":\(steps)}")
+        return 0
+    case "keys":
+        guard let spec = args["keys"] as? String, ndPostKeys(view, spec: spec) else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"dispatched\":true}")
+        return 0
+    case "doubleClick":
+        guard ndPostClicksAtCenter(view, button: "left", clicks: 2, dismissAfter: false) else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    case "rightClick":
+        guard ndPostClicksAtCenter(view, button: "right", clicks: 1, dismissAfter: true) else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    case "hover":
+        guard ndPostHoverAtCenter(view) else { return invalidValue(errOut, nodeID) }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
     default:
         setErrRaw(errOut, nodeID)
         return -32601

@@ -2,7 +2,7 @@
 // tools/package-linux.ts — `nd package linux`: assembles an AppDir for the
 // gallery example, packs it into an AppImage (falling back to a squashfs
 // image if appimagetool isn't available), then produces a signed full-archive
-// update payload (M9-D2/D4).
+// update payload.
 import { $ } from "bun";
 import { mkdirSync, cpSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { buildAndSignManifest, ensureEphemeralKey } from "./manifest.ts";
@@ -61,7 +61,7 @@ export async function packageLinux() {
     .catch(async () => { await $`mksquashfs ${appdir} ${appImage} -root-owned -noappend`.quiet(); });
   console.error(`ND_PACKAGE_APPIMAGE ${appImage}`);
 
-  // Full-archive update payload (.tar.zst), signed (M9-D2).
+  // Full-archive update payload (.tar.zst), signed.
   const archive = `${updDir}/gallery-${VERSION}-linux.tar.zst`;
   await $`tar -C ${dist} -cf - AppDir | zstd -q -o ${archive}`.quiet();
   const { sec, pub } = await ensureEphemeralKey(updDir);

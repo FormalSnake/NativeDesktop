@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// StatusPage (M15): SwiftUI `ContentUnavailableView` — the exact native
-/// empty-state primitive (macOS 14+) — hosted in an NSHostingView, with the
+/// StatusPage: SwiftUI `ContentUnavailableView`, the native empty-state
+/// primitive (macOS 14+), hosted in an NSHostingView, with the
 /// React children (action buttons) mounted into a plain horizontal
 /// NSStackView BELOW it rather than inside the SwiftUI `actions` builder:
 /// the children are live NSViews the reconciler owns, and re-wrapping them in

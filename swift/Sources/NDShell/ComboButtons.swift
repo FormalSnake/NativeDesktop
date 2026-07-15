@@ -1,10 +1,10 @@
 import AppKit
 
-/// MenuButton + SplitButton (M15): ONE native class covers both —
-/// NSComboButton (macOS 13+), `.unified` for the menu-only MenuButton and
-/// `.split` for SplitButton (separate arrow segment; the main segment's
-/// target/action is wired to `clicked` by the ordinary EventDispatcher path,
-/// since NSComboButton is an NSControl). Menus are built from Menu/MenuItem
+/// MenuButton + SplitButton: one NSComboButton (macOS 13+) class covers
+/// both — `.unified` for the menu-only MenuButton and `.split` for
+/// SplitButton (separate arrow segment; the main segment's target/action is
+/// wired to `clicked` by the ordinary EventDispatcher path, since
+/// NSComboButton is an NSControl). Menus are built from Menu/MenuItem
 /// children through the generalized NDMenuManager owner registry
 /// (MenuBar.swift), so MenuItem's `selected` routes identically from the
 /// menubar, both button kinds, and TrayItem.
@@ -27,6 +27,7 @@ func makeMenuButton(_ props: [String: Any]) -> NSView {
     let combo = NSComboButton(title: propStr(props, "label") ?? "", menu: NSMenu(), target: NDComboMenuProxy.shared, action: #selector(NDComboMenuProxy.popMenu(_:)))
     combo.style = .unified
     if let icon = propStr(props, "iconName") { ndApplyComboIcon(combo, icon) }
+    ndSeedComboAlignment(combo)
     return combo
 }
 
@@ -36,7 +37,19 @@ func makeSplitButton(_ props: [String: Any]) -> NSView {
     let combo = NSComboButton(title: propStr(props, "label") ?? "", menu: NSMenu(), target: nil, action: nil)
     combo.style = .split
     if let icon = propStr(props, "iconName") { ndApplyComboIcon(combo, icon) }
+    ndSeedComboAlignment(combo)
     return combo
+}
+
+/// Content-sized like Button/ToggleButton, not stretched to fill a parent
+/// vertical Box — the GTK arm hardcodes setHalign(.start)/hexpand(0) at
+/// create for exactly this reason. Seeding `ndLayoutFlags` (instead of
+/// constraining here) keeps ndApplyStyle's merge semantics: an explicit
+/// app-level halign still wins, absence keeps "start".
+private func ndSeedComboAlignment(_ combo: NSComboButton) {
+    var flags = ndLayoutFlags[ObjectIdentifier(combo)] ?? NDLayoutFlags()
+    flags.halign = "start"
+    ndLayoutFlags[ObjectIdentifier(combo)] = flags
 }
 
 func ndApplyComboIcon(_ combo: NSComboButton, _ iconName: String) {

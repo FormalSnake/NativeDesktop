@@ -7,13 +7,13 @@ const plugin = @import("plugin.zig");
 const ndp_binary = @import("ndp_binary.zig");
 // The UI-thread marshal + crash-overlay chrome are vtable-only concerns (not
 // part of the comptime null|abi seam every backend implements) — the core
-// calls them straight through the registered C vtable (M6a Task 3), the same
-// object `abi_backend.bind` already wired for the structural seam calls.
+// calls them straight through the registered C vtable, the same object
+// `abi_backend.bind` already wired for the structural seam calls.
 const abi_backend = @import("abi_backend.zig");
 
 var trace: bool = false;
 
-// Used when the embedder never called `nd_set_acl` (T10): the safe default
+// Used when the embedder never called `nd_set_acl`: the safe default
 // grants the core UI ops so every existing demo stays green.
 var default_acl: acl.Acl = undefined;
 var default_acl_ready: bool = false;
@@ -99,13 +99,13 @@ pub const Runtime = struct {
     // via `nd_set_backend_name` and sent verbatim in the helloAck so the child
     // can populate `Platform.backend`.
     backend_name: []const u8 = "unknown",
-    // ND_DEV=1 (M8-D4): gates the `--hot` spawn flag and the overlay's
+    // ND_DEV=1: gates the `--hot` spawn flag and the overlay's
     // Restart button ONLY. The overlay itself paints regardless.
     dev: bool = false,
     parent_env: *const std.process.Environ.Map = undefined,
     real_environ: std.process.Environ = undefined,
     // Stashed by the `runtimeError` reader arm; consumed by the crash overlay
-    // (M8) when the imminent disconnect fires. Freed/replaced on each report.
+    // when the imminent disconnect fires. Freed/replaced on each report.
     last_error_message: ?[]u8 = null,
     last_error_stack: ?[]u8 = null,
     // Set once the reader loop has painted the overlay for the current
@@ -167,10 +167,8 @@ pub const Runtime = struct {
     }
 
     /// Spawns the bun child. `dev` selects `bun --hot <script>` over
-    /// `bun <script>` (M8-D4) — everything else about the spawn is
-    /// unchanged, so a non-dev run stays byte-identical to M5c. Factored out
-    /// so a dev-mode Restart can respawn a fresh child against the same
-    /// listening socket.
+    /// `bun <script>`. Factored out so a dev-mode Restart can respawn a
+    /// fresh child against the same listening socket.
     fn spawnChild(self: *Runtime) !void {
         var env = std.process.Environ.Map.init(self.gpa);
         defer env.deinit();
@@ -195,11 +193,10 @@ pub const Runtime = struct {
     }
 
     /// `nd_emit_event`'s body (abi.zig) routes here — the embedder->core
-    /// event channel (M6a-D2). There is no more core-installed sink function
-    /// pointer (M5c's `setEventSink`/`initStyle` are gone — the embedder
-    /// calls `nd_emit_event` directly for every native signal, including its
-    /// own style-error reports). A no-op before `start` has run (no window
-    /// mounted yet, nothing to report to).
+    /// event channel. There is no core-installed sink function pointer;
+    /// the embedder calls `nd_emit_event` directly for every native signal,
+    /// including its own style-error reports. A no-op before `start` has run
+    /// (no window mounted yet, nothing to report to).
     pub fn emitEvent(node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         if (singleton) |self| self.sendEvent(node_id, name, payload);
     }
@@ -340,7 +337,7 @@ pub const Runtime = struct {
     }
 
     /// Parses a `runtimeError {message, stack}` frame and stashes both into
-    /// `last_error_message`/`last_error_stack` (M8) — the crash overlay reads
+    /// `last_error_message`/`last_error_stack` — the crash overlay reads
     /// these when the imminent disconnect triggers `onChildExit`. Best-effort:
     /// a malformed frame is dropped, never crashes the reader loop.
     fn stashRuntimeError(self: *Runtime, bytes: []u8) void {
@@ -355,8 +352,8 @@ pub const Runtime = struct {
         std.debug.print("ND_RUNTIME_ERROR_REPORTED {s}\n", .{parsed.value.message});
     }
 
-    /// Called from the reader-loop thread on every disconnect path (M8-D3:
-    /// a dead `bytes` read = the child actually exited — crash, kill -9, or
+    /// Called from the reader-loop thread on every disconnect path (a dead
+    /// `bytes` read means the child actually exited: crash, kill -9, or
     /// process.exit — never a `--hot` edit, which keeps the same socket).
     /// Prints the existing marker, then marshals the overlay paint onto the
     /// UI thread with whatever error text was last reported (or a generic
@@ -387,7 +384,7 @@ pub const Runtime = struct {
 
     /// Restart trampoline: the embedder's crash-overlay Restart button (dev-
     /// mode only — the embedder gates this on its own `ND_DEV` read, since
-    /// `show_overlay`'s ABI carries only the message, M6a Task 3) calls
+    /// `show_overlay`'s ABI carries only the message) calls
     /// `nd_emit_event(ctx, 0, "restart", "{}")`; `nd_emit_event`'s body
     /// (abi.zig) intercepts that reserved name and routes here instead of
     /// forwarding it as a normal NDP event (the child is dead — there is
@@ -415,7 +412,7 @@ pub const Runtime = struct {
     /// never sent a higher-generation CommitBatch), every non-overlay node
     /// is cleared here so the fresh mount rebuilds from an empty tree.
     fn respawn(self: *Runtime) void {
-        // Empty message is the clear sentinel (M6a Task 3): `show_overlay`'s
+        // Empty message is the clear sentinel: `show_overlay`'s
         // ABI carries only one string param, so "" means "take the overlay
         // down" rather than adding a second vtable field for one call site.
         abi_backend.vtable.show_overlay(abi_backend.ctx, "");

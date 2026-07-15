@@ -1,4 +1,4 @@
-// Pure-TS OS shell helpers (M15). Unlike system.ts, these do NOT round-trip
+// Pure-TS OS shell helpers. Unlike system.ts, these do NOT round-trip
 // through the host or go through ACL — they spawn commands directly in the
 // app's own unsandboxed Bun process, the same way any other Node/Bun script
 // would (see CLAUDE.md: the Bun child is a full runtime, not a sandboxed

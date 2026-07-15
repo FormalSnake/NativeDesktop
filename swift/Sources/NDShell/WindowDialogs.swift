@@ -1,15 +1,15 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Window dialog commands (M15): showAlert (NSAlert sheet), openFile/saveFile
+/// Window dialog commands: showAlert (NSAlert sheet), openFile/saveFile
 /// (NSOpenPanel/NSSavePanel sheets), showAbout (the standard about panel).
 /// Results fire the Window node's alertResult/openFileResult/saveFileResult
-/// events — the widgetCommand -> same-node result-event pattern
-/// (executeJavaScript -> javaScriptResult), mirroring src/gtk/dialogs.zig.
+/// events, the same widgetCommand -> same-node result-event pattern as
+/// executeJavaScript -> javaScriptResult, mirroring src/gtk/dialogs.zig.
 ///
 /// Multi-window correctness: every sheet resolves the owning NSWindow from
-/// the Window node's OWN handle via ndWindow(for:) (SplitController.swift) —
-/// never a global — so two windows can each run their own dialog.
+/// the Window node's OWN handle via ndWindow(for:) (SplitController.swift),
+/// never a global, so two windows can each run their own dialog.
 
 nonisolated(unsafe) private var ndWindowNodeIDs: [ObjectIdentifier: UInt32] = [:]
 

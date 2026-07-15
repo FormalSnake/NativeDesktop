@@ -30,9 +30,9 @@ for the details and for how to move a live widget between windows without reload
 
 ## Chrome is declarative
 
-Native chrome — headerbars, toolbars, split views — is composed the same way as any other widget:
-declared as JSX children, not configured through an imperative window API. `examples/notes/main.tsx`
-builds a two-pane app entirely out of intrinsics:
+Native chrome (headerbars, toolbars, split views) is composed the same way as any other widget:
+declared as JSX children rather than configured through an imperative window API.
+`examples/notes/main.tsx` builds a two-pane app entirely out of intrinsics:
 
 ```tsx
 <window title="ND Notes" defaultWidth={900} defaultHeight={600}>
@@ -58,8 +58,8 @@ attach-time-only: changing one after mount is a no-op. See
 
 ## Events are props
 
-Widget events arrive as ordinary React props — `onClick`, `onChanged`, `onToggled`,
-`onSelectionChanged`, and so on — each wired from the schema's `events` list for that widget.
+Widget events arrive as ordinary React props (`onClick`, `onChanged`, `onToggled`,
+`onSelectionChanged`, and so on), each wired from the schema's `events` list for that widget.
 `<textinput onChanged={(e) => setText(e.text)} />` receives the new text on its event payload,
 exactly like any other controlled-component callback.
 
@@ -67,8 +67,8 @@ exactly like any other controlled-component callback.
 
 Not every prop can be changed after a widget mounts. The schema marks each prop's `appliesTo` as
 `create` (set once, at construction), `createAndUpdate` (can change on any re-render), or `meta`
-(framework bookkeeping, e.g. `testID`). `Button.label`, for example, is `create`-only — changing it
+(framework bookkeeping, e.g. `testID`). `Button.label`, for example, is `create`-only: changing it
 on a live button is a no-op, which is why `examples/notes/main.tsx` keys its header on the note's
 `id`/`title` to force a remount instead of relying on a prop update. Check a widget's `Applied`
-column before assuming a prop is live-updatable — see the full breakdown in the
+column before assuming a prop is live-updatable; the full breakdown is in the
 [Widget Reference](/components/widget-reference/).

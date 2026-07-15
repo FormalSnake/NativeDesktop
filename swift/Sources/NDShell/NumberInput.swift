@@ -1,6 +1,6 @@
 import AppKit
 
-/// NumberInput (M15): the HIG composite — "a stepper sits next to a field
+/// NumberInput: the HIG composite of "a stepper sits next to a field
 /// that displays its current value". One tracked NSStackView handle holding
 /// an NSTextField (NumberFormatter enforces digits + range) and an NSStepper
 /// (min/max/increment/wraps), kept in two-way sync. Both inputs funnel into

@@ -53,7 +53,7 @@ stderr — capture with `2>&1`):
 
 Every `examples/*` package also declares `"dev": "nd dev main.tsx"` (the `nd` CLI, `packages/nd`),
 so `cd examples/counter && bun run dev` is equivalent to the raw invocation above minus
-`NATIVE_AUTOMATION=1` — `nd dev` doesn't set that for you, so export it first if you need the
+`NATIVE_AUTOMATION=1`. `nd dev` doesn't set that for you, so export it first if you need the
 automation socket. `nd dev` resolves a *prebuilt* host binary via `@nativedesktop/host` rather than
 building one, so use the raw `zig build` + `ND_SCRIPT` form above while iterating on the host itself.
 
@@ -67,7 +67,7 @@ ND_DEV=1 ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/n
 ```
 
 `bun --hot` keeps the same OS process and socket across an edit but re-evaluates the entire module
-graph — so hooks **must** be imported from `@nativedesktop/react`, never directly from `react`:
+graph, so hooks must be imported from `@nativedesktop/react`, never directly from `react`:
 
 ```ts
 // Correct — resolves against the reconciler's live dispatcher across hot reloads

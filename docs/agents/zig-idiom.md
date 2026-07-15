@@ -1,10 +1,10 @@
-# Zig 0.16 idiom — wrong vs right
+# Zig 0.16 idiom: wrong vs right
 
 Coding agents are trained on corpora that predate most of Zig's `std.Io`/allocator-interface
 rework. Every row below is a drift the NativeDesktop implementation actually hit and had to correct
-(cited from `CLAUDE-activeContext.md`, the project's session memory bank) — not a hypothetical. If
-you are writing or reviewing Zig in this repo, assume your training-data idiom is stale until you
-have grepped `src/` for the real pattern.
+(recorded in `CLAUDE-activeContext.md`, the project's session memory bank); none are hypothetical.
+If you are writing or reviewing Zig in this repo, assume your training-data idiom is stale until
+you have grepped `src/` for the real pattern.
 
 | Concept | Pre-2025 idiom (hallucinated) | Zig 0.16 idiom (this repo) |
 |---|---|---|
@@ -21,8 +21,8 @@ have grepped `src/` for the real pattern.
 
 ## Closing note
 
-These are not style preferences — several of them (`std.Io.Mutex` needing `.init`, `environ_map`
+These are not style preferences: several of them (`std.Io.Mutex` needing `.init`, `environ_map`
 replacing rather than merging, `addTest` needing an explicit root per file) are silent-failure traps
 that compile and pass locally before breaking a specific runtime path. When in doubt, `rg` the
-actual pattern in `src/` before writing new Zig — the living code is the up-to-date reference, not
+actual pattern in `src/` before writing new Zig; the living code is the up-to-date reference, not
 this table and not pre-2025 training data.

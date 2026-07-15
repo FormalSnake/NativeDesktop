@@ -4153,10 +4153,12 @@ function genWidgetTypesTs(s: Schema): string {
 
 function genWidgetTypesZig(s: Schema): string {
   let out = HEADER_ZIG + "const std = @import(\"std\");\n\n";
-  out += "const Entry = struct { name: []const u8, value: u16 };\n";
+  out += "const Entry = struct { name: []const u8, value: u16, role: ?[]const u8 };\n";
   out += "pub const widget_types = [_]Entry{\n";
   for (let i = 0; i < s.widgets.length; i++) {
-    out += `    .{ .name = ${JSON.stringify(s.widgets[i]!.name)}, .value = ${i + 1} },\n`;
+    const w = s.widgets[i]!;
+    const role = w.automation?.role ? JSON.stringify(w.automation.role) : "null";
+    out += `    .{ .name = ${JSON.stringify(w.name)}, .value = ${i + 1}, .role = ${role} },\n`;
   }
   out += "};\n\n";
   out += "pub fn widgetTypeOf(name: []const u8) ?u16 {\n";
@@ -4164,6 +4166,10 @@ function genWidgetTypesZig(s: Schema): string {
   out += "    return null;\n}\n\n";
   out += "pub fn widgetNameOf(v: u16) ?[]const u8 {\n";
   out += "    for (widget_types) |e| if (e.value == v) return e.name;\n";
+  out += "    return null;\n}\n\n";
+  out += "/// The widget's schema-declared automation role (getTree's `role` field).\n";
+  out += "pub fn roleOf(name: []const u8) ?[]const u8 {\n";
+  out += "    for (widget_types) |e| if (std.mem.eql(u8, e.name, name)) return e.role;\n";
   out += "    return null;\n}\n";
   return out;
 }

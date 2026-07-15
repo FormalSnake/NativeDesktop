@@ -10,9 +10,9 @@ rather than occupying permanent space. Two (`MenuButton`, `SplitButton`) reuse t
 
 ## MenuButton (`<menubutton>`) and SplitButton (`<splitbutton>`)
 
-`<menubutton>` is a single button that opens a dropdown menu. `<splitbutton>` is two actions fused
-into one control — a primary click action plus a chevron that opens a dropdown for secondary
-actions — `AdwSplitButton` on GTK, an `NSButton` + attached `NSMenu` on macOS.
+`<menubutton>` is a single button that opens a dropdown menu. `<splitbutton>` fuses two actions
+into one control: a primary click action plus a chevron that opens a dropdown for secondary
+actions. It's `AdwSplitButton` on GTK and an `NSButton` + attached `NSMenu` on macOS.
 
 Both take `<menuitem>` children (and `<menu>` for a nested submenu) — the exact same elements the
 [`<menubar>`](/native-platform/menu-bar/) page documents, built into an `NSMenu`/`GMenuModel` instead
@@ -39,8 +39,8 @@ of the app's main menu:
 
 ## Popover (`<popover>`)
 
-An anchored transient surface — `GtkPopover` / `NSPopover` — for a small piece of arbitrary content
-(not a menu) attached to a trigger. Unlike `MenuButton`, its child is a full widget tree, not
+An anchored transient surface (`GtkPopover` / `NSPopover`) for a small piece of arbitrary content
+attached to a trigger. Unlike `MenuButton`, its child is a full widget tree rather than
 `<menuitem>`s, so it can hold anything a `<box>` could.
 
 ```tsx
@@ -68,9 +68,9 @@ as above, not off on its own.
 
 ## Expander (`<expander>`)
 
-An inline disclosure widget — `AdwExpanderRow`-style on GTK, an `NSButton` disclosure triangle +
-container on macOS — for content that should stay in the layout flow (unlike `Popover`, which floats
-above it).
+An inline disclosure widget (`AdwExpanderRow`-style on GTK, an `NSButton` disclosure triangle +
+container on macOS) for content that should stay in the layout flow, unlike `Popover`, which floats
+above it.
 
 ```tsx
 const [open, setOpen] = useState(false);

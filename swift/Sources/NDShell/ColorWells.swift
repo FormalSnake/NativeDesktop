@@ -1,8 +1,8 @@
 import AppKit
 
-/// ColorPicker (M15): NSColorWell with the modern `.minimal` well style
-/// (macOS 13+ convention — swatch opens the picker popover). The wire value
-/// is `#rrggbb` (or `#rrggbbaa` when not fully opaque), matching
+/// ColorPicker: NSColorWell with the modern `.minimal` well style
+/// (macOS 13+ convention; the swatch opens the picker popover). The wire
+/// value is `#rrggbb` (or `#rrggbbaa` when not fully opaque), matching
 /// src/gtk/style.zig's color convention and the GTK backend's ndRgbaToHex.
 final class NDColorWell: NSColorWell {
     /// The shared NSColorPanel is process-global; alpha support is per-widget

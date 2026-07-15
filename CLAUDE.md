@@ -82,9 +82,24 @@ against its OWN window (so `getTree` bounds, `click`, `setValue`, `type`,
 `scroll`, `waitFor` are per-window-correct), `screenshot` targets the requested
 `window` (via the existing `resolve_window` op — no new ABI op), the crash
 overlay paints on every open window, each toolbar attaches to its owning window,
-and `core:window.create` is ACL-gated per window id. One limitation remains:
-`getTree` has no `window` param yet, so it returns the root window's tree with
-other windows' nodes attached as orphans.
+and `core:window.create` is ACL-gated per window id. `getTree` takes an
+optional `window` param (M16) scoping the snapshot to that window's subtree;
+without it the root window's tree is returned with other windows' nodes
+attached as orphans.
+
+**Agentic testing (M16):** `getTree` is an accessibility tree — every node
+carries `role` (schema-declared, on the wire via the generated widget table),
+`enabled`, `focused`, and `value` (live per-node `"a11y"` probe through the
+existing `semantic_action` vtable op #17 — NO new ABI op; backends without the
+probe degrade to defaults). Input-synthesis RPCs `pointer`/`drag`/`keys`/
+`doubleClick`/`rightClick`/`hover` post real NSEvents through the app's event
+queue on macOS (drag posts the whole down/dragged/up batch in ONE marshal —
+AppKit tracking loops block the main thread mid-gesture and would deadlock
+per-phase marshaling); GTK answers `-32003 inputUnsupported` (GTK4 removed
+app-constructible events) — semantic click/setValue/type/scroll remain the
+Linux path. Acceptance: `scripts/mac/mac-gestures.sh` (examples/gestures +
+gestures-drive.ts, keys-menu-drive.ts) → `MAC_GESTURES_OK`. Full surface doc:
+`docs-site/src/content/docs/automation-testing/automation-socket.md`.
 
 **Cross-window reparenting (drag a tab between windows without reload):** React
 can't express a widget-preserving cross-parent move — moving a node to a new

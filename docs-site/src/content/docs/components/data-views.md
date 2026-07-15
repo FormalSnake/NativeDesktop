@@ -1,19 +1,19 @@
 ---
 title: Data Views
-description: Table and TreeView — structured multi-column and hierarchical data, both with the same rule — the native widget never reorders or re-nests data on its own.
+description: "Table and TreeView render multi-column and hierarchical data with one shared rule: the native widget never reorders or re-nests your data."
 ---
 
-`<table>` and `<treeview>` both take a **plain data prop** (`rows`/`nodes`) you own in React state, and
+`<table>` and `<treeview>` both take a plain data prop (`rows`/`nodes`) you own in React state, and
 both follow the same contract: the native widget renders exactly what you give it and asks you, via an
-event, when the user wants something to change — it never reorders or re-nests the data itself. That
-keeps your React state the single source of truth, the same discipline `<listview>`'s `items` already
-follows.
+event, when the user wants something to change. It never reorders or re-nests the data itself, so
+your React state stays the single source of truth — the same discipline `<listview>`'s `items`
+already follows.
 
 ## Table (`<table>`)
 
-A multi-column list — `GtkColumnView`-backed on GTK, `NSTableView` on macOS — described with a
-columns array and a rows array kept separate, so a column resize or reorder never has to touch every
-row.
+A multi-column list, backed by `GtkColumnView` on GTK and `NSTableView` on macOS. You describe it
+with a columns array and a rows array kept separate, so a column resize or reorder never has to touch
+every row.
 
 ```tsx
 import type { TableColumn, TableRow } from "@nativedesktop/react";
@@ -58,16 +58,17 @@ function handleSortChanged(e: { data: unknown }) {
 | `rowActivated` | `onRowActivated` | `{ index }` (double-click / Enter) |
 | `sortChanged` | `onSortChanged` | `{ data: { columnId, direction } }` |
 
-**Clicking a column header fires `sortChanged` and stops there** — the native widget shows the sort
-indicator arrow but never actually reorders `rows` itself. Your `onSortChanged` handler owns sorting:
-re-sort `rows` in JS (as above) and pass the new array back down. This mirrors `<listview>`'s
-"native never mutates your data" contract and keeps sorting logic in one place, testable outside the
+Clicking a column header fires `sortChanged` and stops there: the native widget shows the sort
+indicator arrow but never reorders `rows` itself. Your `onSortChanged` handler owns sorting — re-sort
+`rows` in JS (as above) and pass the new array back down. This mirrors `<listview>`'s "native never
+mutates your data" contract and keeps sorting logic in one place, where you can test it outside the
 UI.
 
 ## TreeView (`<treeview>`)
 
-A hierarchical outline — `GtkTreeListView`/`GtkColumnView` on GTK, `NSOutlineView` on macOS — described
-as a **flat array** keyed by `id`/`parentId`, not nested JS objects. Root nodes omit `parentId`.
+A hierarchical outline, backed by `GtkTreeListView`/`GtkColumnView` on GTK and `NSOutlineView` on
+macOS. You describe it as a flat array keyed by `id`/`parentId`, not nested JS objects. Root nodes
+omit `parentId`.
 
 ```tsx
 import type { TreeNode } from "@nativedesktop/react";
@@ -109,9 +110,9 @@ const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.
 | `nodeExpanded` | `onNodeExpanded` | `{ data: { nodeId } }` |
 | `nodeCollapsed` | `onNodeCollapsed` | `{ data: { nodeId } }` |
 
-Expansion is **controlled state, not native state**: the widget asks (via `nodeExpanded`/
+Expansion is controlled state, not native state: the widget asks (via `nodeExpanded`/
 `nodeCollapsed`) rather than deciding on its own, so a re-render triggered by something else in your
-app can never silently collapse a branch the user opened — track expansion yourself (a `Set<string>`
+app can never silently collapse a branch the user opened. Track expansion yourself (a `Set<string>`
 of expanded ids, as above) and feed it back into every node's `expanded` field.
 
 See `examples/gallery/main.tsx`'s "Table" and "Tree" tabs for both wired to full controlled state

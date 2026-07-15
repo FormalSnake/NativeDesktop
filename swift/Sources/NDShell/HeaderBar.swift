@@ -1,11 +1,11 @@
 import AppKit
 import CNd
 
-// M11 Phase B: macOS uses the REAL native idiom (Notes.app/Mail) — a SINGLE
+// macOS uses the real native idiom (Notes.app/Mail): a SINGLE
 // unified NSToolbar spanning the top, with the sidebar reaching the very top
 // of the window (traffic lights floating over it) via the Window create arm's
 // .fullSizeContentView + titlebarAppearsTransparent. The per-pane <headerbar>s
-// (two, or three for an M13 three-pane SplitView) do NOT each create their
+// (two, or three for a three-pane SplitView) do NOT each create their
 // own toolbar: their items MERGE into the one window toolbar, separated by an
 // NSTrackingSeparatorToolbarItem per divider (aligned to the split's dividers)
 // — sidebar items sit left of divider 0, list items (if any) sit between
@@ -108,9 +108,9 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     private var idsByView: [ObjectIdentifier: NSToolbarItem.Identifier] = [:]
 
     // Pane header handles, once their panes have landed in the split. `list`
-    // is the middle "folders / list / content" pane (M13 three-pane
-    // SplitView) — nil for a two-pane tree, in which case the toolbar output
-    // is byte-identical to the pre-M13 two-bucket behavior.
+    // is the middle "folders / list / content" pane of a three-pane
+    // SplitView — nil for a two-pane tree, which keeps the two-bucket
+    // toolbar output unchanged.
     private weak var sidebarHeader: NDHeaderBarView?
     private weak var listHeader: NDHeaderBarView?
     private weak var contentHeader: NDHeaderBarView?
@@ -236,8 +236,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
 
     /// Rebuilds the toolbar item list from scratch (fresh identifiers) rather
     /// than mutating a live list in place — simple and reliable for a full
-    /// re-pack, and cheap for a handful of items (mirrors the M11 Phase A
-    /// full-recreate rebuild pattern this replaces).
+    /// re-pack, and cheap for a handful of items.
     func rebuild() {
         idsByView.removeAll()
         for idx in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
@@ -292,8 +291,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
         // Only insert a tracking separator when the split is present — it is
         // required to construct the item (it binds to the split's divider).
-        // Divider 0 always appears (byte-identical to the pre-M13 two-pane
-        // output); divider 1 only when a `list` pane exists (three-pane).
+        // Divider 0 always appears (same output as a two-pane split);
+        // divider 1 only when a `list` pane exists (three-pane).
         if split != nil {
             ids.append(trackingSeparatorID0)
         }
@@ -462,7 +461,7 @@ func ndToolbarPanePack(_ pane: NDToolbarPaneView, _ child: NSView) {
         // Logical only — the pane VIEW never enters the hierarchy. The SplitView
         // arm adds THIS content box (an NSStackView) directly to the split slot,
         // where it fills natively; parenting it inside the plain-NSView pane
-        // instead would collapse it to its intrinsic size (the M11 Phase B bug).
+        // instead would collapse it to its intrinsic size.
         pane.contentView?.removeFromSuperview()
         pane.contentView = child
     }

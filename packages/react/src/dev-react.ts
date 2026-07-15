@@ -1,6 +1,6 @@
-// Dev-mode hook-preserving re-export of `react` (M8, mechanism (c)). Read
-// this file's header before touching it — the design here is the outcome of
-// two failed mechanisms, recorded so nobody re-attempts them:
+// Dev-mode hook-preserving re-export of `react`. Read this file's header
+// before touching it — the design here is the outcome of two failed
+// mechanisms, recorded so nobody re-attempts them:
 //
 // (a) `@nativedesktop/react` re-exporting react's hooks through a
 //     `globalThis` stash covers OUR OWN JSX/APIs, but not the app's own
@@ -9,16 +9,15 @@
 // (b) Bun runtime aliasing of the bare `"react"`/`"react-reconciler"`
 //     specifiers via `Bun.plugin`'s `builder.module()`, loaded through
 //     `bun --hot --preload <script>` so the alias survives re-evals. This
-//     DOES intercept real package names (verified — `onResolve`/`onLoad` do
-//     NOT, they never fire for specifiers Bun's own resolver can already
-//     resolve, even for real installed packages) and the preload script
-//     genuinely runs once per process, not per hot re-eval (verified). It
-//     still fails: Bun 1.3.13 throws "Requested module is already fetched"
-//     (a native `provideFetch` conflict, invisible to `require.cache`
-//     tampering) the moment a `builder.module()`-aliased specifier is
-//     touched by BOTH an ESM `import` and a CJS `require()` anywhere in the
-//     process — verified with four independent minimal repros in the
-//     scratchpad. `react-reconciler`'s bundled cjs does `require("react")`
+//     DOES intercept real package names (`onResolve`/`onLoad` do NOT — they
+//     never fire for specifiers Bun's own resolver can already resolve,
+//     even for real installed packages) and the preload script genuinely
+//     runs once per process, not per hot re-eval. It still fails: Bun
+//     1.3.13 throws "Requested module is already fetched" (a native
+//     `provideFetch` conflict, invisible to `require.cache` tampering) the
+//     moment a `builder.module()`-aliased specifier is touched by BOTH an
+//     ESM `import` and a CJS `require()` anywhere in the process.
+//     `react-reconciler`'s bundled cjs does `require("react")`
 //     (and jsx-runtime/jsx-dev-runtime do too), while this codebase's own
 //     source and every app entry use genuine ESM `import`. That combination
 //     is unavoidable here, so (b) cannot work without rewriting every

@@ -34,8 +34,8 @@ pub fn main(init: std.process.Init) void {
     // loads the Adwaita stylesheet and starts AdwStyleManager's system
     // light/dark tracking from the first frame. The window class below stays
     // gtk.ApplicationWindow on purpose, so the default titlebar/window
-    // controls keep working until a later task hands titlebar ownership to
-    // a <headerbar> widget.
+    // controls keep working until titlebar ownership moves to a
+    // <headerbar> widget.
     // HANDLES_OPEN: the OS delivers file/URI launches through the `open`
     // signal (app.openFile / app.openUrl system events) instead of `activate`.
     var app = adw.Application.new(app_id, .{ .handles_open = true });
@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) void {
 
 fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     if (smoke) {
-        // Unchanged M1 pure-GTK smoke path.
+        // Pure-GTK smoke path.
         const window = gtk.ApplicationWindow.new(app);
         const win = window.as(gtk.Window);
         gtk.Window.setTitle(win, "NativeDesktop M1");
@@ -66,10 +66,9 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         return;
     }
 
-    // M6a: the embedder crosses the C ABI instead of building the Tree/
-    // Runtime/automation.Server directly (M2-M5c called those Zig types by
-    // hand; the core now owns them behind nd_init/nd_register_backend/
-    // nd_start_runtime/nd_start_automation).
+    // The embedder crosses the C ABI instead of building the Tree/Runtime/
+    // automation.Server directly; the core owns them behind nd_init/
+    // nd_register_backend/nd_start_runtime/nd_start_automation.
     backend.setApp(app);
     const ctx = abi.nd_init() orelse {
         std.debug.print("ND_RUNTIME_ERROR nd_init failed\n", .{});
@@ -92,9 +91,9 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     abi.nd_register_backend(ctx, &the_vtable);
     abi.nd_set_backend_name(ctx, "gtk");
 
-    // M10: opt-in capability ACL + native plugin. Absent env = safe default
-    // (core UI ops granted), byte-identical to pre-M10 behavior. Mirrors
-    // swift/Sources/NDShell/main.swift's env wiring (env names + call order).
+    // Opt-in capability ACL + native plugin. Absent env = safe default
+    // (core UI ops granted). Mirrors swift/Sources/NDShell/main.swift's
+    // env wiring (env names + call order).
     if (global_environ_map.?.get("ND_ACL_GRANTS")) |grants| {
         if (std.heap.page_allocator.dupeZ(u8, grants)) |grants_z| {
             abi.nd_set_acl(ctx, grants_z.ptr);
