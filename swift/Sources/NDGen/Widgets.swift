@@ -289,7 +289,13 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ShareButton" {
         return makeShareButton(props)  // NSSharingServicePicker anchor button (M15, NDShell/ShareButtons.swift)
     } else if kind == "Terminal" {
-        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? 13, cols: propInt(props, "cols") ?? 80, rows: propInt(props, "rows") ?? 24)
+        let cols = propInt(props, "cols") ?? 80
+        let rows = propInt(props, "rows") ?? 24
+        let fontSize = propInt(props, "fontSize") ?? 13
+        if propBool(props, "remote") ?? false {
+            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, cols: cols, rows: rows)
+        }
+        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, cols: cols, rows: rows)
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -556,6 +562,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndTreeViewConnect(view, nodeID: nodeID)
     } else if kind == "FontPicker" {
         ndFontPickerConnect(view, nodeID: nodeID)
+    } else if kind == "Terminal" {
+        ndTerminalConnect(view, nodeID: nodeID)
     }
 }
 

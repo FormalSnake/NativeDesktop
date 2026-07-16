@@ -169,7 +169,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": [],
+  "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -223,7 +223,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": [],
+  "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState"],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame

@@ -1596,11 +1596,18 @@ function genZigCreateBody(w: Widget): string {
   } else if (w.name === "MenuItem") {
     out += "        return ndMenuItemCreate(app, props, dupeZ);\n";
   } else if (w.name === "Terminal") {
-    out += "        const command: ?[*:0]const u8 = if (propStr(props, \"command\")) |c| dupeZ(c).ptr else null;\n";
-    out += "        const cwd: ?[*:0]const u8 = if (propStr(props, \"cwd\")) |c| dupeZ(c).ptr else null;\n";
     out += `        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse ${dflt(w, "fontSize")});\n`;
     out += `        const cols: u16 = @intCast(propInt(props, "cols") orelse ${dflt(w, "cols")});\n`;
     out += `        const rows: u16 = @intCast(propInt(props, "rows") orelse ${dflt(w, "rows")});\n`;
+    out += "        if (propBool(props, \"remote\") orelse false) {\n";
+    out += "            const host: [*:0]const u8 = if (propStr(props, \"host\")) |h| dupeZ(h).ptr else \"127.0.0.1\";\n";
+    out += `            const port: u16 = @intCast(propInt(props, "port") orelse ${dflt(w, "port")});\n`;
+    out += "            const sid: [*:0]const u8 = if (propStr(props, \"sessionId\")) |s| dupeZ(s).ptr else \"\";\n";
+    out += "            const ticket: [*:0]const u8 = if (propStr(props, \"ticket\")) |t| dupeZ(t).ptr else \"\";\n";
+    out += "            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, cols, rows);\n";
+    out += "        }\n";
+    out += "        const command: ?[*:0]const u8 = if (propStr(props, \"command\")) |c| dupeZ(c).ptr else null;\n";
+    out += "        const cwd: ?[*:0]const u8 = if (propStr(props, \"cwd\")) |c| dupeZ(c).ptr else null;\n";
     out += "        return ndterm_gtk.create(command, cwd, font_size, cols, rows);\n";
   } else if (w.name === "NativeView") {
     // Generic native-view host: a third-party dlopen'd plugin registered a
@@ -2151,7 +2158,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "terminal"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -2186,6 +2193,12 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.newWindow":           { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.downloadRequested":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.javaScriptResult":    { signal: "",              target: "webview", cb: "", suppress: false },
+  // Terminal effect (title/bell/exit) + connection state fire from the reader
+  // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
+  "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
+  "Terminal.bell":               { signal: "",              target: "terminal", cb: "", suppress: false },
+  "Terminal.exited":             { signal: "",              target: "terminal", cb: "", suppress: false },
+  "Terminal.connectionState":    { signal: "",              target: "terminal", cb: "", suppress: false },
   // NativeView events originate in the app plugin and are connected by the retained tree.
   "NativeView.nativeEvent":      { signal: "",              target: "nativeview", cb: "", suppress: false },
   // Window dialog results fire from the async dialog callbacks wired inside
@@ -2429,7 +2442,8 @@ function genZigEvents(s: Schema): string {
       throw new Error(`no signal template for event ${key} — add one when introducing it`);
     }
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
-      || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview") continue; // custom connect, no GTK callback body
+      || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview"
+      || t.target === "terminal") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -2482,6 +2496,14 @@ function genZigEvents(s: Schema): string {
         // All WebView events wire inside webview.zig from one connect call.
         if (!navConnected) {
           out += "        if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "terminal") {
+        // All Terminal effect/state events wire inside terminal.zig from one call.
+        if (!navConnected) {
+          out += "        if (emit) |f| ndterm_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
         }
         continue;
@@ -3200,7 +3222,13 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "MenuItem") {
     out += "        return ndMenuItemCreate(props)\n";
   } else if (w.name === "Terminal") {
-    out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: propInt(props, "fontSize") ?? ${swiftDefaultInt(w, "fontSize")}, cols: propInt(props, "cols") ?? ${swiftDefaultInt(w, "cols")}, rows: propInt(props, "rows") ?? ${swiftDefaultInt(w, "rows")})\n`;
+    out += `        let cols = propInt(props, "cols") ?? ${swiftDefaultInt(w, "cols")}\n`;
+    out += `        let rows = propInt(props, "rows") ?? ${swiftDefaultInt(w, "rows")}\n`;
+    out += `        let fontSize = propInt(props, "fontSize") ?? ${swiftDefaultInt(w, "fontSize")}\n`;
+    out += `        if propBool(props, "remote") ?? ${swiftDefaultBool(w, "remote")} {\n`;
+    out += `            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? ${swiftDefaultInt(w, "port")}, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, cols: cols, rows: rows)\n`;
+    out += `        }\n`;
+    out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, cols: cols, rows: rows)\n`;
   } else if (w.name === "NativeView") {
     // Generic native-view host (GTK-first): route to the plugin's AppKit
     // nd_view_impl if one registered `viewKind`, else an empty NSView (no
@@ -3578,6 +3606,12 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.newWindow":           { selector: "webview", payload: "text" },
   "WebView.downloadRequested":   { selector: "webview", payload: "data" },
   "WebView.javaScriptResult":    { selector: "webview", payload: "data" },
+  // Terminal effect (title/bell/exit) + connection state fire from a reader
+  // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
+  "Terminal.titleChanged":       { selector: "terminal", payload: "text" },
+  "Terminal.bell":               { selector: "terminal", payload: "none" },
+  "Terminal.exited":             { selector: "terminal", payload: "data" },
+  "Terminal.connectionState":    { selector: "terminal", payload: "data" },
   "NativeView.nativeEvent":      { selector: "nativeview", payload: "data" },
   // M15 additions. Plain NSControl target/action where a fire selector fits;
   // everything else routes to a hand-written connect (SWIFT_CUSTOM_CONNECT).
@@ -3625,6 +3659,7 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   treeview: "ndTreeViewConnect",
   windowdialogs: "ndWindowDialogsConnect",
   windowtabs: "ndWindowTabsConnect",
+  terminal: "ndTerminalConnect",
 };
 
 /** Emits `ndConnectEvents`, wiring each widget's controls to

@@ -809,9 +809,19 @@
         { "name": "fontSize", "type": "int", "default": 13, "appliesTo": "create" },
         { "name": "cols", "type": "int", "default": 80, "appliesTo": "create" },
         { "name": "rows", "type": "int", "default": 24, "appliesTo": "create" },
+        { "name": "remote", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "host", "type": "string", "appliesTo": "create" },
+        { "name": "port", "type": "int", "default": 4618, "appliesTo": "create" },
+        { "name": "sessionId", "type": "string", "appliesTo": "create" },
+        { "name": "ticket", "type": "string", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "titleChanged",    "ndpName": "onTitleChanged",    "payload": "text" },
+        { "name": "bell",            "ndpName": "onBell",            "payload": "none" },
+        { "name": "exited",          "ndpName": "onExited",          "payload": "data" },
+        { "name": "connectionState", "ndpName": "onConnectionState", "payload": "data" }
+      ],
       "automation": { "role": "terminal", "textFrom": null }
     }
   ]

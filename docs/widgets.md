@@ -723,5 +723,17 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `fontSize` | int | 13 | create |
 | `cols` | int | 80 | create |
 | `rows` | int | 24 | create |
+| `remote` | bool | false | create |
+| `host` | string | — | create |
+| `port` | int | 4618 | create |
+| `sessionId` | string | — | create |
+| `ticket` | string | — | create |
 | `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `titleChanged` | `onTitleChanged` | text |
+| `bell` | `onBell` | none |
+| `exited` | `onExited` | data |
+| `connectionState` | `onConnectionState` | data |
 

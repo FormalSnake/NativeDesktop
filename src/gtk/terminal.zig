@@ -10,6 +10,13 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const cairo = @import("cairo");
 const ndt = @import("../core/terminal.zig");
+const ndremote = @import("../core/remote_terminal.zig");
+const protocol = @import("../protocol.zig");
+
+/// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
+/// instance) — handed over once by the generated connectEvents Terminal arm.
+pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
+var emit: ?EmitFn = null;
 
 // ---- ndterm C-ABI structs, re-declared locally to stay decoupled from the
 // core's Zig type exports (layout matches include/ndterm.h exactly). The core's
@@ -49,6 +56,9 @@ const State = struct {
     cell_h: f64,
     cols: u16,
     rows: u16,
+    node_id: u32 = 0, // set by connectEvents; effect emits gate on it (0 = unwired)
+    is_remote: bool = false,
+    rt: ?*align(8) anyopaque = null, // nd_remote_terminal handle (Channel is 8-aligned)
 };
 
 fn stateFrom(widget: *gtk.Widget) ?*State {
@@ -59,10 +69,53 @@ fn stateFrom(widget: *gtk.Widget) ?*State {
 pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, cols: u16, rows: u16) *gtk.Widget {
     const area = gtk.DrawingArea.new();
     const widget = area.as(gtk.Widget);
+    const state = newState(widget, area, font_size, cols, rows);
 
-    // Monospace cell metric from the point size (measuring via pango would be
-    // more precise, but this keeps create() self-contained and the grid stays
-    // internally consistent because the draw func reuses these same numbers).
+    // Pass the State as the effect userdata (title/bell/child-exit) so the
+    // generated connectEvents arm can wire it to NDP events.
+    const term = ndt.ndterm_open(cols, rows, command, cwd, &effectTramp, state) orelse {
+        // Core failed to spawn the PTY: return the bare DrawingArea (blank).
+        std.debug.print("ND_WARN ndterm_open failed\n", .{});
+        std.heap.c_allocator.destroy(state);
+        return widget;
+    };
+    state.term = @ptrCast(term);
+
+    wireSurface(area, widget, state);
+    return widget;
+}
+
+/// Remote variant: the grid is fed by the byte-plane transport (ndremote)
+/// instead of a local PTY. Same rendering/input surface; effect + connection
+/// state route to NDP events via effectTramp/stateTramp.
+pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, cols: u16, rows: u16) *gtk.Widget {
+    const area = gtk.DrawingArea.new();
+    const widget = area.as(gtk.Widget);
+    const state = newState(widget, area, font_size, cols, rows);
+    state.is_remote = true;
+
+    const rt = ndremote.ndrt_open(host, port, session_id, ticket, cols, rows, &effectTramp, &stateTramp, state) orelse {
+        std.debug.print("ND_WARN ndrt_open failed\n", .{});
+        std.heap.c_allocator.destroy(state);
+        return widget;
+    };
+    state.rt = @ptrCast(rt);
+    const term = ndremote.ndrt_terminal(rt) orelse {
+        ndremote.ndrt_close(rt);
+        std.heap.c_allocator.destroy(state);
+        return widget;
+    };
+    state.term = @ptrCast(@alignCast(term));
+
+    wireSurface(area, widget, state);
+    return widget;
+}
+
+/// Allocate + init per-widget State (term set by the caller after open).
+/// Monospace cell metric from the point size (measuring via pango would be more
+/// precise, but this keeps the grid internally consistent because the draw func
+/// reuses these same numbers).
+fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, cols: u16, rows: u16) *State {
     const fs: f64 = @floatFromInt(font_size);
     const cell_w = @round(fs * 0.6);
     const cell_h = @round(fs * 1.2);
@@ -70,15 +123,9 @@ pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, co
     gtk.DrawingArea.setContentWidth(area, @intFromFloat(cell_w * @as(f64, @floatFromInt(cols))));
     gtk.DrawingArea.setContentHeight(area, @intFromFloat(cell_h * @as(f64, @floatFromInt(rows))));
 
-    const term = ndt.ndterm_open(cols, rows, command, cwd, null, null) orelse {
-        // Core failed to spawn the PTY: return the bare DrawingArea (blank).
-        std.debug.print("ND_WARN ndterm_open failed\n", .{});
-        return widget;
-    };
-
     const state = std.heap.c_allocator.create(State) catch @panic("OOM allocating terminal State");
     state.* = .{
-        .term = @ptrCast(term),
+        .term = undefined,
         .widget = widget,
         .font_size = fs,
         .cell_w = cell_w,
@@ -86,8 +133,12 @@ pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, co
         .cols = cols,
         .rows = rows,
     };
-    gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
+    return state;
+}
 
+/// Shared surface wiring for both the local and remote paths.
+fn wireSurface(area: *gtk.DrawingArea, widget: *gtk.Widget, state: *State) void {
+    gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
     gtk.DrawingArea.setDrawFunc(area, &drawCb, state, null);
 
     // Focusable + key controller for input, click gesture to grab focus.
@@ -100,14 +151,53 @@ pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, co
     _ = gtk.GestureClick.signals.pressed.connect(click, *State, &onPressed, state, .{});
     gtk.Widget.addController(widget, click.as(gtk.EventController));
 
-    // Repaint every frame so PTY output from the core's reader thread shows up
+    // Repaint every frame so output from the core's reader thread shows up
     // without a per-cell dirty channel (correct first, fast later).
     _ = gtk.Widget.addTickCallback(widget, &tickCb, null, null);
 
     // Tear down the core + free state when the widget goes away.
     _ = gtk.Widget.signals.unrealize.connect(widget, *State, &onUnrealize, state, .{});
+}
 
-    return widget;
+/// Generated connectEvents Terminal arm: stash node_id on the State and save
+/// the module emit sink. Both trampolines gate on node_id != 0. Effect/state
+/// callbacks fire on a reader thread — emitting an NDP event there is safe
+/// (writeFrameOpts holds writer_mutex); they never touch a GTK widget.
+pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
+    emit = emit_fn;
+    const state = stateFrom(widget) orelse return;
+    state.node_id = node_id;
+}
+
+fn effectTramp(ud: ?*anyopaque, kind: c_int, text: ?[*:0]const u8, code: c_int) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(ud orelse return));
+    if (state.node_id == 0) return;
+    const f = emit orelse return;
+    switch (kind) {
+        0 => { // title changed
+            const t = text orelse return;
+            f(state.node_id, "titleChanged", .{ .text = std.mem.span(t) });
+        },
+        1 => f(state.node_id, "bell", .{}), // bell
+        2 => { // child exited
+            var obj: std.json.ObjectMap = .empty;
+            defer obj.deinit(std.heap.page_allocator);
+            obj.put(std.heap.page_allocator, "code", .{ .integer = @as(i64, code) }) catch return;
+            f(state.node_id, "exited", .{ .data = .{ .object = obj } });
+        },
+        else => {},
+    }
+}
+
+fn stateTramp(ud: ?*anyopaque, state_val: c_int, detail: ?[*:0]const u8) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(ud orelse return));
+    if (state.node_id == 0) return;
+    const f = emit orelse return;
+    var obj: std.json.ObjectMap = .empty;
+    defer obj.deinit(std.heap.page_allocator);
+    obj.put(std.heap.page_allocator, "state", .{ .integer = @as(i64, state_val) }) catch return;
+    if (detail) |d| obj.put(std.heap.page_allocator, "detail", .{ .string = std.mem.span(d) }) catch return;
+    f(state.node_id, "connectionState", .{ .data = .{ .object = obj } });
 }
 
 const G_SOURCE_CONTINUE: c_int = 1;
@@ -122,7 +212,11 @@ fn onPressed(_: *gtk.GestureClick, _: c_int, _: f64, _: f64, state: *State) call
 }
 
 fn onUnrealize(widget: *gtk.Widget, state: *State) callconv(.c) void {
-    ndt.ndterm_close(@ptrCast(state.term));
+    if (state.is_remote) {
+        if (state.rt) |rt| ndremote.ndrt_close(@ptrCast(rt)); // closes the virtual ndterm too
+    } else {
+        ndt.ndterm_close(@ptrCast(state.term));
+    }
     gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, null);
     std.heap.c_allocator.destroy(state);
 }

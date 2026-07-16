@@ -1336,11 +1336,18 @@ pub fn create(
         // ND_PLATFORM_NOOP(ShareButton): not available on this platform — invisible empty box by design.
         return gtk.Box.new(.vertical, 0).as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Terminal")) {
-        const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
-        const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
         const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
         const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
         const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
+        if (propBool(props, "remote") orelse false) {
+            const host: [*:0]const u8 = if (propStr(props, "host")) |h| dupeZ(h).ptr else "127.0.0.1";
+            const port: u16 = @intCast(propInt(props, "port") orelse 4618);
+            const sid: [*:0]const u8 = if (propStr(props, "sessionId")) |s| dupeZ(s).ptr else "";
+            const ticket: [*:0]const u8 = if (propStr(props, "ticket")) |t| dupeZ(t).ptr else "";
+            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, cols, rows);
+        }
+        const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
+        const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
         return ndterm_gtk.create(command, cwd, font_size, cols, rows);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
@@ -1955,6 +1962,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_FontPicker_fontChanged = asObject(widget);
         const hid_FontPicker_fontChanged = gobject.signalConnectData(obj_FontPicker_fontChanged, "notify::font-desc", @ptrCast(&cbFontDesc), data, null, .{});
         noteSuppressible(obj_FontPicker_fontChanged, hid_FontPicker_fontChanged);
+    } else if (std.mem.eql(u8, kind, "Terminal")) {
+        if (emit) |f| ndterm_gtk.connectEvents(widget, node_id, f);
     }
 }
 

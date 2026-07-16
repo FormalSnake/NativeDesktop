@@ -10,66 +10,112 @@ import CNd
 /// key events to bytes for `ndterm_write_input`, tracks pixel size onto the
 /// grid via `ndterm_resize`, and closes the handle on `deinit`.
 ///
-/// No effect callback is registered yet (title/bell/child-exit events are
-/// deferred), so `ndterm_open` gets `nil`/`nil` for `cb`/`userdata`.
+/// The effect callback (title/bell/child-exit) is registered with `self` as
+/// userdata; a remote view additionally registers a connection-state callback.
+/// Both fire on a reader thread and marshal to the main queue before emitting.
 ///
 /// Flipped like the rest of the shell (`FlippedView`, `NDPaneHostView`): the
 /// grid is top-origin (row 0 is the top row), so a top-left y-down coordinate
 /// space lets cell (x, y) draw at `(x*cellW, y*cellH)` directly, and AppKit's
 /// string drawing stays right-side-up in a flipped view.
 final class NDTerminalView: NSView {
-    /// `nd_terminal *` (opaque to Swift). Nil only if `ndterm_open` failed.
+    /// `nd_terminal *` (opaque to Swift). Nil only if the open failed. For a
+    /// remote view it is `ndrt_terminal(rt)` — the same render handle the local
+    /// path uses, so draw/input are backend-agnostic.
     /// nonisolated(unsafe): the @MainActor view's nonisolated `deinit` closes the
     /// handle; teardown is single-owner so the unchecked access is safe.
-    nonisolated(unsafe) private let term: OpaquePointer?
+    nonisolated(unsafe) private var term: OpaquePointer?
+    /// `nd_remote_terminal *` for a remote view (nil for a local PTY view).
+    nonisolated(unsafe) private var rt: OpaquePointer?
+    private let isRemote: Bool
     private let font: NSFont
     private let boldFont: NSFont
     private let cellW: CGFloat
     private let cellH: CGFloat
     /// Current grid dimensions. Start from the create-time props, then track
-    /// the view's pixel size in `setFrameSize` (→ `ndterm_resize`).
+    /// the view's pixel size in `setFrameSize` (→ `ndterm_resize`/`ndrt_resize`).
     private var cols: Int
     private var rows: Int
+    /// Node id recorded by `ndTerminalConnect` (generated ndConnectEvents arm).
+    /// 0 = not yet wired; the effect/state trampolines gate on it. Read from the
+    /// transport reader thread, hence nonisolated(unsafe) (set-once on main).
+    nonisolated(unsafe) var ndNodeID: UInt32 = 0
     nonisolated(unsafe) private var repaintTimer: Timer?
 
-    init(command: String?, cwd: String?, fontSize: Int, cols: Int, rows: Int) {
+    /// Monospace ⇒ every glyph shares one advance, so the max advance IS the
+    /// cell width; `defaultLineHeight` is the font's natural row pitch. Ceil
+    /// both to keep cell rects on integral pixels.
+    private static func metrics(_ fontSize: Int) -> (NSFont, NSFont, CGFloat, CGFloat) {
         let f = NSFont(name: "Menlo", size: CGFloat(fontSize))
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
-        self.font = f
-        self.boldFont = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
-        // Monospace ⇒ every glyph shares one advance, so the max advance IS the
-        // cell width; `defaultLineHeight` is the font's natural row pitch.
-        // Ceil both to keep cell rects on integral pixels.
-        self.cellW = ceil(f.maximumAdvancement.width)
-        self.cellH = ceil(NSLayoutManager().defaultLineHeight(for: f))
+        let bold = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
+        return (f, bold, ceil(f.maximumAdvancement.width), ceil(NSLayoutManager().defaultLineHeight(for: f)))
+    }
+
+    init(command: String?, cwd: String?, fontSize: Int, cols: Int, rows: Int) {
+        (self.font, self.boldFont, self.cellW, self.cellH) = Self.metrics(fontSize)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
-
-        let c = UInt16(self.cols)
-        let r = UInt16(self.rows)
-        // `command`/`cwd` are optional; a nil pointer tells the core to use
-        // $SHELL / inherit cwd. `ndterm_open` spawns synchronously, so the
-        // transient C strings from `withCString` outlive the call.
-        var handle: OpaquePointer?
-        switch (command, cwd) {
-        case let (cmd?, wd?):
-            handle = cmd.withCString { cp in wd.withCString { wp in ndterm_open(c, r, cp, wp, nil, nil) } }
-        case let (cmd?, nil):
-            handle = cmd.withCString { cp in ndterm_open(c, r, cp, nil, nil, nil) }
-        case let (nil, wd?):
-            handle = wd.withCString { wp in ndterm_open(c, r, nil, wp, nil, nil) }
-        case (nil, nil):
-            handle = ndterm_open(c, r, nil, nil, nil, nil)
-        }
-        self.term = handle
-
+        self.isRemote = false
+        self.rt = nil
+        self.term = nil
         super.init(frame: NSRect(x: 0, y: 0,
                                  width: CGFloat(self.cols) * cellW,
                                  height: CGFloat(self.rows) * cellH))
 
-        // The core mutates the grid on its own reader thread; there's no push
-        // signal yet, so poll-repaint at 30 Hz. Weak self ⇒ the timer
-        // doesn't keep the view alive; `deinit` invalidates it.
+        // Open after super.init so `self` can be the effect userdata (title/bell/
+        // child-exit). `command`/`cwd` are optional; a nil pointer tells the core
+        // to use $SHELL / inherit cwd. Transient C strings outlive the sync call.
+        let ud = Unmanaged.passUnretained(self).toOpaque()
+        let c = UInt16(self.cols)
+        let r = UInt16(self.rows)
+        switch (command, cwd) {
+        case let (cmd?, wd?):
+            self.term = cmd.withCString { cp in wd.withCString { wp in ndterm_open(c, r, cp, wp, ndTerminalEffectCb, ud) } }
+        case let (cmd?, nil):
+            self.term = cmd.withCString { cp in ndterm_open(c, r, cp, nil, ndTerminalEffectCb, ud) }
+        case let (nil, wd?):
+            self.term = wd.withCString { wp in ndterm_open(c, r, nil, wp, ndTerminalEffectCb, ud) }
+        case (nil, nil):
+            self.term = ndterm_open(c, r, nil, nil, ndTerminalEffectCb, ud)
+        }
+
+        startRepaint()
+    }
+
+    /// Remote view: the grid is fed by the byte-plane transport (ndremote).
+    /// `remote` is the overload disambiguator (always true here).
+    init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, cols: Int, rows: Int) {
+        (self.font, self.boldFont, self.cellW, self.cellH) = Self.metrics(fontSize)
+        self.cols = max(1, cols)
+        self.rows = max(1, rows)
+        self.isRemote = true
+        self.rt = nil
+        self.term = nil
+        super.init(frame: NSRect(x: 0, y: 0,
+                                 width: CGFloat(self.cols) * cellW,
+                                 height: CGFloat(self.rows) * cellH))
+
+        let ud = Unmanaged.passUnretained(self).toOpaque()
+        let c = UInt16(self.cols)
+        let r = UInt16(self.rows)
+        let handle = (host ?? "127.0.0.1").withCString { h in
+            (sessionId ?? "").withCString { s in
+                (ticket ?? "").withCString { t in
+                    ndrt_open(h, UInt16(truncatingIfNeeded: port), s, t, c, r, ndTerminalEffectCb, ndTerminalStateCb, ud)
+                }
+            }
+        }
+        self.rt = handle
+        self.term = handle.map { ndrt_terminal($0) } ?? nil
+
+        startRepaint()
+    }
+
+    // The core mutates the grid on its own reader thread; there's no push
+    // signal, so poll-repaint at 30 Hz. Weak self ⇒ the timer doesn't keep the
+    // view alive; `deinit` invalidates it.
+    private func startRepaint() {
         repaintTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             self?.needsDisplay = true
         }
@@ -79,7 +125,11 @@ final class NDTerminalView: NSView {
 
     deinit {
         repaintTimer?.invalidate()
-        if let t = term { ndterm_close(t) }
+        if isRemote {
+            if let r = rt { ndrt_close(r) } // closes the virtual ndterm too
+        } else if let t = term {
+            ndterm_close(t)
+        }
     }
 
     // Top-origin grid; opaque (every pixel is painted by the bg fill below);
@@ -202,7 +252,11 @@ final class NDTerminalView: NSView {
         if newCols != cols || newRows != rows {
             cols = newCols
             rows = newRows
-            ndterm_resize(t, UInt16(cols), UInt16(rows))
+            if isRemote, let r = rt {
+                ndrt_resize(r, UInt16(cols), UInt16(rows)) // local grid + RESIZE frame
+            } else {
+                ndterm_resize(t, UInt16(cols), UInt16(rows))
+            }
             needsDisplay = true
         }
     }
@@ -264,4 +318,44 @@ final class NDTerminalView: NSView {
         }
         return []
     }
+}
+
+// MARK: - effect / connection-state trampolines (C ABI)
+
+/// Records the node id so the effect/state trampolines can emit (generated
+/// `ndConnectEvents` Terminal arm). Peer of `ndWebViewConnect`.
+func ndTerminalConnect(_ view: NSView, nodeID: UInt32) {
+    guard let tv = view as? NDTerminalView else { return }
+    tv.ndNodeID = nodeID
+}
+
+/// Emit an NDP event for a terminal view. `udata` is the unretained view passed
+/// as the ndterm/ndremote userdata. Fires on a reader thread; the actual emit is
+/// marshaled to the main queue, capturing only value types (never the view).
+private func ndTerminalEmit(_ udata: UnsafeMutableRawPointer?, _ name: String, _ json: String) {
+    guard let udata = udata else { return }
+    let nodeID = Unmanaged<NDTerminalView>.fromOpaque(udata).takeUnretainedValue().ndNodeID
+    guard nodeID != 0 else { return }
+    DispatchQueue.main.async { ndEmitEvent(nodeID, name, json) }
+}
+
+/// `nd_term_effect_cb` — kind: 0 title, 1 bell, 2 child-exit (code).
+func ndTerminalEffectCb(_ udata: UnsafeMutableRawPointer?, _ kind: Int32, _ text: UnsafePointer<CChar>?, _ code: Int32) {
+    switch kind {
+    case 0:
+        let title = text.map { String(cString: $0) } ?? ""
+        ndTerminalEmit(udata, "titleChanged", "{\"text\":\(ndJsonString(title))}")
+    case 1:
+        ndTerminalEmit(udata, "bell", "{}")
+    case 2:
+        ndTerminalEmit(udata, "exited", "{\"data\":{\"code\":\(code)}}")
+    default:
+        break
+    }
+}
+
+/// `nd_rt_state_cb` — connection-state transitions (nd_rt_state + optional detail).
+func ndTerminalStateCb(_ udata: UnsafeMutableRawPointer?, _ state: Int32, _ detail: UnsafePointer<CChar>?) {
+    let detailJson = detail.map { ",\"detail\":\(ndJsonString(String(cString: $0)))" } ?? ""
+    ndTerminalEmit(udata, "connectionState", "{\"data\":{\"state\":\(state)\(detailJson)}}")
 }
