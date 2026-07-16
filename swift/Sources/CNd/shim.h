@@ -5,3 +5,4 @@
 // the header-install step is fixed to copy both.
 #include "../../../include/nd.h"
 #include "../../../include/ndterm.h"
+#include "../../../include/ndremote.h"

@@ -21,6 +21,11 @@ pub const abi = @import("abi");
 // symbols are force-retained below exactly like abi's C-ABI surface.
 pub const terminal = @import("terminal.zig");
 
+// Remote-terminal transport: a Canary byte-plane client that feeds a virtual
+// ndterm (ndremote C ABI, include/ndremote.h). GTK-free / AppKit-free like
+// terminal.zig; its `export fn ndrt_*` symbols are force-retained below.
+pub const remote_terminal = @import("remote_terminal.zig");
+
 // Force retention of the `export fn` C-ABI symbols in `libnd.a`: Zig's
 // lazy compilation only emits code reachable from something the compiler
 // keeps, and a static-lib artifact has no "keep everything exported"
@@ -50,6 +55,11 @@ comptime {
     _ = &terminal.ndterm_open_virtual;
     _ = &terminal.ndterm_feed;
     _ = &terminal.ndterm_reset;
+    _ = &remote_terminal.ndrt_open;
+    _ = &remote_terminal.ndrt_terminal;
+    _ = &remote_terminal.ndrt_write_input;
+    _ = &remote_terminal.ndrt_resize;
+    _ = &remote_terminal.ndrt_close;
 }
 
 test {

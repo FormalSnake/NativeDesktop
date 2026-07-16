@@ -227,6 +227,18 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(ndp_binary_tests).step);
 
+    // Remote-terminal transport: own addTest root (Zig 0.16 does not collect
+    // `test {}` transitively) for the standalone byte-plane framing tests. It
+    // imports terminal.zig (ghostty_* externs), so link the terminal deps.
+    const remote_terminal_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/remote_terminal.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    linkTerminalDeps(remote_terminal_tests_mod, ghostty_vt_lib, target);
+    const remote_terminal_tests = b.addTest(.{ .root_module = remote_terminal_tests_mod });
+    test_step.dependOn(&b.addRunArtifact(remote_terminal_tests).step);
+
     // Capability ACL: own addTest root, std-only module.
     const acl_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -283,11 +295,20 @@ pub fn build(b: *std.Build) void {
     // is not 8-byte aligned"); repack the installed archive with libtool so
     // swiftc/SwiftPM can link it. Host-gated: only Apple's linker cares, and
     // libtool only exists on macOS. Repacking is idempotent.
+    //
+    // libtool must be handed the extracted OBJECT files, not the archive:
+    // `libtool -static -o out in.a` on macOS SILENTLY DROPS whichever member is
+    // misaligned (keeping only the aligned one), so repacking straight from the
+    // archive loses libnd_zcu.o once it is the misaligned member. Extract, then
+    // repack from the .o files, which libtool aligns correctly.
     if (builtin.os.tag == .macos) {
         const lib_path = b.getInstallPath(.lib, "libnd.a");
         const repack = b.addSystemCommand(&.{
             "/bin/sh", "-c",
-            b.fmt("libtool -static -o '{s}.repacked' '{s}' && mv '{s}.repacked' '{s}'", .{ lib_path, lib_path, lib_path, lib_path }),
+            b.fmt(
+                "set -e; d=$(dirname '{s}'); w=\"$d/.ndrepack\"; rm -rf \"$w\"; mkdir \"$w\"; (cd \"$w\" && ar x '{s}' && chmod +r *.o && libtool -static -o repacked.a *.o); mv \"$w/repacked.a\" '{s}'; rm -rf \"$w\"",
+                .{ lib_path, lib_path, lib_path },
+            ),
         });
         repack.step.dependOn(&libnd_install.step);
         libnd_step.dependOn(&repack.step);
