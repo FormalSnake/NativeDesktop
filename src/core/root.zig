@@ -47,6 +47,9 @@ comptime {
     _ = &terminal.ndterm_cursor;
     _ = &terminal.ndterm_default_colors;
     _ = &terminal.ndterm_render_unlock;
+    _ = &terminal.ndterm_open_virtual;
+    _ = &terminal.ndterm_feed;
+    _ = &terminal.ndterm_reset;
 }
 
 test {

@@ -71,6 +71,31 @@ void         ndterm_cursor(nd_terminal *t, nd_term_cursor *out);
 void         ndterm_default_colors(nd_terminal *t, uint8_t fg[3], uint8_t bg[3]);
 void         ndterm_render_unlock(nd_terminal *t);
 
+/* --- virtual (remote-fed) mode ---
+   A virtual terminal has NO pty/fork/reader-thread (amaster == -1). Bytes are
+   pushed in with ndterm_feed and pulled out through output_cb. Used by the
+   remote transport (src/core/remote_terminal.zig): a daemon streams the PTY's
+   output over the byte plane, this VT renders it, and keystrokes / VT query
+   responses travel back over the wire instead of to a local PTY master. */
+
+/* Output sink for VIRTUAL terminals: replaces the write(amaster) path. In
+   virtual mode both keystrokes (ndterm_write_input) and VT query responses
+   (the internal write_pty effect) route here instead of to a PTY master. */
+typedef void (*nd_term_output_cb)(void *userdata, const uint8_t *bytes, size_t len);
+
+/* Open a terminal with NO pty/fork/reader-thread. Bytes are pushed in via
+   ndterm_feed and pulled out via output_cb. `cb` = title/bell/exit effects,
+   `userdata` is passed to BOTH cb and output_cb (caller disambiguates). */
+nd_terminal *ndterm_open_virtual(uint16_t cols, uint16_t rows,
+                                 nd_term_effect_cb cb, nd_term_output_cb output_cb,
+                                 void *userdata);
+/* Feed remote PTY output into the VT (virtual mode only; no-op on pty-backed).
+   Thread-safe: takes the same internal mutex as ndterm_render_lock. */
+void         ndterm_feed(nd_terminal *t, const uint8_t *bytes, size_t len);
+/* Reset the VT to power-on defaults before the next feed — used on a snapshot/
+   replay boundary (OUTPUT frame with FLAG_RESET set). */
+void         ndterm_reset(nd_terminal *t);
+
 #ifdef __cplusplus
 }
 #endif

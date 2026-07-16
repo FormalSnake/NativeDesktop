@@ -61,6 +61,10 @@ const NDTERM_FLAG_WIDE_TAIL: u8 = 1 << 4;
 /// 1 bell, 2 child-exit (`code`=exit status).
 const EffectCb = *const fn (userdata: ?*anyopaque, kind: c_int, text: ?[*:0]const u8, code: c_int) callconv(.c) void;
 
+/// include/ndterm.h `nd_term_output_cb`. In virtual mode this replaces the
+/// write(amaster) path: both keystrokes and VT query responses route here.
+const OutputCb = *const fn (userdata: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void;
+
 // ---------------------------------------------------------------------------
 // libghostty-vt types (from vendor/libghostty-vt/include/ghostty/vt/*.h).
 // Opaque handles are `?*anyopaque`. GhosttyResult is c_int (GHOSTTY_SUCCESS=0).
@@ -248,6 +252,15 @@ const Terminal = struct {
     amaster: c_int,
     pid: c_int,
 
+    // Virtual mode: no pty/fork/reader-thread (amaster == -1). Output bytes
+    // (keystrokes + VT query responses) flow to `output_cb` instead of a PTY
+    // master; input arrives via ndterm_feed. `cols`/`rows` track the logical
+    // grid so ndterm_reset can rebuild the VT at the current size.
+    is_virtual: bool = false,
+    output_cb: ?OutputCb = null,
+    cols: u16 = 0,
+    rows: u16 = 0,
+
     term: ?*anyopaque = null, // GhosttyTerminal
     state: ?*anyopaque = null, // GhosttyRenderState
     row_iter: ?*anyopaque = null, // GhosttyRenderStateRowIterator
@@ -290,7 +303,13 @@ fn writePtyCb(term: ?*anyopaque, userdata: ?*anyopaque, data: [*]const u8, len: 
     const t: *Terminal = @ptrCast(@alignCast(userdata orelse return));
     // Already under `mutex` (inside vt_write). Write query responses straight
     // back to the PTY; do NOT re-lock (non-recursive mutex) or re-enter vt_write.
-    _ = write(t.amaster, data, len);
+    // In virtual mode there is no PTY — route responses out through output_cb
+    // (the transport sends them as an INPUT frame; different lock, no deadlock).
+    if (t.is_virtual) {
+        if (t.output_cb) |o| o(t.userdata, data, len);
+    } else {
+        _ = write(t.amaster, data, len);
+    }
 }
 
 fn titleChangedCb(term: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) void {
@@ -442,71 +461,103 @@ fn parentSetup(
         .cwd_owned = cwd_owned,
     };
 
-    var term: ?*anyopaque = null;
-    const opts = GhosttyTerminalOptions{ .cols = cols, .rows = rows, .max_scrollback = 1000 };
-    if (ghostty_terminal_new(null, &term, opts) != GHOSTTY_SUCCESS) return error.TerminalNew;
-    t.term = term;
-    errdefer ghostty_terminal_free(t.term);
-
-    // Default colors so per-cell fallback + ndterm_default_colors always resolve.
-    const def_fg = GhosttyColorRgb{ .r = t.default_fg[0], .g = t.default_fg[1], .b = t.default_fg[2] };
-    const def_bg = GhosttyColorRgb{ .r = t.default_bg[0], .g = t.default_bg[1], .b = t.default_bg[2] };
-    _ = ghostty_terminal_set(t.term, OPT_COLOR_FOREGROUND, @ptrCast(&def_fg));
-    _ = ghostty_terminal_set(t.term, OPT_COLOR_BACKGROUND, @ptrCast(&def_bg));
-
-    // Register effects. userdata is the *Terminal so callbacks reach t.cb/t.userdata.
-    _ = ghostty_terminal_set(t.term, OPT_USERDATA, @ptrCast(t));
-    _ = ghostty_terminal_set(t.term, OPT_WRITE_PTY, @ptrCast(&writePtyCb));
-    _ = ghostty_terminal_set(t.term, OPT_TITLE_CHANGED, @ptrCast(&titleChangedCb));
-    _ = ghostty_terminal_set(t.term, OPT_BELL, @ptrCast(&bellCb));
-
-    var state: ?*anyopaque = null;
-    if (ghostty_render_state_new(null, &state) != GHOSTTY_SUCCESS) return error.RenderStateNew;
-    t.state = state;
-    errdefer ghostty_render_state_free(t.state);
-
-    var iter: ?*anyopaque = null;
-    if (ghostty_render_state_row_iterator_new(null, &iter) != GHOSTTY_SUCCESS) return error.RowIterNew;
-    t.row_iter = iter;
-    errdefer ghostty_render_state_row_iterator_free(t.row_iter);
-
-    var cells: ?*anyopaque = null;
-    if (ghostty_render_state_row_cells_new(null, &cells) != GHOSTTY_SUCCESS) return error.RowCellsNew;
-    t.row_cells = cells;
-    errdefer ghostty_render_state_row_cells_free(t.row_cells);
+    try setupVt(t, cols, rows);
+    errdefer freeVt(t);
 
     t.reader_thread = try std.Thread.spawn(.{}, readerLoop, .{t});
     return t;
 }
 
-pub export fn ndterm_close(t_opt: ?*Terminal) callconv(.c) void {
-    const t = t_opt orelse return;
+/// Register the 4 effect options + default colors on `t.term`. Shared by
+/// setupVt and ndterm_reset (which rebuilds the VT). userdata is the
+/// *Terminal so callbacks reach t.cb/t.userdata.
+fn registerVtOptions(t: *Terminal) void {
+    const def_fg = GhosttyColorRgb{ .r = t.default_fg[0], .g = t.default_fg[1], .b = t.default_fg[2] };
+    const def_bg = GhosttyColorRgb{ .r = t.default_bg[0], .g = t.default_bg[1], .b = t.default_bg[2] };
+    _ = ghostty_terminal_set(t.term, OPT_COLOR_FOREGROUND, @ptrCast(&def_fg));
+    _ = ghostty_terminal_set(t.term, OPT_COLOR_BACKGROUND, @ptrCast(&def_bg));
+    _ = ghostty_terminal_set(t.term, OPT_USERDATA, @ptrCast(t));
+    _ = ghostty_terminal_set(t.term, OPT_WRITE_PTY, @ptrCast(&writePtyCb));
+    _ = ghostty_terminal_set(t.term, OPT_TITLE_CHANGED, @ptrCast(&titleChangedCb));
+    _ = ghostty_terminal_set(t.term, OPT_BELL, @ptrCast(&bellCb));
+}
 
-    // Signal teardown, then wake a reader blocked in read() by hanging up the
-    // child (EOF on the PTY master). The reader sees `closing` and will not reap.
-    t.closing.store(true, .seq_cst);
-    lockMutex(t);
-    if (!t.child_reaped) _ = kill(t.pid, sigNum(std.posix.SIG.HUP));
-    unlockMutex(t);
+/// Build the libghostty-vt terminal + render-state/iterator/cells on `t`.
+/// Shared by the pty-backed (ndterm_open) and virtual (ndterm_open_virtual)
+/// paths — neither touches the PTY. Frees any partial allocation on error.
+fn setupVt(t: *Terminal, cols: u16, rows: u16) !void {
+    t.cols = cols;
+    t.rows = rows;
 
-    t.reader_thread.join();
-
-    // Reader has exited; reap the child if it is still alive.
-    lockMutex(t);
-    if (!t.child_reaped) {
-        _ = kill(t.pid, sigNum(std.posix.SIG.KILL));
-        var status: c_int = 0;
-        _ = waitpid(t.pid, &status, 0);
-        t.child_reaped = true;
+    var term: ?*anyopaque = null;
+    const opts = GhosttyTerminalOptions{ .cols = cols, .rows = rows, .max_scrollback = 1000 };
+    if (ghostty_terminal_new(null, &term, opts) != GHOSTTY_SUCCESS) return error.TerminalNew;
+    t.term = term;
+    errdefer {
+        ghostty_terminal_free(t.term);
+        t.term = null;
     }
-    unlockMutex(t);
 
-    _ = close(t.amaster);
+    registerVtOptions(t);
 
+    var state: ?*anyopaque = null;
+    if (ghostty_render_state_new(null, &state) != GHOSTTY_SUCCESS) return error.RenderStateNew;
+    t.state = state;
+    errdefer {
+        ghostty_render_state_free(t.state);
+        t.state = null;
+    }
+
+    var iter: ?*anyopaque = null;
+    if (ghostty_render_state_row_iterator_new(null, &iter) != GHOSTTY_SUCCESS) return error.RowIterNew;
+    t.row_iter = iter;
+    errdefer {
+        ghostty_render_state_row_iterator_free(t.row_iter);
+        t.row_iter = null;
+    }
+
+    var cells: ?*anyopaque = null;
+    if (ghostty_render_state_row_cells_new(null, &cells) != GHOSTTY_SUCCESS) return error.RowCellsNew;
+    t.row_cells = cells;
+}
+
+/// Free the libghostty-vt render objects + terminal (reverse of setupVt).
+fn freeVt(t: *Terminal) void {
     ghostty_render_state_row_cells_free(t.row_cells);
     ghostty_render_state_row_iterator_free(t.row_iter);
     ghostty_render_state_free(t.state);
     ghostty_terminal_free(t.term);
+}
+
+pub export fn ndterm_close(t_opt: ?*Terminal) callconv(.c) void {
+    const t = t_opt orelse return;
+
+    // Virtual mode has no reader thread / child / PTY master (amaster == -1),
+    // so skip all of the pty teardown — just free the VT + owned memory.
+    if (!t.is_virtual) {
+        // Signal teardown, then wake a reader blocked in read() by hanging up the
+        // child (EOF on the PTY master). The reader sees `closing` and will not reap.
+        t.closing.store(true, .seq_cst);
+        lockMutex(t);
+        if (!t.child_reaped) _ = kill(t.pid, sigNum(std.posix.SIG.HUP));
+        unlockMutex(t);
+
+        t.reader_thread.join();
+
+        // Reader has exited; reap the child if it is still alive.
+        lockMutex(t);
+        if (!t.child_reaped) {
+            _ = kill(t.pid, sigNum(std.posix.SIG.KILL));
+            var status: c_int = 0;
+            _ = waitpid(t.pid, &status, 0);
+            t.child_reaped = true;
+        }
+        unlockMutex(t);
+
+        _ = close(t.amaster);
+    }
+
+    freeVt(t);
 
     if (t.snapshot.len != 0) gpa.free(t.snapshot);
     if (t.command_owned) |c| gpa.free(c);
@@ -514,20 +565,84 @@ pub export fn ndterm_close(t_opt: ?*Terminal) callconv(.c) void {
     gpa.destroy(t);
 }
 
+pub export fn ndterm_open_virtual(
+    cols: u16,
+    rows: u16,
+    cb: ?EffectCb,
+    output_cb: ?OutputCb,
+    userdata: ?*anyopaque,
+) callconv(.c) ?*Terminal {
+    const t = gpa.create(Terminal) catch return null;
+    t.* = .{
+        .amaster = -1,
+        .pid = -1,
+        .is_virtual = true,
+        .output_cb = output_cb,
+        .cb = cb,
+        .userdata = userdata,
+        .command_owned = null,
+        .cwd_owned = null,
+    };
+    setupVt(t, cols, rows) catch {
+        gpa.destroy(t);
+        return null;
+    };
+    return t;
+}
+
+pub export fn ndterm_feed(t_opt: ?*Terminal, bytes: [*]const u8, len: usize) callconv(.c) void {
+    const t = t_opt orelse return;
+    if (!t.is_virtual) return; // no-op on pty-backed terminals
+    lockMutex(t);
+    defer unlockMutex(t);
+    ghostty_terminal_vt_write(t.term, bytes, len);
+}
+
+pub export fn ndterm_reset(t_opt: ?*Terminal) callconv(.c) void {
+    const t = t_opt orelse return;
+    if (!t.is_virtual) return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    // Rebuild the VT for a true power-on state: RIS (ESC c) alone would not
+    // guarantee scrollback / alt-screen / DEC-mode reset to match a server
+    // snapshot. free + new + re-register the effect options at the current size.
+    ghostty_terminal_free(t.term);
+    var term: ?*anyopaque = null;
+    const opts = GhosttyTerminalOptions{ .cols = t.cols, .rows = t.rows, .max_scrollback = 1000 };
+    if (ghostty_terminal_new(null, &term, opts) != GHOSTTY_SUCCESS) {
+        t.term = null;
+        return;
+    }
+    t.term = term;
+    registerVtOptions(t);
+}
+
 pub export fn ndterm_resize(t_opt: ?*Terminal, cols: u16, rows: u16) callconv(.c) void {
     const t = t_opt orelse return;
     lockMutex(t);
     defer unlockMutex(t);
     _ = ghostty_terminal_resize(t.term, cols, rows, 0, 0);
-    var ws = winsize{ .ws_row = rows, .ws_col = cols, .ws_xpixel = 0, .ws_ypixel = 0 };
-    _ = ioctl(t.amaster, TIOCSWINSZ, &ws);
+    t.cols = cols;
+    t.rows = rows;
+    // Virtual mode has no PTY master to notify — the remote server owns the
+    // real PTY winsize (driven by RESIZE frames from the transport).
+    if (!t.is_virtual) {
+        var ws = winsize{ .ws_row = rows, .ws_col = cols, .ws_xpixel = 0, .ws_ypixel = 0 };
+        _ = ioctl(t.amaster, TIOCSWINSZ, &ws);
+    }
 }
 
 pub export fn ndterm_write_input(t_opt: ?*Terminal, bytes: [*]const u8, len: usize) callconv(.c) void {
     const t = t_opt orelse return;
     lockMutex(t);
     defer unlockMutex(t);
-    _ = write(t.amaster, bytes, len);
+    // Virtual mode: keystrokes leave through output_cb (the transport wraps
+    // them in an INPUT frame) instead of a local PTY master.
+    if (t.is_virtual) {
+        if (t.output_cb) |o| o(t.userdata, bytes, len);
+    } else {
+        _ = write(t.amaster, bytes, len);
+    }
 }
 
 pub export fn ndterm_render_lock(t_opt: ?*Terminal, out_cols: *u16, out_rows: *u16) callconv(.c) void {
