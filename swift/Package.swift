@@ -34,7 +34,7 @@ let package = Package(
                     // libghostty-vt resolves the ghostty_* externs that
                     // libnd's terminal core (ndterm_*) references. After -lnd so the
                     // archive satisfies libnd's undefined symbols.
-                    "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt.a",
+                    "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt-macos-aarch64.a",
                 ]),
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),

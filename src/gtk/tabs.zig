@@ -25,6 +25,7 @@
 // handle outlives the page (mirrors reparent_child's ref bracket).
 const std = @import("std");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
@@ -183,6 +184,15 @@ fn createScaffold(app: *gtk.Application, group: *Group, width: c_int, height: c_
     _ = gobject.signalConnectData(@ptrCast(@alignCast(win)), "notify::is-active", @ptrCast(&onWindowActive), null, null, .{});
     _ = gtk.Window.signals.close_request.connect(win, ?*anyopaque, &onScaffoldCloseRequest, null, .{});
     _ = gtk.Widget.signals.destroy.connect(win.as(gtk.Widget), ?*anyopaque, &onScaffoldDestroy, null, .{});
+
+    // Ctrl+W closes the active tab. It's a native tab-system keybinding (GNOME
+    // AdwTabView apps bind it), so the tab window owns it rather than leaning on
+    // the app's optional menu. Capture phase intercepts before the focused
+    // webview can swallow the accelerator.
+    const keys = gtk.EventControllerKey.new();
+    gtk.EventController.setPropagationPhase(keys.as(gtk.EventController), .capture);
+    _ = gtk.EventControllerKey.signals.key_pressed.connect(keys, *gtk.Window, &onWindowKey, win, .{});
+    gtk.Widget.addController(win.as(gtk.Widget), keys.as(gtk.EventController));
 
     try group.windows.append(alloc, win);
     group.last_active = win;
@@ -469,6 +479,19 @@ fn onNewTabClicked(_: *gtk.Button, bin: *gtk.Widget) callconv(.c) void {
 /// Scaffold close (user X / Alt+F4): report every member tab closed so the
 /// app unmounts them, then let the close proceed — main.zig's last-window
 /// shutdown logic runs unchanged after us.
+/// Ctrl+W on a scaffold window: close the selected tab through the same
+/// deferred close-page path as its X button (closePage -> onClosePage holds the
+/// page pending and emits `closed` -> the app unmounts the <window>).
+fn onWindowKey(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk.ModifierType, win: *gtk.Window) callconv(.c) c_int {
+    if (!mods.control_mask) return 0;
+    if (keyval != 'w' and keyval != 'W') return 0;
+    const raw = getData(win, K_VIEW) orelse return 0;
+    const view: *adw.TabView = @ptrCast(@alignCast(raw));
+    const page = adw.TabView.getSelectedPage(view) orelse return 0;
+    adw.TabView.closePage(view, page);
+    return 1; // GDK_EVENT_STOP
+}
+
 fn onScaffoldCloseRequest(win: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
     const raw = getData(win, K_VIEW) orelse return 0;
     const view: *adw.TabView = @ptrCast(@alignCast(raw));
