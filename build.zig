@@ -40,7 +40,14 @@ pub fn build(b: *std.Build) void {
     // Prebuilt libghostty-vt static archive. Linked into every artifact
     // that compiles the generated GTK create dispatcher — which reaches
     // src/gtk/terminal.zig -> src/core/terminal.zig and its ghostty_* externs.
-    const ghostty_vt_lib = b.path("vendor/libghostty-vt/lib/libghostty-vt.a");
+    // Per-arch blobs live side by side so a Linux and a macOS checkout never
+    // clobber each other's archive on sync; the Swift/AppKit build picks the
+    // macOS one directly in swift/Package.swift.
+    const ghostty_vt_lib = b.path(switch (target.result.os.tag) {
+        .macos => "vendor/libghostty-vt/lib/libghostty-vt-macos-aarch64.a",
+        .linux => "vendor/libghostty-vt/lib/libghostty-vt-linux-x86_64.a",
+        else => @panic("no prebuilt libghostty-vt for this target"),
+    });
 
     // ---- The core: `src/abi.zig` transitively reaches every other
     // GTK-free core file via ordinary same-directory relative imports (abi
