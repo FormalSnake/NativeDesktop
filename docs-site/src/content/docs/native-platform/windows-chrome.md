@@ -15,7 +15,9 @@ compose into the same chrome; see [Menu Bar](/native-platform/menu-bar/) and
 The JSX root of an app. `title`, `defaultWidth`, and `defaultHeight` are honored on both platforms;
 `title` is live-updatable, the size props are create-only (they set the initial window size, not a
 constraint). See the [Widget Reference](/components/widget-reference/) for the full
-prop table.
+prop table. Multiple `<window>` roots open [multiple OS windows](/native-platform/multi-window/),
+and windows sharing a `tabGroup` render as one tabbed window with
+[native system tabs](/native-platform/tabs/).
 
 ## `<splitview>`: sidebar + content
 

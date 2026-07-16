@@ -151,6 +151,13 @@ export function showAbout(node: NdNodeRef<"window">, options: ShowAboutOptions):
   sendCommand(node, "showAbout", options);
 }
 
+/// Opens the native tab overview for the window's tab group — AdwTabOverview
+/// on GNOME, Show All Tabs (toggleTabOverview) on macOS. Fire-and-forget like
+/// showAbout; a no-op on windows without a `tabGroup`.
+export function showTabOverview(node: NdNodeRef<"window">): void {
+  sendCommand(node, "showTabOverview", {});
+}
+
 /// Pass as the owning <window>'s `onAlertResult` prop, bound to that same
 /// node (see module header) — settles the matching showAlert() call.
 export function onAlertResult(node: NdNodeRef<"window">, e: { data: unknown }): void {

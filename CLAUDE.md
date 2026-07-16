@@ -101,6 +101,34 @@ Linux path. Acceptance: `scripts/mac/mac-gestures.sh` (examples/gestures +
 gestures-drive.ts, keys-menu-drive.ts) → `MAC_GESTURES_OK`. Full surface doc:
 `docs-site/src/content/docs/automation-testing/automation-socket.md`.
 
+**Native system tabs (M17):** `<window tabGroup="x">` roots render as one
+tabbed window per platform's real tab system — macOS: each tab IS an NSWindow
+joined via `addTabbedWindow` (identifier `nd.x`, `.preferred`; the tab bar's
+`+` exists because `NDWindowTabDelegate` implements `newWindowForTab`); GTK:
+the group owns scaffold AdwApplicationWindows (`AdwTabOverview{view}` >
+`AdwTabView`, Ghostty's hierarchy) and each Window NODE's handle is an AdwBin
+tab page — `src/gtk/tabs.zig` + `swift/Sources/NDShell/WindowTabs.swift`,
+generated Window arms delegate. Framework injects GTK chrome (AdwTabBar with
+a `+` end-action under the app's headerbar, AdwTabButton `overview.open`
+packed at headerbar end). Events on the window node: `newTabRequested` (app
+renders another `<window tabGroup>`), `closed` (app unmounts; the native
+close is HELD PENDING until the unmount's remove op lands — AdwTabView's
+async close-page contract / `windowShouldClose` false). JS-initiated unmount
+closes natively via a `window.close` semantic action (tree.zig remove arm —
+no new vtable op; plain windows ride it too, guarded no-op when already
+closed; `isReleasedWhenClosed=false` at create makes close() safe). Tab
+drag-out/in/reorder is native both sides; GTK `create-window` spawns a
+sibling scaffold and the page (bin + child widget, webview state intact)
+transfers; per-page chrome rebinds its `view` on `page-attached`;
+`page-detached` must NEVER destroy or emit (fires on transfer). Cross-group
+never merges (distinct identifiers). `showTabOverview` window command =
+AdwTabOverview open / `toggleTabOverview`. `tabGroup` is create-only.
+Overview's own new-tab button stays disabled on GTK BY DESIGN — its
+`create-tab` signal demands a synchronously returned AdwTabPage, which the
+async JS round-trip can't produce. Acceptance: `scripts/tabs-drive.ts`
+(browser + terminal examples, cmd+t/cmd+w through real menu key equivalents)
+→ `ND_TABS_OK`. Docs: `docs-site/src/content/docs/native-platform/tabs.md`.
+
 **Cross-window reparenting (drag a tab between windows without reload):** React
 can't express a widget-preserving cross-parent move — moving a node to a new
 parent unmounts+remounts it, destroying the native widget (a `<webview>` would

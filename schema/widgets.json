@@ -79,14 +79,17 @@
         { "name": "title", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "defaultWidth", "type": "int", "default": 480, "appliesTo": "create" },
         { "name": "defaultHeight", "type": "int", "default": 320, "appliesTo": "create" },
+        { "name": "tabGroup", "type": "string", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "alertResult", "ndpName": "onAlertResult", "payload": "data" },
         { "name": "openFileResult", "ndpName": "onOpenFileResult", "payload": "data" },
-        { "name": "saveFileResult", "ndpName": "onSaveFileResult", "payload": "data" }
+        { "name": "saveFileResult", "ndpName": "onSaveFileResult", "payload": "data" },
+        { "name": "newTabRequested", "ndpName": "onNewTabRequested", "payload": "data" },
+        { "name": "closed", "ndpName": "onClosed", "payload": "data" }
       ],
-      "commands": ["showAlert", "openFile", "saveFile", "showAbout"],
+      "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview"],
       "automation": { "role": "window", "textFrom": "title" }
     },
     {

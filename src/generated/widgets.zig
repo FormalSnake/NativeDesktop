@@ -12,6 +12,7 @@ const ndterm_gtk = @import("../gtk/terminal.zig");
 const ndicons = @import("../gtk/icons.zig");
 const ndweb_gtk = @import("../gtk/webview.zig");
 const nddialog_gtk = @import("../gtk/dialogs.zig");
+const ndtabs_gtk = @import("../gtk/tabs.zig");
 const ndtable_gtk = @import("../gtk/table.zig");
 const ndtree_gtk = @import("../gtk/treeview.zig");
 const ndtoast_gtk = @import("../gtk/toast.zig");
@@ -921,15 +922,9 @@ pub fn create(
     the_window: *?*gtk.Window,
 ) !*gtk.Widget {
     if (std.mem.eql(u8, kind, "Window")) {
-        const window = adw.ApplicationWindow.new(app);
-        const win = window.as(gtk.Window);
-        the_window.* = win;
-        if (propStr(props, "title")) |t| gtk.Window.setTitle(win, dupeZ(t));
         const w: c_int = @intCast(propInt(props, "defaultWidth") orelse 480);
         const h: c_int = @intCast(propInt(props, "defaultHeight") orelse 320);
-        gtk.Window.setDefaultSize(win, w, h);
-        gtk.Window.present(win);
-        return window.as(gtk.Widget);
+        return ndtabs_gtk.createWindow(app, propStr(props, "tabGroup"), propStr(props, "title"), w, h, the_window, dupeZ);
     } else if (std.mem.eql(u8, kind, "Box")) {
         const vertical = if (propStr(props, "orientation")) |o| std.mem.eql(u8, o, "vertical") else true;
         const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;
@@ -1355,10 +1350,7 @@ pub fn create(
 /// The GTK update dispatcher for createAndUpdate props.
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     if (std.mem.eql(u8, kind, "Window")) {
-        if (propStr(props, "title")) |t| {
-            const win: *gtk.Window = @ptrCast(@alignCast(widget));
-            gtk.Window.setTitle(win, dupeZ(t));
-        }
+        if (propStr(props, "title")) |t| ndtabs_gtk.setTitle(widget, dupeZ(t));
     } else if (std.mem.eql(u8, kind, "Box")) {
         if (propInt(props, "spacing")) |s| {
             const box: *gtk.Box = @ptrCast(@alignCast(widget));
@@ -1852,6 +1844,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Window")) {
         if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);
+        if (emit) |f| ndtabs_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "Button")) {
         const obj_Button_clicked = asObject(widget);
         const hid_Button_clicked = gobject.signalConnectData(obj_Button_clicked, "clicked", @ptrCast(&cbClicked), data, null, .{});
@@ -1968,6 +1961,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
     if (std.mem.eql(u8, kind, "Window")) {
+        if (std.mem.eql(u8, command, "showTabOverview")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         ndweb_gtk.command(widget, command, arg);
@@ -1985,7 +1979,7 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     if (std.mem.eql(u8, parent_kind, "Window")) {
         if (!gobject.ext.isA(child, gtk.Widget)) {
             ndMenuAttachToWindow(child);
-        } else adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
+        } else ndtabs_gtk.appendToWindow(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) {
@@ -2030,8 +2024,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else adw.HeaderBar.packStart(hb, child);
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));
-        if (gobject.ext.isA(child, adw.HeaderBar)) adw.ToolbarView.addTopBar(tv, child)
-        else adw.ToolbarView.setContent(tv, child);
+        if (gobject.ext.isA(child, adw.HeaderBar)) {
+            adw.ToolbarView.addTopBar(tv, child);
+            ndtabs_gtk.onHeaderBarAttached(tv, child);
+        } else adw.ToolbarView.setContent(tv, child);
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
         ndMenubarAppendMenu(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
@@ -2138,7 +2134,7 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         return;
     }
     if (std.mem.eql(u8, parent_kind, "Window")) {
-        if (gobject.ext.isA(child, gtk.Widget)) adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);
+        if (gobject.ext.isA(child, gtk.Widget)) ndtabs_gtk.removeFromWindow(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
         gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {

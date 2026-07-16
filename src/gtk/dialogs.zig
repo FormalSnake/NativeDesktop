@@ -15,6 +15,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
+const ndtabs_gtk = @import("tabs.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents Window arm.
@@ -33,6 +34,13 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
 fn widgetNodeId(widget: *gtk.Widget) ?u32 {
     const raw = gobject.Object.getData(widget.as(gobject.Object), NODE_ID_KEY) orelse return null;
     return @intCast(@intFromPtr(raw));
+}
+
+/// The Window node's handle is a real gtk.Window for plain windows but a tab
+/// page bin for `tabGroup` members (M17) — dialogs must parent on the actual
+/// OS window either way, so resolve through the widget root.
+fn owningWindow(widget: *gtk.Widget) *gtk.Window {
+    return ndtabs_gtk.owningWindow(widget) orelse @ptrCast(@alignCast(widget));
 }
 
 fn argObject(arg: ?std.json.Value) ?std.json.ObjectMap {
@@ -201,7 +209,7 @@ fn cmdOpenFile(widget: *gtk.Widget, arg: ?std.json.Value) void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_state.deinit(); // GtkFileDialog copies its config strings
     const dialog = buildFileDialog(arena_state.allocator(), obj);
-    const window: *gtk.Window = @ptrCast(@alignCast(widget));
+    const window = owningWindow(widget);
     const multiple = if (obj) |o| (objBool(o, "multiple") orelse false) else false;
     const directories = if (obj) |o| (objBool(o, "directories") orelse false) else false;
 
@@ -227,7 +235,7 @@ fn cmdSaveFile(widget: *gtk.Widget, arg: ?std.json.Value) void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_state.deinit();
     const dialog = buildFileDialog(arena_state.allocator(), obj);
-    const window: *gtk.Window = @ptrCast(@alignCast(widget));
+    const window = owningWindow(widget);
     const ctx = std.heap.page_allocator.create(FileCtx) catch return;
     ctx.* = .{ .node_id = node_id, .mode = .save };
     gtk.FileDialog.save(dialog, window, null, &cbFileOne, ctx);

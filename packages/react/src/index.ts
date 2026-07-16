@@ -11,6 +11,7 @@ export {
   openFile,
   saveFile,
   showAbout,
+  showTabOverview,
   onAlertResult,
   onOpenFileResult,
   onSaveFileResult,

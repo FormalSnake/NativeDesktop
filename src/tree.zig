@@ -451,12 +451,20 @@ pub const Tree = struct {
                     const m = self.metaGet(sid) orelse continue;
                     if (m.view_kind) |view_kind| if (self.nodes.get(sid)) |w| backend.nativeViewDestroy(view_kind, w);
                 }
-                // Portable parent lookup: the meta map already tracks
-                // each child's parent id (set by append/insertBefore), so the
-                // live parent widget comes from `self.nodes`, not a backend
-                // "get live GTK parent" call. `backend.hasParent` still guards
-                // against double-remove (mirrors gcOldGenerations/clearAppNodes).
-                if (backend.hasParent(child)) {
+                // A Window root has no tree parent to detach from — its
+                // native teardown is a window/tab close instead ("window.close"
+                // semantic action, M17). The backend no-ops on windows the
+                // user already closed (the `closed`-event -> unmount path), so
+                // remove stays idempotent with native close.
+                const is_window_root = if (cmeta) |m| std.mem.eql(u8, m.widget_type, "Window") else false;
+                if (is_window_root) {
+                    backend.closeWindow(child, id);
+                } else if (backend.hasParent(child)) {
+                    // Portable parent lookup: the meta map already tracks
+                    // each child's parent id (set by append/insertBefore), so the
+                    // live parent widget comes from `self.nodes`, not a backend
+                    // "get live GTK parent" call. `backend.hasParent` still guards
+                    // against double-remove (mirrors gcOldGenerations/clearAppNodes).
                     if (cmeta) |m| {
                         if (self.nodes.get(m.parent)) |parent| {
                             const parent_kind = if (self.metaGet(m.parent)) |pmeta| pmeta.widget_type else "";

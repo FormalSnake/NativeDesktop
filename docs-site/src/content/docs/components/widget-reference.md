@@ -18,7 +18,20 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `title` | string | — | createAndUpdate |
 | `defaultWidth` | int | 480 | create |
 | `defaultHeight` | int | 320 | create |
+| `tabGroup` | string | — | create |
 | `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `alertResult` | `onAlertResult` | data |
+| `openFileResult` | `onOpenFileResult` | data |
+| `saveFileResult` | `onSaveFileResult` | data |
+| `newTabRequested` | `onNewTabRequested` | data |
+| `closed` | `onClosed` | data |
+
+Imperative commands (via `sendCommand(ref.current, …)`): `showAlert`, `openFile`, `saveFile`,
+`showAbout`, `showTabOverview` — see [Dialogs](/components/dialogs/) and
+[Native Tabs](/native-platform/tabs/).
 
 ## Box (`<box>`)
 

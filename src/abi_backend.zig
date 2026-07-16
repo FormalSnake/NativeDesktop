@@ -153,6 +153,18 @@ pub fn resolveWindow(handle: *Widget) *Widget {
     return @ptrCast(vtable.resolve_window(ctx, handle) orelse handle);
 }
 
+/// Closes a Window node's native window/tab when its React root unmounts
+/// (tree.zig's remove arm). Rides `semantic_action` — "window.close" is a
+/// node-level semantic like the a11y probe, so no new vtable op. Backends
+/// treat it as a no-op on already-closed handles.
+pub fn closeWindow(handle: *Widget, node_id: u32) void {
+    var result: ?[*:0]u8 = null;
+    var err: ?[*:0]u8 = null;
+    _ = vtable.semantic_action(ctx, handle, node_id, "window.close", "{}", &result, &err);
+    if (result) |r| abi.nd_free(r);
+    if (err) |e| abi.nd_free(e);
+}
+
 /// Relocates a live widget from `old_parent` to `new_parent` without destroying
 /// it (the widget-preserving cross-window move — see `Tree.reparent`). Crosses
 /// the ABI with both parent kinds + attach metadata so each backend can reuse

@@ -55,6 +55,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Windows & Chrome', slug: 'native-platform/windows-chrome' },
 						{ label: 'Multi-Window', slug: 'native-platform/multi-window' },
+						{ label: 'Native Tabs', slug: 'native-platform/tabs' },
 						{ label: 'System Capabilities', slug: 'native-platform/system-capabilities' },
 						{ label: 'Menu Bar', slug: 'native-platform/menu-bar' },
 						{ label: 'Split Views', slug: 'native-platform/split-views' },

@@ -236,6 +236,10 @@ pub fn hasParent(_: *Node) bool {
 }
 pub fn unparentWidget(_: *Node) void {}
 
+/// Window-root unmount (tree.zig remove arm, M17): the null backend has no
+/// OS window to close — uniform-interface no-op like unparentWidget.
+pub fn closeWindow(_: *Node, _: u32) void {}
+
 /// Widget-preserving cross-window move (see `Tree.reparent`): detach from the
 /// old parent's child list and insert under the new one, KEEPING the same
 /// `*Node` handle — never a destroy+recreate. Mirrors the real backends'

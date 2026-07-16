@@ -119,7 +119,7 @@ export interface WidgetEvent {
   payload: "none" | "text" | "checked" | "value" | "index" | "data";
 }
 export const widgetEvents: Record<string, WidgetEvent[]> = {
-  "window": [{ name: "alertResult", handler: "onAlertResult", payload: "data" }, { name: "openFileResult", handler: "onOpenFileResult", payload: "data" }, { name: "saveFileResult", handler: "onSaveFileResult", payload: "data" }],
+  "window": [{ name: "alertResult", handler: "onAlertResult", payload: "data" }, { name: "openFileResult", handler: "onOpenFileResult", payload: "data" }, { name: "saveFileResult", handler: "onSaveFileResult", payload: "data" }, { name: "newTabRequested", handler: "onNewTabRequested", payload: "data" }, { name: "closed", handler: "onClosed", payload: "data" }],
   "box": [],
   "label": [],
   "button": [{ name: "clicked", handler: "onClick", payload: "none" }],
@@ -173,7 +173,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
 };
 
 export const handlerPropNames: Record<string, string[]> = {
-  "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult"],
+  "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult", "onNewTabRequested", "onClosed"],
   "box": [],
   "label": [],
   "button": ["onClick"],
@@ -229,7 +229,7 @@ export const handlerPropNames: Record<string, string[]> = {
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
  *  (M14) — the runtime validation table behind sendCommand(). */
 export const widgetCommands: Record<string, readonly string[]> = {
-  "window": ["showAlert", "openFile", "saveFile", "showAbout"],
+  "window": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview"],
   "box": [],
   "label": [],
   "button": [],
@@ -284,7 +284,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
 
 /** Compile-time command-name map (only widgets with commands appear). */
 export type WidgetCommandNames = {
-  "window": "showAlert" | "openFile" | "saveFile" | "showAbout";
+  "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools";
   "toastoverlay": "showToast" | "dismissToast";
 };

@@ -1245,6 +1245,7 @@ function genZig(s: Schema): string {
   out += "const ndicons = @import(\"../gtk/icons.zig\");\n";
   out += "const ndweb_gtk = @import(\"../gtk/webview.zig\");\n";
   out += "const nddialog_gtk = @import(\"../gtk/dialogs.zig\");\n";
+  out += "const ndtabs_gtk = @import(\"../gtk/tabs.zig\");\n";
   out += "const ndtable_gtk = @import(\"../gtk/table.zig\");\n";
   out += "const ndtree_gtk = @import(\"../gtk/treeview.zig\");\n";
   out += "const ndtoast_gtk = @import(\"../gtk/toast.zig\");\n";
@@ -1303,8 +1304,9 @@ function genZig(s: Schema): string {
  *  create/apply templates). Bodies see `widget`, `command`, and `arg`. */
 const ZIG_COMMANDS: Record<string, string> = {
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
-  // Dialogs parent on the Window node's OWN handle (multi-window correct).
-  Window: "        nddialog_gtk.command(widget, command, arg);\n",
+  // Dialogs parent on the Window node's OWN handle (multi-window correct);
+  // tab commands route to tabs.zig first.
+  Window: "        if (std.mem.eql(u8, command, \"showTabOverview\")) return ndtabs_gtk.command(widget, command, arg);\n        nddialog_gtk.command(widget, command, arg);\n",
   ToastOverlay: "        ndtoast_gtk.command(widget, command, arg);\n",
 };
 
@@ -1383,15 +1385,14 @@ function zigDefaultStr(w: Widget, prop: string): string {
 function genZigCreateBody(w: Widget): string {
   let out = "";
   if (w.name === "Window") {
-    out += "        const window = adw.ApplicationWindow.new(app);\n";
-    out += "        const win = window.as(gtk.Window);\n";
-    out += "        the_window.* = win;\n";
-    out += "        if (propStr(props, \"title\")) |t| gtk.Window.setTitle(win, dupeZ(t));\n";
+    // Tab-aware creation lives in src/gtk/tabs.zig: a plain window is an
+    // AdwApplicationWindow; a `tabGroup` member is an AdwTabPage inside the
+    // group's shared scaffold window (overview + tab view). Either way the
+    // returned handle is the node's stable widget and `the_window` is the
+    // owning gtk.Window.
     out += `        const w: c_int = @intCast(propInt(props, "defaultWidth") orelse ${dflt(w, "defaultWidth")});\n`;
     out += `        const h: c_int = @intCast(propInt(props, "defaultHeight") orelse ${dflt(w, "defaultHeight")});\n`;
-    out += "        gtk.Window.setDefaultSize(win, w, h);\n";
-    out += "        gtk.Window.present(win);\n";
-    out += "        return window.as(gtk.Widget);\n";
+    out += "        return ndtabs_gtk.createWindow(app, propStr(props, \"tabGroup\"), propStr(props, \"title\"), w, h, the_window, dupeZ);\n";
   } else if (w.name === "Box") {
     out += "        const vertical = if (propStr(props, \"orientation\")) |o| std.mem.eql(u8, o, \"vertical\") else true;\n";
     out += "        const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;\n";
@@ -1833,10 +1834,9 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            gtk.Box.setSpacing(box, @intCast(s));\n";
       out += "        }\n";
     } else if (w.name === "Window" && p.name === "title") {
-      out += "        if (propStr(props, \"title\")) |t| {\n";
-      out += "            const win: *gtk.Window = @ptrCast(@alignCast(widget));\n";
-      out += "            gtk.Window.setTitle(win, dupeZ(t));\n";
-      out += "        }\n";
+      // Routes through tabs.zig: plain window -> gtk_window_set_title; tab
+      // member -> adw_tab_page_set_title (+ scaffold title when selected).
+      out += "        if (propStr(props, \"title\")) |t| ndtabs_gtk.setTitle(widget, dupeZ(t));\n";
     } else if (w.name === "TextInput" && p.name === "text") {
       out += "        if (propStr(props, \"text\")) |t| {\n";
       out += "            const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);\n";
@@ -2151,7 +2151,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "toastoverlay" | "table" | "treeview"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -2193,6 +2193,10 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Window.alertResult":          { signal: "",              target: "windowdialogs", cb: "", suppress: false },
   "Window.openFileResult":       { signal: "",              target: "windowdialogs", cb: "", suppress: false },
   "Window.saveFileResult":       { signal: "",              target: "windowdialogs", cb: "", suppress: false },
+  // Native-tab lifecycle fires from hand-written src/gtk/tabs.zig —
+  // connectEvents hands it the node id + emit fn once (webview idiom).
+  "Window.newTabRequested":      { signal: "",              target: "windowtabs",    cb: "", suppress: false },
+  "Window.closed":               { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "ToggleButton.toggled":        { signal: "toggled",          target: "widget", cb: "cbToggleButtonToggled", suppress: true },
   "SegmentedControl.selectionChanged": { signal: "notify::active", target: "widget", cb: "cbToggleGroupActive", suppress: true },
   "NumberInput.valueChanged":    { signal: "value-changed",    target: "widget", cb: "cbSpinValueChanged", suppress: true },
@@ -2425,7 +2429,7 @@ function genZigEvents(s: Schema): string {
       throw new Error(`no signal template for event ${key} — add one when introducing it`);
     }
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
-      || t.target === "windowdialogs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview") continue; // custom connect, no GTK callback body
+      || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -2447,6 +2451,7 @@ function genZigEvents(s: Schema): string {
     out += `    ${first ? "if" : "} else if"} (std.mem.eql(u8, kind, ${JSON.stringify(w.name)})) {\n`;
     first = false;
     let navConnected = false;
+    const connectedTargets = new Set<string>();
     for (const e of w.events) {
       const maybeT = SIGNALS[`${w.name}.${e.name}`];
       if (!maybeT) {
@@ -2483,9 +2488,19 @@ function genZigEvents(s: Schema): string {
       }
       if (t.target === "windowdialogs") {
         // All dialog result events wire inside dialogs.zig from one connect call.
-        if (!navConnected) {
+        if (!connectedTargets.has("windowdialogs")) {
           out += "        if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);\n";
-          navConnected = true;
+          connectedTargets.add("windowdialogs");
+        }
+        continue;
+      }
+      if (t.target === "windowtabs") {
+        // Native-tab lifecycle (closed / newTabRequested) wires inside
+        // tabs.zig from one connect call — Window carries BOTH dialog and
+        // tab events, hence the per-target dedup set.
+        if (!connectedTargets.has("windowtabs")) {
+          out += "        if (emit) |f| ndtabs_gtk.connectEvents(widget, node_id, f);\n";
+          connectedTargets.add("windowtabs");
         }
         continue;
       }
@@ -2547,19 +2562,19 @@ function headerBarAttach(): string {
 
 const STRUCTURAL: Record<string, StructuralTemplate> = {
   Window: {
-    // adw.ApplicationWindow is edge-to-edge: content is a single child set via
-    // setContent (NOT gtk.Window.setChild — that targets the internal handle
-    // AdwApplicationWindow wraps). Headers no longer mount at window level;
-    // they live inside a <toolbarview> pane. M13: a <menubar> child is NOT a
-    // GtkWidget (it's a GMenu handle) — route it to the menu subsystem as app
-    // chrome instead of setting it as the window's content child.
+    // The Window node handle is either a plain AdwApplicationWindow or a tab
+    // page bin (tabs.zig decides at create) — content attach/detach routes
+    // through tabs.zig so both shapes work, and the tab chrome (per-page
+    // AdwTabBar under the app's headerbar) injects on attach. M13: a
+    // <menubar> child is NOT a GtkWidget (it's a GMenu handle) — route it to
+    // the menu subsystem as app chrome instead of window content.
     append: () => {
       let s = "        if (!gobject.ext.isA(child, gtk.Widget)) {\n";
       s += "            ndMenuAttachToWindow(child);\n";
-      s += "        } else adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);\n";
+      s += "        } else ndtabs_gtk.appendToWindow(parent, child);\n";
       return s;
     },
-    remove: () => "        if (gobject.ext.isA(child, gtk.Widget)) adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);\n",
+    remove: () => "        if (gobject.ext.isA(child, gtk.Widget)) ndtabs_gtk.removeFromWindow(parent, child);\n",
   },
   SettingsGroup: {
     append: () => {
@@ -2708,10 +2723,14 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   ToolbarView: {
     // Child routing is by widget TYPE (like Window's HeaderBar check): a
     // HeaderBar child becomes a top bar, anything else the content pane.
+    // tabs.zig hooks headerbar attach: when this toolbarview lives inside a
+    // tab page, the header gains the AdwTabButton overview toggle.
     append: () => {
       let s = "        const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));\n";
-      s += "        if (gobject.ext.isA(child, adw.HeaderBar)) adw.ToolbarView.addTopBar(tv, child)\n";
-      s += "        else adw.ToolbarView.setContent(tv, child);\n";
+      s += "        if (gobject.ext.isA(child, adw.HeaderBar)) {\n";
+      s += "            adw.ToolbarView.addTopBar(tv, child);\n";
+      s += "            ndtabs_gtk.onHeaderBarAttached(tv, child);\n";
+      s += "        } else adw.ToolbarView.setContent(tv, child);\n";
       return s;
     },
     remove: () => "        adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);\n",
@@ -2965,12 +2984,18 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)\n";
     out += '        if let t = propStr(props, "title") { win.title = t }\n';
     out += "        win.titlebarAppearsTransparent = true\n";
+    out += "        // The core (not AppKit) owns window lifetime: close() must never\n";
+    out += "        // dealloc the window while the retained tree still references it.\n";
+    out += "        win.isReleasedWhenClosed = false\n";
     out += "        win.contentView = content\n";
     out += "        gWindow = win\n";
     out += "        let manager = NDToolbarManager()\n";
     out += "        ndWindowToolbarManager = manager\n";
     out += "        ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)\n";
-    out += "        win.center(); win.makeKeyAndOrderFront(nil)\n";
+    out += "        // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window\n";
+    out += "        // joins its group's native tab bar via addTabbedWindow; a plain\n";
+    out += "        // window centers and orders front as before.\n";
+    out += '        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))\n';
     out += "        return content\n";
   } else if (w.name === "Box") {
     out += "        let stack = NSStackView()\n";
@@ -3579,6 +3604,10 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Window.alertResult":          { selector: "windowdialogs", payload: "data" },
   "Window.openFileResult":       { selector: "windowdialogs", payload: "data" },
   "Window.saveFileResult":       { selector: "windowdialogs", payload: "data" },
+  // Native-tab lifecycle fires from NDShell/WindowTabs.swift (windowWillClose
+  // observer + newWindowForTab responder) — one connect records the nodeID.
+  "Window.newTabRequested":      { selector: "windowtabs",    payload: "data" },
+  "Window.closed":               { selector: "windowtabs",    payload: "data" },
 };
 
 /// M15 hand-written connect routes (webview-idiom: ONE call records the node
@@ -3595,6 +3624,7 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   table: "ndTableConnect",
   treeview: "ndTreeViewConnect",
   windowdialogs: "ndWindowDialogsConnect",
+  windowtabs: "ndWindowTabsConnect",
 };
 
 /** Emits `ndConnectEvents`, wiring each widget's controls to
@@ -3625,6 +3655,7 @@ function genSwiftEvents(s: Schema): string {
     out += `    ${first ? "if" : "} else if"} kind == ${JSON.stringify(w.name)} {\n`;
     first = false;
     let navConnected = false;
+    const connectedSelectors = new Set<string>();
     for (const e of w.events) {
       const maybeT = SWIFT_SIGNALS[`${w.name}.${e.name}`];
       if (!maybeT) {
@@ -3662,10 +3693,12 @@ function genSwiftEvents(s: Schema): string {
       }
       if (SWIFT_CUSTOM_CONNECT[t.selector]) {
         // M15 hand-written connect: one call records the node id for every
-        // event this widget emits directly (the webview idiom).
-        if (!navConnected) {
+        // event this widget emits directly (the webview idiom). Dedup is
+        // per-selector, not per-widget — Window carries both windowdialogs
+        // and windowtabs events.
+        if (!connectedSelectors.has(t.selector)) {
           out += `        ${SWIFT_CUSTOM_CONNECT[t.selector]}(view, nodeID: nodeID)\n`;
-          navConnected = true;
+          connectedSelectors.add(t.selector);
         }
         continue;
       }
@@ -3683,8 +3716,9 @@ function genSwiftEvents(s: Schema): string {
 const SWIFT_COMMANDS: Record<string, string> = {
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
   // Dialogs resolve the owning NSWindow from the node's OWN handle
-  // (ndWindow(for:)) — multi-window correct, no gWindow (M15).
-  Window: "        ndWindowCommand(view, command, argJson)\n",
+  // (ndWindow(for:)) — multi-window correct, no gWindow (M15). Tab commands
+  // route to WindowTabs.swift first.
+  Window: "        if command == \"showTabOverview\" { ndWindowTabsCommand(view, command, argJson); return }\n        ndWindowCommand(view, command, argJson)\n",
   ToastOverlay: "        ndToastOverlayCommand(view, command, argJson)\n",
 };
 

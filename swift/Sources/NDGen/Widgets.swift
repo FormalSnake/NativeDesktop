@@ -40,12 +40,18 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         if let t = propStr(props, "title") { win.title = t }
         win.titlebarAppearsTransparent = true
+        // The core (not AppKit) owns window lifetime: close() must never
+        // dealloc the window while the retained tree still references it.
+        win.isReleasedWhenClosed = false
         win.contentView = content
         gWindow = win
         let manager = NDToolbarManager()
         ndWindowToolbarManager = manager
         ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)
-        win.center(); win.makeKeyAndOrderFront(nil)
+        // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window
+        // joins its group's native tab bar via addTabbedWindow; a plain
+        // window centers and orders front as before.
+        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))
         return content
     } else if kind == "Box" {
         let stack = NSStackView()
@@ -489,6 +495,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
 func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     if kind == "Window" {
         ndWindowDialogsConnect(view, nodeID: nodeID)
+        ndWindowTabsConnect(view, nodeID: nodeID)
     } else if kind == "Button" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "clicked", payload: .none, action: #selector(EventDispatcher.fireNone(_:)))
     } else if kind == "TextInput" {
@@ -555,6 +562,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {
     if kind == "Window" {
+        if command == "showTabOverview" { ndWindowTabsCommand(view, command, argJson); return }
         ndWindowCommand(view, command, argJson)
     } else if kind == "WebView" {
         ndWebViewCommand(view, command, argJson)

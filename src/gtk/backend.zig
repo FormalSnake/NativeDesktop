@@ -20,6 +20,7 @@ const overlay = @import("overlay.zig");
 const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
 const system = @import("system.zig");
+const ndtabs_gtk = @import("tabs.zig");
 
 pub const Widget = gtk.Widget;
 
@@ -259,14 +260,22 @@ fn vtGetWindow(_: *abi.NdContext) callconv(.c) ?*anyopaque {
     return w.as(gtk.Widget);
 }
 
-/// `vtable.resolve_window`: a GTK Window node's handle is the stable gtk.Window
-/// widget (never orphaned the way AppKit's create-time content view is once a
-/// SplitView takes over), so reconstruction rebinds to it unchanged. Also
-/// records the resolved window as the current snapshot target (multi-window):
+/// `vtable.resolve_window`: a plain GTK Window node's handle is the stable
+/// gtk.Window widget (never orphaned the way AppKit's create-time content
+/// view is once a SplitView takes over), so reconstruction rebinds to it
+/// unchanged. A tab-member node's handle is its page bin (M17) — resolve
+/// walks to the CURRENT owning scaffold window, which also keeps screenshot
+/// targeting correct after a cross-window tab drag. Also records the
+/// resolved window as the current snapshot target (multi-window):
 /// automation.zig's selectSnapshotWindow calls this before each screenshot so
 /// `vtSnapshot` renders the requested window rather than the global one.
 fn vtResolveWindow(_: *abi.NdContext, handle: ?*anyopaque) callconv(.c) ?*anyopaque {
-    if (handle) |h| snapshot_target_window = @ptrCast(@alignCast(h));
+    const h = handle orelse return null;
+    // Return the handle UNCHANGED — tree.zig rebinds the respawned node to
+    // exactly this pointer, and for a tab member that must stay the page bin.
+    // Only the snapshot target wants the real window under it.
+    const w: *gtk.Widget = @ptrCast(@alignCast(h));
+    snapshot_target_window = ndtabs_gtk.owningWindow(w) orelse @ptrCast(@alignCast(h));
     return handle;
 }
 
@@ -485,7 +494,12 @@ fn vtSemanticAction(
         return -32602;
     }
 
-    if (std.mem.eql(u8, action_s, "click")) {
+    if (std.mem.eql(u8, action_s, "window.close")) {
+        // Window-root unmount (tree.zig remove arm): close the native
+        // window/tab — tabs.zig no-ops if the user already closed it.
+        ndtabs_gtk.closeNode(w);
+        return 0;
+    } else if (std.mem.eql(u8, action_s, "click")) {
         return semanticClick(w, node_id, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "setValue")) {
         return semanticSetValue(w, node_id, args, result_json_out, err_json_out);

@@ -609,6 +609,11 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
                        _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     let args = parseProps(argJson)
     switch action {
+    case "window.close":
+        // Window-root unmount (tree.zig remove arm): close the native
+        // window/tab — no-op if the user already closed it.
+        ndWindowTabsClose(view)
+        return 0
     case "click":
         return semanticClick(view, nodeID, resultOut)
     case "setValue":

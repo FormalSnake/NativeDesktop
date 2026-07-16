@@ -13,6 +13,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `title` | string | — | createAndUpdate |
 | `defaultWidth` | int | 480 | create |
 | `defaultHeight` | int | 320 | create |
+| `tabGroup` | string | — | create |
 | `testID` | string | — | meta |
 
 | Event | Handler | Payload |
@@ -20,8 +21,10 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `alertResult` | `onAlertResult` | data |
 | `openFileResult` | `onOpenFileResult` | data |
 | `saveFileResult` | `onSaveFileResult` | data |
+| `newTabRequested` | `onNewTabRequested` | data |
+| `closed` | `onClosed` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`.
 
 ## Box (`<box>`)
 
