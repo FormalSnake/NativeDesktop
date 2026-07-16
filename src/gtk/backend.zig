@@ -317,9 +317,19 @@ const G_SOURCE_REMOVE: c_int = 0;
 
 const MarshalJob = struct { fn_ptr: *const fn (?*anyopaque) callconv(.c) void, data: ?*anyopaque };
 
+// Marshal jobs are the ONE arena user that crosses threads: vtMarshalAsync runs
+// on the core's reader/child-watcher threads (it IS the core's hop onto the UI
+// thread) while marshalTrampoline frees on the UI thread, which also owns every
+// other arena user (dupeZ, event stringify, commit-batch parsing). `arena` is a
+// plain ArenaAllocator — not thread-safe — so allocating jobs from it raced the
+// UI thread's arena writes and corrupted the heap, surfacing as intermittent
+// GTK segfaults (e.g. inside a later g_object_notify during commit apply). Jobs
+// ride a thread-safe allocator instead, keeping `arena` UI-thread-exclusive.
+const marshal_alloc = std.heap.smp_allocator;
+
 fn marshalTrampoline(data: ?*anyopaque) callconv(.c) c_int {
     const job: *MarshalJob = @ptrCast(@alignCast(data.?));
-    defer arena.destroy(job);
+    defer marshal_alloc.destroy(job);
     job.fn_ptr(job.data);
     return G_SOURCE_REMOVE;
 }
@@ -328,7 +338,7 @@ fn marshalTrampoline(data: ?*anyopaque) callconv(.c) c_int {
 /// paths call this instead of touching glib directly. Fills with
 /// `g_main_context_invoke_full`.
 fn vtMarshalAsync(_: *abi.NdContext, fn_ptr: *const fn (?*anyopaque) callconv(.c) void, data: ?*anyopaque) callconv(.c) void {
-    const job = arena.create(MarshalJob) catch return;
+    const job = marshal_alloc.create(MarshalJob) catch return;
     job.* = .{ .fn_ptr = fn_ptr, .data = data };
     _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &marshalTrampoline, job, null);
 }
