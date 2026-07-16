@@ -43,12 +43,15 @@ function BrowserTab({ withMenu, onNewTab, onClose }: { withMenu: boolean; onNewT
       onClosed={onClose}
     >
       {/* App menu is process-wide chrome; exactly one window may own it, so
-          it rides the FIRST open tab and re-attaches if that tab closes.
-          File > Close (from `defaults`) closes the active tab natively. */}
+          it rides the FIRST open tab and re-attaches if that tab closes. Ctrl+W
+          is a native tab-system binding (closes the active tab from any tab);
+          the menu entry stays mouse-only because a menu accelerator registers
+          app-globally and would always close this menu-owning tab instead. */}
       {withMenu && (
         <menubar defaults>
           <menu label="File" testID="menu-file">
             <menuitem testID="menu-new-tab" label="New Tab" accelerator="primary+t" onSelect={onNewTab} />
+            <menuitem testID="menu-close-tab" label="Close Tab" onSelect={onClose} />
           </menu>
         </menubar>
       )}
