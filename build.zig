@@ -227,6 +227,18 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(ndp_binary_tests).step);
 
+    // Terminal core virtual-mode tests: own addTest root (Zig 0.16 does not
+    // collect `test {}` transitively) — feed/reset/input-routing/title against a
+    // real libghostty-vt, no PTY. Links the terminal deps (ghostty + libc).
+    const terminal_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/terminal.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    linkTerminalDeps(terminal_tests_mod, ghostty_vt_lib, target);
+    const terminal_tests = b.addTest(.{ .root_module = terminal_tests_mod });
+    test_step.dependOn(&b.addRunArtifact(terminal_tests).step);
+
     // Remote-terminal transport: own addTest root (Zig 0.16 does not collect
     // `test {}` transitively) for the standalone byte-plane framing tests. It
     // imports terminal.zig (ghostty_* externs), so link the terminal deps.

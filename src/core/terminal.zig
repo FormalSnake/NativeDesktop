@@ -842,3 +842,85 @@ pub export fn ndterm_render_unlock(t_opt: ?*Terminal) callconv(.c) void {
 inline fn sigNum(sig: anytype) c_int {
     return @intCast(@intFromEnum(sig));
 }
+
+// ---------------------------------------------------------------------------
+// Virtual-mode unit tests (WP6). Exercise ndterm_open_virtual/feed/reset with a
+// real libghostty-vt instance and no PTY. Framing tests live in
+// remote_terminal.zig. Both are wired as their own addTest roots in build.zig.
+// ---------------------------------------------------------------------------
+
+var t_output: std.ArrayListUnmanaged(u8) = .empty;
+var t_effect_kind: c_int = -1;
+var t_effect_text: [256]u8 = undefined;
+var t_effect_len: usize = 0;
+
+fn testOutputCb(_: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void {
+    t_output.appendSlice(std.testing.allocator, bytes[0..len]) catch {};
+}
+
+fn testEffectCb(_: ?*anyopaque, kind: c_int, text: ?[*:0]const u8, code: c_int) callconv(.c) void {
+    _ = code;
+    t_effect_kind = kind;
+    if (text) |tx| {
+        const s = std.mem.span(tx);
+        t_effect_len = @min(s.len, t_effect_text.len);
+        @memcpy(t_effect_text[0..t_effect_len], s[0..t_effect_len]);
+    }
+}
+
+fn cellChar(t: *Terminal, x: u16, y: u16) u8 {
+    var cols: u16 = 0;
+    var rows: u16 = 0;
+    ndterm_render_lock(t, &cols, &rows);
+    defer ndterm_render_unlock(t);
+    var cell: nd_term_cell = undefined;
+    ndterm_cell(t, x, y, &cell);
+    return cell.utf8[0];
+}
+
+test "virtual mode: feed renders into the grid; input routes out with no echo" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 5, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    ndterm_feed(t, "hi", 2);
+    try std.testing.expectEqual(@as(u8, 'h'), cellChar(t, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'i'), cellChar(t, 1, 0));
+
+    // Keystrokes leave via output_cb and are NOT echoed into the local grid.
+    ndterm_write_input(t, "x", 1);
+    try std.testing.expectEqualSlices(u8, "x", t_output.items);
+    try std.testing.expectEqual(@as(u8, 0), cellChar(t, 2, 0));
+}
+
+test "virtual mode: OSC-2 title fires the effect callback" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    t_effect_kind = -1;
+    t_effect_len = 0;
+    const t = ndterm_open_virtual(20, 5, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    const osc = "\x1b]2;hello-title\x07";
+    ndterm_feed(t, osc, osc.len);
+    try std.testing.expectEqual(@as(c_int, 0), t_effect_kind);
+    try std.testing.expectEqualStrings("hello-title", t_effect_text[0..t_effect_len]);
+}
+
+test "virtual mode: reset clears the grid" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 5, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    ndterm_feed(t, "ABC", 3);
+    try std.testing.expectEqual(@as(u8, 'A'), cellChar(t, 0, 0));
+    ndterm_reset(t);
+    try std.testing.expectEqual(@as(u8, 0), cellChar(t, 0, 0));
+}
+
+test "virtual mode: close is safe with no thread/child/fd" {
+    const t = ndterm_open_virtual(10, 3, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    ndterm_close(t); // must not join a thread, kill a pid, or close(-1)
+}
