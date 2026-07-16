@@ -151,6 +151,11 @@ fn wireSurface(area: *gtk.DrawingArea, widget: *gtk.Widget, state: *State) void 
     _ = gtk.GestureClick.signals.pressed.connect(click, *State, &onPressed, state, .{});
     gtk.Widget.addController(widget, click.as(gtk.EventController));
 
+    // Track the drawing area's actual allocation onto the grid (peer of the
+    // AppKit setFrameSize path). GtkDrawingArea::resize is the correct
+    // observation point — cheaper and more precise than polling in tickCb.
+    _ = gtk.DrawingArea.signals.resize.connect(area, *State, &onResize, state, .{});
+
     // Repaint every frame so output from the core's reader thread shows up
     // without a per-cell dirty channel (correct first, fast later).
     _ = gtk.Widget.addTickCallback(widget, &tickCb, null, null);
@@ -209,6 +214,27 @@ fn tickCb(widget: *gtk.Widget, _: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) 
 
 fn onPressed(_: *gtk.GestureClick, _: c_int, _: f64, _: f64, state: *State) callconv(.c) void {
     _ = gtk.Widget.grabFocus(state.widget);
+}
+
+/// Map the drawing area's pixel allocation onto the cell grid. Local:
+/// ndterm_resize (grid only). Remote: ndrt_resize (grid + a RESIZE frame; the
+/// server replies RESIZED and the reader applies the min-box result). Both take
+/// the ndterm mutex, so this is safe against the reader's feed.
+fn onResize(_: *gtk.DrawingArea, width: c_int, height: c_int, state: *State) callconv(.c) void {
+    if (width <= 0 or height <= 0) return;
+    const cols_i: i64 = @intFromFloat(@as(f64, @floatFromInt(width)) / state.cell_w);
+    const rows_i: i64 = @intFromFloat(@as(f64, @floatFromInt(height)) / state.cell_h);
+    const cols: u16 = @intCast(std.math.clamp(cols_i, 1, 65535));
+    const rows: u16 = @intCast(std.math.clamp(rows_i, 1, 65535));
+    if (cols == state.cols and rows == state.rows) return;
+    state.cols = cols;
+    state.rows = rows;
+    if (state.is_remote) {
+        if (state.rt) |rt| ndremote.ndrt_resize(@ptrCast(rt), cols, rows);
+    } else {
+        ndt.ndterm_resize(@ptrCast(state.term), cols, rows);
+    }
+    gtk.Widget.queueDraw(state.widget);
 }
 
 fn onUnrealize(widget: *gtk.Widget, state: *State) callconv(.c) void {
