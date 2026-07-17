@@ -81,7 +81,14 @@ function streamSession(sock: { write(d: Uint8Array): number }, st: ConnState, co
   setTimeout(() => send(enc.encode("\x07")), 500); // bell
   // FLAG_RESET snapshot: clears the grid, then feeds new content + a new title.
   setTimeout(() => send(enc.encode("\x1b]2;snapshot-ready\x07SNAPSHOT-RELOADED\r\n"), FLAG_RESET), 750);
-  setTimeout(() => sock.write(frame(T.EXIT, exitBody(1, 0))), 1000);
+  // WP polish-1 deliverable 3 proof: Powerline separators (U+E0B0/U+E0B1) +
+  // a devicon (U+F07B) — PUA codepoints a non-Nerd primary font has no
+  // glyph for, so this renders non-blank only if the per-glyph fallback
+  // (CTFontCreateForString on AppKit, Pango/fontconfig on GTK) finds an
+  // installed Nerd Font. Sent after the reset (which would otherwise wipe
+  // it) and before EXIT (the driver screenshots once exit is observed).
+  setTimeout(() => send(enc.encode("nerd-font:   \r\n")), 900);
+  setTimeout(() => sock.write(frame(T.EXIT, exitBody(1, 0))), 1100);
   void cols; void rows;
 }
 

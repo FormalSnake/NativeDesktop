@@ -12,6 +12,9 @@ const HOST = process.env.ND_REMOTE_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.ND_REMOTE_PORT ?? "4618");
 const SESSION = process.env.ND_REMOTE_SESSION ?? "sess-demo";
 const TICKET = process.env.ND_REMOTE_TICKET ?? "ticket-demo";
+// WP polish-1 deliverable 3 proof (scripts/remote-terminal.sh): unset by
+// default, so this example still exercises the "no fontFamily" fallback path.
+const FONT_FAMILY = process.env.ND_TERM_FONT_FAMILY;
 
 // nd_rt_state order (include/ndremote.h).
 const STATE_NAMES = ["connecting", "authed", "attached", "reconnecting", "failed", "closed"];
@@ -53,6 +56,7 @@ function App(): React.ReactNode {
             cols={80}
             rows={24}
             fontSize={13}
+            fontFamily={FONT_FAMILY}
             testID="remote-term"
             onConnectionState={(e) => {
               const s = (e.data as { state: number }).state;
