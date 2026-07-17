@@ -3984,37 +3984,25 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            ])\n" +
       "            return\n" +
       "        }\n" +
+      // Frame save/reassert, preferredContentSize hazard, and the
+      // attachForSidebar call all live in ndInstallSplitAsWindowContent
+      // (SplitController.swift) — shared with the toastoverlay branch below.
       "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {\n" +
-      // Assigning contentViewController resizes the window to the controller
-      // view's fitting size (measured 900x600 -> 500x500), clobbering Window
-      // defaultWidth/Height. Save the frame first and reassert it right after
-      // (display:true) — the split view's fitting size is only a floor, so the
-      // reasserted 1100x700 sticks with no lingering size constraint.
-      //
-      // Do NOT steer the initial size via `controller.preferredContentSize`
-      // instead: a non-zero preferred size makes AppKit install fixed
-      // width/height constraints on the controller's view
-      // (`NSViewController.preferredContentSize.{width,height}` @ priority 501)
-      // that AppKit re-syncs on every layout pass. Those pin the window to the
-      // windowed size through a fullscreen transition — the window reports
-      // .fullScreen but its frame never grows to the screen, leaving a small
-      // app box in a black fullscreen space. Zeroing preferredContentSize does
-      // not drop the constraints, and removing them by hand only holds until
-      // the next layout pass re-derives them from the still-non-zero property,
-      // so the plain save/reassert-frame path is the one that survives
-      // fullscreen.
-      "            let ndSavedFrame = win.frame\n" +
-      "            win.contentViewController = controller\n" +
-      "            win.setFrame(ndSavedFrame, display: true)\n" +
-      // A sidebar-behavior split item earns the full-height sidebar
-      // treatment even with no <headerbar> anywhere in the tree — the
-      // window-toolbar attach that used to fire only from a registering
-      // headerbar (NDToolbarManager.register) now fires directly here too,
-      // via the same helper, so the sidebar's vibrancy reaches the very top
-      // under the traffic lights (Notes/Mail idiom) for plain sidebar apps.
-      "            if controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) {\n" +
-      "                ndWindowToolbarManager?.attachForSidebar(win: win, split: split)\n" +
-      "            }\n" +
+      "            ndInstallSplitAsWindowContent(split, controller, win)\n" +
+      // A <toastoverlay> wrapping a registered SplitView is a LOGICAL holder
+      // on the Mac (its toasts are child-window NSPanels; the view draws
+      // nothing), so the split it wraps must still take the exact
+      // contentViewController path a direct <splitview> child takes — hosting
+      // the bare splitView as a plain subview leaves every pane's content
+      // hanging off the controller's never-installed wrapper view (measured:
+      // the whole split subtree reports visible=false and renders nothing).
+      // The overlay records the split at its own append (Toasts.swift's
+      // setChild); this branch installs it and hands the overlay its host
+      // window for panel presentation + automation visibility.
+      '        } else if let overlay = child as? NDToastOverlayView, let split = overlay.ndEmbeddedSplit,\n' +
+      "                  let controller = ndSplitViewController(for: split), let win = window {\n" +
+      "            ndInstallSplitAsWindowContent(split, controller, win)\n" +
+      "            overlay.ndHostWindow = win\n" +
       "        } else {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
       "                win.contentViewController = nil\n" +
@@ -4060,6 +4048,15 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "           let window = parent.window ?? gWindow, window.contentViewController === controller {\n" +
       "            window.contentViewController = nil\n" +
       "            window.contentView = parent\n" +
+      // Overlay-wrapped split (see the append arm): the installed controller
+      // belongs to the overlay's embedded split — clear + re-seat exactly like
+      // the direct-split branch above, and drop the overlay's window record.
+      '        } else if let overlay = child as? NDToastOverlayView, let split = overlay.ndEmbeddedSplit,\n' +
+      "                  let controller = ndSplitViewController(for: split),\n" +
+      "                  let window = overlay.ndHostWindow ?? parent.window ?? gWindow, window.contentViewController === controller {\n" +
+      "            window.contentViewController = nil\n" +
+      "            window.contentView = parent\n" +
+      "            overlay.ndHostWindow = nil\n" +
       "        } else {\n" +
       "            child.removeFromSuperview()\n" +
       "        }\n",

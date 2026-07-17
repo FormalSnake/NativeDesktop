@@ -627,12 +627,11 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             return
         }
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split), let win = window {
-            let ndSavedFrame = win.frame
-            win.contentViewController = controller
-            win.setFrame(ndSavedFrame, display: true)
-            if controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) {
-                ndWindowToolbarManager?.attachForSidebar(win: win, split: split)
-            }
+            ndInstallSplitAsWindowContent(split, controller, win)
+        } else if let overlay = child as? NDToastOverlayView, let split = overlay.ndEmbeddedSplit,
+                  let controller = ndSplitViewController(for: split), let win = window {
+            ndInstallSplitAsWindowContent(split, controller, win)
+            overlay.ndHostWindow = win
         } else {
             if let win = window, win.contentViewController != nil {
                 win.contentViewController = nil
@@ -837,6 +836,12 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
            let window = parent.window ?? gWindow, window.contentViewController === controller {
             window.contentViewController = nil
             window.contentView = parent
+        } else if let overlay = child as? NDToastOverlayView, let split = overlay.ndEmbeddedSplit,
+                  let controller = ndSplitViewController(for: split),
+                  let window = overlay.ndHostWindow ?? parent.window ?? gWindow, window.contentViewController === controller {
+            window.contentViewController = nil
+            window.contentView = parent
+            overlay.ndHostWindow = nil
         } else {
             child.removeFromSuperview()
         }

@@ -21,6 +21,13 @@ import Foundation
     // takes over as contentViewController — resolve through the create-time
     // registry so a chrome window's root doesn't report invisible.
     if let win = ndContentToWindow[ObjectIdentifier(view)] { return win.isVisible }
+    // A ToastOverlay wrapping the window's SplitView is a logical holder
+    // that never enters the hierarchy (Toasts.swift setChild) — report its
+    // host window's visibility, same contract as the Window-root branch.
+    if let overlay = view as? NDToastOverlayView, overlay.ndEmbeddedSplit != nil,
+       let win = overlay.ndHostWindow {
+        return win.isVisible
+    }
     return !view.isHidden && view.window != nil
 }
 
@@ -47,6 +54,15 @@ import Foundation
     // through, returning garbage. Window handles are identified by the
     // create-time registry and report their window's LIVE content bounds.
     if let win = ndContentToWindow[ObjectIdentifier(view)] {
+        guard let live = ndLiveContentView(ofWindow: win) else { return false }
+        live.layoutSubtreeIfNeeded()
+        out = nd_rect(x: 0, y: 0, w: Int32(live.bounds.width), h: Int32(live.bounds.height))
+        return true
+    }
+    // Detached split-wrapping ToastOverlay (see ndNodeVisible): its handle has
+    // no geometry of its own — report its host window's live content bounds.
+    if let overlay = view as? NDToastOverlayView, overlay.ndEmbeddedSplit != nil,
+       let win = overlay.ndHostWindow {
         guard let live = ndLiveContentView(ofWindow: win) else { return false }
         live.layoutSubtreeIfNeeded()
         out = nd_rect(x: 0, y: 0, w: Int32(live.bounds.width), h: Int32(live.bounds.height))
@@ -179,6 +195,65 @@ private extension Double {
     return NSBitmapImageRep(cgImage: outCG)
 }
 
+/// The macOS 26 sidebar glass container renders as an opaque plate in every
+/// offscreen capture rung (its blur + content compose via the window server,
+/// not the view's own draw pass), so a base capture of the split shows the
+/// sidebar as a blank white column — while the sidebar pane's OWN view
+/// (`item.viewController.view`, our NDPaneHostView) captures its widgets
+/// perfectly when rendered outside that glass ancestor context (both
+/// measured live against examples/notes). Compose the two: draw each
+/// non-collapsed sidebar-behavior item's pane view over the base capture at
+/// its frame, on a window-background backdrop (the pane's dark-mode pixels
+/// are white-on-transparent, same as flattenOntoWindowBackground's input).
+/// Pure-CG compositing — NSGraphicsContext(bitmapImageRep:) silently draws
+/// nothing in this unbundled process (see flattenOntoWindowBackground).
+@MainActor func ndCompositeSidebarPanes(_ rep: NSBitmapImageRep, _ content: NSView, _ window: NSWindow?) -> NSBitmapImageRep {
+    guard let split = content as? NSSplitView, let controller = ndSplitViewController(for: split) else { return rep }
+    let panes = controller.splitViewItems.filter { $0.behavior == .sidebar && !$0.isCollapsed }
+    guard !panes.isEmpty, let baseCG = rep.cgImage else { return rep }
+    let width = rep.pixelsWide
+    let height = rep.pixelsHigh
+    guard content.bounds.width > 0, content.bounds.height > 0,
+          let ctx = CGContext(
+              data: nil,
+              width: width,
+              height: height,
+              bitsPerComponent: 8,
+              bytesPerRow: 0,
+              space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else { return rep }
+    var bgCG: CGColor = NSColor.windowBackgroundColor.cgColor
+    if let win = window ?? gWindow {
+        win.effectiveAppearance.performAsCurrentDrawingAppearance {
+            bgCG = win.backgroundColor.cgColor
+        }
+    }
+    ctx.draw(baseCG, in: CGRect(x: 0, y: 0, width: width, height: height))
+    let sx = CGFloat(width) / content.bounds.width
+    let sy = CGFloat(height) / content.bounds.height
+    for item in panes {
+        let pane = item.viewController.view
+        guard pane.bounds.width > 0, pane.bounds.height > 0, pane.window === content.window,
+              let paneRep = pane.bitmapImageRepForCachingDisplay(in: pane.bounds) else { continue }
+        pane.cacheDisplay(in: pane.bounds, to: paneRep)
+        guard let paneCG = paneRep.cgImage else { continue }
+        // `content` is flipped (y-down): CG rect y measures from the bottom.
+        let r = pane.convert(pane.bounds, to: content)
+        let rect = CGRect(
+            x: r.origin.x * sx,
+            y: (content.bounds.height - r.maxY) * sy,
+            width: r.width * sx,
+            height: r.height * sy
+        )
+        ctx.setFillColor(bgCG)
+        ctx.fill(rect)
+        ctx.draw(paneCG, in: rect)
+    }
+    guard let outCG = ctx.makeImage() else { return rep }
+    return NSBitmapImageRep(cgImage: outCG)
+}
+
 /// Writes `rep` as a PNG to `path` iff it's non-blank. Returns whether it
 /// wrote (i.e. whether this rung succeeded). The rep is flattened onto the
 /// window background first — see `flattenOntoWindowBackground`.
@@ -293,11 +368,14 @@ private extension Double {
     let bounds = content.bounds
     content.layoutSubtreeIfNeeded() // real Auto Layout pass before any capture rung
 
-    // Rung 1: force display, then cacheDisplay.
+    // Rung 1: force display, then cacheDisplay. The sidebar composite
+    // (ndCompositeSidebarPanes) redraws glass-hosted sidebar panes that
+    // capture as an opaque white plate in the base pass.
     content.displayIfNeeded()
     if let rep = content.bitmapImageRepForCachingDisplay(in: bounds) {
         content.cacheDisplay(in: bounds, to: rep)
-        if writeIfNonBlank(rep, pngPath, targetWindow) {
+        let composed = ndCompositeSidebarPanes(rep, content, targetWindow)
+        if writeIfNonBlank(composed, pngPath, targetWindow) {
             FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=1\n".data(using: .utf8)!)
             return true
         }

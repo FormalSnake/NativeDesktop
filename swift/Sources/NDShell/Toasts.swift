@@ -27,11 +27,36 @@ final class NDToastOverlayView: NSView {
     private var current: (request: NDToastRequest, panel: NSPanel)?
     private var timer: Timer?
     private var resizeObservedWindow: NSWindow?
+    /// A registered SplitView child recorded by `setChild` instead of being
+    /// parented here — see that method's doc comment. The generated Window
+    /// append arm looks through this to install the split as
+    /// contentViewController, then records the window in `ndHostWindow` so
+    /// toast panels can present without this view ever entering a hierarchy.
+    weak var ndEmbeddedSplit: NSSplitView?
+    weak var ndHostWindow: NSWindow?
 
     override var isFlipped: Bool { true }
 
-    /// Single-child slot (generated structural ToastOverlay arms).
+    /// Single-child slot (generated structural ToastOverlay arms). A
+    /// registered SplitView child is NOT parented here: this overlay is a
+    /// logical wrapper for it (toasts are child-window NSPanels; this view
+    /// draws nothing), and the split must still reach the window's
+    /// contentViewController — hosting the bare splitView as a plain subview
+    /// leaves every pane's content hanging off the controller's
+    /// never-installed wrapper view (measured: the whole split subtree
+    /// reports visible=false and renders nothing). The split is recorded in
+    /// `ndEmbeddedSplit`; the generated Window append arm (or, on a late
+    /// append after this overlay already landed in a window, this method)
+    /// installs it via ndInstallSplitAsWindowContent.
     func setChild(_ child: NSView) {
+        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split) {
+            ndEmbeddedSplit = split
+            if let win = ndHostWindow ?? window {
+                ndInstallSplitAsWindowContent(split, controller, win)
+                ndHostWindow = win
+            }
+            return
+        }
         subviews.forEach { $0.removeFromSuperview() }
         child.translatesAutoresizingMaskIntoConstraints = false
         addSubview(child)
@@ -44,6 +69,14 @@ final class NDToastOverlayView: NSView {
     }
 
     func clearChild(_ child: NSView) {
+        if child === ndEmbeddedSplit {
+            if let controller = ndSplitViewController(for: ndEmbeddedSplit!),
+               let win = ndHostWindow, win.contentViewController === controller {
+                win.contentViewController = nil
+            }
+            ndEmbeddedSplit = nil
+            return
+        }
         if child.superview === self { child.removeFromSuperview() }
     }
 
@@ -77,11 +110,14 @@ final class NDToastOverlayView: NSView {
     }
 
     private func present(_ request: NDToastRequest) {
-        guard let host = window else {
+        // `ndHostWindow`: the split-wrapping overlay never enters a hierarchy
+        // (`setChild`'s registered-split branch), so its window comes from the
+        // generated Window append arm instead of `self.window`.
+        guard let host = window ?? ndHostWindow else {
             // Overlay not in a window yet (commit-order race): retry next turn.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if self.window != nil { self.present(request) }
+                if (self.window ?? self.ndHostWindow) != nil { self.present(request) }
                 else { FileHandle.standardError.write("ND_WARN showToast before ToastOverlay entered a window; dropped\n".data(using: .utf8)!) }
             }
             return

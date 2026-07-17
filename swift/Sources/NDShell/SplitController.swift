@@ -80,6 +80,48 @@ func ndLiveContentView(for handle: NSView) -> NSView? {
     return ndLiveContentView(ofWindow: ndWindow(for: handle))
 }
 
+/// Installs a registered SplitView as `win`'s contentViewController — the one
+/// hosting path that earns the automatic Liquid Glass sidebar treatment on
+/// macOS 26 (M11 Phase C). Called by the generated Window append arm for a
+/// direct `<splitview>` child AND for one wrapped in a `<toastoverlay>`
+/// (Toasts.swift's `ndEmbeddedSplit`): parenting the bare splitView as a
+/// plain subview instead leaves every pane's content hanging off the
+/// controller's never-installed wrapper view — measured live, the whole split
+/// subtree reports visible=false and renders nothing.
+///
+/// Assigning contentViewController resizes the window to the controller
+/// view's fitting size (measured 900x600 -> 500x500), clobbering Window
+/// defaultWidth/Height. Save the frame first and reassert it right after
+/// (display:true) — the split view's fitting size is only a floor, so the
+/// reasserted 1100x700 sticks with no lingering size constraint.
+///
+/// Do NOT steer the initial size via `controller.preferredContentSize`
+/// instead: a non-zero preferred size makes AppKit install fixed
+/// width/height constraints on the controller's view
+/// (`NSViewController.preferredContentSize.{width,height}` @ priority 501)
+/// that AppKit re-syncs on every layout pass. Those pin the window to the
+/// windowed size through a fullscreen transition — the window reports
+/// .fullScreen but its frame never grows to the screen, leaving a small
+/// app box in a black fullscreen space. Zeroing preferredContentSize does
+/// not drop the constraints, and removing them by hand only holds until
+/// the next layout pass re-derives them from the still-non-zero property,
+/// so the plain save/reassert-frame path is the one that survives
+/// fullscreen.
+func ndInstallSplitAsWindowContent(_ split: NSSplitView, _ controller: NSSplitViewController, _ win: NSWindow) {
+    let ndSavedFrame = win.frame
+    win.contentViewController = controller
+    win.setFrame(ndSavedFrame, display: true)
+    // A sidebar-behavior split item earns the full-height sidebar
+    // treatment even with no <headerbar> anywhere in the tree — the
+    // window-toolbar attach that used to fire only from a registering
+    // headerbar (NDToolbarManager.register) now fires directly here too,
+    // via the same helper, so the sidebar's vibrancy reaches the very top
+    // under the traffic lights (Notes/Mail idiom) for plain sidebar apps.
+    if controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) {
+        ndWindowToolbarManager?.attachForSidebar(win: win, split: split)
+    }
+}
+
 /// Wraps a pane's content in a flipped plain-NSView host pinned below the
 /// safe area (generated SplitView append/insertBefore arms). The
 /// NSSplitViewItem supplies the sidebar material/glass BEHIND this host, but
