@@ -1681,6 +1681,21 @@ fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv
     gtk.Label.setText(label, gtk.StringObject.getString(so));
 }
 
+fn cbHoverEnter(_: *gtk.EventControllerMotion, _: f64, _: f64, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "hoverChanged", .{ .checked = true });
+}
+fn cbHoverLeave(_: *gtk.EventControllerMotion, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "hoverChanged", .{ .checked = false });
+}
+fn ndHoverConnect(widget: *gtk.Widget, data: ?*anyopaque) void {
+    const ctrl = gtk.EventControllerMotion.new();
+    _ = gtk.EventControllerMotion.signals.enter.connect(ctrl, ?*anyopaque, &cbHoverEnter, data, .{});
+    _ = gtk.EventControllerMotion.signals.leave.connect(ctrl, ?*anyopaque, &cbHoverLeave, data, .{});
+    gtk.Widget.addController(widget, ctrl.as(gtk.EventController));
+}
+
 fn cbClicked(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const node_id: u32 = @intCast(@intFromPtr(data));
     if (emit) |f| f(node_id, "clicked", .{});
@@ -1859,10 +1874,13 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     if (std.mem.eql(u8, kind, "Window")) {
         if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);
         if (emit) |f| ndtabs_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "Box")) {
+        ndHoverConnect(widget, data);
     } else if (std.mem.eql(u8, kind, "Button")) {
         const obj_Button_clicked = asObject(widget);
         const hid_Button_clicked = gobject.signalConnectData(obj_Button_clicked, "clicked", @ptrCast(&cbClicked), data, null, .{});
         _ = hid_Button_clicked;
+        ndHoverConnect(widget, data);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const obj_TextInput_changed = asObject(widget);
         const hid_TextInput_changed = gobject.signalConnectData(obj_TextInput_changed, "changed", @ptrCast(&cbEditableChanged), data, null, .{});
@@ -1977,12 +1995,14 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
     if (std.mem.eql(u8, kind, "Window")) {
-        if (std.mem.eql(u8, command, "showTabOverview")) return ndtabs_gtk.command(widget, command, arg);
+        if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         ndweb_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
         ndtoast_gtk.command(widget, command, arg);
+    } else if (std.mem.eql(u8, kind, "Terminal")) {
+        ndterm_gtk.runCommand(widget, command, arg);
     } else {
         std.debug.print("ND_WARN widgetCommand on kind={s} with no commands\n", .{kind});
     }
@@ -2228,4 +2248,4 @@ pub const style_subkeys = [_]StyleSubDef{
     .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
     .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
 };
-pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline"};
+pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline"};

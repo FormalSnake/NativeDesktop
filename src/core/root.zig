@@ -52,6 +52,7 @@ comptime {
     _ = &terminal.ndterm_cursor;
     _ = &terminal.ndterm_default_colors;
     _ = &terminal.ndterm_render_unlock;
+    _ = &terminal.ndterm_dirty_seq;
     _ = &terminal.ndterm_open_virtual;
     _ = &terminal.ndterm_feed;
     _ = &terminal.ndterm_reset;
@@ -67,6 +68,17 @@ comptime {
     _ = &terminal.ndterm_scroll_viewport;
     _ = &terminal.ndterm_mouse_mode;
     _ = &remote_terminal.ndrt_open_ex;
+    // WP-A1 (clipboard-design): selection / copy-paste / scrollback-indicator
+    // ABI. Appended, not interleaved — see house rule above.
+    _ = &terminal.ndterm_selection_begin;
+    _ = &terminal.ndterm_selection_extend;
+    _ = &terminal.ndterm_selection_word;
+    _ = &terminal.ndterm_selection_line;
+    _ = &terminal.ndterm_selection_all;
+    _ = &terminal.ndterm_selection_clear;
+    _ = &terminal.ndterm_selection_text;
+    _ = &terminal.ndterm_write_paste;
+    _ = &terminal.ndterm_scrollback_state;
 }
 
 test {

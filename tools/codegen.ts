@@ -1304,9 +1304,10 @@ function genZig(s: Schema): string {
  *  create/apply templates). Bodies see `widget`, `command`, and `arg`. */
 const ZIG_COMMANDS: Record<string, string> = {
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
+  Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
   // Dialogs parent on the Window node's OWN handle (multi-window correct);
   // tab commands route to tabs.zig first.
-  Window: "        if (std.mem.eql(u8, command, \"showTabOverview\")) return ndtabs_gtk.command(widget, command, arg);\n        nddialog_gtk.command(widget, command, arg);\n",
+  Window: "        if (std.mem.eql(u8, command, \"showTabOverview\") or std.mem.eql(u8, command, \"present\")) return ndtabs_gtk.command(widget, command, arg);\n        nddialog_gtk.command(widget, command, arg);\n",
   ToastOverlay: "        ndtoast_gtk.command(widget, command, arg);\n",
 };
 
@@ -2169,9 +2170,13 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "terminal"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "terminal" | "hover"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
+  // C4: hover isn't a plain GObject signal on the widget itself — it's an
+  // EventControllerMotion enter/leave pair, wired via ndHoverConnect (HOVER_CALLBACKS).
+  "Button.hoverChanged":     { signal: "",                 target: "hover",  cb: "",                   suppress: false },
+  "Box.hoverChanged":        { signal: "",                 target: "hover",  cb: "",                   suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "TextInput.activate":      { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
   "SearchInput.changed":     { signal: "search-changed",   target: "widget", cb: "cbEditableChanged",  suppress: true },
@@ -2210,6 +2215,10 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Terminal.bell":               { signal: "",              target: "terminal", cb: "", suppress: false },
   "Terminal.exited":             { signal: "",              target: "terminal", cb: "", suppress: false },
   "Terminal.connectionState":    { signal: "",              target: "terminal", cb: "", suppress: false },
+  // Selection / image-paste fire from src/gtk/terminal.zig on the UI thread via
+  // the same connectEvents-supplied emit fn (WP-A4/WP-B2).
+  "Terminal.selectionChanged":   { signal: "",              target: "terminal", cb: "", suppress: false },
+  "Terminal.imagePaste":         { signal: "",              target: "terminal", cb: "", suppress: false },
   // NativeView events originate in the app plugin and are connected by the retained tree.
   "NativeView.nativeEvent":      { signal: "",              target: "nativeview", cb: "", suppress: false },
   // Window dialog results fire from the async dialog callbacks wired inside
@@ -2439,6 +2448,26 @@ fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv
 }
 `;
 
+// C4: onHoverChanged (Button/Box) — a GtkEventControllerMotion added to the
+// widget, not a plain GObject signal, so it's wired via its own connect
+// helper (ndHoverConnect) rather than the generic signalConnectData path.
+// Emitted unconditionally alongside the other always-present callbacks.
+const HOVER_CALLBACKS = `fn cbHoverEnter(_: *gtk.EventControllerMotion, _: f64, _: f64, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "hoverChanged", .{ .checked = true });
+}
+fn cbHoverLeave(_: *gtk.EventControllerMotion, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "hoverChanged", .{ .checked = false });
+}
+fn ndHoverConnect(widget: *gtk.Widget, data: ?*anyopaque) void {
+    const ctrl = gtk.EventControllerMotion.new();
+    _ = gtk.EventControllerMotion.signals.enter.connect(ctrl, ?*anyopaque, &cbHoverEnter, data, .{});
+    _ = gtk.EventControllerMotion.signals.leave.connect(ctrl, ?*anyopaque, &cbHoverLeave, data, .{});
+    gtk.Widget.addController(widget, ctrl.as(gtk.EventController));
+}
+`;
+
 /** Emits the signal-wiring table + callbacks. Throws on a schema event without
  *  a template (same fail-loud contract as the prop-template throws). */
 function genZigEvents(s: Schema): string {
@@ -2454,12 +2483,13 @@ function genZigEvents(s: Schema): string {
     }
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
       || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview"
-      || t.target === "terminal") continue; // custom connect, no GTK callback body
+      || t.target === "terminal" || t.target === "hover") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
   let out = "";
   out += LISTVIEW_CALLBACKS + "\n";
+  out += HOVER_CALLBACKS + "\n";
   for (const cb of used) out += CALLBACK_BODIES[cb]! + "\n";
 
   out += "pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {\n";
@@ -2541,6 +2571,13 @@ function genZigEvents(s: Schema): string {
         if (!navConnected) {
           out += "        if (emit) |f| ndtoast_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "hover") {
+        if (!connectedTargets.has("hover")) {
+          out += "        ndHoverConnect(widget, data);\n";
+          connectedTargets.add("hover");
         }
         continue;
       }
@@ -3595,6 +3632,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
 interface SwiftSignalTemplate { selector: string; payload: PayloadKind }
 const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Button.clicked":          { selector: "fireNone",    payload: "none" },
+  // C4: hover fires from an NSTrackingArea, not NSControl target/action —
+  // connectEvents routes it to ndHoverConnect (Hover.swift) instead.
+  "Button.hoverChanged":     { selector: "hover",       payload: "checked" },
+  "Box.hoverChanged":        { selector: "hover",       payload: "checked" },
   "TextInput.changed":       { selector: "fireText",    payload: "text" },
   "TextInput.activate":      { selector: "fireText",    payload: "text" },
   "SearchInput.changed":     { selector: "fireText",    payload: "text" },
@@ -3634,6 +3675,8 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Terminal.bell":               { selector: "terminal", payload: "none" },
   "Terminal.exited":             { selector: "terminal", payload: "data" },
   "Terminal.connectionState":    { selector: "terminal", payload: "data" },
+  "Terminal.selectionChanged":   { selector: "terminal", payload: "checked" },
+  "Terminal.imagePaste":         { selector: "terminal", payload: "data" },
   "NativeView.nativeEvent":      { selector: "nativeview", payload: "data" },
   // M15 additions. Plain NSControl target/action where a fire selector fits;
   // everything else routes to a hand-written connect (SWIFT_CUSTOM_CONNECT).
@@ -3682,6 +3725,7 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   windowdialogs: "ndWindowDialogsConnect",
   windowtabs: "ndWindowTabsConnect",
   terminal: "ndTerminalConnect",
+  hover: "ndHoverConnect",
 };
 
 /** Emits `ndConnectEvents`, wiring each widget's controls to
@@ -3772,10 +3816,11 @@ function genSwiftEvents(s: Schema): string {
  *  `command`, and `argJson`. */
 const SWIFT_COMMANDS: Record<string, string> = {
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
+  Terminal: "        ndTerminalCommand(view, command, argJson)\n",
   // Dialogs resolve the owning NSWindow from the node's OWN handle
   // (ndWindow(for:)) — multi-window correct, no gWindow (M15). Tab commands
   // route to WindowTabs.swift first.
-  Window: "        if command == \"showTabOverview\" { ndWindowTabsCommand(view, command, argJson); return }\n        ndWindowCommand(view, command, argJson)\n",
+  Window: "        if command == \"showTabOverview\" || command == \"present\" { ndWindowTabsCommand(view, command, argJson); return }\n        ndWindowCommand(view, command, argJson)\n",
   ToastOverlay: "        ndToastOverlayCommand(view, command, argJson)\n",
 };
 

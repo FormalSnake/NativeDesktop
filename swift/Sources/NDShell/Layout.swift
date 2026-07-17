@@ -227,14 +227,14 @@ func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
             "ND_WARN halign/valign \"\(align)\" is not a recognized alignment value (expected fill/start/center/end)\n".data(using: .utf8)!)
     }
 
-    // A button attaching to a `navigation-sidebar` box becomes a source-list
-    // table row (SidebarTable.swift): mark/hide it and reload the table so the
-    // new row shows. Style/class are applied BEFORE append on create (see this
-    // file's header comment), so marking here strips any generic bezel the
-    // pre-attach `suggested-action` gave it.
-    if let btn = child as? NDButton, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
-        ndMarkSidebarRowButton(btn)
-        ndSidebarTables[ObjectIdentifier(stack)]?.reload()
+    // A subtree attaching somewhere inside a `nd-native-sidebar` box becomes
+    // (part of) its source-list table's row model (SidebarTable.swift):
+    // reload marks/hides any newly-reached button and refreshes the table.
+    // `stack` need not be the classed box itself — a real app nests row
+    // buttons inside structural wrapper boxes (a host/project section), so
+    // this walks UP to find the enclosing sidebar, not just an exact match.
+    if let table = ndEnclosingSidebarTable(stack) {
+        table.reload()
     }
 
     // A separator inside a `boxed-list` card renders as an inset hairline row
@@ -302,9 +302,12 @@ func ndBoxChildDetached(_ stack: NSStackView, _ child: NSView) {
         ndCrossAxisConstraints[ObjectIdentifier(child)] = nil
     }
 
-    // A row removed from a `navigation-sidebar` box: drop it from the row set
-    // and reload the source-list table (SidebarTable.swift).
-    if ndNavigationSidebars.contains(ObjectIdentifier(stack)), let table = ndSidebarTables[ObjectIdentifier(stack)] {
+    // A row (or a wrapper box carrying rows) removed from somewhere inside a
+    // `nd-native-sidebar` box: drop the direct child from the row set and
+    // reload the source-list table (SidebarTable.swift) — same enclosing-
+    // table walk as the attach arm above, since `stack` need not be the
+    // classed box itself.
+    if let table = ndEnclosingSidebarTable(stack) {
         ndSidebarRowButtons.remove(ObjectIdentifier(child))
         table.reload()
     }

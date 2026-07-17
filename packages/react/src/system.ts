@@ -115,6 +115,10 @@ export const clipboard = {
   async writeText(text: string): Promise<void> {
     await call("clipboard.writeText", { text });
   },
+  /** Reads the clipboard's image, written to a host-local temp PNG. Default-denied — needs `core:clipboard.read.image`. Rejects when the clipboard holds no image. */
+  readImage(): Promise<{ path: string; width: number; height: number; bytes: number }> {
+    return call("clipboard.readImage") as Promise<{ path: string; width: number; height: number; bytes: number }>;
+  },
 };
 
 // --- notifications -----------------------------------------------------------------

@@ -28,7 +28,7 @@ typedef struct {
   char    utf8[16];
   uint8_t fg[3];   /* resolved rgb */
   uint8_t bg[3];   /* resolved rgb */
-  uint8_t flags;   /* bit0 bold, bit1 underline, bit2 inverse, bit3 wide, bit4 wide_tail */
+  uint8_t flags;   /* bit0 bold, bit1 underline, bit2 inverse, bit3 wide, bit4 wide_tail, bit5 selected */
 } nd_term_cell;
 
 #define NDTERM_FLAG_BOLD      (1u << 0)
@@ -36,6 +36,10 @@ typedef struct {
 #define NDTERM_FLAG_INVERSE   (1u << 2)
 #define NDTERM_FLAG_WIDE      (1u << 3)
 #define NDTERM_FLAG_WIDE_TAIL (1u << 4)
+/* Set on a snapshot cell that falls inside the terminal's active selection.
+   The surface swaps fg/bg (like it already does for INVERSE) to draw the
+   highlight band. Recomputed from the active selection on every render_lock. */
+#define NDTERM_FLAG_SELECTED  (1u << 5)
 
 typedef struct {
   uint16_t x, y;
@@ -123,6 +127,18 @@ void         ndterm_cursor(nd_terminal *t, nd_term_cursor *out);
 void         ndterm_default_colors(nd_terminal *t, uint8_t fg[3], uint8_t bg[3]);
 void         ndterm_render_unlock(nd_terminal *t);
 
+/* --- dirty tracking (repaint gating) ---
+   A monotonically-increasing generation counter, bumped whenever anything that
+   affects the rendered viewport changes: grid mutation (PTY/feed output),
+   scrollback viewport move, resize, and reset. A backend's repaint timer reads
+   this once per tick and only invalidates when it advanced since the last paint,
+   so an idle terminal (no output) never repaints — dropping idle CPU to ~0
+   instead of the old unconditional full-grid redraw. Lock-free: safe to call
+   WITHOUT holding the render lock (reads an atomic). Returns 0 for a NULL
+   terminal. Stage-2 selection ops must also bump it (any state affecting
+   rendered output). */
+uint64_t     ndterm_dirty_seq(nd_terminal *t);
+
 /* --- virtual (remote-fed) mode ---
    A virtual terminal has NO pty/fork/reader-thread (amaster == -1). Bytes are
    pushed in with ndterm_feed and pulled out through output_cb. Used by the
@@ -154,6 +170,48 @@ void         ndterm_feed(nd_terminal *t, const uint8_t *bytes, size_t len);
 /* Reset the VT to power-on defaults before the next feed — used on a snapshot/
    replay boundary (OUTPUT frame with FLAG_RESET set). */
 void         ndterm_reset(nd_terminal *t);
+
+/* --- selection / copy-paste (WP-A1) ---
+   A backend maps pointer gestures to viewport cells and drives these. The
+   active selection is stored as two viewport endpoints (plus a mode) and the
+   underlying libghostty-vt GhosttySelection is rebuilt from fresh grid refs on
+   every ndterm_render_lock, so no stale untracked ref survives a feed. Each of
+   these ops bumps ndterm_dirty_seq so the highlight repaints. All are safe to
+   call on a NULL terminal (no-op / return 0). Coordinates are viewport cells
+   (0,0 = top-left of the visible grid). */
+
+/* Begin a linear selection with the anchor at (col,row); head starts there. */
+void         ndterm_selection_begin(nd_terminal *t, uint16_t col, uint16_t row);
+/* Extend the linear selection's head to (col,row) (drag). */
+void         ndterm_selection_extend(nd_terminal *t, uint16_t col, uint16_t row);
+/* Select the word under (col,row) (double-click). */
+void         ndterm_selection_word(nd_terminal *t, uint16_t col, uint16_t row);
+/* Select the whole line under (col,row) (triple-click). */
+void         ndterm_selection_line(nd_terminal *t, uint16_t col, uint16_t row);
+/* Select all terminal content including scrollback. */
+void         ndterm_selection_all(nd_terminal *t);
+/* Clear the active selection. */
+void         ndterm_selection_clear(nd_terminal *t);
+/* Copy the active selection's plain text (unwrapped, trailing-trimmed) into
+   `buf`. Pass buf == NULL to query the required byte length. Returns the number
+   of bytes the full text needs (which may exceed buf_len — retry with a bigger
+   buffer), or 0 when there is no active selection. Not NUL-terminated. */
+size_t       ndterm_selection_text(nd_terminal *t, uint8_t *buf, size_t buf_len);
+
+/* Encode `bytes` as a paste and route it to the same sink as ndterm_write_input
+   (PTY master for pty-backed terminals, output_cb for virtual ones). Wraps the
+   data in bracketed-paste markers (ESC[200~ … ESC[201~) only when the VT has
+   DECSET 2004 active; otherwise newlines are normalized to carriage returns.
+   Unsafe control bytes are stripped by libghostty-vt regardless. */
+void         ndterm_write_paste(nd_terminal *t, const uint8_t *bytes, size_t len);
+
+/* Scrollback indicator state. Fills the out params (each may be NULL) with the
+   total scrollable rows, the rows currently scrolled above the viewport, and
+   the viewport's offset from the top of the scrollable area. Returns 1 when the
+   viewport is pinned to the live output (bottom), 0 when scrolled into history —
+   a backend hides the indicator when pinned. Returns 0 for a NULL terminal. */
+uint8_t      ndterm_scrollback_state(nd_terminal *t, size_t *total_rows,
+                                     size_t *scrollback_rows, size_t *viewport_offset);
 
 #ifdef __cplusplus
 }

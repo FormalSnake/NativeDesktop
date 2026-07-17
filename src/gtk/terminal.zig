@@ -9,6 +9,8 @@
 const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
+const glib = @import("glib");
+const gio = @import("gio");
 const gobject = @import("gobject");
 const cairo = @import("cairo");
 const pango = @import("pango");
@@ -33,6 +35,7 @@ const FLAG_UNDERLINE: u8 = 1 << 1;
 const FLAG_INVERSE: u8 = 1 << 2;
 const FLAG_WIDE: u8 = 1 << 3;
 const FLAG_WIDE_TAIL: u8 = 1 << 4;
+const FLAG_SELECTED: u8 = 1 << 5;
 
 const Cell = extern struct {
     utf8: [16]u8,
@@ -81,6 +84,22 @@ const State = struct {
     // dragging) vs NDTERM_MOUSE_ANY (report every move).
     mouse_button_down: bool = false,
     mouse_last_button: c_uint = 0,
+    // WP-A1/A2 selection: `selecting` is true while a left-button drag is
+    // building a selection; `has_selection` mirrors the last emitted
+    // onSelectionChanged so we only fire on a real transition.
+    selecting: bool = false,
+    has_selection: bool = false,
+    // Last dirty generation the tick callback queued a draw for (perf repaint
+    // gate). Sentinel maxInt forces the first tick to paint the initial frame
+    // even though a fresh terminal's dirty_seq is 0.
+    last_drawn_seq: u64 = std.math.maxInt(u64),
+    // Latest nd_rt_state seen by stateTramp (-1 = none yet). The transport
+    // starts emitting at createRemote time, BEFORE connectEvents has assigned
+    // node_id, so early transitions (always CONNECTING, and — on a reused,
+    // already-authed connection — potentially ATTACHED) would be silently
+    // dropped by the node_id gate. connectEvents re-emits this so the app's
+    // onConnectionState always observes the current state once subscribed.
+    last_conn_state: std.atomic.Value(i32) = std.atomic.Value(i32).init(-1),
 };
 
 fn stateFrom(widget: *gtk.Widget) ?*State {
@@ -293,14 +312,24 @@ fn wireSurface(area: *gtk.DrawingArea, widget: *gtk.Widget, state: *State) void 
     _ = gtk.EventControllerScroll.signals.scroll.connect(scroll_ctrl, *State, &onScroll, state, .{});
     gtk.Widget.addController(widget, scroll_ctrl.as(gtk.EventController));
 
+    // WP-B2 image paste: accept dropped images (a raw GdkTexture, e.g. from a
+    // browser/screenshot tool) and dropped image files (a GFile). Either yields
+    // a local temp PNG path emitted via onImagePaste — the app uploads it and
+    // types the returned path. Text/other drops are ignored here.
+    const drop = gtk.DropTarget.new(gdk.Texture.getGObjectType(), .{ .copy = true });
+    var drop_types = [_]usize{ gdk.Texture.getGObjectType(), gio.File.getGObjectType() };
+    gtk.DropTarget.setGtypes(drop, &drop_types, drop_types.len);
+    _ = gtk.DropTarget.signals.drop.connect(drop, *State, &onDrop, state, .{});
+    gtk.Widget.addController(widget, drop.as(gtk.EventController));
+
     // Track the drawing area's actual allocation onto the grid (peer of the
     // AppKit setFrameSize path). GtkDrawingArea::resize is the correct
     // observation point — cheaper and more precise than polling in tickCb.
     _ = gtk.DrawingArea.signals.resize.connect(area, *State, &onResize, state, .{});
 
-    // Repaint every frame so output from the core's reader thread shows up
-    // without a per-cell dirty channel (correct first, fast later).
-    _ = gtk.Widget.addTickCallback(widget, &tickCb, null, null);
+    // Frame-clock tick gates repaint on the core's dirty generation (see
+    // tickCb) so an idle terminal doesn't burn CPU on unchanged redraws.
+    _ = gtk.Widget.addTickCallback(widget, &tickCb, state, null);
 
     // Tear down the core + free state when the widget goes away.
     _ = gtk.Widget.signals.unrealize.connect(widget, *State, &onUnrealize, state, .{});
@@ -314,58 +343,145 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     emit = emit_fn;
     const state = stateFrom(widget) orelse return;
     state.node_id = node_id;
+    // Replay the newest connection state that arrived before the subscription
+    // existed (see State.last_conn_state). Harmless if stateTramp emits the
+    // same state again concurrently — the payload is idempotent app-side.
+    const last = state.last_conn_state.load(.seq_cst);
+    if (last >= 0) postEmit(node_id, .conn_state, last, null);
+}
+
+// effectTramp/stateTramp fire on the ndremote reader thread (and, for a local
+// PTY terminal, the core's reader thread). The emit sink (`emit` -> backend.zig
+// `emitEventAdapter`) allocates from the process-global `arena`, which is NOT
+// thread-safe and is otherwise UI-thread-exclusive (see backend.zig's
+// marshal-job comment: crossing threads on it corrupts the heap and surfaces as
+// intermittent GTK segfaults / dropped events — e.g. the remote terminal's
+// `connectionState` never reaching 'attached' on real Linux GTK). So the
+// trampolines only COPY the payload into a thread-safe job here and hop onto the
+// GTK main loop via g_main_context_invoke_full, mirroring the AppKit surface's
+// `DispatchQueue.main.async`. The main-loop trampoline then does the actual
+// emit, keeping every `emit`/`arena` touch on the UI thread.
+const emit_alloc = std.heap.smp_allocator;
+
+const EmitJob = struct {
+    node_id: u32,
+    kind: enum { title, bell, exited, conn_state },
+    ival: c_int = 0, // exit code (exited) or state value (conn_state)
+    text: ?[:0]u8 = null, // owned title (title) or detail (conn_state); freed by the trampoline
+};
+
+fn postEmit(node_id: u32, kind: @FieldType(EmitJob, "kind"), ival: c_int, text: ?[*:0]const u8) void {
+    const job = emit_alloc.create(EmitJob) catch return;
+    job.* = .{
+        .node_id = node_id,
+        .kind = kind,
+        .ival = ival,
+        .text = if (text) |t| emit_alloc.dupeZ(u8, std.mem.span(t)) catch null else null,
+    };
+    _ = glib.MainContext.default().invokeFull(glib.PRIORITY_DEFAULT, &emitTrampoline, job, null);
+}
+
+fn emitTrampoline(data: ?*anyopaque) callconv(.c) c_int {
+    const job: *EmitJob = @ptrCast(@alignCast(data.?));
+    defer {
+        if (job.text) |t| emit_alloc.free(t);
+        emit_alloc.destroy(job);
+    }
+    const f = emit orelse return G_SOURCE_REMOVE;
+    switch (job.kind) {
+        .title => f(job.node_id, "titleChanged", .{ .text = if (job.text) |t| @as([]const u8, t) else "" }),
+        .bell => f(job.node_id, "bell", .{}),
+        .exited => {
+            var obj: std.json.ObjectMap = .empty;
+            defer obj.deinit(std.heap.page_allocator);
+            obj.put(std.heap.page_allocator, "code", .{ .integer = @as(i64, job.ival) }) catch return G_SOURCE_REMOVE;
+            f(job.node_id, "exited", .{ .data = .{ .object = obj } });
+        },
+        .conn_state => {
+            var obj: std.json.ObjectMap = .empty;
+            defer obj.deinit(std.heap.page_allocator);
+            obj.put(std.heap.page_allocator, "state", .{ .integer = @as(i64, job.ival) }) catch return G_SOURCE_REMOVE;
+            if (job.text) |d| obj.put(std.heap.page_allocator, "detail", .{ .string = d }) catch return G_SOURCE_REMOVE;
+            f(job.node_id, "connectionState", .{ .data = .{ .object = obj } });
+        },
+    }
+    return G_SOURCE_REMOVE;
 }
 
 fn effectTramp(ud: ?*anyopaque, kind: c_int, text: ?[*:0]const u8, code: c_int) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(ud orelse return));
     if (state.node_id == 0) return;
-    const f = emit orelse return;
     switch (kind) {
-        0 => { // title changed
-            const t = text orelse return;
-            f(state.node_id, "titleChanged", .{ .text = std.mem.span(t) });
-        },
-        1 => f(state.node_id, "bell", .{}), // bell
-        2 => { // child exited
-            var obj: std.json.ObjectMap = .empty;
-            defer obj.deinit(std.heap.page_allocator);
-            obj.put(std.heap.page_allocator, "code", .{ .integer = @as(i64, code) }) catch return;
-            f(state.node_id, "exited", .{ .data = .{ .object = obj } });
-        },
+        0 => postEmit(state.node_id, .title, 0, text),
+        1 => postEmit(state.node_id, .bell, 0, null),
+        2 => postEmit(state.node_id, .exited, code, null),
         else => {},
     }
 }
 
 fn stateTramp(ud: ?*anyopaque, state_val: c_int, detail: ?[*:0]const u8) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(ud orelse return));
+    state.last_conn_state.store(state_val, .seq_cst);
     if (state.node_id == 0) return;
-    const f = emit orelse return;
-    var obj: std.json.ObjectMap = .empty;
-    defer obj.deinit(std.heap.page_allocator);
-    obj.put(std.heap.page_allocator, "state", .{ .integer = @as(i64, state_val) }) catch return;
-    if (detail) |d| obj.put(std.heap.page_allocator, "detail", .{ .string = std.mem.span(d) }) catch return;
-    f(state.node_id, "connectionState", .{ .data = .{ .object = obj } });
+    postEmit(state.node_id, .conn_state, state_val, detail);
 }
 
 const G_SOURCE_CONTINUE: c_int = 1;
+const G_SOURCE_REMOVE: c_int = 0;
 
-fn tickCb(widget: *gtk.Widget, _: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) c_int {
+/// Repaint gate (perf: real-hardware scout measured ~35% idle CPU from this
+/// callback's unconditional per-frame redraw). Only queue a draw when the core's
+/// dirty generation advanced since the last one — an idle terminal (no output,
+/// no scroll/resize) produces no bumps and so never repaints, dropping idle CPU
+/// to ~0. The frame-clock tick itself is cheap (one atomic load + compare).
+fn tickCb(widget: *gtk.Widget, _: *gdk.FrameClock, ud: ?*anyopaque) callconv(.c) c_int {
+    const state: *State = @ptrCast(@alignCast(ud orelse return G_SOURCE_CONTINUE));
+    const seq = ndt.ndterm_dirty_seq(@ptrCast(state.term));
+    if (seq == state.last_drawn_seq) return G_SOURCE_CONTINUE;
+    state.last_drawn_seq = seq;
     gtk.Widget.queueDraw(widget);
     return G_SOURCE_CONTINUE;
 }
 
-fn onPressed(gesture: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) callconv(.c) void {
+fn onPressed(gesture: *gtk.GestureClick, n_press: c_int, x: f64, y: f64, state: *State) callconv(.c) void {
     _ = gtk.Widget.grabFocus(state.widget);
     const btn = gtk.GestureSingle.getCurrentButton(gesture.as(gtk.GestureSingle));
     state.mouse_button_down = true;
     state.mouse_last_button = btn;
-    if (ndt.ndterm_mouse_mode(@ptrCast(state.term)) == 0) return;
+
+    const mode = ndt.ndterm_mouse_mode(@ptrCast(state.term));
+    const shift = gtk.EventController.getCurrentEventState(gesture.as(gtk.EventController)).shift_mask;
+    // Left-button selection when the app isn't grabbing the mouse (mode 0), or
+    // when Shift overrides an active mouse-reporting mode — mirrors the AppKit
+    // surface's gate. click-count drives word (2) / line (3) vs char (1).
+    if (btn == 1 and (mode == 0 or shift)) {
+        const col = cellCol(state, x);
+        const row = cellRow(state, y);
+        if (n_press >= 3) {
+            ndt.ndterm_selection_line(@ptrCast(state.term), col, row);
+        } else if (n_press == 2) {
+            ndt.ndterm_selection_word(@ptrCast(state.term), col, row);
+        } else {
+            ndt.ndterm_selection_begin(@ptrCast(state.term), col, row);
+        }
+        state.selecting = true;
+        gtk.Widget.queueDraw(state.widget);
+        emitSelectionChanged(state);
+        return;
+    }
+
+    if (mode == 0) return;
     sendSgrMouse(state, sgrBaseButton(btn), x, y, true);
 }
 
 fn onReleased(_: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) callconv(.c) void {
     const btn = state.mouse_last_button;
     state.mouse_button_down = false;
+    if (state.selecting) {
+        state.selecting = false;
+        emitSelectionChanged(state);
+        return;
+    }
     if (ndt.ndterm_mouse_mode(@ptrCast(state.term)) == 0) return;
     sendSgrMouse(state, sgrBaseButton(btn), x, y, false);
 }
@@ -378,6 +494,12 @@ fn onReleased(_: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) cal
 /// mirror of this same choice), safe in practice because apps that enable
 /// tracking overwhelmingly also request SGR.
 fn onMotion(_: *gtk.EventControllerMotion, x: f64, y: f64, state: *State) callconv(.c) void {
+    if (state.selecting) {
+        ndt.ndterm_selection_extend(@ptrCast(state.term), cellCol(state, x), cellRow(state, y));
+        gtk.Widget.queueDraw(state.widget);
+        emitSelectionChanged(state);
+        return;
+    }
     const mode = ndt.ndterm_mouse_mode(@ptrCast(state.term));
     const any_motion = (mode & NDTERM_MOUSE_ANY) != 0;
     const button_motion = state.mouse_button_down and (mode & NDTERM_MOUSE_BUTTON) != 0;
@@ -459,11 +581,29 @@ fn drawGlyph(cr: *cairo.Context, layout: *pango.Layout, desc: *pango.FontDescrip
     cairo.Context.restore(cr);
 }
 
+/// Fill one coalesced background run of `w` px at (px, row*ch). No-op for an
+/// empty run (w == 0), which is how the caller skips default-bg gaps.
+fn flushBgRun(cr: *cairo.Context, px: f64, row: u16, w: f64, ch: f64, rgb: [3]u8) void {
+    if (w == 0) return;
+    setRgb(cr, rgb);
+    cairo.Context.rectangle(cr, px, @as(f64, @floatFromInt(row)) * ch, w, ch);
+    cairo.Context.fill(cr);
+}
+
 fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_int, _: ?*anyopaque) callconv(.c) void {
     const state = stateFrom(area.as(gtk.Widget)) orelse return;
     const term = state.term;
     const cw = state.cell_w;
     const ch = state.cell_h;
+
+    // Scrollback indicator state, queried BEFORE the render lock:
+    // ndterm_scrollback_state takes the terminal mutex itself, and render_lock
+    // keeps that same (non-recursive) mutex held until render_unlock — calling
+    // it inside the locked region self-deadlocks the UI thread on the first
+    // draw. One frame of staleness in an advisory thumb is invisible.
+    var sb_total: usize = 0;
+    var sb_offset: usize = 0;
+    const sb_pinned = ndt.ndterm_scrollback_state(@ptrCast(term), &sb_total, null, &sb_offset);
 
     var cols: u16 = 0;
     var rows: u16 = 0;
@@ -492,28 +632,56 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
 
     var y: u16 = 0;
     while (y < rows) : (y += 1) {
+        // Pass 1 — backgrounds, before any glyph so a coalesced run can't
+        // overpaint the text drawn on top of it. Contiguous cells sharing a
+        // non-default bg collapse into one cairo fill (perf: turns a per-cell
+        // fill into ~runs-per-row); a default-bg cell needs no fill at all, the
+        // whole-widget fill above already covers it.
+        var run_start_px: f64 = 0;
+        var run_w: f64 = 0;
+        var run_bg: [3]u8 = def_bg;
         var x: u16 = 0;
         while (x < cols) : (x += 1) {
             var cell: Cell = undefined;
             ndt.ndterm_cell(@ptrCast(term), x, y, @ptrCast(&cell));
-
-            // The trailing half of a wide glyph carries no text of its own;
-            // the wide cell's grapheme already overdraws into it.
             if ((cell.flags & FLAG_WIDE_TAIL) != 0) continue;
             const wide = (cell.flags & FLAG_WIDE) != 0;
-
-            const inverse = (cell.flags & FLAG_INVERSE) != 0;
-            const fg = if (inverse) cell.bg else cell.fg;
+            // A selected cell swaps fg/bg like INVERSE does; the two compose by
+            // XOR (selection over inverse text stays legible).
+            const inverse = ((cell.flags & FLAG_INVERSE) != 0) != ((cell.flags & FLAG_SELECTED) != 0);
             const bg = if (inverse) cell.fg else cell.bg;
+            const px = @as(f64, @floatFromInt(x)) * cw;
+            const own_w = if (wide) cw * 2 else cw;
 
+            if (std.mem.eql(u8, &bg, &def_bg)) {
+                flushBgRun(cr, run_start_px, y, run_w, ch, run_bg);
+                run_w = 0;
+            } else if (run_w != 0 and std.mem.eql(u8, &bg, &run_bg)) {
+                run_w += own_w;
+            } else {
+                flushBgRun(cr, run_start_px, y, run_w, ch, run_bg);
+                run_start_px = px;
+                run_w = own_w;
+                run_bg = bg;
+            }
+            if (wide) x += 1;
+        }
+        flushBgRun(cr, run_start_px, y, run_w, ch, run_bg);
+
+        // Pass 2 — glyphs + underline, per cell (cell_w is a rounded metric,
+        // not the font's measured advance, so a concatenated Pango run would
+        // drift off the grid; the explicit per-cell origin is load-bearing).
+        x = 0;
+        while (x < cols) : (x += 1) {
+            var cell: Cell = undefined;
+            ndt.ndterm_cell(@ptrCast(term), x, y, @ptrCast(&cell));
+            if ((cell.flags & FLAG_WIDE_TAIL) != 0) continue;
+            const wide = (cell.flags & FLAG_WIDE) != 0;
+            const inverse = ((cell.flags & FLAG_INVERSE) != 0) != ((cell.flags & FLAG_SELECTED) != 0);
+            const fg = if (inverse) cell.bg else cell.fg;
             const px = @as(f64, @floatFromInt(x)) * cw;
             const py = @as(f64, @floatFromInt(y)) * ch;
             const own_w = if (wide) cw * 2 else cw;
-
-            // Cell background (spans both cells for a wide lead).
-            setRgb(cr, bg);
-            cairo.Context.rectangle(cr, px, py, own_w, ch);
-            cairo.Context.fill(cr);
 
             if (cell.utf8[0] != 0) {
                 const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
@@ -550,6 +718,159 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
             const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
             drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, cell.bg);
         }
+    }
+
+    // Scrollback indicator: a thin right-edge thumb, shown only while scrolled
+    // into history (pinned == 0). Height/position track the viewport's share of
+    // the total scrollable area. (State queried above, before the render lock.)
+    if (sb_pinned == 0 and sb_total > @as(usize, rows)) {
+        const track_h: f64 = @floatFromInt(height);
+        const total_f: f64 = @floatFromInt(sb_total);
+        const thumb_h = @max(track_h * @as(f64, @floatFromInt(rows)) / total_f, 16.0);
+        const thumb_y = (track_h - thumb_h) * @as(f64, @floatFromInt(sb_offset)) / @max(total_f - @as(f64, @floatFromInt(rows)), 1.0);
+        setRgb(cr, .{ 0x88, 0x88, 0x88 });
+        cairo.Context.rectangle(cr, @as(f64, @floatFromInt(width)) - 4.0, thumb_y, 3.0, thumb_h);
+        cairo.Context.fill(cr);
+    }
+}
+
+// ---- selection / clipboard / commands (WP-A2 / WP-A4 / WP-B2) ----
+
+/// Fire onSelectionChanged only when the has-selection state actually flips.
+/// Called on the UI thread (gestures/keys/commands), so it emits directly —
+/// unlike the reader-thread effect callbacks, no main-loop marshaling needed.
+fn emitSelectionChanged(state: *State) void {
+    if (state.node_id == 0) return;
+    const f = emit orelse return;
+    const has = ndt.ndterm_selection_text(@ptrCast(state.term), null, 0) != 0;
+    if (has == state.has_selection) return;
+    state.has_selection = has;
+    f(state.node_id, "selectionChanged", .{ .checked = has });
+}
+
+fn displayClipboard() ?*gdk.Clipboard {
+    const display = gdk.Display.getDefault() orelse return null;
+    return gdk.Display.getClipboard(display);
+}
+
+fn copyToClipboard(state: *State) void {
+    const need = ndt.ndterm_selection_text(@ptrCast(state.term), null, 0);
+    if (need == 0) return;
+    const buf = std.heap.c_allocator.allocSentinel(u8, need, 0) catch return;
+    defer std.heap.c_allocator.free(buf);
+    // The reader thread can grow the selection between the size query and the
+    // read; ndterm.h documents the return may exceed buf_len — clamp it.
+    const n = @min(ndt.ndterm_selection_text(@ptrCast(state.term), buf.ptr, need), need);
+    buf[n] = 0;
+    const clip = displayClipboard() orelse return;
+    gdk.Clipboard.setText(clip, buf.ptr);
+}
+
+const PasteJob = struct { state: *State };
+
+/// Ctrl+Shift+V / the `paste` command. Probes the clipboard for an image first
+/// (WP-B2): if it holds image/png, read it as a texture, save a local temp PNG,
+/// and emit onImagePaste{path} instead of typing text; otherwise paste text.
+fn pasteFromClipboard(state: *State) void {
+    const clip = displayClipboard() orelse return;
+    const formats = gdk.Clipboard.getFormats(clip);
+    const job = std.heap.c_allocator.create(PasteJob) catch return;
+    job.* = .{ .state = state };
+    if (gdk.ContentFormats.containMimeType(formats, "image/png") != 0) {
+        gdk.Clipboard.readTextureAsync(clip, null, &cbPasteImage, job);
+    } else {
+        gdk.Clipboard.readTextAsync(clip, null, &cbPasteText, job);
+    }
+}
+
+fn cbPasteText(source: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
+    const job: *PasteJob = @ptrCast(@alignCast(user_data.?));
+    defer std.heap.c_allocator.destroy(job);
+    const clip: *gdk.Clipboard = @ptrCast(@alignCast(source.?));
+    var err: ?*glib.Error = null;
+    const text = gdk.Clipboard.readTextFinish(clip, res, &err);
+    if (text) |t| {
+        defer glib.free(t);
+        const s = std.mem.span(t);
+        ndt.ndterm_write_paste(@ptrCast(job.state.term), s.ptr, s.len);
+    } else if (err) |e| e.free();
+}
+
+fn cbPasteImage(source: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
+    const job: *PasteJob = @ptrCast(@alignCast(user_data.?));
+    defer std.heap.c_allocator.destroy(job);
+    const clip: *gdk.Clipboard = @ptrCast(@alignCast(source.?));
+    var err: ?*glib.Error = null;
+    const texture = gdk.Clipboard.readTextureFinish(clip, res, &err);
+    if (texture) |tex| {
+        defer gobject.Object.unref(tex.as(gobject.Object));
+        saveTextureAndEmit(job.state, tex);
+    } else if (err) |e| e.free();
+}
+
+/// Drop handler: a dropped GdkTexture is saved to a temp PNG; a dropped GFile
+/// image is emitted by its own path (no copy). Returns whether the drop was
+/// accepted.
+fn onDrop(_: *gtk.DropTarget, value: *gobject.Value, _: f64, _: f64, state: *State) callconv(.c) c_int {
+    const obj = gobject.Value.getObject(value) orelse return 0;
+    if (gobject.ext.cast(gdk.Texture, obj)) |tex| {
+        saveTextureAndEmit(state, tex);
+        return 1;
+    }
+    if (gobject.ext.cast(gio.File, obj)) |file| {
+        const path = gio.File.getPath(file) orelse return 0;
+        defer glib.free(path);
+        emitImagePaste(state, std.mem.span(path));
+        return 1;
+    }
+    return 0;
+}
+
+/// Write `tex` to a fresh local temp PNG and emit its path via onImagePaste.
+fn saveTextureAndEmit(state: *State, tex: *gdk.Texture) void {
+    var buf: [256]u8 = undefined;
+    const path = tempPngPath(&buf) orelse return;
+    if (gdk.Texture.saveToPng(tex, path.ptr) == 0) return;
+    emitImagePaste(state, path);
+}
+
+var paste_counter: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+/// Build a unique `<tmp>/nd-clip-<pid>-<n>.png` path into `buf`.
+fn tempPngPath(buf: []u8) ?[:0]const u8 {
+    const dir_z = std.c.getenv("TMPDIR");
+    const dir: []const u8 = if (dir_z) |d| std.mem.span(d) else "/tmp";
+    const n = paste_counter.fetchAdd(1, .monotonic);
+    const pid = std.c.getpid();
+    return std.fmt.bufPrintZ(buf, "{s}/nd-clip-{d}-{d}.png", .{ dir, pid, n }) catch null;
+}
+
+fn emitImagePaste(state: *State, path: []const u8) void {
+    if (state.node_id == 0) return;
+    const f = emit orelse return;
+    var obj: std.json.ObjectMap = .empty;
+    defer obj.deinit(std.heap.page_allocator);
+    obj.put(std.heap.page_allocator, "path", .{ .string = path }) catch return;
+    f(state.node_id, "imagePaste", .{ .data = .{ .object = obj } });
+}
+
+/// Generated widgetCommand Terminal arm (WP-A4): copy/paste/selectAll/
+/// clearSelection. `widget` is the DrawingArea carrying the State. Named
+/// `runCommand` (not `command`) to avoid shadowing create()'s `command` param.
+pub fn runCommand(widget: *gtk.Widget, cmd: []const u8, _: ?std.json.Value) void {
+    const state = stateFrom(widget) orelse return;
+    if (std.mem.eql(u8, cmd, "copy")) {
+        copyToClipboard(state);
+    } else if (std.mem.eql(u8, cmd, "paste")) {
+        pasteFromClipboard(state);
+    } else if (std.mem.eql(u8, cmd, "selectAll")) {
+        ndt.ndterm_selection_all(@ptrCast(state.term));
+        gtk.Widget.queueDraw(state.widget);
+        emitSelectionChanged(state);
+    } else if (std.mem.eql(u8, cmd, "clearSelection")) {
+        ndt.ndterm_selection_clear(@ptrCast(state.term));
+        gtk.Widget.queueDraw(state.widget);
+        emitSelectionChanged(state);
     }
 }
 
@@ -591,6 +912,39 @@ fn sendSgrMouse(state: *State, cb: u8, x: f64, y: f64, press: bool) void {
 }
 
 fn onKeyPressed(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk.ModifierType, state: *State) callconv(.c) c_int {
+    // Ctrl+Shift+C/V: copy the selection / paste the clipboard. Intercepted
+    // before the generic Ctrl+letter -> control-byte mapping below (which would
+    // otherwise send 0x03/0x16 into the PTY).
+    if (mods.control_mask and mods.shift_mask) {
+        if (keyval == 'C' or keyval == 'c') {
+            copyToClipboard(state);
+            return 1;
+        }
+        if (keyval == 'V' or keyval == 'v') {
+            pasteFromClipboard(state);
+            return 1;
+        }
+    }
+
+    // Shift+PageUp/Down/Home/End: move the scrollback viewport (client-local,
+    // no PTY round-trip). Home/End jump to the extremes via a large delta the
+    // core clamps to the scrollback bounds.
+    if (mods.shift_mask) {
+        const rows: c_int = @intCast(state.rows);
+        const scroll_delta: ?c_int = switch (keyval) {
+            gdk.KEY_Page_Up => -rows,
+            gdk.KEY_Page_Down => rows,
+            gdk.KEY_Home => -1_000_000,
+            gdk.KEY_End => 1_000_000,
+            else => null,
+        };
+        if (scroll_delta) |d| {
+            ndt.ndterm_scroll_viewport(@ptrCast(state.term), d);
+            gtk.Widget.queueDraw(state.widget);
+            return 1;
+        }
+    }
+
     // Ctrl+letter -> the corresponding control byte (a..z / A..Z -> 0x01..0x1a).
     if (mods.control_mask) {
         if ((keyval >= 'a' and keyval <= 'z') or (keyval >= 'A' and keyval <= 'Z')) {

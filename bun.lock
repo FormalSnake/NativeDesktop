@@ -75,6 +75,17 @@
         "@types/react": "19.2.17",
       },
     },
+    "examples/ndwidgets-probe": {
+      "name": "ndwidgets-probe-example",
+      "dependencies": {
+        "@nativedesktop/react": "workspace:*",
+        "nd": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
     "examples/notes": {
       "name": "notes-example",
       "dependencies": {
@@ -410,6 +421,8 @@
     "nativeview-demo-example": ["nativeview-demo-example@workspace:examples/nativeview-demo"],
 
     "nd": ["nd@workspace:packages/nd"],
+
+    "ndwidgets-probe-example": ["ndwidgets-probe-example@workspace:examples/ndwidgets-probe"],
 
     "negotiator": ["negotiator@1.0.0", "", {}, "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="],
 

@@ -46,6 +46,7 @@ fn commitGate(a: *acl.Acl, batch: protocol.CommitBatch) ?[]const u8 {
 fn systemMethodCapability(method: []const u8) ?[]const u8 {
     if (std.mem.startsWith(u8, method, "dialog.")) return "core:dialog";
     if (std.mem.eql(u8, method, "clipboard.readText")) return "core:clipboard.read";
+    if (std.mem.eql(u8, method, "clipboard.readImage")) return "core:clipboard.read.image";
     if (std.mem.eql(u8, method, "clipboard.writeText")) return "core:clipboard.write";
     if (std.mem.startsWith(u8, method, "notification.")) return "core:notification";
     if (std.mem.startsWith(u8, method, "recent.")) return "core:recent";

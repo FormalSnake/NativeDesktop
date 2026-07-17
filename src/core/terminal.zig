@@ -69,6 +69,7 @@ const NDTERM_FLAG_UNDERLINE: u8 = 1 << 1;
 const NDTERM_FLAG_INVERSE: u8 = 1 << 2;
 const NDTERM_FLAG_WIDE: u8 = 1 << 3;
 const NDTERM_FLAG_WIDE_TAIL: u8 = 1 << 4;
+const NDTERM_FLAG_SELECTED: u8 = 1 << 5;
 
 /// include/ndterm.h `nd_term_effect_cb`. kind: 0 title (`text`=new title),
 /// 1 bell, 2 child-exit (`code`=exit status).
@@ -84,6 +85,8 @@ const OutputCb = *const fn (userdata: ?*anyopaque, bytes: [*]const u8, len: usiz
 // ---------------------------------------------------------------------------
 
 const GHOSTTY_SUCCESS: c_int = 0;
+// types.h GhosttyResult: OUT_OF_SPACE is returned by the *_buf size-query path.
+const GHOSTTY_OUT_OF_SPACE: c_int = -3;
 
 /// terminal.h `GhosttyTerminalOptions`.
 const GhosttyTerminalOptions = extern struct {
@@ -155,6 +158,75 @@ const GhosttyTerminalScrollViewport = extern struct {
     value: GhosttyTerminalScrollViewportValue,
 };
 
+/// point.h `GhosttyPointCoordinate` — note `y` is u32, `x` is u16.
+const GhosttyPointCoordinate = extern struct {
+    x: u16,
+    y: u32,
+};
+
+/// point.h `GhosttyPointValue` (tagged-union value; only `coordinate` used).
+const GhosttyPointValue = extern union {
+    coordinate: GhosttyPointCoordinate,
+    _padding: [2]u64,
+};
+
+/// point.h `GhosttyPoint` — a grid coordinate under a coordinate-system tag.
+const GhosttyPoint = extern struct {
+    tag: c_int,
+    value: GhosttyPointValue,
+};
+
+/// grid_ref.h `GhosttyGridRef` (sized struct — set `size` = @sizeOf on out
+/// params). An untracked snapshot; valid only until the next terminal mutation.
+const GhosttyGridRef = extern struct {
+    size: usize,
+    node: ?*anyopaque,
+    x: u16,
+    y: u16,
+};
+
+/// selection.h `GhosttySelection` (sized struct). `start`/`end` are untracked
+/// grid-ref snapshots — rebuilt from fresh refs on every render (see WP-A1).
+const GhosttySelection = extern struct {
+    size: usize,
+    start: GhosttyGridRef,
+    end: GhosttyGridRef,
+    rectangle: bool,
+};
+
+/// selection.h `GhosttyTerminalSelectWordOptions`.
+const GhosttyTerminalSelectWordOptions = extern struct {
+    size: usize,
+    ref: GhosttyGridRef,
+    boundary_codepoints: ?[*]const u32,
+    boundary_codepoints_len: usize,
+};
+
+/// selection.h `GhosttyTerminalSelectLineOptions`.
+const GhosttyTerminalSelectLineOptions = extern struct {
+    size: usize,
+    ref: GhosttyGridRef,
+    whitespace: ?[*]const u32,
+    whitespace_len: usize,
+    semantic_prompt_boundary: bool,
+};
+
+/// selection.h `GhosttyTerminalSelectionFormatOptions`.
+const GhosttyTerminalSelectionFormatOptions = extern struct {
+    size: usize,
+    emit: c_int, // GhosttyFormatterFormat
+    unwrap: bool,
+    trim: bool,
+    selection: ?*const GhosttySelection,
+};
+
+/// terminal.h `GhosttyTerminalScrollbar` — scrollable-area geometry in rows.
+const GhosttyTerminalScrollbar = extern struct {
+    total: u64,
+    offset: u64,
+    len: u64,
+};
+
 /// render.h `GhosttyRenderStateColors` (sized struct — init `size` = @sizeOf).
 const GhosttyRenderStateColors = extern struct {
     size: usize,
@@ -176,6 +248,20 @@ const OPT_COLOR_PALETTE: c_int = 14;
 
 // terminal.h `GhosttyTerminalScrollViewportTag` values used here.
 const SCROLL_VIEWPORT_DELTA: c_int = 2;
+
+// point.h `GhosttyPointTag` — VIEWPORT coordinates (relative to the visible grid).
+const POINT_TAG_VIEWPORT: c_int = 1;
+
+// types.h `GhosttyFormatterFormat` — plain text (no escape sequences).
+const FORMATTER_FORMAT_PLAIN: c_int = 0;
+
+// terminal.h `GhosttyTerminalData` values used by the scrollback indicator.
+const TDATA_SCROLLBAR: c_int = 9;
+const TDATA_VIEWPORT_ACTIVE: c_int = 32;
+
+// modes.h `GHOSTTY_MODE_BRACKETED_PASTE` — DEC 2004, ansi=false so the packed
+// GhosttyMode u16 equals the raw number (same convention as the mouse modes).
+const MODE_BRACKETED_PASTE: u16 = 2004;
 
 // modes.h `GHOSTTY_MODE_*` — DEC private mouse modes (ansi=false, so the
 // packed `GhosttyMode` u16 equals the raw mode number below).
@@ -247,6 +333,18 @@ extern "c" fn ghostty_terminal_get(terminal: ?*anyopaque, data: c_int, out: *any
 extern "c" fn ghostty_terminal_vt_write(terminal: ?*anyopaque, data: [*]const u8, len: usize) void;
 extern "c" fn ghostty_terminal_scroll_viewport(terminal: ?*anyopaque, behavior: GhosttyTerminalScrollViewport) void;
 extern "c" fn ghostty_terminal_mode_get(terminal: ?*anyopaque, mode: u16, out_value: *bool) c_int;
+extern "c" fn ghostty_terminal_grid_ref(terminal: ?*anyopaque, point: GhosttyPoint, out_ref: *GhosttyGridRef) c_int;
+
+// selection.h
+extern "c" fn ghostty_terminal_select_word(terminal: ?*anyopaque, options: *const GhosttyTerminalSelectWordOptions, out_selection: *GhosttySelection) c_int;
+extern "c" fn ghostty_terminal_select_line(terminal: ?*anyopaque, options: *const GhosttyTerminalSelectLineOptions, out_selection: *GhosttySelection) c_int;
+extern "c" fn ghostty_terminal_select_all(terminal: ?*anyopaque, out_selection: *GhosttySelection) c_int;
+extern "c" fn ghostty_terminal_selection_contains(terminal: ?*anyopaque, selection: *const GhosttySelection, point: GhosttyPoint, out_contains: *bool) c_int;
+extern "c" fn ghostty_terminal_selection_format_buf(terminal: ?*anyopaque, options: GhosttyTerminalSelectionFormatOptions, buf: ?[*]u8, buf_len: usize, out_written: *usize) c_int;
+
+// paste.h — `data` is mutated in place during encoding; both `data` and `buf`
+// may be NULL (NULL buf = size query into out_written).
+extern "c" fn ghostty_paste_encode(data: ?[*]u8, data_len: usize, bracketed: bool, buf: ?[*]u8, buf_len: usize, out_written: *usize) c_int;
 
 // screen.h — GhosttyCell is a uint64_t passed by value.
 extern "c" fn ghostty_cell_get(cell: u64, data: c_int, out: *anyopaque) c_int;
@@ -302,6 +400,9 @@ const TIOCSWINSZ: c_ulong = switch (builtin.os.tag) {
 // Terminal instance (opaque `nd_terminal*` to callers).
 // ---------------------------------------------------------------------------
 
+/// Active-selection kind (WP-A1). `.none` = no selection.
+const SelMode = enum(u8) { none, point, word, line, all };
+
 const Terminal = struct {
     // Plain blocking mutex via libc pthread — this GTK-free core has no `std.Io`
     // (the only std Mutex in Zig 0.16 needs one), and its critical sections run
@@ -337,6 +438,22 @@ const Terminal = struct {
     closing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     child_reaped: bool = false,
 
+    // Repaint-gating generation counter (include/ndterm.h ndterm_dirty_seq).
+    // Bumped on any viewport-affecting mutation (grid feed, scroll, resize,
+    // reset). Atomic so a backend's repaint timer can poll it lock-free.
+    dirty_seq: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    // Active selection (WP-A1). Stored as two viewport endpoints + a mode; the
+    // libghostty-vt GhosttySelection is rebuilt from fresh grid refs on every
+    // render_lock (buildActiveSelection) so no stale untracked ref survives a
+    // feed. `.point` is a linear anchor→head drag; word/line/all derive their
+    // selection from the head cell / whole grid.
+    sel_mode: SelMode = .none,
+    sel_anchor_x: u16 = 0,
+    sel_anchor_y: u16 = 0,
+    sel_head_x: u16 = 0,
+    sel_head_y: u16 = 0,
+
     snapshot: []nd_term_cell = &.{},
     snap_cols: u16 = 0,
     snap_rows: u16 = 0,
@@ -355,6 +472,72 @@ fn lockMutex(t: *Terminal) void {
 
 fn unlockMutex(t: *Terminal) void {
     _ = std.c.pthread_mutex_unlock(&t.mutex);
+}
+
+/// Advance the repaint-gating generation counter. Called on any mutation that
+/// changes what a render_lock snapshot would produce. Lock-free (atomic add);
+/// callers already hold `mutex` for the mutation itself, but this doesn't need
+/// it — the counter is only ever read racily by a poll.
+fn bumpDirty(t: *Terminal) void {
+    _ = t.dirty_seq.fetchAdd(1, .monotonic);
+}
+
+/// A VIEWPORT-tagged point at (x,y) for grid_ref / selection_contains.
+fn viewportPoint(x: u16, y: u16) GhosttyPoint {
+    return .{ .tag = POINT_TAG_VIEWPORT, .value = .{ .coordinate = .{ .x = x, .y = y } } };
+}
+
+/// Rebuild the active GhosttySelection from fresh grid refs for the current
+/// viewport. Must be called with `mutex` held and after the render state /
+/// viewport is current, since the refs are untracked snapshots invalidated by
+/// any terminal mutation. Returns null when there is no selection (or the refs
+/// could not be resolved, e.g. an off-grid endpoint after a resize).
+fn buildActiveSelection(t: *Terminal) ?GhosttySelection {
+    switch (t.sel_mode) {
+        .none => return null,
+        .point => {
+            var start: GhosttyGridRef = undefined;
+            var end: GhosttyGridRef = undefined;
+            if (ghostty_terminal_grid_ref(t.term, viewportPoint(t.sel_anchor_x, t.sel_anchor_y), &start) != GHOSTTY_SUCCESS) return null;
+            if (ghostty_terminal_grid_ref(t.term, viewportPoint(t.sel_head_x, t.sel_head_y), &end) != GHOSTTY_SUCCESS) return null;
+            return .{ .size = @sizeOf(GhosttySelection), .start = start, .end = end, .rectangle = false };
+        },
+        .word => {
+            var ref: GhosttyGridRef = undefined;
+            if (ghostty_terminal_grid_ref(t.term, viewportPoint(t.sel_head_x, t.sel_head_y), &ref) != GHOSTTY_SUCCESS) return null;
+            const opts = GhosttyTerminalSelectWordOptions{
+                .size = @sizeOf(GhosttyTerminalSelectWordOptions),
+                .ref = ref,
+                .boundary_codepoints = null,
+                .boundary_codepoints_len = 0,
+            };
+            var sel: GhosttySelection = undefined;
+            sel.size = @sizeOf(GhosttySelection);
+            if (ghostty_terminal_select_word(t.term, &opts, &sel) != GHOSTTY_SUCCESS) return null;
+            return sel;
+        },
+        .line => {
+            var ref: GhosttyGridRef = undefined;
+            if (ghostty_terminal_grid_ref(t.term, viewportPoint(t.sel_head_x, t.sel_head_y), &ref) != GHOSTTY_SUCCESS) return null;
+            const opts = GhosttyTerminalSelectLineOptions{
+                .size = @sizeOf(GhosttyTerminalSelectLineOptions),
+                .ref = ref,
+                .whitespace = null,
+                .whitespace_len = 0,
+                .semantic_prompt_boundary = false,
+            };
+            var sel: GhosttySelection = undefined;
+            sel.size = @sizeOf(GhosttySelection);
+            if (ghostty_terminal_select_line(t.term, &opts, &sel) != GHOSTTY_SUCCESS) return null;
+            return sel;
+        },
+        .all => {
+            var sel: GhosttySelection = undefined;
+            sel.size = @sizeOf(GhosttySelection);
+            if (ghostty_terminal_select_all(t.term, &sel) != GHOSTTY_SUCCESS) return null;
+            return sel;
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +612,7 @@ fn readerLoop(t: *Terminal) void {
         lockMutex(t);
         ghostty_terminal_vt_write(t.term, &buf, n);
         unlockMutex(t);
+        bumpDirty(t);
     }
 
     // The PTY hit EOF. If this is a genuine child exit (not a teardown from
@@ -735,8 +919,9 @@ pub export fn ndterm_feed(t_opt: ?*Terminal, bytes: [*]const u8, len: usize) cal
     const t = t_opt orelse return;
     if (!t.is_virtual) return; // no-op on pty-backed terminals
     lockMutex(t);
-    defer unlockMutex(t);
     ghostty_terminal_vt_write(t.term, bytes, len);
+    unlockMutex(t);
+    bumpDirty(t);
 }
 
 pub export fn ndterm_reset(t_opt: ?*Terminal) callconv(.c) void {
@@ -744,6 +929,7 @@ pub export fn ndterm_reset(t_opt: ?*Terminal) callconv(.c) void {
     if (!t.is_virtual) return;
     lockMutex(t);
     defer unlockMutex(t);
+    defer bumpDirty(t);
     // Rebuild the VT for a true power-on state: RIS (ESC c) alone would not
     // guarantee scrollback / alt-screen / DEC-mode reset to match a server
     // snapshot. free + new + re-register the effect options at the current size.
@@ -762,6 +948,7 @@ pub export fn ndterm_resize(t_opt: ?*Terminal, cols: u16, rows: u16) callconv(.c
     const t = t_opt orelse return;
     lockMutex(t);
     defer unlockMutex(t);
+    defer bumpDirty(t);
     _ = ghostty_terminal_resize(t.term, cols, rows, 0, 0);
     t.cols = cols;
     t.rows = rows;
@@ -782,6 +969,7 @@ pub export fn ndterm_scroll_viewport(t_opt: ?*Terminal, delta: c_int) callconv(.
     const t = t_opt orelse return;
     lockMutex(t);
     defer unlockMutex(t);
+    defer bumpDirty(t);
     const behavior = GhosttyTerminalScrollViewport{
         .tag = SCROLL_VIEWPORT_DELTA,
         .value = .{ .delta = delta },
@@ -879,6 +1067,10 @@ pub export fn ndterm_render_lock(t_opt: ?*Terminal, out_cols: *u16, out_rows: *u
     const blank = blankCell(t.default_fg, t.default_bg);
     for (t.snapshot) |*c| c.* = blank;
 
+    // Active selection rebuilt from fresh viewport grid refs under the mutex, so
+    // its untracked snapshot refs stay valid for the whole cell loop below.
+    const active_sel: ?GhosttySelection = buildActiveSelection(t);
+
     _ = ghostty_render_state_get(t.state, RDATA_ROW_ITERATOR, @ptrCast(&t.row_iter));
     var y: u16 = 0;
     while (ghostty_render_state_row_iterator_next(t.row_iter)) {
@@ -889,7 +1081,14 @@ pub export fn ndterm_render_lock(t_opt: ?*Terminal, out_cols: *u16, out_rows: *u
         var x: u16 = 0;
         while (x < cols) : (x += 1) {
             if (ghostty_render_state_row_cells_select(t.row_cells, x) != GHOSTTY_SUCCESS) continue;
-            t.snapshot[@as(usize, y) * @as(usize, cols) + x] = resolveCell(t, blank);
+            var cell = resolveCell(t, blank);
+            if (active_sel) |*sel| {
+                var contained: bool = false;
+                if (ghostty_terminal_selection_contains(t.term, sel, viewportPoint(x, y), &contained) == GHOSTTY_SUCCESS and contained) {
+                    cell.flags |= NDTERM_FLAG_SELECTED;
+                }
+            }
+            t.snapshot[@as(usize, y) * @as(usize, cols) + x] = cell;
         }
     }
 
@@ -1020,6 +1219,172 @@ pub export fn ndterm_default_colors(t_opt: ?*Terminal, fg: *[3]u8, bg: *[3]u8) c
 pub export fn ndterm_render_unlock(t_opt: ?*Terminal) callconv(.c) void {
     const t = t_opt orelse return;
     unlockMutex(t);
+}
+
+/// include/ndterm.h ndterm_dirty_seq — the repaint-gating generation counter.
+/// Lock-free: reads an atomic, so a backend's repaint timer polls it without
+/// taking the render lock.
+pub export fn ndterm_dirty_seq(t_opt: ?*Terminal) callconv(.c) u64 {
+    const t = t_opt orelse return 0;
+    return t.dirty_seq.load(.monotonic);
+}
+
+// ---------------------------------------------------------------------------
+// Selection / copy-paste / scrollback-indicator exports (WP-A1).
+// Each selection op stores viewport endpoints + a mode and bumps dirty_seq so
+// the highlight repaints; the GhosttySelection itself is rebuilt lazily under
+// render_lock (buildActiveSelection). All lock `mutex` for consistency with the
+// reader thread, and are safe on a NULL terminal.
+// ---------------------------------------------------------------------------
+
+pub export fn ndterm_selection_begin(t_opt: ?*Terminal, col: u16, row: u16) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_mode = .point;
+    t.sel_anchor_x = col;
+    t.sel_anchor_y = row;
+    t.sel_head_x = col;
+    t.sel_head_y = row;
+}
+
+pub export fn ndterm_selection_extend(t_opt: ?*Terminal, col: u16, row: u16) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_head_x = col;
+    t.sel_head_y = row;
+    // A drag with no prior anchor (or after select-all) starts a linear range.
+    if (t.sel_mode == .none or t.sel_mode == .all) {
+        t.sel_mode = .point;
+        t.sel_anchor_x = col;
+        t.sel_anchor_y = row;
+    }
+}
+
+pub export fn ndterm_selection_word(t_opt: ?*Terminal, col: u16, row: u16) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_mode = .word;
+    t.sel_anchor_x = col;
+    t.sel_anchor_y = row;
+    t.sel_head_x = col;
+    t.sel_head_y = row;
+}
+
+pub export fn ndterm_selection_line(t_opt: ?*Terminal, col: u16, row: u16) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_mode = .line;
+    t.sel_anchor_x = col;
+    t.sel_anchor_y = row;
+    t.sel_head_x = col;
+    t.sel_head_y = row;
+}
+
+pub export fn ndterm_selection_all(t_opt: ?*Terminal) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_mode = .all;
+}
+
+pub export fn ndterm_selection_clear(t_opt: ?*Terminal) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+    defer bumpDirty(t);
+    t.sel_mode = .none;
+}
+
+pub export fn ndterm_selection_text(t_opt: ?*Terminal, buf: ?[*]u8, buf_len: usize) callconv(.c) usize {
+    const t = t_opt orelse return 0;
+    lockMutex(t);
+    defer unlockMutex(t);
+    const sel = buildActiveSelection(t) orelse return 0;
+    const opts = GhosttyTerminalSelectionFormatOptions{
+        .size = @sizeOf(GhosttyTerminalSelectionFormatOptions),
+        .emit = FORMATTER_FORMAT_PLAIN,
+        .unwrap = true,
+        .trim = true,
+        .selection = &sel,
+    };
+    var written: usize = 0;
+    const rc = ghostty_terminal_selection_format_buf(t.term, opts, buf, buf_len, &written);
+    // SUCCESS -> `written` bytes copied; OUT_OF_SPACE -> `written` is the size the
+    // caller must allocate (nothing copied). Both report the needed length.
+    if (rc == GHOSTTY_SUCCESS or rc == GHOSTTY_OUT_OF_SPACE) return written;
+    return 0;
+}
+
+pub export fn ndterm_write_paste(t_opt: ?*Terminal, bytes: [*]const u8, len: usize) callconv(.c) void {
+    const t = t_opt orelse return;
+    lockMutex(t);
+    defer unlockMutex(t);
+
+    var bracketed: bool = false;
+    _ = ghostty_terminal_mode_get(t.term, MODE_BRACKETED_PASTE, &bracketed);
+
+    // ghostty_paste_encode mutates its input in place, so encode against owned
+    // copies of the source bytes: one throwaway copy for the size query, one for
+    // the real encode.
+    var needed: usize = 0;
+    {
+        const probe = gpa.alloc(u8, len) catch return;
+        defer gpa.free(probe);
+        if (len != 0) @memcpy(probe, bytes[0..len]);
+        _ = ghostty_paste_encode(probe.ptr, len, bracketed, null, 0, &needed);
+    }
+    if (needed == 0) return;
+
+    const out = gpa.alloc(u8, needed) catch return;
+    defer gpa.free(out);
+    const data = gpa.alloc(u8, len) catch return;
+    defer gpa.free(data);
+    if (len != 0) @memcpy(data, bytes[0..len]);
+
+    var written: usize = 0;
+    if (ghostty_paste_encode(data.ptr, len, bracketed, out.ptr, out.len, &written) != GHOSTTY_SUCCESS) return;
+
+    // Route through the same sink as ndterm_write_input (already under mutex).
+    if (t.is_virtual) {
+        if (t.output_cb) |o| o(t.userdata, out.ptr, written);
+    } else {
+        _ = write(t.amaster, out.ptr, written);
+    }
+}
+
+pub export fn ndterm_scrollback_state(
+    t_opt: ?*Terminal,
+    total_rows: ?*usize,
+    scrollback_rows: ?*usize,
+    viewport_offset: ?*usize,
+) callconv(.c) u8 {
+    const t = t_opt orelse {
+        if (total_rows) |p| p.* = 0;
+        if (scrollback_rows) |p| p.* = 0;
+        if (viewport_offset) |p| p.* = 0;
+        return 0;
+    };
+    lockMutex(t);
+    defer unlockMutex(t);
+
+    var bar: GhosttyTerminalScrollbar = std.mem.zeroes(GhosttyTerminalScrollbar);
+    _ = ghostty_terminal_get(t.term, TDATA_SCROLLBAR, @ptrCast(&bar));
+    var pinned: bool = true;
+    _ = ghostty_terminal_get(t.term, TDATA_VIEWPORT_ACTIVE, @ptrCast(&pinned));
+
+    if (total_rows) |p| p.* = @intCast(bar.total);
+    if (viewport_offset) |p| p.* = @intCast(bar.offset);
+    if (scrollback_rows) |p| p.* = @intCast(if (bar.total > bar.len) bar.total - bar.len else 0);
+    return if (pinned) 1 else 0;
 }
 
 /// std.posix.SIG.* are an enum(u32) in Zig 0.16; kill() wants a c_int.
@@ -1164,6 +1529,132 @@ test "virtual mode: open_virtual_ex applies default fg/bg + palette at open" {
     ndterm_cell(t, 0, 0, &cell);
     ndterm_render_unlock(t);
     try std.testing.expectEqualSlices(u8, &.{ 10, 20, 30 }, &cell.fg);
+}
+
+test "virtual mode: dirty_seq advances on feed/reset but not on a bare render" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(10, 2, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    const s0 = ndterm_dirty_seq(t);
+    ndterm_feed(t, "hi", 2);
+    const s1 = ndterm_dirty_seq(t);
+    try std.testing.expect(s1 > s0);
+
+    // A render_lock/unlock cycle is a pure read — it must NOT bump the counter,
+    // or the repaint gate would never settle (every paint would look dirty).
+    var cols: u16 = 0;
+    var rows: u16 = 0;
+    ndterm_render_lock(t, &cols, &rows);
+    ndterm_render_unlock(t);
+    try std.testing.expectEqual(s1, ndterm_dirty_seq(t));
+
+    ndterm_reset(t);
+    try std.testing.expect(ndterm_dirty_seq(t) > s1);
+}
+
+test "virtual mode: alternate-screen content renders into the grid" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 5, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    // Enter the alternate screen (DECSET 1049), home the cursor, print text.
+    // This is the exact mode a full-screen TUI (htop/btop/vim) uses; the
+    // real-hardware scout saw this render pure black on GTK, so pin the core
+    // behavior: alt-screen cells must reach the snapshot like primary ones.
+    const seq = "\x1b[?1049h\x1b[HALT";
+    ndterm_feed(t, seq, seq.len);
+    try std.testing.expectEqual(@as(u8, 'A'), cellChar(t, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'L'), cellChar(t, 1, 0));
+    try std.testing.expectEqual(@as(u8, 'T'), cellChar(t, 2, 0));
+
+    // Leaving the alt screen (DECRST 1049) restores the primary screen, which
+    // was blank when we switched away.
+    const leave = "\x1b[?1049l";
+    ndterm_feed(t, leave, leave.len);
+    try std.testing.expectEqual(@as(u8, 0), cellChar(t, 0, 0));
+}
+
+fn selectionString(t: *Terminal, alloc: std.mem.Allocator) ![]u8 {
+    const need = ndterm_selection_text(t, null, 0);
+    if (need == 0) return alloc.alloc(u8, 0);
+    const buf = try alloc.alloc(u8, need);
+    const written = ndterm_selection_text(t, buf.ptr, buf.len);
+    return buf[0..written];
+}
+
+test "selection: linear begin/extend extracts the covered text" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 3, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    ndterm_feed(t, "hello world", 11);
+
+    const s0 = ndterm_dirty_seq(t);
+    ndterm_selection_begin(t, 0, 0);
+    ndterm_selection_extend(t, 4, 0); // inclusive cols 0..4 -> "hello"
+    try std.testing.expect(ndterm_dirty_seq(t) > s0);
+
+    const text = try selectionString(t, std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("hello", text);
+
+    // FLAG_SELECTED is set on the covered cells and clear outside them.
+    var cols: u16 = 0;
+    var rows: u16 = 0;
+    ndterm_render_lock(t, &cols, &rows);
+    var c0: nd_term_cell = undefined;
+    var c6: nd_term_cell = undefined;
+    ndterm_cell(t, 0, 0, &c0);
+    ndterm_cell(t, 6, 0, &c6);
+    ndterm_render_unlock(t);
+    try std.testing.expect((c0.flags & NDTERM_FLAG_SELECTED) != 0);
+    try std.testing.expect((c6.flags & NDTERM_FLAG_SELECTED) == 0);
+}
+
+test "selection: word/all snapshots and clear resets" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 3, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    ndterm_feed(t, "hello world", 11);
+
+    ndterm_selection_word(t, 7, 0); // inside "world"
+    const word = try selectionString(t, std.testing.allocator);
+    defer std.testing.allocator.free(word);
+    try std.testing.expectEqualStrings("world", word);
+
+    ndterm_selection_all(t);
+    const all = try selectionString(t, std.testing.allocator);
+    defer std.testing.allocator.free(all);
+    try std.testing.expectEqualStrings("hello world", all);
+
+    ndterm_selection_clear(t);
+    try std.testing.expectEqual(@as(usize, 0), ndterm_selection_text(t, null, 0));
+}
+
+test "paste: bracketed wrapping only when DECSET 2004 is active" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 3, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    // No bracketed-paste mode: bytes pass through un-wrapped (routed via output_cb).
+    ndterm_write_paste(t, "hi", 2);
+    try std.testing.expectEqualStrings("hi", t_output.items);
+
+    // Enable DECSET 2004, then paste wraps in ESC[200~ … ESC[201~.
+    t_output.clearRetainingCapacity();
+    const enable = "\x1b[?2004h";
+    ndterm_feed(t, enable, enable.len);
+    ndterm_write_paste(t, "hi", 2);
+    try std.testing.expect(std.mem.startsWith(u8, t_output.items, "\x1b[200~"));
+    try std.testing.expect(std.mem.endsWith(u8, t_output.items, "\x1b[201~"));
+    try std.testing.expect(std.mem.indexOf(u8, t_output.items, "hi") != null);
 }
 
 test "virtual mode: scroll_viewport moves the render window into scrollback" {

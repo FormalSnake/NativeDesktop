@@ -35,7 +35,7 @@
     "caption-heading", "caption", "monospace", "numeric",
     "accent", "success", "warning", "error",
     "boxed-list", "boxed-list-separate", "card", "activatable",
-    "navigation-sidebar", "selection-mode", "osd",
+    "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd",
     "dimmed", "background", "view", "frame", "compact", "menu", "inline"
   ],
   "types": [
@@ -89,7 +89,7 @@
         { "name": "newTabRequested", "ndpName": "onNewTabRequested", "payload": "data" },
         { "name": "closed", "ndpName": "onClosed", "payload": "data" }
       ],
-      "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview"],
+      "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
       "automation": { "role": "window", "textFrom": "title" }
     },
     {
@@ -101,7 +101,9 @@
         { "name": "spacing", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
-      "events": [],
+      "events": [
+        { "name": "hoverChanged", "ndpName": "onHoverChanged", "payload": "checked" }
+      ],
       "automation": { "role": "group", "textFrom": null }
     },
     {
@@ -126,7 +128,8 @@
         { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" }
       ],
       "events": [
-        { "name": "clicked", "ndpName": "onClick" }
+        { "name": "clicked", "ndpName": "onClick" },
+        { "name": "hoverChanged", "ndpName": "onHoverChanged", "payload": "checked" }
       ],
       "automation": { "role": "button", "textFrom": "label" }
     },
@@ -824,8 +827,11 @@
         { "name": "titleChanged",    "ndpName": "onTitleChanged",    "payload": "text" },
         { "name": "bell",            "ndpName": "onBell",            "payload": "none" },
         { "name": "exited",          "ndpName": "onExited",          "payload": "data" },
-        { "name": "connectionState", "ndpName": "onConnectionState", "payload": "data" }
+        { "name": "connectionState", "ndpName": "onConnectionState", "payload": "data" },
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "checked" },
+        { "name": "imagePaste",      "ndpName": "onImagePaste",      "payload": "data" }
       ],
+      "commands": ["copy", "paste", "selectAll", "clearSelection"],
       "automation": { "role": "terminal", "textFrom": null }
     }
   ]

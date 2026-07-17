@@ -16,7 +16,7 @@
 //   - source-checkout fallback: when this package sits inside the NativeDesktop
 //     repo, a missing prebuilt falls back to the freshly built artifacts, and if
 //     those are missing too the requested backend is built on first run.
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const OS_NAMES: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
@@ -109,10 +109,20 @@ function isSourceCheckout(repoRoot: string): boolean {
 export async function resolveHostBinary(opts: { backend?: Backend } = {}): Promise<string> {
   const backend = resolveBackend(opts);
   const { prebuilt, repoRoot, fresh } = hostBinaryCandidates(backend);
-
-  if (existsSync(prebuilt)) return prebuilt;
-
   const source = isSourceCheckout(repoRoot);
+
+  if (existsSync(prebuilt)) {
+    // In a source checkout, a newer zig-out/swift artifact wins over a stale
+    // prebuilt — otherwise every dev/e2e run silently tests whatever was last
+    // copied into bin/<key>/, not the code just built (a real bite: a Jul 16
+    // prebuilt masked an entire wave of terminal fixes).
+    if (source) {
+      const built = fresh.find(existsSync);
+      if (built && statSync(built).mtimeMs > statSync(prebuilt).mtimeMs) return built;
+    }
+    return prebuilt;
+  }
+
   if (source) {
     const built = fresh.find(existsSync);
     if (built) return built;

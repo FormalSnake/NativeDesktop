@@ -509,8 +509,11 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     if kind == "Window" {
         ndWindowDialogsConnect(view, nodeID: nodeID)
         ndWindowTabsConnect(view, nodeID: nodeID)
+    } else if kind == "Box" {
+        ndHoverConnect(view, nodeID: nodeID)
     } else if kind == "Button" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "clicked", payload: .none, action: #selector(EventDispatcher.fireNone(_:)))
+        ndHoverConnect(view, nodeID: nodeID)
     } else if kind == "TextInput" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
@@ -577,12 +580,14 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {
     if kind == "Window" {
-        if command == "showTabOverview" { ndWindowTabsCommand(view, command, argJson); return }
+        if command == "showTabOverview" || command == "present" { ndWindowTabsCommand(view, command, argJson); return }
         ndWindowCommand(view, command, argJson)
     } else if kind == "WebView" {
         ndWebViewCommand(view, command, argJson)
     } else if kind == "ToastOverlay" {
         ndToastOverlayCommand(view, command, argJson)
+    } else if kind == "Terminal" {
+        ndTerminalCommand(view, command, argJson)
     } else {
         FileHandle.standardError.write("ND_WARN widgetCommand on kind=\(kind) with no commands\n".data(using: .utf8)!)
     }

@@ -56,6 +56,7 @@ pub fn handleRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params
     if (std.mem.eql(u8, m, "dialog.saveFile")) return saveFile(ctx, id, p);
     if (std.mem.eql(u8, m, "dialog.showMessage")) return showMessage(ctx, id, p);
     if (std.mem.eql(u8, m, "clipboard.readText")) return clipboardReadText(ctx, id);
+    if (std.mem.eql(u8, m, "clipboard.readImage")) return clipboardReadImage(ctx, id);
     if (std.mem.eql(u8, m, "clipboard.writeText")) return clipboardWriteText(ctx, id, p);
     if (std.mem.eql(u8, m, "notification.show")) return notificationShow(ctx, id, p);
     if (std.mem.eql(u8, m, "recent.add")) return recentAdd(ctx, id, p);
@@ -157,6 +158,44 @@ fn clipboardReadText(ctx: *abi.NdContext, id: u32) void {
 }
 
 const Job = struct { ctx: *abi.NdContext, id: u32 };
+
+/// WP-B1: read a bitmap image off the clipboard, write it to a host-local temp
+/// PNG, and return {path,width,height}. Privileged (core:clipboard.read.image,
+/// default-deny) — image bytes never enter NDP, only the resulting path does.
+fn clipboardReadImage(ctx: *abi.NdContext, id: u32) void {
+    const display = gdk.Display.getDefault() orelse return respond(ctx, id, false, "no display");
+    const clipboard = gdk.Display.getClipboard(display);
+    const job = alloc.create(Job) catch return respond(ctx, id, false, "oom");
+    job.* = .{ .ctx = ctx, .id = id };
+    gdk.Clipboard.readTextureAsync(clipboard, null, &cbClipboardReadImage, job);
+}
+
+var clip_image_counter: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+fn cbClipboardReadImage(source: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
+    const job: *Job = @ptrCast(@alignCast(user_data.?));
+    defer alloc.destroy(job);
+    const clipboard: *gdk.Clipboard = @ptrCast(@alignCast(source.?));
+    var err: ?*glib.Error = null;
+    const texture = gdk.Clipboard.readTextureFinish(clipboard, res, &err);
+    const tex = texture orelse {
+        if (err) |e| e.free();
+        return respond(job.ctx, job.id, false, "no image on clipboard");
+    };
+    defer objUnref(tex);
+
+    var buf: [256]u8 = undefined;
+    const dir_z = std.c.getenv("TMPDIR");
+    const dir: []const u8 = if (dir_z) |d| std.mem.span(d) else "/tmp";
+    const n = clip_image_counter.fetchAdd(1, .monotonic);
+    const path = std.fmt.bufPrintZ(&buf, "{s}/nd-clip-{d}-{d}.png", .{ dir, std.c.getpid(), n }) catch
+        return respond(job.ctx, job.id, false, "path");
+    if (gdk.Texture.saveToPng(tex, path.ptr) == 0) return respond(job.ctx, job.id, false, "save failed");
+
+    const width = gdk.Texture.getWidth(tex);
+    const height = gdk.Texture.getHeight(tex);
+    respondValue(job.ctx, job.id, .{ .path = @as([]const u8, path), .width = width, .height = height });
+}
 
 fn cbClipboardRead(source: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
     const job: *Job = @ptrCast(@alignCast(user_data.?));

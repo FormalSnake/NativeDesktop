@@ -81,8 +81,19 @@ func ndWindowTabsConnect(_ view: NSView, nodeID: UInt32) {
 /// Generated ndWidgetCommand Window arm (tab commands only — dialogs stay in
 /// WindowDialogs.swift).
 func ndWindowTabsCommand(_ view: NSView, _ command: String, _ argJson: String) {
-    guard command == "showTabOverview", let win = ndWindow(for: view) else { return }
-    win.toggleTabOverview(nil)
+    guard let win = ndWindow(for: view) else { return }
+    switch command {
+    case "showTabOverview":
+        win.toggleTabOverview(nil)
+    case "present":
+        // C5: raise/focus an open window/tab. Each `<window tabGroup>` member
+        // is its own real NSWindow (this file's header comment) — presenting
+        // one means switching the OS tab bar to it, then ordering front.
+        win.tabGroup?.selectedWindow = win
+        win.makeKeyAndOrderFront(nil)
+    default:
+        break
+    }
 }
 
 /// The "window.close" semantic action (tree.zig remove arm): the React root

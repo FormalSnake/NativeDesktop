@@ -24,7 +24,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `newTabRequested` | `onNewTabRequested` | data |
 | `closed` | `onClosed` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
 
 ## Box (`<box>`)
 
@@ -35,6 +35,10 @@ Automation role: `group`. Text source: none. Children: multi.
 | `orientation` | vertical \| horizontal | vertical | create |
 | `spacing` | int | 0 | createAndUpdate |
 | `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `hoverChanged` | `onHoverChanged` | checked |
 
 ## Label (`<label>`)
 
@@ -59,6 +63,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | Event | Handler | Payload |
 |---|---|---|
 | `clicked` | `onClick` | none |
+| `hoverChanged` | `onHoverChanged` | checked |
 
 ## TextInput (`<textinput>`)
 
@@ -740,6 +745,10 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `bell` | `onBell` | none |
 | `exited` | `onExited` | data |
 | `connectionState` | `onConnectionState` | data |
+| `selectionChanged` | `onSelectionChanged` | checked |
+| `imagePaste` | `onImagePaste` | data |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`.
 
 `palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors (16 or 256 entries, ANSI index order — entry 0 is black, 1 red, … 15 bright white for the 16-color form); unset means the backend's built-in default palette. `foreground`/`background` are the default text/cell colors (also `#rrggbb`), distinct from the CSS `background`/`color` `style` props, which paint the widget's own view chrome rather than the terminal's cell colors.
 

@@ -343,7 +343,7 @@ private struct NDTypography {
 }
 nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypography] = [:]
 
-/// Box views (`NSStackView`) carrying the `navigation-sidebar` structural
+/// Box views (`NSStackView`) carrying the `nd-native-sidebar` structural
 /// class. On the Mac each is backed by a real source-list `NSTableView`
 /// (SidebarTable.swift) — its child buttons become the table's row model —
 /// giving native accent/focus selection, row metrics, and font for free
@@ -388,7 +388,7 @@ nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] =
 ///
 /// Most structural classes (`card`, `view`, `toolbar`, `osd`, ...) are
 /// silently ignored — those roles come from the SplitView/HeaderBar widgets
-/// themselves on the Mac, not from class strings. `navigation-sidebar` and
+/// themselves on the Mac, not from class strings. `nd-native-sidebar` and
 /// `boxed-list` are the exceptions: recorded into their registries and turned
 /// into a real source-list `NSTableView` (SidebarTable.swift) and a native
 /// grouped `NSBox` card respectively — so the box-of-flat-buttons sidebar and
@@ -432,7 +432,7 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             btn.showsBorderOnlyWhileMouseInside = true
         default:
             // Typography classes are handled by ndRecomputeTypography below,
-            // not this switch. `navigation-sidebar`/`boxed-list` are structural
+            // not this switch. `nd-native-sidebar`/`boxed-list` are structural
             // and handled in the NSStackView blocks after this loop. The rest
             // (card, view, toolbar, osd, ...) are roles owned by the
             // SplitView/HeaderBar widgets on the Mac — silently ignored here.
@@ -440,13 +440,17 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
-    // Record the `navigation-sidebar` structural class (set-replace) and back
+    // Record the `nd-native-sidebar` structural class (set-replace) and back
     // the box with a source-list NSTableView (SidebarTable.swift). Install
     // captures whatever button children already attached before the class
     // landed (either create order — see Layout.swift's header comment).
+    // Deliberately NOT keyed on `navigation-sidebar`: that is libadwaita's
+    // styling class and apps use it for GTK list styling on trees whose rows
+    // are composite (button + caption + badge), which this table model can't
+    // represent — the structural takeover must be an explicit opt-in.
     if let stack = view as? NSStackView {
         let id = ObjectIdentifier(stack)
-        if classes.contains("navigation-sidebar") {
+        if classes.contains("nd-native-sidebar") {
             ndNavigationSidebars.insert(id)
             ndInstallSidebarTable(stack)
         } else if ndNavigationSidebars.remove(id) != nil {
@@ -455,9 +459,12 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     }
 
     // A sidebar row's `suggested-action` changed (navigation): re-align the
-    // table's native selection with it. The button's box is its superview.
+    // table's native selection with it. The row button may sit several
+    // structural wrapper boxes below the classed box itself (a host/project
+    // section), so walk up to the enclosing table rather than assuming the
+    // button's immediate superview is it.
     if let btn = view as? NDButton, ndSidebarRowButtons.contains(ObjectIdentifier(btn)),
-       let stack = btn.superview as? NSStackView, let table = ndSidebarTables[ObjectIdentifier(stack)] {
+       let table = ndEnclosingSidebarTable(btn) {
         table.syncSelection()
     }
 
@@ -672,7 +679,7 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     // a standing style font (see `ndRecomputeTypography`'s doc comment for
     // the full cascade order).
     // (The `boxed-list` card fill lives on its own background NSBox subview and
-    // navigation-sidebar rows are hidden table-row providers, so neither needs a
+    // nd-native-sidebar rows are hidden table-row providers, so neither needs a
     // guard here — the `background`/`border` blocks run unconditionally.)
     if let bg = style["background"] as? String, let color = nsColor(fromHexOrName: bg) {
         view.wantsLayer = true

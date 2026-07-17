@@ -362,6 +362,20 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         adw.TabOverview.setOpen(@ptrCast(@alignCast(raw)), 1);
         return;
     }
+    if (std.mem.eql(u8, cmd, "present")) {
+        // C5: raise/focus an open window/tab. A tab-bin page selects itself
+        // in its scaffold's AdwTabView first (peer of createWindow's
+        // setSelectedPage on append) so presenting the scaffold shows it.
+        if (isTabBin(widget)) {
+            if (owningView(widget)) |view| {
+                const page = adw.TabView.getPage(view, widget);
+                adw.TabView.setSelectedPage(view, page);
+            }
+        }
+        const win = owningWindow(widget) orelse return;
+        gtk.Window.present(win);
+        return;
+    }
     std.debug.print("ND_WARN unknown tabs command {s}\n", .{cmd});
 }
 

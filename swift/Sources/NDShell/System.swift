@@ -24,6 +24,7 @@ enum NDSystem {
         case "dialog.showMessage": showMessage(id, params)
         case "clipboard.readText":
             respondResult(id, jsonFragment(NSPasteboard.general.string(forType: .string) ?? ""))
+        case "clipboard.readImage": readImage(id)
         case "clipboard.writeText":
             let text = propStr(params, "text") ?? ""
             let pb = NSPasteboard.general
@@ -83,6 +84,34 @@ enum NDSystem {
         s.removeFirst()
         s.removeLast()
         return s
+    }
+
+    // MARK: - clipboard image (WP-B1)
+
+    @MainActor private static var imageCounter = 0
+
+    /// clipboard.readImage: writes the clipboard's bitmap image to a host-local
+    /// temp PNG and returns {path,width,height}. Privileged
+    /// (core:clipboard.read.image, default-deny) — image bytes never enter NDP,
+    /// only the resulting path does.
+    @MainActor private static func readImage(_ id: UInt32) {
+        let pb = NSPasteboard.general
+        var png = pb.data(forType: .png)
+        if png == nil, let tiff = pb.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff) {
+            png = rep.representation(using: .png, properties: [:])
+        }
+        guard let data = png, let rep = NSBitmapImageRep(data: data) else {
+            return respondError(id, "no image on clipboard")
+        }
+        let name = "nd-clip-\(ProcessInfo.processInfo.processIdentifier)-\(imageCounter).png"
+        imageCounter += 1
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent(name)
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+        } catch {
+            return respondError(id, "write failed")
+        }
+        respondResult(id, "{\"path\":\(jsonFragment(path)),\"width\":\(rep.pixelsWide),\"height\":\(rep.pixelsHigh)}")
     }
 
     // MARK: - dialogs

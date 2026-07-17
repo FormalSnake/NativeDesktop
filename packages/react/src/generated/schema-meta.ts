@@ -120,9 +120,9 @@ export interface WidgetEvent {
 }
 export const widgetEvents: Record<string, WidgetEvent[]> = {
   "window": [{ name: "alertResult", handler: "onAlertResult", payload: "data" }, { name: "openFileResult", handler: "onOpenFileResult", payload: "data" }, { name: "saveFileResult", handler: "onSaveFileResult", payload: "data" }, { name: "newTabRequested", handler: "onNewTabRequested", payload: "data" }, { name: "closed", handler: "onClosed", payload: "data" }],
-  "box": [],
+  "box": [{ name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }],
   "label": [],
-  "button": [{ name: "clicked", handler: "onClick", payload: "none" }],
+  "button": [{ name: "clicked", handler: "onClick", payload: "none" }, { name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }],
   "textinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }],
   "textarea": [{ name: "changed", handler: "onChanged", payload: "text" }],
   "checkbox": [{ name: "toggled", handler: "onToggled", payload: "checked" }],
@@ -169,14 +169,14 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }],
+  "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }, { name: "selectionChanged", handler: "onSelectionChanged", payload: "checked" }, { name: "imagePaste", handler: "onImagePaste", payload: "data" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
   "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult", "onNewTabRequested", "onClosed"],
-  "box": [],
+  "box": ["onHoverChanged"],
   "label": [],
-  "button": ["onClick"],
+  "button": ["onClick", "onHoverChanged"],
   "textinput": ["onChanged", "onActivate"],
   "textarea": ["onChanged"],
   "checkbox": ["onToggled"],
@@ -223,13 +223,13 @@ export const handlerPropNames: Record<string, string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState"],
+  "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState", "onSelectionChanged", "onImagePaste"],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
  *  (M14) — the runtime validation table behind sendCommand(). */
 export const widgetCommands: Record<string, readonly string[]> = {
-  "window": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview"],
+  "window": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
   "box": [],
   "label": [],
   "button": [],
@@ -279,14 +279,15 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": [],
+  "terminal": ["copy", "paste", "selectAll", "clearSelection"],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */
 export type WidgetCommandNames = {
-  "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview";
+  "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview" | "present";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools";
   "toastoverlay": "showToast" | "dismissToast";
+  "terminal": "copy" | "paste" | "selectAll" | "clearSelection";
 };
 
 /** Platform availability (schema `platforms`): null = every platform. A

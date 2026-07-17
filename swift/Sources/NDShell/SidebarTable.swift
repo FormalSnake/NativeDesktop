@@ -1,6 +1,6 @@
 import AppKit
 
-// A `navigation-sidebar` box (`<box cssClasses={["navigation-sidebar"]}>` of
+// A `nd-native-sidebar` box (`<box cssClasses={["nd-native-sidebar"]}>` of
 // flat `<button>` rows) renders on the Mac as a REAL source-list NSTableView
 // (`.sourceList` style) — the native primitive that gives accent-when-key /
 // neutral-gray-when-unfocused selection, source-list row metrics/font, and row
@@ -27,6 +27,23 @@ nonisolated(unsafe) var ndSidebarRowButtons: Set<ObjectIdentifier> = []
 
 private let ndSidebarCellID = NSUserInterfaceItemIdentifier("nd-sidebar-cell")
 private let ndSidebarColumnID = NSUserInterfaceItemIdentifier("nd-sidebar-col")
+
+/// Walks up from `view` to the nearest ancestor (inclusive) carrying
+/// `nd-native-sidebar`, and returns its table controller. Row buttons in a
+/// real app's sidebar routinely sit several structural wrapper boxes below
+/// the classed box itself (a host/project section around each run row), so
+/// attach/detach hooks (`ndBoxChildAttached`/`ndBoxChildDetached`,
+/// Layout.swift) can't assume `view` IS the tracked box.
+func ndEnclosingSidebarTable(_ view: NSView) -> NDSidebarTable? {
+    var v: NSView? = view
+    while let cur = v {
+        if let stack = cur as? NSStackView, let table = ndSidebarTables[ObjectIdentifier(stack)] {
+            return table
+        }
+        v = cur.superview
+    }
+    return nil
+}
 
 final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     weak var box: NSStackView?
@@ -64,10 +81,26 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
         tableView.sizeLastColumnToFit()
     }
 
-    /// The row model: the box's arranged NDButton children, in order (hidden
-    /// ones included — `arrangedSubviews` keeps them).
+    /// The row model: every NDButton in the box's subtree, document order, at
+    /// ANY depth — a real app's sidebar commonly nests row buttons inside
+    /// structural wrapper boxes (a host/project section around each run row),
+    /// not as direct children of the nd-native-sidebar box itself. Recursion
+    /// stops at a nested `nd-native-sidebar` box, which owns its own rows.
     var rowButtons: [NDButton] {
-        box?.arrangedSubviews.compactMap { $0 as? NDButton } ?? []
+        box.map(NDSidebarTable.collectRowButtons) ?? []
+    }
+
+    static func collectRowButtons(_ view: NSView) -> [NDButton] {
+        guard let stack = view as? NSStackView else { return [] }
+        var out: [NDButton] = []
+        for child in stack.arrangedSubviews {
+            if let btn = child as? NDButton {
+                out.append(btn)
+            } else if !ndNavigationSidebars.contains(ObjectIdentifier(child)) {
+                out.append(contentsOf: collectRowButtons(child))
+            }
+        }
+        return out
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rowButtons.count }
@@ -94,8 +127,12 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     /// Rebuilds the rows and re-syncs the selection (rows changed: attach/
-    /// detach/reorder).
+    /// detach/reorder — anywhere in the subtree, not just directly under
+    /// `box`). Marks any row button newly reached by the recursive walk
+    /// (idempotent — a wrapper box, e.g. a host/project section, can attach
+    /// its own already-populated button descendants in one shot).
     func reload() {
+        for btn in rowButtons { ndMarkSidebarRowButton(btn) }
         // The table may be installed before React appends the backing buttons.
         // Every later addArrangedSubview becomes a newer sibling and can sit
         // above the table despite the install-time `.above` positioning. Move
@@ -146,7 +183,7 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 }
 
-/// Installs the source-list table for a `navigation-sidebar` box (idempotent):
+/// Installs the source-list table for a `nd-native-sidebar` box (idempotent):
 /// marks/hides the existing button children as rows and pins the table's scroll
 /// view to fill the box.
 func ndInstallSidebarTable(_ box: NSStackView) {
@@ -154,7 +191,6 @@ func ndInstallSidebarTable(_ box: NSStackView) {
     if ndSidebarTables[id] != nil { return }
     let table = NDSidebarTable(box: box)
     ndSidebarTables[id] = table
-    for btn in box.arrangedSubviews.compactMap({ $0 as? NDButton }) { ndMarkSidebarRowButton(btn) }
     let sv = table.scrollView
     sv.translatesAutoresizingMaskIntoConstraints = false
     box.addSubview(sv, positioned: .above, relativeTo: nil)
@@ -167,14 +203,14 @@ func ndInstallSidebarTable(_ box: NSStackView) {
     table.reload()
 }
 
-/// Reverses `ndInstallSidebarTable` when a box drops `navigation-sidebar`
+/// Reverses `ndInstallSidebarTable` when a box drops `nd-native-sidebar`
 /// (set-replace): removes the table and un-hides the button children.
 func ndRemoveSidebarTable(_ box: NSStackView) {
     let id = ObjectIdentifier(box)
     guard let table = ndSidebarTables[id] else { return }
     table.scrollView.removeFromSuperview()
     ndSidebarTables[id] = nil
-    for btn in box.arrangedSubviews.compactMap({ $0 as? NDButton }) {
+    for btn in NDSidebarTable.collectRowButtons(box) {
         ndSidebarRowButtons.remove(ObjectIdentifier(btn))
         btn.ndIsSidebarRowModel = false
         btn.setAccessibilityHidden(false)

@@ -43,6 +43,23 @@ final class NDTerminalView: NSView {
     /// transport reader thread, hence nonisolated(unsafe) (set-once on main).
     nonisolated(unsafe) var ndNodeID: UInt32 = 0
     nonisolated(unsafe) private var repaintTimer: Timer?
+    /// Last dirty generation the repaint timer marked for display. Sentinel
+    /// `.max` forces the first tick to paint even though a fresh terminal's
+    /// `ndterm_dirty_seq` is 0. Read/written only on the main thread (the
+    /// timer callback).
+    private var lastDrawnSeq: UInt64 = .max
+
+    /// Memoized `NSColor` by packed 0xRRGGBB (perf: the render hot loop
+    /// otherwise allocates 2 NSColors per cell per frame — ≥90k/sec on a full
+    /// grid at 30Hz). There are ≤256 palette colors + a default, so this
+    /// saturates quickly and never grows unbounded.
+    private var colorCache: [UInt32: NSColor] = [:]
+    /// Memoized `CGGlyph` per ASCII codepoint for the regular/bold primary
+    /// faces, so a coalesced run draws with `CTFontDrawGlyphs` (explicit
+    /// per-cell positions, bypassing the per-cell `NSStringDrawingEngine`
+    /// layout the perf scout measured as the dominant cost).
+    private var regularGlyphs: [UInt8: CGGlyph] = [:]
+    private var boldGlyphs: [UInt8: CGGlyph] = [:]
 
     /// WP polish-1 deliverable 3: per-glyph fallback for codepoints the
     /// primary font can't render (PUA Powerline separators/devicons, symbols
@@ -57,6 +74,13 @@ final class NDTerminalView: NSView {
     /// motion reports (NDTERM_MOUSE_BUTTON vs NDTERM_MOUSE_ANY).
     private var mouseButtonDown = false
     private var mouseLastButton: Int32 = 0
+
+    /// WP-A1/A3 selection: `selecting` is true while a left drag builds a
+    /// selection; `hasSelection` mirrors the last emitted onSelectionChanged so
+    /// we only fire on a real transition. `pasteCounter` uniquifies temp PNGs.
+    private var selecting = false
+    private var hasSelection = false
+    private static var pasteCounter = 0
 
     /// Cell width is the advance of a representative ASCII glyph, NOT
     /// `NSFont.maximumAdvancement` — that's the widest glyph in the WHOLE
@@ -110,6 +134,7 @@ final class NDTerminalView: NSView {
             }
         }
 
+        registerForDraggedTypes([.png, .tiff, .fileURL])
         startRepaint()
     }
 
@@ -141,15 +166,24 @@ final class NDTerminalView: NSView {
         self.rt = handle
         self.term = handle.map { ndrt_terminal($0) } ?? nil
 
+        registerForDraggedTypes([.png, .tiff, .fileURL])
         startRepaint()
     }
 
     // The core mutates the grid on its own reader thread; there's no push
-    // signal, so poll-repaint at 30 Hz. Weak self ⇒ the timer doesn't keep the
-    // view alive; `deinit` invalidates it.
+    // signal, so poll at 30 Hz — but only invalidate when the core's dirty
+    // generation actually advanced (perf: the old unconditional needsDisplay
+    // burned ~50-65% of a core redrawing an unchanged idle prompt). The tick
+    // itself is just a lock-free atomic read + compare, so an idle terminal
+    // sits at ~0% CPU. Weak self ⇒ the timer doesn't keep the view alive;
+    // `deinit` invalidates it.
     private func startRepaint() {
         repaintTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            self?.needsDisplay = true
+            guard let self, let t = self.term else { return }
+            let seq = ndterm_dirty_seq(t)
+            guard seq != self.lastDrawnSeq else { return }
+            self.lastDrawnSeq = seq
+            self.needsDisplay = true
         }
     }
 
@@ -193,12 +227,34 @@ final class NDTerminalView: NSView {
         }
     }
 
-    /// `nd_term_cell.fg`/`.bg` import as 3-tuples of `UInt8` (resolved sRGB).
+    /// `nd_term_cell.fg`/`.bg` import as 3-tuples of `UInt8` (resolved sRGB),
+    /// memoized by packed 0xRRGGBB so a redraw doesn't re-allocate the same few
+    /// palette colors thousands of times.
     private func nsColor(_ rgb: (UInt8, UInt8, UInt8)) -> NSColor {
-        NSColor(srgbRed: CGFloat(rgb.0) / 255.0,
-                green: CGFloat(rgb.1) / 255.0,
-                blue: CGFloat(rgb.2) / 255.0,
-                alpha: 1.0)
+        let key = UInt32(rgb.0) << 16 | UInt32(rgb.1) << 8 | UInt32(rgb.2)
+        if let c = colorCache[key] { return c }
+        let c = NSColor(srgbRed: CGFloat(rgb.0) / 255.0,
+                        green: CGFloat(rgb.1) / 255.0,
+                        blue: CGFloat(rgb.2) / 255.0,
+                        alpha: 1.0)
+        colorCache[key] = c
+        return c
+    }
+
+    /// CGGlyph for an ASCII byte on the given primary face, memoized. Returns
+    /// nil when the face has no glyph for the codepoint (shouldn't happen for
+    /// printable ASCII on a monospace face, but keeps the run path honest — a
+    /// miss falls back to the per-cell substitute draw).
+    private func asciiGlyph(_ byte: UInt8, bold: Bool) -> CGGlyph? {
+        if bold, let g = boldGlyphs[byte] { return g }
+        if !bold, let g = regularGlyphs[byte] { return g }
+        let face = bold ? boldFont : font
+        var unichar: [UniChar] = [UniChar(byte)]
+        var glyph = CGGlyph(0)
+        let ok = CTFontGetGlyphsForCharacters(face, &unichar, &glyph, 1)
+        guard ok, glyph != 0 else { return nil }
+        if bold { boldGlyphs[byte] = glyph } else { regularGlyphs[byte] = glyph }
+        return glyph
     }
 
     /// Resolves the font to draw `grapheme` with, given the primary/bold face
@@ -243,6 +299,14 @@ final class NDTerminalView: NSView {
             return
         }
 
+        // Scrollback indicator state, queried BEFORE the render lock:
+        // ndterm_scrollback_state takes the terminal mutex itself, and
+        // render_lock keeps that same (non-recursive) mutex held until
+        // render_unlock — calling it inside the locked region self-deadlocks
+        // the UI thread. One frame of staleness in an advisory thumb is fine.
+        var sbTotal = 0, sbOffset = 0
+        let sbPinned = ndterm_scrollback_state(t, &sbTotal, nil, &sbOffset)
+
         // Snapshot the viewport under the core's mutex; every read below is
         // valid only until `ndterm_render_unlock`.
         var lcols: UInt16 = 0
@@ -258,53 +322,102 @@ final class NDTerminalView: NSView {
         defaultBg.setFill()
         bounds.fill()
 
+        let ctx = NSGraphicsContext.current?.cgContext
+        let defBgKey = UInt32(defBg[0]) << 16 | UInt32(defBg[1]) << 8 | UInt32(defBg[2])
+
         var cell = nd_term_cell()
         for y in 0..<Int(lrows) {
-            for x in 0..<Int(lcols) {
+            // Pass 1 — backgrounds, before any glyph so a coalesced fill can't
+            // overpaint the text on top of it. Contiguous cells sharing a
+            // non-default bg collapse into one fill; a default-bg cell needs no
+            // fill at all (the whole-view fill above already covers it).
+            var bgRunStart = 0
+            var bgRunCols = 0
+            var bgRunColor: NSColor = defaultBg
+            var bgRunKey: UInt32 = defBgKey
+            var x = 0
+            while x < Int(lcols) {
                 ndterm_cell(t, UInt16(x), UInt16(y), &cell)
                 let flags = UInt32(cell.flags)
-                // The trailing half of a wide glyph carries no text of its own;
-                // the wide cell's grapheme already overdraws into it.
-                if (flags & NDTERM_FLAG_WIDE_TAIL) != 0 { continue }
+                if (flags & NDTERM_FLAG_WIDE_TAIL) != 0 { x += 1; continue }
+                let span = (flags & NDTERM_FLAG_WIDE) != 0 ? 2 : 1
+                // A selected cell swaps fg/bg like INVERSE; the two compose by XOR.
+                let inverse = ((flags & NDTERM_FLAG_INVERSE) != 0) != ((flags & NDTERM_FLAG_SELECTED) != 0)
+                let bgTuple = inverse ? cell.fg : cell.bg
+                let bgKey = UInt32(bgTuple.0) << 16 | UInt32(bgTuple.1) << 8 | UInt32(bgTuple.2)
+                if bgKey == defBgKey {
+                    if bgRunCols != 0 { fillBgRun(bgRunStart, y, bgRunCols, bgRunColor); bgRunCols = 0 }
+                } else if bgRunCols != 0, bgKey == bgRunKey {
+                    bgRunCols += span
+                } else {
+                    if bgRunCols != 0 { fillBgRun(bgRunStart, y, bgRunCols, bgRunColor) }
+                    bgRunStart = x
+                    bgRunCols = span
+                    bgRunKey = bgKey
+                    bgRunColor = nsColor(bgTuple)
+                }
+                x += span
+            }
+            if bgRunCols != 0 { fillBgRun(bgRunStart, y, bgRunCols, bgRunColor) }
+
+            // Pass 2 — foreground. Coalesce contiguous same-attr printable-ASCII
+            // cells into one `CTFontDrawGlyphs` run with explicit per-cell
+            // positions (no per-cell NSStringDrawing layout, no advance drift);
+            // non-ASCII / wide / substitute cells keep the a45f481 per-cell
+            // fallback + clipping path exactly.
+            var runGlyphs: [CGGlyph] = []
+            var runStart = 0
+            var runBold = false
+            var runUnderline = false
+            var runFg: NSColor = defaultFg
+            var runFgKey: UInt32 = 0
+            func flushRun() {
+                guard !runGlyphs.isEmpty else { return }
+                drawGlyphRun(ctx, glyphs: runGlyphs, startCol: runStart, row: y,
+                             bold: runBold, color: runFg, underline: runUnderline)
+                runGlyphs.removeAll(keepingCapacity: true)
+            }
+            x = 0
+            while x < Int(lcols) {
+                ndterm_cell(t, UInt16(x), UInt16(y), &cell)
+                let flags = UInt32(cell.flags)
+                if (flags & NDTERM_FLAG_WIDE_TAIL) != 0 { x += 1; continue }
                 let isWide = (flags & NDTERM_FLAG_WIDE) != 0
+                let span = isWide ? 2 : 1
+                let bold = (flags & NDTERM_FLAG_BOLD) != 0
+                let underline = (flags & NDTERM_FLAG_UNDERLINE) != 0
+                let inverse = ((flags & NDTERM_FLAG_INVERSE) != 0) != ((flags & NDTERM_FLAG_SELECTED) != 0)
+                let fgTuple = inverse ? cell.bg : cell.fg
+                let fgKey = UInt32(fgTuple.0) << 16 | UInt32(fgTuple.1) << 8 | UInt32(fgTuple.2)
 
-                var fg = nsColor(cell.fg)
-                var bg = nsColor(cell.bg)
-                if (flags & NDTERM_FLAG_INVERSE) != 0 { swap(&fg, &bg) }
+                let b0 = UInt8(bitPattern: cell.utf8.0)
+                let b1 = UInt8(bitPattern: cell.utf8.1)
+                let isAscii = b1 == 0 && b0 >= 0x20 && b0 <= 0x7e && !isWide
 
-                let rect = NSRect(x: CGFloat(x) * cellW, y: CGFloat(y) * cellH,
-                                   width: isWide ? cellW * 2 : cellW, height: cellH)
-                bg.setFill()
-                rect.fill()
-
-                let s = graphemeString(cell)
-                if !s.isEmpty {
-                    let primaryFace = (flags & NDTERM_FLAG_BOLD) != 0 ? boldFont : font
-                    let (drawFont, isSubstitute) = resolvedFont(for: s, primary: primaryFace)
-                    var attrs: [NSAttributedString.Key: Any] = [
-                        .font: drawFont,
-                        .foregroundColor: fg,
-                    ]
-                    if (flags & NDTERM_FLAG_UNDERLINE) != 0 {
-                        attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                if isAscii, let glyph = asciiGlyph(b0, bold: bold) {
+                    if !runGlyphs.isEmpty,
+                       bold != runBold || underline != runUnderline || fgKey != runFgKey || x != runStart + runGlyphs.count {
+                        flushRun()
                     }
-                    if isSubstitute {
-                        // Clip to the cell(s) this glyph owns — a fallback
-                        // face wider than the fixed cellW/cellH metric box
-                        // (PUA/emoji substitutes) can't smear into the
-                        // neighbor. The common (primary-font) path stays
-                        // unclipped: monospace glyphs on the primary face
-                        // never overrun their cell.
-                        let ctx = NSGraphicsContext.current?.cgContext
-                        ctx?.saveGState()
-                        ctx?.clip(to: rect)
-                        (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
-                        ctx?.restoreGState()
-                    } else {
-                        (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+                    if runGlyphs.isEmpty {
+                        runStart = x
+                        runBold = bold
+                        runUnderline = underline
+                        runFg = nsColor(fgTuple)
+                        runFgKey = fgKey
+                    }
+                    runGlyphs.append(glyph)
+                } else {
+                    flushRun()
+                    let s = graphemeString(cell)
+                    if !s.isEmpty {
+                        drawCellIndividual(ctx, grapheme: s, x: x, y: y, isWide: isWide,
+                                           bold: bold, underline: underline, fg: nsColor(fgTuple))
                     }
                 }
+                x += span
             }
+            flushRun()
         }
 
         var cursor = nd_term_cursor()
@@ -325,7 +438,75 @@ final class NDTerminalView: NSView {
             }
         }
 
+        // Scrollback indicator: a thin right-edge thumb, shown only while
+        // scrolled into history (pinned == 0). Height/position track the
+        // viewport's share of the total scrollable area. (State queried above,
+        // before the render lock.)
+        if sbPinned == 0, sbTotal > Int(lrows) {
+            let trackH = bounds.height
+            let totalF = CGFloat(sbTotal)
+            let thumbH = max(trackH * CGFloat(Int(lrows)) / totalF, 16)
+            let thumbY = (trackH - thumbH) * CGFloat(sbOffset) / max(totalF - CGFloat(Int(lrows)), 1)
+            NSColor(white: 0.53, alpha: 1).setFill()
+            NSRect(x: bounds.width - 4, y: thumbY, width: 3, height: thumbH).fill()
+        }
+
         ndterm_render_unlock(t)
+    }
+
+    /// Fill one coalesced background run (`cols` cells wide) at (startCol, row).
+    private func fillBgRun(_ startCol: Int, _ row: Int, _ cols: Int, _ color: NSColor) {
+        color.setFill()
+        NSRect(x: CGFloat(startCol) * cellW, y: CGFloat(row) * cellH,
+               width: CGFloat(cols) * cellW, height: cellH).fill()
+    }
+
+    /// Draw a coalesced ASCII run as glyphs at fixed per-cell positions. The
+    /// view is flipped (y-down), so the text matrix is y-flipped to keep glyphs
+    /// upright and each glyph is placed at its exact `col*cellW` origin — no
+    /// natural-advance drift off the grid. Underline spans the whole run.
+    private func drawGlyphRun(_ ctx: CGContext?, glyphs: [CGGlyph], startCol: Int, row: Int,
+                              bold: Bool, color: NSColor, underline: Bool) {
+        guard let ctx, !glyphs.isEmpty else { return }
+        let face = bold ? boldFont : font
+        let baseline = CGFloat(row) * cellH + face.ascender
+        var positions = [CGPoint]()
+        positions.reserveCapacity(glyphs.count)
+        for i in 0..<glyphs.count {
+            positions.append(CGPoint(x: CGFloat(startCol + i) * cellW, y: baseline))
+        }
+        ctx.saveGState()
+        ctx.setFillColor(color.cgColor)
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        CTFontDrawGlyphs(face as CTFont, glyphs, positions, glyphs.count, ctx)
+        ctx.restoreGState()
+        if underline {
+            color.setFill()
+            NSRect(x: CGFloat(startCol) * cellW, y: CGFloat(row) * cellH + cellH - 1,
+                   width: CGFloat(glyphs.count) * cellW, height: 1).fill()
+        }
+    }
+
+    /// Per-cell draw for a non-ASCII / wide / fallback-face grapheme: the exact
+    /// a45f481 path — resolve a substitute font for uncovered codepoints and
+    /// clip a substitute draw to the owned cell rect so a wide fallback face
+    /// can't smear into the neighbor.
+    private func drawCellIndividual(_ ctx: CGContext?, grapheme s: String, x: Int, y: Int,
+                                    isWide: Bool, bold: Bool, underline: Bool, fg: NSColor) {
+        let primaryFace = bold ? boldFont : font
+        let (drawFont, isSubstitute) = resolvedFont(for: s, primary: primaryFace)
+        var attrs: [NSAttributedString.Key: Any] = [.font: drawFont, .foregroundColor: fg]
+        if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        let rect = NSRect(x: CGFloat(x) * cellW, y: CGFloat(y) * cellH,
+                          width: isWide ? cellW * 2 : cellW, height: cellH)
+        if isSubstitute {
+            ctx?.saveGState()
+            ctx?.clip(to: rect)
+            (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+            ctx?.restoreGState()
+        } else {
+            (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+        }
     }
 
     // MARK: - resize
@@ -378,6 +559,29 @@ final class NDTerminalView: NSView {
 
     override func keyDown(with event: NSEvent) {
         guard let t = term else { return }
+
+        // Cmd+C/V/A: copy the selection / paste the clipboard / select all.
+        if event.modifierFlags.contains(.command) {
+            switch event.charactersIgnoringModifiers {
+            case "c": copySelection(); return
+            case "v": pasteClipboard(); return
+            case "a": ndterm_selection_all(t); needsDisplay = true; emitSelectionChanged(); return
+            default: break
+            }
+        }
+
+        // Shift+PageUp/Down/Home/End: move the scrollback viewport. Home/End jump
+        // to the extremes via a large delta the core clamps.
+        if event.modifierFlags.contains(.shift), let sp = event.specialKey {
+            switch sp {
+            case .pageUp: ndterm_scroll_viewport(t, -Int32(rows)); needsDisplay = true; return
+            case .pageDown: ndterm_scroll_viewport(t, Int32(rows)); needsDisplay = true; return
+            case .home: ndterm_scroll_viewport(t, -1_000_000); needsDisplay = true; return
+            case .end: ndterm_scroll_viewport(t, 1_000_000); needsDisplay = true; return
+            default: break
+            }
+        }
+
         let bytes = keyBytes(for: event)
         guard !bytes.isEmpty else { return }
         bytes.withUnsafeBufferPointer { buf in
@@ -483,9 +687,41 @@ final class NDTerminalView: NSView {
         sendSgrMouse(button: base | 32, event: event, press: true) // +32 = motion
     }
 
-    override func mouseDown(with event: NSEvent) { beginMouseButton(0, event: event) } // SGR 0 = left
-    override func mouseUp(with event: NSEvent) { endMouseButton(event: event) }
-    override func mouseDragged(with event: NSEvent) { reportMotion(event: event) }
+    /// Left button drives text selection when the app isn't grabbing the mouse
+    /// (mode 0), or when Shift overrides an active mouse-reporting mode — mirrors
+    /// the GTK surface. clickCount drives word (2) / line (3) vs char (1).
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        if let t = term, ndterm_mouse_mode(t) == 0 || event.modifierFlags.contains(.shift) {
+            let (col, row) = cellCoord(for: event)
+            if event.clickCount >= 3 {
+                ndterm_selection_line(t, col, row)
+            } else if event.clickCount == 2 {
+                ndterm_selection_word(t, col, row)
+            } else {
+                ndterm_selection_begin(t, col, row)
+            }
+            selecting = true
+            needsDisplay = true
+            emitSelectionChanged()
+            return
+        }
+        beginMouseButton(0, event: event) // SGR 0 = left
+    }
+    override func mouseUp(with event: NSEvent) {
+        if selecting { selecting = false; emitSelectionChanged(); return }
+        endMouseButton(event: event)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if selecting, let t = term {
+            let (col, row) = cellCoord(for: event)
+            ndterm_selection_extend(t, col, row)
+            needsDisplay = true
+            emitSelectionChanged()
+            return
+        }
+        reportMotion(event: event)
+    }
     override func rightMouseDown(with event: NSEvent) { beginMouseButton(2, event: event) } // SGR 2 = right
     override func rightMouseUp(with event: NSEvent) { endMouseButton(event: event) }
     override func rightMouseDragged(with event: NSEvent) { reportMotion(event: event) }
@@ -505,6 +741,124 @@ final class NDTerminalView: NSView {
         guard delta != 0 else { return }
         ndterm_scroll_viewport(t, delta)
         needsDisplay = true
+    }
+
+    // MARK: - selection / clipboard / image paste (WP-A3 / WP-A4 / WP-B2)
+
+    /// Fire onSelectionChanged only when the has-selection state actually flips.
+    private func emitSelectionChanged() {
+        guard let t = term, ndNodeID != 0 else { return }
+        let has = ndterm_selection_text(t, nil, 0) > 0
+        guard has != hasSelection else { return }
+        hasSelection = has
+        ndEmitEvent(ndNodeID, "selectionChanged", "{\"checked\":\(has)}")
+    }
+
+    private func copySelection() {
+        guard let t = term else { return }
+        let need = ndterm_selection_text(t, nil, 0)
+        guard need > 0 else { return }
+        var buf = [UInt8](repeating: 0, count: need)
+        // ndterm.h: the return may exceed buf_len if output grew the selection
+        // between the size query and the read — clamp before slicing.
+        let n = min(buf.withUnsafeMutableBufferPointer { ndterm_selection_text(t, $0.baseAddress, need) }, need)
+        let s = String(decoding: buf[0..<n], as: UTF8.self)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+    }
+
+    /// Probe the clipboard for an image first (WP-B2): if it holds one, save a
+    /// local temp PNG and emit onImagePaste{path} instead of typing; otherwise
+    /// paste text via ndterm_write_paste (bracketed-paste aware).
+    private func pasteClipboard() {
+        guard let t = term else { return }
+        let pb = NSPasteboard.general
+        if let png = pasteboardImagePng(pb), let path = writeTempPng(png) {
+            emitImagePaste(path)
+            return
+        }
+        guard let s = pb.string(forType: .string) else { return }
+        let bytes = Array(s.utf8)
+        bytes.withUnsafeBufferPointer { if let b = $0.baseAddress { ndterm_write_paste(t, b, bytes.count) } }
+    }
+
+    /// PNG bytes for whatever image the pasteboard holds (native PNG, or a TIFF
+    /// re-encoded to PNG), or nil when it has no bitmap image.
+    private func pasteboardImagePng(_ pb: NSPasteboard) -> Data? {
+        if let png = pb.data(forType: .png) { return png }
+        if let tiff = pb.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff) {
+            return rep.representation(using: .png, properties: [:])
+        }
+        return nil
+    }
+
+    private func writeTempPng(_ data: Data) -> String? {
+        let name = "nd-clip-\(ProcessInfo.processInfo.processIdentifier)-\(Self.pasteCounter).png"
+        Self.pasteCounter += 1
+        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent(name)
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return path
+        } catch {
+            return nil
+        }
+    }
+
+    private func emitImagePaste(_ path: String) {
+        guard ndNodeID != 0 else { return }
+        ndEmitEvent(ndNodeID, "imagePaste", "{\"data\":{\"path\":\(ndJsonString(path))}}")
+    }
+
+    /// Generated widgetCommand Terminal arm (WP-A4): copy/paste/selectAll/
+    /// clearSelection. Internal so the free `ndTerminalCommand` shim can reach it.
+    func runWidgetCommand(_ command: String) {
+        guard let t = term else { return }
+        switch command {
+        case "copy": copySelection()
+        case "paste": pasteClipboard()
+        case "selectAll": ndterm_selection_all(t); needsDisplay = true; emitSelectionChanged()
+        case "clearSelection": ndterm_selection_clear(t); needsDisplay = true; emitSelectionChanged()
+        default: break
+        }
+    }
+
+    // MARK: - drag & drop image paste (WP-B2)
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return dropHasImage(sender) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        // A dropped image file: emit its own path (no copy needed).
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first(where: { isImagePath($0.path) }) {
+            emitImagePaste(url.path)
+            return true
+        }
+        // Dropped raw image bytes: save a temp PNG and emit its path.
+        if let png = pasteboardImagePng(pb), let path = writeTempPng(png) {
+            emitImagePaste(path)
+            return true
+        }
+        return false
+    }
+
+    private func dropHasImage(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        if pb.data(forType: .png) != nil || pb.data(forType: .tiff) != nil { return true }
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            return urls.contains { isImagePath($0.path) }
+        }
+        return false
+    }
+
+    private func isImagePath(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"].contains(ext)
     }
 }
 
@@ -581,6 +935,13 @@ private func withTerminalOpenOpts<R>(palette: String?, foreground: String, backg
 func ndTerminalConnect(_ view: NSView, nodeID: UInt32) {
     guard let tv = view as? NDTerminalView else { return }
     tv.ndNodeID = nodeID
+}
+
+/// Generated `ndWidgetCommand` Terminal arm (WP-A4): copy/paste/selectAll/
+/// clearSelection. `argJson` is unused (these commands take no argument).
+func ndTerminalCommand(_ view: NSView, _ command: String, _ argJson: String) {
+    guard let tv = view as? NDTerminalView else { return }
+    tv.runWidgetCommand(command)
 }
 
 /// Emit an NDP event for a terminal view. `udata` is the unretained view passed
