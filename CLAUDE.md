@@ -274,5 +274,3 @@ widget-level `onKeyDown` yet.
   generated Zig/TS/Swift.
 - **Build:** `zig build` → `zig-out/bin/nd-hello` (Zig host); the SwiftPM
   package in `swift/` builds the AppKit shell; `bun run dev` == `nd dev`.
-
-NEVER EDIT tools/codegen.ts ON YOUR OWN! JUST DELETE THE FILE IT SHOULD AUTO GENERATE WITH THE COMMAND
