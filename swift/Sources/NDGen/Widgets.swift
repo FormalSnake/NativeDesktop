@@ -135,7 +135,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         if let p = propStr(props, "path") {
             iv.image = NSImage(contentsOfFile: p)
         } else if let n = propStr(props, "iconName") {
-            iv.image = NSImage(named: n)
+            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)
         }
         return iv
     } else if kind == "ScrollView" {
@@ -292,10 +292,17 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let cols = propInt(props, "cols") ?? 80
         let rows = propInt(props, "rows") ?? 24
         let fontSize = propInt(props, "fontSize") ?? 13
+        let fontFamily = propStr(props, "fontFamily")
+        let palette = propStr(props, "palette")
+        let foreground = propStr(props, "foreground") ?? "#cccccc"
+        let background = propStr(props, "background") ?? "#000000"
+        // SEAM: NDTerminalView init signatures are the published contract with NDTerminalView.swift (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
+        //   init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
+        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
         if propBool(props, "remote") ?? false {
-            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, cols: cols, rows: rows)
+            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
         }
-        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, cols: cols, rows: rows)
+        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -361,7 +368,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             iv.image = NSImage(contentsOfFile: p_)
         }
         if let n = propStr(props, "iconName"), let iv = view as? NSImageView {
-            iv.image = NSImage(named: n)
+            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)
         }
     } else if kind == "Spinner" {
         if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {
@@ -618,6 +625,9 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             let ndSavedFrame = win.frame
             win.contentViewController = controller
             win.setFrame(ndSavedFrame, display: true)
+            if controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) {
+                ndWindowToolbarManager?.attachForSidebar(win: win, split: split)
+            }
         } else {
             if let win = window, win.contentViewController != nil {
                 win.contentViewController = nil

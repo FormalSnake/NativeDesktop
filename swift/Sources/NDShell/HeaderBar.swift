@@ -164,19 +164,12 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // panes to track) — tracking separators are already guarded on
         // `self.split` being present.
         if let split { self.split = split }
-        // Lazy toolbar attachment (see the generated Window create arm): only
-        // headerbar apps get the unified toolbar strip; plain apps keep the
-        // standard titlebar height in their safe area.
-        if let win = resolveOwnerWindow(), win.toolbar !== toolbar {
-            win.toolbar = toolbar
-            win.toolbarStyle = .unified
-            // Hide the redundant window-title text: with a sidebar + unified
-            // toolbar the title would otherwise sit at the content pane's
-            // LEADING edge and push toolbar items (the back/forward nav) to the
-            // trailing edge. Native sidebar apps (System Settings, Notes, Mail)
-            // hide it for exactly this reason — the sidebar/content give context.
-            // Purely visual; `win.title` is retained for Mission Control / a11y.
-            win.titleVisibility = .hidden
+        // Lazy toolbar attachment: only headerbar apps get the unified
+        // toolbar strip; plain apps keep the standard titlebar height in
+        // their safe area. Same treatment a sidebar-only split gets from the
+        // generated Window append arm via `attachForSidebar` directly.
+        if let win = resolveOwnerWindow() {
+            attachForSidebar(win: win, split: nil) // self.split already set above
         }
         if resizeObserver == nil, let win = resolveOwnerWindow() {
             // Same capture-nothing idiom as scheduleRebuild: resolve the
@@ -195,6 +188,30 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             contentHeader = header
         }
         scheduleRebuild()
+    }
+
+    /// The native Mac sidebar treatment (Notes/Mail idiom): a transparent,
+    /// title-hidden titlebar plus this window's (possibly item-less) unified
+    /// toolbar, so the sidebar's vibrancy reaches the very top under the
+    /// traffic lights. `register()` reaches this same path once a
+    /// `<headerbar>` pane lands in the split; the generated Window append
+    /// arm calls it directly for a sidebar splitview with NO headerbar at
+    /// all, so plain sidebar apps get the treatment too. A no-op past the
+    /// first call for a given window (`win.toolbar !== toolbar` guards it) —
+    /// toolbar visibility stays tied to item count (see `init`/`rebuild`), so
+    /// an item-less attach here reserves no titlebar strip.
+    func attachForSidebar(win: NSWindow, split: NSSplitView?) {
+        if let split { self.split = split }
+        guard win.toolbar !== toolbar else { return }
+        win.toolbar = toolbar
+        win.toolbarStyle = .unified
+        // Hide the redundant window-title text: with a sidebar + unified
+        // toolbar the title would otherwise sit at the content pane's
+        // LEADING edge and push toolbar items (the back/forward nav) to the
+        // trailing edge. Native sidebar apps (System Settings, Notes, Mail)
+        // hide it for exactly this reason — the sidebar/content give context.
+        // Purely visual; `win.title` is retained for Mission Control / a11y.
+        win.titleVisibility = .hidden
     }
 
     /// Drops a pane's header when its pane leaves the split.

@@ -1597,18 +1597,29 @@ function genZigCreateBody(w: Widget): string {
     out += "        return ndMenuItemCreate(app, props, dupeZ);\n";
   } else if (w.name === "Terminal") {
     out += `        const font_size: c_int = @intCast(propInt(props, "fontSize") orelse ${dflt(w, "fontSize")});\n`;
+    out += "        const font_family: ?[*:0]const u8 = if (propStr(props, \"fontFamily\")) |f| dupeZ(f).ptr else null;\n";
+    out += "        const palette: ?[*:0]const u8 = if (propStr(props, \"palette\")) |p| dupeZ(p).ptr else null;\n";
+    out += `        const fg: [*:0]const u8 = dupeZ(propStr(props, "foreground") orelse ${zigDefaultStr(w, "foreground")}).ptr;\n`;
+    out += `        const bg: [*:0]const u8 = dupeZ(propStr(props, "background") orelse ${zigDefaultStr(w, "background")}).ptr;\n`;
     out += `        const cols: u16 = @intCast(propInt(props, "cols") orelse ${dflt(w, "cols")});\n`;
     out += `        const rows: u16 = @intCast(propInt(props, "rows") orelse ${dflt(w, "rows")});\n`;
+    // SEAM (package nd-terminal-surfaces owns the callee): the
+    // ndterm_gtk.create/createRemote signatures below are the published
+    // interface contract — a change to these argument names/order/types
+    // must land in both this codegen arm and src/gtk/terminal.zig together.
+    out += "        // SEAM: ndterm_gtk create/createRemote signatures are the published contract with src/gtk/terminal.zig (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.\n";
+    out += "        //   create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget\n";
+    out += "        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget\n";
     out += "        if (propBool(props, \"remote\") orelse false) {\n";
     out += "            const host: [*:0]const u8 = if (propStr(props, \"host\")) |h| dupeZ(h).ptr else \"127.0.0.1\";\n";
     out += `            const port: u16 = @intCast(propInt(props, "port") orelse ${dflt(w, "port")});\n`;
     out += "            const sid: [*:0]const u8 = if (propStr(props, \"sessionId\")) |s| dupeZ(s).ptr else \"\";\n";
     out += "            const ticket: [*:0]const u8 = if (propStr(props, \"ticket\")) |t| dupeZ(t).ptr else \"\";\n";
-    out += "            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, cols, rows);\n";
+    out += "            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, font_family, palette, fg, bg, cols, rows);\n";
     out += "        }\n";
     out += "        const command: ?[*:0]const u8 = if (propStr(props, \"command\")) |c| dupeZ(c).ptr else null;\n";
     out += "        const cwd: ?[*:0]const u8 = if (propStr(props, \"cwd\")) |c| dupeZ(c).ptr else null;\n";
-    out += "        return ndterm_gtk.create(command, cwd, font_size, cols, rows);\n";
+    out += "        return ndterm_gtk.create(command, cwd, font_size, font_family, palette, fg, bg, cols, rows);\n";
   } else if (w.name === "NativeView") {
     // Generic native-view host: a third-party dlopen'd plugin registered a
     // factory under `viewKind` via the v2 plugin ABI (register_view). No core
@@ -3119,7 +3130,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        if let p = propStr(props, "path") {\n';
     out += "            iv.image = NSImage(contentsOfFile: p)\n";
     out += '        } else if let n = propStr(props, "iconName") {\n';
-    out += "            iv.image = NSImage(named: n)\n";
+    out += "            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)\n";
     out += "        }\n";
     out += "        return iv\n";
   } else if (w.name === "ScrollView") {
@@ -3225,10 +3236,21 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        let cols = propInt(props, "cols") ?? ${swiftDefaultInt(w, "cols")}\n`;
     out += `        let rows = propInt(props, "rows") ?? ${swiftDefaultInt(w, "rows")}\n`;
     out += `        let fontSize = propInt(props, "fontSize") ?? ${swiftDefaultInt(w, "fontSize")}\n`;
+    out += `        let fontFamily = propStr(props, "fontFamily")\n`;
+    out += `        let palette = propStr(props, "palette")\n`;
+    out += `        let foreground = propStr(props, "foreground") ?? ${swiftDefaultStr(w, "foreground")}\n`;
+    out += `        let background = propStr(props, "background") ?? ${swiftDefaultStr(w, "background")}\n`;
+    // SEAM (package nd-terminal-surfaces owns the callee): the NDTerminalView
+    // initializer signatures below are the published interface contract — a
+    // change to these argument names/order/types must land in both this
+    // codegen arm and NDTerminalView.swift together.
+    out += "        // SEAM: NDTerminalView init signatures are the published contract with NDTerminalView.swift (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.\n";
+    out += "        //   init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)\n";
+    out += "        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)\n";
     out += `        if propBool(props, "remote") ?? ${swiftDefaultBool(w, "remote")} {\n`;
-    out += `            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? ${swiftDefaultInt(w, "port")}, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, cols: cols, rows: rows)\n`;
+    out += `            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? ${swiftDefaultInt(w, "port")}, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)\n`;
     out += `        }\n`;
-    out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, cols: cols, rows: rows)\n`;
+    out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)\n`;
   } else if (w.name === "NativeView") {
     // Generic native-view host (GTK-first): route to the plugin's AppKit
     // nd_view_impl if one registered `viewKind`, else an empty NSView (no
@@ -3421,7 +3443,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "Image" && p.name === "iconName") {
       out += '        if let n = propStr(props, "iconName"), let iv = view as? NSImageView {\n';
-      out += "            iv.image = NSImage(named: n)\n";
+      out += "            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)\n";
       out += "        }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += '        if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {\n';
@@ -3939,6 +3961,15 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            let ndSavedFrame = win.frame\n" +
       "            win.contentViewController = controller\n" +
       "            win.setFrame(ndSavedFrame, display: true)\n" +
+      // A sidebar-behavior split item earns the full-height sidebar
+      // treatment even with no <headerbar> anywhere in the tree — the
+      // window-toolbar attach that used to fire only from a registering
+      // headerbar (NDToolbarManager.register) now fires directly here too,
+      // via the same helper, so the sidebar's vibrancy reaches the very top
+      // under the traffic lights (Notes/Mail idiom) for plain sidebar apps.
+      "            if controller.splitViewItems.contains(where: { $0.behavior == .sidebar }) {\n" +
+      "                ndWindowToolbarManager?.attachForSidebar(win: win, split: split)\n" +
+      "            }\n" +
       "        } else {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
       "                win.contentViewController = nil\n" +
@@ -4281,6 +4312,10 @@ function genDocs(s: Schema): string {
     }
     if (w.name === "Select") out += "`options` is create-only in v1.\n\n";
     if (w.name === "TabView") out += "`selectedIndex` takes effect on update; initial page is 0.\n\n";
+    if (w.name === "Terminal") {
+      out +=
+        "`palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors (16 or 256 entries, ANSI index order — entry 0 is black, 1 red, … 15 bright white for the 16-color form); unset means the backend's built-in default palette. `foreground`/`background` are the default text/cell colors (also `#rrggbb`), distinct from the CSS `background`/`color` `style` props, which paint the widget's own view chrome rather than the terminal's cell colors.\n\n";
+    }
   }
   return out;
 }

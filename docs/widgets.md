@@ -721,6 +721,10 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `command` | string | — | create |
 | `cwd` | string | — | create |
 | `fontSize` | int | 13 | create |
+| `fontFamily` | string | — | create |
+| `palette` | string | — | create |
+| `foreground` | string | #cccccc | create |
+| `background` | string | #000000 | create |
 | `cols` | int | 80 | create |
 | `rows` | int | 24 | create |
 | `remote` | bool | false | create |
@@ -736,4 +740,6 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `bell` | `onBell` | none |
 | `exited` | `onExited` | data |
 | `connectionState` | `onConnectionState` | data |
+
+`palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors (16 or 256 entries, ANSI index order — entry 0 is black, 1 red, … 15 bright white for the 16-color form); unset means the backend's built-in default palette. `foreground`/`background` are the default text/cell colors (also `#rrggbb`), distinct from the CSS `background`/`color` `style` props, which paint the widget's own view chrome rather than the terminal's cell colors.
 

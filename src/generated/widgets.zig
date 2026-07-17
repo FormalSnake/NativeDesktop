@@ -1337,18 +1337,25 @@ pub fn create(
         return gtk.Box.new(.vertical, 0).as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Terminal")) {
         const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
+        const font_family: ?[*:0]const u8 = if (propStr(props, "fontFamily")) |f| dupeZ(f).ptr else null;
+        const palette: ?[*:0]const u8 = if (propStr(props, "palette")) |p| dupeZ(p).ptr else null;
+        const fg: [*:0]const u8 = dupeZ(propStr(props, "foreground") orelse "#cccccc").ptr;
+        const bg: [*:0]const u8 = dupeZ(propStr(props, "background") orelse "#000000").ptr;
         const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
         const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
+        // SEAM: ndterm_gtk create/createRemote signatures are the published contract with src/gtk/terminal.zig (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
+        //   create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget
+        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget
         if (propBool(props, "remote") orelse false) {
             const host: [*:0]const u8 = if (propStr(props, "host")) |h| dupeZ(h).ptr else "127.0.0.1";
             const port: u16 = @intCast(propInt(props, "port") orelse 4618);
             const sid: [*:0]const u8 = if (propStr(props, "sessionId")) |s| dupeZ(s).ptr else "";
             const ticket: [*:0]const u8 = if (propStr(props, "ticket")) |t| dupeZ(t).ptr else "";
-            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, cols, rows);
+            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, font_family, palette, fg, bg, cols, rows);
         }
         const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
         const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
-        return ndterm_gtk.create(command, cwd, font_size, cols, rows);
+        return ndterm_gtk.create(command, cwd, font_size, font_family, palette, fg, bg, cols, rows);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
