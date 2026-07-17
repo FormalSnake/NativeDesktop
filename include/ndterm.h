@@ -57,8 +57,60 @@ nd_terminal *ndterm_open(uint16_t cols, uint16_t rows,
 void         ndterm_close(nd_terminal *t);
 void         ndterm_resize(nd_terminal *t, uint16_t cols, uint16_t rows);
 
+/* Open-time default fg/bg + 256-color palette (WP polish-1 deliverable 7).
+   Pass NULL for `opts` to ndterm_open_ex/ndterm_open_virtual_ex/ndrt_open_ex
+   to get exactly ndterm_open's/ndterm_open_virtual's/ndrt_open's built-in
+   defaults (foreground 0xcccccc, background black, libghostty-vt's built-in
+   256-color palette). Fields are independently optional. `palette_rgb`, when
+   non-NULL, must point to exactly NDTERM_PALETTE_COLORS*3 bytes: packed
+   r,g,b triples for palette indices 0..255 in order (indices 0-15 are the 16
+   ANSI colors) — `palette_len` must equal that byte count or the palette is
+   left at its default. Only read during the open call; never retained. */
+#define NDTERM_PALETTE_COLORS 256
+typedef struct {
+  const uint8_t *palette_rgb;  /* NULL, or NDTERM_PALETTE_COLORS*3 packed r,g,b bytes */
+  size_t         palette_len;  /* must equal NDTERM_PALETTE_COLORS*3 when palette_rgb != NULL */
+  uint8_t        has_fg;       /* 0/1: apply fg[3] as the default foreground */
+  uint8_t        fg[3];
+  uint8_t        has_bg;       /* 0/1: apply bg[3] as the default background */
+  uint8_t        bg[3];
+} nd_term_open_opts;
+
+/* Same as ndterm_open, plus `opts` (see nd_term_open_opts); opts == NULL
+   behaves exactly like ndterm_open. */
+nd_terminal *ndterm_open_ex(uint16_t cols, uint16_t rows,
+                            const char *command, const char *cwd,
+                            const nd_term_open_opts *opts,
+                            nd_term_effect_cb cb, void *userdata);
+
 /* --- input (already-encoded bytes -> PTY) --- */
 void         ndterm_write_input(nd_terminal *t, const uint8_t *bytes, size_t len);
+
+/* --- scroll / mouse (WP polish-1 deliverable 6) ---
+   Both also work on a remote (virtual) terminal via ndrt_terminal(rt), the
+   same way ndterm_render_lock/_cell/_cursor/_write_input already do — there
+   is no separate ndrt_scroll_viewport/ndrt_mouse_mode. */
+
+/* Move the client-local scrollback viewport by `delta` rows (negative = back
+   into scrollback, positive = toward the live output) and let the backend
+   re-render via the normal render_lock/cell/render_unlock path. Wraps
+   libghostty-vt's ghostty_terminal_scroll_viewport. Safe to call on a NULL
+   terminal (no-op). */
+void         ndterm_scroll_viewport(nd_terminal *t, int delta);
+
+/* Bitmask of the VT's currently-active mouse reporting modes, so a backend
+   can gate SGR mouse-event encoding on whether — and in which format — the
+   app enabled reporting. Returns 0 for a NULL terminal or when no mouse mode
+   is set. */
+#define NDTERM_MOUSE_X10        (1u << 0) /* DECSET 9: X10 mouse reporting */
+#define NDTERM_MOUSE_NORMAL     (1u << 1) /* DECSET 1000: normal (click) tracking */
+#define NDTERM_MOUSE_BUTTON     (1u << 2) /* DECSET 1002: button-event tracking */
+#define NDTERM_MOUSE_ANY        (1u << 3) /* DECSET 1003: any-event tracking */
+#define NDTERM_MOUSE_UTF8       (1u << 4) /* DECSET 1005: UTF-8 coordinate format */
+#define NDTERM_MOUSE_SGR        (1u << 5) /* DECSET 1006: SGR coordinate format */
+#define NDTERM_MOUSE_URXVT      (1u << 6) /* DECSET 1015: URxvt coordinate format */
+#define NDTERM_MOUSE_SGR_PIXELS (1u << 7) /* DECSET 1016: SGR pixel-coordinate format */
+uint32_t     ndterm_mouse_mode(nd_terminal *t);
 
 /* --- render read ---
    ndterm_render_lock takes the mutex, runs the libghostty-vt render-state
@@ -89,6 +141,13 @@ typedef void (*nd_term_output_cb)(void *userdata, const uint8_t *bytes, size_t l
 nd_terminal *ndterm_open_virtual(uint16_t cols, uint16_t rows,
                                  nd_term_effect_cb cb, nd_term_output_cb output_cb,
                                  void *userdata);
+/* Same as ndterm_open_virtual, plus `opts` (see nd_term_open_opts above);
+   opts == NULL behaves exactly like ndterm_open_virtual. Used by ndrt_open_ex
+   (include/ndremote.h) for remote sessions. */
+nd_terminal *ndterm_open_virtual_ex(uint16_t cols, uint16_t rows,
+                                    const nd_term_open_opts *opts,
+                                    nd_term_effect_cb cb, nd_term_output_cb output_cb,
+                                    void *userdata);
 /* Feed remote PTY output into the VT (virtual mode only; no-op on pty-backed).
    Thread-safe: takes the same internal mutex as ndterm_render_lock. */
 void         ndterm_feed(nd_terminal *t, const uint8_t *bytes, size_t len);

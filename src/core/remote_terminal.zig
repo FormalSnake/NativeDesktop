@@ -675,6 +675,40 @@ pub export fn ndrt_open(
     state_cb: ?StateCb,
     userdata: ?*anyopaque,
 ) callconv(.c) ?*Channel {
+    return openImpl(host, port, session_id, ticket, cols, rows, null, effect_cb, state_cb, userdata);
+}
+
+/// WP polish-1 deliverable 7: same as ndrt_open, plus an optional open-time
+/// default fg/bg + 256-color palette applied to the underlying virtual ndterm
+/// (see include/ndterm.h `nd_term_open_opts`). `opts == null` behaves exactly
+/// like ndrt_open.
+pub export fn ndrt_open_ex(
+    host: ?[*:0]const u8,
+    port: u16,
+    session_id: ?[*:0]const u8,
+    ticket: ?[*:0]const u8,
+    cols: u16,
+    rows: u16,
+    opts: ?*const ndterm.nd_term_open_opts,
+    effect_cb: ?EffectCb,
+    state_cb: ?StateCb,
+    userdata: ?*anyopaque,
+) callconv(.c) ?*Channel {
+    return openImpl(host, port, session_id, ticket, cols, rows, opts, effect_cb, state_cb, userdata);
+}
+
+fn openImpl(
+    host: ?[*:0]const u8,
+    port: u16,
+    session_id: ?[*:0]const u8,
+    ticket: ?[*:0]const u8,
+    cols: u16,
+    rows: u16,
+    opts: ?*const ndterm.nd_term_open_opts,
+    effect_cb: ?EffectCb,
+    state_cb: ?StateCb,
+    userdata: ?*anyopaque,
+) ?*Channel {
     const host_s: [:0]const u8 = if (host) |h| std.mem.span(h) else "127.0.0.1";
     const sid_s: [:0]const u8 = if (session_id) |s| std.mem.span(s) else "";
     const ticket_s: [:0]const u8 = if (ticket) |t| std.mem.span(t) else "";
@@ -694,7 +728,7 @@ pub export fn ndrt_open(
         .surface_ud = userdata,
     };
 
-    const term = ndterm.ndterm_open_virtual(@max(1, cols), @max(1, rows), transportEffectTramp, transportOutputTramp, ch) orelse {
+    const term = ndterm.ndterm_open_virtual_ex(@max(1, cols), @max(1, rows), opts, transportEffectTramp, transportOutputTramp, ch) orelse {
         gpa.free(sid_owned);
         gpa.destroy(ch);
         return null;

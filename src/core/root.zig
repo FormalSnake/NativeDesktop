@@ -60,6 +60,13 @@ comptime {
     _ = &remote_terminal.ndrt_write_input;
     _ = &remote_terminal.ndrt_resize;
     _ = &remote_terminal.ndrt_close;
+    // WP polish-1 (mac-design-polish.md deliverables 6+7): scroll/mouse-mode
+    // ABI + open-time palette. Appended, not interleaved — see house rule above.
+    _ = &terminal.ndterm_open_ex;
+    _ = &terminal.ndterm_open_virtual_ex;
+    _ = &terminal.ndterm_scroll_viewport;
+    _ = &terminal.ndterm_mouse_mode;
+    _ = &remote_terminal.ndrt_open_ex;
 }
 
 test {

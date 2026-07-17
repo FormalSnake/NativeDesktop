@@ -48,8 +48,19 @@ nd_remote_terminal *ndrt_open(const char *host, uint16_t port,
                               uint16_t cols, uint16_t rows,
                               nd_term_effect_cb effect_cb,
                               nd_rt_state_cb state_cb, void *userdata);
+/* Same as ndrt_open, plus an optional open-time default fg/bg + 256-color
+   palette applied to the underlying virtual ndterm (see include/ndterm.h
+   `nd_term_open_opts`). `opts == NULL` behaves exactly like ndrt_open. */
+nd_remote_terminal *ndrt_open_ex(const char *host, uint16_t port,
+                                 const char *session_id, const char *ticket,
+                                 uint16_t cols, uint16_t rows,
+                                 const nd_term_open_opts *opts,
+                                 nd_term_effect_cb effect_cb,
+                                 nd_rt_state_cb state_cb, void *userdata);
 /* The virtual ndterm render handle — the surface draws this exactly like a
-   local terminal (ndterm_render_lock/_cell/_cursor/_write_input). */
+   local terminal (ndterm_render_lock/_cell/_cursor/_write_input, and also
+   ndterm_scroll_viewport/ndterm_mouse_mode — there is no separate
+   ndrt_scroll_viewport/ndrt_mouse_mode). */
 nd_terminal *ndrt_terminal(nd_remote_terminal *rt);
 /* Send keystrokes (equivalent to ndterm_write_input on the render handle). */
 void         ndrt_write_input(nd_remote_terminal *rt, const uint8_t *bytes, size_t len);
