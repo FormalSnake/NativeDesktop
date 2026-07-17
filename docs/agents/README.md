@@ -18,16 +18,18 @@ drive the app the same way a user would. Full design: `docs/superpowers/specs/20
 **The `nd` CLI (`packages/nd`, M8-D8).** A scaffolded app or `examples/*` package declares
 `"dev": "nd dev"` (or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `bun run dev` /
 `nd dev [entry]` is the canonical way to run it; `entry` defaults to `src/main.tsx`. `nd dev`
-resolves the host binary for the current platform via `@nativedesktop/host`'s `resolveHostBinary()`
-(a prebuilt binary at `packages/host/bin/<os>-<arch>/nd-hello`, populated from a local `zig
-build` today; see `packages/host/src/index.ts`) and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>`.
+resolves the native backend for the current platform via `@nativedesktop/host`'s `resolveHostBinary()`
+(the AppKit `nd-shell` on macOS, the GTK `nd-hello` on Linux — override with `--backend gtk|appkit`
+or `ND_BACKEND`; prebuilt under `packages/host/bin/<os>-<arch>/`, or built on first run inside a
+framework checkout; see `packages/host/src/index.ts`) and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>`.
 `nd build` runs `bun run compile` (the babel/react-compiler pre-pass below). `nd dev` does not set
 `NATIVE_AUTOMATION=1` itself; export it in the environment before running `nd dev`/`bun run dev`
 if you need the automation socket.
 
-`nd dev` runs the *prebuilt* binary bundled with `@nativedesktop/host`, not a fresh `zig build`
-output. If you're iterating on the Zig host itself rather than app code, invoke the raw form
-directly against `zig-out/bin/nd-hello` so host changes take effect immediately:
+`nd dev` prefers the *prebuilt* binary bundled with `@nativedesktop/host` (building it once inside a
+framework checkout when absent), so it won't pick up an in-place host rebuild. If you're iterating on
+the Zig or Swift host itself rather than app code, invoke the raw form directly against your fresh
+build so host changes take effect immediately:
 
 ```
 ND_SCRIPT=<entry.tsx> NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello

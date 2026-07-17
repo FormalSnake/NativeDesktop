@@ -22,7 +22,8 @@ to work around; `scripts/dedupe-react.mjs` and its `postinstall` hook are delete
 bun run dev   # == nd dev  (src/main.tsx, ND_DEV=1, hot reload + crash-restart overlay)
 ```
 
-`nd dev [entry]` (`packages/nd`) resolves the prebuilt host binary for your platform via
+`nd dev [entry]` (`packages/nd`) resolves the native host binary for your platform — the AppKit
+shell on macOS, the GTK host on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND` — via
 `@nativedesktop/host`'s `resolveHostBinary()` and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>`;
 `entry` defaults to `src/main.tsx`. If `nativedesktop.config.ts` declares app-owned native plugins,
 `nd` first runs only their cached app build commands and passes their shared-library paths to that
@@ -30,9 +31,9 @@ same prebuilt host; it never rebuilds NativeDesktop. See `docs/native-components
 framework checkout and `native/README.md` in this app. `ND_DEV=1` is the underlying mechanism: it runs the Bun child
 under `--hot` and enables the in-window crash-restart button. `nd dev` does not set
 `NATIVE_AUTOMATION=1` itself; export it in your shell first if you need the automation socket. If
-you're iterating on the framework's Zig host rather than this app's code, invoke the raw form
-directly against a freshly built `zig-out/bin/nd-hello` instead, since `nd dev` runs the *prebuilt*
-binary bundled with `@nativedesktop/host`:
+you're iterating on the framework's Zig or Swift host rather than this app's code, invoke the raw
+form directly against your freshly built host binary instead, since `nd dev` prefers the prebuilt
+binary resolved by `@nativedesktop/host`:
 
 ```
 ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>

@@ -3,8 +3,18 @@ title: Quick Start
 description: Build the host binary and run a real NativeDesktop example, in dev mode or a plain run.
 ---
 
-This walks through building the Zig host (`nd-hello`) and running one of the framework's own
-examples against it — the fastest way to see a real GTK4/AppKit window driven by React.
+The fastest way to see a real native window driven by React is `bun run dev` in one of the
+framework's own examples: it runs the **native backend for your platform** — the AppKit shell on
+macOS, the GTK host on Linux — with no build step to remember.
+
+```bash
+cd examples/counter && bun run dev        # == nd dev main.tsx — native backend, hot reload
+bun run dev -- --backend gtk              # cross-check the same app on the GTK host
+```
+
+`nd dev` resolves the backend's binary via `@nativedesktop/host` and, inside this checkout, builds
+it on first run (`nd: building appkit host (first run)…`). The rest of this page covers the raw
+host invocation and manual builds, which you only need while hacking on the host itself.
 
 ## Prerequisites
 
@@ -53,9 +63,11 @@ stderr — capture with `2>&1`):
 
 Every `examples/*` package also declares `"dev": "nd dev main.tsx"` (the `nd` CLI, `packages/nd`),
 so `cd examples/counter && bun run dev` is equivalent to the raw invocation above minus
-`NATIVE_AUTOMATION=1`. `nd dev` doesn't set that for you, so export it first if you need the
-automation socket. `nd dev` resolves a *prebuilt* host binary via `@nativedesktop/host` rather than
-building one, so use the raw `zig build` + `ND_SCRIPT` form above while iterating on the host itself.
+`NATIVE_AUTOMATION=1` — `nd dev` doesn't set that for you, so export it first if you need the
+automation socket. `nd dev` picks the native backend (appkit on macOS, gtk on Linux; override with
+`--backend gtk|appkit` or `ND_BACKEND`), resolving a prebuilt binary via `@nativedesktop/host` and
+building it on first run inside this checkout. Use the raw `ND_SCRIPT` form above when you want to
+run a specific freshly built host while iterating on the host itself.
 
 ## Dev mode: hot reload
 
@@ -84,9 +96,12 @@ See [State & Hot Reload](/core-concepts/state-hot-reload/) for why this conventi
 `NDP_TRACE=1` (set on the host) turns on verbose per-frame NDP tracing — useful when a commit isn't
 showing up the way you expect.
 
-## Building the macOS shell
+## Building the macOS shell by hand
 
-The AppKit backend is a Swift shell linked against a GTK-free static build of the Zig core:
+`nd dev` (and `resolveHostBinary({ backend: "appkit" })`) build the AppKit shell for you on first
+run, so you rarely need this. It's the recipe to reach for when you're changing the Swift host
+itself and want to drive a specific build. The AppKit backend is a Swift shell linked against a
+GTK-free static build of the Zig core:
 
 ```bash
 zig build libnd -Dbackend=abi

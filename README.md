@@ -28,26 +28,31 @@ Mac devshell borrows Homebrew's GTK stack instead: run `brew install libadwaita`
 `gtk4` too). Then, inside that shell:
 
 ```bash
-zig build                    # produces zig-out/bin/nd-hello, the Zig host
 ./scripts/new-app.sh ../my-app
 cd ../my-app
 bun install
 bun run dev                   # == `nd dev` — ND_DEV=1, hot reload, crash-restart overlay
 ```
 
-`bun run dev` resolves the *prebuilt* `nd-hello` binary for your platform via `@nativedesktop/host`.
-Prebuilt binaries ship for `darwin-arm64` (`packages/host/bin/darwin-arm64/`). On other platforms,
-run `zig build` and copy `zig-out/bin/nd-hello` into `packages/host/bin/<os>-<arch>/nd-hello` first
-(see `packages/host/src/index.ts`). `nd dev [entry]` and `nd build` (`packages/nd`) wrap the
-underlying mechanism directly:
+`bun run dev` runs the **native backend for your platform** — the AppKit shell on macOS, the
+GTK host on Linux. `nd dev` resolves that backend's binary via `@nativedesktop/host` (AppKit
+`nd-shell`, GTK `nd-hello`); inside this checkout a missing binary is built on first run
+(`nd: building appkit host (first run)…`). Pass `--backend gtk` (or set `ND_BACKEND=gtk`) to
+cross-check the same app on the GTK host, which runs on macOS too via GTK4's Quartz backend:
 
 ```bash
-ND_SCRIPT=src/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello
+bun run dev -- --backend gtk   # cross-check on the GTK host
 ```
 
-Running the host directly like this is useful while iterating on the Zig host itself, since
-`nd dev` runs a prebuilt binary rather than a fresh build. `NATIVE_AUTOMATION=1` opens the
-automation RPC socket (see below); `nd dev` doesn't set it for you.
+`nd dev [entry]` and `nd build` (`packages/nd`) wrap the underlying mechanism — the host reads
+`ND_SCRIPT` and `ND_DEV`, and `NATIVE_AUTOMATION=1` opens the automation RPC socket (see below;
+`nd dev` doesn't set it for you). While iterating on the Zig or Swift host itself, build it with
+`zig build` (GTK) or the AppKit recipe in the Quick Start guide's *Building the macOS shell*
+section, then invoke the fresh binary directly:
+
+```bash
+ND_SCRIPT=src/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello   # GTK host, fresh build
+```
 
 ## Architecture
 
