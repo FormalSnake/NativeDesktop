@@ -258,30 +258,36 @@ fn cbFileOne(source: ?*gobject.Object, res: *gio.AsyncResult, data: ?*anyopaque)
 
     var payload: std.json.ObjectMap = .empty;
     defer payload.deinit(std.heap.page_allocator);
+    // getPath returns a glib-owned string that must be freed before this callback
+    // returns; the payload is stringified synchronously inside emit, so the JSON
+    // value has to hold a copy that outlives glib.free (same lifetime dance as
+    // cbFileMany) — appending the raw span and freeing it first is a use-after-free.
     if (ctx.mode == .save) {
         objPutBool(&payload, "canceled", file == null);
+        var copy: ?[]u8 = null;
+        defer if (copy) |c| std.heap.page_allocator.free(c);
         if (file) |file_| {
             defer gobject.Object.unref(@ptrCast(@alignCast(file_)));
             if (gio.File.getPath(file_)) |p| {
                 defer glib.free(p);
-                objPutStr(&payload, "path", std.mem.span(p));
-            } else {
-                payload.put(std.heap.page_allocator, "path", .null) catch {};
+                copy = std.heap.page_allocator.dupe(u8, std.mem.span(p)) catch null;
             }
-        } else {
-            payload.put(std.heap.page_allocator, "path", .null) catch {};
         }
+        if (copy) |c| objPutStr(&payload, "path", c) else payload.put(std.heap.page_allocator, "path", .null) catch {};
         f(ctx.node_id, "saveFileResult", .{ .data = .{ .object = payload } });
         return;
     }
     objPutBool(&payload, "canceled", file == null);
     var paths: std.json.Array = .init(std.heap.page_allocator);
     defer paths.deinit();
+    var copy: ?[]u8 = null;
+    defer if (copy) |c| std.heap.page_allocator.free(c);
     if (file) |file_| {
         defer gobject.Object.unref(@ptrCast(@alignCast(file_)));
         if (gio.File.getPath(file_)) |p| {
             defer glib.free(p);
-            paths.append(.{ .string = std.mem.span(p) }) catch {};
+            copy = std.heap.page_allocator.dupe(u8, std.mem.span(p)) catch null;
+            if (copy) |c| paths.append(.{ .string = c }) catch {};
         }
     }
     payload.put(std.heap.page_allocator, "paths", .{ .array = paths }) catch {};
