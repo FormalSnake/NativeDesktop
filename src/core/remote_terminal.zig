@@ -613,14 +613,24 @@ fn failConnection(conn: *Connection, reason: []const u8) void {
 // ---------------------------------------------------------------------------
 
 fn findOrCreateConnection(host: [:0]const u8, port: u16, ticket: [:0]const u8) ?*Connection {
-    var key_buf: [512]u8 = undefined;
-    const key = std.fmt.bufPrint(&key_buf, "{s}:{d}", .{ host, port }) catch return null;
+    // Keyed by host:port:ticket, NOT host:port. A ticket names one server-side
+    // grant (which sessions this connection may attach; typically single-use),
+    // so terminals opened with the same ticket share a connection, while a
+    // fresh ticket always gets a fresh connection and reader, even when a
+    // failed connection for the same endpoint still has live members. Keying
+    // by endpoint alone silently discarded every later ticket: an
+    // endpoint-shared connection could only ever attach the FIRST ticket's
+    // session scope, and after failConnection() the dead entry blocked the
+    // endpoint until its last member closed.
+    const key_owned = std.fmt.allocPrint(gpa, "{s}:{d}:{s}", .{ host, port, ticket }) catch return null;
 
-    if (conns.get(key)) |c| return c;
+    if (conns.get(key_owned)) |c| {
+        gpa.free(key_owned);
+        return c;
+    }
 
-    const conn = gpa.create(Connection) catch return null;
-    const key_owned = gpa.dupe(u8, key) catch {
-        gpa.destroy(conn);
+    const conn = gpa.create(Connection) catch {
+        gpa.free(key_owned);
         return null;
     };
     const host_owned = gpa.dupeZ(u8, host) catch {

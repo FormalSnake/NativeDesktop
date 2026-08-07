@@ -69,6 +69,31 @@ pinned Zig 0.16). The GTK host links it into every artifact that compiles the te
 macOS shell links it after `libnd` so its `ghostty_*` symbols resolve. Nothing is downloaded at build
 or run time.
 
+## Remote mode
+
+With `remote`, the widget spawns no PTY. The host process dials a byte-lane TCP server itself and
+feeds the terminal from that stream, so raw bytes never cross the app's JS bridge:
+
+```tsx
+<terminal remote host="127.0.0.1" port={4618} sessionId={id} ticket={ticket} />
+```
+
+`host`, `port`, `sessionId`, and `ticket` are create-time props like everything else on the widget:
+to attach with a different ticket or session, remount with a different `key`.
+
+Connection sharing is keyed by `host:port:ticket`. Terminals opened with the same ticket share one
+TCP connection (the server assigns each an attach channel); a different ticket always gets its own
+connection and reader thread, even to the same endpoint. Servers that mint single-use,
+session-scoped tickets rely on this: a stale or failed connection for an endpoint never blocks a
+fresh attach, and one terminal's grant never limits another's.
+
+The connection auto-reconnects with backoff and replays its ticket on each attempt. Progress is
+reported through `onConnectionState` (`data.state` indexes `connecting`, `authed`, `attached`,
+`reconnecting`, `failed`, `closed`, the `nd_rt_state` order in `include/ndremote.h`). `failed` is
+terminal for that connection: the server refused auth or attach, so retrying the same ticket cannot
+succeed. Apps recover by minting a fresh ticket and remounting, which creates a fresh connection
+under the new key.
+
 ## Current scope
 
 The terminal renders the grid and routes keyboard input on both backends. Terminal-initiated events
