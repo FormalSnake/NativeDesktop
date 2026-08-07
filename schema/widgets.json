@@ -833,6 +833,20 @@
       ],
       "commands": ["copy", "paste", "selectAll", "clearSelection"],
       "automation": { "role": "terminal", "textFrom": null }
+    },
+    {
+      "name": "Paned",
+      "intrinsic": "paned",
+      "container": { "childModel": "multi" },
+      "props": [
+        { "name": "orientation", "type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal", "appliesTo": "create" },
+        { "name": "position", "type": "float", "default": 0.5, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "positionChanged", "ndpName": "onPositionChanged", "payload": "position" }
+      ],
+      "automation": { "role": "group", "textFrom": null }
     }
   ]
 }

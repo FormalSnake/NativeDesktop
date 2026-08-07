@@ -1637,6 +1637,35 @@ test "selection: word/all snapshots and clear resets" {
     try std.testing.expectEqual(@as(usize, 0), ndterm_selection_text(t, null, 0));
 }
 
+test "selection: click with no drag leaves nothing selected; click+drag yields a range (cmux-parity-polish-2 d3)" {
+    t_output = .empty;
+    defer t_output.deinit(std.testing.allocator);
+    const t = ndterm_open_virtual(20, 3, testEffectCb, testOutputCb, null) orelse return error.OpenFailed;
+    defer ndterm_close(t);
+
+    ndterm_feed(t, "hello world", 11);
+
+    // A stale selection from a previous interaction (e.g. select-all)...
+    ndterm_selection_all(t);
+    try std.testing.expect(ndterm_selection_text(t, null, 0) > 0);
+
+    // ...a plain press clears it (onPressed's immediate ndterm_selection_clear)
+    // but — unlike the old behavior — does NOT call ndterm_selection_begin.
+    // A release with zero drag motion therefore leaves nothing selected,
+    // instead of the old persistent one-cell phantom.
+    ndterm_selection_clear(t);
+    try std.testing.expectEqual(@as(usize, 0), ndterm_selection_text(t, null, 0));
+
+    // A real drag: onMotion promotes the pending anchor to a selection only
+    // once motion crosses into a different cell (begin at the anchor, then
+    // extend to the head) — yields a non-empty range.
+    ndterm_selection_begin(t, 0, 0);
+    ndterm_selection_extend(t, 4, 0);
+    const text = try selectionString(t, std.testing.allocator);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("hello", text);
+}
+
 test "paste: bracketed wrapping only when DECSET 2004 is active" {
     t_output = .empty;
     defer t_output.deinit(std.testing.allocator);

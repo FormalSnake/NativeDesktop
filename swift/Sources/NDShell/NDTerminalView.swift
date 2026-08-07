@@ -82,6 +82,15 @@ final class NDTerminalView: NSView {
     private var hasSelection = false
     private static var pasteCounter = 0
 
+    /// Click-artifact fix (cmux-parity-polish-2 deliverable 3): true from a
+    /// plain left `mouseDown` until either real drag motion crosses into a
+    /// different cell (promotes to `selecting`, see `mouseDragged`) or
+    /// `mouseUp` with zero motion (never promotes — no selection is created).
+    /// `selAnchorCol/Row` is the press-time cell, held until that decision.
+    private var selPending = false
+    private var selAnchorCol: UInt16 = 0
+    private var selAnchorRow: UInt16 = 0
+
     /// Cell width is the advance of a representative ASCII glyph, NOT
     /// `NSFont.maximumAdvancement` — that's the widest glyph in the WHOLE
     /// font, and a Nerd Font's huge Powerline/devicon glyph set can push it
@@ -696,12 +705,22 @@ final class NDTerminalView: NSView {
             let (col, row) = cellCoord(for: event)
             if event.clickCount >= 3 {
                 ndterm_selection_line(t, col, row)
+                selecting = true
             } else if event.clickCount == 2 {
                 ndterm_selection_word(t, col, row)
+                selecting = true
             } else {
-                ndterm_selection_begin(t, col, row)
+                // Click-artifact fix: don't start a real selection on a plain
+                // click — that used to leave a persistent one-cell phantom
+                // highlight (rendered like a second cursor) on every click.
+                // Drop any prior selection and just remember the anchor;
+                // mouseDragged promotes it to a real selection only once the
+                // drag crosses into a different cell.
+                ndterm_selection_clear(t)
+                selPending = true
+                selAnchorCol = col
+                selAnchorRow = row
             }
-            selecting = true
             needsDisplay = true
             emitSelectionChanged()
             return
@@ -710,12 +729,29 @@ final class NDTerminalView: NSView {
     }
     override func mouseUp(with event: NSEvent) {
         if selecting { selecting = false; emitSelectionChanged(); return }
+        if selPending {
+            // Press+release with zero drag: mouseDown never called
+            // ndterm_selection_begin, so there is nothing to clear.
+            selPending = false
+            return
+        }
         endMouseButton(event: event)
     }
     override func mouseDragged(with event: NSEvent) {
         if selecting, let t = term {
             let (col, row) = cellCoord(for: event)
             ndterm_selection_extend(t, col, row)
+            needsDisplay = true
+            emitSelectionChanged()
+            return
+        }
+        if selPending, let t = term {
+            let (col, row) = cellCoord(for: event)
+            guard col != selAnchorCol || row != selAnchorRow else { return } // still the same cell: just a click so far
+            ndterm_selection_begin(t, selAnchorCol, selAnchorRow)
+            ndterm_selection_extend(t, col, row)
+            selPending = false
+            selecting = true
             needsDisplay = true
             emitSelectionChanged()
             return
@@ -732,11 +768,25 @@ final class NDTerminalView: NSView {
 
     /// Scroll wheel -> client-local scrollback viewport (ndterm_scroll_viewport,
     /// wrapping libghostty-vt's scroll_viewport — the client VT already saw
-    /// every byte, so no round-trip to the daemon is needed). `scrollingDeltaY`
-    /// positive = user scrolled up (reveal older content), matching
-    /// ndterm_scroll_viewport's "up is negative" convention under negation.
+    /// every byte, so no round-trip to the daemon is needed) when the app isn't
+    /// grabbing the mouse. `scrollingDeltaY` positive = user scrolled up (reveal
+    /// older content), matching ndterm_scroll_viewport's "up is negative"
+    /// convention under negation.
+    ///
+    /// cmux-parity-polish-2 deliverable 4: this only helps when the client owns
+    /// the scrollback view. An app that's grabbed the mouse (ndterm_mouse_mode
+    /// != 0, mirroring mouseDown's own gate) — including any alt-screen TUI,
+    /// since those enable mouse reporting to get scroll at all — never sees a
+    /// local viewport move. Forward the wheel as an SGR mouse-wheel report
+    /// instead (button 64 = up, 65 = down), one report per callback, the same
+    /// way beginMouseButton forwards a mouse-mode click.
     override func scrollWheel(with event: NSEvent) {
-        guard let t = term else { return }
+        guard let t = term, event.scrollingDeltaY != 0 else { return }
+        if ndterm_mouse_mode(t) != 0 {
+            let button: Int32 = event.scrollingDeltaY > 0 ? 64 : 65
+            sendSgrMouse(button: button, event: event, press: true)
+            return
+        }
         let delta = Int32((-event.scrollingDeltaY / cellH).rounded())
         guard delta != 0 else { return }
         ndterm_scroll_viewport(t, delta)

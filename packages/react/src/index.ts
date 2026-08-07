@@ -55,7 +55,7 @@ export {
   Suspense,
   Fragment,
 } from "./dev-react.ts";
-export { dialog, clipboard, notifications, recentDocuments, credentials, app, audio } from "./system.ts";
+export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio } from "./system.ts";
 export type {
   FileFilter,
   OpenFileOptions,
@@ -63,6 +63,7 @@ export type {
   MessageLevel,
   MessageOptions,
   NotificationOptions,
+  Appearance,
   AudioPlayOptions,
   AudioState,
   AudioStateEvent,

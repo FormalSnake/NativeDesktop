@@ -57,6 +57,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "TrayItem": { role: "trayitem", textFrom: null, childModel: "multi" },
   "ShareButton": { role: "button", textFrom: "label", childModel: null },
   "Terminal": { role: "terminal", textFrom: null, childModel: null },
+  "Paned": { role: "group", textFrom: null, childModel: "multi" },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -111,6 +112,7 @@ export const intrinsicToName: Record<string, string> = {
   "trayitem": "TrayItem",
   "sharebutton": "ShareButton",
   "terminal": "Terminal",
+  "paned": "Paned",
 };
 
 export interface WidgetEvent {
@@ -170,6 +172,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "trayitem": [],
   "sharebutton": [],
   "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }, { name: "selectionChanged", handler: "onSelectionChanged", payload: "checked" }, { name: "imagePaste", handler: "onImagePaste", payload: "data" }],
+  "paned": [{ name: "positionChanged", handler: "onPositionChanged", payload: "position" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -224,6 +227,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "trayitem": [],
   "sharebutton": [],
   "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState", "onSelectionChanged", "onImagePaste"],
+  "paned": ["onPositionChanged"],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
@@ -280,6 +284,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "trayitem": [],
   "sharebutton": [],
   "terminal": ["copy", "paste", "selectAll", "clearSelection"],
+  "paned": [],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */
@@ -346,4 +351,5 @@ export const widgetPlatforms: Record<string, readonly ("macos" | "linux")[] | nu
   "trayitem": ["macos"],
   "sharebutton": ["macos"],
   "terminal": null,
+  "paned": null,
 };

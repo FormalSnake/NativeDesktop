@@ -912,6 +912,61 @@ fn ndVideoSetSrc(video: *gtk.Video, src: [:0]const u8) void {
     gobject.Object.unref(@ptrCast(@alignCast(file)));
 }
 
+// ---- cmux-parity-polish-2: Paned (draggable two-child split, distinct from
+// SplitView's collapsible-sidebar AdwOverlaySplitView) ----
+const ND_PANED_PENDING_FRACTION = "nd-paned-pending-fraction";
+const ND_PANED_DEBOUNCE_ID = "nd-paned-debounce-id";
+const ND_PANED_NODE_ID = "nd-paned-node-id";
+
+/// `position` is a 0..1 fraction of the total size, but GtkPaned's own
+/// `position` property is a pixel offset from the left/top — converting
+/// needs the widget's current allocation, which is 0 until the first layout
+/// pass. Applied immediately once allocated (the update path, and a replay
+/// from cbPanedMapped); otherwise stashed for cbPanedMapped to replay once
+/// "map" fires (GTK4 dropped the old size-allocate signal, so there is no
+/// cheaper "first laid out" hook on a plain widget).
+fn ndPanedApplyPosition(paned: *gtk.Paned, frac: f64) void {
+    const widget = paned.as(gtk.Widget);
+    const horizontal = gtk.Orientable.getOrientation(paned.as(gtk.Orientable)) == .horizontal;
+    const total = if (horizontal) gtk.Widget.getAllocatedWidth(widget) else gtk.Widget.getAllocatedHeight(widget);
+    if (total <= 0) {
+        // +1: a bit-cast 0.0 fraction is the null pointer, which qdata can't
+        // tell apart from "no data set" — offset by one, undo it on read.
+        gobject.Object.setData(asObject(widget), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));
+        return;
+    }
+    blockEcho(asObject(widget));
+    gtk.Paned.setPosition(paned, @intFromFloat(@round(frac * @as(f64, @floatFromInt(total)))));
+    unblockEcho(asObject(widget));
+}
+
+fn cbPanedMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const raw = gobject.Object.getData(obj, ND_PANED_PENDING_FRACTION) orelse return;
+    gobject.Object.setData(obj, ND_PANED_PENDING_FRACTION, null);
+    const frac: f64 = @bitCast(@as(usize, @intFromPtr(raw)) - 1); // undo the +1 offset from setData
+    ndPanedApplyPosition(@ptrCast(@alignCast(obj)), frac);
+}
+
+/// Fired 150ms after the last notify::position (cbPanedPositionChanged's
+/// debounce) — reads the settled divider position back as a 0..1 fraction
+/// and emits onPositionChanged. `user_data` holds the ref cbPanedPositionChanged
+/// took to keep the widget alive across the wait; always released here.
+fn ndPanedEmitPosition(user_data: ?*anyopaque) callconv(.c) c_int {
+    const obj: *gobject.Object = @ptrCast(@alignCast(user_data.?));
+    defer gobject.Object.unref(obj);
+    gobject.Object.setData(obj, ND_PANED_DEBOUNCE_ID, null);
+    const node_raw = gobject.Object.getData(obj, ND_PANED_NODE_ID) orelse return 0;
+    const node_id: u32 = @intCast(@intFromPtr(node_raw));
+    const paned: *gtk.Paned = @ptrCast(@alignCast(obj));
+    const widget = paned.as(gtk.Widget);
+    const horizontal = gtk.Orientable.getOrientation(paned.as(gtk.Orientable)) == .horizontal;
+    const total = if (horizontal) gtk.Widget.getAllocatedWidth(widget) else gtk.Widget.getAllocatedHeight(widget);
+    if (total <= 0) return 0; // G_SOURCE_REMOVE
+    const frac = @as(f64, @floatFromInt(gtk.Paned.getPosition(paned))) / @as(f64, @floatFromInt(total));
+    if (emit) |f| f(node_id, "positionChanged", .{ .position = frac });
+    return 0; // G_SOURCE_REMOVE
+}
+
 /// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-
 /// terminated GTK string using the backend arena (passed by the caller).
 pub fn create(
@@ -1356,6 +1411,15 @@ pub fn create(
         const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
         const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
         return ndterm_gtk.create(command, cwd, font_size, font_family, palette, fg, bg, cols, rows);
+    } else if (std.mem.eql(u8, kind, "Paned")) {
+        const vertical = if (propStr(props, "orientation")) |o| std.mem.eql(u8, o, "vertical") else false;
+        const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;
+        const paned = gtk.Paned.new(orientation);
+        const frac = propFloat(props, "position") orelse 0.5;
+        // +1: 0.0 bit-casts to the null pointer, indistinguishable from unset qdata (see cbPanedMapped).
+        gobject.Object.setData(asObject(paned), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));
+        _ = gobject.signalConnectData(asObject(paned), "map", @ptrCast(&cbPanedMapped), null, null, .{});
+        return paned.as(gtk.Widget);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -1666,6 +1730,10 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "ShareButton")) {
         // ND_PLATFORM_NOOP(ShareButton): prop "label" is a no-op on this platform by design.
         // ND_PLATFORM_NOOP(ShareButton): prop "items" is a no-op on this platform by design.
+    } else if (std.mem.eql(u8, kind, "Paned")) {
+        if (propFloat(props, "position")) |frac| {
+            ndPanedApplyPosition(@ptrCast(@alignCast(widget)), frac);
+        }
     }
 }
 
@@ -1869,6 +1937,20 @@ fn cbFontDesc(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(
     if (emit) |f| f(node_id, "fontChanged", .{ .text = std.mem.span(str) });
 }
 
+// notify:: handlers get (object, pspec, user_data). Debounced 150ms
+// (ndPanedEmitPosition) so a live drag — which fires this on every pixel —
+// reports one settled onPositionChanged instead of flooding the wire.
+fn cbPanedPositionChanged(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    gobject.Object.setData(obj, ND_PANED_NODE_ID, data);
+    if (gobject.Object.getData(obj, ND_PANED_DEBOUNCE_ID)) |raw| {
+        _ = glib.Source.remove(@intCast(@intFromPtr(raw)));
+        gobject.Object.unref(obj); // release the cancelled timer's ref
+    }
+    _ = gobject.Object.ref(obj); // held until ndPanedEmitPosition fires or cancels
+    const id = glib.timeoutAdd(150, &ndPanedEmitPosition, obj);
+    gobject.Object.setData(obj, ND_PANED_DEBOUNCE_ID, @ptrFromInt(@as(usize, id)));
+}
+
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Window")) {
@@ -1989,6 +2071,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         noteSuppressible(obj_FontPicker_fontChanged, hid_FontPicker_fontChanged);
     } else if (std.mem.eql(u8, kind, "Terminal")) {
         if (emit) |f| ndterm_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "Paned")) {
+        const obj_Paned_positionChanged = asObject(widget);
+        const hid_Paned_positionChanged = gobject.signalConnectData(obj_Paned_positionChanged, "notify::position", @ptrCast(&cbPanedPositionChanged), data, null, .{});
+        noteSuppressible(obj_Paned_positionChanged, hid_Paned_positionChanged);
     }
 }
 
@@ -2089,6 +2175,13 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
         // ND_PLATFORM_NOOP(TrayItem): children never mount on this platform.
+    } else if (std.mem.eql(u8, parent_kind, "Paned")) {
+        const p: *gtk.Paned = @ptrCast(@alignCast(parent));
+        if (gtk.Paned.getStartChild(p) == null) {
+            gtk.Paned.setStartChild(p, child);
+        } else {
+            gtk.Paned.setEndChild(p, child);
+        }
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -2156,6 +2249,13 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         const prev = gtk.Widget.getPrevSibling(b);
         if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)
         else gtk.Box.insertChildAfter(box, child, prev);
+    } else if (std.mem.eql(u8, parent_kind, "Paned")) {
+        const p: *gtk.Paned = @ptrCast(@alignCast(parent));
+        if (gtk.Paned.getStartChild(p) == null) {
+            gtk.Paned.setStartChild(p, child);
+        } else {
+            gtk.Paned.setEndChild(p, child);
+        }
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         appendChild(parent, parent_kind, child, attached, dupeZ);
@@ -2220,6 +2320,13 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), null);
     } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
         // ND_PLATFORM_NOOP(TrayItem): children never mount on this platform.
+    } else if (std.mem.eql(u8, parent_kind, "Paned")) {
+        const p: *gtk.Paned = @ptrCast(@alignCast(parent));
+        if (gtk.Paned.getStartChild(p) == child) {
+            gtk.Paned.setStartChild(p, null);
+        } else if (gtk.Paned.getEndChild(p) == child) {
+            gtk.Paned.setEndChild(p, null);
+        }
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }

@@ -54,6 +54,7 @@ pub const widget_types = [_]Entry{
     .{ .name = "TrayItem", .value = 49, .role = "trayitem" },
     .{ .name = "ShareButton", .value = 50, .role = "button" },
     .{ .name = "Terminal", .value = 51, .role = "terminal" },
+    .{ .name = "Paned", .value = 52, .role = "group" },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {

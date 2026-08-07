@@ -15,6 +15,7 @@ const gdk = @import("gdk");
 const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
+const adw = @import("adw");
 const abi = @import("../abi.zig");
 const audio = @import("audio.zig");
 
@@ -64,6 +65,7 @@ pub fn handleRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params
     if (std.mem.eql(u8, m, "credentials.set")) return credentialsSet(ctx, id, p);
     if (std.mem.eql(u8, m, "credentials.get")) return credentialsGet(ctx, id, p);
     if (std.mem.eql(u8, m, "credentials.delete")) return credentialsDelete(ctx, id, p);
+    if (std.mem.eql(u8, m, "system.getAppearance")) return getAppearance(ctx, id);
     respond(ctx, id, false, "not implemented");
 }
 
@@ -131,6 +133,41 @@ fn parseParams(comptime T: type, p: []const u8) ?std.json.Parsed(T) {
 fn activeWindow() ?*gtk.Window {
     const app = the_app orelse return null;
     return gtk.Application.getActiveWindow(app);
+}
+
+// ============================================================================
+// system.getAppearance / appearance event
+// ============================================================================
+
+var appearance_watch_installed = false;
+
+/// `"dark"`/`"light"` read of `AdwStyleManager`'s `dark` property — already
+/// tracking the system light/dark preference from `adw_init()` (main.zig), so
+/// this just reads it rather than querying GTK/portal settings itself.
+fn currentAppearance() []const u8 {
+    const sm = adw.StyleManager.getDefault();
+    return if (adw.StyleManager.getDark(sm) != 0) "dark" else "light";
+}
+
+/// Installs a one-time `notify::dark` watch on the default `AdwStyleManager`,
+/// pushing an `appearance` system event on every change. Idempotent (first
+/// `system.getAppearance` call wins) — mirrors `notif_action_registered`'s
+/// lazy-once pattern below.
+fn ensureAppearanceWatch() void {
+    if (appearance_watch_installed) return;
+    appearance_watch_installed = true;
+    const sm = adw.StyleManager.getDefault();
+    _ = gobject.Object.signals.notify.connect(sm, ?*anyopaque, &onAppearanceNotify, null, .{ .detail = "dark" });
+}
+
+fn onAppearanceNotify(_: *adw.StyleManager, _: *gobject.ParamSpec, _: ?*anyopaque) callconv(.c) void {
+    const ctx = the_ctx orelse return;
+    emitSystemEvent(ctx, "appearance", .{ .appearance = currentAppearance() });
+}
+
+fn getAppearance(ctx: *abi.NdContext, id: u32) void {
+    ensureAppearanceWatch();
+    respondValue(ctx, id, currentAppearance());
 }
 
 // ============================================================================

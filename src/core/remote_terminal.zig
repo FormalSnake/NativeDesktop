@@ -473,10 +473,14 @@ fn handleFrame(conn: *Connection, frame_type: u8, body: []const u8) void {
             if (body.len < 8) return;
             const srv = std.mem.readInt(u32, body[0..4], .little);
             const code = std.mem.readInt(i32, body[4..8], .little);
+            // Hold state_mutex across the callback (like the OUTPUT/RESIZED
+            // feeds): a concurrent ndrt_close takes it before freeing the
+            // channel, so `ch` cannot vanish between the lookup and the call.
+            // The surface effect cb only marshals onto its UI loop — it never
+            // re-enters ndrt_*, so there is no lock cycle.
             conn.lockState();
-            const ch_opt = conn.by_srv.get(srv);
-            conn.unlockState();
-            if (ch_opt) |ch| {
+            defer conn.unlockState();
+            if (conn.by_srv.get(srv)) |ch| {
                 if (ch.effect_cb) |cb| cb(ch.surface_ud, 2, null, code);
             }
         },
@@ -522,6 +526,14 @@ fn bindAttached(conn: *Connection, a: Attached) void {
     // Match the pending channel by sessionId (server ids aren't known until now).
     for (conn.members.items) |ch| {
         if (std.mem.eql(u8, ch.session_id, a.sessionId)) {
+            // A re-ATTACH (opening another channel on this live connection
+            // re-attaches every member, and the daemon assigns a fresh channel
+            // id each time — bytelane/server.ts nextChannel++) rebinds this
+            // member to a new id. Drop the prior mapping first, or by_srv keeps
+            // a stale entry pointing at this Channel that ndrt_close's
+            // remove(ch.channel) never clears — the reader would then feed a
+            // freed VT via the orphaned key.
+            if (ch.attached_once) _ = conn.by_srv.remove(ch.channel);
             ch.channel = a.channel;
             ch.last_seq = a.seq;
             ch.attached_once = true;
@@ -550,16 +562,15 @@ fn reportAttachErr(conn: *Connection, e: AttachErr) void {
 
 /// After AUTH_OK (or a reconnect), (re)ATTACH every member with its lastSeq.
 fn sendAttachAll(conn: *Connection) void {
+    // Hold state_mutex across the sends: a concurrent ndrt_close takes it
+    // before removing a member from `members` and freeing it, so iterating and
+    // reading ch.session_id/cols/rows here can never touch a freed Channel.
+    // sendJson only takes write_mutex, which nests below state_mutex in the
+    // documented lock order, so widening the scope introduces no cycle.
     conn.lockState();
-    var buf: std.ArrayListUnmanaged(*Channel) = .empty;
-    defer buf.deinit(gpa);
+    defer conn.unlockState();
     for (conn.members.items) |ch| {
         ch.notifyState(RT_AUTHED, null);
-        buf.append(gpa, ch) catch {};
-    }
-    conn.unlockState();
-
-    for (buf.items) |ch| {
         const last: ?u64 = if (ch.attached_once) ch.last_seq else null;
         conn.sendJson(FrameType.attach, .{
             .sessionId = @as([]const u8, ch.session_id),
@@ -914,4 +925,176 @@ test "frameBytes rejects a body over the max frame size" {
     const big = try testing.allocator.alloc(u8, MAX_FRAME);
     defer testing.allocator.free(big);
     try testing.expectError(FrameError.BadFrame, frameBytes(testing.allocator, FrameType.output, big));
+}
+
+// ---------------------------------------------------------------------------
+// Close-while-streaming regression (the paned-restructure use-after-free).
+//
+// A scripted loopback daemon drives the real reader thread. Opening a second
+// channel on the live shared connection re-ATTACHes the first, and the daemon
+// assigns a fresh channel id per ATTACH (bytelane/server.ts nextChannel++), so
+// the first member gets rebound to a new id. The daemon keeps streaming OUTPUT
+// on the FIRST-assigned channel id. Before the fix, bindAttached left the
+// stale id in by_srv, ndrt_close(A) never cleared it, and the reader fed the
+// freed VT via the orphaned key — a GP fault. This exercises exactly that
+// timing and asserts the process survives it.
+// ---------------------------------------------------------------------------
+
+// Loopback listener libc (Zig 0.16 has no std.net/std.posix sockets; mirror the
+// file's hand-declared extern "c" approach). sockaddr_in has the BSD sin_len /
+// sin_family split on Darwin — branch on the target like `addrinfo` above.
+const AF_INET: c_int = 2;
+extern "c" fn bind(fd: c_int, addr: *const anyopaque, len: u32) c_int;
+extern "c" fn listen(fd: c_int, backlog: c_int) c_int;
+extern "c" fn accept(fd: c_int, addr: ?*anyopaque, len: ?*u32) c_int;
+extern "c" fn getsockname(fd: c_int, addr: *anyopaque, len: *u32) c_int;
+
+const sockaddr_in = switch (builtin.os.tag) {
+    .linux => extern struct { family: u16 = AF_INET, port: u16 = 0, addr: u32 = 0, zero: [8]u8 = @splat(0) },
+    else => extern struct { len: u8 = 16, family: u8 = AF_INET, port: u16 = 0, addr: u32 = 0, zero: [8]u8 = @splat(0) },
+};
+
+/// Bind a fresh 127.0.0.1 listener on an ephemeral port; returns (fd, port).
+fn loopbackListen() !struct { fd: c_int, port: u16 } {
+    const fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return error.SocketFailed;
+    var sa = sockaddr_in{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f00_0001) };
+    if (bind(fd, &sa, @sizeOf(sockaddr_in)) != 0) return error.BindFailed;
+    if (listen(fd, 4) != 0) return error.ListenFailed;
+    var got = sockaddr_in{};
+    var len: u32 = @sizeOf(sockaddr_in);
+    if (getsockname(fd, &got, &len) != 0) return error.GetsocknameFailed;
+    return .{ .fd = fd, .port = std.mem.bigToNative(u16, got.port) };
+}
+
+const MockDaemon = struct {
+    listen_fd: c_int,
+    port: u16,
+    stream: std.atomic.Value(usize) = std.atomic.Value(usize).init(0), // accepted fd+1 (0 = none yet)
+    write_mutex: std.c.pthread_mutex_t = .{},
+    next_channel: u32 = 1,
+    stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    attaches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    fn send(self: *MockDaemon, fd: c_int, ftype: u8, body: []const u8) void {
+        var hdr: [5]u8 = undefined;
+        std.mem.writeInt(u32, hdr[0..4], @intCast(1 + body.len), .little);
+        hdr[4] = ftype;
+        _ = std.c.pthread_mutex_lock(&self.write_mutex);
+        defer _ = std.c.pthread_mutex_unlock(&self.write_mutex);
+        var off: usize = 0;
+        while (off < hdr.len) {
+            const rc = write(fd, hdr[off..].ptr, hdr.len - off);
+            if (rc <= 0) return;
+            off += @intCast(rc);
+        }
+        off = 0;
+        while (off < body.len) {
+            const rc = write(fd, body.ptr + off, body.len - off);
+            if (rc <= 0) return;
+            off += @intCast(rc);
+        }
+    }
+
+    // Accept one client, answer AUTH, and assign a fresh channel per ATTACH.
+    fn serve(self: *MockDaemon) void {
+        const fd = accept(self.listen_fd, null, null);
+        if (fd < 0) return;
+        self.stream.store(@as(usize, @intCast(fd)) + 1, .seq_cst);
+
+        var dec = FrameDecoder.init(gpa);
+        defer dec.deinit();
+        var buf: [4096]u8 = undefined;
+        while (!self.stop.load(.seq_cst)) {
+            const rc = read(fd, &buf, buf.len);
+            if (rc <= 0) break;
+            dec.push(buf[0..@intCast(rc)]) catch break;
+            while (dec.next() catch break) |frame| {
+                switch (frame.frame_type) {
+                    FrameType.auth => self.send(fd, FrameType.auth_ok, "{\"ackWindowBytes\":262144}"),
+                    FrameType.attach => {
+                        const Body = struct { sessionId: []const u8 = "" };
+                        const parsed = std.json.parseFromSlice(Body, gpa, frame.body, .{ .ignore_unknown_fields = true }) catch continue;
+                        defer parsed.deinit();
+                        const chan = self.next_channel;
+                        self.next_channel += 1;
+                        var jb: [256]u8 = undefined;
+                        const j = std.fmt.bufPrint(&jb, "{{\"sessionId\":\"{s}\",\"channel\":{d},\"seq\":0,\"cols\":80,\"rows\":24,\"mode\":\"live\"}}", .{ parsed.value.sessionId, chan }) catch continue;
+                        self.send(fd, FrameType.attached, j);
+                        _ = self.attaches.fetchAdd(1, .seq_cst);
+                    },
+                    else => {}, // drain INPUT/ACK/DETACH
+                }
+            }
+        }
+    }
+
+    // Hammer OUTPUT on channel 1 (the first-assigned id) so a surviving orphan
+    // mapping would be fed across the close of channel A.
+    fn stream1(self: *MockDaemon) void {
+        var seq: u64 = 1;
+        while (!self.stop.load(.seq_cst)) {
+            const raw = self.stream.load(.seq_cst);
+            if (raw == 0) {
+                sleepMs(1);
+                continue;
+            }
+            const fd: c_int = @intCast(raw - 1);
+            var body: [14]u8 = undefined;
+            std.mem.writeInt(u32, body[0..4], 1, .little); // channel 1
+            std.mem.writeInt(u64, body[4..12], seq, .little);
+            body[12] = 0; // no flags
+            body[13] = 'x';
+            self.send(fd, FrameType.output, &body);
+            seq += 1;
+            sleepMs(1);
+        }
+    }
+};
+
+fn stateCbCount(userdata: ?*anyopaque, state: c_int, _: ?[*:0]const u8) callconv(.c) void {
+    if (state != RT_ATTACHED) return;
+    const counter: *std.atomic.Value(u32) = @ptrCast(@alignCast(userdata orelse return));
+    _ = counter.fetchAdd(1, .seq_cst);
+}
+
+test "close while output streams on an orphaned channel does not use-after-free" {
+    // Loopback + reader threads use the c_allocator like production; this soaks
+    // the real ndrt_open/close lifetime, so a UAF crashes the test process.
+    const lb = try loopbackListen();
+    var daemon = MockDaemon{ .listen_fd = lb.fd, .port = lb.port };
+    defer _ = close(daemon.listen_fd);
+
+    const serve_t = try std.Thread.spawn(.{}, MockDaemon.serve, .{&daemon});
+    const stream_t = try std.Thread.spawn(.{}, MockDaemon.stream1, .{&daemon});
+
+    var host_buf: [16]u8 = undefined;
+    const host = try std.fmt.bufPrintZ(&host_buf, "127.0.0.1", .{});
+
+    var attached = std.atomic.Value(u32).init(0);
+
+    const a = ndrt_open(host.ptr, daemon.port, "sess-a", "", 80, 24, null, &stateCbCount, &attached) orelse return error.OpenFailed;
+    // Wait until A is attached (channel 1 bound) before opening B.
+    var spins: u32 = 0;
+    while (attached.load(.seq_cst) < 1 and spins < 2000) : (spins += 1) sleepMs(1);
+    try std.testing.expect(attached.load(.seq_cst) >= 1);
+
+    // B on the same host:port re-ATTACHes A (fresh id) — A now rebinds to
+    // channel 2 while the daemon still streams on channel 1.
+    const b = ndrt_open(host.ptr, daemon.port, "sess-b", "", 80, 24, null, &stateCbCount, &attached) orelse return error.OpenFailed;
+    spins = 0;
+    while (daemon.attaches.load(.seq_cst) < 3 and spins < 2000) : (spins += 1) sleepMs(1);
+
+    // Let the client process both re-ATTACHED binds, then close A while the
+    // channel-1 stream is in flight.
+    sleepMs(30);
+    ndrt_close(a);
+    sleepMs(30); // reader keeps servicing channel-1 output here
+    ndrt_close(b); // last channel: joins the reader
+
+    daemon.stop.store(true, .seq_cst);
+    const raw = daemon.stream.load(.seq_cst);
+    if (raw != 0) _ = shutdown(@intCast(raw - 1), SHUT_RDWR);
+    serve_t.join();
+    stream_t.join();
 }

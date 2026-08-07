@@ -12,7 +12,7 @@
     },
     {
       "name": "EventPayload",
-      "doc": "Typed event payload. Exactly one field is set per event name (see widgets.json events[].payload): changed/activate/navigate/titleChanged -> text, toggled/loadingChanged/backAvailable/forwardAvailable -> checked, valueChanged -> value, selectionChanged -> index, clicked -> none, styleError -> key (the offending style key, M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as \"payload\":{} — byte-compatible with M4.",
+      "doc": "Typed event payload. Exactly one field is set per event name (see widgets.json events[].payload): changed/activate/navigate/titleChanged -> text, toggled/loadingChanged/backAvailable/forwardAvailable -> checked, valueChanged -> value, selectionChanged -> index, clicked -> none, styleError -> key (the offending style key, M5c-D7), positionChanged -> position (Paned's 0..1 divider fraction, a dedicated field rather than reusing `value` — app-panes-and-tabs codes against the literal name `position`). Serialized with emit_null_optional_fields=false, so clicked still wires as \"payload\":{} — byte-compatible with M4.",
       "fields": [
         { "name": "text", "type": "string", "optional": true },
         { "name": "checked", "type": "bool", "optional": true },
@@ -20,7 +20,8 @@
         { "name": "index", "type": "i64", "optional": true },
         { "name": "key", "type": "string", "optional": true },
         { "name": "nativeName", "type": "string", "optional": true },
-        { "name": "data", "type": "any", "optional": true }
+        { "name": "data", "type": "any", "optional": true },
+        { "name": "position", "type": "f64", "optional": true }
       ]
     }
   ],

@@ -145,7 +145,12 @@ func buildVTable() -> nd_backend {
         let widgetBits = Int(bitPattern: w)
         MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
-            viewFrom(widgetPtr).removeFromSuperview()
+            let view = viewFrom(widgetPtr)
+            // dev-mode hot-reload/Restart sweep (Tree.gcOldGenerations et al.)
+            // tears down doomed widgets via this path instead of remove_child
+            // — a torn-down `<paned>` needs the same controller cleanup here.
+            ndPanedTeardown(view)
+            view.removeFromSuperview()
         }
     }
 
@@ -596,6 +601,12 @@ func ndRecomputeTypography(_ view: NSView) {
             applyCssFont(textTarget, .body)
         case "dimmed":
             applyCssTextColor(textTarget, .secondaryLabelColor)
+        case "error":
+            applyCssTextColor(textTarget, .systemRed)
+        case "warning":
+            applyCssTextColor(textTarget, .systemOrange)
+        case "success":
+            applyCssTextColor(textTarget, .systemGreen)
         case "monospace":
             applyCssFontValue(textTarget, .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
         case "numeric":

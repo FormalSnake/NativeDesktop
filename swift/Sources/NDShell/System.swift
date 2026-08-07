@@ -49,6 +49,9 @@ enum NDSystem {
         case "audio.stop": NDAudio.stop(id, params)
         case "audio.seek": NDAudio.seek(id, params)
         case "audio.setVolume": NDAudio.setVolume(id, params)
+        case "system.getAppearance":
+            ensureAppearanceWatch()
+            respondResult(id, jsonFragment(currentAppearance()))
         default:
             // The core already gates truly unknown methods before dispatch here.
             respondError(id, "not implemented")
@@ -245,6 +248,32 @@ enum NDSystem {
             NDLegacyNotifier.shared.deliver(id: notifID, title: title, body: body)
         }
         respondResult(id, jsonFragment(notifID))
+    }
+
+    // MARK: - appearance
+
+    nonisolated(unsafe) private static var appearanceObs: NSKeyValueObservation?
+
+    /// `"dark"`/`"light"` best-match of the effective appearance — the same
+    /// aqua/darkAqua pair AppKit resolves menu bars and system chrome against,
+    /// so this tracks accent-color-independent light/dark switches (System
+    /// Settings, or an app-level `NSApp.appearance` override).
+    @MainActor private static func currentAppearance() -> String {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? "dark" : "light"
+    }
+
+    /// Installs a one-time KVO watch on `NSApp.effectiveAppearance`, pushing an
+    /// `appearance` system event on every change. Idempotent (first
+    /// `system.getAppearance` call wins) — mirrors `unAuthorizationRequested`'s
+    /// lazy-once pattern above.
+    @MainActor private static func ensureAppearanceWatch() {
+        guard appearanceObs == nil else { return }
+        appearanceObs = NSApp.observe(\.effectiveAppearance, options: [.new]) { _, _ in
+            DispatchQueue.main.async {
+                let appearance = MainActor.assumeIsolated { currentAppearance() }
+                emitEvent(channel: "appearance", dataJson: "{\"appearance\":\(jsonFragment(appearance))}")
+            }
+        }
     }
 
     // MARK: - keychain credentials

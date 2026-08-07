@@ -752,3 +752,17 @@ Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/re
 
 `palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors (16 or 256 entries, ANSI index order — entry 0 is black, 1 red, … 15 bright white for the 16-color form); unset means the backend's built-in default palette. `foreground`/`background` are the default text/cell colors (also `#rrggbb`), distinct from the CSS `background`/`color` `style` props, which paint the widget's own view chrome rather than the terminal's cell colors.
 
+## Paned (`<paned>`)
+
+Automation role: `group`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `orientation` | horizontal \| vertical | horizontal | create |
+| `position` | float | 0.5 | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `positionChanged` | `onPositionChanged` | position |
+

@@ -52,6 +52,7 @@ fn systemMethodCapability(method: []const u8) ?[]const u8 {
     if (std.mem.startsWith(u8, method, "recent.")) return "core:recent";
     if (std.mem.startsWith(u8, method, "credentials.")) return "core:credentials";
     if (std.mem.startsWith(u8, method, "audio.")) return "core:audio";
+    if (std.mem.eql(u8, method, "system.getAppearance")) return "core:system";
     return null;
 }
 
@@ -770,6 +771,7 @@ test "systemMethodCapability maps each capability group and denies unknown metho
     try std.testing.expectEqualStrings("core:recent", systemMethodCapability("recent.add").?);
     try std.testing.expectEqualStrings("core:credentials", systemMethodCapability("credentials.get").?);
     try std.testing.expectEqualStrings("core:audio", systemMethodCapability("audio.play").?);
+    try std.testing.expectEqualStrings("core:system", systemMethodCapability("system.getAppearance").?);
     // The clipboard split is per-method: only the two named methods map.
     try std.testing.expect(systemMethodCapability("clipboard.clear") == null);
     try std.testing.expect(systemMethodCapability("unknown.method") == null);

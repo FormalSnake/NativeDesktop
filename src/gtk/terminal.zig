@@ -89,6 +89,20 @@ const State = struct {
     // onSelectionChanged so we only fire on a real transition.
     selecting: bool = false,
     has_selection: bool = false,
+    // Click-artifact fix (cmux-parity-polish-2 deliverable 3): `sel_pending`
+    // is true from a plain left press until either real drag motion crosses
+    // into a different cell (promotes to `selecting`, see onMotion) or
+    // release with zero motion (never promotes — no selection is created).
+    // `sel_anchor_col/row` is the press-time cell, held until that decision.
+    sel_pending: bool = false,
+    sel_anchor_col: u16 = 0,
+    sel_anchor_row: u16 = 0,
+    // Last-known pointer cell (from onPressed/onMotion), used to place the
+    // SGR coordinate on a wheel-forwarded mouse event (cmux-parity-polish-2
+    // deliverable 4) — GtkEventControllerScroll's `scroll` signal carries no
+    // position of its own.
+    mouse_x: f64 = 0,
+    mouse_y: f64 = 0,
     // Last dirty generation the tick callback queued a draw for (perf repaint
     // gate). Sentinel maxInt forces the first tick to paint the initial frame
     // even though a fresh terminal's dirty_seq is 0.
@@ -448,6 +462,8 @@ fn onPressed(gesture: *gtk.GestureClick, n_press: c_int, x: f64, y: f64, state: 
     const btn = gtk.GestureSingle.getCurrentButton(gesture.as(gtk.GestureSingle));
     state.mouse_button_down = true;
     state.mouse_last_button = btn;
+    state.mouse_x = x;
+    state.mouse_y = y;
 
     const mode = ndt.ndterm_mouse_mode(@ptrCast(state.term));
     const shift = gtk.EventController.getCurrentEventState(gesture.as(gtk.EventController)).shift_mask;
@@ -459,12 +475,22 @@ fn onPressed(gesture: *gtk.GestureClick, n_press: c_int, x: f64, y: f64, state: 
         const row = cellRow(state, y);
         if (n_press >= 3) {
             ndt.ndterm_selection_line(@ptrCast(state.term), col, row);
+            state.selecting = true;
         } else if (n_press == 2) {
             ndt.ndterm_selection_word(@ptrCast(state.term), col, row);
+            state.selecting = true;
         } else {
-            ndt.ndterm_selection_begin(@ptrCast(state.term), col, row);
+            // Click-artifact fix: don't start a real selection on a plain
+            // press — that used to leave a persistent one-cell phantom
+            // highlight (rendered like a second cursor) on every click. Drop
+            // any prior selection and just remember the anchor; onMotion
+            // promotes it to a real selection only once the drag crosses
+            // into a different cell (see onMotion / onReleased below).
+            ndt.ndterm_selection_clear(@ptrCast(state.term));
+            state.sel_pending = true;
+            state.sel_anchor_col = col;
+            state.sel_anchor_row = row;
         }
-        state.selecting = true;
         gtk.Widget.queueDraw(state.widget);
         emitSelectionChanged(state);
         return;
@@ -482,6 +508,12 @@ fn onReleased(_: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) cal
         emitSelectionChanged(state);
         return;
     }
+    if (state.sel_pending) {
+        // Press+release with zero drag: onPressed never called
+        // ndterm_selection_begin, so there is nothing to clear.
+        state.sel_pending = false;
+        return;
+    }
     if (ndt.ndterm_mouse_mode(@ptrCast(state.term)) == 0) return;
     sendSgrMouse(state, sgrBaseButton(btn), x, y, false);
 }
@@ -494,8 +526,22 @@ fn onReleased(_: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) cal
 /// mirror of this same choice), safe in practice because apps that enable
 /// tracking overwhelmingly also request SGR.
 fn onMotion(_: *gtk.EventControllerMotion, x: f64, y: f64, state: *State) callconv(.c) void {
+    state.mouse_x = x;
+    state.mouse_y = y;
     if (state.selecting) {
         ndt.ndterm_selection_extend(@ptrCast(state.term), cellCol(state, x), cellRow(state, y));
+        gtk.Widget.queueDraw(state.widget);
+        emitSelectionChanged(state);
+        return;
+    }
+    if (state.sel_pending) {
+        const col = cellCol(state, x);
+        const row = cellRow(state, y);
+        if (col == state.sel_anchor_col and row == state.sel_anchor_row) return; // still the same cell: just a click so far
+        ndt.ndterm_selection_begin(@ptrCast(state.term), state.sel_anchor_col, state.sel_anchor_row);
+        ndt.ndterm_selection_extend(@ptrCast(state.term), col, row);
+        state.sel_pending = false;
+        state.selecting = true;
         gtk.Widget.queueDraw(state.widget);
         emitSelectionChanged(state);
         return;
@@ -514,9 +560,25 @@ fn onMotion(_: *gtk.EventControllerMotion, x: f64, y: f64, state: *State) callco
 /// needed). `dy` is GTK's vertical scroll delta (negative = up, matching
 /// ndterm_scroll_viewport's "up is negative" convention); scaled to a few
 /// lines per wheel step, matching common terminal-emulator convention.
+///
+/// cmux-parity-polish-2 deliverable 4: this only helps when the client owns
+/// the scrollback view. An app that's grabbed the mouse (ndterm_mouse_mode !=
+/// 0, mirroring onPressed's own gate) — including any alt-screen TUI, since
+/// those enable mouse reporting to get scroll at all — never sees a local
+/// viewport move. Forward the wheel as an SGR mouse-wheel report instead
+/// (button 64 = up, 65 = down), one report per callback, the same way
+/// onPressed forwards a mouse-mode click.
 const SCROLL_LINES_PER_UNIT: f64 = 3.0;
+const SGR_WHEEL_UP: u8 = 64;
+const SGR_WHEEL_DOWN: u8 = 65;
 
 fn onScroll(_: *gtk.EventControllerScroll, _: f64, dy: f64, state: *State) callconv(.c) c_int {
+    if (dy == 0) return 0;
+    if (ndt.ndterm_mouse_mode(@ptrCast(state.term)) != 0) {
+        const cb: u8 = if (dy < 0) SGR_WHEEL_UP else SGR_WHEEL_DOWN;
+        sendSgrMouse(state, cb, state.mouse_x, state.mouse_y, true);
+        return 1;
+    }
     const delta: c_int = @intFromFloat(@round(dy * SCROLL_LINES_PER_UNIT));
     if (delta == 0) return 0;
     ndt.ndterm_scroll_viewport(@ptrCast(state.term), delta);

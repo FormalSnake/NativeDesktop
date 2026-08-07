@@ -44,6 +44,10 @@ private let ndSFSymbolMap: [String: String] = [
     "dialog-error": "exclamationmark.triangle",
     "media-playback-stop": "stop.circle",
     "web-browser": "globe",
+    "folder": "folder",
+    "utilities-terminal": "terminal",
+    "view-dual": "rectangle.split.2x1",
+    "view-grid": "square.grid.2x2",
 ]
 
 func ndSFSymbol(forFreedesktop name: String) -> String? {

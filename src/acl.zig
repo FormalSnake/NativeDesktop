@@ -35,6 +35,7 @@ pub const Acl = struct {
         self.default_perms.put(a, "core:recent", {}) catch {};
         self.default_perms.put(a, "core:clipboard.write", {}) catch {};
         self.default_perms.put(a, "core:audio", {}) catch {};
+        self.default_perms.put(a, "core:system", {}) catch {};
         return self;
     }
 
@@ -118,6 +119,7 @@ test "default policy grants core ops, denies plugin ops" {
     try std.testing.expect(acl.isAllowed(0, "core:recent"));
     try std.testing.expect(acl.isAllowed(0, "core:clipboard.write"));
     try std.testing.expect(acl.isAllowed(0, "core:audio"));
+    try std.testing.expect(acl.isAllowed(0, "core:system"));
     // Privileged system capabilities stay default-deny.
     try std.testing.expect(!acl.isAllowed(0, "core:clipboard.read"));
     try std.testing.expect(!acl.isAllowed(0, "core:credentials"));

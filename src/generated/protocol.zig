@@ -17,8 +17,10 @@ pub const Runtime = struct {
 /// events[].payload): changed/activate/navigate/titleChanged -> text,
 /// toggled/loadingChanged/backAvailable/forwardAvailable -> checked, valueChanged -> value,
 /// selectionChanged -> index, clicked -> none, styleError -> key (the offending style key,
-/// M5c-D7). Serialized with emit_null_optional_fields=false, so clicked still wires as
-/// "payload":{} — byte-compatible with M4.
+/// M5c-D7), positionChanged -> position (Paned's 0..1 divider fraction, a dedicated field
+/// rather than reusing `value` — app-panes-and-tabs codes against the literal name `position`).
+/// Serialized with emit_null_optional_fields=false, so clicked still wires as "payload":{} —
+/// byte-compatible with M4.
 pub const EventPayload = struct {
     text: ?[]const u8 = null,
     checked: ?bool = null,
@@ -27,6 +29,7 @@ pub const EventPayload = struct {
     key: ?[]const u8 = null,
     nativeName: ?[]const u8 = null,
     data: ?std.json.Value = null,
+    position: ?f64 = null,
 };
 
 /// One of create|append|insertBefore|remove|setText|update|hide|unhide. Decoded with a permissive struct:

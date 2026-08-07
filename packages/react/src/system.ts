@@ -190,6 +190,23 @@ export const app = {
   },
 };
 
+// --- system appearance -----------------------------------------------------------------
+
+export type Appearance = "dark" | "light";
+
+export const system = {
+  /** Reads the OS's current light/dark appearance. Default-granted. */
+  getAppearance(): Promise<Appearance> {
+    return call("system.getAppearance") as Promise<Appearance>;
+  },
+  /** Subscribes to system appearance changes. Returns an unsubscribe function. */
+  onAppearanceChange(handler: (appearance: Appearance) => void): () => void {
+    return subscribe("appearance", "system.onAppearanceChange", (data) =>
+      handler((data as { appearance: Appearance }).appearance),
+    );
+  },
+};
+
 // --- audio -----------------------------------------------------------------
 
 export interface AudioPlayOptions {

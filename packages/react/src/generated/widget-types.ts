@@ -52,4 +52,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   TrayItem: 49,
   ShareButton: 50,
   Terminal: 51,
+  Paned: 52,
 };

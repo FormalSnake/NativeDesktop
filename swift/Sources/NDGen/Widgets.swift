@@ -303,6 +303,14 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
             return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
         }
         return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
+    } else if kind == "Paned" {
+        let horizontal = (propStr(props, "orientation") ?? "horizontal") != "vertical"
+        let split = NSSplitView()
+        split.isVertical = horizontal
+        let controller = PanedController(split: split)
+        ndPanedControllers[ObjectIdentifier(split)] = controller
+        controller.setPositionFraction(propDouble(props, "position") ?? 0.5)
+        return split
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -502,6 +510,11 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
     } else if kind == "ShareButton" {
         ndShareButtonApply(view, props)  // label/items merged
         // "items" handled by ndShareButtonApply above (merged).
+    } else if kind == "Paned" {
+        if let f = propDouble(props, "position"), let split = view as? NSSplitView,
+           let controller = ndPanedController(for: split) {
+            controller.setPositionFraction(f)
+        }
     }
 }
 
@@ -574,6 +587,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndFontPickerConnect(view, nodeID: nodeID)
     } else if kind == "Terminal" {
         ndTerminalConnect(view, nodeID: nodeID)
+    } else if kind == "Paned" {
+        ndPanedConnect(view, nodeID: nodeID)
     }
 }
 
@@ -728,6 +743,9 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndToastOverlaySetChild(parent, child)
     } else if parentKind == "TrayItem" {
         ndMenuOwnerAppend(parent, child)
+    } else if parentKind == "Paned" {
+        let split = parent as! NSSplitView
+        split.addSubview(child)
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -814,6 +832,9 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndStatusPagePack(parent, child, before: before)
     } else if parentKind == "TrayItem" {
         ndMenuOwnerAppend(parent, child)
+    } else if parentKind == "Paned" {
+        let split = parent as! NSSplitView
+        split.addSubview(child)
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -825,6 +846,11 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     // TrayItem's NSStatusItem — neither was ever a layout child.
     if ndPopoverStructuralDetach(child, parent) { return }
     if ndTrayItemStructuralDetach(child) { return }
+    // Cross-cutting: deregister a torn-down `<paned>`'s controller (no-op
+    // unless `child` is itself a Paned's outer split view) — additive, not a
+    // short-circuit, since the split view still needs the ordinary
+    // removeFromSuperview dispatch below.
+    ndPanedTeardown(child)
     if parentKind == "Window" {
         if ndIsMenuNode(child) { return } // M13: menubar detach is a no-op (mainMenu rebuilt on next change)
         if let pane = child as? NDToolbarPaneView {
@@ -900,6 +926,9 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndToastOverlayClearChild(parent, child)
     } else if parentKind == "TrayItem" {
         ndMenuOwnerRemove(parent, child)
+    } else if parentKind == "Paned" {
+        _ = parent
+        child.removeFromSuperview()
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
