@@ -28,6 +28,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `saveFileResult` | `onSaveFileResult` | data |
 | `newTabRequested` | `onNewTabRequested` | data |
 | `closed` | `onClosed` | data |
+| `focused` | `onFocused` | checked |
 
 Imperative commands (via `sendCommand(ref.current, …)`): `showAlert`, `openFile`, `saveFile`,
 `showAbout`, `showTabOverview` — see [Dialogs](/components/dialogs/) and

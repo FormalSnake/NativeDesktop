@@ -2304,6 +2304,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   // connectEvents hands it the node id + emit fn once (webview idiom).
   "Window.newTabRequested":      { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Window.closed":               { signal: "",              target: "windowtabs",    cb: "", suppress: false },
+  "Window.focused":              { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "ToggleButton.toggled":        { signal: "toggled",          target: "widget", cb: "cbToggleButtonToggled", suppress: true },
   "SegmentedControl.selectionChanged": { signal: "notify::active", target: "widget", cb: "cbToggleGroupActive", suppress: true },
   "NumberInput.valueChanged":    { signal: "value-changed",    target: "widget", cb: "cbSpinValueChanged", suppress: true },
@@ -3849,6 +3850,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   // observer + newWindowForTab responder) — one connect records the nodeID.
   "Window.newTabRequested":      { selector: "windowtabs",    payload: "data" },
   "Window.closed":               { selector: "windowtabs",    payload: "data" },
+  "Window.focused":              { selector: "windowtabs",    payload: "checked" },
   // PanedController IS the NSSplitViewDelegate and emits onPositionChanged
   // directly (debounced) — connectEvents just records the node id.
   "Paned.positionChanged":       { selector: "paned",         payload: "position" },

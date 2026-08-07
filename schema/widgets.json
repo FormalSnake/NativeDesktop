@@ -87,7 +87,8 @@
         { "name": "openFileResult", "ndpName": "onOpenFileResult", "payload": "data" },
         { "name": "saveFileResult", "ndpName": "onSaveFileResult", "payload": "data" },
         { "name": "newTabRequested", "ndpName": "onNewTabRequested", "payload": "data" },
-        { "name": "closed", "ndpName": "onClosed", "payload": "data" }
+        { "name": "closed", "ndpName": "onClosed", "payload": "data" },
+        { "name": "focused", "ndpName": "onFocused", "payload": "checked" }
       ],
       "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
       "automation": { "role": "window", "textFrom": "title" }

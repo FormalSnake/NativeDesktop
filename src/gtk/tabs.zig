@@ -51,6 +51,7 @@ const K_VIEW = "nd-tab-view";
 const K_GROUP = "nd-tab-group";
 const K_WIN_CLOSED = "nd-window-closed";
 const K_BTN_DONE = "nd-tab-btn-injected";
+const K_FOCUSED_BIN = "nd-tabs-focused-bin";
 
 const Group = struct {
     name: []u8,
@@ -98,6 +99,10 @@ pub fn owningWindow(widget: *gtk.Widget) ?*gtk.Window {
 
 fn emitEmpty(node_id: u32, name: []const u8) void {
     if (emit) |f| f(node_id, name, .{ .data = .{ .object = .empty } });
+}
+
+fn emitFocused(node_id: u32, checked: bool) void {
+    if (emit) |f| f(node_id, "focused", .{ .checked = checked });
 }
 
 // ---- creation --------------------------------------------------------------
@@ -348,6 +353,7 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
         _ = gobject.Object.ref(@ptrCast(@alignCast(widget)));
         _ = gtk.Window.signals.close_request.connect(@as(*gtk.Window, @ptrCast(@alignCast(widget))), ?*anyopaque, &onPlainWindowClose, null, .{});
         _ = gtk.Widget.signals.destroy.connect(widget, ?*anyopaque, &onPlainWindowDestroy, null, .{});
+        _ = gobject.signalConnectData(@ptrCast(@alignCast(widget)), "notify::is-active", @ptrCast(&onPlainWindowActive), null, null, .{});
     }
 }
 
@@ -469,12 +475,37 @@ fn reapIdle(data: ?*anyopaque) callconv(.c) c_int {
 fn onSelectedPage(view: *adw.TabView, _: ?*anyopaque, win: *gtk.Window) callconv(.c) void {
     const page = adw.TabView.getSelectedPage(view) orelse return;
     gtk.Window.setTitle(win, adw.TabPage.getTitle(page));
+    recomputeBinFocus(view, win);
 }
 
 fn onWindowActive(win: *gtk.Window, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
-    if (gtk.Window.isActive(win) == 0) return;
-    const group: *Group = @ptrCast(@alignCast(getData(win, K_GROUP) orelse return));
-    group.last_active = win;
+    if (gtk.Window.isActive(win) != 0) {
+        const group: *Group = @ptrCast(@alignCast(getData(win, K_GROUP) orelse return));
+        group.last_active = win;
+    }
+    if (getData(win, K_VIEW)) |v| recomputeBinFocus(@ptrCast(@alignCast(v)), win);
+}
+
+/// The `focused` event: true for the selected page bin of an active
+/// scaffold window, false for whichever bin previously held that spot. Driven
+/// from notify::is-active (window gains/loses activation) and
+/// notify::selected-page (user switches tabs) — both routes converge here so
+/// only a net change ever emits.
+fn recomputeBinFocus(view: *adw.TabView, win: *gtk.Window) void {
+    const now: ?*gtk.Widget = if (gtk.Window.isActive(win) != 0)
+        if (adw.TabView.getSelectedPage(view)) |page| adw.TabPage.getChild(page) else null
+    else
+        null;
+    const prev_raw = getData(view, K_FOCUSED_BIN);
+    const prev: ?*gtk.Widget = if (prev_raw) |p| @ptrCast(@alignCast(p)) else null;
+    if (prev == now) return;
+    if (prev) |p| {
+        if (binNodeId(p)) |id| emitFocused(id, false);
+    }
+    if (now) |n| {
+        if (binNodeId(n)) |id| emitFocused(id, true);
+    }
+    setData(view, K_FOCUSED_BIN, if (now) |n| @ptrCast(n) else null);
 }
 
 fn onNewTabClicked(_: *gtk.Button, bin: *gtk.Widget) callconv(.c) void {
@@ -542,4 +573,10 @@ fn onPlainWindowClose(win: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
 
 fn onPlainWindowDestroy(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
     setFlag(w, K_WIN_CLOSED, true);
+}
+
+/// Plain (ungrouped) window key/active transitions map 1:1 to `focused`.
+fn onPlainWindowActive(win: *gtk.Window, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    const w = win.as(gtk.Widget);
+    if (binNodeId(w)) |id| emitFocused(id, gtk.Window.isActive(win) != 0);
 }

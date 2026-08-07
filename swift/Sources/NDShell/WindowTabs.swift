@@ -135,4 +135,21 @@ final class NDWindowTabDelegate: NSObject, NSWindowDelegate {
         }
         ndTabEmit(nodeID, "newTabRequested", payload)
     }
+
+    /// `focused` fires per-window, including tab-group members: AppKit
+    /// gives each `<window tabGroup>` its own real NSWindow (this file's
+    /// header comment), so switching native tabs resigns the outgoing
+    /// window's key status and makes the incoming one key — no extra
+    /// tab-selection wiring needed beyond these two delegate methods.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
+        ndEmitEvent(nodeID, "focused", "{\"checked\":true}")
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
+        ndEmitEvent(nodeID, "focused", "{\"checked\":false}")
+    }
 }

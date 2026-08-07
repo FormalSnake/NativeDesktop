@@ -51,7 +51,7 @@ Because a tab is a window, everything window-scoped keeps working per tab unchan
 [dialogs](/components/dialogs/), toolbars, automation targeting, and the `core:window.create` ACL
 gate (each new tab is a `create Window` op scoped to its own id).
 
-## The two native events
+## Native events
 
 The framework owns the tab chrome, so tab lifecycle arrives as events on the `<window>` node:
 
@@ -67,6 +67,28 @@ The framework owns the tab chrome, so tab lifecycle arrives as events on the `<w
 Unmounting a `<window>` from app code (without a user close) closes its native window/tab the same
 way — the remove rides a `window.close` semantic action, so JS-initiated and user-initiated closes
 converge on one path.
+
+## Tracking the frontmost tab
+
+Every `<window>` also fires `onFocused({ checked })` when it gains or loses key/active status — for
+a plain window that's a normal focus change, but for a `tabGroup` member it also fires when the
+user switches native tabs: the outgoing tab gets `checked: false`, the incoming one `checked: true`.
+This is the signal to keep for app-level state (menu items, keyboard shortcuts, a command palette)
+that needs to act on "whichever tab is frontmost right now" rather than on whatever tab last
+rendered — without it, an app tracking its own "selected" value has no way to learn that the user
+switched tabs natively, since the switch never touches React.
+
+```tsx
+<window
+  title="Terminal"
+  tabGroup="terminal"
+  onFocused={({ checked }) => {
+    if (checked) setActiveTabId(id);
+  }}
+>
+  {/* … */}
+</window>
+```
 
 The examples bind a `New Tab` menu item (`accelerator="primary+t"`) to the same handler as
 `onNewTabRequested`, which is the conventional Cmd+T/Ctrl+T affordance on both platforms.

@@ -121,7 +121,7 @@ export interface WidgetEvent {
   payload: "none" | "text" | "checked" | "value" | "index" | "data";
 }
 export const widgetEvents: Record<string, WidgetEvent[]> = {
-  "window": [{ name: "alertResult", handler: "onAlertResult", payload: "data" }, { name: "openFileResult", handler: "onOpenFileResult", payload: "data" }, { name: "saveFileResult", handler: "onSaveFileResult", payload: "data" }, { name: "newTabRequested", handler: "onNewTabRequested", payload: "data" }, { name: "closed", handler: "onClosed", payload: "data" }],
+  "window": [{ name: "alertResult", handler: "onAlertResult", payload: "data" }, { name: "openFileResult", handler: "onOpenFileResult", payload: "data" }, { name: "saveFileResult", handler: "onSaveFileResult", payload: "data" }, { name: "newTabRequested", handler: "onNewTabRequested", payload: "data" }, { name: "closed", handler: "onClosed", payload: "data" }, { name: "focused", handler: "onFocused", payload: "checked" }],
   "box": [{ name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }],
   "label": [],
   "button": [{ name: "clicked", handler: "onClick", payload: "none" }, { name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }],
@@ -176,7 +176,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
 };
 
 export const handlerPropNames: Record<string, string[]> = {
-  "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult", "onNewTabRequested", "onClosed"],
+  "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult", "onNewTabRequested", "onClosed", "onFocused"],
   "box": ["onHoverChanged"],
   "label": [],
   "button": ["onClick", "onHoverChanged"],
