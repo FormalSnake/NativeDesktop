@@ -1510,6 +1510,10 @@ function genZigCreateBody(w: Widget): string {
     out += "        const vertical = if (propStr(props, \"orientation\")) |o| std.mem.eql(u8, o, \"vertical\") else false;\n";
     out += "        const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;\n";
     out += "        const paned = gtk.Paned.new(orientation);\n";
+    out += "        // AppKit parity (PanedController's minPaneExtent): the divider must\n";
+    out += "        // respect child minimum sizes instead of crushing a pane to zero.\n";
+    out += "        gtk.Paned.setShrinkStartChild(paned, 0);\n";
+    out += "        gtk.Paned.setShrinkEndChild(paned, 0);\n";
     out += `        const frac = propFloat(props, "position") orelse ${dflt(w, "position")};\n`;
     out += "        // +1: 0.0 bit-casts to the null pointer, indistinguishable from unset qdata (see cbPanedMapped).\n";
     out += "        gobject.Object.setData(asObject(paned), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));\n";
@@ -1747,13 +1751,14 @@ function genZigCreateBody(w: Widget): string {
     // must land in both this codegen arm and src/gtk/terminal.zig together.
     out += "        // SEAM: ndterm_gtk create/createRemote signatures are the published contract with src/gtk/terminal.zig (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.\n";
     out += "        //   create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget\n";
-    out += "        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget\n";
+    out += "        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, restore_scrollback: bool, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget\n";
     out += "        if (propBool(props, \"remote\") orelse false) {\n";
     out += "            const host: [*:0]const u8 = if (propStr(props, \"host\")) |h| dupeZ(h).ptr else \"127.0.0.1\";\n";
     out += `            const port: u16 = @intCast(propInt(props, "port") orelse ${dflt(w, "port")});\n`;
     out += "            const sid: [*:0]const u8 = if (propStr(props, \"sessionId\")) |s| dupeZ(s).ptr else \"\";\n";
     out += "            const ticket: [*:0]const u8 = if (propStr(props, \"ticket\")) |t| dupeZ(t).ptr else \"\";\n";
-    out += "            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, font_family, palette, fg, bg, cols, rows);\n";
+    out += `            const restore_scrollback = propBool(props, "restoreScrollback") orelse ${dflt(w, "restoreScrollback")};\n`;
+    out += "            return ndterm_gtk.createRemote(host, port, sid, ticket, restore_scrollback, font_size, font_family, palette, fg, bg, cols, rows);\n";
     out += "        }\n";
     out += "        const command: ?[*:0]const u8 = if (propStr(props, \"command\")) |c| dupeZ(c).ptr else null;\n";
     out += "        const cwd: ?[*:0]const u8 = if (propStr(props, \"cwd\")) |c| dupeZ(c).ptr else null;\n";
@@ -2362,6 +2367,9 @@ const SIGNALS: Record<string, SignalTemplate> = {
   // the same connectEvents-supplied emit fn (WP-A4/WP-B2).
   "Terminal.selectionChanged":   { signal: "",              target: "terminal", cb: "", suppress: false },
   "Terminal.imagePaste":         { signal: "",              target: "terminal", cb: "", suppress: false },
+  // Focus enter/leave fires from a GtkEventControllerFocus inside terminal.zig
+  // on the UI thread, same connectEvents-supplied emit fn.
+  "Terminal.focusChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
   // NativeView events originate in the app plugin and are connected by the retained tree.
   "NativeView.nativeEvent":      { signal: "",              target: "nativeview", cb: "", suppress: false },
   // Window dialog results fire from the async dialog callbacks wired inside
@@ -3508,9 +3516,9 @@ function genSwiftCreateBody(w: Widget): string {
     // codegen arm and NDTerminalView.swift together.
     out += "        // SEAM: NDTerminalView init signatures are the published contract with NDTerminalView.swift (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.\n";
     out += "        //   init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)\n";
-    out += "        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)\n";
+    out += "        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)\n";
     out += `        if propBool(props, "remote") ?? ${swiftDefaultBool(w, "remote")} {\n`;
-    out += `            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? ${swiftDefaultInt(w, "port")}, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)\n`;
+    out += `            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? ${swiftDefaultInt(w, "port")}, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), restoreScrollback: propBool(props, "restoreScrollback") ?? ${swiftDefaultBool(w, "restoreScrollback")}, fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)\n`;
     out += `        }\n`;
     out += `        return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)\n`;
   } else if (w.name === "NativeView") {
@@ -3909,6 +3917,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Terminal.connectionState":    { selector: "terminal", payload: "data" },
   "Terminal.selectionChanged":   { selector: "terminal", payload: "checked" },
   "Terminal.imagePaste":         { selector: "terminal", payload: "data" },
+  "Terminal.focusChanged":       { selector: "terminal", payload: "checked" },
   "NativeView.nativeEvent":      { selector: "nativeview", payload: "data" },
   // M15 additions. Plain NSControl target/action where a fire selector fits;
   // everything else routes to a hand-written connect (SWIFT_CUSTOM_CONNECT).

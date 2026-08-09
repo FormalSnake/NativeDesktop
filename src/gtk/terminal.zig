@@ -89,6 +89,9 @@ const State = struct {
     // onSelectionChanged so we only fire on a real transition.
     selecting: bool = false,
     has_selection: bool = false,
+    // Mirrors the last emitted onFocusChanged so enter/leave only fire on a
+    // real transition.
+    focused: bool = false,
     // Click-artifact fix (cmux-parity-polish-2 deliverable 3): `sel_pending`
     // is true from a plain left press until either real drag motion crosses
     // into a different cell (promotes to `selecting`, see onMotion) or
@@ -228,7 +231,7 @@ pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, fo
 /// Remote variant: the grid is fed by the byte-plane transport (ndremote)
 /// instead of a local PTY. Same rendering/input surface; effect + connection
 /// state route to NDP events via effectTramp/stateTramp.
-pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget {
+pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, restore_scrollback: bool, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget {
     const area = gtk.DrawingArea.new();
     const widget = area.as(gtk.Widget);
     const state = newState(widget, area, font_size, font_family, cols, rows);
@@ -237,7 +240,8 @@ pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, t
     var open_opts: OpenOpts = .{};
     const opts_ptr = buildOpenOpts(&open_opts, palette, foreground, background);
 
-    const rt = ndremote.ndrt_open_ex(host, port, session_id, ticket, cols, rows, opts_ptr, &effectTramp, &stateTramp, state) orelse {
+    const open = if (restore_scrollback) &ndremote.ndrt_open_history else &ndremote.ndrt_open_ex;
+    const rt = open(host, port, session_id, ticket, cols, rows, opts_ptr, &effectTramp, &stateTramp, state) orelse {
         std.debug.print("ND_WARN ndrt_open failed\n", .{});
         freeState(state);
         return widget;
@@ -321,6 +325,14 @@ fn wireSurface(area: *gtk.DrawingArea, widget: *gtk.Widget, state: *State) void 
     const motion_ctrl = gtk.EventControllerMotion.new();
     _ = gtk.EventControllerMotion.signals.motion.connect(motion_ctrl, *State, &onMotion, state, .{});
     gtk.Widget.addController(widget, motion_ctrl.as(gtk.EventController));
+
+    // Keyboard-focus tracking for onFocusChanged. The callbacks resolve State
+    // through the controller's widget (not a State user-data pointer): a leave
+    // fired mid-destruction after onUnrealize freed State must find nothing.
+    const focus_ctrl = gtk.EventControllerFocus.new();
+    _ = gtk.EventControllerFocus.signals.enter.connect(focus_ctrl, ?*anyopaque, &onFocusEnter, null, .{});
+    _ = gtk.EventControllerFocus.signals.leave.connect(focus_ctrl, ?*anyopaque, &onFocusLeave, null, .{});
+    gtk.Widget.addController(widget, focus_ctrl.as(gtk.EventController));
 
     const scroll_ctrl = gtk.EventControllerScroll.new(gtk.EventControllerScrollFlags.flags_vertical);
     _ = gtk.EventControllerScroll.signals.scroll.connect(scroll_ctrl, *State, &onScroll, state, .{});
@@ -810,6 +822,28 @@ fn emitSelectionChanged(state: *State) void {
     f(state.node_id, "selectionChanged", .{ .checked = has });
 }
 
+fn onFocusEnter(ctrl: *gtk.EventControllerFocus, _: ?*anyopaque) callconv(.c) void {
+    emitFocusChanged(ctrl, true);
+}
+
+fn onFocusLeave(ctrl: *gtk.EventControllerFocus, _: ?*anyopaque) callconv(.c) void {
+    emitFocusChanged(ctrl, false);
+}
+
+/// Fire onFocusChanged only on a real transition, on the UI thread (focus
+/// signals fire on the main loop, like the gestures). State is resolved via
+/// stateFrom so a signal firing during widget destruction, after onUnrealize
+/// cleared the qdata and freed State, is a no-op instead of a use-after-free.
+fn emitFocusChanged(ctrl: *gtk.EventControllerFocus, focused: bool) void {
+    const widget = gtk.EventController.getWidget(ctrl.as(gtk.EventController)) orelse return;
+    const state = stateFrom(widget) orelse return;
+    if (state.node_id == 0) return;
+    const f = emit orelse return;
+    if (state.focused == focused) return;
+    state.focused = focused;
+    f(state.node_id, "focusChanged", .{ .checked = focused });
+}
+
 fn displayClipboard() ?*gdk.Clipboard {
     const display = gdk.Display.getDefault() orelse return null;
     return gdk.Display.getClipboard(display);
@@ -917,11 +951,13 @@ fn emitImagePaste(state: *State, path: []const u8) void {
 }
 
 /// Generated widgetCommand Terminal arm (WP-A4): copy/paste/selectAll/
-/// clearSelection. `widget` is the DrawingArea carrying the State. Named
+/// clearSelection/focus. `widget` is the DrawingArea carrying the State. Named
 /// `runCommand` (not `command`) to avoid shadowing create()'s `command` param.
 pub fn runCommand(widget: *gtk.Widget, cmd: []const u8, _: ?std.json.Value) void {
     const state = stateFrom(widget) orelse return;
-    if (std.mem.eql(u8, cmd, "copy")) {
+    if (std.mem.eql(u8, cmd, "focus")) {
+        _ = gtk.Widget.grabFocus(state.widget);
+    } else if (std.mem.eql(u8, cmd, "copy")) {
         copyToClipboard(state);
     } else if (std.mem.eql(u8, cmd, "paste")) {
         pasteFromClipboard(state);

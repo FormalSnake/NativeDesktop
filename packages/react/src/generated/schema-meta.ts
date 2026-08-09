@@ -171,7 +171,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }, { name: "selectionChanged", handler: "onSelectionChanged", payload: "checked" }, { name: "imagePaste", handler: "onImagePaste", payload: "data" }],
+  "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }, { name: "selectionChanged", handler: "onSelectionChanged", payload: "checked" }, { name: "imagePaste", handler: "onImagePaste", payload: "data" }, { name: "focusChanged", handler: "onFocusChanged", payload: "checked" }],
   "paned": [{ name: "positionChanged", handler: "onPositionChanged", payload: "position" }],
 };
 
@@ -226,7 +226,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState", "onSelectionChanged", "onImagePaste"],
+  "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState", "onSelectionChanged", "onImagePaste", "onFocusChanged"],
   "paned": ["onPositionChanged"],
 };
 
@@ -283,7 +283,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "video": [],
   "trayitem": [],
   "sharebutton": [],
-  "terminal": ["copy", "paste", "selectAll", "clearSelection"],
+  "terminal": ["copy", "paste", "selectAll", "clearSelection", "focus"],
   "paned": [],
 };
 
@@ -292,7 +292,7 @@ export type WidgetCommandNames = {
   "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview" | "present";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools";
   "toastoverlay": "showToast" | "dismissToast";
-  "terminal": "copy" | "paste" | "selectAll" | "clearSelection";
+  "terminal": "copy" | "paste" | "selectAll" | "clearSelection" | "focus";
 };
 
 /** Platform availability (schema `platforms`): null = every platform. A

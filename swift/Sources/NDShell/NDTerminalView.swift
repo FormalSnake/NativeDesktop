@@ -149,7 +149,10 @@ final class NDTerminalView: NSView {
 
     /// Remote view: the grid is fed by the byte-plane transport (ndremote).
     /// `remote` is the overload disambiguator (always true here).
-    init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
+    /// `restoreScrollback` opens via ndrt_open_history: the fresh ATTACH asks
+    /// the daemon for retained-ring replay, so the VT rebuilds scrollback (the
+    /// core falls back to snapshot/live when history is unavailable).
+    init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
         (self.font, self.boldFont, self.cellW, self.cellH) = Self.metrics(fontSize, fontFamily)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
@@ -163,11 +166,12 @@ final class NDTerminalView: NSView {
         let ud = Unmanaged.passUnretained(self).toOpaque()
         let c = UInt16(self.cols)
         let r = UInt16(self.rows)
+        let open = restoreScrollback ? ndrt_open_history : ndrt_open_ex
         let handle = withTerminalOpenOpts(palette: palette, foreground: foreground, background: background) { opts in
             (host ?? "127.0.0.1").withCString { h in
                 (sessionId ?? "").withCString { s in
                     (ticket ?? "").withCString { t in
-                        ndrt_open_ex(h, UInt16(truncatingIfNeeded: port), s, t, c, r, opts, ndTerminalEffectCb, ndTerminalStateCb, ud)
+                        open(h, UInt16(truncatingIfNeeded: port), s, t, c, r, opts, ndTerminalEffectCb, ndTerminalStateCb, ud)
                     }
                 }
             }
@@ -212,6 +216,27 @@ final class NDTerminalView: NSView {
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    /// First-responder transitions drive onFocusChanged. Emits directly (the
+    /// responder chain runs on the main thread); ndNodeID gates an unwired or
+    /// torn-down view the same way emitSelectionChanged does — the JS registry
+    /// drops events for removed nodes.
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { emitFocusChanged(true) }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { emitFocusChanged(false) }
+        return ok
+    }
+
+    private func emitFocusChanged(_ focused: Bool) {
+        guard ndNodeID != 0 else { return }
+        ndEmitEvent(ndNodeID, "focusChanged", "{\"checked\":\(focused)}")
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: CGFloat(cols) * cellW, height: CGFloat(rows) * cellH)
@@ -861,7 +886,10 @@ final class NDTerminalView: NSView {
     }
 
     /// Generated widgetCommand Terminal arm (WP-A4): copy/paste/selectAll/
-    /// clearSelection. Internal so the free `ndTerminalCommand` shim can reach it.
+    /// clearSelection/focus. Internal so the free `ndTerminalCommand` shim can
+    /// reach it. `focus` stays within the view's own window (no
+    /// makeKeyAndOrderFront): programmatic pane focus must not steal key
+    /// status from another window.
     func runWidgetCommand(_ command: String) {
         guard let t = term else { return }
         switch command {
@@ -869,6 +897,7 @@ final class NDTerminalView: NSView {
         case "paste": pasteClipboard()
         case "selectAll": ndterm_selection_all(t); needsDisplay = true; emitSelectionChanged()
         case "clearSelection": ndterm_selection_clear(t); needsDisplay = true; emitSelectionChanged()
+        case "focus": window?.makeFirstResponder(self)
         default: break
         }
     }

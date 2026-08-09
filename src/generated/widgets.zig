@@ -1466,13 +1466,14 @@ pub fn create(
         const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
         // SEAM: ndterm_gtk create/createRemote signatures are the published contract with src/gtk/terminal.zig (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
         //   create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget
-        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget
+        //   createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, ticket: [*:0]const u8, restore_scrollback: bool, font_size: c_int, font_family: ?[*:0]const u8, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, cols: u16, rows: u16) *gtk.Widget
         if (propBool(props, "remote") orelse false) {
             const host: [*:0]const u8 = if (propStr(props, "host")) |h| dupeZ(h).ptr else "127.0.0.1";
             const port: u16 = @intCast(propInt(props, "port") orelse 4618);
             const sid: [*:0]const u8 = if (propStr(props, "sessionId")) |s| dupeZ(s).ptr else "";
             const ticket: [*:0]const u8 = if (propStr(props, "ticket")) |t| dupeZ(t).ptr else "";
-            return ndterm_gtk.createRemote(host, port, sid, ticket, font_size, font_family, palette, fg, bg, cols, rows);
+            const restore_scrollback = propBool(props, "restoreScrollback") orelse false;
+            return ndterm_gtk.createRemote(host, port, sid, ticket, restore_scrollback, font_size, font_family, palette, fg, bg, cols, rows);
         }
         const command: ?[*:0]const u8 = if (propStr(props, "command")) |c| dupeZ(c).ptr else null;
         const cwd: ?[*:0]const u8 = if (propStr(props, "cwd")) |c| dupeZ(c).ptr else null;
@@ -1481,6 +1482,10 @@ pub fn create(
         const vertical = if (propStr(props, "orientation")) |o| std.mem.eql(u8, o, "vertical") else false;
         const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;
         const paned = gtk.Paned.new(orientation);
+        // AppKit parity (PanedController's minPaneExtent): the divider must
+        // respect child minimum sizes instead of crushing a pane to zero.
+        gtk.Paned.setShrinkStartChild(paned, 0);
+        gtk.Paned.setShrinkEndChild(paned, 0);
         const frac = propFloat(props, "position") orelse 0.5;
         // +1: 0.0 bit-casts to the null pointer, indistinguishable from unset qdata (see cbPanedMapped).
         gobject.Object.setData(asObject(paned), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));

@@ -826,6 +826,7 @@
         { "name": "port", "type": "int", "default": 4618, "appliesTo": "create" },
         { "name": "sessionId", "type": "string", "appliesTo": "create" },
         { "name": "ticket", "type": "string", "appliesTo": "create" },
+        { "name": "restoreScrollback", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -834,9 +835,10 @@
         { "name": "exited",          "ndpName": "onExited",          "payload": "data" },
         { "name": "connectionState", "ndpName": "onConnectionState", "payload": "data" },
         { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "checked" },
-        { "name": "imagePaste",      "ndpName": "onImagePaste",      "payload": "data" }
+        { "name": "imagePaste",      "ndpName": "onImagePaste",      "payload": "data" },
+        { "name": "focusChanged",    "ndpName": "onFocusChanged",    "payload": "checked" }
       ],
-      "commands": ["copy", "paste", "selectAll", "clearSelection"],
+      "commands": ["copy", "paste", "selectAll", "clearSelection", "focus"],
       "automation": { "role": "terminal", "textFrom": null }
     },
     {

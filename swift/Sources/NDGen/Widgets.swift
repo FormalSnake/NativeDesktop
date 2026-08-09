@@ -309,9 +309,9 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let background = propStr(props, "background") ?? "#000000"
         // SEAM: NDTerminalView init signatures are the published contract with NDTerminalView.swift (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
         //   init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
-        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
+        //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
         if propBool(props, "remote") ?? false {
-            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
+            return NDTerminalView(remote: true, host: propStr(props, "host"), port: propInt(props, "port") ?? 4618, sessionId: propStr(props, "sessionId"), ticket: propStr(props, "ticket"), restoreScrollback: propBool(props, "restoreScrollback") ?? false, fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
         }
         return NDTerminalView(command: propStr(props, "command"), cwd: propStr(props, "cwd"), fontSize: fontSize, fontFamily: fontFamily, palette: palette, foreground: foreground, background: background, cols: cols, rows: rows)
     } else if kind == "Paned" {

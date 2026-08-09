@@ -742,6 +742,7 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `port` | int | 4618 | create |
 | `sessionId` | string | — | create |
 | `ticket` | string | — | create |
+| `restoreScrollback` | bool | false | create |
 | `testID` | string | — | meta |
 
 | Event | Handler | Payload |
@@ -752,8 +753,9 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `connectionState` | `onConnectionState` | data |
 | `selectionChanged` | `onSelectionChanged` | checked |
 | `imagePaste` | `onImagePaste` | data |
+| `focusChanged` | `onFocusChanged` | checked |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`, `focus`.
 
 `palette` carries the terminal's 16- or 256-color palette as a comma-separated list of `#rrggbb` hex colors (16 or 256 entries, ANSI index order — entry 0 is black, 1 red, … 15 bright white for the 16-color form); unset means the backend's built-in default palette. `foreground`/`background` are the default text/cell colors (also `#rrggbb`), distinct from the CSS `background`/`color` `style` props, which paint the widget's own view chrome rather than the terminal's cell colors.
 
