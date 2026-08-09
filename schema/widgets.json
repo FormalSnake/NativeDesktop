@@ -68,6 +68,16 @@
         { "name": "hasChildren", "type": "bool" },
         { "name": "expanded", "type": "bool" }
       ]
+    },
+    {
+      "name": "CommandPaletteItem",
+      "doc": "CommandPalette result row: stable string id (echoed in onActivate), title, optional subtitle + leading icon. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders.",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "title", "type": "string" },
+        { "name": "subtitle", "type": "string", "optional": true },
+        { "name": "iconName", "type": "string", "optional": true }
+      ]
     }
   ],
   "widgets": [
@@ -854,6 +864,25 @@
         { "name": "positionChanged", "ndpName": "onPositionChanged", "payload": "position" }
       ],
       "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "CommandPalette",
+      "intrinsic": "commandpalette",
+      "container": null,
+      "props": [
+        { "name": "open", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "query", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "items", "type": "objectList", "itemShape": "CommandPaletteItem", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "queryChanged", "ndpName": "onQueryChanged", "payload": "text" },
+        { "name": "activate", "ndpName": "onActivate", "payload": "text" },
+        { "name": "submit", "ndpName": "onSubmit", "payload": "text" },
+        { "name": "cancel", "ndpName": "onCancel" }
+      ],
+      "automation": { "role": "dialog", "textFrom": null }
     }
   ]
 }

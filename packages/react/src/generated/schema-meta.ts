@@ -58,6 +58,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "ShareButton": { role: "button", textFrom: "label", childModel: null },
   "Terminal": { role: "terminal", textFrom: null, childModel: null },
   "Paned": { role: "group", textFrom: null, childModel: "multi" },
+  "CommandPalette": { role: "dialog", textFrom: null, childModel: null },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -113,6 +114,7 @@ export const intrinsicToName: Record<string, string> = {
   "sharebutton": "ShareButton",
   "terminal": "Terminal",
   "paned": "Paned",
+  "commandpalette": "CommandPalette",
 };
 
 export interface WidgetEvent {
@@ -173,6 +175,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "sharebutton": [],
   "terminal": [{ name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "bell", handler: "onBell", payload: "none" }, { name: "exited", handler: "onExited", payload: "data" }, { name: "connectionState", handler: "onConnectionState", payload: "data" }, { name: "selectionChanged", handler: "onSelectionChanged", payload: "checked" }, { name: "imagePaste", handler: "onImagePaste", payload: "data" }, { name: "focusChanged", handler: "onFocusChanged", payload: "checked" }],
   "paned": [{ name: "positionChanged", handler: "onPositionChanged", payload: "position" }],
+  "commandpalette": [{ name: "queryChanged", handler: "onQueryChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "submit", handler: "onSubmit", payload: "text" }, { name: "cancel", handler: "onCancel", payload: "none" }],
 };
 
 export const handlerPropNames: Record<string, string[]> = {
@@ -228,6 +231,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "sharebutton": [],
   "terminal": ["onTitleChanged", "onBell", "onExited", "onConnectionState", "onSelectionChanged", "onImagePaste", "onFocusChanged"],
   "paned": ["onPositionChanged"],
+  "commandpalette": ["onQueryChanged", "onActivate", "onSubmit", "onCancel"],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
@@ -285,6 +289,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "sharebutton": [],
   "terminal": ["copy", "paste", "selectAll", "clearSelection", "focus"],
   "paned": [],
+  "commandpalette": [],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */
@@ -352,4 +357,5 @@ export const widgetPlatforms: Record<string, readonly ("macos" | "linux")[] | nu
   "sharebutton": ["macos"],
   "terminal": null,
   "paned": null,
+  "commandpalette": null,
 };

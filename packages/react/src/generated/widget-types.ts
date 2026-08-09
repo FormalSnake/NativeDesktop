@@ -53,4 +53,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   ShareButton: 50,
   Terminal: 51,
   Paned: 52,
+  CommandPalette: 53,
 };

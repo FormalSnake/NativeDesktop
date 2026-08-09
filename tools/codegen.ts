@@ -1349,6 +1349,7 @@ function genZig(s: Schema): string {
   out += "const ndtable_gtk = @import(\"../gtk/table.zig\");\n";
   out += "const ndtree_gtk = @import(\"../gtk/treeview.zig\");\n";
   out += "const ndtoast_gtk = @import(\"../gtk/toast.zig\");\n";
+  out += "const ndpalette_gtk = @import(\"../gtk/commandpalette.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
@@ -1970,6 +1971,8 @@ function genZigCreateBody(w: Widget): string {
     out += "        // have no toggle (AppKit's AVPlayerView honors it).\n";
     out += "        if (propStr(props, \"src\")) |s| { if (s.len > 0) ndVideoSetSrc(video, dupeZ(s)); }\n";
     out += "        return video.as(gtk.Widget);\n";
+  } else if (w.name === "CommandPalette") {
+    out += "        return ndpalette_gtk.create(props, dupeZ);  // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)\n";
   } else if (excludedOn(w, "linux")) {
     out += `        // ND_PLATFORM_NOOP(${w.name}): not available on this platform — invisible empty box by design.\n`;
     out += "        return gtk.Box.new(.vertical, 0).as(gtk.Widget);\n";
@@ -1987,6 +1990,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   // hand-written modules — one forwarding call covers every update key.
   if (w.name === "Table") return "        ndtable_gtk.applyProps(widget, props, dupeZ);\n";
   if (w.name === "TreeView") return "        ndtree_gtk.applyProps(widget, props, dupeZ);\n";
+  if (w.name === "CommandPalette") return "        ndpalette_gtk.applyProps(widget, props, dupeZ);\n";
   let out = "";
   for (const p of updProps) {
     if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
@@ -2318,7 +2322,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "terminal" | "hover"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "commandpalette" | "terminal" | "hover"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   // C4: hover isn't a plain GObject signal on the widget itself — it's an
@@ -2406,6 +2410,12 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "TreeView.rowActivated":       { signal: "",              target: "treeview", cb: "", suppress: false },
   "TreeView.nodeExpanded":       { signal: "",              target: "treeview", cb: "", suppress: false },
   "TreeView.nodeCollapsed":      { signal: "",              target: "treeview", cb: "", suppress: false },
+  // CommandPalette events (queryChanged/activate/submit/cancel) all fire from
+  // inside src/gtk/commandpalette.zig — connectEvents hands it node id + emit once.
+  "CommandPalette.queryChanged": { signal: "",              target: "commandpalette", cb: "", suppress: false },
+  "CommandPalette.activate":     { signal: "",              target: "commandpalette", cb: "", suppress: false },
+  "CommandPalette.submit":       { signal: "",              target: "commandpalette", cb: "", suppress: false },
+  "CommandPalette.cancel":       { signal: "",              target: "commandpalette", cb: "", suppress: false },
   // notify::position fires continuously while dragging; cbPanedPositionChanged
   // debounces it into one settled onPositionChanged (ZIG_EXTRA/ndPanedEmitPosition).
   "Paned.positionChanged":       { signal: "notify::position", target: "widget", cb: "cbPanedPositionChanged", suppress: true },
@@ -2652,7 +2662,7 @@ function genZigEvents(s: Schema): string {
     }
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
       || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview"
-      || t.target === "terminal" || t.target === "hover") continue; // custom connect, no GTK callback body
+      || t.target === "commandpalette" || t.target === "terminal" || t.target === "hover") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -2760,6 +2770,13 @@ function genZigEvents(s: Schema): string {
       if (t.target === "treeview") {
         if (!navConnected) {
           out += "        if (emit) |f| ndtree_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "commandpalette") {
+        if (!navConnected) {
+          out += "        if (emit) |f| ndpalette_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
         }
         continue;
@@ -3593,6 +3610,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return makeTrayItem(props)  // NSStatusItem behind a host-only handle (M15, NDShell/TrayItems.swift)\n";
   } else if (w.name === "ShareButton") {
     out += "        return makeShareButton(props)  // NSSharingServicePicker anchor button (M15, NDShell/ShareButtons.swift)\n";
+  } else if (w.name === "CommandPalette") {
+    out += "        return makeCommandPalette(props)  // host-only handle: dimmed scrim + centered card over the window (NDShell/CommandPalette.swift)\n";
   } else if (excludedOn(w, "macos")) {
     out += `        // ND_PLATFORM_NOOP(${w.name}): not available on this platform — invisible empty view by design.\n`;
     out += "        return FlippedView()\n";
@@ -3629,6 +3648,7 @@ const SWIFT_SUPPRESSED = new Set([
   "TreeView.nodes",
   "TreeView.selectedIndex",
   "FontPicker.value",
+  "CommandPalette.query",
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
@@ -3858,6 +3878,14 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        ndShareButtonApply(view, props)  // label/items merged\n";
     } else if (w.name === "ShareButton") {
       out += `        // "${p.name}" handled by ndShareButtonApply above (merged).\n`;
+    } else if (w.name === "CommandPalette" && p.name === "placeholder") {
+      out += '        if let ph = propStr(props, "placeholder") { ndCommandPaletteApplyPlaceholder(view, ph) }\n';
+    } else if (w.name === "CommandPalette" && p.name === "query") {
+      out += '        if let q = propStr(props, "query") { ndCommandPaletteApplyQuery(view, q) }\n';
+    } else if (w.name === "CommandPalette" && p.name === "items") {
+      out += '        if let raw = propObjArray(props, "items") { ndCommandPaletteApplyItems(view, raw) }\n';
+    } else if (w.name === "CommandPalette" && p.name === "open") {
+      out += '        if let o = propBool(props, "open") { ndCommandPaletteApplyOpen(view, o) }\n';
     } else if (excludedOn(w, "macos")) {
       out += `        // ND_PLATFORM_NOOP(${w.name}): prop "${p.name}" is a no-op on this platform by design.\n`;
     } else if (SWIFT_STUB_WIDGETS.has(w.name)) {
@@ -3941,6 +3969,12 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "TreeView.rowActivated":       { selector: "treeview",      payload: "data" },
   "TreeView.nodeExpanded":       { selector: "treeview",      payload: "data" },
   "TreeView.nodeCollapsed":      { selector: "treeview",      payload: "data" },
+  // CommandPalette events fire from NDShell/CommandPalette.swift — one connect
+  // records the nodeID (webview idiom), the handle emits directly.
+  "CommandPalette.queryChanged": { selector: "commandpalette", payload: "text" },
+  "CommandPalette.activate":     { selector: "commandpalette", payload: "text" },
+  "CommandPalette.submit":       { selector: "commandpalette", payload: "text" },
+  "CommandPalette.cancel":       { selector: "commandpalette", payload: "none" },
   "Window.alertResult":          { selector: "windowdialogs", payload: "data" },
   "Window.openFileResult":       { selector: "windowdialogs", payload: "data" },
   "Window.saveFileResult":       { selector: "windowdialogs", payload: "data" },
@@ -3967,6 +4001,7 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   toastoverlay: "ndToastOverlayConnect",
   table: "ndTableConnect",
   treeview: "ndTreeViewConnect",
+  commandpalette: "ndCommandPaletteConnect",
   windowdialogs: "ndWindowDialogsConnect",
   windowtabs: "ndWindowTabsConnect",
   terminal: "ndTerminalConnect",

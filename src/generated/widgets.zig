@@ -16,6 +16,7 @@ const ndtabs_gtk = @import("../gtk/tabs.zig");
 const ndtable_gtk = @import("../gtk/table.zig");
 const ndtree_gtk = @import("../gtk/treeview.zig");
 const ndtoast_gtk = @import("../gtk/toast.zig");
+const ndpalette_gtk = @import("../gtk/commandpalette.zig");
 const nd_plugin = @import("../plugin.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -1491,6 +1492,8 @@ pub fn create(
         gobject.Object.setData(asObject(paned), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));
         _ = gobject.signalConnectData(asObject(paned), "map", @ptrCast(&cbPanedMapped), null, null, .{});
         return paned.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "CommandPalette")) {
+        return ndpalette_gtk.create(props, dupeZ);  // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -1807,6 +1810,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propFloat(props, "position")) |frac| {
             ndPanedApplyPosition(@ptrCast(@alignCast(widget)), frac);
         }
+    } else if (std.mem.eql(u8, kind, "CommandPalette")) {
+        ndpalette_gtk.applyProps(widget, props, dupeZ);
     }
 }
 
@@ -2148,6 +2153,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_Paned_positionChanged = asObject(widget);
         const hid_Paned_positionChanged = gobject.signalConnectData(obj_Paned_positionChanged, "notify::position", @ptrCast(&cbPanedPositionChanged), data, null, .{});
         noteSuppressible(obj_Paned_positionChanged, hid_Paned_positionChanged);
+    } else if (std.mem.eql(u8, kind, "CommandPalette")) {
+        if (emit) |f| ndpalette_gtk.connectEvents(widget, node_id, f);
     }
 }
 

@@ -773,3 +773,22 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|
 | `positionChanged` | `onPositionChanged` | position |
 
+## CommandPalette (`<commandpalette>`)
+
+Automation role: `dialog`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `open` | bool | false | createAndUpdate |
+| `placeholder` | string | — | createAndUpdate |
+| `query` | string |  | createAndUpdate |
+| `items` | objectList | — | createAndUpdate |
+| `testID` | string | — | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `queryChanged` | `onQueryChanged` | text |
+| `activate` | `onActivate` | text |
+| `submit` | `onSubmit` | text |
+| `cancel` | `onCancel` | none |
+

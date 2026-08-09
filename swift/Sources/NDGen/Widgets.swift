@@ -322,6 +322,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         ndPanedControllers[ObjectIdentifier(split)] = controller
         controller.setPositionFraction(propDouble(props, "position") ?? 0.5)
         return split
+    } else if kind == "CommandPalette" {
+        return makeCommandPalette(props)  // host-only handle: dimmed scrim + centered card over the window (NDShell/CommandPalette.swift)
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -528,6 +530,11 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
            let controller = ndPanedController(for: split) {
             controller.setPositionFraction(f)
         }
+    } else if kind == "CommandPalette" {
+        if let o = propBool(props, "open") { ndCommandPaletteApplyOpen(view, o) }
+        if let ph = propStr(props, "placeholder") { ndCommandPaletteApplyPlaceholder(view, ph) }
+        if let q = propStr(props, "query") { ndCommandPaletteApplyQuery(view, q) }
+        if let raw = propObjArray(props, "items") { ndCommandPaletteApplyItems(view, raw) }
     }
 }
 
@@ -602,6 +609,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndTerminalConnect(view, nodeID: nodeID)
     } else if kind == "Paned" {
         ndPanedConnect(view, nodeID: nodeID)
+    } else if kind == "CommandPalette" {
+        ndCommandPaletteConnect(view, nodeID: nodeID)
     }
 }
 
