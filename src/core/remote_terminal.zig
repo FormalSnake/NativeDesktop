@@ -210,6 +210,66 @@ const addrinfo = switch (builtin.os.tag) {
 
 const timespec = extern struct { sec: i64, nsec: i64 };
 
+// fcntl/setsockopt/poll plumbing for the interruptible dial, TCP keepalive,
+// and the heartbeat read timeout. Values differ between Linux and the
+// BSD/macOS family; switch per target like `addrinfo` above.
+const F_GETFL: c_int = 3;
+const F_SETFL: c_int = 4;
+const O_NONBLOCK: c_int = switch (builtin.os.tag) {
+    .linux => 0o4000,
+    else => 0x0004,
+};
+const POLLOUT: i16 = 0x0004;
+const SOL_SOCKET: c_int = switch (builtin.os.tag) {
+    .linux => 1,
+    else => 0xffff,
+};
+const SO_KEEPALIVE: c_int = switch (builtin.os.tag) {
+    .linux => 9,
+    else => 0x0008,
+};
+const SO_ERROR: c_int = switch (builtin.os.tag) {
+    .linux => 4,
+    else => 0x1007,
+};
+const SO_RCVTIMEO: c_int = switch (builtin.os.tag) {
+    .linux => 20,
+    else => 0x1006,
+};
+const IPPROTO_TCP: c_int = 6;
+// macOS spells the keepalive-idle option TCP_KEEPALIVE (0x10), Linux TCP_KEEPIDLE (4).
+const TCP_KEEPIDLE: c_int = switch (builtin.os.tag) {
+    .linux => 4,
+    else => 0x10,
+};
+const TCP_KEEPINTVL: c_int = switch (builtin.os.tag) {
+    .linux => 5,
+    else => 0x101,
+};
+const TCP_KEEPCNT: c_int = switch (builtin.os.tag) {
+    .linux => 6,
+    else => 0x102,
+};
+const EINTR: c_int = 4;
+const EINPROGRESS: c_int = switch (builtin.os.tag) {
+    .linux => 115,
+    else => 36,
+};
+const EWOULDBLOCK: c_int = switch (builtin.os.tag) {
+    .linux => 11,
+    else => 35,
+};
+
+const nfds_t = switch (builtin.os.tag) {
+    .linux => c_ulong,
+    else => c_uint,
+};
+const pollfd = extern struct { fd: c_int, events: i16, revents: i16 };
+const timeval = switch (builtin.os.tag) {
+    .linux => extern struct { sec: c_long, usec: c_long },
+    else => extern struct { sec: c_long, usec: i32 },
+};
+
 extern "c" fn getaddrinfo(node: ?[*:0]const u8, service: ?[*:0]const u8, hints: ?*const addrinfo, res: *?*addrinfo) c_int;
 extern "c" fn freeaddrinfo(res: ?*addrinfo) void;
 extern "c" fn socket(domain: c_int, socktype: c_int, protocol: c_int) c_int;
@@ -219,36 +279,121 @@ extern "c" fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
 extern "c" fn write(fd: c_int, buf: [*]const u8, nbyte: usize) isize;
 extern "c" fn close(fd: c_int) c_int;
 extern "c" fn nanosleep(req: *const timespec, rem: ?*timespec) c_int;
+extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+extern "c" fn poll(fds: [*]pollfd, nfds: nfds_t, timeout: c_int) c_int;
+extern "c" fn setsockopt(fd: c_int, level: c_int, optname: c_int, optval: *const anyopaque, optlen: u32) c_int;
+extern "c" fn getsockopt(fd: c_int, level: c_int, optname: c_int, optval: *anyopaque, optlen: *u32) c_int;
 
-/// Blocking dial of host:port (numeric or DNS, IPv4/IPv6). Returns a connected
-/// fd, or null on any failure. Tries each resolved address in turn.
-fn dial(host: [:0]const u8, port: u16) ?c_int {
+const DIAL_TIMEOUT_MS: u64 = 5_000;
+/// AUTH_OK.heartbeatSec fallback when the daemon omits or zeroes the field.
+const DEFAULT_HEARTBEAT_SEC: u64 = 30;
+/// The read timeout is heartbeat/2, so this many consecutive idle wakes equals
+/// 2x heartbeat of total inbound silence: the dead-link threshold (docs
+/// protocol.md §2.2).
+const DEAD_IDLE_WAKES: u32 = 4;
+
+fn effectiveHeartbeatSec(from_auth_ok: u64) u64 {
+    return if (from_auth_ok == 0) DEFAULT_HEARTBEAT_SEC else from_auth_ok;
+}
+
+/// SO_RCVTIMEO for serveEpoch's read loop: half the heartbeat interval, so
+/// the reader wakes twice per interval to PING and to count silence.
+fn readTimeoutFor(heartbeat_sec: u64) timeval {
+    const half_ms = heartbeat_sec * 500;
+    return .{ .sec = @intCast(half_ms / 1000), .usec = @intCast((half_ms % 1000) * 1000) };
+}
+
+/// Dial conn.host:port (numeric or DNS, IPv4/IPv6) with a bounded,
+/// interruptible connect: O_NONBLOCK + poll with a DIAL_TIMEOUT_MS deadline.
+/// The in-progress fd is published to conn.fd BEFORE the wait so ndrt_close
+/// can shutdown() a hanging dial, and the wait polls in 100ms slices checking
+/// conn.closing (macOS shutdown() on a still-connecting socket is ENOTCONN
+/// and wakes nothing). On success the fd is blocking again with TCP keepalive
+/// armed. Returns null on any failure; tries each resolved address in turn.
+fn dial(conn: *Connection) ?c_int {
     var hints = std.mem.zeroes(addrinfo);
     hints.family = AF_UNSPEC;
     hints.socktype = SOCK_STREAM;
 
     var svc_buf: [8]u8 = undefined;
-    const svc = std.fmt.bufPrintZ(&svc_buf, "{d}", .{port}) catch return null;
+    const svc = std.fmt.bufPrintZ(&svc_buf, "{d}", .{conn.port}) catch return null;
 
     var res: ?*addrinfo = null;
-    if (getaddrinfo(host.ptr, svc.ptr, &hints, &res) != 0) return null;
+    if (getaddrinfo(conn.host.ptr, svc.ptr, &hints, &res) != 0) return null;
     defer freeaddrinfo(res);
 
     var it = res;
     while (it) |ai| : (it = ai.next) {
+        if (conn.closing.load(.seq_cst)) return null;
+        const sa = ai.addr orelse continue;
         const fd = socket(ai.family, ai.socktype, ai.protocol);
         if (fd < 0) continue;
-        if (ai.addr) |sa| {
-            if (connect(fd, sa, ai.addrlen) == 0) return fd;
+        if (connectDeadline(conn, fd, sa, ai.addrlen)) {
+            armKeepalive(fd);
+            return fd;
         }
+        conn.fd.store(-1, .seq_cst);
         _ = close(fd);
     }
     return null;
 }
 
+fn connectDeadline(conn: *Connection, fd: c_int, sa: *const anyopaque, salen: u32) bool {
+    const fl = fcntl(fd, F_GETFL, @as(c_int, 0));
+    if (fl < 0) return false;
+    if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) return false;
+    conn.fd.store(fd, .seq_cst); // published pre-wait: ndrt_close can shutdown() this fd
+    if (connect(fd, sa, salen) != 0) {
+        if (std.c._errno().* != EINPROGRESS) return false;
+        var pfd = [1]pollfd{.{ .fd = fd, .events = POLLOUT, .revents = 0 }};
+        var waited_ms: u64 = 0;
+        var ready = false;
+        while (waited_ms < DIAL_TIMEOUT_MS) {
+            if (conn.closing.load(.seq_cst)) return false;
+            const rc = poll(&pfd, 1, 100);
+            if (rc > 0) {
+                ready = true;
+                break;
+            }
+            if (rc < 0 and std.c._errno().* != EINTR) return false;
+            waited_ms += 100;
+        }
+        if (!ready) return false;
+        var err: c_int = 0;
+        var errlen: u32 = @sizeOf(c_int);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen) != 0 or err != 0) return false;
+    }
+    return fcntl(fd, F_SETFL, fl) >= 0;
+}
+
+/// SO_KEEPALIVE with aggressive probing (idle 20s, then 5s x 3 probes) so a
+/// blackholed link also dies at the TCP layer, independent of the PING cycle.
+fn armKeepalive(fd: c_int) void {
+    var v: c_int = 1;
+    _ = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &v, @sizeOf(c_int));
+    v = 20;
+    _ = setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &v, @sizeOf(c_int));
+    v = 5;
+    _ = setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &v, @sizeOf(c_int));
+    v = 3;
+    _ = setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &v, @sizeOf(c_int));
+}
+
 fn sleepMs(ms: u64) void {
     const ts = timespec{ .sec = @intCast(ms / 1000), .nsec = @intCast((ms % 1000) * 1_000_000) };
     _ = nanosleep(&ts, null);
+}
+
+/// Backoff sleep in 100ms slices watching conn.closing, so ndrt_close never
+/// waits out a full reconnect backoff (up to 45s) to join the reader.
+fn sleepInterruptible(conn: *Connection, total_ms: u64) void {
+    var remaining = total_ms;
+    while (remaining > 0) {
+        if (conn.closing.load(.seq_cst)) return;
+        const slice = @min(remaining, 100);
+        sleepMs(slice);
+        remaining -= slice;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +455,10 @@ const Connection = struct {
     by_srv: std.AutoHashMapUnmanaged(u32, *Channel) = .empty,
     refcount: usize = 0,
 
-    // From AUTH_OK.
+    // From AUTH_OK. heartbeat_sec is only touched on the reader thread
+    // (serveEpoch reads it, handleFrame's AUTH_OK arm writes it).
     ack_window_bytes: u64 = 256 * 1024,
+    heartbeat_sec: u64 = DEFAULT_HEARTBEAT_SEC,
 
     rng: u64, // cheap LCG state for backoff jitter
 
@@ -387,10 +534,10 @@ fn transportOutputTramp(userdata: ?*anyopaque, bytes: [*]const u8, len: usize) c
 fn readerMain(conn: *Connection) void {
     var backoff_ms: u64 = 250;
     while (!conn.closing.load(.seq_cst) and !conn.failed.load(.seq_cst)) {
-        const fd = dial(conn.host, conn.port) orelse {
+        const fd = dial(conn) orelse {
             markAllReconnecting(conn);
             const jitter = conn.nextJitter(backoff_ms / 2);
-            sleepMs(backoff_ms + jitter);
+            sleepInterruptible(conn, backoff_ms + jitter);
             backoff_ms = @min(backoff_ms * 2, 30_000);
             continue;
         };
@@ -412,12 +559,38 @@ fn readerMain(conn: *Connection) void {
     }
 }
 
-/// Read + dispatch frames until the socket closes.
+/// Read + dispatch frames until the socket closes or the link goes silent.
+/// SO_RCVTIMEO (heartbeat/2, from AUTH_OK.heartbeatSec) wakes the blocking
+/// read periodically; each idle wake sends a PING, and DEAD_IDLE_WAKES
+/// consecutive idle wakes (2x heartbeat with no inbound bytes at all, PONGs
+/// included) ends the epoch like an EOF so the normal redial/backoff path
+/// runs instead of blocking forever on a blackholed peer.
 fn serveEpoch(conn: *Connection, fd: c_int) void {
     var buf: [65536]u8 = undefined;
+    var applied_hb: u64 = 0;
+    var idle_wakes: u32 = 0;
+    var ping_nonce: u64 = 0;
     while (true) {
+        if (conn.heartbeat_sec != applied_hb) {
+            applied_hb = conn.heartbeat_sec;
+            var tv = readTimeoutFor(applied_hb);
+            _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, @sizeOf(timeval));
+        }
         const rc = read(fd, &buf, buf.len);
-        if (rc <= 0) return; // EOF / error / woken by shutdown()
+        if (rc == 0) return; // EOF / woken by shutdown()
+        if (rc < 0) {
+            const e = std.c._errno().*;
+            if (e == EINTR) continue;
+            if (e != EWOULDBLOCK) return; // hard socket error
+            idle_wakes += 1;
+            if (idle_wakes >= DEAD_IDLE_WAKES) return; // silent link: reconnect
+            ping_nonce += 1;
+            var nonce: [8]u8 = undefined;
+            std.mem.writeInt(u64, nonce[0..8], ping_nonce, .little);
+            conn.sendFrame(FrameType.ping, &nonce);
+            continue;
+        }
+        idle_wakes = 0;
         const n: usize = @intCast(rc);
         conn.decoder.push(buf[0..n]) catch return; // OOM: drop the epoch
         while (true) {
@@ -439,6 +612,7 @@ fn handleFrame(conn: *Connection, frame_type: u8, body: []const u8) void {
             const parsed = std.json.parseFromSlice(AuthOk, gpa, body, .{ .ignore_unknown_fields = true }) catch return;
             defer parsed.deinit();
             if (parsed.value.ackWindowBytes > 0) conn.ack_window_bytes = parsed.value.ackWindowBytes;
+            conn.heartbeat_sec = effectiveHeartbeatSec(parsed.value.heartbeatSec);
             sendAttachAll(conn);
         },
         FrameType.auth_err => {
@@ -935,6 +1109,23 @@ test "frameBytes rejects a body over the max frame size" {
     const big = try testing.allocator.alloc(u8, MAX_FRAME);
     defer testing.allocator.free(big);
     try testing.expectError(FrameError.BadFrame, frameBytes(testing.allocator, FrameType.output, big));
+}
+
+test "heartbeat falls back to 30s when AUTH_OK omits or zeroes heartbeatSec" {
+    const testing = std.testing;
+    try testing.expectEqual(DEFAULT_HEARTBEAT_SEC, effectiveHeartbeatSec(0));
+    try testing.expectEqual(@as(u64, 7), effectiveHeartbeatSec(7));
+}
+
+test "read timeout is half the heartbeat interval" {
+    const testing = std.testing;
+    const tv30 = readTimeoutFor(30);
+    try testing.expect(tv30.sec == 15 and tv30.usec == 0);
+    const tv1 = readTimeoutFor(1);
+    try testing.expect(tv1.sec == 0 and tv1.usec == 500_000);
+    // DEAD_IDLE_WAKES half-interval wakes must add up to the 2x-heartbeat
+    // silence budget (docs/protocol.md §2.2).
+    try testing.expectEqual(@as(u64, 2 * 30 * 1000), DEAD_IDLE_WAKES * 30 * 500);
 }
 
 // ---------------------------------------------------------------------------
