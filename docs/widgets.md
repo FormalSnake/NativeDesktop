@@ -48,6 +48,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string |  | create |
+| `ellipsize` | bool | false | create |
 | `testID` | string | — | meta |
 
 ## Button (`<button>`)
@@ -60,6 +61,8 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `testID` | string | — | meta |
 | `iconName` | string | — | create |
 | `labelAlign` | start \| center \| end | center | create |
+| `ellipsize` | bool | false | create |
+| `tooltip` | string | — | createAndUpdate |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -184,6 +187,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `minContentHeight` | int | 0 | create |
+| `hscroll` | auto \| never | auto | create |
 | `testID` | string | — | meta |
 
 ## Separator (`<separator>`)

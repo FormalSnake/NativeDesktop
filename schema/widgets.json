@@ -113,6 +113,7 @@
       "container": null,
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -126,7 +127,9 @@
         { "name": "label", "type": "string", "default": "Button", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
-        { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" }
+        { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" },
+        { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" }
       ],
       "events": [
         { "name": "clicked", "ndpName": "onClick" },
@@ -253,6 +256,7 @@
       "container": { "childModel": "single" },
       "props": [
         { "name": "minContentHeight", "type": "int", "default": 0, "appliesTo": "create" },
+        { "name": "hscroll", "type": "enum", "values": ["auto", "never"], "default": "auto", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],

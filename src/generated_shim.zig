@@ -21,6 +21,7 @@ pub const widgetCommand = g.widgetCommand;
 pub const appendChild = g.appendChild;
 pub const insertBefore = g.insertBefore;
 pub const removeChild = g.removeChild;
+pub const ndPanedStructuralTeardown = g.ndPanedStructuralTeardown;
 pub const StyleTarget = g.StyleTarget;
 pub const StyleKeyDef = g.StyleKeyDef;
 pub const style_keys = g.style_keys;

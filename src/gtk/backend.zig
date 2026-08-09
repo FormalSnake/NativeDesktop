@@ -160,6 +160,10 @@ pub fn hasParent(widget: *gtk.Widget) bool {
 
 pub fn unparentWidget(widget: *gtk.Widget) void {
     if (!isRealWidget(widget)) return; // menu node: nothing to unparent
+    // dev-mode GC sweep path: a doomed <paned> needs the same settle-timer
+    // cancel here as the ordinary removeChild dispatch (AppKit peer:
+    // Backend.swift's vt.unparent calling ndPanedTeardown).
+    generated.ndPanedStructuralTeardown(widget);
     gtk.Widget.unparent(widget);
 }
 

@@ -35,7 +35,11 @@ final class PanedController: NSObject, NSSplitViewDelegate {
     let split: NSSplitView
     private var suppressed = false
     private var pendingFraction: Double?
+    // Last known fraction, programmatic or user-dragged; reapplyFraction
+    // restores it after subview mutations discard the divider position.
+    private var lastFraction: Double?
     private var debounce: DispatchWorkItem?
+    private let minPaneExtent: CGFloat = 120
 
     init(split: NSSplitView) {
         self.split = split
@@ -56,6 +60,20 @@ final class PanedController: NSObject, NSSplitViewDelegate {
     /// pass, so an early write is stashed and replayed by `frameChanged`
     /// once real geometry exists.
     func setPositionFraction(_ frac: Double) {
+        lastFraction = frac
+        guard extent > 0 else { pendingFraction = frac; return }
+        suppressed = true
+        split.setPosition(frac * extent, ofDividerAt: 0)
+        suppressed = false
+    }
+
+    /// The generated structural arms call this after any pane add/remove:
+    /// NSSplitView's adjustSubviews redistributes on subview mutation,
+    /// silently discarding the divider position while the JS-side `position`
+    /// value is unchanged (so no prop update arrives to restore it).
+    /// Re-applies the last known fraction once both panes exist.
+    func reapplyFraction() {
+        guard let frac = lastFraction, split.subviews.count == 2 else { return }
         guard extent > 0 else { pendingFraction = frac; return }
         suppressed = true
         split.setPosition(frac * extent, ofDividerAt: 0)
@@ -84,7 +102,17 @@ final class PanedController: NSObject, NSSplitViewDelegate {
     private func emitPosition() {
         guard extent > 0, let first = split.subviews.first else { return }
         let frac = (split.isVertical ? first.frame.width : first.frame.height) / extent
+        lastFraction = Double(frac)
         ndEmitEvent(nodeID, "positionChanged", "{\"position\":\(frac)}")
+    }
+
+    /// Keeps either pane from being dragged below minPaneExtent.
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        max(proposedMinimumPosition, minPaneExtent)
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        min(proposedMaximumPosition, extent - minPaneExtent)
     }
 
     /// Undoes `init`: drops the frame-change observer and any in-flight

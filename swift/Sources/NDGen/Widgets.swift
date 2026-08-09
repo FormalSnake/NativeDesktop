@@ -64,6 +64,11 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
         let label = NDTextField(labelWithString: text)
+        if propBool(props, "ellipsize") ?? false {
+            // Truncate instead of forcing the min width to the full text.
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         return label
     } else if kind == "Button" {
         let lbl = propStr(props, "label") ?? "Button"
@@ -77,6 +82,11 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         case "end": b.alignment = .right
         default: break
         }
+        if propBool(props, "ellipsize") ?? false {
+            b.lineBreakMode = .byTruncatingTail
+            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        if let tt = propStr(props, "tooltip") { b.toolTip = tt }
         return b
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
@@ -141,6 +151,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ScrollView" {
         let sv = NSScrollView()
         sv.hasVerticalScroller = true
+        if propStr(props, "hscroll") == "never" { sv.hasHorizontalScroller = false }
         sv.drawsBackground = false
         let doc = FlippedView()
         sv.documentView = doc
@@ -324,6 +335,8 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
             stack.spacing = CGFloat(sp)
         }
+    } else if kind == "Button" {
+        if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }
     } else if kind == "TextInput" {
         if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {
             withEchoSuppressed(view) { field.stringValue = t }
@@ -746,6 +759,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "Paned" {
         let split = parent as! NSSplitView
         split.addSubview(child)
+        ndPanedController(for: split)?.reapplyFraction()
     } else {
         FileHandle.standardError.write("ND_WARN append to non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }
@@ -834,7 +848,9 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "Paned" {
         let split = parent as! NSSplitView
-        split.addSubview(child)
+        let idx = split.arrangedSubviews.firstIndex(of: before) ?? split.arrangedSubviews.count
+        split.insertArrangedSubview(child, at: idx)
+        ndPanedController(for: split)?.reapplyFraction()
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
         ndAppendChild(parent, parentKind, child, attachedJson)
@@ -927,8 +943,9 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     } else if parentKind == "TrayItem" {
         ndMenuOwnerRemove(parent, child)
     } else if parentKind == "Paned" {
-        _ = parent
+        let split = parent as! NSSplitView
         child.removeFromSuperview()
+        ndPanedController(for: split)?.reapplyFraction()
     } else {
         FileHandle.standardError.write("ND_WARN remove from non-container kind=\(parentKind)\n".data(using: .utf8)!)
     }

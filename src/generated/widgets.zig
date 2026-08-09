@@ -915,16 +915,16 @@ fn ndVideoSetSrc(video: *gtk.Video, src: [:0]const u8) void {
 // ---- cmux-parity-polish-2: Paned (draggable two-child split, distinct from
 // SplitView's collapsible-sidebar AdwOverlaySplitView) ----
 const ND_PANED_PENDING_FRACTION = "nd-paned-pending-fraction";
+const ND_PANED_TICK_ID = "nd-paned-tick-id";
 const ND_PANED_DEBOUNCE_ID = "nd-paned-debounce-id";
 const ND_PANED_NODE_ID = "nd-paned-node-id";
 
 /// `position` is a 0..1 fraction of the total size, but GtkPaned's own
 /// `position` property is a pixel offset from the left/top — converting
 /// needs the widget's current allocation, which is 0 until the first layout
-/// pass. Applied immediately once allocated (the update path, and a replay
-/// from cbPanedMapped); otherwise stashed for cbPanedMapped to replay once
-/// "map" fires (GTK4 dropped the old size-allocate signal, so there is no
-/// cheaper "first laid out" hook on a plain widget).
+/// pass. Applied immediately once allocated (the update path); otherwise
+/// stashed for the first-layout tick retry (cbPanedMapped/ndPanedTickApply)
+/// to replay once real geometry exists.
 fn ndPanedApplyPosition(paned: *gtk.Paned, frac: f64) void {
     const widget = paned.as(gtk.Widget);
     const horizontal = gtk.Orientable.getOrientation(paned.as(gtk.Orientable)) == .horizontal;
@@ -933,6 +933,8 @@ fn ndPanedApplyPosition(paned: *gtk.Paned, frac: f64) void {
         // +1: a bit-cast 0.0 fraction is the null pointer, which qdata can't
         // tell apart from "no data set" — offset by one, undo it on read.
         gobject.Object.setData(asObject(widget), ND_PANED_PENDING_FRACTION, @ptrFromInt(@as(usize, @bitCast(frac)) + 1));
+        // An already-mapped widget gets no further "map", so kick the retry here.
+        if (gtk.Widget.getMapped(widget) != 0) ndPanedEnsureTick(widget);
         return;
     }
     blockEcho(asObject(widget));
@@ -940,11 +942,39 @@ fn ndPanedApplyPosition(paned: *gtk.Paned, frac: f64) void {
     unblockEcho(asObject(widget));
 }
 
+/// GTK4 emits "map" BEFORE the first size-allocate, so the allocation is
+/// still 0 here and the stashed fraction can't be converted yet. Start a
+/// per-frame tick retry instead of applying directly.
 fn cbPanedMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
-    const raw = gobject.Object.getData(obj, ND_PANED_PENDING_FRACTION) orelse return;
+    if (gobject.Object.getData(obj, ND_PANED_PENDING_FRACTION) == null) return;
+    ndPanedEnsureTick(@ptrCast(@alignCast(obj)));
+}
+
+fn ndPanedEnsureTick(widget: *gtk.Widget) void {
+    const obj = asObject(widget);
+    if (gobject.Object.getData(obj, ND_PANED_TICK_ID) != null) return;
+    const id = gtk.Widget.addTickCallback(widget, &ndPanedTickApply, null, null);
+    gobject.Object.setData(obj, ND_PANED_TICK_ID, @ptrFromInt(@as(usize, id))); // tick ids start at 1
+}
+
+/// Applies the stashed fraction on the first frame with a real allocation,
+/// then removes itself. GTK drops live tick callbacks when the widget is
+/// destroyed, so no extra teardown bookkeeping is needed.
+fn ndPanedTickApply(widget: *gtk.Widget, _: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) c_int {
+    const obj = asObject(widget);
+    const raw = gobject.Object.getData(obj, ND_PANED_PENDING_FRACTION) orelse {
+        gobject.Object.setData(obj, ND_PANED_TICK_ID, null);
+        return 0; // G_SOURCE_REMOVE: the update path applied it meanwhile
+    };
+    const paned: *gtk.Paned = @ptrCast(@alignCast(widget));
+    const horizontal = gtk.Orientable.getOrientation(paned.as(gtk.Orientable)) == .horizontal;
+    const total = if (horizontal) gtk.Widget.getAllocatedWidth(widget) else gtk.Widget.getAllocatedHeight(widget);
+    if (total <= 0) return 1; // G_SOURCE_CONTINUE: not laid out yet
     gobject.Object.setData(obj, ND_PANED_PENDING_FRACTION, null);
+    gobject.Object.setData(obj, ND_PANED_TICK_ID, null);
     const frac: f64 = @bitCast(@as(usize, @intFromPtr(raw)) - 1); // undo the +1 offset from setData
-    ndPanedApplyPosition(@ptrCast(@alignCast(obj)), frac);
+    ndPanedApplyPosition(paned, frac);
+    return 0; // G_SOURCE_REMOVE
 }
 
 /// Fired 150ms after the last notify::position (cbPanedPositionChanged's
@@ -965,6 +995,20 @@ fn ndPanedEmitPosition(user_data: ?*anyopaque) callconv(.c) c_int {
     const frac = @as(f64, @floatFromInt(gtk.Paned.getPosition(paned))) / @as(f64, @floatFromInt(total));
     if (emit) |f| f(node_id, "positionChanged", .{ .position = frac });
     return 0; // G_SOURCE_REMOVE
+}
+
+/// Cross-cutting removal hook (AppKit peer: ndPanedTeardown in
+/// PanedController.swift): a removed `<paned>`'s pending 150ms settle timer
+/// (cbPanedPositionChanged) would otherwise outlive the widget's place in
+/// the tree and fire against stale geometry. Cancels it and drops the ref
+/// the timer held. No-op for every other widget kind.
+pub fn ndPanedStructuralTeardown(child: *gtk.Widget) void {
+    if (!gobject.ext.isA(child, gtk.Paned)) return;
+    const obj = asObject(child);
+    const raw = gobject.Object.getData(obj, ND_PANED_DEBOUNCE_ID) orelse return;
+    _ = glib.Source.remove(@intCast(@intFromPtr(raw)));
+    gobject.Object.setData(obj, ND_PANED_DEBOUNCE_ID, null);
+    gobject.Object.unref(obj); // the cancelled timer's ref
 }
 
 /// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-
@@ -992,6 +1036,14 @@ pub fn create(
         // GtkLabel defaults to centered text when it is allocated extra width.
         // Native form rows expect their expanding title labels to stay leading-aligned.
         gtk.Label.setXalign(label, 0.0);
+        if (propBool(props, "ellipsize") orelse false) {
+            // The label must stop dictating its parent's width: .end caps the
+            // minimum at one ellipsis, max-width-chars(1) caps the natural
+            // request too, and hexpand still fills whatever the row has.
+            gtk.Label.setEllipsize(label, .end);
+            gtk.Label.setMaxWidthChars(label, 1);
+            gtk.Widget.setHexpand(label.as(gtk.Widget), 1);
+        }
         return label.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Button")) {
         const lbl = propStr(props, "label") orelse "Button";
@@ -1021,6 +1073,15 @@ pub fn create(
                 }
             }
         }
+        if (propBool(props, "ellipsize") orelse false) {
+            // can-shrink ellipsizes the title instead of forcing the button's
+            // min width to the full text (GTK 4.12+ / libadwaita 1.4+).
+            gtk.Button.setCanShrink(button, 1);
+            if (gtk.Button.getChild(button)) |child| {
+                if (gobject.ext.isA(child, adw.ButtonContent)) adw.ButtonContent.setCanShrink(@ptrCast(@alignCast(child)), 1);
+            }
+        }
+        if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(button.as(gtk.Widget), dupeZ(tt));
         return button.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
@@ -1089,6 +1150,11 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "ScrollView")) {
         const sw = gtk.ScrolledWindow.new();
         if (propInt(props, "minContentHeight")) |h| { if (h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(h)); }
+        // hscroll=never clamps content to the viewport width instead of
+        // growing a horizontal scrollbar under vertically-scrolling lists.
+        if (propStr(props, "hscroll")) |h| {
+            if (std.mem.eql(u8, h, "never")) gtk.ScrolledWindow.setPolicy(sw, .never, .automatic);
+        }
         return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Separator")) {
         const vertical = if (propStr(props, "orientation")) |o| std.mem.eql(u8, o, "vertical") else false;
@@ -1434,6 +1500,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             const box: *gtk.Box = @ptrCast(@alignCast(widget));
             gtk.Box.setSpacing(box, @intCast(s));
         }
+    } else if (std.mem.eql(u8, kind, "Button")) {
+        if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         if (propStr(props, "text")) |t| {
             const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
@@ -2269,6 +2337,10 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (gtk.Widget.getParent(child) == parent) gtk.Widget.unparent(child);
         return;
     }
+    // Cross-cutting: cancel a torn-down `<paned>`'s pending settle timer.
+    // Additive, not a short-circuit: the ordinary container dispatch below
+    // still runs (AppKit peer: ndPanedTeardown in ndRemoveChild).
+    ndPanedStructuralTeardown(child);
     if (std.mem.eql(u8, parent_kind, "Window")) {
         if (gobject.ext.isA(child, gtk.Widget)) ndtabs_gtk.removeFromWindow(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {

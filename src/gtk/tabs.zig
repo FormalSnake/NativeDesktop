@@ -210,26 +210,78 @@ fn createScaffold(app: *gtk.Application, group: *Group, width: c_int, height: c_
 /// Window-node content attach. Plain window: AdwApplicationWindow.setContent.
 /// Page bin: mount the child and inject tab chrome — into the app's own
 /// AdwToolbarView when it has one (tab bar lands BELOW its headerbar, the
-/// Epiphany layout), else under a framework AdwToolbarView wrapper.
+/// Epiphany layout). An AdwOverlaySplitView child gets the chrome in its
+/// CONTENT pane only, so the sidebar runs full height and the tabs render
+/// over the content pane. Anything else lands under a framework
+/// AdwToolbarView wrapper.
+/// Tab chrome placement keys on what's INSIDE transparent single-child
+/// wrappers an app may put between the window and its real root (an
+/// AdwToastOverlay so toasts overlay the whole window) — otherwise a
+/// toast-wrapped split view silently takes the full-width fallback.
+fn effectiveWindowChild(child: *gtk.Widget) *gtk.Widget {
+    var cur = child;
+    while (gobject.ext.isA(cur, adw.ToastOverlay)) {
+        const overlay: *adw.ToastOverlay = @ptrCast(@alignCast(cur));
+        cur = adw.ToastOverlay.getChild(overlay) orelse return cur;
+    }
+    return cur;
+}
+
 pub fn appendToWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
     if (!isTabBin(parent)) {
         adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
         return;
     }
     const bin: *adw.Bin = @ptrCast(@alignCast(parent));
-    if (gobject.ext.isA(child, adw.ToolbarView)) {
+    const effective = effectiveWindowChild(child);
+    if (gobject.ext.isA(effective, adw.ToolbarView)) {
         setData(parent, K_WRAPPER, null);
         adw.Bin.setChild(bin, child);
-        const tv: *adw.ToolbarView = @ptrCast(@alignCast(child));
+        const tv: *adw.ToolbarView = @ptrCast(@alignCast(effective));
         injectTabBar(parent, tv);
         injectTabButtonInto(parent, tv);
+    } else if (gobject.ext.isA(effective, adw.OverlaySplitView)) {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(effective));
+        // Children commit before parents, so the split view's content pane
+        // is already mounted here; a content-less split view (degenerate
+        // tree) falls back to the full-width wrapper below.
+        if (adw.OverlaySplitView.getContent(sv)) |content| {
+            setData(parent, K_WRAPPER, null);
+            adw.Bin.setChild(bin, child);
+            if (gobject.ext.isA(content, adw.ToolbarView)) {
+                const tv: *adw.ToolbarView = @ptrCast(@alignCast(content));
+                injectTabBar(parent, tv);
+                injectTabButtonInto(parent, tv);
+            } else {
+                // Wrap only the content pane. Ref bracket across the
+                // reparent: setContent(null) drops the split view's ref and
+                // would destroy an unowned content child (the M8 GC lesson).
+                const wrapper = adw.ToolbarView.new();
+                setData(parent, K_WRAPPER, wrapper);
+                _ = gobject.Object.ref(@as(*gobject.Object, @ptrCast(@alignCast(content))));
+                adw.OverlaySplitView.setContent(sv, null);
+                adw.ToolbarView.setContent(wrapper, content);
+                _ = gobject.Object.unref(@as(*gobject.Object, @ptrCast(@alignCast(content))));
+                adw.OverlaySplitView.setContent(sv, wrapper.as(gtk.Widget));
+                injectTabBar(parent, wrapper);
+            }
+            return;
+        }
+        wrapWholeChild(parent, bin, child);
     } else {
-        const wrapper = adw.ToolbarView.new();
-        setData(parent, K_WRAPPER, wrapper);
-        adw.ToolbarView.setContent(wrapper, child);
-        adw.Bin.setChild(bin, wrapper.as(gtk.Widget));
-        injectTabBar(parent, wrapper);
+        wrapWholeChild(parent, bin, child);
     }
+}
+
+/// Framework AdwToolbarView wrapper around the ENTIRE window child, carrying
+/// the tab bar full-width (apps with neither a root <toolbarview> nor a
+/// sidebar split).
+fn wrapWholeChild(parent: *gtk.Widget, bin: *adw.Bin, child: *gtk.Widget) void {
+    const wrapper = adw.ToolbarView.new();
+    setData(parent, K_WRAPPER, wrapper);
+    adw.ToolbarView.setContent(wrapper, child);
+    adw.Bin.setChild(bin, wrapper.as(gtk.Widget));
+    injectTabBar(parent, wrapper);
 }
 
 pub fn removeFromWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
@@ -244,12 +296,22 @@ pub fn removeFromWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
             adw.ToolbarView.setContent(wrapper, null);
             return;
         }
+        // Split-view content wrapper: it lives inside the departing child's
+        // subtree and dies with it, so forget it here.
+        if (gtk.Widget.isAncestor(wrapper.as(gtk.Widget), child) != 0) setData(parent, K_WRAPPER, null);
     }
-    // Direct-mounted app toolbarview: reclaim the injected tab bar before the
-    // child (and the bar with it) is torn down, so re-append re-injects fresh.
+    // Reclaim the injected tab bar from whichever AdwToolbarView carries it
+    // (direct-mounted app toolbarview, split-view content toolbarview, or the
+    // synthetic content wrapper) before the child subtree is torn down, so
+    // re-append re-injects fresh.
     if (getData(parent, K_TAB_BAR)) |tb| {
         const bar: *adw.TabBar = @ptrCast(@alignCast(tb));
-        if (gobject.ext.isA(child, adw.ToolbarView)) adw.ToolbarView.remove(@ptrCast(@alignCast(child)), bar.as(gtk.Widget));
+        const bar_w = bar.as(gtk.Widget);
+        if (gtk.Widget.getAncestor(bar_w, adw.ToolbarView.getGObjectType())) |tvw| {
+            if (tvw == child or gtk.Widget.isAncestor(tvw, child) != 0) {
+                adw.ToolbarView.remove(@ptrCast(@alignCast(tvw)), bar_w);
+            }
+        }
         setData(parent, K_TAB_BAR, null);
     }
     adw.Bin.setChild(bin, null);
@@ -274,11 +336,20 @@ fn injectTabBar(bin: *gtk.Widget, tv: *adw.ToolbarView) void {
 /// Generated ToolbarView arm hook: a <headerbar> just attached. If this
 /// toolbarview lives in a tab page, (a) our tab bar must sit BELOW the new
 /// headerbar (AdwToolbarView stacks top bars in add order — re-adding moves
-/// ours to the end) and (b) the headerbar gains the AdwTabButton.
+/// ours to the end) and (b) the headerbar gains the AdwTabButton. Headerbars
+/// in a split view's sidebar (or list) pane get neither: tab chrome belongs
+/// to the content pane only.
 pub fn onHeaderBarAttached(tv: *adw.ToolbarView, header: *gtk.Widget) void {
     const tvw = tv.as(gtk.Widget);
-    const bin = gtk.Widget.getAncestor(tvw, adw.Bin.getGObjectType()) orelse return;
-    if (!isTabBin(bin)) return;
+    // Walk AdwBin ancestors until the tab page bin: adw containers keep
+    // internal bins between a slot child and the container itself.
+    var bin_w: ?*gtk.Widget = gtk.Widget.getAncestor(tvw, adw.Bin.getGObjectType());
+    while (bin_w) |b| {
+        if (isTabBin(b)) break;
+        bin_w = if (gtk.Widget.getParent(b)) |p| gtk.Widget.getAncestor(p, adw.Bin.getGObjectType()) else null;
+    }
+    const bin = bin_w orelse return;
+    if (inSidebarSlot(tvw)) return;
     if (getData(bin, K_TAB_BAR)) |tb| {
         const bar: *adw.TabBar = @ptrCast(@alignCast(tb));
         if (gtk.Widget.getParent(bar.as(gtk.Widget)) == tvw) {
@@ -299,6 +370,22 @@ fn injectTabButtonInto(bin: *gtk.Widget, tv: *adw.ToolbarView) void {
             return;
         }
     }
+}
+
+/// True when `w` sits inside the sidebar slot of any AdwOverlaySplitView
+/// ancestor (the nested list-pane split counts too). Slot membership is
+/// checked against the split view's LOGICAL sidebar child, because adw keeps
+/// internal widgets between slot children and the split view itself.
+fn inSidebarSlot(w: *gtk.Widget) bool {
+    var anc: ?*gtk.Widget = gtk.Widget.getAncestor(w, adw.OverlaySplitView.getGObjectType());
+    while (anc) |a| {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(a));
+        if (adw.OverlaySplitView.getSidebar(sv)) |sb| {
+            if (w == sb or gtk.Widget.isAncestor(w, sb) != 0) return true;
+        }
+        anc = if (gtk.Widget.getParent(a)) |p| gtk.Widget.getAncestor(p, adw.OverlaySplitView.getGObjectType()) else null;
+    }
+    return false;
 }
 
 fn findHeaderBar(w: *gtk.Widget) ?*adw.HeaderBar {
