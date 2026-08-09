@@ -79,6 +79,9 @@ comptime {
     _ = &terminal.ndterm_selection_text;
     _ = &terminal.ndterm_write_paste;
     _ = &terminal.ndterm_scrollback_state;
+    // History-replay attach (canary docs/protocol.md replay:"history").
+    // Appended, not interleaved, per the house rule above.
+    _ = &remote_terminal.ndrt_open_history;
 }
 
 test {

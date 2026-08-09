@@ -408,6 +408,10 @@ const Channel = struct {
     session_id: [:0]u8, // owned
     channel: u32 = 0, // server-assigned (valid once attached_once)
     attached_once: bool = false,
+    /// Fresh ATTACHes (no lastSeq) request `replay: "history"` (§2.2): the
+    /// daemon replays the session's retained ring history into this fresh VT
+    /// instead of a screen-only snapshot. Set only via ndrt_open_history.
+    replay_history: bool = false,
     dead: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     term: ?*align(8) anyopaque = null, // virtual ndterm handle (core Terminal is 8-aligned)
@@ -746,10 +750,14 @@ fn sendAttachAll(conn: *Connection) void {
     for (conn.members.items) |ch| {
         ch.notifyState(RT_AUTHED, null);
         const last: ?u64 = if (ch.attached_once) ch.last_seq else null;
+        // §2.2: `replay` is only consulted when lastSeq is absent; a warm
+        // re-ATTACH keeps the exact byte-gap semantics regardless of the flag.
+        const replay: ?[]const u8 = if (ch.replay_history and last == null) "history" else null;
         conn.sendJson(FrameType.attach, .{
             .sessionId = @as([]const u8, ch.session_id),
             .role = @as([]const u8, "controller"),
             .lastSeq = last,
+            .replay = replay,
             .cols = ch.cols,
             .rows = ch.rows,
         });
@@ -870,7 +878,7 @@ pub export fn ndrt_open(
     state_cb: ?StateCb,
     userdata: ?*anyopaque,
 ) callconv(.c) ?*Channel {
-    return openImpl(host, port, session_id, ticket, cols, rows, null, effect_cb, state_cb, userdata);
+    return openImpl(host, port, session_id, ticket, cols, rows, null, false, effect_cb, state_cb, userdata);
 }
 
 /// WP polish-1 deliverable 7: same as ndrt_open, plus an optional open-time
@@ -889,7 +897,29 @@ pub export fn ndrt_open_ex(
     state_cb: ?StateCb,
     userdata: ?*anyopaque,
 ) callconv(.c) ?*Channel {
-    return openImpl(host, port, session_id, ticket, cols, rows, opts, effect_cb, state_cb, userdata);
+    return openImpl(host, port, session_id, ticket, cols, rows, opts, false, effect_cb, state_cb, userdata);
+}
+
+/// Same as ndrt_open_ex, but the fresh ATTACH opts into the daemon's
+/// retained-ring history replay (canary docs/protocol.md §2.2
+/// `replay: "history"`): the daemon feeds the session's ring history
+/// (screen *and* scrollback, bounded by ring capacity) into this fresh VT
+/// instead of a screen-only snapshot. Falls back to the ordinary
+/// snapshot/live attach when the daemon cannot serve history (older daemon,
+/// empty ring), so callers need no special handling.
+pub export fn ndrt_open_history(
+    host: ?[*:0]const u8,
+    port: u16,
+    session_id: ?[*:0]const u8,
+    ticket: ?[*:0]const u8,
+    cols: u16,
+    rows: u16,
+    opts: ?*const ndterm.nd_term_open_opts,
+    effect_cb: ?EffectCb,
+    state_cb: ?StateCb,
+    userdata: ?*anyopaque,
+) callconv(.c) ?*Channel {
+    return openImpl(host, port, session_id, ticket, cols, rows, opts, true, effect_cb, state_cb, userdata);
 }
 
 fn openImpl(
@@ -900,6 +930,7 @@ fn openImpl(
     cols: u16,
     rows: u16,
     opts: ?*const ndterm.nd_term_open_opts,
+    replay_history: bool,
     effect_cb: ?EffectCb,
     state_cb: ?StateCb,
     userdata: ?*anyopaque,
@@ -916,6 +947,7 @@ fn openImpl(
     ch.* = .{
         .conn = undefined,
         .session_id = sid_owned,
+        .replay_history = replay_history,
         .cols = @max(1, cols),
         .rows = @max(1, rows),
         .effect_cb = effect_cb,
@@ -1176,6 +1208,17 @@ const MockDaemon = struct {
     next_channel: u32 = 1,
     stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     attaches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    /// When set, an ATTACH carrying `replay:"history"` (and no lastSeq) is
+    /// answered with mode "history" plus a RESET-flagged OUTPUT carrying
+    /// `history_payload`; the daemon side of docs/protocol.md §2.2.
+    history_mode: bool = false,
+    /// ATTACHes seen with `replay:"history"` and no lastSeq.
+    history_attaches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    /// ATTACHes where the replay field appeared in any other combination
+    /// (present alongside lastSeq, or on a channel that never opted in).
+    replay_misuse: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    const history_payload = "\x1b]2;hist-title\x07HIST";
 
     fn send(self: *MockDaemon, fd: c_int, ftype: u8, body: []const u8) void {
         var hdr: [5]u8 = undefined;
@@ -1214,14 +1257,31 @@ const MockDaemon = struct {
                 switch (frame.frame_type) {
                     FrameType.auth => self.send(fd, FrameType.auth_ok, "{\"ackWindowBytes\":262144}"),
                     FrameType.attach => {
-                        const Body = struct { sessionId: []const u8 = "" };
+                        const Body = struct { sessionId: []const u8 = "", lastSeq: ?u64 = null, replay: ?[]const u8 = null };
                         const parsed = std.json.parseFromSlice(Body, gpa, frame.body, .{ .ignore_unknown_fields = true }) catch continue;
                         defer parsed.deinit();
+                        const wants_history = if (parsed.value.replay) |r| std.mem.eql(u8, r, "history") else false;
+                        if (wants_history and parsed.value.lastSeq == null) {
+                            _ = self.history_attaches.fetchAdd(1, .seq_cst);
+                        } else if (parsed.value.replay != null) {
+                            _ = self.replay_misuse.fetchAdd(1, .seq_cst);
+                        }
                         const chan = self.next_channel;
                         self.next_channel += 1;
                         var jb: [256]u8 = undefined;
-                        const j = std.fmt.bufPrint(&jb, "{{\"sessionId\":\"{s}\",\"channel\":{d},\"seq\":0,\"cols\":80,\"rows\":24,\"mode\":\"live\"}}", .{ parsed.value.sessionId, chan }) catch continue;
-                        self.send(fd, FrameType.attached, j);
+                        if (self.history_mode and wants_history and parsed.value.lastSeq == null) {
+                            const j = std.fmt.bufPrint(&jb, "{{\"sessionId\":\"{s}\",\"channel\":{d},\"seq\":{d},\"cols\":80,\"rows\":24,\"mode\":\"history\"}}", .{ parsed.value.sessionId, chan, history_payload.len }) catch continue;
+                            self.send(fd, FrameType.attached, j);
+                            var out: [13 + history_payload.len]u8 = undefined;
+                            std.mem.writeInt(u32, out[0..4], chan, .little);
+                            std.mem.writeInt(u64, out[4..12], history_payload.len, .little);
+                            out[12] = FLAG_RESET; // history resync: RESET, no SNAPSHOT (§2.2)
+                            @memcpy(out[13..], history_payload);
+                            self.send(fd, FrameType.output, &out);
+                        } else {
+                            const j = std.fmt.bufPrint(&jb, "{{\"sessionId\":\"{s}\",\"channel\":{d},\"seq\":0,\"cols\":80,\"rows\":24,\"mode\":\"live\"}}", .{ parsed.value.sessionId, chan }) catch continue;
+                            self.send(fd, FrameType.attached, j);
+                        }
                         _ = self.attaches.fetchAdd(1, .seq_cst);
                     },
                     else => {}, // drain INPUT/ACK/DETACH
@@ -1298,4 +1358,69 @@ test "close while output streams on an orphaned channel does not use-after-free"
     if (raw != 0) _ = shutdown(@intCast(raw - 1), SHUT_RDWR);
     serve_t.join();
     stream_t.join();
+}
+
+// ---------------------------------------------------------------------------
+// History-replay attach (docs/protocol.md §2.2 replay: "history"): the wire
+// request carries the field only on a lastSeq-less ATTACH, and the replayed
+// bytes reach the fresh VT through the ordinary OUTPUT feed path.
+// ---------------------------------------------------------------------------
+
+const HistCap = struct {
+    var title_ok = std.atomic.Value(bool).init(false);
+    var mode_history = std.atomic.Value(bool).init(false);
+
+    // The replayed payload carries an OSC 2 title: the VT parsing it (and the
+    // effect surfacing here) proves the bytes were fed into the fresh VT.
+    fn effectCb(_: ?*anyopaque, kind: c_int, text: ?[*:0]const u8, _: c_int) callconv(.c) void {
+        if (kind != 0) return; // 0 = title
+        const t = text orelse return;
+        if (std.mem.eql(u8, std.mem.span(t), "hist-title")) title_ok.store(true, .seq_cst);
+    }
+
+    fn stateCb(_: ?*anyopaque, state: c_int, detail: ?[*:0]const u8) callconv(.c) void {
+        if (state != RT_ATTACHED) return;
+        const d = detail orelse return;
+        if (std.mem.eql(u8, std.mem.span(d), "history")) mode_history.store(true, .seq_cst);
+    }
+};
+
+test "ndrt_open_history requests replay:history and feeds the replayed bytes into the fresh VT" {
+    const lb = try loopbackListen();
+    var daemon = MockDaemon{ .listen_fd = lb.fd, .port = lb.port, .history_mode = true };
+    defer _ = close(daemon.listen_fd);
+    const serve_t = try std.Thread.spawn(.{}, MockDaemon.serve, .{&daemon});
+
+    var host_buf: [16]u8 = undefined;
+    const host = try std.fmt.bufPrintZ(&host_buf, "127.0.0.1", .{});
+
+    HistCap.title_ok.store(false, .seq_cst);
+    HistCap.mode_history.store(false, .seq_cst);
+
+    const h = ndrt_open_history(host.ptr, daemon.port, "sess-h", "", 40, 10, null, HistCap.effectCb, HistCap.stateCb, null) orelse return error.OpenFailed;
+
+    var spins: u32 = 0;
+    while (!HistCap.title_ok.load(.seq_cst) and spins < 2000) : (spins += 1) sleepMs(1);
+    try std.testing.expect(HistCap.title_ok.load(.seq_cst)); // replayed bytes reached the VT
+    try std.testing.expect(HistCap.mode_history.load(.seq_cst)); // ATTACHED reported mode "history"
+    try std.testing.expectEqual(@as(u32, 1), daemon.history_attaches.load(.seq_cst));
+    try std.testing.expectEqual(@as(u32, 0), daemon.replay_misuse.load(.seq_cst));
+
+    // A plain open on the shared connection re-ATTACHes every member: sess-p
+    // must never carry the replay field, and sess-h's re-ATTACH now has a
+    // lastSeq so it must not either (misuse counts both).
+    var attached = std.atomic.Value(u32).init(0);
+    const p = ndrt_open(host.ptr, daemon.port, "sess-p", "", 40, 10, null, &stateCbCount, &attached) orelse return error.OpenFailed;
+    spins = 0;
+    while (daemon.attaches.load(.seq_cst) < 3 and spins < 2000) : (spins += 1) sleepMs(1);
+    try std.testing.expect(daemon.attaches.load(.seq_cst) >= 3);
+    try std.testing.expectEqual(@as(u32, 0), daemon.replay_misuse.load(.seq_cst));
+
+    ndrt_close(p);
+    ndrt_close(h);
+
+    daemon.stop.store(true, .seq_cst);
+    const raw = daemon.stream.load(.seq_cst);
+    if (raw != 0) _ = shutdown(@intCast(raw - 1), SHUT_RDWR);
+    serve_t.join();
 }

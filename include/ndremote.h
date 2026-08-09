@@ -57,6 +57,18 @@ nd_remote_terminal *ndrt_open_ex(const char *host, uint16_t port,
                                  const nd_term_open_opts *opts,
                                  nd_term_effect_cb effect_cb,
                                  nd_rt_state_cb state_cb, void *userdata);
+/* Same as ndrt_open_ex, but the fresh ATTACH opts into the daemon's
+   retained-ring history replay (canary docs/protocol.md replay:"history"):
+   the fresh VT is rebuilt from the session's ring history (screen and
+   scrollback, bounded by ring capacity) instead of a screen-only snapshot.
+   Falls back to the ordinary snapshot/live attach when the daemon cannot
+   serve history, so callers need no special handling. */
+nd_remote_terminal *ndrt_open_history(const char *host, uint16_t port,
+                                      const char *session_id, const char *ticket,
+                                      uint16_t cols, uint16_t rows,
+                                      const nd_term_open_opts *opts,
+                                      nd_term_effect_cb effect_cb,
+                                      nd_rt_state_cb state_cb, void *userdata);
 /* The virtual ndterm render handle — the surface draws this exactly like a
    local terminal (ndterm_render_lock/_cell/_cursor/_write_input, and also
    ndterm_scroll_viewport/ndterm_mouse_mode — there is no separate
