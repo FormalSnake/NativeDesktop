@@ -157,6 +157,7 @@ fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8
             const id = objStr(it.object, "id") orelse "";
             const title = objStr(it.object, "title") orelse "";
             const row = adw.ActionRow.new();
+            gtk.Widget.setFocusable(row.as(gtk.Widget), 0); // keyboard stays on the entry; see the ListBox setup in create()
             adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
             if (objStr(it.object, "subtitle")) |sub| adw.ActionRow.setSubtitle(row, dupeZ(sub));
             if (objStr(it.object, "iconName")) |ic| {
@@ -262,6 +263,16 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     gtk.ListBox.setSelectionMode(list, .browse);
     gtk.ListBox.setActivateOnSingleClick(list, 1);
     gtk.Widget.addCssClass(list.as(gtk.Widget), "boxed-list");
+    // Keyboard focus stays on the search entry, always: its capture-phase key
+    // controller is the ONLY keyboard route to `activate` (onKeyPressed). If the
+    // list (or a row) could hold focus, a pointer click that drills into a folder
+    // would move focus onto the list, and the next Return would fire GtkListBox's
+    // activate-cursor-row -> row-activated -> a SECOND `activate` alongside
+    // onKeyPressed's — the add-project-twice bug. A non-focusable list can't be
+    // that second path; mouse activation (activate-on-single-click) and the
+    // automation row-activated emit are gesture/signal driven, not focus driven,
+    // so both still fire exactly once. Rows are made non-focusable in rebuildRows.
+    gtk.Widget.setFocusable(list.as(gtk.Widget), 0);
     gtk.ScrolledWindow.setChild(scroller, list.as(gtk.Widget));
 
     gtk.Box.append(content, entry.as(gtk.Widget));
