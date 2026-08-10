@@ -28,10 +28,12 @@ export default defineConfig({
 						{ label: 'Architecture', slug: 'core-concepts/architecture' },
 						{ label: 'App Model', slug: 'core-concepts/app-model' },
 						{ label: 'State & Hot Reload', slug: 'core-concepts/state-hot-reload' },
+						{ label: 'Error Handling', slug: 'core-concepts/error-handling' },
 						{ label: 'Styling & Design Language', slug: 'core-concepts/styling-design-language' },
 						{ label: 'Automation-First', slug: 'core-concepts/automation-first' },
 						{ label: 'Imperative Commands & Refs', slug: 'core-concepts/imperative-commands' },
 						{ label: 'App Data & Storage', slug: 'core-concepts/app-data-storage' },
+						{ label: 'RPC Client', slug: 'core-concepts/rpc-client' },
 					],
 				},
 				{

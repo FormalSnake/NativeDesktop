@@ -70,3 +70,8 @@ export type {
   AudioSpectrumEvent,
 } from "./system.ts";
 export { openExternal, openPath, revealPath } from "./shell.ts";
+export { onUnhandledError, setUnhandledErrorPolicy } from "./errors.ts";
+export type { NdErrorKind, NdErrorContext, NdErrorHandler, UnhandledErrorPolicy } from "./errors.ts";
+export { useMountEffect } from "./hooks.ts";
+export { createStore, useStoreValue } from "./store.ts";
+export type { Store, StoreOptions } from "./store.ts";

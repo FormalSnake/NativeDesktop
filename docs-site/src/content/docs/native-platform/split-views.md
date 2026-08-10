@@ -72,6 +72,56 @@ otherwise ask for less. Don't assume a small `listWidth` (e.g. `0.15`) will
 render a genuinely narrow list column at typical window widths; measure against the 240pt floor
 before relying on an exact initial pixel width.
 
+## Tiling panes: `PaneTree` / `usePaneTree`
+
+`<splitview>` is the app-frame shape (sidebar/list/content). For user-driven tiling, terminal
+splits, editor panes, and anything else where the user splits and closes at will, use
+`@nativedesktop/panes` (`packages/panes/`): a pure model plus a component over the existing
+`<paned>` widget. No new widget, no schema or ABI change; each split renders as a real native
+`GtkPaned` / `NSSplitView` with a draggable divider.
+
+```tsx
+import { PaneTree, seedPanes, usePaneTree } from "@nativedesktop/panes";
+
+function Editor(): React.ReactNode {
+  const panes = usePaneTree(seedPanes([{ file: "notes.md" }]));
+  return (
+    <PaneTree
+      model={panes.model}
+      onChange={panes.setModel}
+      renderLeaf={({ id, data, focused, solo }) => (
+        <box orientation="vertical">
+          <label text={`${data.file}${focused ? " (focused)" : ""}`} />
+          <button label="Split" onClick={() => panes.split(id, "horizontal", { file: "new.md" })} />
+          {!solo && <button label="Close" onClick={() => panes.close(id)} />}
+        </box>
+      )}
+    />
+  );
+}
+```
+
+The model is a strictly binary tree (`PaneLeaf | PaneSplit`) with pure ops: `splitPane`,
+`closePane`, `focusPane`/`focusPaneAt`/`focusNeighbor`, `setPaneRatio`, `updatePane`,
+`paneLeaves`, `samePaneShape`, and `migratePanes` for reviving persisted state (garbage in,
+empty model out). Every op returns the same reference when nothing changed, which is what keeps
+the native `positionChanged` echo after a programmatic ratio write from looping through a
+render+persist cycle. Ratios are clamped to `[0.05, 0.95]` (`clampPaneRatio`); non-finite input
+becomes `0.5`, and echoes at or beyond the clamp bounds are dropped as mid-layout noise (a
+settled drag can't reach them past the backends' native minimum pane extents).
+
+`usePaneTree` holds the model in state and applies every op against a ref rather than the
+render-time model, so an `await`-resuming split can't revert a divider drag that happened in
+between; `latest()` exposes that ref for persistence. `renderLeaf` owns all per-pane chrome
+(focus ring, toolbar); `PaneTree` supplies `focused`/`solo` and one expanding `<box>` wrapper per
+leaf. Splits are keyed on the split node's id because `orientation` is create-only on both
+backends: a structural collapse landing a different split at the same position remounts instead
+of mutating.
+
+Persist the model with [`createStore`](/core-concepts/app-data-storage/): `store.set(panes.latest())`
+on change, `flush()` when `samePaneShape` says the change was structural. `examples/panes/` is the
+worked example (and the headless acceptance fixture, `scripts/headless-panes.sh`).
+
 ## Automation
 
 Three-pane trees expose the same `getTree`/`semanticClick` contract as any other widget nesting (see

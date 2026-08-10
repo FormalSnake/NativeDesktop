@@ -40,6 +40,8 @@ jobs:
         run: nix develop -c ./scripts/headless-m5c.sh
       - name: headless m8
         run: nix develop -c ./scripts/headless-m8.sh
+      - name: headless errors
+        run: nix develop -c ./scripts/headless-errors.sh
       - name: bun tests (runtime)
         run: nix develop -c bun test runtime/ndp-binary.test.ts
       - name: build demo plugin
@@ -48,3 +50,7 @@ jobs:
         run: nix develop -c ./scripts/headless-m10.sh
       - name: headless notes (native chrome)
         run: nix develop -c ./scripts/headless-notes.sh
+      - name: bun tests (packages)
+        run: nix develop -c bun test packages/
+      - name: headless panes (store restore + pane tree)
+        run: nix develop -c ./scripts/headless-panes.sh

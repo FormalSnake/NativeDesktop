@@ -18,9 +18,11 @@ getAppDataDir(); // resolve the path; does not create it
 ensureAppDataDir(); // resolve AND mkdir -p it, returning the same path
 ```
 
-The app name comes from the nearest `package.json`'s `name` field (the same `cwd` `loadConfig()`
-resolves `nativedesktop.config.ts` from); there's no separate app-identity config. The
-resolved path follows each OS's own convention:
+In a packaged app the name comes from the bundle's `nd-app.json` (written by
+[`nd package`](/packaging/) from `app.name`); in dev it comes from the nearest `package.json`'s
+`name` field (the same `cwd` `loadConfig()` resolves `nativedesktop.config.ts` from), so apps that
+configure no `app.name` keep the same directory in both modes. The resolved path follows each OS's
+own convention:
 
 | Platform | Path |
 | --- | --- |
@@ -31,6 +33,69 @@ resolved path follows each OS's own convention:
 `getAppDataDir()` just resolves the path; `ensureAppDataDir()` also creates it (`mkdirSync` with
 `recursive: true`) and hands back the same string, so it's the one you want before writing a file or
 opening a database there.
+
+## `createStore`: versioned JSON settings
+
+For settings, layouts, and other small persistent state, `createStore` (exported from
+`@nativedesktop/react`, `packages/react/src/store.ts`) manages one `${name}.json` file under
+`getAppDataDir()` (or a `dir` override):
+
+```tsx
+import { createStore, render, useStoreValue } from "@nativedesktop/react";
+
+const settings = createStore<{ theme: string }>({
+  name: "settings", // -> <appDataDir>/settings.json
+  version: 1,
+  defaults: { theme: "system" },
+  migrate: (raw, fromVersion) => {
+    // Called on EVERY load, current-version files included: this one hook is
+    // where validation, sanitizing, and upgrades all live. Return null to
+    // reject the file and start over from defaults.
+    if (typeof raw !== "object" || raw === null) return null;
+    return raw as { theme: string };
+  },
+});
+
+await settings.load(); // top-level await, right before render()
+await render(<App />);
+```
+
+The load-before-render idiom is the whole design: the app entry is already `await render(<App />)`,
+so `await store.load()` on the line above costs nothing and makes `store.get()` synchronous inside
+every component. There is no loading flash, no restore effect, no Suspense boundary; a `get()`
+before `load()` resolves throws a named error rather than returning a silent default.
+
+Inside components, subscribe with `useStoreValue(store)` (optionally `useStoreValue(store, select)`),
+and write with `store.set(next)` or `store.update(fn)`. The API:
+
+```ts
+createStore<T>(options: StoreOptions<T>): Store<T> // deduped by resolved file path
+
+load(): Promise<T>        // idempotent; repeat calls return the same promise
+get(): T                  // synchronous after load()
+set(next: T): void        // notifies subscribers, schedules a debounced write
+update(fn: (prev: T) => T): void
+subscribe(cb: (value: T) => void): () => void
+flush(): Promise<void>    // awaits the pending debounced write plus every queued one
+loadError: Error | undefined
+```
+
+Persistence semantics:
+
+- **Debounced, atomic writes.** Sets are collapsed on a 250ms debounce (`debounceMs`), each write
+  lands via write-to-tmp + rename, and writes are serialized so an older snapshot can never land
+  after a newer one. Call `flush()` after a structural change you don't want to lose (a pane
+  closed, a tab reordered); let ratio-drag-style churn ride the debounce.
+- **Exit safety.** A last-resort synchronous flush of any pending value runs on `exit`, `SIGINT`,
+  and `SIGTERM` (the host stops the Bun child with SIGTERM).
+- **Versioning.** The file carries a `{ version, data }` envelope. `migrate(raw, fromVersion)` is
+  the single validate-and-upgrade hook; without one, only exact-version files load.
+- **Corruption.** An unparseable or rejected file is renamed to `${name}.corrupt.json` (one slot,
+  overwritten), the store starts from `defaults`, and `loadError` records why: the app keeps
+  launching, and the bad file stays rescuable.
+
+Bring your own validator (zod and friends) inside `migrate` if you want one; the store deliberately
+does not depend on any, matching `@nativedesktop/data`'s ORM-agnostic stance.
 
 ## `@nativedesktop/data`: worker-backed SQLite
 
