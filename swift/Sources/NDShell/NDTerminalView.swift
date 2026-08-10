@@ -33,6 +33,10 @@ final class NDTerminalView: NSView {
     private let boldFont: NSFont
     private let cellW: CGFloat
     private let cellH: CGFloat
+    /// Baseline offset within a cell (the primary face's ascent). One value for
+    /// the whole grid so the ASCII run path and the per-cell fallback path put
+    /// every glyph on the same line, regardless of bold or substitute face.
+    private let ascent: CGFloat
     /// Current grid dimensions. Start from the create-time props, then track
     /// the view's pixel size in `setFrameSize`/`layout` (→ `ndterm_resize`/
     /// `ndrt_resize`).
@@ -91,24 +95,32 @@ final class NDTerminalView: NSView {
     private var selAnchorCol: UInt16 = 0
     private var selAnchorRow: UInt16 = 0
 
-    /// Cell width is the advance of a representative ASCII glyph, NOT
-    /// `NSFont.maximumAdvancement` — that's the widest glyph in the WHOLE
-    /// font, and a Nerd Font's huge Powerline/devicon glyph set can push it
-    /// many times wider than an actual monospace character (verified: a
-    /// GeistMono Nerd Font cell otherwise blows up to ~90pt). `defaultLineHeight`
-    /// is the font's natural row pitch. Ceil both to keep cell rects on
-    /// integral pixels. `fontFamily` unset (or not resolvable by name) falls
-    /// back to the system monospace face — never hardcodes Menlo.
-    private static func metrics(_ fontSize: Int, _ fontFamily: String?) -> (NSFont, NSFont, CGFloat, CGFloat) {
+    /// Cell width is the widest advance over printable ASCII (Ghostty: usually
+    /// 'M' but take whatever is widest), NOT `NSFont.maximumAdvancement` — that's
+    /// the widest glyph in the WHOLE font, and a Nerd Font's huge Powerline/
+    /// devicon glyph set can push it many times wider than an actual monospace
+    /// character (verified: a GeistMono Nerd Font cell otherwise blows up to
+    /// ~90pt). `defaultLineHeight` is the font's natural row pitch. Ceil both to
+    /// keep cell rects on integral pixels. The fourth return is the baseline
+    /// ascent. `fontFamily` unset (or not resolvable by name) falls back to the
+    /// system monospace face — never hardcodes Menlo.
+    private static func metrics(_ fontSize: Int, _ fontFamily: String?) -> (NSFont, NSFont, CGFloat, CGFloat, CGFloat) {
         let f = fontFamily.flatMap { NSFont(name: $0, size: CGFloat(fontSize)) }
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
         let bold = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
-        let cellWidth = ("M" as NSString).size(withAttributes: [.font: f]).width
-        return (f, bold, ceil(cellWidth), ceil(NSLayoutManager().defaultLineHeight(for: f)))
+
+        var chars = [UniChar]((0x20...0x7e).map { UniChar($0) })
+        var glyphs = [CGGlyph](repeating: 0, count: chars.count)
+        CTFontGetGlyphsForCharacters(f as CTFont, &chars, &glyphs, chars.count)
+        var advances = [CGSize](repeating: .zero, count: chars.count)
+        CTFontGetAdvancesForGlyphs(f as CTFont, .horizontal, &glyphs, &advances, chars.count)
+        let cellWidth = advances.reduce(CGFloat(0)) { max($0, $1.width) }
+
+        return (f, bold, ceil(cellWidth), ceil(NSLayoutManager().defaultLineHeight(for: f)), f.ascender)
     }
 
     init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
-        (self.font, self.boldFont, self.cellW, self.cellH) = Self.metrics(fontSize, fontFamily)
+        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent) = Self.metrics(fontSize, fontFamily)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
         self.isRemote = false
@@ -153,7 +165,7 @@ final class NDTerminalView: NSView {
     /// the daemon for retained-ring replay, so the VT rebuilds scrollback (the
     /// core falls back to snapshot/live when history is unavailable).
     init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
-        (self.font, self.boldFont, self.cellW, self.cellH) = Self.metrics(fontSize, fontFamily)
+        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent) = Self.metrics(fontSize, fontFamily)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
         self.isRemote = true
@@ -298,17 +310,17 @@ final class NDTerminalView: NSView {
     /// installed font (including Nerd Fonts for PUA codepoints — unlike the
     /// automatic script-based cascade plain `NSString.draw` would use, which
     /// can't route PUA codepoints anywhere) and the result is cached by
-    /// codepoint. Returns (font, isSubstitute); the caller clips a substitute
-    /// draw to the owned cell rect (see `draw`) since a mis-metric'd
-    /// fallback face could otherwise smear into the next cell.
-    private func resolvedFont(for grapheme: String, primary: NSFont) -> (NSFont, Bool) {
-        guard let scalar = grapheme.unicodeScalars.first, scalar.value >= 0x80 else { return (primary, false) }
+    /// codepoint. ASCII always returns the primary. The caller draws every
+    /// result on the shared baseline and scales an oversized glyph to fit the
+    /// cell rather than clipping it (see `drawCellIndividual`).
+    private func resolvedFont(for grapheme: String, primary: NSFont) -> NSFont {
+        guard let scalar = grapheme.unicodeScalars.first, scalar.value >= 0x80 else { return primary }
         let cp = scalar.value
-        if primaryCovers.contains(cp) { return (primary, false) }
-        if let cached = fallbackFonts[cp] { return (cached, true) }
+        if primaryCovers.contains(cp) { return primary }
+        if let cached = fallbackFonts[cp] { return cached }
 
         let utf16 = Array(grapheme.utf16)
-        guard !utf16.isEmpty else { return (primary, false) }
+        guard !utf16.isEmpty else { return primary }
         var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
         let covered = utf16.withUnsafeBufferPointer { u in
             glyphs.withUnsafeMutableBufferPointer { g in
@@ -317,11 +329,11 @@ final class NDTerminalView: NSView {
         }
         if covered {
             primaryCovers.insert(cp)
-            return (primary, false)
+            return primary
         }
         let substitute = CTFontCreateForString(font, grapheme as CFString, CFRange(location: 0, length: utf16.count)) as NSFont
         fallbackFonts[cp] = substitute
-        return (substitute, true)
+        return substitute
     }
 
     // MARK: - render
@@ -457,18 +469,22 @@ final class NDTerminalView: NSView {
         var cursor = nd_term_cursor()
         ndterm_cursor(t, &cursor)
         if cursor.visible != 0, Int(cursor.x) < Int(lcols), Int(cursor.y) < Int(lrows) {
-            let cx = CGFloat(cursor.x) * cellW
-            let cy = CGFloat(cursor.y) * cellH
-            let curRect = NSRect(x: cx, y: cy, width: cellW, height: cellH)
-            // Solid block: paint the cell in the default fg, then re-stamp its
-            // glyph in the default bg so the character reads through the block.
-            defaultFg.setFill()
-            curRect.fill()
             ndterm_cell(t, cursor.x, cursor.y, &cell)
+            let flags = UInt32(cell.flags)
+            let isWide = (flags & NDTERM_FLAG_WIDE) != 0
+            let curRect = NSRect(x: CGFloat(cursor.x) * cellW, y: CGFloat(cursor.y) * cellH,
+                                 width: isWide ? cellW * 2 : cellW, height: cellH)
+            // Block cursor = invert the cell: fill with its fg, then re-stamp the
+            // glyph in its bg through the same per-cell path (correct face +
+            // fallback + shared baseline + scale-to-fit) so a bold or nerd glyph
+            // under the cursor reads through the block. Mirrors the GTK surface.
+            nsColor(cell.fg).setFill()
+            curRect.fill()
             let s = graphemeString(cell)
             if !s.isEmpty {
-                (s as NSString).draw(at: NSPoint(x: cx, y: cy),
-                                     withAttributes: [.font: font, .foregroundColor: defaultBg])
+                drawCellIndividual(ctx, grapheme: s, x: Int(cursor.x), y: Int(cursor.y),
+                                   isWide: isWide, bold: (flags & NDTERM_FLAG_BOLD) != 0,
+                                   underline: (flags & NDTERM_FLAG_UNDERLINE) != 0, fg: nsColor(cell.bg))
             }
         }
 
@@ -503,13 +519,15 @@ final class NDTerminalView: NSView {
                               bold: Bool, color: NSColor, underline: Bool) {
         guard let ctx, !glyphs.isEmpty else { return }
         let face = bold ? boldFont : font
-        let baseline = CGFloat(row) * cellH + face.ascender
+        let baseline = CGFloat(row) * cellH + ascent
         var positions = [CGPoint]()
         positions.reserveCapacity(glyphs.count)
         for i in 0..<glyphs.count {
             positions.append(CGPoint(x: CGFloat(startCol + i) * cellW, y: baseline))
         }
         ctx.saveGState()
+        ctx.setShouldAntialias(true)
+        ctx.setShouldSmoothFonts(true)
         ctx.setFillColor(color.cgColor)
         ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         CTFontDrawGlyphs(face as CTFont, glyphs, positions, glyphs.count, ctx)
@@ -521,25 +539,58 @@ final class NDTerminalView: NSView {
         }
     }
 
-    /// Per-cell draw for a non-ASCII / wide / fallback-face grapheme: the exact
-    /// a45f481 path — resolve a substitute font for uncovered codepoints and
-    /// clip a substitute draw to the owned cell rect so a wide fallback face
-    /// can't smear into the neighbor.
+    /// Per-cell draw for a non-ASCII / wide / fallback-face grapheme. Resolves a
+    /// substitute face for uncovered codepoints, then draws through CoreText on
+    /// the SAME baseline the ASCII run path uses so a nerd/CJK/box glyph lines up
+    /// with the surrounding text. Oversized glyphs (a Nerd Font's Powerline or
+    /// devicon set routinely overflows a monospace cell) are uniformly scaled to
+    /// fit the cell box and centered, never clipped or sliced — Ghostty's glyph
+    /// "fit" constraint (min(1, boxW/inkW, boxH/inkH), contain-only, no enlarge).
     private func drawCellIndividual(_ ctx: CGContext?, grapheme s: String, x: Int, y: Int,
                                     isWide: Bool, bold: Bool, underline: Bool, fg: NSColor) {
-        let primaryFace = bold ? boldFont : font
-        let (drawFont, isSubstitute) = resolvedFont(for: s, primary: primaryFace)
-        var attrs: [NSAttributedString.Key: Any] = [.font: drawFont, .foregroundColor: fg]
-        if underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        let rect = NSRect(x: CGFloat(x) * cellW, y: CGFloat(y) * cellH,
-                          width: isWide ? cellW * 2 : cellW, height: cellH)
-        if isSubstitute {
-            ctx?.saveGState()
-            ctx?.clip(to: rect)
-            (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
-            ctx?.restoreGState()
-        } else {
-            (s as NSString).draw(at: NSPoint(x: rect.minX, y: rect.minY), withAttributes: attrs)
+        guard let ctx else { return }
+        let drawFont = resolvedFont(for: s, primary: bold ? boldFont : font)
+        let boxW = isWide ? cellW * 2 : cellW
+        let box = NSRect(x: CGFloat(x) * cellW, y: CGFloat(y) * cellH, width: boxW, height: cellH)
+        let baseline = CGFloat(y) * cellH + ascent
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: drawFont,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): fg.cgColor,
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: s, attributes: attrs) as CFAttributedString)
+        // Ink bounds of the actual drawn pixels, relative to the pen origin on
+        // the baseline (typographic space: +y is up, descent is negative).
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        let inkW = max(ink.width, 0.001)
+        let inkH = max(ink.height, 0.001)
+        // Contain-only: 1 when the glyph already fits the cell, < 1 when it
+        // overflows. Never enlarges.
+        let scale = min(1, boxW / inkW, cellH / inkH)
+
+        ctx.saveGState()
+        ctx.setShouldAntialias(true)
+        ctx.setShouldSmoothFonts(true)
+        if scale < 1 {
+            // Overflowing glyph: shrink to fit and center in the cell box. The
+            // natural ink center (pen at box.minX / baseline) maps onto box.mid.
+            let inkCenterX = box.minX + ink.origin.x + inkW / 2
+            let inkCenterY = baseline - ink.origin.y - inkH / 2
+            ctx.translateBy(x: box.midX, y: box.midY)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -inkCenterX, y: -inkCenterY)
+        }
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textPosition = CGPoint(x: box.minX, y: baseline)
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
+
+        // Underline drawn as a cell-wide rule (matching the ASCII run path)
+        // rather than the glyph's own decoration, so it never scales with an
+        // oversized glyph and lines up across ASCII and fallback cells.
+        if underline {
+            fg.setFill()
+            NSRect(x: box.minX, y: CGFloat(y) * cellH + cellH - 1, width: boxW, height: 1).fill()
         }
     }
 
