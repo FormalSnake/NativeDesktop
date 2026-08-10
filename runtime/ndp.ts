@@ -3,9 +3,9 @@
 // Field names below are a contract with the Zig host (src/protocol.zig) — verbatim, no renaming.
 //
 // runtime->host families: hello, commitBatch, event, ping, and (M8)
-// runtimeError { message, stack } — a best-effort report of an uncaught
-// exception / unhandled rejection sent before the process exits, so the
-// host's crash overlay shows the real error instead of a bare disconnect.
+// runtimeError { message, stack, fatal }, a best-effort report of an
+// uncaught error. fatal=true precedes a process exit (crash overlay shows
+// the text); fatal=false reports a survived error (host logs it, no overlay).
 
 import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 // Message shapes are GENERATED from schema/protocol.json (the single source
@@ -236,12 +236,12 @@ export class Ndp {
     this.send({ type: "ping" });
   }
 
-  /// Best-effort report of an uncaught exception / unhandled rejection,
-  /// flushed through the same outbox as commits — sent before the process
-  /// dies so the host's overlay (M8) shows the real error, not a bare
-  /// disconnect.
-  sendRuntimeError(message: string, stack: string): void {
-    this.send({ type: "runtimeError", message, stack });
+  /// Best-effort error report, flushed through the same outbox as commits.
+  /// fatal=true is sent just before the process dies so the host's overlay
+  /// (M8) shows the real error, not a bare disconnect; fatal=false reports
+  /// a survived error the host logs without stashing.
+  sendRuntimeError(message: string, stack: string, fatal: boolean): void {
+    this.send({ type: "runtimeError", message, stack, fatal });
   }
 }
 

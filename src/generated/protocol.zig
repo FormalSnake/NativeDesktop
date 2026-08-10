@@ -95,12 +95,15 @@ pub const Pong = struct {
     type: []const u8 = "pong",
 };
 
-/// Best-effort report of an uncaught exception / unhandled rejection, sent before the child
-/// exits so the host's crash overlay (M8) shows the real error instead of a bare disconnect.
+/// Best-effort report of an uncaught error. fatal=true means the child exits after sending (the
+/// host stashes the text for the crash overlay, M8); fatal=false means the app survived (host
+/// prints ND_RUNTIME_ERROR_NONFATAL and must NOT stash, so a stale report never becomes overlay
+/// text).
 pub const RuntimeError = struct {
     type: []const u8 = "runtimeError",
     message: []const u8,
     stack: []const u8,
+    fatal: bool,
 };
 
 /// Dispatches a loaded native plugin's command (M10); gated on the plugin:<plugin>.<command>

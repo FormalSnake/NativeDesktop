@@ -154,10 +154,11 @@
       "tsName": "RuntimeErrorMsg",
       "zigName": "RuntimeError",
       "direction": "runtimeToHost",
-      "doc": "Best-effort report of an uncaught exception / unhandled rejection, sent before the child exits so the host's crash overlay (M8) shows the real error instead of a bare disconnect.",
+      "doc": "Best-effort report of an uncaught error. fatal=true means the child exits after sending (the host stashes the text for the crash overlay, M8); fatal=false means the app survived (host prints ND_RUNTIME_ERROR_NONFATAL and must NOT stash, so a stale report never becomes overlay text).",
       "fields": [
         { "name": "message", "type": "string" },
-        { "name": "stack", "type": "string" }
+        { "name": "stack", "type": "string" },
+        { "name": "fatal", "type": "bool" }
       ]
     },
     {

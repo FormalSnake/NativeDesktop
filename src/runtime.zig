@@ -338,15 +338,23 @@ pub const Runtime = struct {
         return payload;
     }
 
-    /// Parses a `runtimeError {message, stack}` frame and stashes both into
-    /// `last_error_message`/`last_error_stack` — the crash overlay reads
-    /// these when the imminent disconnect triggers `onChildExit`. Best-effort:
-    /// a malformed frame is dropped, never crashes the reader loop.
+    /// Parses a `runtimeError {message, stack, fatal}` frame. fatal=true:
+    /// stashes both into `last_error_message`/`last_error_stack`, which the
+    /// crash overlay reads when the imminent disconnect triggers
+    /// `onChildExit`. fatal=false: the child survived; log only, never stash
+    /// (a stale non-fatal message must not become overlay text on a later
+    /// crash). Best-effort: a malformed frame is dropped, never crashes the
+    /// reader loop. `fatal` defaults true so a frame missing the field takes
+    /// the conservative (overlay) path.
     fn stashRuntimeError(self: *Runtime, bytes: []u8) void {
         defer self.gpa.free(bytes);
-        const RE = struct { message: []const u8 = "", stack: []const u8 = "" };
+        const RE = struct { message: []const u8 = "", stack: []const u8 = "", fatal: bool = true };
         const parsed = std.json.parseFromSlice(RE, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch return;
         defer parsed.deinit();
+        if (!parsed.value.fatal) {
+            std.debug.print("ND_RUNTIME_ERROR_NONFATAL {s}\n", .{parsed.value.message});
+            return;
+        }
         if (self.last_error_message) |m| self.gpa.free(m);
         if (self.last_error_stack) |s| self.gpa.free(s);
         self.last_error_message = self.gpa.dupe(u8, parsed.value.message) catch null;

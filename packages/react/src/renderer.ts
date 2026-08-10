@@ -13,11 +13,11 @@ import {
   getHmrState,
   setHmrState,
   isHot,
-  installErrorReporting,
   setupRefresh,
   registerRoot,
   hotUpdateRoot,
 } from "./hmr.ts";
+import { installErrorHandlers, reportRenderError } from "./errors.ts";
 
 type ReconcilerInstance = {
   createContainer: (...a: unknown[]) => unknown;
@@ -32,12 +32,12 @@ type ReconcilerInstance = {
 // First boot connects, handshakes, and creates the reconciler root; every
 // subsequent call (a hot re-eval) reuses the surviving root instead.
 export async function render(element: ReactNode): Promise<void> {
+  installErrorHandlers();
   let state = getHmrState();
   if (!state) {
     const ndp = await Ndp.connect();
     await ndp.handshake({ name: "bun", version: Bun.version });
     setBackend(ndp.backend);
-    installErrorReporting(ndp);
 
     const batch = new Batch();
     const registry = new NodeRegistry();
@@ -70,9 +70,19 @@ export async function render(element: ReactNode): Promise<void> {
       false,
       null,
       "nd",
-      (e: unknown) => { throw e; },
-      () => {},
-      () => {},
+      // onUncaughtError: report, then rethrow. React re-raises the throw in
+      // a setTimeout, so the process-level uncaughtException handler (which
+      // dedupes via errors.ts's renderFatal mark) performs the actual exit.
+      (e: unknown, info?: { componentStack?: string }) => {
+        reportRenderError(e, "renderUncaught", info?.componentStack);
+        throw e;
+      },
+      (e: unknown, info?: { componentStack?: string }) => {
+        reportRenderError(e, "renderCaught", info?.componentStack);
+      },
+      (e: unknown, info?: { componentStack?: string }) => {
+        reportRenderError(e, "renderRecoverable", info?.componentStack);
+      },
       null,
     );
     state = { ndp, root, reconciler: Reconciler, bootCount: 0 };

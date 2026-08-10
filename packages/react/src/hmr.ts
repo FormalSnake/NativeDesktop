@@ -57,23 +57,6 @@ export function isHot(): boolean {
   return process.env.ND_DEV === "1";
 }
 
-/** Reports an uncaught exception / unhandled rejection to the host before
- *  the process exits, so the crash overlay shows the real error. */
-export function installErrorReporting(ndp: Ndp): void {
-  const report = (err: unknown): void => {
-    const e = err instanceof Error ? err : new Error(String(err));
-    ndp.sendRuntimeError(e.message, e.stack ?? "");
-  };
-  process.on("uncaughtException", (err) => {
-    report(err);
-    process.exit(1);
-  });
-  process.on("unhandledRejection", (reason) => {
-    report(reason);
-    process.exit(1);
-  });
-}
-
 interface RefreshableReconciler {
   setRefreshHandler?: (h: unknown) => void;
   // Registers the reconciler's commit/schedule hooks with the object at
