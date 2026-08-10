@@ -293,6 +293,9 @@ fn ndMenubarCreate(app: *gtk.Application, window: ?*gtk.Window, defaults: bool) 
     const m = gio.Menu.new();
     the_menubar = m;
     menu_defaults = defaults;
+    // Native tabs share one scaffold window, so the single primary button must
+    // follow the selected tab; onSelectedPage calls back here to re-home it.
+    ndtabs_gtk.onTabSelected = &ndMenuRefresh;
     return @ptrCast(@alignCast(m));
 }
 
@@ -543,17 +546,33 @@ fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
         }
     }
     if (!found_root) return null;
+    // Native tabs: every <window ln> tab is a page in one scaffold window, so a
+    // whole-window search pins the button to the first tab's header. Scope the
+    // search to the SELECTED page so the button rides whichever tab is visible;
+    // a plain window has no tab view and searches the whole root as before.
+    const search_root: *gtk.Widget = ndtabs_gtk.selectedTabContent(root) orelse root;
     var split_opt: ?*adw.OverlaySplitView = null;
-    ndMenuFindSplit(@ptrCast(@alignCast(root)), &split_opt);
-    var split = split_opt orelse return null;
-    var content = adw.OverlaySplitView.getContent(split) orelse return null;
-    while (gobject.ext.isA(content, adw.OverlaySplitView)) {
-        split = @ptrCast(@alignCast(content));
-        content = adw.OverlaySplitView.getContent(split) orelse return null;
+    ndMenuFindSplit(search_root, &split_opt);
+    if (split_opt) |split0| {
+        var split = split0;
+        var content = adw.OverlaySplitView.getContent(split) orelse return null;
+        while (gobject.ext.isA(content, adw.OverlaySplitView)) {
+            split = @ptrCast(@alignCast(content));
+            content = adw.OverlaySplitView.getContent(split) orelse return null;
+        }
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(content, &hb_opt);
+        return hb_opt;
     }
-    var hb_opt: ?*adw.HeaderBar = null;
-    ndMenuFirstHeaderBar(content, &hb_opt);
-    return hb_opt;
+    // A tab page without a split layout (a plain <toolbarview> tab): the page's
+    // own first header. Non-tab windows fall through to the caller's
+    // last-registered-header fallback exactly as before.
+    if (ndtabs_gtk.selectedTabContent(root)) |page| {
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(page, &hb_opt);
+        return hb_opt;
+    }
+    return null;
 }
 
 fn ndMenuRefresh() void {
