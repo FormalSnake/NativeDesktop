@@ -11,23 +11,28 @@ backends and this documentation cannot drift from each other.
 
 ## What each widget declaration carries
 
-- **Props**, each with a type and an `appliesTo` of `create` (set once), `createAndUpdate` (live),
-  or `meta` (`testID` — framework bookkeeping, not rendered).
-- **Events**, each mapped to a React handler prop name (`clicked` → `onClick`) and, where relevant,
-  a payload shape.
-- **Container model** — `null` for a leaf widget, `single` for one child (`<window>`,
-  `<scrollview>`), or `multi` for many (`<box>`, `<splitview>`).
-- **Attached props** — props a *container* reads off its *children* rather than off itself: `slot`
-  on a `<splitview>`'s or `<headerbar>`'s children, `gridRow`/`gridColumn` on a `<grid>`'s children,
-  `tabLabel` on a `<tabview>`'s children. These are attach-time-only; changing one after mount is a
-  no-op.
-- **Automation role + text source** — every widget declares an automation `role` (`button`,
-  `textbox`, `list`, …) and, where applicable, which prop `getTree` reports as its `text`. This is
-  what makes the tree an agent reads meaningful rather than a bag of opaque refs.
-- **Platform availability** — an optional `platforms` list restricts a widget to specific OSes (e.g.
-  `<trayitem>` and `<sharebutton>` are `macos`-only). Elsewhere it mounts as an invisible no-op, and
-  `nd dev` logs a one-time console warning telling you to gate it with `Platform.os`. See
-  [Platform Support](/native-platform/platform-support/#platform-only-widgets).
+**Props**, each with a type and an `appliesTo` of `create` (set once), `createAndUpdate` (live), or
+`meta` (framework bookkeeping like `testID`, never rendered).
+
+**Events**, each mapped to a React handler prop name (`clicked` becomes `onClick`) and, where
+relevant, a payload shape.
+
+**Container model**: `null` for a leaf widget, `single` for one child (`<window>`, `<scrollview>`),
+or `multi` for many (`<box>`, `<splitview>`).
+
+**Attached props**, which a container reads off its children rather than off itself: `slot` on a
+`<splitview>`'s or `<headerbar>`'s children, `gridRow` and `gridColumn` on a `<grid>`'s children,
+`tabLabel` on a `<tabview>`'s children. They apply at attach time only, so changing one after mount
+is a no-op.
+
+**Automation role and text source.** Every widget declares an automation `role` (`button`,
+`textbox`, `list`, and so on) and, where applicable, which prop `getTree` reports as its `text`.
+That is what makes the tree an agent reads meaningful instead of a bag of opaque refs.
+
+**Platform availability.** An optional `platforms` list restricts a widget to specific operating
+systems, which is how `<trayitem>` and `<sharebutton>` end up macOS-only. Elsewhere the widget mounts
+as an invisible no-op and `nd dev` logs a one-time console warning telling you to gate it with
+`Platform.os`. See [Platform Support](/native-platform/platform-support/#platform-only-widgets).
 
 ## Styling applies uniformly
 

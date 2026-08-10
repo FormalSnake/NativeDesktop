@@ -162,7 +162,7 @@ There are two event subscriptions; each returns an unsubscribe function like the
   missing local file) reject the `play()` promise itself; asynchronous media failures (bad codec, an
   unreachable URL) arrive later as a `state: "error"` event with the message in `error`.
 - **`audio.onSpectrum(handler)`** fires at roughly 15 Hz with `{ handle, bins }`: 32 magnitudes
-  normalized 0..1, log-spaced across roughly 50 Hz–16 kHz. It fires only for handles played with
+  normalized 0..1, log-spaced across roughly 50 Hz to 16 kHz. It fires only for handles played with
   `spectrum: true`.
 
 ## App-level events
@@ -222,7 +222,7 @@ grant.
 | `core:clipboard.read` | **denied** | `clipboard.readText` |
 | `core:credentials` | **denied** | `credentials.set`, `credentials.get`, `credentials.delete` |
 
-Grant the denied groups by setting `ND_ACL_GRANTS` on the host process — a JSON object with a
+Grant the denied groups by setting `ND_ACL_GRANTS` on the host process. It takes a JSON object with a
 `defaultWindow` array (applies to every window) and/or a `grants` array of `{ window, permissions }`
 entries for per-window grants:
 
@@ -249,8 +249,8 @@ drop; `audio.onState`/`audio.onSpectrum` ride the same channel. The shell helper
 - **macOS notifications and bundling.** A packaged `.app` delivers notifications through
   `UNUserNotificationCenter`, which requests banner/sound authorization on first use and delivers
   click events through `notifications.onClick`. The bare (unbundled) `nd dev` process has no bundle
-  identifier, so it falls back to the deprecated `NSUserNotificationCenter` API instead — test click
-  delivery against a packaged build, not the dev shell.
+  identifier, so it falls back to the deprecated `NSUserNotificationCenter` API instead. Test click
+  delivery against a packaged build rather than the dev shell.
 - **GTK message levels.** `dialog.showMessage`'s `level` is accepted on GTK but has no visual
   effect, since `GtkAlertDialog` has no per-severity styling. Dismissing the dialog with Escape
   resolves to `defaultButton` on both backends.

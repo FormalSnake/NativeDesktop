@@ -15,16 +15,15 @@ drive the app the same way a user would. Full design: `docs/superpowers/specs/20
 
 ## Running an app
 
-**The `nd` CLI (`packages/nd`, M8-D8).** A scaffolded app or `examples/*` package declares
-`"dev": "nd dev"` (or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `bun run dev` /
-`nd dev [entry]` is the canonical way to run it; `entry` defaults to `src/main.tsx`. `nd dev`
-resolves the native backend for the current platform via `@nativedesktop/host`'s `resolveHostBinary()`
-(the AppKit `nd-shell` on macOS, the GTK `nd-hello` on Linux — override with `--backend gtk|appkit`
-or `ND_BACKEND`; prebuilt under `packages/host/bin/<os>-<arch>/`, or built on first run inside a
-framework checkout; see `packages/host/src/index.ts`) and spawns it with `ND_DEV=1 ND_SCRIPT=<entry>`.
-`nd build` runs `bun run compile` (the babel/react-compiler pre-pass below). `nd dev` does not set
-`NATIVE_AUTOMATION=1` itself; export it in the environment before running `nd dev`/`bun run dev`
-if you need the automation socket.
+**The `nd` CLI (`packages/nd`).** A scaffolded app or `examples/*` package declares `"dev": "nd dev"`
+(or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `nd dev [entry]` is the canonical way
+to run one. `entry` defaults to `src/main.tsx`. `nd dev` resolves the native backend for the current
+platform through `@nativedesktop/host`'s `resolveHostBinary()`: the AppKit `nd-shell` on macOS, the
+GTK `nd-hello` on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND`. The binary is
+prebuilt under `packages/host/bin/<os>-<arch>/`, or built on first run inside a framework checkout
+(see `packages/host/src/index.ts`). It then spawns that binary with `ND_DEV=1 ND_SCRIPT=<entry>`.
+`nd build` runs `bun run compile`, the Babel and React Compiler pre-pass described below. `nd dev`
+does not set `NATIVE_AUTOMATION=1`, so export it before running if you need the automation socket.
 
 `nd dev` prefers the *prebuilt* binary bundled with `@nativedesktop/host` (building it once inside a
 framework checkout when absent), so it won't pick up an in-place host rebuild. If you're iterating on
@@ -108,15 +107,14 @@ codebase in the same monorepo) can be authored the normal way, `import { useStat
 (`packages/babel-plugin-nativedesktop/`) rewrites named hook imports `from "react"` to `from
 "@nativedesktop/react"` at both places this framework transforms source:
 
-- **`bun run compile`/`nd build`** — the babel plugin (`index.js`) runs as an ordinary Babel visitor
-  alongside `babel-plugin-react-compiler` and the JSX transform (`template/babel.config.json`); it
-  rewrites every file's `ImportDeclaration` for `"react"`: hook specifiers split out into a
-  second `import … from "@nativedesktop/react"` while default/namespace/type-only specifiers stay
-  on `"react"`.
-- **`bun --hot`/`nd dev`** — babel never runs under Bun's own transpiler, so a Bun `onLoad` plugin
-  (`bun-plugin.js`, string-rewriting the same import shape via `rewrite.js`) does the equivalent job,
-  registered once per process via `template/bunfig.toml`'s `preload =
-  ["babel-plugin-nativedesktop/bun-plugin"]`.
+- Under `nd build`, the Babel plugin (`index.js`) runs as an ordinary visitor alongside
+  `babel-plugin-react-compiler` and the JSX transform (`template/babel.config.json`). It rewrites
+  every file's `ImportDeclaration` for `"react"`, splitting hook specifiers into a second
+  `import … from "@nativedesktop/react"` while default, namespace, and type-only specifiers stay on
+  `"react"`.
+- Under `nd dev`, Babel never runs inside Bun's own transpiler, so a Bun `onLoad` plugin does the
+  equivalent job by string-rewriting the same import shape (`bun-plugin.js` via `rewrite.js`),
+  registered once per process through `template/bunfig.toml`'s `preload`.
 
 Only the hook subset `packages/react/src/dev-react.ts` pins gets rewritten; the exact list is
 `packages/babel-plugin-nativedesktop/hooks.js`'s `PINNED_HOOKS`: `useState`, `useEffect`,
@@ -178,10 +176,10 @@ reload and react-refresh are unaffected; use `bun run compile && ND_SCRIPT=dist/
 `packages/mcp` is a stdio MCP server that bridges to the host's automation socket. Four tools,
 today:
 
-- `nd_get_tree` — snapshot the widget tree (refs, testIDs, text, geometry).
-- `nd_screenshot` — render the window to a PNG at an absolute path.
-- `nd_click` — semantic click on a widget by ref.
-- `nd_wait_for` — poll a tree condition (`textContains` or `refVisible`) until it holds or times out.
+- `nd_get_tree`: snapshot the widget tree (refs, testIDs, text, geometry).
+- `nd_screenshot`: render the window to a PNG at an absolute path.
+- `nd_click`: semantic click on a widget by ref.
+- `nd_wait_for`: poll a tree condition (`textContains` or `refVisible`) until it holds or times out.
 
 These are a thin pass-through to the raw RPC methods; see `automation.md` for the full method
 list (including `setValue`/`type`/`scroll`, which exist on the raw socket but do not yet have MCP

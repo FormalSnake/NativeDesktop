@@ -1,6 +1,6 @@
 ---
 title: Pickers
-description: ColorPicker, DatePicker, and FontPicker — three widgets that open a native OS picker surface and report back a portable string value.
+description: ColorPicker, DatePicker, and FontPicker, three widgets that open a native OS picker surface and report back a portable string value.
 ---
 
 Three widgets each wrap a native OS picker (a color well, a calendar, the system font panel) and

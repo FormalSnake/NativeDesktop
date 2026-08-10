@@ -1,6 +1,6 @@
 ---
 title: Menus & Popovers
-description: MenuButton, SplitButton, Popover, and Expander — four widgets for content or actions that reveal on demand.
+description: MenuButton, SplitButton, Popover, and Expander, the four widgets for content or actions that reveal on demand.
 ---
 
 Four widgets share one idea: content or actions that stay hidden until the user asks for them,
@@ -14,7 +14,7 @@ rather than occupying permanent space. Two (`MenuButton`, `SplitButton`) reuse t
 into one control: a primary click action plus a chevron that opens a dropdown for secondary
 actions. It's `AdwSplitButton` on GTK and an `NSButton` + attached `NSMenu` on macOS.
 
-Both take `<menuitem>` children (and `<menu>` for a nested submenu) — the exact same elements the
+Both take `<menuitem>` children, plus `<menu>` for a nested submenu, the same elements the
 [`<menubar>`](/native-platform/menu-bar/) page documents, built into an `NSMenu`/`GMenuModel` instead
 of the app's main menu:
 
@@ -34,7 +34,7 @@ of the app's main menu:
 
 | Widget | Props | Events |
 | --- | --- | --- |
-| `<menubutton>` | `label`, `iconName` (both createAndUpdate) | none — each `<menuitem>` fires its own `onSelect` |
+| `<menubutton>` | `label`, `iconName` (both createAndUpdate) | none; each `<menuitem>` fires its own `onSelect` |
 | `<splitbutton>` | `label`, `iconName` (both createAndUpdate) | `clicked` → `onClick` (the primary action; the dropdown's items fire their own `onSelect`) |
 
 ## Popover (`<popover>`)
@@ -59,12 +59,12 @@ const [open, setOpen] = useState(false);
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `open` | bool | createAndUpdate | Controlled — set from `onClosed` when the user dismisses it (click-outside, Escape). |
+| `open` | bool | createAndUpdate | Controlled. Set it from `onClosed` when the user dismisses the popover by clicking outside or pressing Escape. |
 | `position` | `top` \| `bottom` \| `left` \| `right` | createAndUpdate | Default `top`. |
 
 `closed` → `onClosed` fires with no payload. A `<popover>` attaches to whatever widget is its own
-tree parent on GTK (`gtk_widget_set_parent`) — put it in a `<box>` alongside the button that opens it,
-as above, not off on its own.
+tree parent on GTK (`gtk_widget_set_parent`), so put it in a `<box>` alongside the button that opens
+it, as above, rather than off on its own.
 
 ## Expander (`<expander>`)
 
@@ -85,7 +85,7 @@ const [open, setOpen] = useState(false);
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
 | `label` | string | createAndUpdate | |
-| `expanded` | bool | createAndUpdate | Controlled — set from `onToggled`. |
+| `expanded` | bool | createAndUpdate | Controlled. Set it from `onToggled`. |
 
 `toggled` → `onToggled` fires `{ checked }`.
 

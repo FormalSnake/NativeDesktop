@@ -102,15 +102,15 @@ A manifest is a small JSON document, produced by `tools/manifest.ts`
 }
 ```
 
-- `app_id` — reverse-DNS app identifier.
-- `version` — the version this manifest describes.
-- `from` — optional; the version a delta artifact (see below) would apply
+- `app_id`: reverse-DNS app identifier.
+- `version`: the version this manifest describes.
+- `from`: optional, the version a delta artifact (see below) would apply
   against. `null` for a full-only manifest.
-- `full_url` — where to fetch the full compressed archive.
-- `full_sig_b64` — the second base64 line of the archive's `.minisig` file
+- `full_url`: where to fetch the full compressed archive.
+- `full_sig_b64`: the second base64 line of the archive's `.minisig` file
   (`algorithm[2] ‖ key_id[8] ‖ signature[64]`), passed through verbatim for
   the Zig verifier to decode.
-- `delta` — reserved and not populated in M9. The schema leaves room for a
+- `delta`: reserved and not populated. The schema leaves room for a
   future array of delta artifacts (each naming a `from` version, a URL, and
   its own signature) so that adding delta support later is additive to the
   manifest shape rather than a breaking change.

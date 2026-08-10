@@ -88,7 +88,7 @@ function checkPlatform(type: WidgetType): void {
   if (!allowed || (allowed as readonly string[]).includes(Platform.os)) return;
   warnedPlatformMismatch.add(type);
   const label = allowed.map((p) => PLATFORM_LABEL[p]).join("/");
-  console.warn(`<${type}> is ${label}-only; it renders nothing on ${Platform.os} — gate with Platform.os.`);
+  console.warn(`<${type}> is ${label}-only; it renders nothing on ${Platform.os}. Gate it with Platform.os.`);
 }
 
 export const hostConfig = {

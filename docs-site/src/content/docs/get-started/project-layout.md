@@ -3,83 +3,90 @@ title: Project Layout
 description: Where the widget schema, generated bindings, core, and app code live in the NativeDesktop repository.
 ---
 
-NativeDesktop is a monorepo. The pieces that matter for building an app, or for building the
-framework itself, are:
+NativeDesktop is a monorepo. These are the pieces that matter when you build an app, or when you
+work on the framework itself.
 
-## `schema/widgets.json` — the single source of truth
+## `schema/widgets.json`, the single source of truth
 
-Every widget's props, defaults, events, and automation role are declared once, here. Nothing about
-a widget's shape is hand-written anywhere else; `tools/codegen.ts` reads this file and generates:
+Every widget's props, defaults, events, commands, and automation role is declared once, here.
+Nothing about a widget's shape is hand-written anywhere else. `tools/codegen.ts` reads this file and
+generates:
 
-- `src/generated/` — Zig bindings for the GTK backend (widget construction, prop application,
-  event wiring).
+- `src/generated/`, the Zig bindings for the GTK backend: widget construction, prop application,
+  event wiring.
 - TypeScript intrinsics and schema metadata consumed by `packages/react`.
-- Swift arms in the AppKit backend under `swift/Sources/NDShell/` (the generated `Widgets.swift`).
-- The generated docs themselves: `docs/widgets.md` and `docs/styling.md`.
+- The Swift arms of the AppKit backend under `swift/Sources/NDGen/`.
+- The generated reference docs, `docs/widgets.md` and `docs/styling.md`.
 
-If you add or change a widget, you change `schema/widgets.json` and regenerate. You never write a
-binding by hand.
+Adding or changing a widget means editing `schema/widgets.json` and running
+`scripts/regen-bindings.sh`. You never write a binding by hand.
 
-## `packages/react` — the React renderer
+Two more schemas feed the same pipeline: `schema/protocol.json` for the NDP wire frames and
+`schema/rpc.json` for the automation methods.
 
-`@nativedesktop/react` is the package app code imports. It implements the host config that turns
-React commits into NDP `CommitBatch` operations and re-exports the hooks your app uses (see
-[State & Hot Reload](/core-concepts/state-hot-reload/) for why the re-export matters). `react` is a
-`peerDependency` (not vendored), so a single hoisted `react` instance is shared across an app and
-the linked package.
+## `src/`, the Zig core
 
-## `packages/nd` and `packages/host` — the `nd` CLI
+The flat `.zig` files directly under `src/` are the GTK-free core that both backends link against:
+`tree.zig` (the reconciler and retained widget tree), `runtime.zig`, `protocol.zig`,
+`automation.zig`, `acl.zig`, and the C-ABI seam in `abi.zig` plus `abi_backend.zig`.
 
-`nd dev [entry]` / `nd build` (`packages/nd`) wrap the raw `ND_DEV=1 ND_SCRIPT=<entry>
-<host-binary>` invocation and the babel/react-compiler pre-pass, respectively — see
-[Quick Start](/get-started/quick-start/). `@nativedesktop/host`'s `resolveHostBinary()` finds the
-prebuilt `nd-hello` for the current platform under `bin/<os>-<arch>/`; supply that binary by
-running `zig build` locally and copying the result in.
+- `src/core/` is `libnd`'s module root (`root.zig`) alongside the terminal, remote-terminal, and
+  update subsystems. `zig build libnd -Dbackend=abi` builds this as the static library the Swift
+  shell links.
+- `src/gtk/` is the GTK4 and libadwaita backend: widget creation, style and CSS-class application,
+  the webview, the terminal, the main loop. It compiles into the `nd-hello` binary.
+- `src/generated/` is codegen output. Do not hand-edit it.
 
-## `src/` — the Zig core
+## `swift/`, the macOS shell
 
-- `src/core/` — the GTK-free core (widget tree, automation server, protocol handling) that both
-  backends link against. This is what `zig build libnd -Dbackend=abi` produces as a static library
-  for the Swift shell.
-- `src/gtk/` — the GTK4/libadwaita backend: widget creation, style/CSS-class application, the main
-  loop.
-- `src/generated/` — codegen output from `schema/widgets.json` (do not hand-edit).
+A Swift and AppKit shell over the C-ABI core, following the same pattern as Ghostty's `libghostty`.
+`swift/Sources/NDShell/` is hand-written: `Backend.swift` for widget creation and prop application,
+`HeaderBar.swift`, `SplitController.swift`, and `Layout.swift` for native chrome, `Icons.swift` for
+the freedesktop-to-SF-Symbol mapping (see [Icons](/native-platform/icons/)), plus `Automation.swift`
+and `Events.swift`. `swift/Sources/NDGen/` holds the generated arms, and `swift/Sources/CNd/`
+bridges `libnd.a`.
 
-## `swift/Sources/NDShell/` — the macOS shell
+## `packages/`
 
-A thin Swift/AppKit shell over the C-ABI Zig core, following the same pattern as Ghostty's
-`libghostty`: `Backend.swift` (widget creation and prop application), `HeaderBar.swift` /
-`SplitController.swift` / `Layout.swift` (native chrome), `Icons.swift` (freedesktop → SF Symbol
-mapping — see [Icons](/native-platform/icons/)), `Automation.swift`, `Events.swift`, and the
-generated `Widgets.swift`.
+| Package | What it is |
+|---|---|
+| `@nativedesktop/react` | The renderer app code imports. Turns React commits into NDP `CommitBatch` ops and re-exports the hooks your app uses. `react` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
+| `nd` | The CLI. `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation; `nd build` runs the Babel and React Compiler pre-pass. See [Quick Start](/get-started/quick-start/). |
+| `@nativedesktop/host` | `resolveHostBinary()` finds the prebuilt host for the current platform under `bin/<os>-<arch>/`, and builds one on first run inside this checkout. |
+| `@nativedesktop/data` | Worker-backed `bun:sqlite`, so queries never block React's commit loop. See [App Data & Storage](/core-concepts/app-data-storage/). |
+| `@nativedesktop/native` | Support for app-owned native plugins. |
+| `@nativedesktop/mcp` | A stdio MCP server bridging the automation socket to MCP tool calls. See [MCP Tools](/automation-testing/mcp-tools/). |
+| `babel-plugin-nativedesktop` | Rewrites `react` hook imports to `@nativedesktop/react` in shared logic modules. |
 
 ## `examples/`
 
-Real, driven apps that stress-test the framework's suitability:
+Thirteen driven apps that stress-test the framework. The ones to read first:
 
-- `examples/counter/` — the minimal example: state, a click handler, `Suspense`, and a `useMemo`'d
-  interval, in one `<window>`.
-- `examples/notes/` — a two-pane notes app exercising native chrome (`<splitview>`, `<headerbar>`,
+- `examples/counter/`: the minimal app. State, a click handler, `Suspense`, and an interval, in one
+  `<window>`.
+- `examples/notes/`: a two-pane notes app exercising native chrome (`<splitview>`, `<headerbar>`,
   `<toolbarview>`), `cssClasses`, and search.
-- `examples/gallery/` — a broader widget gallery, including a 100k-row `<listview>` regression case.
+- `examples/gallery/`: a broad widget gallery, including a 100k-row `<listview>` regression case.
+- `examples/browser/`: tabbed browsing over `<webview>`, including native tabs and cross-window tab
+  drag.
+- `examples/terminal/` and `examples/remote-terminal/`: the libghostty-vt terminal widget, local and
+  over SSH.
 
-## `template/` — the app scaffold
+## `template/`
 
-What `scripts/new-app.sh` copies to start a new app: a `package.json` that links
-`@nativedesktop/react`, `nd`, and (transitively) `@nativedesktop/host` via `file:` paths into this
-checkout (none are published to npm yet), a `src/main.tsx` entry point, a `babel.config.json` for the
-opt-in React Compiler + hook-import-rewrite pre-pass, and a `bunfig.toml` that preloads the
-`bun --hot`-path twin of that hook rewrite.
+What `scripts/new-app.sh` copies to start a new app: a `package.json` linking
+`@nativedesktop/react`, `nd`, and transitively `@nativedesktop/host` through `file:` paths into this
+checkout (none are published to npm yet), a `src/main.tsx` entry, a `babel.config.json` for the
+opt-in React Compiler and hook-import rewrite, and a `bunfig.toml` that preloads the `bun --hot`
+twin of that rewrite.
 
-## `tools/`
+## `tools/` and `scripts/`
 
-Build-time scripts invoked as documented conventions: `tools/codegen.ts` (schema → bindings + docs),
-`tools/package.ts` / `tools/package-linux.ts` / `tools/package-mac.ts` (see
-[Packaging](/packaging/)), `tools/manifest.ts` (update manifests). The `nd` CLI (`packages/nd`) only
-covers running/building an *app* (`nd dev`/`nd build`) — these `tools/` scripts have no `nd`
-subcommand equivalent (no `nd package`, `nd codegen`, etc.) and are invoked directly with `bun`.
+`tools/` holds build-time scripts invoked directly with `bun`: `tools/codegen.ts` (schemas to
+bindings and docs), `tools/package.ts` with its `package-linux.ts` and `package-mac.ts` halves (see
+[Packaging](/packaging/)), `tools/manifest.ts` for update manifests, and `tools/ndshot/` for macOS
+screen capture. The `nd` CLI covers running and building an app only. There is no `nd package` or
+`nd codegen`.
 
-## `packages/mcp`
-
-A stdio MCP server bridging the automation socket to MCP tool calls — see
-[MCP Tools](/automation-testing/mcp-tools/).
+`scripts/` holds the headless drive scripts the CI gate runs, `new-app.sh`, and
+`regen-bindings.sh`.

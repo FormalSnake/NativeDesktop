@@ -3,12 +3,12 @@ title: Automation Socket
 description: The full JSON-RPC automation surface, covering transport, methods, error codes, and known gaps.
 ---
 
-Ground truth for this page is `schema/rpc.json`, the single source of truth `tools/codegen.ts`
-generates both `src/generated/rpc.zig` (consumed by `src/automation.zig`) and
-`packages/react/src/generated/rpc.ts` from. This page is a human/agent-readable mirror of the
-schema; if the two disagree, the schema (and its generated output) wins.
-A method/param/result change in the schema is a compile error on both the Zig and TypeScript side
-until every caller is updated, not a silent runtime break.
+`schema/rpc.json` is the ground truth for this page. `tools/codegen.ts` generates both
+`src/generated/rpc.zig` (consumed by `src/automation.zig`) and
+`packages/react/src/generated/rpc.ts` from it, and this page is a readable mirror. If the two
+disagree, the schema and its generated output win. Changing a method, param, or result in the schema
+is a compile error on both the Zig and the TypeScript side until every caller is updated, never a
+silent runtime break.
 
 ## Transport
 
@@ -53,19 +53,20 @@ row-selection widgets (`SourceList`/`Table`/`TreeView`), null for widgets withou
 without the probe degrade to the defaults (`enabled: true`, `focused: false`, `value: null`) rather
 than failing the snapshot.
 
-## Input synthesis — platform support
+## Input synthesis by platform
 
-`pointer`/`drag`/`keys`/`doubleClick`/`rightClick`/`hover` post real native events on macOS:
-constructed `NSEvent`s pushed through the app's own event queue (`NSApp.postEvent`), so slider
-thumbs, split-view dividers, table row double-activation, text selection, and menu key equivalents
-run genuine AppKit machinery, in-process and without any TCC permission. Multi-event gestures (`drag`,
-double-clicks) are posted as one batch because AppKit controls run nested mouse-tracking loops
-inside `mouseDown` dispatch that consume the rest of the gesture from the queue while blocking the
-main thread.
+`pointer`, `drag`, `keys`, `doubleClick`, `rightClick`, and `hover` post real native events on
+macOS: constructed `NSEvent`s pushed through the app's own event queue with `NSApp.postEvent`.
+Slider thumbs, split-view dividers, table row activation, text selection, and menu key equivalents
+all run genuine AppKit machinery, in-process and without any TCC permission. Multi-event gestures
+like `drag` and double-clicks are posted as one batch, because AppKit controls run nested
+mouse-tracking loops inside `mouseDown` dispatch that consume the rest of the gesture from the queue
+while blocking the main thread.
 
-On GTK these methods answer `-32003` (`input synthesis unsupported on this backend`): GTK4 removed
+On GTK these methods answer `-32003`, `input synthesis unsupported on this backend`. GTK4 removed
 app-constructible `GdkEvent`s, so in-process synthesis is impossible. Use the semantic methods
-(`click`/`setValue`/`type`/`scroll`) on Linux instead. The `a11y` fields work on both backends.
+`click`, `setValue`, `type`, and `scroll` on Linux instead. The accessibility fields work on both
+backends.
 
 Three behaviors are deliberate:
 
@@ -86,7 +87,7 @@ Three behaviors are deliberate:
 |---|---|---|
 | `-32001` | not actionable | `{ref, reason: "unknown" \| "invisible" \| "unmapped" \| "offscreen"}` |
 | `-32002` | `waitFor` timed out | `{timeoutMs}` |
-| `-32003` | input synthesis unsupported on this backend | `{ref}` — pointer/drag/keys/doubleClick/rightClick/hover on GTK |
+| `-32003` | input synthesis unsupported on this backend | `{ref}`, raised by pointer/drag/keys/doubleClick/rightClick/hover on GTK |
 | `-32601` | method not found | none |
 | `-32602` | invalid params | `{ref}` where applicable |
 | `-32603` | internal error | none, or a message describing the failure |

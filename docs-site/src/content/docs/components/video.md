@@ -1,6 +1,6 @@
 ---
 title: Video
-description: The <video> widget plays local or remote video through the platform's own media stack — AVPlayer/AVPlayerView on macOS, GtkVideo on Linux.
+description: "The <video> widget plays local or remote video through the platform's own media stack: AVPlayer with AVPlayerView on macOS, GtkVideo on Linux."
 ---
 
 `<video>` plays a local file or remote URL through the platform's own media stack
@@ -20,7 +20,7 @@ const [src, setSrc] = useState("/Users/me/clip.mp4");
 | `src` | string | createAndUpdate | A local path or a remote URL. |
 | `autoplay` | bool | create | Default `false`. |
 | `loop` | bool | createAndUpdate | Default `false`. |
-| `controls` | bool | create | Default `true`. Takes effect on macOS only — see below. |
+| `controls` | bool | create | Default `true`. Takes effect on macOS only, see below. |
 
 There are no events in v1 (no `onEnded`/`onTimeUpdate`/`onError`). If you need playback state, drive
 audio-visual sync yourself or track it against the [Audio API](/native-platform/system-capabilities/#audio)'s

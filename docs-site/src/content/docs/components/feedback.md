@@ -1,6 +1,6 @@
 ---
 title: Feedback
-description: Banner, StatusPage, and ToastOverlay — three widgets for telling the user something happened, at three different levels of intrusiveness.
+description: Banner, StatusPage, and ToastOverlay, three widgets for telling the user something happened at different levels of intrusiveness.
 ---
 
 Three widgets cover the feedback spectrum from "always visible until dismissed" (`Banner`) to
@@ -26,7 +26,7 @@ const [revealed, setRevealed] = useState(true);
 | --- | --- | --- | --- |
 | `title` | string | createAndUpdate | |
 | `buttonLabel` | string | createAndUpdate | Omit to render the banner with no action button. |
-| `revealed` | bool | createAndUpdate | Controlled visibility — default `false`. |
+| `revealed` | bool | createAndUpdate | Controlled visibility, defaulting to `false`. |
 
 `buttonClicked` → `onButtonClicked` fires with no payload; it's on you to also set `revealed={false}`
 if clicking the button should dismiss the banner.
@@ -49,7 +49,7 @@ page's call to action.
 | `title` | string | createAndUpdate | |
 | `description` | string | createAndUpdate | |
 
-No events of its own — wire up whatever action widget you place inside it.
+No events of its own. Wire up whatever action widget you place inside it.
 
 ## ToastOverlay (`<toastoverlay>`) and the toast helpers
 
@@ -90,9 +90,9 @@ async function handleDelete() {
 | Function | Signature | Resolves to |
 | --- | --- | --- |
 | `showToast(node, options)` | `options: { title, buttonLabel?, timeoutSeconds?, priority? }` | `{ buttonClicked: boolean }` |
-| `dismissToast(node, id?)` | dismisses the toast matching `id`, or whichever is currently visible | — |
+| `dismissToast(node, id?)` | dismisses the toast matching `id`, or whichever is currently visible | none |
 
-`priority` is `"normal"` (default) or `"high"` — a high-priority toast jumps the overlay's queue
+`priority` is `"normal"` by default, or `"high"`. A high-priority toast jumps the overlay's queue
 instead of waiting behind an already-showing one. `showToast`'s promise resolves once, however the
 toast goes away: `{ buttonClicked: true }` if the user clicks the action button, `{ buttonClicked:
 false }` for a timeout, Escape, or the queue advancing past it.

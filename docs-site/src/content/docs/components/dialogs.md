@@ -1,6 +1,6 @@
 ---
 title: Dialogs
-description: showAlert, openFile, saveFile, and showAbout — native modal dialogs scoped to one <window>, driven as promise-wrapped imperative commands.
+description: showAlert, openFile, saveFile, and showAbout, native modal dialogs scoped to one <window> and driven as promise-wrapped imperative commands.
 ---
 
 `@nativedesktop/react` exposes four native, per-window modal dialogs (a confirmation alert, an
@@ -69,13 +69,14 @@ event and needs no wiring; see below.
 
 | Function | Options | Resolves to |
 | --- | --- | --- |
-| `showAlert(node, options)` | `{ title, body?, buttons: { id, label, style? }[] }` | `{ buttonId }` — the clicked button's `id` |
-| `openFile(node, options?)` | `{ multiple?, directories?, filters?: { name, extensions }[] }` | `{ canceled, paths }` — `paths: []` if canceled |
-| `saveFile(node, options?)` | `{ suggestedName?, defaultDir?, filters? }` | `{ canceled, path }` — `path: null` if canceled |
-| `showAbout(node, options)` | `{ appName, version, developer?, website? }` | — fire-and-forget, no promise |
+| `showAlert(node, options)` | `{ title, body?, buttons: { id, label, style? }[] }` | `{ buttonId }`, the clicked button's `id` |
+| `openFile(node, options?)` | `{ multiple?, directories?, filters?: { name, extensions }[] }` | `{ canceled, paths }`, with `paths: []` if canceled |
+| `saveFile(node, options?)` | `{ suggestedName?, defaultDir?, filters? }` | `{ canceled, path }`, with `path: null` if canceled |
+| `showAbout(node, options)` | `{ appName, version, developer?, website? }` | none; fire-and-forget, no promise |
 
-`style` on an alert button is `"default" | "suggested" | "destructive"` — the destructive style is the
-red/warning treatment (`NSAlertStyle.critical`-adjacent styling, `.destructive-action` on GTK).
+`style` on an alert button is `"default" | "suggested" | "destructive"`. The destructive style is the
+red warning treatment: `NSAlertStyle.critical`-adjacent styling on macOS, `.destructive-action` on
+GTK.
 
 ## One dialog per window at a time
 
@@ -85,7 +86,7 @@ before the first resolves rejects immediately with an error naming the dialog th
 rather than queueing or silently clobbering the first caller's promise:
 
 ```
-Error: <window> already has a "showAlert" dialog pending — only one modal dialog per window is allowed at a time
+Error: <window> already has a "showAlert" dialog pending; only one modal dialog per window is allowed at a time
 ```
 
 `showAbout` is the exception: it has no result event to correlate, so it doesn't claim the slot and

@@ -16,8 +16,8 @@ description: What's landed, what's planned, and how each platform is verified.
 ```tsx
 import { Platform } from "@nativedesktop/react";
 
-Platform.backend; // "gtk" | "appkit" — the native widget layer actually drawing
-Platform.os;      // "macos" | "linux" | "windows" — where the process runs
+Platform.backend; // "gtk" | "appkit": the native widget layer actually drawing
+Platform.os;      // "macos" | "linux" | "windows": where the process runs
 
 // Branch on the renderer:
 const inset = Platform.select({ gtk: 6, appkit: 8, default: 6 });
@@ -58,8 +58,8 @@ where the widget would have been:
 ```
 
 In development (`nd dev`, `ND_DEV=1`), mounting a platform-excluded widget on a platform it doesn't
-list logs a one-time console warning (`<trayitem> is macOS-only; it renders nothing on linux — gate
-with Platform.os.`), so a missing `Platform.os` gate doesn't fail silently. The warning is skipped
+list logs a one-time console warning (`<trayitem> is macOS-only; it renders nothing on linux. Gate
+it with Platform.os.`), so a missing `Platform.os` gate doesn't fail silently. The warning is skipped
 entirely in a production build (`nd build`). See [Overview](/components/overview/#what-each-widget-declaration-carries)
 for the schema mechanic and [Menu Bar](/native-platform/menu-bar/#beyond-the-menu-bar) for how
 `<trayitem>`'s own dropdown menu is built from `<menu>`/`<menuitem>` children.
@@ -90,8 +90,8 @@ see `docs/agents/automation.md` for the one-time Screen Recording grant flow.
 
 The Windows backend is fully specified (raw Win32 windowing via `zigwin32`, custom-drawn
 Direct2D/DirectWrite widgets each carrying a UIA provider and `AutomationId` from day one) but not
-yet implemented. The design doc budgets 2–3× the effort of the other two backends and explicitly
-schedules it last, since Windows has no first-class native-toolkit equivalent to GTK4/AppKit that a
+yet implemented. The design doc budgets two to three times the effort of the other two backends and
+schedules it last, since Windows has no first-class native-toolkit equivalent to GTK4 or AppKit that a
 thin binding could sit on top of. `tools/package.ts` already reflects this: it accepts `linux` and
 `mac` as packaging targets and exits with an explicit error for anything else. Don't rely on any
 Windows-specific prop, flag, or command not documented elsewhere on this site.

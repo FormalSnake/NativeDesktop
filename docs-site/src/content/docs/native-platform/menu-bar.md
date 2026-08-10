@@ -44,28 +44,21 @@ machinery.)
 
 ## MenuItem: role or onSelect, never both in effect
 
-A `<menuitem>` has either a `role` (native, platform-provided behavior) or an `onSelect` handler
-(custom). If both are set, `onSelect` wins and the role contributes nothing beyond documentation.
-`role="separator"` renders a native separator — `label`/`iconName`/`accelerator` are ignored on a
-separator item.
+A `<menuitem>` has either a `role`, meaning platform-provided behavior, or an `onSelect` handler for
+custom behavior. If both are set, `onSelect` wins and the role contributes nothing beyond
+documentation. `role="separator"` renders a native separator, and `label`, `iconName`, and
+`accelerator` are ignored on it.
 
-The full prop set (see the [Widget Reference](/components/widget-reference/) for the generated
-table):
+The full prop set (the [Widget Reference](/components/widget-reference/) has the generated table):
 
-- **`label`** — the item's text.
-- **`iconName`** — a freedesktop name, the same vocabulary as `Button.iconName` (see
-  [Icons](/native-platform/icons/)). Resolved through the same mac SF Symbol map. Deliberately not
-  rendered on GNOME: popover menus don't render item icons and the HIG discourages them, so
-  omitting them is the platform-correct choice.
-- **`accelerator`** — grammar `mod+…+key`: mods are `primary`, `shift`, `alt`, `ctrl` (`primary` is
-  ⌘ on macOS, Ctrl on GNOME); the key is one printable character or a named key (`enter`,
-  `escape`, `backspace`, `delete`, `space`, `tab`, `f1`…`f12`, `left`/`right`/`up`/`down`, `comma`,
-  `period`).
-- **`role`** — `none` (the default) plus a fixed vocabulary: `separator`, `about`, `settings`,
-  `quit`, `undo`, `redo`, `cut`, `copy`, `paste`, `delete`, `selectAll`, `close`, `minimize`,
-  `zoom`, `fullscreen`.
-- **`enabled`** — createAndUpdate; a disabled item doesn't fire `onSelect`, on either platform.
-- **`onSelect`** — fires the `selected` event.
+| Prop | Meaning |
+|---|---|
+| `label` | The item's text. |
+| `iconName` | A freedesktop name, the same vocabulary as `Button.iconName` (see [Icons](/native-platform/icons/)), resolved through the same SF Symbol map on macOS. Deliberately not rendered on GNOME, where popover menus have no item icons and the HIG discourages them. |
+| `accelerator` | Grammar `mod+…+key`. Mods are `primary`, `shift`, `alt`, `ctrl`, where `primary` is ⌘ on macOS and Ctrl on GNOME. The key is one printable character or a named key: `enter`, `escape`, `backspace`, `delete`, `space`, `tab`, `f1` through `f12`, `left`, `right`, `up`, `down`, `comma`, `period`. |
+| `role` | `none` by default, plus a fixed vocabulary: `separator`, `about`, `settings`, `quit`, `undo`, `redo`, `cut`, `copy`, `paste`, `delete`, `selectAll`, `close`, `minimize`, `zoom`, `fullscreen`. |
+| `enabled` | createAndUpdate. A disabled item does not fire `onSelect` on either platform. |
+| `onSelect` | Fires the `selected` event. |
 
 ## Platform rendering
 

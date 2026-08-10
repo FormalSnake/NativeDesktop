@@ -5,8 +5,8 @@ description: The <terminal> widget embeds a real terminal emulator (libghostty-v
 
 `<terminal>` embeds a real terminal emulator as a native drawing surface: `libghostty-vt`, the same
 VT engine that powers [Ghostty](https://ghostty.org). It spawns a PTY running your shell, parses the
-escape-sequence stream into a cell grid, and draws that grid with the platform's own text stack —
-CoreText on macOS, cairo/Pango on GTK. The surface captures keystrokes and writes them straight to
+escape-sequence stream into a cell grid, and draws that grid with the platform's own text stack:
+CoreText on macOS, cairo and Pango on GTK. The surface captures keystrokes and writes them straight to
 the PTY.
 
 ```tsx
@@ -36,8 +36,8 @@ prompt, run `vim`, and see colors and the cursor.
 | `cols`     | number   | `80`      | Initial columns.                                             |
 | `rows`     | number   | `24`      | Initial rows.                                                |
 
-All props are `create`-time — the terminal owns its PTY for the life of the widget, so changing them
-means remounting (give the widget a different `key`). Keystrokes are handled host-side in the
+All props are `create`-time. The terminal owns its PTY for the life of the widget, so changing them
+means remounting, which you do by giving the widget a different `key`. Keystrokes are handled host-side in the
 surface and fed directly to the PTY; they never cross the NDP protocol, which keeps the interactive
 hot path off the socket entirely.
 

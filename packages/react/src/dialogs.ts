@@ -91,7 +91,7 @@ function checkAvailable(node: NdNodeRef<"window">, reject: (reason: Error) => vo
   const existing = pending.get(node.id);
   if (!existing) return true;
   reject(
-    new Error(`<window> already has a "${existing.kind}" dialog pending — only one modal dialog per window is allowed at a time`),
+    new Error(`<window> already has a "${existing.kind}" dialog pending; only one modal dialog per window is allowed at a time`),
   );
   return false;
 }

@@ -6,8 +6,8 @@ description: Render more than one <window> root from a single React tree, and mo
 A NativeDesktop app isn't limited to one `<window>`. Render multiple `<window>` roots (a sibling
 list, typically inside a fragment) and each becomes an independent OS window on both backends, all
 driven by the same Bun/React process. `examples/multiwindow/main.tsx` is the reference app for
-everything on this page. Windows sharing a `tabGroup` prop render as one tabbed window instead —
-see [Native Tabs](/native-platform/tabs/).
+everything on this page. Windows sharing a `tabGroup` prop render as one tabbed window instead. See
+[Native Tabs](/native-platform/tabs/).
 
 ## Rendering more than one window
 

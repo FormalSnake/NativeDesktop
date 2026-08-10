@@ -182,30 +182,30 @@ wired into a `Dialect` whose `createDriver()` returns a `Driver` that acquires a
 
 ### Migrations
 
-Two ways to apply schema changes, both compatible with the worker-backed connection:
+Two ways to apply schema changes, both compatible with the worker-backed connection.
 
-- **`drizzle-kit` unchanged** — `drizzle-kit generate` and `drizzle-kit migrate` run as their own
-  process directly against the SQLite file, off the hot path entirely; they don't know or care that
-  the app's own queries route through a worker.
-- **Apply at startup, in-process**, via `drizzle-orm/sqlite-proxy/migrator`:
+Use `drizzle-kit` unchanged. `drizzle-kit generate` and `drizzle-kit migrate` run as their own
+process directly against the SQLite file, off the hot path, and neither knows nor cares that the
+app's queries route through a worker.
 
-  ```ts
-  import { migrate } from "drizzle-orm/sqlite-proxy/migrator";
+Or apply them at startup, in-process, through `drizzle-orm/sqlite-proxy/migrator`:
 
-  await migrate(
-    db,
-    async (queries) => {
-      await executor.transaction(queries.map((sql) => ({ sql })));
-    },
-    { migrationsFolder: "./drizzle" },
-  );
-  ```
+```ts
+import { migrate } from "drizzle-orm/sqlite-proxy/migrator";
 
-  `queries` arrives as `string[]`; mapping each one to `{ sql }` turns it into a `TxStep`, so the
-  whole migration runs as one `transaction()` call, atomic through the same worker every other
-  query goes through.
+await migrate(
+  db,
+  async (queries) => {
+    await executor.transaction(queries.map((sql) => ({ sql })));
+  },
+  { migrationsFolder: "./drizzle" },
+);
+```
 
-The framework owns exactly one seam: `query`/`mutate`/`transaction`, running off the thread that
-drives React's commit loop. Which ORM sits on top of it, if any, is the app's call and the app's
-dependency: `@nativedesktop/data` carries no ORM version liability, and an ORM this page doesn't
-mention adapts the same way, in about the same number of lines.
+`queries` arrives as `string[]`. Mapping each one to `{ sql }` turns it into a `TxStep`, so the whole
+migration runs as one `transaction()` call, atomic through the same worker every other query uses.
+
+The framework owns exactly one seam: `query`, `mutate`, and `transaction`, running off the thread
+that drives React's commit loop. Which ORM sits on top, if any, is the app's call and the app's
+dependency. `@nativedesktop/data` carries no ORM version liability, and an ORM this page never
+mentions adapts the same way in about the same number of lines.

@@ -6,7 +6,7 @@ description: "Table and TreeView render multi-column and hierarchical data with 
 `<table>` and `<treeview>` both take a plain data prop (`rows`/`nodes`) you own in React state, and
 both follow the same contract: the native widget renders exactly what you give it and asks you, via an
 event, when the user wants something to change. It never reorders or re-nests the data itself, so
-your React state stays the single source of truth — the same discipline `<listview>`'s `items`
+your React state stays the single source of truth, the same discipline `<listview>`'s `items`
 already follows.
 
 ## Table (`<table>`)
@@ -47,8 +47,8 @@ function handleSortChanged(e: { data: unknown }) {
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `columns` | `TableColumn[]` | createAndUpdate | `{ id, title, width? }` — `id` is echoed back in `sortChanged`, not shown. |
-| `rows` | `TableRow[]` | createAndUpdate | `{ id?, cells }` — `cells` is positional, indexed by `columns`' order. |
+| `columns` | `TableColumn[]` | createAndUpdate | `{ id, title, width? }`. `id` is echoed back in `sortChanged`, never shown. |
+| `rows` | `TableRow[]` | createAndUpdate | `{ id?, cells }`. `cells` is positional, indexed by `columns`' order. |
 | `selectedIndex` | int | createAndUpdate | Default `-1`. |
 | `showRowSeparators` | bool | createAndUpdate | Default `true`. |
 
@@ -59,8 +59,8 @@ function handleSortChanged(e: { data: unknown }) {
 | `sortChanged` | `onSortChanged` | `{ data: { columnId, direction } }` |
 
 Clicking a column header fires `sortChanged` and stops there: the native widget shows the sort
-indicator arrow but never reorders `rows` itself. Your `onSortChanged` handler owns sorting — re-sort
-`rows` in JS (as above) and pass the new array back down. This mirrors `<listview>`'s "native never
+indicator arrow but never reorders `rows` itself. Your `onSortChanged` handler owns sorting: re-sort
+`rows` in JS as above and pass the new array back down. This mirrors `<listview>`'s "native never
 mutates your data" contract and keeps sorting logic in one place, where you can test it outside the
 UI.
 
@@ -99,7 +99,7 @@ const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `nodes` | `TreeNode[]` | createAndUpdate | `{ id, parentId?, title, badge?, iconName?, hasChildren, expanded }` — flat, not nested. |
+| `nodes` | `TreeNode[]` | createAndUpdate | `{ id, parentId?, title, badge?, iconName?, hasChildren, expanded }`, a flat list rather than a nested one. |
 | `selectedIndex` | int | createAndUpdate | Default `-1`, indexes the flattened *visible* rows. |
 | `indentationPerLevel` | int | create | Pixels per depth level, default `16`. |
 

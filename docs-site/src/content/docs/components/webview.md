@@ -50,7 +50,7 @@ The full version of this example lives at `examples/browser/main.tsx`.
 | Prop     | Type   | Default | Applied          | Notes                                                     |
 | -------- | ------ | ------- | ---------------- | --------------------------------------------------------- |
 | `url`    | string | `""`    | createAndUpdate  | The page to load. Setting it navigates; empty is ignored. |
-| `testID` | string | —       | meta             | Automation handle, not rendered.                          |
+| `testID` | string | none    | meta             | Automation handle, not rendered.                          |
 
 `url` is a controlled prop: the widget navigates to it whenever it changes, but the host holds an
 echo guard and reloads only when the new `url` differs from the engine's current URI, so
@@ -60,8 +60,8 @@ is set to fill by default.
 
 ## Events
 
-Navigation state comes back through five events. Their payloads follow the schema's shared shapes —
-`text` events carry `{ text }`, boolean events carry `{ checked }`.
+Navigation state comes back through five events. Their payloads follow the schema's shared shapes,
+so `text` events carry `{ text }` and boolean events carry `{ checked }`.
 
 | Event              | Handler prop        | Payload           | Fires when…                                  |
 | ------------------ | ------------------- | ----------------- | -------------------------------------------- |
@@ -101,7 +101,7 @@ sendCommand(page.current, "reload");
 Command names are checked against the schema both at compile time (through `WidgetCommandNames`) and
 again at runtime, so a stale string fails loudly. See
 [Imperative Commands & Refs](/core-concepts/imperative-commands/) for the full mechanism. There is no
-`loadURL` command — to load a page, set the `url` prop.
+`loadURL` command. To load a page, set the `url` prop.
 
 ## How it works
 

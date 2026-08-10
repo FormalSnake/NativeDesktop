@@ -82,10 +82,9 @@ export default defineConfig({
 
 - **`id`** overrides `CFBundleIdentifier` on macOS. There's no Linux equivalent; the `.desktop`
   file's identity comes from its filename.
-- **`fileAssociations`** — each entry is one document type: `ext` (no dot), an optional
-  human-readable `name`, an optional `mimeType`, and `role` (`"editor"` or `"viewer"`, default
-  `"editor"`).
-- **`urlSchemes`** — each entry is one custom scheme (`{ scheme, name? }`), e.g. `myapp://...`.
+- `fileAssociations`: each entry is one document type, with `ext` (no dot), an optional readable
+  `name`, an optional `mimeType`, and `role` (`"editor"` or `"viewer"`, defaulting to `"editor"`).
+- `urlSchemes`: each entry is one custom scheme, `{ scheme, name? }`, for example `myapp://...`.
 
 On macOS, `tools/app-identity.ts` injects `CFBundleDocumentTypes` (one `<dict>` per file
 association) and `CFBundleURLTypes` (one per URL scheme) into `Info.plist`, alongside the
@@ -119,16 +118,16 @@ consumed by `src/core/update.zig`'s `parseManifest`:
 }
 ```
 
-- `app_id` — reverse-DNS app identifier.
-- `version` — the version this manifest describes.
-- `from` — optional; the version a delta artifact would apply against. `null` for a full-only
+- `app_id`: reverse-DNS app identifier.
+- `version`: the version this manifest describes.
+- `from`: optional, the version a delta artifact would apply against. `null` for a full-only
   manifest.
-- `full_url` — where to fetch the full compressed archive.
-- `full_sig_b64` — the second base64 line of the archive's `.minisig` file
+- `full_url`: where to fetch the full compressed archive.
+- `full_sig_b64`: the second base64 line of the archive's `.minisig` file
   (`algorithm[2] ‖ key_id[8] ‖ signature[64]`), passed through verbatim for the Zig verifier to
   decode.
-- `delta` — reserved and not populated. The schema leaves room for a future array of delta
-  artifacts, so adding delta support later extends the manifest shape instead of breaking it.
+- `delta`: reserved and not populated. The schema leaves room for a future array of delta artifacts,
+  so adding delta support later extends the manifest shape instead of breaking it.
 
 ## Full-archive updates ship; deltas are deferred
 

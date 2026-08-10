@@ -15,11 +15,11 @@ Automation role: `window`. Text source: `title`. Children: single.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `title` | string | — | createAndUpdate |
+| `title` | string | none | createAndUpdate |
 | `defaultWidth` | int | 480 | create |
 | `defaultHeight` | int | 320 | create |
-| `tabGroup` | string | — | create |
-| `testID` | string | — | meta |
+| `tabGroup` | string | none | create |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -31,7 +31,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `focused` | `onFocused` | checked |
 
 Imperative commands (via `sendCommand(ref.current, …)`): `showAlert`, `openFile`, `saveFile`,
-`showAbout`, `showTabOverview` — see [Dialogs](/components/dialogs/) and
+`showAbout`, `showTabOverview`. See [Dialogs](/components/dialogs/) and
 [Native Tabs](/native-platform/tabs/).
 
 ## Box (`<box>`)
@@ -42,7 +42,7 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|---|
 | `orientation` | vertical \| horizontal | vertical | create |
 | `spacing` | int | 0 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Label (`<label>`)
 
@@ -51,7 +51,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string | (empty) | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Button (`<button>`)
 
@@ -60,8 +60,8 @@ Automation role: `button`. Text source: `label`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `label` | string | Button | create |
-| `testID` | string | — | meta |
-| `iconName` | string | — | create |
+| `testID` | string | none | meta |
+| `iconName` | string | none | create |
 | `labelAlign` | start \| center \| end | center | create |
 
 | Event | Handler | Payload |
@@ -75,9 +75,9 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string | (empty) | createAndUpdate |
-| `placeholder` | string | — | createAndUpdate |
+| `placeholder` | string | none | createAndUpdate |
 | `editable` | bool | true | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -92,14 +92,14 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string | (empty) | createAndUpdate |
 | `minContentHeight` | int | 120 | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `changed` | `onChanged` | text |
 
 An empty `TextArea` collapses to 0 logical height, which fails the automation actionability check
-until it has content or explicit sizing — see [Automation Socket](/automation-testing/automation-socket/).
+until it has content or explicit sizing. See [Automation Socket](/automation-testing/automation-socket/).
 
 ## Checkbox (`<checkbox>`)
 
@@ -109,7 +109,7 @@ Automation role: `checkbox`. Text source: `label`. Children: none.
 |---|---|---|---|
 | `checked` | bool | false | createAndUpdate |
 | `label` | string | (empty) | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -121,10 +121,10 @@ Automation role: `radio`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `group` | string | — | create |
+| `group` | string | none | create |
 | `checked` | bool | false | createAndUpdate |
 | `label` | string | (empty) | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -136,9 +136,9 @@ Automation role: `combobox`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `options` | stringList | — | create |
+| `options` | stringList | none | create |
 | `selectedIndex` | int | 0 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -157,7 +157,7 @@ Automation role: `slider`. Text source: none. Children: none.
 | `step` | float | 1 | create |
 | `value` | float | 0 | createAndUpdate |
 | `orientation` | horizontal \| vertical | horizontal | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -170,7 +170,7 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `fraction` | float | 0 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Image (`<image>`)
 
@@ -178,9 +178,9 @@ Automation role: `image`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `path` | string | — | createAndUpdate |
-| `iconName` | string | — | createAndUpdate |
-| `testID` | string | — | meta |
+| `path` | string | none | createAndUpdate |
+| `iconName` | string | none | createAndUpdate |
+| `testID` | string | none | meta |
 
 ## ScrollView (`<scrollview>`)
 
@@ -189,7 +189,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `minContentHeight` | int | 0 | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Separator (`<separator>`)
 
@@ -198,7 +198,7 @@ Automation role: `separator`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `orientation` | horizontal \| vertical | horizontal | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Spinner (`<spinner>`)
 
@@ -207,7 +207,7 @@ Automation role: `spinner`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `spinning` | bool | true | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## TabView (`<tabview>`)
 
@@ -216,7 +216,7 @@ Automation role: `tablist`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `selectedIndex` | int | 0 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 Attached props (set on children):
 
@@ -224,7 +224,7 @@ Attached props (set on children):
 |---|---|---|
 | `tabLabel` | string | (empty) |
 
-Attached props are attach-time-only; changing them after mount is a no-op. `selectedIndex` takes
+Attached props apply at attach time only. Changing one after mount is a no-op. `selectedIndex` takes
 effect on update; initial page is 0.
 
 ## Grid (`<grid>`)
@@ -233,7 +233,7 @@ Automation role: `grid`. Text source: none. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 Attached props (set on children):
 
@@ -244,7 +244,7 @@ Attached props (set on children):
 | `gridRowSpan` | int | 1 |
 | `gridColumnSpan` | int | 1 |
 
-Attached props are attach-time-only; changing them after mount is a no-op.
+Attached props apply at attach time only. Changing one after mount is a no-op.
 
 ## ListView (`<listview>`)
 
@@ -252,30 +252,43 @@ Automation role: `list`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `items` | stringList | — | createAndUpdate |
+| `items` | stringList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `rowActivated` | `onRowActivated` | index |
 
 `itemCount` (reported by `getTree`) is the row count, never a walk of GTK's recycled row widgets.
-React item-template components (rendering arbitrary JSX per row) are deferred — v1 renders native
-string rows only.
+React item-template components, rendering arbitrary JSX per row, are not implemented. Today
+`<listview>` renders native string rows only.
 
 ## WebView (`<webview>`)
-
-:::caution
-**v1 stub** — renders a placeholder `Label`, not a real web view.
-:::
 
 Automation role: `webview`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `url` | string | — | create |
-| `testID` | string | — | meta |
+| `url` | string | (empty) | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `navigate` | `onNavigate` | text |
+| `titleChanged` | `onTitleChanged` | text |
+| `loadingChanged` | `onLoadingChanged` | checked |
+| `backAvailable` | `onBackAvailable` | checked |
+| `forwardAvailable` | `onForwardAvailable` | checked |
+| `loadProgress` | `onLoadProgress` | value |
+| `loadFailed` | `onLoadFailed` | data |
+| `newWindow` | `onNewWindow` | text |
+| `downloadRequested` | `onDownloadRequested` | data |
+| `javaScriptResult` | `onJavaScriptResult` | data |
+
+Imperative commands (via `sendCommand(ref.current, …)`): `goBack`, `goForward`, `reload`, `stop`,
+`executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`. See
+[WebView](/components/webview/).
 
 ## SplitView (`<splitview>`)
 
@@ -286,7 +299,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `sidebarWidth` | float | 0 | create |
 | `collapsed` | bool | false | createAndUpdate |
 | `listWidth` | float | 0 | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 Attached props (set on children):
 
@@ -294,7 +307,7 @@ Attached props (set on children):
 |---|---|---|
 | `slot` | enum (`sidebar` \| `content` \| `list`) | content |
 
-Attached props are attach-time-only; changing them after mount is a no-op. See
+Attached props apply at attach time only. Changing one after mount is a no-op. See
 [Windows & Chrome](/native-platform/windows-chrome/) for how this renders on each platform, and
 [Split Views](/native-platform/split-views/) for the three-pane (`list` slot) pattern.
 
@@ -305,7 +318,7 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `title` | string | (empty) | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 Attached props (set on children):
 
@@ -313,8 +326,9 @@ Attached props (set on children):
 |---|---|---|
 | `slot` | enum (`start` \| `end`) | start |
 
-Attached props are attach-time-only; changing them after mount is a no-op. `title` is create-only —
-key the widget on the title if it needs to change (see [App Model](/core-concepts/app-model/)).
+Attached props apply at attach time only. Changing one after mount is a no-op. `title` is
+create-only, so key the widget on the title if it needs to change (see
+[App Model](/core-concepts/app-model/)).
 
 ## ToolbarView (`<toolbarview>`)
 
@@ -322,7 +336,7 @@ Automation role: `group`. Text source: none. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## SearchInput (`<searchinput>`)
 
@@ -331,8 +345,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string | (empty) | createAndUpdate |
-| `placeholder` | string | — | createAndUpdate |
-| `testID` | string | — | meta |
+| `placeholder` | string | none | createAndUpdate |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -345,9 +359,9 @@ Automation role: `list`. Text source: none. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `items` | objectList | — | createAndUpdate |
+| `items` | objectList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -363,7 +377,7 @@ platform rendering (real `NSApp.mainMenu` on macOS, primary hamburger menu on GN
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `defaults` | bool | true | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## Menu (`<menu>`)
 
@@ -372,7 +386,7 @@ Automation role: `menu`. Text source: `label`. Children: multi (`<menuitem>` ele
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `label` | string | (empty) | create |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 ## MenuItem (`<menuitem>`)
 
@@ -382,11 +396,11 @@ Automation role: `menuitem`. Text source: `label`. Children: none. An item has e
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `label` | string | (empty) | create |
-| `iconName` | string | — | create |
-| `accelerator` | string | — | create |
+| `iconName` | string | none | create |
+| `accelerator` | string | none | create |
 | `role` | none \| separator \| about \| settings \| quit \| undo \| redo \| cut \| copy \| paste \| delete \| selectAll \| close \| minimize \| zoom \| fullscreen | none | create |
 | `enabled` | bool | true | createAndUpdate |
-| `testID` | string | — | meta |
+| `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|

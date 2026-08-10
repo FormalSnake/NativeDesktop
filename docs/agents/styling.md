@@ -30,7 +30,7 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable (frozen
   | --- | --- |
   | `suggested-action` | `NSButton.bezelColor = .controlAccentColor`, `keyEquivalent = "\r"` |
   | `destructive-action` | `NSButton.bezelColor = .systemRed`, `hasDestructiveAction = true` |
-  | `pill` | no-op — modern AppKit buttons are already rounded |
+  | `pill` | no-op; modern AppKit buttons are already rounded |
   | `flat` | `NSButton.isBordered = false`, `showsBorderOnlyWhileMouseInside = true` |
   | `title-1` / `title-2` / `title-3` / `title-4` | `.font = .preferredFont(forTextStyle:)` with `.largeTitle` / `.title1` / `.title2` / `.title3` |
   | `heading` | `.preferredFont(forTextStyle: .headline)` |

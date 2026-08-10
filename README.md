@@ -1,62 +1,87 @@
 # NativeDesktop
 
-NativeDesktop is a cross-platform desktop framework where you write React 19 in TypeScript and get
-real native widgets back: GTK4/libadwaita on Linux, AppKit on macOS, Win32 planned. There is no
-embedded browser on the UI path: no DOM, no Electron. Apps can still show web content — the
-`<webview>` widget wraps the platform's own engine (WKWebView on macOS, WebKitGTK on Linux) while
-the UI around it stays native. The widgets your JSX describes are the platform's own widget
-classes (`GtkBox`, `AdwHeaderBar`, `NSButton`, `NSSplitView`), so one React tree renders in each
-platform's current design language (Liquid Glass on macOS, Adwaita on GNOME) instead of a
-facsimile layer approximating either one.
+Write React 19 in TypeScript, get real native desktop widgets: GTK4 and libadwaita on Linux, AppKit
+on macOS. No DOM, no Electron, no browser on the UI path.
 
-## Share code with web and React Native
+The widgets your JSX describes are the platform's own classes (`GtkBox`, `AdwHeaderBar`, `NSButton`,
+`NSSplitView`), so one React tree renders in each platform's current design language rather than a
+lookalike layer approximating both. Apps that need web content get a `<webview>` backed by the
+system engine (WKWebView on macOS, WebKitGTK on Linux) with native UI around it.
 
-`@nativedesktop/react` declares `react` as a `peerDependency` rather than a vendored copy, so a
-NativeDesktop app can live in a monorepo next to a web (`react-dom`) app and a React Native app and
-share a single hooks/logic package with both, unmodified. Author a hook the normal way,
-`import { useState } from "react"`, in a plain `.ts` file, and NativeDesktop's build pipeline
-rewrites that import to the pinned `@nativedesktop/react` for you (a Babel plugin for `nd build`, a
-Bun `onLoad` plugin for `nd dev`/`bun --hot`). Desktop-only UI lives in `.desktop.tsx` files, the
-platform-suffix convention React Native uses for `.native.tsx`. See
-[Monorepo & Code Sharing](docs-site/src/content/docs/get-started/monorepo.md) for the full mechanics.
+```tsx
+// src/main.tsx
+import { render, useState } from "@nativedesktop/react";
 
-## Quickstart
+function App() {
+  const [clicks, setClicks] = useState(0);
 
-Enter the pinned toolchain (Zig 0.16.0, Bun 1.3.13, and, on Linux, GTK4 + libadwaita) with
-`nix develop`. On macOS, nixpkgs' `libadwaita` doesn't build under Nix (an `appstream` issue), so the
-Mac devshell borrows Homebrew's GTK stack instead: run `brew install libadwaita` once (it pulls in
-`gtk4` too). Then, inside that shell:
+  return (
+    <window title="Counter" defaultWidth={480} defaultHeight={320}>
+      <box orientation="vertical" spacing={8}>
+        <label text={`Clicks: ${clicks}`} />
+        <button label="Increment" onClick={() => setClicks((c) => c + 1)} />
+      </box>
+    </window>
+  );
+}
+
+await render(<App />);
+```
+
+Hooks are imported from `@nativedesktop/react`, not from `react`. Hot reload re-evaluates the whole
+module graph, and a bare `react` import resolves to a fresh instance with no attached dispatcher.
+Shared logic packages are the exception: write them against `react` and the build rewrites the
+import for you. See [State & Hot Reload][state] and [Monorepo & Code Sharing][monorepo].
+
+## Getting started
+
+You need Zig 0.16.0, Bun 1.3.13, and on Linux GTK4 plus libadwaita. The repo pins all of it in a Nix
+flake:
+
+```bash
+nix develop
+```
+
+On macOS, nixpkgs' `libadwaita` fails to build (an `appstream` dependency issue), so the Mac devshell
+borrows Homebrew's GTK stack. Run `brew install libadwaita` once, which pulls in `gtk4` too.
+
+Scaffold an app and run it:
 
 ```bash
 ./scripts/new-app.sh ../my-app
 cd ../my-app
 bun install
-bun run dev                   # == `nd dev` — ND_DEV=1, hot reload, crash-restart overlay
+bun run dev
 ```
 
-`bun run dev` runs the **native backend for your platform** — the AppKit shell on macOS, the
-GTK host on Linux. `nd dev` resolves that backend's binary via `@nativedesktop/host` (AppKit
-`nd-shell`, GTK `nd-hello`); inside this checkout a missing binary is built on first run
-(`nd: building appkit host (first run)…`). Pass `--backend gtk` (or set `ND_BACKEND=gtk`) to
-cross-check the same app on the GTK host, which runs on macOS too via GTK4's Quartz backend:
+`bun run dev` is `nd dev`, which runs the native backend for your platform: the AppKit shell on
+macOS, the GTK host on Linux. It resolves that binary through `@nativedesktop/host` and, inside this
+checkout, builds it on first run. Hot reload and the crash-restart overlay are on.
+
+To see the same tree on the other backend, GTK4 also runs on macOS through its Quartz `gdk`:
 
 ```bash
-bun run dev -- --backend gtk   # cross-check on the GTK host
+bun run dev -- --backend gtk
 ```
 
-`nd dev [entry]` and `nd build` (`packages/nd`) wrap the underlying mechanism — the host reads
-`ND_SCRIPT` and `ND_DEV`, and `NATIVE_AUTOMATION=1` opens the automation RPC socket (see below;
-`nd dev` doesn't set it for you). While iterating on the Zig or Swift host itself, build it with
-`zig build` (GTK) or the AppKit recipe in the Quick Start guide's *Building the macOS shell*
-section, then invoke the fresh binary directly:
+The framework's own examples run the same way. `cd examples/counter && bun run dev` is the shortest
+path to a real window.
 
-```bash
-ND_SCRIPT=src/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello   # GTK host, fresh build
-```
+### The `nd` CLI
 
-## Architecture
+| Command | What it does |
+|---|---|
+| `nd dev [entry]` | Run in dev mode: `ND_DEV=1`, hot reload, crash-restart overlay. `entry` defaults to `src/main.tsx`. |
+| `nd dev --backend gtk\|appkit` | Force a backend. Defaults to AppKit on macOS, GTK elsewhere. Also reads `ND_BACKEND`. |
+| `nd build` | Compile the app to `dist/` through Babel (React Compiler pass, JSX to calls, hook-import rewrite). |
 
-Every NativeDesktop app is two processes:
+`nd` wraps environment variables the host reads directly. `ND_SCRIPT` points at the React entry,
+`ND_DEV=1` enables hot reload, `NATIVE_AUTOMATION=1` opens the automation socket (`nd dev` does not
+set this one for you), and `NDP_TRACE=1` logs every protocol frame.
+
+## How it works
+
+Every app is two processes.
 
 ```mermaid
 flowchart TB
@@ -88,76 +113,147 @@ flowchart TB
     SCHEMA -->|tools/codegen.ts| CORE
 ```
 
-- **A native host** owns `main()` and the platform's native UI loop (GLib's main loop on Linux via
-  GTK4/libadwaita, `NSApplication.run` via a thin Swift shell on macOS). Both are the same GTK-free
-  Zig core (`src/`): NDP server, retained widget tree, and a frozen C-ABI backend seam, with the
-  platform-specific widget layer plugged in behind it. It holds the authoritative widget tree.
-- **A Bun/TypeScript child** runs your React app. Your components never touch a widget directly.
-  React's reconciler diffs your tree and sends the result to the host over **NDP**, a
-  length-prefixed JSON protocol over a local socket, as one `CommitBatch` per commit.
+The **native host** owns `main()` and the platform's UI loop: GLib's main loop on Linux,
+`NSApplication.run` through a thin Swift shell on macOS. Both sit on the same GTK-free Zig core in
+`src/`, which holds the NDP server, the authoritative retained widget tree, and a frozen C-ABI seam
+that the platform widget layer plugs into.
 
-This split means a JS crash or hang doesn't take the window down: the host stays up and keeps
-answering automation requests.
+The **Bun/TypeScript child** runs your app. Components never touch a widget. React's reconciler
+diffs the tree and ships the result over NDP, a length-prefixed JSON protocol on a local socket, as
+one `CommitBatch` per commit. Events come back the same way.
 
-**Know which backend is drawing.** The OS can't tell you (GTK runs on macOS too), so the host names
-its active backend in the NDP handshake, and the child reads it as `Platform.backend` (`"gtk"` |
-`"appkit"`) alongside `Platform.os`. Branch on `backend` for renderer quirks, on `os` for OS
-conventions; `Platform.select({ gtk, appkit, default })` picks per backend. See
-[Platform Support](docs-site/src/content/docs/native-platform/platform-support.md).
+Because the two are separate processes, a JS crash or hang leaves the window standing. The host
+stays up, keeps answering automation requests, and can restart the child. A crash inside the native
+toolkit is the one failure mode this does not isolate, which is also true of any native app.
 
-**App-owned native components.** Apps can compile GTK widgets, AppKit views, or SwiftUI hosted in
-`NSHostingView` as their own `.so`/`.dylib`. The prebuilt host loads those plugins at launch, while
-typed React wrappers carry JSON props, events, and commands without a framework rebuild. See
+Unlike an Electron renderer, the child is a full Bun runtime with `node:fs`, `bun:sqlite`, process
+spawning, and network access. There is no `contextBridge` and no separate backend process to talk
+to. The tradeoff: heavy synchronous work on the Bun main thread stalls React's commit loop, so
+push it off with `@nativedesktop/data` or a `Worker`.
+
+### Schemas generate the boundary
+
+Three JSON schemas feed `tools/codegen.ts` and are the only source of truth for anything crossing
+the Zig/Bun line:
+
+- `schema/widgets.json`: 53 widgets with their props, defaults, events, commands, and automation
+  role. Generates the Zig bindings, TypeScript intrinsics, Swift bindings, and the widget reference.
+- `schema/protocol.json`: the 14 NDP frames (`hello`, `commitBatch`, `event`, `systemRequest`, and
+  the rest).
+- `schema/rpc.json`: 13 automation methods with typed params, results, and error codes, generated
+  into a tRPC-style client where `AutomationClient.call<M>()` returns `Promise<RpcResult<M>>`.
+
+Rename or retype a field and both the Zig and the TypeScript side fail to compile. Never hand-edit
+generated files. Run `scripts/regen-bindings.sh` after a schema change.
+
+## What you get
+
+**Native chrome, not a facsimile.** Header bars, sidebars, split views, and toolbars are the real
+widgets. `style` covers theme-neutral geometry; `cssClasses` reaches named design-language classes
+that map to GTK CSS on Linux and real AppKit control properties on macOS. Dark mode follows the
+system. See [Styling & Design Language][styling] and [Windows & Chrome][chrome].
+
+**Automation as a first-class consumer.** Set `NATIVE_AUTOMATION=1` and every widget in the tree is
+inspectable and drivable over a JSON-RPC socket. `getTree` returns an accessibility tree with roles,
+enabled and focused state, and live values. On macOS, `pointer`, `drag`, and `keys` post real
+NSEvents through the app's queue. A coding agent drives the app the way a person would. See
+[Automation Socket][automation] and [MCP Tools][mcp].
+
+**Multiple windows and native tabs.** Render more than one `<window>` root and each becomes an
+independent OS window, all from the same React process, so they share state without IPC. Adding
+`tabGroup` turns them into the platform's own tab system: `addTabbedWindow` on macOS, `AdwTabView`
+on GTK. Dragging a `<webview>` tab into another window keeps it alive rather than reloading it, via
+`createPortal` plus `moveNode`. See [Multi-Window][multiwindow] and [Native Tabs][tabs].
+
+**System capabilities.** Promise-based APIs for file dialogs, clipboard, notifications, recent
+documents, Keychain and libsecret credentials, audio playback with a spectrum feed, and app-level
+events like `onOpenUrl` and `onFileDrop`. Access is gated per method group by an ACL manifest. See
+[System Capabilities][system].
+
+**App data and SQLite.** `getAppDataDir()` resolves each OS's per-app directory.
+`@nativedesktop/data` runs `bun:sqlite` inside a Bun `Worker`, so queries never block the thread
+driving React. It depends on no ORM: `query`, `mutate`, and `transaction` form a stable
+`SqliteExecutor` seam, with worked Drizzle and Kysely adapters in the tests. See
+[App Data & Storage][data].
+
+**App-owned native code.** An app can compile its own GTK widgets, AppKit views, or SwiftUI in an
+`NSHostingView` into a `.so` or `.dylib`. The prebuilt host loads the plugin at launch and typed
+React wrappers carry props, events, and commands across, with no framework rebuild. See
 [App-owned native components](docs/native-components.md) and
 [`examples/nativeview-demo`](examples/nativeview-demo).
 
-**Schema-driven codegen.** Three schemas are the single source of truth
-for everything that crosses the Zig↔Bun boundary, all fed through `tools/codegen.ts`:
+**A `<terminal>` widget** backed by libghostty-vt, and a `<webview>` with the surface a browser
+needs: navigation events, load progress, download interception, popup handling, and
+`executeJavaScript`. See [Terminal][terminal] and [WebView][webview].
 
-- `schema/widgets.json` — every widget's props, defaults, events, and automation role. Generates the
-  Zig bindings, TypeScript intrinsics, Swift bindings for the AppKit backend, and the widget
-  reference docs.
-- `schema/protocol.json` — the NDP wire frames (`hello`, `commitBatch`, `event`, …).
-- `schema/rpc.json` — the automation RPC router: 7 methods (`getTree`, `screenshot`, `click`,
-  `waitFor`, `setValue`, `type`, `scroll`) with typed params/results and error codes, generated into
-  a fully-typed, tRPC-style client (`AutomationClient.call<M>(): Promise<RpcResult<M>>`).
+## Platform support
 
-Renaming or retyping a field in any of these schemas is a compile error on both the Zig side and the
-TypeScript side, so a mismatch fails at build time instead of at runtime.
+| Platform | Backend | Status |
+|---|---|---|
+| Linux | GTK4 + libadwaita | Shipping. Blocking CI gate: unit tests, codegen freshness, and headless drive scripts under Weston. |
+| macOS | AppKit, a Swift shell over a GTK-free `libnd.a` | Shipping. Non-blocking CI job plus local drive scripts. |
+| Windows | Win32 with Direct2D/DirectWrite and UIA providers | Designed, not implemented. `tools/package.ts` rejects it as a target. |
 
-**Automation-first.** Every widget a React tree creates is tracked host-side and answerable over a
-JSON-RPC socket the moment `NATIVE_AUTOMATION=1` is set. A coding agent or a headless test drives
-the app the same way a user would.
+Mobile is out of scope by design. See [Platform Support][platform].
 
-**Multi-window, with widget-preserving reparenting.** Render more than one `<window>` root and each
-becomes an independent OS window, all driven by the same Bun/React process, so windows share state
-without IPC. Moving a live widget (e.g. a `<webview>` tab) to another window without
-reloading it is a dedicated primitive, `createPortal` + `moveNode`, since a plain React re-parent
-would unmount and rebuild the native widget. See
-[Multi-Window](docs-site/src/content/docs/native-platform/multi-window.md).
+## Repository layout
 
-**App data directory and a worker-backed SQLite layer.** `getAppDataDir()`/`ensureAppDataDir()`
-resolve each OS's own per-app data directory; `@nativedesktop/data` runs `bun:sqlite` inside a Bun
-`Worker` so queries never block the thread driving React's commit loop. It depends on no ORM:
-`query`/`mutate`/`transaction` (the `SqliteExecutor` interface) is a stable seam any ORM can adapt
-to in userland, with worked Drizzle and Kysely examples. See
-[App Data & Storage](docs-site/src/content/docs/core-concepts/app-data-storage.md).
+```
+src/              Zig core: NDP server, reconciler, ACL, C-ABI backend seam
+src/gtk/          GTK4 + libadwaita backend, compiled into the Linux host
+swift/            AppKit backend: NDShell (hand-written), NDGen (generated), CNd (bridges libnd.a)
+schema/           widgets.json, protocol.json, rpc.json
+tools/            codegen.ts, packaging, ndshot screenshot helper
+packages/         react, nd, host, data, native, mcp, babel-plugin-nativedesktop
+examples/         13 runnable apps, from counter to a tabbed browser
+runtime/          NDP client and its tests
+plugins/          sample native plugins
+scripts/          headless drive scripts, scaffolder, binding regeneration
+docs-site/        the documentation site (Astro + Starlight)
+template/         what scripts/new-app.sh copies
+```
 
-**A broad widget set, plus native dialogs and toasts.** Beyond the form/layout basics, NativeDesktop
-ships pickers (color, date, font), menus/popovers, Table and TreeView for structured data, Video, and
-macOS-only polish widgets (`<trayitem>`, `<sharebutton>`) gated with `Platform.os`. Per-window native
-dialogs (`showAlert`/`openFile`/`saveFile`/`showAbout`) and in-app toasts (`showToast`/`dismissToast`
-on a `<toastoverlay>`) round out the app-facing surface. See the
-[Widget Reference](docs-site/src/content/docs/components/widget-reference.md) and
-[Dialogs](docs-site/src/content/docs/components/dialogs.md).
+## Working on the framework
+
+```bash
+zig build                     # builds zig-out/bin/nd-hello, the GTK host
+zig build test                # Zig unit tests
+zig build libnd -Dbackend=abi # GTK-free static core the Swift shell links
+scripts/regen-bindings.sh     # regenerate Zig/TS/Swift bindings from the schemas
+```
+
+Run a freshly built host directly when you are changing the host itself, since `nd dev` prefers the
+resolved prebuilt binary:
+
+```bash
+ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello
+```
+
+The host prints `ND_*` markers to stderr: `ND_CHILD_CONNECTED`, `ND_COMMIT_APPLIED commitId=…`,
+`ND_AUTOMATION_LISTENING path=…`, `ND_CHILD_EXITED`. The `scripts/headless-*.sh` gates assert on
+those markers, so capture stderr with `2>&1` when you drive the host yourself.
+
+Building the macOS shell by hand takes one extra step, because Zig's archiver emits object members
+Apple's linker rejects. [Quick Start][quickstart] has the `libtool` repack recipe and the
+`env -u SDKROOT` invocation.
 
 ## Docs
 
-The full documentation site lives in [`docs-site/`](docs-site) (Astro + Starlight). Run it locally:
+The full site lives in [`docs-site/`](docs-site) and runs with `cd docs-site && bun install && bun
+run dev`. Start with [Introduction][intro] and [Quick Start][quickstart].
 
-```bash
-cd docs-site && bun install && bun run dev
-```
-
-Start with [Introduction](docs-site/src/content/docs/get-started/introduction.md) and
-[Quick Start](docs-site/src/content/docs/get-started/quick-start.md).
+[intro]: docs-site/src/content/docs/get-started/introduction.md
+[quickstart]: docs-site/src/content/docs/get-started/quick-start.md
+[monorepo]: docs-site/src/content/docs/get-started/monorepo.md
+[state]: docs-site/src/content/docs/core-concepts/state-hot-reload.md
+[styling]: docs-site/src/content/docs/core-concepts/styling-design-language.md
+[data]: docs-site/src/content/docs/core-concepts/app-data-storage.md
+[chrome]: docs-site/src/content/docs/native-platform/windows-chrome.md
+[multiwindow]: docs-site/src/content/docs/native-platform/multi-window.md
+[tabs]: docs-site/src/content/docs/native-platform/tabs.md
+[system]: docs-site/src/content/docs/native-platform/system-capabilities.md
+[platform]: docs-site/src/content/docs/native-platform/platform-support.md
+[terminal]: docs-site/src/content/docs/components/terminal.md
+[webview]: docs-site/src/content/docs/components/webview.md
+[automation]: docs-site/src/content/docs/automation-testing/automation-socket.md
+[mcp]: docs-site/src/content/docs/automation-testing/mcp-tools.md

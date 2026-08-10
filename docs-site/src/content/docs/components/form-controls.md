@@ -1,6 +1,6 @@
 ---
 title: Form Controls
-description: ToggleButton, SegmentedControl, NumberInput, LinkButton, and LevelIndicator — five widgets for input shapes Checkbox/Radio/Slider don't cover.
+description: ToggleButton, SegmentedControl, NumberInput, LinkButton, and LevelIndicator, five widgets for input shapes that Checkbox, Radio, and Slider don't cover.
 ---
 
 Five widgets round out the input vocabulary beyond [Checkbox, Radio, Select, and
@@ -23,15 +23,15 @@ const [bold, setBold] = useState(false);
 | --- | --- | --- | --- |
 | `label` | string | createAndUpdate | |
 | `iconName` | string | create | |
-| `active` | bool | createAndUpdate | Controlled — set it from `onToggled`. |
+| `active` | bool | createAndUpdate | Controlled. Set it from `onToggled`. |
 
 `toggled` → `onToggled` fires `{ checked }`.
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
 A fixed row of mutually-exclusive options (`AdwToggleGroup`-style on GTK, an `NSSegmentedControl`
-on macOS). Unlike `<select>`, every option is visible at once; reach for it when there are 2–5 short
-labels, not a long list.
+on macOS). Unlike `<select>`, every option is visible at once. Reach for it when there are two to
+five short labels, not a long list.
 
 ```tsx
 const [sizeIndex, setSizeIndex] = useState(1);
@@ -91,8 +91,8 @@ const [lastActivated, setLastActivated] = useState("");
 | `visited` | bool | createAndUpdate | Purely visual (dims the link). |
 | `openExternal` | bool | createAndUpdate | Default `false`. When `true`, activating also opens `uri` in the OS default browser (`open`/`xdg-open`, the same mechanism as [`openExternal()`](/native-platform/system-capabilities/#shell-helpers)). |
 
-`activate` → `onActivate` fires `{ text: uri }` regardless of `openExternal` — so a link that should
-navigate *inside* your app (not the OS browser) just leaves `openExternal` unset and handles the URI
+`activate` → `onActivate` fires `{ text: uri }` regardless of `openExternal`, so a link that should
+navigate *inside* your app rather than in the OS browser leaves `openExternal` unset and handles the URI
 in the handler.
 
 ## LevelIndicator (`<levelindicator>`)
@@ -112,7 +112,7 @@ interaction; drive it from whatever produces the value, often a `<slider>` in a 
 | `warningValue` / `criticalValue` | float | createAndUpdate | Value thresholds past which the fill recolors (amber/red). Omit either to skip that tier. |
 | `discrete` | bool | create | Render as fixed segments (like a battery icon) instead of a continuous fill. |
 
-No events — it's display-only.
+No events. It is display-only.
 
 See the [Widget Reference](/components/widget-reference/) for the generated prop tables and
 `examples/gallery/main.tsx`'s "Controls" tab for all five wired to live state together.

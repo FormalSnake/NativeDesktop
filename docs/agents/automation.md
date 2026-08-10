@@ -27,7 +27,7 @@ opens). `packages/mcp` is a stdio MCP server that bridges this socket to MCP too
 | `waitFor` | `{condition: {textContains?: string} \| {refVisible?: number}, timeoutMs?: number}` | `{matched: true}` | polls at ~50ms; default `timeoutMs` 2000 |
 | `setValue` | `{ref: number, value: string \| boolean \| number}` | `{ref, applied: true}` | kind-dispatched: `TextInput`/`TextArea` need a string, `Checkbox`/`Radio` a bool, `Slider` a number, `Select` an integer index |
 | `type` | `{ref: number, text: string}` | `{ref, text: <full text after insert>}` | `TextInput` only; semantic append via `GtkEditable.insertText`, never synthetic keysyms |
-| `scroll` | `{ref: number, dx?: number, dy?: number}` | `{ref, x, y}` (resulting adjustment values) | `ScrollView` only — see Deltas below |
+| `scroll` | `{ref: number, dx?: number, dy?: number}` | `{ref, x, y}` (resulting adjustment values) | `ScrollView` only, see Deltas below |
 
 `JsonNode` shape (from `getTree`/nested in `root`/`children`): `{ref: number, type: string, testID:
 string \| null, text: string \| null, visible: boolean, geometry: {x,y,w,h} \| null, children:
@@ -164,11 +164,11 @@ silently ignored (`ndshot doctor` prints which mode it is running in).
 
 Three subcommands, all under `tools/ndshot/bin/ndshot`:
 
-- **`ndshot doctor`** — reports current Screen Recording permission state (and the binary's
+- `ndshot doctor` reports current Screen Recording permission state (and the binary's
   codesign identity, to help spot a stale grant after a rebuild). Exit 0 if granted, 2 if not.
-- **`ndshot list`** — enumerates every capturable window as one JSON object per line: `{"pid":…,
+- `ndshot list` enumerates every capturable window as one JSON object per line: `{"pid":…,
   "windowID":…, "app":"…", "title":"…", "x":…, "y":…, "width":…, "height":…, "onScreen":…}`.
-- **`ndshot capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]`** —
+- `ndshot capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]`
   captures the first matching window to a full-resolution PNG. `--title` is a case-insensitive
   substring match; `--pid`/`--title` compose (both must match); `--window-id` wins outright.
 
