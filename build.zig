@@ -268,6 +268,35 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(acl_tests).step);
 
+    // Automation dialog script (FIFO/exhausted/unscripted): own addTest root;
+    // link_libc for the std.c.getenv/fopen env+file reads.
+    const dialog_script_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/automation_dialogs.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(dialog_script_tests).step);
+
+    // Automation server (waitFor vocabulary / value rendering): own addTest
+    // root. backend "null" keeps the tree->backend seam display-free.
+    const automation_opts = b.addOptions();
+    automation_opts.addOption([]const u8, "backend", "null");
+    const automation_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/automation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "build_options", .module = automation_opts.createModule() },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(automation_tests).step);
+
     // Native-plugin dlopen loader: own addTest root; link_libc because
     // the test dispatches into the demo plugin's libc-allocated result and
     // frees it with std.c.free.

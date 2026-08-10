@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, pointer, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, resolve, windows, pointer, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -18,6 +18,8 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "doubleClick", .method = .doubleClick },
     .{ .name = "rightClick", .method = .rightClick },
     .{ .name = "hover", .method = .hover },
+    .{ .name = "resolve", .method = .resolve },
+    .{ .name = "windows", .method = .windows },
     .{ .name = "pointer", .method = .pointer },
     .{ .name = "drag", .method = .drag },
     .{ .name = "keys", .method = .keys },
@@ -103,8 +105,13 @@ pub const ClickResult = struct {
     dispatched: bool,
 };
 
+/// ref is the winning match (ranked like resolve: actionable first, key window first, then tree
+/// order), so a caller needs no follow-up getTree; count is the number of nodes that satisfied
+/// the predicate.
 pub const WaitForResult = struct {
     matched: bool,
+    ref: ?u32 = null,
+    count: u32,
 };
 
 pub const SetValueResult = struct {
@@ -125,10 +132,42 @@ pub const ScrollResult = struct {
     y: f64,
 };
 
-/// Exactly one of textContains / refVisible must be set.
+/// Exactly one selector: textContains | refVisible | testId. With testId, `state` (default
+/// "present", one of present|gone|visible|enabled|disabled|focused) picks the predicate and
+/// countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against
+/// the node's a11y value STRING RENDERING (numbers stringified, bools "true"/"false") so one
+/// predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on
+/// the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round
+/// trip.
 pub const WaitCondition = struct {
     textContains: ?[]const u8 = null,
     refVisible: ?u32 = null,
+    testId: ?[]const u8 = null,
+    state: ?[]const u8 = null,
+    countAtLeast: ?u32 = null,
+    valueEquals: ?[]const u8 = null,
+    valueContains: ?[]const u8 = null,
+};
+
+pub const ResolveResult = struct {
+    ref: ?u32 = null,
+    refs: []u32,
+    count: u32,
+};
+
+/// key/main/visible/title come from the live windowState probe on the Window node's handle;
+/// tabGroup is the create-time prop (null for plain windows).
+pub const WindowInfo = struct {
+    ref: u32,
+    title: ?[]const u8 = null,
+    key: bool,
+    main: bool,
+    visible: bool,
+    tabGroup: ?[]const u8 = null,
+};
+
+pub const WindowsResult = struct {
+    windows: []WindowInfo,
 };
 
 pub const PointerResult = struct {
@@ -165,58 +204,87 @@ pub const ScreenshotParams = struct {
 };
 
 /// click: Actionability-checked semantic click; emits clicked exactly like real user input. On
-/// CommandPalette activates the currently-highlighted row.
+/// CommandPalette activates the currently-highlighted row. Target by exactly one of ref /
+/// testId (window optionally scopes testId resolution).
 pub const ClickParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
 };
 
-/// waitFor: Polls the tree at ~50ms until the condition holds or timeoutMs elapses.
+/// waitFor: Polls the tree at ~50ms until the condition holds or timeoutMs elapses. window (if
+/// given) scopes every predicate to that Window node's subtree.
 pub const WaitForParams = struct {
     condition: ?WaitCondition = null,
     timeoutMs: i64 = 2000,
+    window: ?u32 = null,
 };
 
 /// setValue: Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a
 /// number, Select an integer index. CommandPalette (routed to the presented dialog): a string
 /// sets the query text (fires queryChanged), an integer activates the row at that index (fires
-/// onActivate), a bool true submits the raw query (fires onSubmit).
+/// onActivate), a bool true submits the raw query (fires onSubmit). Target by exactly one of
+/// ref / testId.
 pub const SetValueParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
     value: ?std.json.Value = null,
 };
 
 /// type: TextInput (and CommandPalette, appending to its query); semantic append via
-/// GtkEditable.insertText, never synthetic keysyms.
+/// GtkEditable.insertText, never synthetic keysyms. Target by exactly one of ref / testId.
 pub const TypeParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
     text: ?[]const u8 = null,
 };
 
 /// scroll: ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy.
+/// Target by exactly one of ref / testId.
 pub const ScrollParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
     dx: ?f64 = null,
     dy: ?f64 = null,
 };
 
 /// doubleClick: Actionability-checked double-click at the widget's center via real input
 /// synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK
-/// (-32003).
+/// (-32003). Target by exactly one of ref / testId.
 pub const DoubleClickParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
 };
 
 /// rightClick: Actionability-checked right-click at the widget's center via real input
 /// synthesis; opens native context menus where the widget has one (dismiss with keys "escape").
-/// Unsupported on GTK (-32003).
+/// Unsupported on GTK (-32003). Target by exactly one of ref / testId.
 pub const RightClickParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
 };
 
 /// hover: Best-effort pointer hover at the widget's center (macOS: posted mouseMoved).
-/// Unsupported on GTK (-32003).
+/// Unsupported on GTK (-32003). Target by exactly one of ref / testId.
 pub const HoverParams = struct {
     ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// resolve: Resolves a testID to the single ACTIONABLE instance. Candidates are ranked:
+/// actionable (the checkActionable predicate passes) before not; then key/front window before
+/// background. `refs` is every match in tree order, `ref` the winner (null when none is
+/// actionable and `actionable` is true).
+pub const ResolveParams = struct {
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+    actionable: bool = true,
 };
 
 /// pointer: Low-level single pointer phase (down|move|up) at logical-window-topleft coordinates

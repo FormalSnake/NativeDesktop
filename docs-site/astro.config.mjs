@@ -69,6 +69,7 @@ export default defineConfig({
 					label: 'Automation & Testing',
 					items: [
 						{ label: 'Automation Socket', slug: 'automation-testing/automation-socket' },
+						{ label: 'Test Harness', slug: 'automation-testing/test-harness' },
 						{ label: 'MCP Tools', slug: 'automation-testing/mcp-tools' },
 					],
 				},

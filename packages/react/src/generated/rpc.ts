@@ -52,8 +52,11 @@ export interface ClickResult {
   dispatched: boolean;
 }
 
+/** ref is the winning match (ranked like resolve: actionable first, key window first, then tree order), so a caller needs no follow-up getTree; count is the number of nodes that satisfied the predicate. */
 export interface WaitForResult {
   matched: boolean;
+  ref: number | null;
+  count: number;
 }
 
 export interface SetValueResult {
@@ -74,10 +77,35 @@ export interface ScrollResult {
   y: number;
 }
 
-/** Exactly one of textContains / refVisible must be set. */
+/** Exactly one selector: textContains | refVisible | testId. With testId, `state` (default "present", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools "true"/"false") so one predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round trip. */
 export interface WaitCondition {
   textContains?: string;
   refVisible?: number;
+  testId?: string;
+  state?: string;
+  countAtLeast?: number;
+  valueEquals?: string;
+  valueContains?: string;
+}
+
+export interface ResolveResult {
+  ref: number | null;
+  refs: number[];
+  count: number;
+}
+
+/** key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows). */
+export interface WindowInfo {
+  ref: number;
+  title: string | null;
+  key: boolean;
+  main: boolean;
+  visible: boolean;
+  tabGroup: string | null;
+}
+
+export interface WindowsResult {
+  windows: WindowInfo[];
 }
 
 export interface PointerResult {
@@ -109,49 +137,71 @@ export interface ScreenshotParams {
   window?: number;
 }
 
-/** Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. */
+/** Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. Target by exactly one of ref / testId (window optionally scopes testId resolution). */
 export interface ClickParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
 }
 
-/** Polls the tree at ~50ms until the condition holds or timeoutMs elapses. */
+/** Polls the tree at ~50ms until the condition holds or timeoutMs elapses. window (if given) scopes every predicate to that Window node's subtree. */
 export interface WaitForParams {
   condition: WaitCondition;
   timeoutMs?: number;
+  window?: number;
 }
 
-/** Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit). */
+/** Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit). Target by exactly one of ref / testId. */
 export interface SetValueParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
   value: unknown;
 }
 
-/** TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms. */
+/** TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms. Target by exactly one of ref / testId. */
 export interface TypeParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
   text: string;
 }
 
-/** ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy. */
+/** ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy. Target by exactly one of ref / testId. */
 export interface ScrollParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
   dx?: number;
   dy?: number;
 }
 
-/** Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003). */
+/** Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003). Target by exactly one of ref / testId. */
 export interface DoubleClickParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
 }
 
-/** Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys "escape"). Unsupported on GTK (-32003). */
+/** Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys "escape"). Unsupported on GTK (-32003). Target by exactly one of ref / testId. */
 export interface RightClickParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
 }
 
-/** Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003). */
+/** Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003). Target by exactly one of ref / testId. */
 export interface HoverParams {
-  ref: number;
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
+/** Resolves a testID to the single ACTIONABLE instance. Candidates are ranked: actionable (the checkActionable predicate passes) before not; then key/front window before background. `refs` is every match in tree order, `ref` the winner (null when none is actionable and `actionable` is true). */
+export interface ResolveParams {
+  testId: string;
+  window?: number;
+  actionable?: boolean;
 }
 
 /** Low-level single pointer phase (down|move|up) at logical-window-topleft coordinates in the target window (default: root window). button is left|right (default left). Caution: a lone down on a tracking control (slider, button) enters the control's mouse-tracking loop until an up arrives — prefer drag for press-move-release sequences. Unsupported on GTK (-32003). */
@@ -195,6 +245,8 @@ export interface RpcMethods {
   doubleClick: { params: DoubleClickParams; result: ClickResult };
   rightClick: { params: RightClickParams; result: ClickResult };
   hover: { params: HoverParams; result: ClickResult };
+  resolve: { params: ResolveParams; result: ResolveResult };
+  windows: { params: undefined; result: WindowsResult };
   pointer: { params: PointerParams; result: PointerResult };
   drag: { params: DragParams; result: DragResult };
   keys: { params: KeysParams; result: KeysResult };

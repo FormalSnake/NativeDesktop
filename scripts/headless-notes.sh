@@ -12,27 +12,19 @@ export NATIVE_AUTOMATION=1
 # defaultWidth=1100, which the drive script asserts (window would be clamped).
 weston --backend=headless --width=1280 --height=800 --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
-trap 'kill "$WESTON_PID" 2>/dev/null || true; kill "$HOST_PID" 2>/dev/null || true' EXIT
+trap 'kill "$WESTON_PID" 2>/dev/null || true' EXIT
 
 for _ in $(seq 1 50); do
   [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
   sleep 0.1
 done
 
-LOG=$(mktemp)
-ND_SCRIPT=examples/notes/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
-HOST_PID=$!
-
-for _ in $(seq 1 120); do
-  grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
-  sleep 0.1
-done
-grep -q "ND_AUTOMATION_LISTENING" "$LOG" || { echo "FAIL: no automation listener"; cat "$LOG"; exit 1; }
-grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL: no commit applied"; cat "$LOG"; exit 1; }
-SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
-
-ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_DIR="$XDG_RUNTIME_DIR" bun scripts/notes-drive.ts >"$XDG_RUNTIME_DIR/drive.log" 2>&1 \
-  || { echo "FAIL: driver"; cat "$XDG_RUNTIME_DIR/drive.log"; cat "$LOG"; exit 1; }
+# scripts/notes-drive.ts now owns launching the host itself (via
+# @nativedesktop/test's launchApp): markers, socket parsing, and retries all
+# live in the harness, so this wrapper's only job is the Wayland compositor
+# and the env vars nd-hello needs once notes-drive.ts spawns it.
+ND_SHOT_DIR="$XDG_RUNTIME_DIR" bun scripts/notes-drive.ts gtk >"$XDG_RUNTIME_DIR/drive.log" 2>&1 \
+  || { echo "FAIL: driver"; cat "$XDG_RUNTIME_DIR/drive.log"; exit 1; }
 cat "$XDG_RUNTIME_DIR/drive.log"
 grep -q "ND_NOTES_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: driver did not report success"; exit 1; }
 grep -q "ND_NAVCHROME_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: native chrome not present"; exit 1; }

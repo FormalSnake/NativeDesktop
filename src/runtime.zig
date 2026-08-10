@@ -10,6 +10,7 @@ const ndp_binary = @import("ndp_binary.zig");
 // calls them straight through the registered C vtable, the same object
 // `abi_backend.bind` already wired for the structural seam calls.
 const abi_backend = @import("abi_backend.zig");
+const automation_dialogs = @import("automation_dialogs.zig");
 
 var trace: bool = false;
 
@@ -539,6 +540,26 @@ pub const Runtime = struct {
             sendSystemResponse(req.id, false, "capability denied");
             return;
         }
+        // Scripted native dialogs (ND_AUTOMATION_DIALOG_SCRIPT): answer
+        // dialog.* from the per-method FIFO instead of dispatching real UI.
+        // An exhausted queue fails LOUDLY — never silently shows the dialog.
+        if (std.mem.startsWith(u8, req.method, "dialog.")) {
+            switch (automation_dialogs.take(req.method)) {
+                .unscripted => {},
+                .exhausted => {
+                    std.debug.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{req.method});
+                    const msg = std.fmt.allocPrint(self.gpa, "dialog script exhausted: {s}", .{req.method}) catch return;
+                    defer self.gpa.free(msg);
+                    sendSystemResponse(req.id, false, msg);
+                    return;
+                },
+                .response => |json| {
+                    std.debug.print("ND_DIALOG_SCRIPTED method={s}\n", .{req.method});
+                    sendSystemResponse(req.id, true, json);
+                    return;
+                },
+            }
+        }
         // `req.method`/`req.params` borrow from `bytes` (freed on return) —
         // dupe both into a heap job before marshaling; `params` re-serializes
         // the parsed value back to the JSON string the backend receives.
@@ -653,6 +674,37 @@ pub const Runtime = struct {
             handleReparent(self.tree, cmd.nodeId, cmd.arg);
             return;
         }
+        // Scripted window-scoped dialogs (packages/react/src/dialogs.ts rides
+        // widgetCommand, not systemRequest): a scripted showAlert/openFile/
+        // saveFile on a Window node synthesizes the matching *Result event —
+        // spliced verbatim as the event's `data`, so the entry must carry the
+        // real shape ({buttonId} / {canceled,paths} / {canceled,path}) — and
+        // the native dialog never opens. Exhausted queues fail LOUDLY with no
+        // event (the pending promise never settles; the marker names why).
+        if (dialogResultEvent(cmd.command)) |event_name| {
+            const meta_kind = if (self.tree.metaGet(cmd.nodeId)) |m| m.widget_type else "";
+            if (std.mem.eql(u8, meta_kind, "Window")) {
+                var method_buf: [40]u8 = undefined;
+                const method = std.fmt.bufPrint(&method_buf, "window.{s}", .{cmd.command}) catch unreachable;
+                switch (automation_dialogs.take(method)) {
+                    .unscripted => {},
+                    .exhausted => {
+                        std.debug.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{method});
+                        return;
+                    },
+                    .response => |json| {
+                        const scripted = std.json.parseFromSlice(std.json.Value, self.gpa, json, .{}) catch {
+                            std.debug.print("ND_DIALOG_SCRIPT_ERROR malformed entry method={s}\n", .{method});
+                            return;
+                        };
+                        defer scripted.deinit();
+                        std.debug.print("ND_DIALOG_SCRIPTED method={s}\n", .{method});
+                        emitEvent(cmd.nodeId, event_name, .{ .data = scripted.value });
+                        return;
+                    },
+                }
+            }
+        }
         const widget = self.tree.get(cmd.nodeId) orelse {
             std.debug.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
             return;
@@ -662,6 +714,15 @@ pub const Runtime = struct {
         const view_kind = if (meta) |m| m.view_kind else null;
         if (view_kind) |vk| backend.nativeViewCommand(vk, widget, cmd.command, cmd.arg) else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
         std.debug.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
+    }
+
+    /// The Window dialog commands the dialog script can intercept, mapped to
+    /// the *Result event each one's promise settles on (dialogs.ts).
+    fn dialogResultEvent(command: []const u8) ?[]const u8 {
+        if (std.mem.eql(u8, command, "showAlert")) return "alertResult";
+        if (std.mem.eql(u8, command, "openFile")) return "openFileResult";
+        if (std.mem.eql(u8, command, "saveFile")) return "saveFileResult";
+        return null;
     }
 
     /// Decodes the `{parent, before?}` arg of a `"__ndReparent"` widgetCommand

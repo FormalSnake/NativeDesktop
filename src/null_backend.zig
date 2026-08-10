@@ -93,6 +93,9 @@ pub fn getWindow() ?*Node {
 pub fn resolveWindow(node: *Node) *Node {
     return node;
 }
+/// release_node seam: node storage is owned by the module-level `nodes` list
+/// and freed in `reset`, so dropping the core's handle is bookkeeping-free.
+pub fn releaseNode(_: *Node) void {}
 
 // Signature-parallel to gtk_backend.createWidget: same (app, kind, props) shape.
 // `app` is unused (opaque *anyopaque so callers pass whatever they hold).

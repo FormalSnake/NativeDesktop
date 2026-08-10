@@ -93,6 +93,14 @@ typedef struct nd_backend {
      result later via nd_system_response. Arrives on the UI thread. Appended
      (append-only vtable) — bumps @sizeOf(NdBackend) to 22 words in src/abi.zig. */
   void (*system_request)(nd_context*, uint32_t id, const char* method, const char* params_json);
+
+  /* drop the backend's per-node ownership reference when the core forgets a
+     node id (tree remove / generation GC / clearAppNodes). GTK: g_object_unref
+     of the create-time ref_sink; the Mac shell: Unmanaged.release of the
+     create-time retain. The widget object stays alive while native parents
+     still reference it. Arrives on the UI thread. Appended (append-only
+     vtable) — bumps @sizeOf(NdBackend) to 23 words in src/abi.zig. */
+  void (*release_node)(nd_context*, nd_widget);
 } nd_backend;
 
 /* lifecycle */

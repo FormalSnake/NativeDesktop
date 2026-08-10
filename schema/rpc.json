@@ -64,7 +64,12 @@
     },
     {
       "name": "WaitForResult",
-      "fields": [{ "name": "matched", "type": "bool" }]
+      "doc": "ref is the winning match (ranked like resolve: actionable first, key window first, then tree order), so a caller needs no follow-up getTree; count is the number of nodes that satisfied the predicate.",
+      "fields": [
+        { "name": "matched", "type": "bool" },
+        { "name": "ref", "type": "u32", "nullable": true },
+        { "name": "count", "type": "u32" }
+      ]
     },
     {
       "name": "SetValueResult",
@@ -92,11 +97,40 @@
     },
     {
       "name": "WaitCondition",
-      "doc": "Exactly one of textContains / refVisible must be set.",
+      "doc": "Exactly one selector: textContains | refVisible | testId. With testId, `state` (default \"present\", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools \"true\"/\"false\") so one predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round trip.",
       "fields": [
         { "name": "textContains", "type": "string", "optional": true },
-        { "name": "refVisible", "type": "u32", "optional": true }
+        { "name": "refVisible", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "state", "type": "string", "optional": true },
+        { "name": "countAtLeast", "type": "u32", "optional": true },
+        { "name": "valueEquals", "type": "string", "optional": true },
+        { "name": "valueContains", "type": "string", "optional": true }
       ]
+    },
+    {
+      "name": "ResolveResult",
+      "fields": [
+        { "name": "ref", "type": "u32", "nullable": true },
+        { "name": "refs", "type": "u32", "list": true },
+        { "name": "count", "type": "u32" }
+      ]
+    },
+    {
+      "name": "WindowInfo",
+      "doc": "key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows).",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "title", "type": "string", "nullable": true },
+        { "name": "key", "type": "bool" },
+        { "name": "main", "type": "bool" },
+        { "name": "visible", "type": "bool" },
+        { "name": "tabGroup", "type": "string", "nullable": true }
+      ]
+    },
+    {
+      "name": "WindowsResult",
+      "fields": [{ "name": "windows", "type": "WindowInfo", "list": true }]
     },
     {
       "name": "PointerResult",
@@ -137,42 +171,53 @@
     },
     {
       "name": "click",
-      "doc": "Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row.",
-      "params": [{ "name": "ref", "type": "u32" }],
+      "doc": "Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. Target by exactly one of ref / testId (window optionally scopes testId resolution).",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
       "result": "ClickResult"
     },
     {
       "name": "waitFor",
-      "doc": "Polls the tree at ~50ms until the condition holds or timeoutMs elapses.",
+      "doc": "Polls the tree at ~50ms until the condition holds or timeoutMs elapses. window (if given) scopes every predicate to that Window node's subtree.",
       "params": [
         { "name": "condition", "type": "WaitCondition" },
-        { "name": "timeoutMs", "type": "i64", "default": 2000 }
+        { "name": "timeoutMs", "type": "i64", "default": 2000 },
+        { "name": "window", "type": "u32", "optional": true }
       ],
       "result": "WaitForResult"
     },
     {
       "name": "setValue",
-      "doc": "Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit).",
+      "doc": "Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit). Target by exactly one of ref / testId.",
       "params": [
-        { "name": "ref", "type": "u32" },
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true },
         { "name": "value", "type": "any" }
       ],
       "result": "SetValueResult"
     },
     {
       "name": "type",
-      "doc": "TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms.",
+      "doc": "TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms. Target by exactly one of ref / testId.",
       "params": [
-        { "name": "ref", "type": "u32" },
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true },
         { "name": "text", "type": "string" }
       ],
       "result": "TypeResult"
     },
     {
       "name": "scroll",
-      "doc": "ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy.",
+      "doc": "ScrollView only — adjusts the wrapping GtkScrolledWindow's adjustments by dx/dy. Target by exactly one of ref / testId.",
       "params": [
-        { "name": "ref", "type": "u32" },
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true },
         { "name": "dx", "type": "f64", "optional": true },
         { "name": "dy", "type": "f64", "optional": true }
       ],
@@ -180,21 +225,49 @@
     },
     {
       "name": "doubleClick",
-      "doc": "Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003).",
-      "params": [{ "name": "ref", "type": "u32" }],
+      "doc": "Actionability-checked double-click at the widget's center via real input synthesis (macOS: posted NSEvents, drives doubleAction row activation). Unsupported on GTK (-32003). Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
       "result": "ClickResult"
     },
     {
       "name": "rightClick",
-      "doc": "Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys \"escape\"). Unsupported on GTK (-32003).",
-      "params": [{ "name": "ref", "type": "u32" }],
+      "doc": "Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys \"escape\"). Unsupported on GTK (-32003). Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
       "result": "ClickResult"
     },
     {
       "name": "hover",
-      "doc": "Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003).",
-      "params": [{ "name": "ref", "type": "u32" }],
+      "doc": "Best-effort pointer hover at the widget's center (macOS: posted mouseMoved). Unsupported on GTK (-32003). Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
       "result": "ClickResult"
+    },
+    {
+      "name": "resolve",
+      "doc": "Resolves a testID to the single ACTIONABLE instance. Candidates are ranked: actionable (the checkActionable predicate passes) before not; then key/front window before background. `refs` is every match in tree order, `ref` the winner (null when none is actionable and `actionable` is true).",
+      "params": [
+        { "name": "testId", "type": "string" },
+        { "name": "window", "type": "u32", "optional": true },
+        { "name": "actionable", "type": "bool", "default": true }
+      ],
+      "result": "ResolveResult"
+    },
+    {
+      "name": "windows",
+      "doc": "Lists every open Window node with its live key/main/visible/title state and tabGroup, in tree order.",
+      "params": [],
+      "result": "WindowsResult"
     },
     {
       "name": "pointer",

@@ -8,8 +8,9 @@ import CNd
 /// Rebuilds an `NSView` from a raw vtable handle. Handles ride the ABI as
 /// retained `Unmanaged<NSView>` pointers (`create` calls `passRetained`;
 /// every other op here calls `takeUnretainedValue` — the core owns the
-/// retain for the node's lifetime, balanced by `unparent`/GC, same
-/// contract as `src/gtk/backend.zig`'s widget handles).
+/// retain for the node's lifetime and drops it through `release_node` when
+/// the id leaves the tree, same contract as `src/gtk/backend.zig`'s
+/// ref_sink'd widget handles).
 @inline(__always) private func viewFrom(_ p: UnsafeMutableRawPointer?) -> NSView {
     Unmanaged<NSView>.fromOpaque(p!).takeUnretainedValue()
 }
@@ -305,6 +306,17 @@ func buildVTable() -> nd_backend {
         let paramsStr = cstr(params)
         MainActor.assumeIsolated {
             NDSystem.handleRequest(id: id, method: methodStr, paramsJson: paramsStr)
+        }
+    }
+
+    // Drops the core's create-time +1 (see viewFrom's contract) when the
+    // core forgets a node id (tree remove / generation GC / clearAppNodes).
+    // The view stays alive while AppKit's hierarchy still references it.
+    vt.release_node = { _, w in
+        let widgetBits = Int(bitPattern: w)
+        MainActor.assumeIsolated {
+            guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
+            Unmanaged<NSView>.fromOpaque(widgetPtr).release()
         }
     }
 

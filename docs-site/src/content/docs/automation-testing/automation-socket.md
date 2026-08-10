@@ -17,7 +17,10 @@ frame per message, over a unix domain socket at `$XDG_RUNTIME_DIR/nd-automation-
 The host prints the socket path as `ND_AUTOMATION_LISTENING path=<path>` on stderr once it's ready.
 The server is gated on `NATIVE_AUTOMATION=1` in the host's environment; if it's unset, the socket
 never opens. `packages/mcp` is a stdio MCP server that bridges this socket to MCP tool calls; see
-[MCP Tools](/automation-testing/mcp-tools/).
+[MCP Tools](/automation-testing/mcp-tools/). For writing a Bun/TypeScript test or drive script
+against this socket directly — launching the host, connecting, and querying/acting/waiting on the
+tree — `@nativedesktop/test` wraps the raw RPC calls documented on this page into a
+`launchApp`/`AppHandle` API; see [Test Harness](/automation-testing/test-harness/).
 
 ## Methods
 
@@ -25,17 +28,24 @@ never opens. `packages/mcp` is a stdio MCP server that bridges this socket to MC
 |---|---|---|---|
 | `getTree` | `{window?}` | `{coordinateSpace, root: JsonNode}` | accessibility-tree snapshot; `window` (a Window node ref) scopes it to that window's subtree |
 | `screenshot` | `{path, window?}` | `{path, width, height}` | in-process render → PNG; `window` picks any open window's Window node ref |
-| `click` | `{ref}` | `{ref, dispatched: true}` | actionability-checked, emits `clicked` semantically |
-| `waitFor` | `{condition: {textContains?} \| {refVisible?}, timeoutMs?}` | `{matched: true}` | polls at ~50ms; default `timeoutMs` 2000 |
-| `setValue` | `{ref, value}` | `{ref, applied: true}` | kind-dispatched: `TextInput`/`TextArea` need a string, `Checkbox`/`Radio` a bool, `Slider` a number, `Select` an integer index |
-| `type` | `{ref, text}` | `{ref, text: <full text after insert>}` | `TextInput` only; semantic append via `GtkEditable.insertText`, never synthetic keysyms |
-| `scroll` | `{ref, dx?, dy?}` | `{ref, x, y}` (resulting adjustment values) | `ScrollView` only |
-| `doubleClick` | `{ref}` | `{ref, dispatched: true}` | real double-click at the widget's center (activates table/list rows); macOS only |
-| `rightClick` | `{ref}` | `{ref, dispatched: true}` | real right-click at the widget's center; an opened context menu is auto-dismissed with an escape (see below); macOS only |
-| `hover` | `{ref}` | `{ref, dispatched: true}` | best-effort `mouseMoved` at the widget's center; macOS only |
+| `click` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | actionability-checked, emits `clicked` semantically; on `CommandPalette` activates the currently-highlighted row |
+| `waitFor` | `{condition: WaitCondition, timeoutMs?, window?}` | `{matched, ref, count}` | polls at ~50ms; default `timeoutMs` 2000; see [waitFor conditions](#waitfor-conditions) |
+| `setValue` | `{ref?, testId?, window?, value}` | `{ref, applied: true}` | kind-dispatched: `TextInput`/`TextArea` need a string, `Checkbox`/`Radio` a bool, `Slider` a number, `Select` an integer index |
+| `type` | `{ref?, testId?, window?, text}` | `{ref, text: <full text after insert>}` | `TextInput` only; semantic append via `GtkEditable.insertText`, never synthetic keysyms |
+| `scroll` | `{ref?, testId?, window?, dx?, dy?}` | `{ref, x, y}` (resulting adjustment values) | `ScrollView` only |
+| `doubleClick` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | real double-click at the widget's center (activates table/list rows); macOS only |
+| `rightClick` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | real right-click at the widget's center; an opened context menu is auto-dismissed with an escape (see below); macOS only |
+| `hover` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | best-effort `mouseMoved` at the widget's center; macOS only |
+| `resolve` | `{testId, window?, actionable?}` (default `actionable: true`) | `{ref, refs, count}` | resolves a testID to the single ACTIONABLE instance, ranked actionable-first then key/front-window-first; `refs` is every match in tree order, `ref` the winner (`null` when none is actionable) |
+| `windows` | `{}` | `{windows: WindowInfo[]}` | every open Window node's live `{ref, title, key, main, visible, tabGroup}`, in tree order |
 | `pointer` | `{phase: "down"\|"move"\|"up", x, y, button?, clickCount?, window?}` | `{dispatched: true}` | low-level single pointer phase at window-topleft coordinates; `clickCount: 2` on a down/up pair makes a double-click; macOS only |
 | `drag` | `{fromRef?\|fromX?,fromY?, toRef?\|toX?,toY?, steps?, durationMs?, button?, window?}` | `{dispatched, fromX, fromY, toX, toY, steps}` | press-move-release; ref endpoints resolve to widget centers and must share a window; macOS only |
 | `keys` | `{keys, window?}` | `{dispatched: true}` | `"cmd+shift+n"` presses one chord (drives menu key equivalents); `"escape"`/`"tab"` a named key; any other string types its characters into the focused widget; macOS only |
+
+`click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, and `hover` all target by **exactly
+one of `ref` or `testId`** (`invalidParams` otherwise); `window` optionally scopes `testId`
+resolution to one window, using the same actionable-first ranking as `resolve`. Targeting by
+`testId` is one round trip with host-side resolution — no `getTree` walk needed first.
 
 `JsonNode` (from `getTree`, nested under `root`/`children`):
 `{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount, rows, role,
@@ -52,6 +62,50 @@ boolean for `Checkbox`/`Radio`/`Switch`, number for `Slider`, selected index for
 row-selection widgets (`SourceList`/`Table`/`TreeView`), null for widgets without a value. Backends
 without the probe degrade to the defaults (`enabled: true`, `focused: false`, `value: null`) rather
 than failing the snapshot.
+
+## waitFor conditions
+
+`WaitCondition` is a flat struct with exactly one selector — `textContains`, `refVisible`, or
+`testId` — evaluated host-side against the retained tree plus the live a11y probe, once per ~50ms
+tick. `waitFor` never does a `getTree` round trip internally; it's the same poll loop the tree
+itself is built from.
+
+```ts
+interface WaitCondition {
+  textContains?: string;
+  refVisible?: number;
+  testId?: string;
+  state?: "present" | "gone" | "visible" | "enabled" | "disabled" | "focused"; // default "present"
+  countAtLeast?: number;
+  valueEquals?: string;
+  valueContains?: string;
+}
+```
+
+With `testId`, `state` picks the predicate (default `"present"`: the node exists in the tree at
+all):
+
+- `"gone"` — no node with this testID exists. A testID that never existed satisfies `"gone"`
+  immediately.
+- `"visible"` / `"enabled"` / `"focused"` — the node exists and its `visible`/`enabled`/`focused`
+  a11y field is `true`.
+- `"disabled"` — the node exists and `enabled` is `false`.
+
+`countAtLeast` and `valueEquals`/`valueContains` refine the match:
+
+- `countAtLeast` counts tree nodes whose testID equals `testId` — for `state` other than
+  `"present"`, only actionable ones count (the same rule `resolve` uses). Most testIDs are unique
+  per node, so this is usually a 0-or-1 check; it matters when an app deliberately reuses one
+  testID across N rendered items.
+- `valueEquals`/`valueContains` compare against the node's a11y `value`, rendered as a **string**
+  (numbers stringified, booleans `"true"`/`"false"`) — so one predicate works for a `TextInput` and
+  a `Slider` alike. For `TextInput`/`TextArea`, `value` mirrors `text`, so `valueContains` is a
+  testID-scoped alternative to a global `textContains` search.
+
+`WaitForResult` is `{matched, ref, count}`: `ref` is the winning match (ranked like `resolve` —
+actionable first, key window first, then tree order), so a caller needs no follow-up `getTree`;
+`count` is how many nodes satisfied the predicate. A timeout is a JSON-RPC error (`-32002`), not a
+`matched: false` result — see [Error codes](#error-codes).
 
 ## Input synthesis by platform
 
@@ -106,7 +160,11 @@ logical units (not device pixels), relative to the window's top-left corner.
 
 - `scroll` only targets `ScrollView`-typed nodes. A `ListView` node can't be scrolled directly;
   scroll its wrapping `ScrollView` if one exists.
-- No `TabView` page-switch RPC.
+- No `TabView` page-switch RPC. A widget on a non-active tab page is `visible: false` (GTK/AppKit
+  both unmap/hide inactive pages), so it fails the actionability check for `click`/`setValue`/etc.
+  regardless of whether it's targeted by `ref` or `testId` — testID targeting resolves the node,
+  it doesn't make a hidden one actionable. Put automation-driven controls on the default-active
+  (first) tab, or outside the `TabView` entirely, until this lands.
 - No `ListView` row-activate/select action from the RPC side (the widget emits `onRowActivated`
   upward to React, but there's no automation method to trigger it).
 - A post-scroll `screenshot` can occasionally race frame invalidation and return a stale texture.
@@ -124,6 +182,43 @@ crash. Because a JS crash is one Bun process dying, the overlay is painted on ev
 The registered testIDs are `nd-overlay-panel`, `nd-overlay-title`, `nd-overlay-error`, and
 `nd-overlay-restart` (the Restart button); agents can `waitFor` them and drive recovery. Both
 backends implement it (`src/gtk/overlay.zig`, `swift/Sources/NDShell/Overlay.swift`).
+
+## Scripted native dialogs
+
+Native file pickers, save panels, and alerts (`NSOpenPanel`/`GtkFileDialog`, `NSAlert`/
+`AdwAlertDialog`) are real modal OS UI — an automated run can't click through them. Setting
+`ND_AUTOMATION_DIALOG_SCRIPT` (honored only when `NATIVE_AUTOMATION=1`) answers them from a
+per-method FIFO instead of ever opening the real dialog:
+
+```json
+{
+  "dialog.openFile": [["/tmp/a.txt"], []],
+  "dialog.saveFile": ["/tmp/out.txt", null],
+  "dialog.showMessage": [0],
+  "window.showAlert": [{ "buttonId": "delete" }],
+  "window.openFile": [{ "canceled": false, "paths": ["/tmp/a.txt"] }],
+  "window.saveFile": [{ "canceled": true, "path": null }]
+}
+```
+
+The value is inline JSON or `@/path/to.json`. Two interception points, matching the two ways an app
+can show a dialog:
+
+- **App-level** (`dialog.openFile`/`dialog.saveFile`/`dialog.showMessage` — `system.ts`'s `dialog`
+  object, a `systemRequest`): each FIFO entry is the **raw** value the JS call resolves to —
+  `dialog.openFile` entries are `string[]` (chosen paths, `[]` for canceled), `dialog.saveFile`
+  entries are `string | null`, `dialog.showMessage` entries are the clicked button's index.
+- **Window-scoped** (`window.showAlert`/`window.openFile`/`window.saveFile` — `dialogs.ts`'s
+  `showAlert`/`openFile`/`saveFile`, a `widgetCommand` on a `<window>` node): each entry is the
+  real result shape the promise resolves to — `AlertResult {buttonId}`,
+  `OpenFileResult {canceled, paths}`, `SaveFileResult {canceled, path}`.
+
+FIFO per method: each call shifts the head. An **exhausted queue never falls through to the real
+dialog** — it fails loudly instead. App-level exhaustion rejects the pending `systemRequest`
+(`ok: false`, `"dialog script exhausted: <method>"`); window-scoped exhaustion has no promise to
+reject (there's no `*Result` event to synthesize), so it prints `ND_DIALOG_SCRIPT_EXHAUSTED
+method=<name>` on stderr instead — poll for that marker (`AppHandle.waitForMarker` in
+[Test Harness](/automation-testing/test-harness/)) to assert the drain.
 
 ## Screenshots on macOS (ndshot)
 

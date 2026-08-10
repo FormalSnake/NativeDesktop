@@ -63,6 +63,14 @@ pub const NdBackend = extern struct {
     // UI thread (runtime.zig marshals). Appended (append-only vtable) — bumps
     // @sizeOf(NdBackend) to 22 words below.
     system_request: *const fn (*NdContext, u32, [*:0]const u8, [*:0]const u8) callconv(.c) void,
+
+    // Drops the backend's per-node ownership reference when the core forgets
+    // a node id (tree remove arm / generation GC / clearAppNodes). GTK:
+    // g_object_unref of the create-time ref_sink; AppKit: Unmanaged.release
+    // of the create-time passRetained. The widget object stays alive while
+    // native parents still reference it. Arrives on the UI thread. Appended
+    // (append-only vtable) — bumps @sizeOf(NdBackend) to 23 words below.
+    release_node: *const fn (*NdContext, ?*anyopaque) callconv(.c) void,
 };
 
 // The core instance: owns the Tree and the Runtime (once nd_start_runtime
@@ -104,9 +112,9 @@ fn currentEnviron() std.process.Environ {
 }
 
 comptime {
-    // 22 function pointers, no padding on a 64-bit target. The vtable is
+    // 23 function pointers, no padding on a 64-bit target. The vtable is
     // append-only: every appended op bumps this count.
-    std.debug.assert(@sizeOf(NdBackend) == 22 * @sizeOf(usize));
+    std.debug.assert(@sizeOf(NdBackend) == 23 * @sizeOf(usize));
     std.debug.assert(@alignOf(NdBackend) == @alignOf(usize));
     std.debug.assert(@sizeOf(NdRect) == 16);
 }

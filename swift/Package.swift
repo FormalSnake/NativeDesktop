@@ -48,6 +48,8 @@ let package = Package(
                 .linkedFramework("UniformTypeIdentifiers"),  // UTType for open/save panel filters
                 .linkedFramework("MediaToolbox"),  // MTAudioProcessingTap for audio.* spectrum analysis
                 .linkedFramework("Accelerate"),    // vDSP FFT for audio.* spectrum analysis
+                .linkedFramework("ScreenCaptureKit"),  // opt-in rung-0 window capture (AutomationCapture.swift)
+                .linkedFramework("ImageIO"),       // PNG write for the SCK capture path
             ]
         ),
     ]

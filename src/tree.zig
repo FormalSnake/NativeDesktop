@@ -24,6 +24,9 @@ pub const NodeMeta = struct {
     /// re-derived by walking the live AdwActionRow widgets. Null for every
     /// widget that isn't row-driven.
     rows: ?[]Row = null,
+    /// Window's create-only tabGroup prop, retained for the automation
+    /// `windows` RPC. Null for plain windows and every non-Window widget.
+    tab_group: ?[]u8 = null,
 
     pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8 };
 };
@@ -155,6 +158,13 @@ pub const Tree = struct {
     // Empty in steady state — so a
     // genuinely new `<window>` in a live tree always opens a fresh window.
     window_reuse: std.AutoHashMapUnmanaged(u32, *Widget) = .{},
+    // Node ids whose stored handle carries NO backend ownership reference:
+    // an AppKit window rebind stores the hierarchy-owned live content view
+    // (resolve_window returns a different pointer there), not the
+    // create-time +1 handle, so `releaseHandle` must skip these — releasing
+    // would over-release a view the shell never handed us. GTK rebinds
+    // return the handle unchanged and never land here.
+    unowned: std.AutoHashMapUnmanaged(u32, void) = .{},
 
     pub fn init(gpa: std.mem.Allocator, app: *anyopaque) Tree {
         return .{ .gpa = gpa, .app = app };
@@ -323,6 +333,7 @@ pub const Tree = struct {
         if (kv.value.attached.tab_label) |v| self.gpa.free(v);
         if (kv.value.attached.slot) |v| self.gpa.free(v);
         freeRows(self.gpa, kv.value.rows);
+        if (kv.value.tab_group) |v| self.gpa.free(v);
     }
 
     pub fn deinitMeta(self: *Tree) void {
@@ -335,8 +346,17 @@ pub const Tree = struct {
             if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.slot) |v| self.gpa.free(v);
             freeRows(self.gpa, entry.value_ptr.rows);
+            if (entry.value_ptr.tab_group) |v| self.gpa.free(v);
         }
         self.meta.deinit(self.gpa);
+    }
+
+    /// Drops the backend's ownership reference for a node id leaving `nodes`
+    /// — the single call-site wrapper around the `release_node` vtable op.
+    /// Skips ids marked `unowned` (AppKit window rebinds; see the field doc).
+    fn releaseHandle(self: *Tree, id: u32, widget: *Widget) void {
+        if (self.unowned.remove(id)) return;
+        backend.releaseNode(widget);
     }
 
     /// UI-thread only. Applies an entire commit batch as one unit.
@@ -360,7 +380,16 @@ pub const Tree = struct {
                 // `createWidget` and opens a fresh window — this is what lets
                 // one tree present N independent OS windows.
                 const widget = if (std.mem.eql(u8, op.widget.?, "Window")) blk: {
-                    if (self.window_reuse.fetchRemove(op.id.?)) |kv| break :blk backend.resolveWindow(kv.value);
+                    if (self.window_reuse.fetchRemove(op.id.?)) |kv| {
+                        const resolved = backend.resolveWindow(kv.value);
+                        // AppKit resolves to the hierarchy-owned live content
+                        // view (a different pointer): the node's create-time
+                        // +1 stays parked on the ORIGINAL handle, so the
+                        // rebound one must never be released when this id
+                        // drops. GTK returns the handle unchanged.
+                        if (resolved != kv.value) self.unowned.put(self.gpa, op.id.?, {}) catch {};
+                        break :blk resolved;
+                    }
                     break :blk backend.createWidget(app, op.widget.?, op.props) catch continue;
                 } else backend.createWidget(app, op.widget.?, op.props) catch continue;
                 backend.connectEvents(widget, op.widget.?, op.id.?);
@@ -378,6 +407,9 @@ pub const Tree = struct {
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
                 if (view_kind != null) if (self.metaGet(op.id.?)) |m| {
                     m.view_kind = self.dupeOpt(view_kind) catch null;
+                };
+                if (propStr(op.props, "tabGroup")) |tg| if (self.metaGet(op.id.?)) |m| {
+                    m.tab_group = self.dupeOpt(tg) catch null;
                 };
                 if (rowCountOf(op.props)) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
@@ -473,10 +505,13 @@ pub const Tree = struct {
                     }
                 }
                 if (cmeta) |m| self.recordRemove(m.parent, id);
-                // Purge bookkeeping for the entire doomed subtree (no backend
-                // calls — the widgets are already gone via the cascade above).
+                // Purge bookkeeping for the entire doomed subtree, dropping
+                // the core's ownership ref on each handle (release_node) —
+                // the create-time ref is what kept a container-cascaded
+                // widget's OBJECT alive for `getTree` probes; releasing here
+                // lets it actually finalize.
                 for (subtree.items) |sid| {
-                    _ = self.nodes.remove(sid);
+                    if (self.nodes.fetchRemove(sid)) |kv| self.releaseHandle(sid, kv.value);
                     self.removeMeta(sid);
                     if (self.children.getPtr(sid)) |list| list.deinit(self.gpa);
                     _ = self.children.remove(sid);
@@ -552,7 +587,7 @@ pub const Tree = struct {
                     self.recordRemove(m.parent, id);
                 }
             }
-            _ = self.nodes.remove(id);
+            if (self.nodes.fetchRemove(id)) |kv| self.releaseHandle(id, kv.value);
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
             _ = self.children.remove(id);
@@ -571,8 +606,11 @@ pub const Tree = struct {
     /// now-stale meta entry is dropped here, same as every other non-overlay
     /// node.
     pub fn clearAppNodes(self: *Tree) void {
-        // Drop any handles a prior respawn left unclaimed before repopulating;
-        // the just-installed tree's `create Window` ops drain this pass's set.
+        // Drop any handles a prior respawn left unclaimed before repopulating
+        // (releasing the ownership ref each was parked with); the
+        // just-installed tree's `create Window` ops drain this pass's set.
+        var wr_it = self.window_reuse.iterator();
+        while (wr_it.next()) |entry| self.releaseHandle(entry.key_ptr.*, entry.value_ptr.*);
         self.window_reuse.clearRetainingCapacity();
         var doomed: std.ArrayList(u32) = .empty;
         defer doomed.deinit(self.gpa);
@@ -615,7 +653,12 @@ pub const Tree = struct {
                 // doomed node's own list, dropped wholesale below.
                 self.recordRemove(m.parent, id);
             }
-            _ = self.nodes.remove(id);
+            // A stashed window's ownership ref is parked in `window_reuse`
+            // (released above on the NEXT clear if unclaimed) — release only
+            // the non-window handles here.
+            if (self.nodes.fetchRemove(id)) |kv| {
+                if (!is_window) self.releaseHandle(id, kv.value);
+            }
             self.removeMeta(id);
             if (self.children.getPtr(id)) |list| list.deinit(self.gpa);
             _ = self.children.remove(id);

@@ -198,9 +198,25 @@ fn vtCreate(_: *abi.NdContext, kind: [*:0]const u8, props_json: [*:0]const u8) c
     const parsed = parseJson(props_json);
     const props: ?std.json.Value = if (parsed) |p| p.value else null;
     const widget = createWidget(global_app, std.mem.span(kind), props) catch return null;
+    // The core's handle table OWNS one reference per node (dropped by
+    // vtReleaseNode when the id leaves the tree). Without it the table was
+    // unowned: a single-child container swap (ScrolledWindow.setChild,
+    // Paned.setStartChild, ...) dropped the previous child's only sunk ref
+    // with no `remove` op, and the next getTree's node_visible/a11y probes
+    // read a freed GObject — the ~1-in-3 first-getTree segfault. ref_sink is
+    // correct for both floating widgets and the non-floating GMenu/GMenuItem
+    // menu handles (a plain ref there).
+    _ = gobject.Object.refSink(widget.as(gobject.Object));
     applyCssClassesIfPresent(widget, props);
     if (std.mem.eql(u8, std.mem.span(kind), "Window")) system.attachWindowDropTarget(widget);
     return widget;
+}
+
+/// `vtable.release_node`: the balancing unref of vtCreate's ref_sink. The
+/// widget object stays alive while a native parent still references it.
+fn vtReleaseNode(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) void {
+    const w: *gtk.Widget = @ptrCast(@alignCast(widget orelse return));
+    gobject.Object.unref(w.as(gobject.Object));
 }
 
 fn vtApplyProps(_: *abi.NdContext, widget: ?*anyopaque, kind: [*:0]const u8, props_json: [*:0]const u8) callconv(.c) void {
@@ -541,6 +557,8 @@ fn vtSemanticAction(
         return semanticScroll(w, node_id, args, result_json_out);
     } else if (std.mem.eql(u8, action_s, "a11y")) {
         return semanticA11y(w, node_id, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "windowState")) {
+        return semanticWindowState(w, result_json_out);
     } else if (std.mem.eql(u8, action_s, "pointer") or std.mem.eql(u8, action_s, "drag") or
         std.mem.eql(u8, action_s, "keys") or std.mem.eql(u8, action_s, "doubleClick") or
         std.mem.eql(u8, action_s, "rightClick") or std.mem.eql(u8, action_s, "hover"))
@@ -597,6 +615,33 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
     defer arena.free(json);
     result_json_out.* = mallocZ(json);
     _ = node_id;
+    return 0;
+}
+
+/// "windowState" — the frontmost-window probe behind the automation
+/// `windows`/`resolve` ranking. Walks to the handle's own GtkWindow root
+/// (a tab member's page-bin handle resolves to its CURRENT scaffold
+/// window). GTK draws no key/main distinction, so `is-active` fills both.
+fn semanticWindowState(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
+    const root = gtk.Widget.getRoot(widget) orelse {
+        result_json_out.* = mallocZ("{\"key\":false,\"main\":false,\"visible\":false,\"title\":null}");
+        return 0;
+    };
+    const win: *gtk.Window = @ptrCast(@alignCast(root));
+    const active = gtk.Window.isActive(win) != 0;
+    const visible = gtk.Widget.getVisible(win.as(gtk.Widget)) != 0;
+    var title_json: []const u8 = "null";
+    var owned = false;
+    if (gtk.Window.getTitle(win)) |t| {
+        if (std.json.Stringify.valueAlloc(arena, std.mem.span(t), .{}) catch null) |tj| {
+            title_json = tj;
+            owned = true;
+        }
+    }
+    defer if (owned) arena.free(@constCast(title_json));
+    const json = std.fmt.allocPrint(arena, "{{\"key\":{},\"main\":{},\"visible\":{},\"title\":{s}}}", .{ active, active, visible, title_json }) catch return -32603;
+    defer arena.free(json);
+    result_json_out.* = mallocZ(json);
     return 0;
 }
 
@@ -861,5 +906,6 @@ pub fn ndBackend() abi.NdBackend {
         .resolve_window = &vtResolveWindow,
         .reparent_child = &vtReparentChild,
         .system_request = &vtSystemRequest,
+        .release_node = &vtReleaseNode,
     };
 }

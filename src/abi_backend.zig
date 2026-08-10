@@ -165,6 +165,13 @@ pub fn closeWindow(handle: *Widget, node_id: u32) void {
     if (err) |e| abi.nd_free(e);
 }
 
+/// Drops the backend's per-node ownership reference when the core forgets a
+/// node id (tree remove arm / generation GC / clearAppNodes) — the balancing
+/// half of the create-time ref (GTK ref_sink / AppKit passRetained).
+pub fn releaseNode(widget: *Widget) void {
+    vtable.release_node(ctx, widget);
+}
+
 /// Relocates a live widget from `old_parent` to `new_parent` without destroying
 /// it (the widget-preserving cross-window move — see `Tree.reparent`). Crosses
 /// the ABI with both parent kinds + attach metadata so each backend can reuse

@@ -160,6 +160,18 @@ private extension Double {
     }
 }
 
+/// `bitmapImageRepForCachingDisplay(in:)` returns a PER-VIEW CACHED rep that
+/// AppKit reuses across calls, and `cacheDisplay(in:to:)` does not clear it:
+/// anything the current draw pass leaves unpainted keeps the PREVIOUS
+/// capture's pixels. The macOS 26 glass sidebar paints nothing in an
+/// offscreen pass (see ndCompositeSidebarPanes), so its region is exactly
+/// where stale text ghosts. Zero the buffer before every cacheDisplay so
+/// unpainted stays transparent.
+@MainActor func ndZeroRep(_ rep: NSBitmapImageRep) {
+    guard let data = rep.bitmapData else { return }
+    memset(data, 0, rep.bytesPerRow * rep.pixelsHigh)
+}
+
 /// The contentView draws onto a TRANSPARENT bitmap in every capture rung —
 /// the opaque window background is painted by the window server, not by the
 /// contentView's own draw pass. Under dark mode the controls therefore
@@ -191,16 +203,23 @@ private extension Double {
           ) else { return rep }
     // Resolve the (multi-window: TARGET) window's dynamic background color in
     // its own appearance (dark mode -> dark gray), falling back to the generic
-    // window color.
+    // window color. Forced to alpha 1: under Liquid Glass the window's
+    // backgroundColor is NOT opaque, and a translucent base lets stale pixels
+    // show through the flatten.
     var bgCG: CGColor = NSColor.windowBackgroundColor.cgColor
     if let win = window ?? gWindow {
         win.effectiveAppearance.performAsCurrentDrawingAppearance {
-            bgCG = win.backgroundColor.cgColor
+            bgCG = win.backgroundColor.withAlphaComponent(1).cgColor
         }
     }
     let full = CGRect(x: 0, y: 0, width: width, height: height)
     ctx.setFillColor(bgCG)
+    // .copy ERASES the destination instead of blending over it — the fill
+    // must replace whatever the context held, then the capture composites
+    // over that opaque base normally.
+    ctx.setBlendMode(.copy)
     ctx.fill(full)
+    ctx.setBlendMode(.normal)
     ctx.draw(cg, in: full)
     guard let outCG = ctx.makeImage() else { return rep }
     return NSBitmapImageRep(cgImage: outCG)
@@ -234,10 +253,13 @@ private extension Double {
               space: CGColorSpaceCreateDeviceRGB(),
               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
           ) else { return rep }
+    // Alpha 1 for the same reason as flattenOntoWindowBackground: a
+    // translucent Liquid Glass background fill cannot erase the base's stale
+    // sidebar pixels.
     var bgCG: CGColor = NSColor.windowBackgroundColor.cgColor
     if let win = window ?? gWindow {
         win.effectiveAppearance.performAsCurrentDrawingAppearance {
-            bgCG = win.backgroundColor.cgColor
+            bgCG = win.backgroundColor.withAlphaComponent(1).cgColor
         }
     }
     ctx.draw(baseCG, in: CGRect(x: 0, y: 0, width: width, height: height))
@@ -247,6 +269,7 @@ private extension Double {
         let pane = item.viewController.view
         guard pane.bounds.width > 0, pane.bounds.height > 0, pane.window === content.window,
               let paneRep = pane.bitmapImageRepForCachingDisplay(in: pane.bounds) else { continue }
+        ndZeroRep(paneRep) // AppKit reuses this rep per view; see ndZeroRep
         pane.cacheDisplay(in: pane.bounds, to: paneRep)
         guard let paneCG = paneRep.cgImage else { continue }
         // `content` is flipped (y-down): CG rect y measures from the bottom.
@@ -258,7 +281,12 @@ private extension Double {
             height: r.height * sy
         )
         ctx.setFillColor(bgCG)
+        // .copy ERASES the base's stale sidebar region (default sourceOver
+        // would blend the translucent fill over it, leaving ghosts); back to
+        // .normal so the pane pixels composite over the opaque backdrop.
+        ctx.setBlendMode(.copy)
         ctx.fill(rect)
+        ctx.setBlendMode(.normal)
         ctx.draw(paneCG, in: rect)
     }
     guard let outCG = ctx.makeImage() else { return rep }
@@ -379,11 +407,24 @@ private extension Double {
     let bounds = content.bounds
     content.layoutSubtreeIfNeeded() // real Auto Layout pass before any capture rung
 
+    // Rung 0 (opt-in): ScreenCaptureKit captures the real composited window
+    // — glass included — so it is correct rather than approximated, and the
+    // sidebar compositor is skipped entirely. Behind an env flag because it
+    // prompts for screen-recording TCC on an ungranted machine (the ladder
+    // below keeps the stock-runner no-prompt contract by default). A denied
+    // grant falls through to the ladder.
+    if ProcessInfo.processInfo.environment["ND_AUTOMATION_CAPTURE"] == "screencapturekit",
+       let win = targetWindow, ndSnapshotViaSCK(win, pngPath) {
+        FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=0\n".data(using: .utf8)!)
+        return true
+    }
+
     // Rung 1: force display, then cacheDisplay. The sidebar composite
     // (ndCompositeSidebarPanes) redraws glass-hosted sidebar panes that
     // capture as an opaque white plate in the base pass.
     content.displayIfNeeded()
     if let rep = content.bitmapImageRepForCachingDisplay(in: bounds) {
+        ndZeroRep(rep) // AppKit reuses this rep per view; see ndZeroRep
         content.cacheDisplay(in: bounds, to: rep)
         let composed = ndCompositeSidebarPanes(rep, content, targetWindow)
         if writeIfNonBlank(composed, pngPath, targetWindow) {
@@ -763,6 +804,18 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
         return semanticScroll(view, nodeID, args, resultOut)
     case "a11y":
         return semanticA11y(view, nodeID, resultOut, errOut)
+    case "windowState":
+        // Frontmost-window probe behind the automation windows/resolve
+        // ranking. Load-bearing on AppKit: a background tab window's views
+        // are hidden but its WINDOW is not key — the key bit is what
+        // separates it from the front tab.
+        guard let win = view.window ?? ndWindow(for: view) else {
+            setResultRaw(resultOut, "{\"key\":false,\"main\":false,\"visible\":false,\"title\":null}")
+            return 0
+        }
+        let title = escapeJSONString(win.title)
+        setResultRaw(resultOut, "{\"key\":\(win.isKeyWindow),\"main\":\(win.isMainWindow),\"visible\":\(win.isVisible),\"title\":\"\(title)\"}")
+        return 0
     case "pointer":
         guard let phase = args["phase"] as? String, let x = numArg(args, "x"), let y = numArg(args, "y"),
               ndPostPointerPhase(view, phase: phase, x: x, y: y,
