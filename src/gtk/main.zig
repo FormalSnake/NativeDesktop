@@ -8,7 +8,9 @@ const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
 const system = @import("system.zig");
 
-pub const app_id = "dev.nativedesktop.hello";
+// Overridable per packaged app: `nd package` bakes ND_APP_ID=<app.id> into the
+// AppRun so window grouping / StartupWMClass bind to the app's own identity.
+pub var app_id: [*:0]const u8 = "dev.nativedesktop.hello";
 
 var smoke = false;
 var global_app: ?*gtk.Application = null;
@@ -29,6 +31,9 @@ pub fn main(init: std.process.Init) void {
         if (std.mem.eql(u8, std.mem.span(arg), "--smoke")) smoke = true;
     }
     global_environ_map = init.environ_map;
+    if (init.environ_map.get("ND_APP_ID")) |id| {
+        if (std.heap.page_allocator.dupeZ(u8, id)) |id_z| app_id = id_z else |_| {}
+    }
 
     // AdwApplication's default startup handler runs adw_init() for us, which
     // loads the Adwaita stylesheet and starts AdwStyleManager's system
@@ -51,7 +56,7 @@ pub fn main(init: std.process.Init) void {
     // start. Detect that case and say so instead of exiting mutely.
     _ = gio.Application.register(app.as(gio.Application), null, null);
     if (gio.Application.getIsRemote(app.as(gio.Application)) != 0) {
-        std.debug.print("ND_ALREADY_RUNNING another instance of {s} is already running; activated it and exiting\n", .{app_id});
+        std.debug.print("ND_ALREADY_RUNNING another instance of {s} is already running; activated it and exiting\n", .{std.mem.span(app_id)});
     }
 
     // Only forward argv[0] to GApplication so its GOptionContext doesn't choke

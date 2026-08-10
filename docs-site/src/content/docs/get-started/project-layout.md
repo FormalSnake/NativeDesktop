@@ -83,10 +83,10 @@ twin of that rewrite.
 ## `tools/` and `scripts/`
 
 `tools/` holds build-time scripts invoked directly with `bun`: `tools/codegen.ts` (schemas to
-bindings and docs), `tools/package.ts` with its `package-linux.ts` and `package-mac.ts` halves (see
-[Packaging](/packaging/)), `tools/manifest.ts` for update manifests, and `tools/ndshot/` for macOS
-screen capture. The `nd` CLI covers running and building an app only. There is no `nd package` or
-`nd codegen`.
+bindings and docs), `tools/package.ts` (a thin shim that packages the gallery example through the
+real `nd package` implementation in `packages/nd/src/package/`, see [Packaging](/packaging/)), and
+`tools/ndshot/` for macOS screen capture. The `nd` CLI covers `nd dev`, `nd build`, `nd package`,
+and `nd doctor`. There is no `nd codegen`.
 
 `scripts/` holds the headless drive scripts the CI gate runs, `new-app.sh`, and
 `regen-bindings.sh`.

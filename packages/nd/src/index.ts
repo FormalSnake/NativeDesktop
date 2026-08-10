@@ -4,8 +4,11 @@
 // instead of a hand-typed env-var incantation:
 //   `nd dev [entry]`  ==  ND_DEV=1 ND_SCRIPT=<entry> <host-binary-from-@nativedesktop/host>
 //   `nd build`        ==  bun run compile   (babel + react-compiler pre-pass, see template/README.md)
+//   `nd package`      ==  assemble + sign the platform bundle (packages/nd/src/package/)
+//   `nd doctor`       ==  packaging/toolchain readiness checks
 import { type Backend, resolveHostBinary } from "@nativedesktop/host";
 import { buildNativePlugins, loadConfig } from "./config.ts";
+import { packageApp, type PackageOptions } from "./package/index.ts";
 
 const DEFAULT_ENTRY = "src/main.tsx";
 
@@ -50,8 +53,71 @@ function usage(): void {
       "                   backend defaults to appkit on macOS, gtk elsewhere (also honors ND_BACKEND);",
       "                   --backend gtk cross-checks the GTK host, --backend appkit forces the macOS shell",
       "  nd build         compile the app for production (bun run compile)",
+      "  nd package [mac|linux] [--out <dir>] [--entry <file>] [--version <v>] [--cwd <dir>]",
+      "             [--no-compile] [--sign <identity>|--no-sign] [--notarize|--no-notarize]",
+      "             [--format appimage|appdir]",
+      "                   assemble + sign the platform bundle (platform defaults to the host;",
+      "                   Windows lands with M7)",
+      "  nd doctor [--json]",
+      "                   check packaging/toolchain readiness for the current directory",
     ].join("\n"),
   );
+}
+
+/** Parse `nd package` args. Exits 2 on an unsupported platform (Windows unchanged). */
+export function parsePackageArgs(args: string[], platform: string = process.platform): PackageOptions {
+  let target: PackageOptions["platform"] | undefined;
+  const opts: Omit<PackageOptions, "platform"> = {};
+  const takeValue = (flag: string, value: string | undefined): string => {
+    if (value === undefined) {
+      console.error(`nd: ${flag} expects a value\n`);
+      usage();
+      process.exit(1);
+    }
+    return value;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--out") opts.outDir = takeValue(arg, args[++i]);
+    else if (arg === "--entry") opts.entry = takeValue(arg, args[++i]);
+    else if (arg === "--version") opts.version = takeValue(arg, args[++i]);
+    else if (arg === "--cwd") opts.cwd = takeValue(arg, args[++i]);
+    else if (arg === "--no-compile") opts.compile = false;
+    else if (arg === "--sign") opts.signIdentity = takeValue(arg, args[++i]);
+    else if (arg === "--no-sign") opts.signIdentity = null;
+    else if (arg === "--notarize") opts.notarize = true;
+    else if (arg === "--no-notarize") opts.notarize = false;
+    else if (arg === "--format") {
+      const format = takeValue(arg, args[++i]);
+      if (format !== "appimage" && format !== "appdir") {
+        console.error(`nd: --format expects "appimage" or "appdir" (got "${format}")\n`);
+        usage();
+        process.exit(1);
+      }
+      opts.format = format;
+    } else if (!arg.startsWith("-") && target === undefined) {
+      if (arg !== "mac" && arg !== "linux") {
+        console.error(`nd package: unsupported platform "${arg}" (Windows lands with M7)\n`);
+        usage();
+        process.exit(2);
+      }
+      target = arg;
+    } else {
+      console.error(`nd: unexpected argument "${arg}"\n`);
+      usage();
+      process.exit(1);
+    }
+  }
+  if (target === undefined) {
+    if (platform === "darwin") target = "mac";
+    else if (platform === "linux") target = "linux";
+    else {
+      console.error(`nd package: unsupported host platform "${platform}" (Windows lands with M7)\n`);
+      usage();
+      process.exit(2);
+    }
+  }
+  return { platform: target, ...opts };
 }
 
 /** Parse `[entry] [--backend gtk|appkit]` in any order. Returns undefined backend to defer to ND_BACKEND / platform default. */
@@ -92,6 +158,22 @@ async function main(): Promise<void> {
     case "build":
       process.exit(await runBuild());
       break;
+    case "package":
+      await packageApp(parsePackageArgs(rest));
+      process.exit(0);
+      break;
+    case "doctor": {
+      const json = rest.includes("--json");
+      const extra = rest.filter((arg) => arg !== "--json");
+      if (extra.length) {
+        console.error(`nd: unexpected argument "${extra[0]}"\n`);
+        usage();
+        process.exit(1);
+      }
+      const { runDoctor } = await import("./package/doctor.ts");
+      process.exit(await runDoctor(process.cwd(), json));
+      break;
+    }
     default:
       if (cmd) console.error(`nd: unknown command "${cmd}"\n`);
       usage();

@@ -1,0 +1,105 @@
+// Runtime node_modules flattening: BFS over the real module graph, copying
+// every package the app can reach at runtime into one flat node_modules that
+// an ordinary upward walk resolves. Subsumes Bun's isolated store
+// (node_modules/.bun/<pkg>/node_modules/<pkg> siblings), workspace symlinks,
+// and file: deps; replaces `bun install` inside the bundle.
+import { cpSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+
+interface QueueEntry {
+  spec: string;
+  /** Directory the spec resolves from (the requiring package's real root). */
+  anchor: string;
+  /** Dest-relative dir of the requiring package, for version-conflict nesting. */
+  requirer?: string;
+  optional: boolean;
+}
+
+const skipNodeModules = (src: string) => basename(src) !== "node_modules";
+
+function packageRoot(spec: string, anchor: string): string {
+  // dereference to the real store/workspace directory so two symlinked routes
+  // to the same package compare equal.
+  return realpathSync(dirname(Bun.resolveSync(`${spec}/package.json`, anchor)));
+}
+
+export interface FlattenOptions {
+  /** The app directory whose package.json dependencies seed the walk. */
+  appDir: string;
+  /** Extra seed specifiers (PackageConfig.runtimeDependencies), resolved from appDir. */
+  extraRoots?: string[];
+  /** The flat node_modules directory to populate. */
+  dest: string;
+}
+
+/** Copies the app's runtime dependency closure into `dest`. Returns the flat package names. */
+export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: FlattenOptions): string[] {
+  const appPkg = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  const anchor = realpathSync(appDir);
+  const queue: QueueEntry[] = [
+    ...Object.keys(appPkg.dependencies ?? {}).map((spec) => ({ spec, anchor, optional: false })),
+    ...extraRoots.map((spec) => ({ spec, anchor, optional: false })),
+  ];
+  // First claim of a name wins the flat slot; a later claim with a different
+  // realpath nests under the requiring package's own node_modules.
+  const claimed = new Map<string, string>();
+  mkdirSync(dest, { recursive: true });
+
+  while (queue.length) {
+    const entry = queue.shift()!;
+    let root: string;
+    try {
+      root = packageRoot(entry.spec, entry.anchor);
+    } catch (err) {
+      if (entry.optional) continue;
+      throw new Error(`nd: cannot resolve runtime dependency "${entry.spec}" from ${entry.anchor}: ${err}`);
+    }
+
+    const existing = claimed.get(entry.spec);
+    let destDir: string;
+    if (existing === undefined) {
+      destDir = entry.spec;
+      claimed.set(entry.spec, root);
+    } else if (existing === root) {
+      continue;
+    } else {
+      if (!entry.requirer) throw new Error(`nd: conflicting versions of "${entry.spec}" among the app's direct dependencies`);
+      destDir = join(entry.requirer, "node_modules", entry.spec);
+    }
+    cpSync(root, join(dest, destDir), { recursive: true, dereference: true, filter: skipNodeModules });
+
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    };
+    for (const spec of Object.keys(pkg.dependencies ?? {})) {
+      queue.push({ spec, anchor: root, requirer: destDir, optional: false });
+    }
+    for (const spec of [...Object.keys(pkg.optionalDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})]) {
+      queue.push({ spec, anchor: root, requirer: destDir, optional: true });
+    }
+  }
+
+  return [...claimed.keys()];
+}
+
+/**
+ * Asserts each flat package's main/exports entry resolves inside the bundle.
+ * Catches a copied-but-unbuilt package (e.g. @nativedesktop/react without its
+ * dist/) before it ships as a broken bundle.
+ */
+export function assertResolvableEntries(appRoot: string, names: string[]): void {
+  for (const name of names) {
+    try {
+      Bun.resolveSync(name, appRoot);
+    } catch {
+      throw new Error(
+        `nd: bundled package "${name}" has no resolvable entry (its build output is missing). ` +
+        `Run \`bun run build\` in ${name} and package again.`,
+      );
+    }
+  }
+}

@@ -19,14 +19,8 @@ workdir="$(mktemp -d)"; ( cd "$workdir" && ar x ~/nd/zig-out/lib/libnd.a && chmo
 zig build update-verify >/dev/null 2>&1
 bun install --frozen-lockfile >/dev/null 2>&1
 
-# packageMac() assembles into dist/mac/Gallery.app without cleaning it first
-# (not idempotent against a leftover .app from a prior run) — cpSync then
-# throws "src and dest cannot be the same". dist/ is gitignored, ephemeral
-# build output; start every gate run from a clean slate (same fix as the
-# Linux leg, scripts/headless-m9.sh).
-rm -rf dist
-
 # 1. Package + deep-sign the .app (ad-hoc; notarize skipped — no creds here).
+#    packageApp cleans dist/mac itself before assembling.
 ND_APP_VERSION=0.9.0 bun tools/package.ts mac >/tmp/mac-pkg.log 2>&1 || { echo "FAIL package"; cat /tmp/mac-pkg.log; exit 1; }
 cat /tmp/mac-pkg.log
 grep -q ND_PACKAGE_APP_SIGNED /tmp/mac-pkg.log || { echo "FAIL not signed"; exit 1; }
@@ -43,7 +37,7 @@ PUB=$(grep -m1 ND_PACKAGE_MANIFEST /tmp/mac-pkg.log | sed 's/.*pub=//')
 # packaging defect. counter has no array/object props (matches T4's own
 # packaged-launch smoke check and the sibling mac-m6.sh legs).
 launchctl print "gui/$(id -u)" >/dev/null 2>&1 || { echo "FAIL: no GUI session for uid $(id -u)"; exit 1; }
-ND_SCRIPT=examples/counter/main.tsx dist/mac/Gallery.app/Contents/MacOS/NDShell >/tmp/mac-app.log 2>&1 &
+ND_SCRIPT=examples/counter/main.tsx dist/mac/Gallery.app/Contents/MacOS/Gallery >/tmp/mac-app.log 2>&1 &
 APP_PID=$!
 for _ in $(seq 1 100); do grep -q ND_COMMIT_APPLIED /tmp/mac-app.log && break; sleep 0.1; done
 grep -q ND_COMMIT_APPLIED /tmp/mac-app.log || { echo "FAIL packaged .app did not present"; cat /tmp/mac-app.log; kill "$APP_PID" 2>/dev/null; exit 1; }

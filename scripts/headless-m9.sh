@@ -11,14 +11,8 @@ export ND_APP_VERSION=0.9.0
 zig build >/dev/null 2>&1
 zig build update-verify >/dev/null 2>&1
 
-# packageLinux() assembles into dist/linux/AppDir without cleaning it first
-# (not idempotent against a leftover AppDir from a prior run — e.g. a
-# previous local/CI attempt) — cpSync then throws "src and dest cannot be
-# the same" on the AppDir.template copy. dist/ is gitignored, ephemeral
-# build output; start every gate run from a clean slate.
-rm -rf dist
-
-# 1. Package the Linux AppImage + signed update artifacts.
+# 1. Package the Linux AppImage + signed update artifacts (packageApp cleans
+#    dist/linux itself before assembling).
 bun tools/package.ts linux >"$XDG_RUNTIME_DIR/pkg.log" 2>&1 || { echo "FAIL: package linux"; cat "$XDG_RUNTIME_DIR/pkg.log"; exit 1; }
 grep -q ND_PACKAGE_APPIMAGE "$XDG_RUNTIME_DIR/pkg.log" || { echo "FAIL: no AppImage"; cat "$XDG_RUNTIME_DIR/pkg.log"; exit 1; }
 PUB=$(grep -m1 ND_PACKAGE_MANIFEST "$XDG_RUNTIME_DIR/pkg.log" | sed 's/.*pub=//')
@@ -40,7 +34,7 @@ LOG=$(mktemp)
 # has no array/object props and is what the sibling m4/m8 smoke scripts
 # already use for this exact kind of packaged-launch proof.
 ND_SCRIPT=dist/linux/AppDir/app/examples/counter/main.tsx \
-  ./dist/linux/AppDir/usr/bin/nd-hello >"$LOG" 2>&1 &
+  ./dist/linux/AppDir/usr/bin/gallery >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 80); do grep -q ND_COMMIT_APPLIED "$LOG" && break; sleep 0.1; done
 grep -q ND_COMMIT_APPLIED "$LOG" || { echo "FAIL: packaged host did not present a commit"; cat "$LOG"; exit 1; }

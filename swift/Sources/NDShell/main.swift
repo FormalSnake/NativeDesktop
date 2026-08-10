@@ -56,6 +56,10 @@ gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
 nd_set_backend_name(ctx, "appkit")
 
+// Packaged-app launch env (nd-app.json), before the plugin block reads
+// ND_PLUGINS and before nd_start_runtime snapshots the environment.
+NDBundleBootstrap.apply()
+
 // Opt-in capability ACL + native plugins. An absent env var keeps the safe
 // default: core UI ops granted, everything else unchanged.
 if let grants = ProcessInfo.processInfo.environment["ND_ACL_GRANTS"] {

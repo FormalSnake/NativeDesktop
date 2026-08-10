@@ -1,175 +1,193 @@
-# Packaging + updates (M9)
+# Packaging + updates
 
-This document covers `nd package <platform>` (packaging the gallery example
-into a distributable), the update manifest format, and how the auto-update
-flow verifies what it downloads. It also states explicitly what M9 does not
-do; every deferral below is a deliberate scoping call.
-
-`nd package` is a documented convention, not a shipped binary (the same
-convention as `nd codegen` ≡ `bun tools/codegen.ts`; see
-`template/README.md`). There is no `bin/nd` dispatcher; `nd package <platform>`
-means `bun tools/package.ts <platform>`.
+`nd package` turns an app directory (a `nativedesktop.config.ts` + `package.json`)
+into a distributable native bundle: a deep-signed `.app` on macOS, an
+AppImage/AppDir on Linux. `nd doctor` checks the toolchain and config before you
+try. The implementation lives in `packages/nd/src/package/`;
+`bun tools/package.ts <mac|linux>` remains as a shim that packages the gallery
+example through it (the M9 gates and `package.yml` call it that way).
 
 ## Commands
 
 ```bash
-bun tools/package.ts linux   # AppImage (or squashfs fallback) + signed .tar.zst update
-bun tools/package.ts mac     # Gallery.app (deep-signed) + signed .tar.gz update
+nd package               # package for the host platform (mac on darwin, linux on linux)
+nd package mac           # <Name>.app, deep-signed, optional notarize + update archive
+nd package linux         # AppDir + AppImage (mksquashfs fallback) + optional update archive
+nd doctor [--json]       # readiness checks; non-zero exit only on real gaps
+
+nd package [mac|linux] [--out <dir>] [--entry <file>] [--version <v>] [--cwd <dir>]
+           [--no-compile] [--sign <identity>|--no-sign] [--notarize|--no-notarize]
+           [--format appimage|appdir]
 ```
 
-`ND_APP_VERSION` (default `0.9.0`) sets the packaged version and the version
-recorded in the update manifest.
+Windows packaging lands with M7; `nd package windows` exits 2 with usage.
+`ND_APP_VERSION` and `--version` override the configured version.
 
-Windows packaging (signed NSIS installer + winget manifest) lands with M7,
-which is not yet implemented.
-`tools/package.ts` exits with an error and a usage message for any platform
-argument other than `linux`/`mac`.
+Stdout markers (greppable, kept stable for the gates): `ND_PACKAGE_APP_SIGNED`,
+`ND_PACKAGE_NOTARIZE_OK|SKIPPED`, `ND_PACKAGE_APPIMAGE`,
+`ND_PACKAGE_MANIFEST <path> pub=<key>`, `ND_PACKAGE_OK <path>`,
+`ND_PACKAGE_UPDATES_SKIPPED reason=not-configured`,
+`ND_PACKAGE_ICON_SKIPPED reason=no-resizer`.
 
-## Linux: AppImage + Flatpak (M9-D4)
+## Configuration
 
-`tools/package-linux.ts` assembles a self-contained AppDir under
-`dist/linux/AppDir` from `packaging/AppDir.template/` (`.desktop`, icon,
-`AppRun`), the built `nd-hello` binary, the Bun runtime, and the app sources
-(examples/packages/runtime, re-`bun install --production`'d inside the
-AppDir; see "Bun workspace bundling" below). It then packs the AppDir into
-an AppImage with `appimagetool`, or with `mksquashfs` when `appimagetool`
-isn't on `PATH` (it currently is not in the nix devshell, so CI and local
-runs exercise the squashfs fallback path).
+Everything is driven by `nativedesktop.config.ts`:
 
-A committed Flatpak manifest also exists at
-`packaging/flatpak/com.nativedesktop.gallery.yml` (GNOME 50 runtime,
-`nd-hello` command, wayland/fallback-x11/dri finish-args only; no portal
-permissions, since in-process automation needs none per spec §11).
-The M9 gate only lint-validates this manifest
-(`flatpak-builder --show-manifest packaging/flatpak/com.nativedesktop.gallery.yml`);
-it does not run a full `flatpak-builder` build. `flatpak-builder` is
-fragile inside a nix sandbox or stock CI (portal + runtime + bubblewrap
-requirements), so the full build is deferred to a real GNOME runner and is
-not part of `scripts/headless-m9.sh` or `.github/workflows/package.yml`.
+```ts
+export default defineConfig({
+  app: {
+    id: "com.example.myapp",        // reverse-DNS; required for icons/mime/updates
+    name: "MyApp",                  // <Name>.app, usr/bin/<slug>. Default: package.json name
+    displayName: "My App",          // CFBundleDisplayName / .desktop Name
+    version: "1.0.0",               // default: package.json version, then "0.0.0"
+    icon: { source: "assets/icon.png" },   // or a string, or { macos, linux }
+    categories: ["Utility"],        // .desktop Categories=
+    fileAssociations: [{ ext: "md", name: "Markdown", mimeType: "text/markdown" }],
+    urlSchemes: [{ scheme: "myapp" }],
+  },
+  package: {
+    entry: "src/main.tsx",          // default
+    compile: "auto",                // run the app's `compile` script when declared; false ships raw source
+    workspaceRoot: ".",             // e.g. "../.." in a monorepo: the bundle app root mirrors it
+    include: [],                    // extra workspace-relative dirs copied into the bundle
+    runtimeDependencies: [],        // extra roots for the module-graph walk
+    outDir: "dist",                 // resolved against workspaceRoot
+    mac: { minimumSystemVersion: "26.0", category: "public.app-category.utilities" },
+    linux: { format: "appimage" },
+    updates: { baseUrl: "https://updates.example.com/myapp" },   // opt-in; omit for no updater
+  },
+});
+```
 
-## macOS: .app + codesign + notarization (M9-D3)
+`workspaceRoot` is the one knob for monorepos: the bundle's app root mirrors the
+workspace, so the app's own files land at their workspace-relative path and
+relative imports/spawns keep resolving. The gallery example uses
+`workspaceRoot: "../.."` so it lands at `app/examples/gallery` inside the bundle.
 
-`tools/package-mac.ts` assembles `Gallery.app` around
-`swift/.build/release/NDShell`, the bundled Bun runtime, and the app
-sources, then deep-signs inside-out (nested Mach-O first, `bun` and
-`NDShell`, then the `.app` itself) with the hardened runtime
-(`--options runtime`) and a `com.apple.security.cs.allow-jit` entitlement
-(`packaging/macos/entitlements.plist`; JSC-under-Bun needs it on Apple
-Silicon, spec §11).
+## What a bundle contains
 
-**Signing identity resolution:** if `APPLE_SIGN_IDENTITY` is set, it's used
-as the `codesign -s` identity (Developer ID / Team-ID-backed signing);
-otherwise packaging falls back to ad-hoc signing (`codesign -s -`).
+- The resolved host binary from `@nativedesktop/host` (`Contents/MacOS/<Name>`
+  on mac, `usr/bin/<slug>` on linux) and the Bun runtime next to it.
+- The app payload under `Resources/app` / `AppDir/app`: the compiled outDir
+  (or the entry's source dir; a root-level entry ships the whole app dir), the
+  app's `package.json`, every `include` path, and built native plugins under
+  `app/native/`.
+- A flat `app/node_modules`: `nd package` walks the real runtime module graph
+  (app `dependencies` + `runtimeDependencies`, then each package's
+  `dependencies`, resolvable `optionalDependencies`/`peerDependencies`) and
+  copies every package into one flat tree that an ordinary upward walk resolves.
+  This subsumes Bun's isolated store, workspace symlinks, and `file:` deps;
+  there is no `bun install` inside the bundle. Version conflicts nest under the
+  requiring package. Each copied package's entry must resolve on disk, so an
+  unbuilt `dist/` fails packaging loudly instead of shipping broken.
+- `app/nd-app.json`: `{ id, name, version, entry, cwd, pluginPaths }`
+  (entry/cwd app-root-relative), the packaged-launch contract below.
 
-**Ad-hoc + hardened runtime:** `--options runtime` is
-accepted by `codesign` alongside an ad-hoc (`-s -`) signature, and the
-entitlements are embedded, but the OS only enforces hardened-runtime
-protections (library validation, restricted entitlements, etc.) for
-signatures backed by a valid Team ID. An ad-hoc-signed `.app` still launches
-locally (and over the ssh-driven session used in this repo's Mac legs), and
-`codesign --verify` passes; that's all the M9 gate asserts
-(`ND_PACKAGE_APP_SIGNED ... identity=adhoc`, `MAC_M9_CODESIGN_OK`). It is
-not the same guarantee a Team-ID signature gives; treat ad-hoc as "runs
-here," not "safe to distribute."
+## Packaged apps launch by themselves
 
-**Notarization is gated on secrets.**
-`xcrun notarytool submit` + `xcrun stapler staple` run only when all
-three of `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` are present
-in the environment. No such credentials exist in this repo's dev/CI
-environment, so packaging always takes the skip path and prints
-`ND_PACKAGE_NOTARIZE_SKIPPED reason=no-credentials`. This is the expected,
-asserted behavior of `scripts/mac/mac-m9.sh` and the `macos-package` CI
-job; it is not a bug and does not fail the gate.
+- macOS: `NDBundleBootstrap` (swift/Sources/NDShell/BundleBootstrap.swift) runs
+  at startup. When `Resources/app/nd-app.json` exists and no explicit
+  `ND_SCRIPT` is set, it points `ND_SCRIPT` at the bundled entry, prepends
+  `Contents/MacOS` to `PATH` (the bundled `bun`), chdirs to `app/<cwd>` (so
+  `getAppDataDir()` and relative fs reads behave the same packaged as in dev),
+  and exports `ND_PLUGINS`/`ND_PLUGIN_PATHS` for bundled plugins. An explicit
+  `ND_SCRIPT` (dev override, gate scripts) wins wholesale: script, cwd, and PATH
+  are left alone.
+- Linux: the generated `AppRun` bakes the same values (absolute `ND_SCRIPT`,
+  `cd`, `PATH`, `ND_APP_ID=<app.id>`, plugin paths). The gtk host reads
+  `ND_APP_ID` for its GApplication id, and the generated `.desktop` carries
+  `StartupWMClass=<app.id>` so icon and window grouping bind.
 
-**Mac machine prerequisite:** the Mac dev loop signs update archives with
-`minisign`, which is not part of Xcode or the system toolchain. Install it
-with `brew install minisign` on the Mac (the CI job installs it as a step;
-a developer's machine needs it pre-installed, same as Zig/Bun).
+## Icons
 
-## Update manifest schema
+- macOS: `.icns` and `.iconset` sources pass through; a PNG is resized with
+  `sips` into an iconset and compiled with `iconutil`. An SVG-only source is a
+  hard error (supply a 1024px PNG or a prebuilt `.icns`).
+- Linux: an SVG installs under `usr/share/icons/hicolor/scalable/apps/`; a PNG
+  is resized into the hicolor sizes with whichever of
+  `sips`/`magick`/`convert`/`rsvg-convert` exists, plus `<slug>.png` at the
+  AppDir root (appimagetool requires it). With no resizer the source installs
+  at its native size only and `ND_PACKAGE_ICON_SKIPPED reason=no-resizer` is
+  printed.
+- No icon configured: the AppDir keeps a 1x1 placeholder and a one-time warning
+  is printed.
 
-A manifest is a small JSON document, produced by `tools/manifest.ts`
-(`buildAndSignManifest`) and consumed by `src/core/update.zig`'s
-`parseManifest`:
+## macOS signing + notarization
+
+Deep-sign runs inside-out: `bun`, the host binary, bundled plugin dylibs, then
+`--deep` on the `.app`, then `codesign --verify --strict`. The hardened runtime
+and `com.apple.security.cs.allow-jit` entitlements apply to every nested Mach-O
+(`bun` is the process that needs allow-jit for JSC on Apple Silicon).
+
+Identity resolution: `--sign <identity>` wins, then `package.mac.signIdentity`,
+then `APPLE_SIGN_IDENTITY`, else ad-hoc (`-`). Ad-hoc-signed apps launch locally
+and pass `codesign --verify`; that is "runs here", not "safe to distribute".
+`--no-sign` skips codesign entirely.
+
+Notarization (`xcrun notarytool submit` + `stapler staple`) runs when `APPLE_ID`,
+`APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` are all set, or when forced with
+`--notarize` (which errors without credentials). Otherwise
+`ND_PACKAGE_NOTARIZE_SKIPPED reason=no-credentials` is printed; that is the
+expected, asserted path in this repo's gates.
+
+A custom `package.mac.infoPlist` file is used verbatim as the base plist, with
+the identity stamped in (CFBundleIdentifier, CFBundleExecutable, version keys,
+document types, URL schemes); by default the plist is generated in-code.
+
+## Updates are opt-in
+
+Without `package.updates`, no archive or manifest is produced
+(`ND_PACKAGE_UPDATES_SKIPPED reason=not-configured`) and `nd doctor` warns that
+the shipped app has no updater. With it, packaging produces a signed
+full-archive payload (`.tar.gz` mac / `.tar.zst` linux, overridable via
+`updates.format`) under `<outDir>/update/` plus a minisign-signed manifest.
+
+Key resolution: `updates.secretKey`/`publicKey`, else
+`ND_MINISIGN_SEC`/`ND_MINISIGN_PUB`, else `ephemeralKey: true` generates a
+throwaway pair (CI/test path only; the gallery config uses it). `minisign` must
+be on PATH (`brew install minisign` on a Mac).
+
+### Manifest schema
+
+Produced by `packages/nd/src/package/updates.ts` (`buildAndSignManifest`),
+consumed by `src/core/update.zig`'s `parseManifest`:
 
 ```json
 {
   "app_id": "com.nativedesktop.gallery",
   "version": "0.9.0",
   "from": null,
-  "full_url": "http://127.0.0.1:0/gallery-0.9.0-linux.tar.zst",
-  "full_sig_b64": "<base64 algo‖key_id‖signature blob>"
+  "full_url": "https://updates.example.com/gallery-0.9.0-linux.tar.zst",
+  "full_sig_b64": "<base64 algo+key_id+signature blob>"
 }
 ```
 
-- `app_id`: reverse-DNS app identifier.
-- `version`: the version this manifest describes.
-- `from`: optional, the version a delta artifact (see below) would apply
-  against. `null` for a full-only manifest.
-- `full_url`: where to fetch the full compressed archive.
-- `full_sig_b64`: the second base64 line of the archive's `.minisig` file
-  (`algorithm[2] ‖ key_id[8] ‖ signature[64]`), passed through verbatim for
-  the Zig verifier to decode.
-- `delta`: reserved and not populated. The schema leaves room for a
-  future array of delta artifacts (each naming a `from` version, a URL, and
-  its own signature) so that adding delta support later is additive to the
-  manifest shape rather than a breaking change.
+`full_sig_b64` is the second base64 line of the archive's `.minisig`
+(`algorithm[2] | key_id[8] | signature[64]`), passed through verbatim for the
+Zig verifier. `from`/`delta` stay reserved for future delta artifacts; only
+full archives ship today (M9-D2).
 
-## Full-archive updates ship; deltas are deferred (M9-D2)
+### Verification is non-disableable
 
-The only update payload M9 produces and verifies is a full compressed
-archive: `.tar.zst` on Linux (via the devshell's `zstd` CLI) and `.tar.gz`
-on macOS (via system `tar`), each signed with minisign. zig-bsdiff +
-zstd delta-chaining from a previous version is deferred: it
-would let an update fetch only the bytes that changed instead of a full
-archive, but it pulls in a bsdiff dependency and chaining logic that isn't
-needed to prove the verify-download-swap flow end to end. The manifest's
-reserved `delta` field (see above) is the only concession M9 makes toward
-that future work.
+The minisign/Ed25519 verifier (`src/core/update.zig`, `verifyMinisign`) is a
+pure function with zero I/O, and every consumer (`zig build update-verify`,
+`scripts/m9-drive.ts`) calls it unconditionally before staging anything. No
+flag, environment variable, or manifest field skips it. The whole flow is
+tested against a loopback server (`tools/update-server.ts`); nothing depends on
+a remote host at test time.
 
-## Signature verification is non-disableable
+## Linux notes
 
-The minisign/Ed25519 verifier lives in `src/core/update.zig`
-(`verifyMinisign(pubkey, message, sig_blob) -> bool`), a pure function with
-zero I/O; it only ever operates on byte slices handed to it. No flag,
-environment variable, or manifest field skips verification:
-every consumer of an update artifact (the `zig build update-verify` CLI,
-and `scripts/m9-drive.ts` which shells out to it) calls the verifier
-unconditionally before staging anything. A tampered archive or manifest is
-rejected; there is no code path that stages an unverified artifact.
+The AppDir is packed with `appimagetool` when available, else `mksquashfs`
+(the nix devshell case), else packaging fails at the packing step;
+`--format appdir` stops at the raw AppDir. A committed Flatpak manifest lives
+at `packaging/flatpak/com.nativedesktop.gallery.yml` and is only lint-validated
+in CI (a full `flatpak-builder` run needs a real GNOME runner).
 
-Minisign format, for reference: a `.minisig` file is two base64 lines (each
-preceded by a comment line). The first blob decodes to
-`signature_algorithm[2] ‖ key_id[8] ‖ signature[64]`. Algorithm tag `Ed`
-signs the raw message; `ED` (used here, for archives, which are large)
-signs the Blake2b-512 prehash of the message. The public key file decodes to
-`signature_algorithm[2] ‖ key_id[8] ‖ public_key[32]`, and its `key_id` must
-match the signature's.
+## Gates
 
-## Zero-network update flow (M9-D5)
-
-The update flow is tested headlessly against a local Bun HTTP server;
-no task depends on `github.com`, `ziglang.org`, or any other remote host at
-test time. `tools/update-server.ts` serves a manifest + archive from a
-directory over `http://127.0.0.1:<ephemeral-port>`; `scripts/m9-drive.ts`
-fetches both, invokes the Zig verifier, and asserts that a tampered
-artifact is rejected while a valid one is accepted and staged atomically.
-
-Cross-references: `scripts/headless-m9.sh` (Linux: package, launch the
-packaged AppDir headlessly under weston, then run the update flow) and
-`scripts/mac/mac-m9.sh` (macOS: package, ad-hoc-sign, launch the packaged
-`.app` in-session, then run the update flow). Both scripts clean `dist/`
-first; the packers are not idempotent against a leftover output tree from
-a prior run.
-
-## CI (`.github/workflows/package.yml`)
-
-- `linux-package` (blocking): installs nix, builds, runs
-  `./scripts/headless-m9.sh`, then lint-validates the Flatpak manifest.
-- `macos-package` (stretch, non-blocking via `continue-on-error: true`,
-  the same convention as `.github/workflows/mac.yml`): installs Zig + Bun +
-  minisign on a stock `macos-latest` runner, builds the Swift shell,
-  packages and ad-hoc-signs `Gallery.app`, verifies the signature, and
-  uploads the `.app` as a build artifact. A red mac job never blocks a
-  merge. As with `mac.yml`, the job has been validated as lint-clean YAML
-  locally; it has not yet been observed running on a real runner.
+`scripts/headless-m9.sh` (Linux: package, launch the packaged AppDir binary
+under weston, run the update flow) and `scripts/mac/mac-m9.sh` (macOS: package,
+verify the ad-hoc signature + allow-jit, launch the packaged `.app`, run the
+update flow). `packageApp` cleans `<outDir>/<platform>` itself before
+assembling, so repeat runs need no manual `rm -rf`.

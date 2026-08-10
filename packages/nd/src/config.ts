@@ -32,16 +32,86 @@ export interface UrlScheme {
   name?: string;
 }
 
+export interface AppIcon {
+  /** Shared icon source (.png/.svg/.icns path, app-relative). */
+  source?: string;
+  macos?: string;
+  linux?: string;
+}
+
 export interface AppIdentity {
-  /** Reverse-DNS bundle id override. */
+  /** Reverse-DNS bundle id. Required for icons, mime registration, and updates. */
   id?: string;
+  /** Product name: <Name>.app, usr/bin/<slug>, AppImage basename. Default: package.json name. */
+  name?: string;
+  /** CFBundleDisplayName / .desktop Name. Default: name. */
+  displayName?: string;
+  /** Default: package.json version, then "0.0.0". ND_APP_VERSION and --version override. */
+  version?: string;
+  icon?: string | AppIcon;
+  /** .desktop Categories=. Default ["Utility"]. */
+  categories?: string[];
   fileAssociations?: FileAssociation[];
   urlSchemes?: UrlScheme[];
+}
+
+export interface UpdatesConfig {
+  baseUrl: string;
+  /** minisign secret key path. Falls back to ND_MINISIGN_SEC/ND_MINISIGN_PUB. */
+  secretKey?: string;
+  publicKey?: string;
+  /** Generate a throwaway keypair when no key is configured (CI/test path only). */
+  ephemeralKey?: boolean;
+  format?: "tar.gz" | "tar.zst";
+}
+
+export interface MacPackageConfig {
+  /** Info.plist override file path; the default template is generated in-code. */
+  infoPlist?: string;
+  entitlements?: string;
+  /** Default "26.0". */
+  minimumSystemVersion?: string;
+  /** LSApplicationCategoryType. */
+  category?: string;
+  /** Else APPLE_SIGN_IDENTITY, else ad-hoc "-". */
+  signIdentity?: string;
+  /** Default: auto (only with all three Apple creds). */
+  notarize?: boolean;
+  extraPlist?: Record<string, string | number | boolean>;
+  backend?: "appkit" | "gtk";
+}
+
+export interface LinuxPackageConfig {
+  /** AppDir seed tree copied before generated files land. */
+  appDirTemplate?: string;
+  format?: "appimage" | "appdir";
+  /** Extra/overriding .desktop entry lines. */
+  desktopEntry?: Record<string, string>;
+}
+
+export interface PackageConfig {
+  /** Source entry, app-relative. Default "src/main.tsx". */
+  entry?: string;
+  /** Default "auto": run the app's `compile` script when it declares one. */
+  compile?: "auto" | false | { script?: string; outDir?: string; entry?: string };
+  /** App-relative, e.g. "../..". The bundle app root mirrors this directory. Default: the app dir itself. */
+  workspaceRoot?: string;
+  /** Extra workspace-relative dirs/files copied into the bundle app root. */
+  include?: string[];
+  /** Extra roots for the runtime module-graph walk. */
+  runtimeDependencies?: string[];
+  /** Default "dist" (resolved against workspaceRoot). */
+  outDir?: string;
+  bunPath?: string;
+  mac?: MacPackageConfig;
+  linux?: LinuxPackageConfig;
+  updates?: UpdatesConfig;
 }
 
 export interface NativeDesktopConfig {
   native?: { plugins?: NativePluginConfig[] };
   app?: AppIdentity;
+  package?: PackageConfig;
 }
 
 export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig { return config; }
