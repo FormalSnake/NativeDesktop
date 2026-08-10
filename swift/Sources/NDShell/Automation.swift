@@ -17,6 +17,10 @@ import Foundation
     // them as actionable so a MenuItem ref survives checkActionable and reaches
     // semanticClick.
     if ndIsMenuNode(view) { return true }
+    // The palette's tracked node is an always-hidden host handle; its real
+    // field/table live in the presented scrim. Report actionable exactly while
+    // presented so automation can drive it (and only then).
+    if let palette = view as? NDCommandPaletteHandleView { return palette.automationPresented }
     // A Window node's handle is orphaned (.window == nil) once a SplitView
     // takes over as contentViewController — resolve through the create-time
     // registry so a chrome window's root doesn't report invisible.
@@ -45,6 +49,13 @@ import Foundation
     // Menu nodes have no geometry; report a nominal non-degenerate rect so
     // checkActionable (w>0 ∧ h>0) admits a MenuItem ref for semanticClick.
     if ndIsMenuNode(view) {
+        out = nd_rect(x: 0, y: 0, w: 1, h: 1)
+        return true
+    }
+    // Palette host handle: a zero-size tracked node whose real surface is the
+    // presented scrim. Report a nominal non-degenerate rect so checkActionable
+    // admits it for the routed setValue/type/click actions.
+    if view is NDCommandPaletteHandleView {
         out = nd_rect(x: 0, y: 0, w: 1, h: 1)
         return true
     }
@@ -523,6 +534,50 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     return -32602
 }
 
+/// Palette automation: string setValue -> query (queryChanged), integer
+/// setValue -> activate the row at that index, bool setValue -> submit, type ->
+/// append into the query, click -> activate the current highlight. Peer of
+/// GTK's `automationAction`.
+@MainActor private func semanticPalette(_ palette: NDCommandPaletteHandleView, _ nodeID: UInt32, _ action: String,
+                                        _ args: [String: Any],
+                                        _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                        _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard palette.automationPresented else { setErrRaw(errOut, nodeID); return -32001 } // not actionable while closed
+    switch action {
+    case "setValue":
+        guard let value = args["value"] else { return invalidValue(errOut, nodeID) }
+        if let s = value as? String {
+            palette.automationSetQuery(s)
+        } else if let num = value as? NSNumber {
+            // JSONSerialization encodes booleans as CFBoolean and integers as
+            // CFNumber; a bare `as? Bool` also matches integers, so split on the
+            // CoreFoundation type instead.
+            if CFGetTypeID(num) == CFBooleanGetTypeID() {
+                guard num.boolValue else { return invalidValue(errOut, nodeID) }
+                palette.automationSubmit()
+            } else {
+                guard palette.automationActivateRow(num.intValue) else { return invalidValue(errOut, nodeID) }
+            }
+        } else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"applied\":true}")
+        return 0
+    case "type":
+        guard let text = args["text"] as? String else { return invalidValue(errOut, nodeID) }
+        let full = palette.automationAppendQuery(text)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"text\":\"\(escapeJSONString(full))\"}")
+        return 0
+    case "click":
+        palette.automationClickHighlight()
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    default:
+        setErrRaw(errOut, nodeID)
+        return -32601
+    }
+}
+
 /// `setValue` — per-control, mirroring GTK's `semanticSetValue`. Setting a
 /// control's value programmatically does NOT fire its change notification in
 /// AppKit (unlike GTK's `Editable.setText`/`Range.setValue`, which fire
@@ -686,6 +741,12 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
                        _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
                        _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     let args = parseProps(argJson)
+    // Palette: route setValue/type/click to the real field/table; a11y and the
+    // rest fall through to the generic host-view handling below.
+    if let palette = view as? NDCommandPaletteHandleView,
+       action == "setValue" || action == "type" || action == "click" {
+        return semanticPalette(palette, nodeID, action, args, resultOut, errOut)
+    }
     switch action {
     case "window.close":
         // Window-root unmount (tree.zig remove arm): close the native

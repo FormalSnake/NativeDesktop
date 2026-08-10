@@ -109,7 +109,7 @@ export interface ScreenshotParams {
   window?: number;
 }
 
-/** Actionability-checked semantic click; emits clicked exactly like real user input. */
+/** Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. */
 export interface ClickParams {
   ref: number;
 }
@@ -120,13 +120,13 @@ export interface WaitForParams {
   timeoutMs?: number;
 }
 
-/** Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. */
+/** Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit). */
 export interface SetValueParams {
   ref: number;
   value: unknown;
 }
 
-/** TextInput only; semantic append via GtkEditable.insertText, never synthetic keysyms. */
+/** TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms. */
 export interface TypeParams {
   ref: number;
   text: string;

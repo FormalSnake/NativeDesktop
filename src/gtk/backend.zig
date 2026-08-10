@@ -21,6 +21,7 @@ const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
 const system = @import("system.zig");
 const ndtabs_gtk = @import("tabs.zig");
+const ndpalette_gtk = @import("commandpalette.zig");
 
 pub const Widget = gtk.Widget;
 
@@ -397,6 +398,10 @@ pub fn setTree(tree: *tree_mod.Tree) void {
 
 fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
+    // The palette's tracked node is an invisible host box; its real entry/list
+    // live in the separately-presented dialog. Report actionable exactly while
+    // presented so automation can drive it (and only then).
+    if (ndpalette_gtk.isPaletteHandle(w)) return ndpalette_gtk.isPresented(w);
     // Menu nodes have no GtkWidget mapped state; treat them as actionable so a
     // MenuItem ref survives checkActionable and reaches semanticClick.
     if (!isRealWidget(w)) return true;
@@ -408,6 +413,13 @@ fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
 
 fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callconv(.c) bool {
     const w: *gtk.Widget = @ptrCast(@alignCast(widget));
+    // Palette host box: a zero-size tracked node whose real surface is the
+    // presented dialog. Report a nominal non-degenerate rect so checkActionable
+    // admits it for the routed setValue/type/click actions.
+    if (ndpalette_gtk.isPaletteHandle(w)) {
+        out.* = .{ .x = 0, .y = 0, .w = 1, .h = 1 };
+        return true;
+    }
     // Menu nodes have no geometry; report a nominal non-degenerate rect so
     // checkActionable (w>0 ∧ h>0) admits a MenuItem ref for semanticClick.
     if (!isRealWidget(w)) {
@@ -513,6 +525,12 @@ fn vtSemanticAction(
         // window/tab — tabs.zig no-ops if the user already closed it.
         ndtabs_gtk.closeNode(w);
         return 0;
+    } else if (ndpalette_gtk.isPaletteHandle(w) and
+        (std.mem.eql(u8, action_s, "setValue") or std.mem.eql(u8, action_s, "type") or std.mem.eql(u8, action_s, "click")))
+    {
+        // Palette: route setValue/type/click to the real entry/list; a11y and
+        // the rest fall through to the generic host-box handling below.
+        return ndpalette_gtk.automationAction(w, node_id, action_s, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "click")) {
         return semanticClick(w, node_id, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "setValue")) {

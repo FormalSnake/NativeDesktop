@@ -35,6 +35,13 @@ const State = struct {
     list: *gtk.ListBox,
     scroller: *gtk.ScrolledWindow,
     ids: std.ArrayListUnmanaged([]u8) = .empty,
+    // Content signature of the currently-rendered rows. A controlled app
+    // re-renders on every state change and hands back a fresh `items` array
+    // each time; without this, applyProps would tear down and rebuild the
+    // ListBox on every render, dropping clicks onto rows being destroyed and
+    // yanking keyboard focus off the search entry. Rebuild only when the
+    // signature actually changes.
+    items_sig: ?[]u8 = null,
     highlight: i32 = -1,
     presented: bool = false,
     pending_open: bool = false,
@@ -92,7 +99,56 @@ fn freeIds(state: *State) void {
     state.ids.clearRetainingCapacity();
 }
 
+/// Content fingerprint of `arr` (id/title/subtitle/iconName of each row), used
+/// to skip the destructive ListBox rebuild when a re-render hands back rows
+/// that render identically. Caller owns the returned slice.
+fn itemsSignature(arr: ?std.json.Array) ?[]u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(std.heap.page_allocator);
+    const a = std.heap.page_allocator;
+    if (arr) |items| {
+        for (items.items) |it| {
+            if (it != .object) continue;
+            inline for (.{ "id", "title", "subtitle", "iconName" }) |key| {
+                buf.appendSlice(a, objStr(it.object, key) orelse "") catch return null;
+                buf.append(a, 0x1f) catch return null;
+            }
+            buf.append(a, 0x1e) catch return null;
+        }
+    }
+    return buf.toOwnedSlice(a) catch null;
+}
+
+/// Re-assert keyboard focus on the search entry after a rebuild, but only when
+/// focus has actually drifted off it — a fresh row set (or a churn tick under a
+/// sheet-mode dialog) moves the toplevel focus onto an internal list widget,
+/// which starves the capture-phase key controller of Return. Skipping when the
+/// entry already owns focus keeps normal typing (which re-grabs would disrupt
+/// by reselecting the text) untouched.
+fn refocusEntry(state: *State) void {
+    const entry_w = state.entry.as(gtk.Widget);
+    if (gtk.Widget.getRoot(entry_w)) |root| {
+        const win: *gtk.Window = @ptrCast(@alignCast(root));
+        if (gtk.Window.getFocus(win)) |fw| {
+            if (fw == entry_w or gtk.Widget.isAncestor(fw, entry_w) != 0) return;
+        }
+    }
+    _ = gtk.Widget.grabFocus(entry_w);
+}
+
 fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const new_sig = itemsSignature(arr);
+    if (state.items_sig) |old| {
+        if (new_sig) |ns| {
+            if (std.mem.eql(u8, old, ns)) {
+                std.heap.page_allocator.free(ns);
+                return; // rows render identically: no teardown, keep highlight/focus
+            }
+        }
+    }
+    if (state.items_sig) |old| std.heap.page_allocator.free(old);
+    state.items_sig = new_sig;
+
     gtk.ListBox.removeAll(state.list);
     freeIds(state);
     if (arr) |items| {
@@ -116,6 +172,7 @@ fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8
     }
     // Fresh results: the top row is the highlighted default (Enter drills in).
     setHighlight(state, if (state.ids.items.len > 0) 0 else -1);
+    if (state.presented) refocusEntry(state);
 }
 
 fn scrollToRow(state: *State, row: *gtk.ListBoxRow) void {
@@ -142,11 +199,22 @@ fn setHighlight(state: *State, idx: i32) void {
 
 fn present(state: *State) void {
     if (state.presented) return;
-    if (gtk.Widget.getRoot(state.handle) == null) {
+    const root = gtk.Widget.getRoot(state.handle) orelse {
         state.pending_open = true; // not rooted yet: cbHandleMapped presents
         return;
-    }
-    adw.Dialog.present(state.dialog, state.handle);
+    };
+    // Present over the application's active window (the visible window/tab),
+    // not merely the handle's own root, so the overlay is modal over whatever
+    // the user is looking at regardless of where the handle sits in the tree.
+    // Fall back to the handle's root when there's no active window.
+    const parent: *gtk.Widget = blk: {
+        const win: *gtk.Window = @ptrCast(@alignCast(root));
+        if (gtk.Window.getApplication(win)) |app| {
+            if (gtk.Application.getActiveWindow(app)) |active| break :blk active.as(gtk.Widget);
+        }
+        break :blk state.handle;
+    };
+    adw.Dialog.present(state.dialog, parent);
     state.presented = true;
     state.pending_open = false;
     _ = gtk.Widget.grabFocus(state.entry.as(gtk.Widget));
@@ -261,6 +329,104 @@ fn emitSubmit(state: *State) void {
     if (emit) |f| f(state.node_id, "submit", .{ .text = text });
 }
 
+// ---- automation ------------------------------------------------------------
+// The tracked node is the host box; the real entry/list live in the separately
+// presented dialog, so the generic setValue/type/click dispatch (which sniffs
+// the host box as a plain GtkBox) can't reach them. The backend routes those
+// three actions here instead, driving the same paths a user would: query text
+// fires queryChanged, an integer index fires the ListBox row-activated ->
+// onActivate, a bool submits, and click activates the current highlight.
+
+/// True for the palette's host box (carries the palette state); lets the
+/// backend's node_visible/node_bounds/semantic_action arms special-case it.
+pub fn isPaletteHandle(widget: *gtk.Widget) bool {
+    return gobject.Object.getData(asObj(widget), STATE_KEY) != null;
+}
+
+/// Actionable only while presented — a closed palette has no entry/list to act
+/// on, so getTree/automation treats it as not-actionable.
+pub fn isPresented(widget: *gtk.Widget) bool {
+    const state = stateOf(widget) orelse return false;
+    return state.presented;
+}
+
+fn cpMallocZ(json: []const u8) ?[*:0]u8 {
+    const buf: [*]u8 = @ptrCast(std.c.malloc(json.len + 1) orelse return null);
+    @memcpy(buf[0..json.len], json);
+    buf[json.len] = 0;
+    return @ptrCast(buf);
+}
+
+fn cpSetResult(out: *?[*:0]u8, value: anytype) void {
+    const json = std.json.Stringify.valueAlloc(std.heap.page_allocator, value, .{}) catch return;
+    defer std.heap.page_allocator.free(json);
+    out.* = cpMallocZ(json);
+}
+
+fn cpSetErr(out: *?[*:0]u8, node_id: u32) i32 {
+    var buf: [48]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"ref\":{d}}}", .{node_id}) catch return -32602;
+    out.* = cpMallocZ(json);
+    return -32602;
+}
+
+fn activateRowByIndex(state: *State, idx: i32) void {
+    const row = gtk.ListBox.getRowAtIndex(state.list, idx) orelse return;
+    gobject.signalEmitByName(asObj(state.list), "row-activated", row); // -> cbRowActivated -> emitActivate
+}
+
+/// Routes the palette node's setValue/type/click automation actions to the real
+/// entry/list. Returns 0 ok / -32001 closed / -32602 invalid value.
+pub fn automationAction(handle: *gtk.Widget, node_id: u32, action: []const u8, args: ?std.json.Value, result_out: *?[*:0]u8, err_out: *?[*:0]u8) i32 {
+    const state = stateOf(handle) orelse return cpSetErr(err_out, node_id);
+    if (!state.presented) {
+        _ = cpSetErr(err_out, node_id);
+        return -32001; // not actionable while closed
+    }
+    const obj: ?std.json.ObjectMap = if (args) |a| (if (a == .object) a.object else null) else null;
+
+    if (std.mem.eql(u8, action, "setValue")) {
+        const value = (if (obj) |o| o.get("value") else null) orelse return cpSetErr(err_out, node_id);
+        switch (value) {
+            .string => |s| {
+                const z = std.heap.page_allocator.dupeZ(u8, s) catch return cpSetErr(err_out, node_id);
+                defer std.heap.page_allocator.free(z);
+                gtk.Editable.setText(state.entry.as(gtk.Editable), z); // fires search-changed -> queryChanged
+            },
+            .integer => |i| {
+                if (i < 0 or i >= @as(i64, @intCast(state.ids.items.len))) return cpSetErr(err_out, node_id);
+                activateRowByIndex(state, @intCast(i));
+            },
+            .bool => |b| {
+                if (!b) return cpSetErr(err_out, node_id);
+                emitSubmit(state);
+            },
+            else => return cpSetErr(err_out, node_id),
+        }
+        cpSetResult(result_out, .{ .ref = node_id, .applied = true });
+        return 0;
+    } else if (std.mem.eql(u8, action, "type")) {
+        const t = (if (obj) |o| o.get("text") else null) orelse return cpSetErr(err_out, node_id);
+        if (t != .string) return cpSetErr(err_out, node_id);
+        const editable = state.entry.as(gtk.Editable);
+        const cur = std.mem.span(gtk.Editable.getText(editable));
+        var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);
+        const z = std.heap.page_allocator.dupeZ(u8, t.string) catch return cpSetErr(err_out, node_id);
+        defer std.heap.page_allocator.free(z);
+        gtk.Editable.insertText(editable, z, -1, &pos); // fires search-changed -> queryChanged
+        cpSetResult(result_out, .{ .ref = node_id, .text = std.mem.span(gtk.Editable.getText(editable)) });
+        return 0;
+    } else if (std.mem.eql(u8, action, "click")) {
+        const n: i32 = @intCast(state.ids.items.len);
+        const idx: i32 = if (state.highlight >= 0 and state.highlight < n) state.highlight else if (n > 0) 0 else -1;
+        if (idx >= 0) activateRowByIndex(state, idx);
+        cpSetResult(result_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
+    _ = cpSetErr(err_out, node_id);
+    return -32601;
+}
+
 fn cbSearchChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(obj))).as(gtk.Editable);
@@ -342,5 +508,6 @@ fn cbHandleDestroyed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     gobject.Object.unref(asObj(state.dialog));
     freeIds(state);
     state.ids.deinit(std.heap.page_allocator);
+    if (state.items_sig) |sig| std.heap.page_allocator.free(sig);
     std.heap.page_allocator.destroy(state);
 }

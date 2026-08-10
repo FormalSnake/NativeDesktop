@@ -164,7 +164,8 @@ pub const ScreenshotParams = struct {
     window: ?u32 = null,
 };
 
-/// click: Actionability-checked semantic click; emits clicked exactly like real user input.
+/// click: Actionability-checked semantic click; emits clicked exactly like real user input. On
+/// CommandPalette activates the currently-highlighted row.
 pub const ClickParams = struct {
     ref: ?u32 = null,
 };
@@ -176,13 +177,16 @@ pub const WaitForParams = struct {
 };
 
 /// setValue: Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a
-/// number, Select an integer index.
+/// number, Select an integer index. CommandPalette (routed to the presented dialog): a string
+/// sets the query text (fires queryChanged), an integer activates the row at that index (fires
+/// onActivate), a bool true submits the raw query (fires onSubmit).
 pub const SetValueParams = struct {
     ref: ?u32 = null,
     value: ?std.json.Value = null,
 };
 
-/// type: TextInput only; semantic append via GtkEditable.insertText, never synthetic keysyms.
+/// type: TextInput (and CommandPalette, appending to its query); semantic append via
+/// GtkEditable.insertText, never synthetic keysyms.
 pub const TypeParams = struct {
     ref: ?u32 = null,
     text: ?[]const u8 = null,

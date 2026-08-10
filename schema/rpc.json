@@ -137,7 +137,7 @@
     },
     {
       "name": "click",
-      "doc": "Actionability-checked semantic click; emits clicked exactly like real user input.",
+      "doc": "Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row.",
       "params": [{ "name": "ref", "type": "u32" }],
       "result": "ClickResult"
     },
@@ -152,7 +152,7 @@
     },
     {
       "name": "setValue",
-      "doc": "Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index.",
+      "doc": "Kind-dispatched: TextInput/TextArea need a string, Checkbox/Radio a bool, Slider a number, Select an integer index. CommandPalette (routed to the presented dialog): a string sets the query text (fires queryChanged), an integer activates the row at that index (fires onActivate), a bool true submits the raw query (fires onSubmit).",
       "params": [
         { "name": "ref", "type": "u32" },
         { "name": "value", "type": "any" }
@@ -161,7 +161,7 @@
     },
     {
       "name": "type",
-      "doc": "TextInput only; semantic append via GtkEditable.insertText, never synthetic keysyms.",
+      "doc": "TextInput (and CommandPalette, appending to its query); semantic append via GtkEditable.insertText, never synthetic keysyms.",
       "params": [
         { "name": "ref", "type": "u32" },
         { "name": "text", "type": "string" }

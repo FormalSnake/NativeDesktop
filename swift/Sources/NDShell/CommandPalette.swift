@@ -64,6 +64,10 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
     fileprivate var placeholder: String?
     fileprivate var rows: [PaletteRow] = []
     private var pendingQuery = ""
+    // Content fingerprint of the rendered rows. A controlled app hands back a
+    // fresh `items` array on every render; without this the table would reload
+    // and reset the highlight on each one, so reload only when rows change.
+    private var rowsSig = ""
 
     private var pendingOpen = false
     private var presented = false
@@ -108,10 +112,30 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
     }
 
     func setRows(_ newRows: [PaletteRow]) {
+        let sig = Self.rowsSignature(newRows)
+        if sig == rowsSig { return } // rows render identically: keep table, selection, focus
+        rowsSig = sig
         rows = newRows
         tableView?.reloadData()
         // Fresh results: the top row is the highlighted default (Return drills in).
-        if presented { highlight(rows.isEmpty ? -1 : 0) }
+        if presented {
+            highlight(rows.isEmpty ? -1 : 0)
+            reassertFieldFocus()
+        }
+    }
+
+    private static func rowsSignature(_ rows: [PaletteRow]) -> String {
+        var s = ""
+        for r in rows { s += "\(r.id)\u{1f}\(r.title)\u{1f}\(r.subtitle ?? "")\u{1f}\(r.iconName ?? "")\u{1e}" }
+        return s
+    }
+
+    // Keep the search field first responder across a reload, but never steal
+    // the field editor mid-edit (that would reselect the text) — only re-grab
+    // when nothing is editing it.
+    private func reassertFieldFocus() {
+        guard let field = searchField, let window = field.window, field.currentEditor() == nil else { return }
+        window.makeFirstResponder(field)
     }
 
     // ---- present / dismiss ----
@@ -122,7 +146,10 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
 
     private func presentPalette() {
         if presented { return }
-        guard let window = self.window, let content = window.contentView else {
+        // Present over the application's active window (the visible window/tab),
+        // not merely the handle's own window, so the overlay covers whatever the
+        // user is looking at regardless of where the handle sits in the tree.
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? self.window, let content = window.contentView else {
             // Not mounted/realized yet (create-time open): retry next turn.
             pendingOpen = true
             DispatchQueue.main.async { [weak self] in
@@ -254,6 +281,46 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
     func emitSubmit() {
         ndEmitEvent(nodeID, "submit", "{\"text\":\(ndJsonString(searchField?.stringValue ?? pendingQuery))}")
     }
+
+    // ---- automation ----
+    // The tracked node is the host handle; the real field/table live in the
+    // presented scrim. Automation routes setValue/type/click here (Automation
+    // .swift) so a headless test drives the same paths a user would.
+
+    var automationPresented: Bool { presented }
+    var automationRowCount: Int { rows.count }
+
+    func automationSetQuery(_ text: String) {
+        searchField?.stringValue = text
+        pendingQuery = text
+        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(text))}")
+    }
+
+    func automationAppendQuery(_ text: String) -> String {
+        let full = (searchField?.stringValue ?? pendingQuery) + text
+        searchField?.stringValue = full
+        pendingQuery = full
+        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(full))}")
+        return full
+    }
+
+    func automationActivateRow(_ idx: Int) -> Bool {
+        guard idx >= 0 && idx < rows.count else { return false }
+        highlight(idx)
+        emitActivate(idx)
+        return true
+    }
+
+    func automationClickHighlight() {
+        let sel = tableView?.selectedRow ?? -1
+        let idx = (sel >= 0 && sel < rows.count) ? sel : (rows.isEmpty ? -1 : 0)
+        if idx >= 0 {
+            highlight(idx)
+            emitActivate(idx)
+        }
+    }
+
+    func automationSubmit() { emitSubmit() }
 
     private func commitReturn() {
         let sel = tableView?.selectedRow ?? -1
