@@ -5,12 +5,13 @@
   "trustedDependencies": [],
   "scripts": {
     "dev": "nd dev",
-    "compile": "babel src --out-dir dist --config-file ./babel.config.json --extensions .ts,.tsx --keep-file-extension"
+    "compile": "babel src --out-dir dist --config-file ./babel.config.json --extensions .ts,.tsx --keep-file-extension",
+    "package": "nd package"
   },
   "dependencies": {
-    "@nativedesktop/react": "file:../packages/react",
-    "@nativedesktop/native": "file:../packages/native",
-    "nd": "file:../packages/nd",
+    "@nativedesktop/react": "^0.1.0",
+    "@nativedesktop/native": "^0.1.0",
+    "@nativedesktop/cli": "^0.1.0",
     "react": "19.2.7"
   },
   "devDependencies": {
@@ -20,7 +21,7 @@
     "@babel/preset-typescript": "8.0.1",
     "@types/bun": "1.3.13",
     "@types/react": "19.2.17",
-    "babel-plugin-nativedesktop": "file:../packages/babel-plugin-nativedesktop",
+    "babel-plugin-nativedesktop": "^0.1.0",
     "babel-plugin-react-compiler": "1.0.0"
   }
 }

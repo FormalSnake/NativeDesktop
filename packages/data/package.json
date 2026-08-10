@@ -2,6 +2,9 @@
   "name": "@nativedesktop/data",
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
@@ -16,7 +19,7 @@
     "./react": "./src/react.ts"
   },
   "peerDependencies": {
-    "@nativedesktop/react": "workspace:*"
+    "@nativedesktop/react": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@nativedesktop/react": { "optional": true }

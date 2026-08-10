@@ -1,0 +1,17 @@
+{
+  "name": "@nativedesktop/host-darwin-arm64",
+  "version": "0.1.0",
+  "description": "Prebuilt NativeDesktop AppKit host binary (nd-shell) for macOS on Apple silicon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/host-darwin-arm64"
+  },
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
+  "publishConfig": { "access": "public" },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin"]
+}

@@ -1,0 +1,110 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "bun publish --dry-run instead of publishing"
+        type: boolean
+        default: true
+
+jobs:
+  build-darwin-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -sL https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz | tar xJ
+          echo "$PWD/zig-aarch64-macos-0.16.0" >> "$GITHUB_PATH"
+      - name: Build AppKit host
+        run: ./scripts/mac/build-appkit-host.sh
+      - name: Strip (local symbols only; a full strip breaks Swift reflection metadata)
+        run: strip -x swift/.build/release/NDShell
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nd-shell
+          path: swift/.build/release/NDShell
+          if-no-files-found: error
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    # Deliberately NOT the Nix devshell: nix develop bakes /nix/store RPATHs
+    # into the binary. ubuntu:24.04 (glibc 2.39, GTK 4.14, libadwaita 1.5)
+    # links by soname, which is the published runtime contract
+    # (docs/runtime-deps.md).
+    container: ubuntu:24.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev curl xz-utils ca-certificates git
+      - uses: actions/checkout@v4
+      - name: Install Zig 0.16.0
+        run: |
+          curl -sL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz | tar xJ
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+      - name: Build GTK host
+        # A link failure mentioning glibc symbols here means the committed
+        # vendor/libghostty-vt linux archive was built against a newer glibc
+        # than this container, not a GTK problem.
+        run: zig build
+      - name: Strip + record sonames
+        run: |
+          strip zig-out/bin/nd-hello
+          ldd zig-out/bin/nd-hello | tee nd-hello.ldd.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nd-hello
+          path: |
+            zig-out/bin/nd-hello
+            nd-hello.ldd.txt
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [build-darwin-arm64, build-linux-x64]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.3.13 }
+      - uses: actions/download-artifact@v4
+        with: { name: nd-shell, path: artifacts/darwin-arm64 }
+      - uses: actions/download-artifact@v4
+        with: { name: nd-hello, path: artifacts/linux-x64 }
+      - name: Stage platform binaries
+        run: |
+          bun scripts/release/stage-platform-binary.ts darwin-arm64 artifacts/darwin-arm64/NDShell
+          bun scripts/release/stage-platform-binary.ts linux-x64 artifacts/linux-x64/zig-out/bin/nd-hello
+      - name: Check lockstep versions
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(jq -r .version packages/host/package.json)"
+          fi
+          bun scripts/release/check-versions.ts "$version"
+      - name: bun install (bun publish resolves workspace:* from the lockfile)
+        run: bun install --frozen-lockfile
+      - name: Build @nativedesktop/react dist
+        run: bun run --cwd packages/react build
+      - name: Write npm token
+        run: printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish all packages
+        run: ./scripts/release/publish-all.sh
+        env:
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+      - name: GitHub release with raw binaries (for Nix and non-npm consumers)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cp artifacts/darwin-arm64/NDShell nd-shell
+          cp artifacts/linux-x64/zig-out/bin/nd-hello nd-hello
+          cp artifacts/linux-x64/nd-hello.ldd.txt .
+          gh release create "$GITHUB_REF_NAME" nd-shell nd-hello nd-hello.ldd.txt --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

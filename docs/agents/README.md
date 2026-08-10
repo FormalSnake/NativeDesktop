@@ -19,8 +19,9 @@ drive the app the same way a user would. Full design: `docs/superpowers/specs/20
 (or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `nd dev [entry]` is the canonical way
 to run one. `entry` defaults to `src/main.tsx`. `nd dev` resolves the native backend for the current
 platform through `@nativedesktop/host`'s `resolveHostBinary()`: the AppKit `nd-shell` on macOS, the
-GTK `nd-hello` on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND`. The binary is
-prebuilt under `packages/host/bin/<os>-<arch>/`, or built on first run inside a framework checkout
+GTK `nd-hello` on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND`. The binary comes
+prebuilt from the installed platform package (`@nativedesktop/host-darwin-arm64` or
+`@nativedesktop/host-linux-x64`), or is built on first run inside a framework checkout
 (see `packages/host/src/index.ts`). It then spawns that binary with `ND_DEV=1 ND_SCRIPT=<entry>`.
 `nd build` runs `bun run compile`, the Babel and React Compiler pre-pass described below. `nd dev`
 does not set `NATIVE_AUTOMATION=1`, so export it before running if you need the automation socket.

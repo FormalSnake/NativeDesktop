@@ -11,8 +11,8 @@
     "examples/browser": {
       "name": "browser-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -22,8 +22,8 @@
     "examples/command-palette": {
       "name": "command-palette-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -33,8 +33,19 @@
     "examples/counter": {
       "name": "counter-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
+    "examples/errors": {
+      "name": "errors-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -44,8 +55,8 @@
     "examples/gallery": {
       "name": "gallery-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -55,8 +66,8 @@
     "examples/gestures": {
       "name": "gestures-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -66,8 +77,8 @@
     "examples/multiwindow": {
       "name": "multiwindow-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -77,9 +88,9 @@
     "examples/nativeview-demo": {
       "name": "nativeview-demo-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/native": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -89,8 +100,8 @@
     "examples/ndwidgets-probe": {
       "name": "ndwidgets-probe-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -100,8 +111,20 @@
     "examples/notes": {
       "name": "notes-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
+    "examples/panes": {
+      "name": "panes-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/panes": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -111,8 +134,8 @@
     "examples/remote-terminal": {
       "name": "remote-terminal-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -122,8 +145,8 @@
     "examples/settings": {
       "name": "settings-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -133,8 +156,8 @@
     "examples/tasks": {
       "name": "tasks-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -144,8 +167,8 @@
     "examples/terminal": {
       "name": "terminal-example",
       "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/react": "workspace:*",
-        "nd": "workspace:*",
         "react": "19.2.7",
       },
       "devDependencies": {
@@ -173,6 +196,18 @@
     "packages/host": {
       "name": "@nativedesktop/host",
       "version": "0.1.0",
+      "optionalDependencies": {
+        "@nativedesktop/host-darwin-arm64": "workspace:*",
+        "@nativedesktop/host-linux-x64": "workspace:*",
+      },
+    },
+    "packages/host-darwin-arm64": {
+      "name": "@nativedesktop/host-darwin-arm64",
+      "version": "0.1.0",
+    },
+    "packages/host-linux-x64": {
+      "name": "@nativedesktop/host-linux-x64",
+      "version": "0.1.0",
     },
     "packages/mcp": {
       "name": "@nativedesktop/mcp",
@@ -190,13 +225,24 @@
       "version": "0.1.0",
     },
     "packages/nd": {
-      "name": "nd",
+      "name": "@nativedesktop/cli",
       "version": "0.1.0",
       "bin": {
         "nd": "src/index.ts",
       },
       "dependencies": {
-        "@nativedesktop/host": "file:../host",
+        "@nativedesktop/host": "workspace:*",
+      },
+    },
+    "packages/panes": {
+      "name": "@nativedesktop/panes",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/react": "19.2.17",
+        "react": "19.2.7",
+      },
+      "peerDependencies": {
+        "@nativedesktop/react": "workspace:^",
       },
     },
     "packages/react": {
@@ -217,6 +263,16 @@
         "react": "^19.2.7",
       },
     },
+    "packages/rpc": {
+      "name": "@nativedesktop/rpc",
+      "version": "0.1.0",
+      "peerDependencies": {
+        "@nativedesktop/react": "workspace:^",
+      },
+      "optionalPeers": [
+        "@nativedesktop/react",
+      ],
+    },
   },
   "packages": {
     "@babel/helper-string-parser": ["@babel/helper-string-parser@7.29.7", "", {}, "sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw=="],
@@ -231,15 +287,25 @@
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.29.0", "", { "dependencies": { "@hono/node-server": "^1.19.9", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ=="],
 
+    "@nativedesktop/cli": ["@nativedesktop/cli@workspace:packages/nd"],
+
     "@nativedesktop/data": ["@nativedesktop/data@workspace:packages/data"],
 
     "@nativedesktop/host": ["@nativedesktop/host@workspace:packages/host"],
+
+    "@nativedesktop/host-darwin-arm64": ["@nativedesktop/host-darwin-arm64@workspace:packages/host-darwin-arm64"],
+
+    "@nativedesktop/host-linux-x64": ["@nativedesktop/host-linux-x64@workspace:packages/host-linux-x64"],
 
     "@nativedesktop/mcp": ["@nativedesktop/mcp@workspace:packages/mcp"],
 
     "@nativedesktop/native": ["@nativedesktop/native@workspace:packages/native"],
 
+    "@nativedesktop/panes": ["@nativedesktop/panes@workspace:packages/panes"],
+
     "@nativedesktop/react": ["@nativedesktop/react@workspace:packages/react"],
+
+    "@nativedesktop/rpc": ["@nativedesktop/rpc@workspace:packages/rpc"],
 
     "@types/babel__core": ["@types/babel__core@7.20.5", "", { "dependencies": { "@babel/parser": "^7.20.7", "@babel/types": "^7.20.7", "@types/babel__generator": "*", "@types/babel__template": "*", "@types/babel__traverse": "*" } }, "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA=="],
 
@@ -349,6 +415,8 @@
 
     "encodeurl": ["encodeurl@2.0.0", "", {}, "sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg=="],
 
+    "errors-example": ["errors-example@workspace:examples/errors"],
+
     "es-define-property": ["es-define-property@1.0.1", "", {}, "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g=="],
 
     "es-errors": ["es-errors@1.3.0", "", {}, "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw=="],
@@ -433,8 +501,6 @@
 
     "nativeview-demo-example": ["nativeview-demo-example@workspace:examples/nativeview-demo"],
 
-    "nd": ["nd@workspace:packages/nd"],
-
     "ndwidgets-probe-example": ["ndwidgets-probe-example@workspace:examples/ndwidgets-probe"],
 
     "negotiator": ["negotiator@1.0.0", "", {}, "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="],
@@ -448,6 +514,8 @@
     "on-finished": ["on-finished@2.4.1", "", { "dependencies": { "ee-first": "1.1.1" } }, "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg=="],
 
     "once": ["once@1.4.0", "", { "dependencies": { "wrappy": "1" } }, "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w=="],
+
+    "panes-example": ["panes-example@workspace:examples/panes"],
 
     "parseurl": ["parseurl@1.3.3", "", {}, "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ=="],
 
@@ -528,8 +596,6 @@
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
 
     "body-parser/content-type": ["content-type@2.0.0", "", {}, "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ=="],
-
-    "nd/@nativedesktop/host": ["@nativedesktop/host@file:packages/host", {}],
 
     "type-is/content-type": ["content-type@2.0.0", "", {}, "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ=="],
   }

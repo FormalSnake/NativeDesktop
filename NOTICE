@@ -1,0 +1,38 @@
+NativeDesktop
+Copyright (c) 2026 Kyan De Sutter (FormalSnake)
+Licensed under the MIT License (see LICENSE).
+
+This repository and the published binaries include or link third-party
+software:
+
+libghostty-vt (vendor/libghostty-vt/)
+  Prebuilt static archives of libghostty-vt from ghostty-org/ghostty.
+  Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. MIT License:
+  vendor/libghostty-vt/LICENSE. Build provenance:
+  vendor/libghostty-vt/PROVENANCE.md. The archives are statically linked into
+  the nd-hello (Linux) and nd-shell (macOS) host binaries.
+
+zig-gobject bindings (vendor/gobject-bindings/)
+  Machine-generated Zig bindings produced by ianprime0509/zig-gobject at
+  commit 97caf8bfb4386409aab1160f7ec05c32ee6d5d7d (pin recorded in
+  build.zig.zon and scripts/regen-bindings.sh). Copyright Ian Johnson,
+  Zero-Clause BSD (0BSD): vendor/gobject-bindings/LICENSE. The bindings are
+  derived from GObject-Introspection GIR data belonging to GTK, GLib, and
+  libadwaita.
+
+GTK4, libadwaita, GLib, Pango, Cairo, and related libraries
+  The Linux host binary nd-hello (shipped in the @nativedesktop/host-linux-x64
+  npm package and as a GitHub Release asset) dynamically links GTK4,
+  libadwaita, GLib/GObject/GIO, Pango, Cairo, gdk-pixbuf, and graphene by
+  soname. These libraries are licensed under the GNU Lesser General Public
+  License 2.1 or later. No LGPL code is bundled in any published npm tarball
+  or release asset; the libraries are loaded from the user's system at run
+  time. The LGPL section 6 relink right is satisfied by dynamic linking and by
+  the published build instructions in this repository (build from source with
+  `zig build`). Optional features additionally dlopen, by bare soname,
+  WebKitGTK (<webview>), GStreamer (audio), and libsecret (credentials); each
+  feature degrades cleanly when its library is absent. See
+  docs/runtime-deps.md for the full runtime contract.
+
+The macOS host binary nd-shell links only Apple system frameworks plus the
+statically linked components listed above.

@@ -9,7 +9,7 @@
   "dependencies": {
     "@nativedesktop/native": "workspace:*",
     "@nativedesktop/react": "workspace:*",
-    "nd": "workspace:*",
+    "@nativedesktop/cli": "workspace:*",
     "react": "19.2.7"
   },
   "devDependencies": {

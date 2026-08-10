@@ -20,17 +20,8 @@ jobs:
           echo "$PWD/zig-aarch64-macos-0.16.0" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: 1.3.13 }
-      - name: Build libnd.a (+ repack for Apple ld)
-        run: |
-          zig build libnd -Dbackend=abi
-          # zig's archiver emits members Apple's ld rejects ("not 8-byte
-          # aligned") and extracts them 0-permission; repack with the system
-          # ar/libtool before the Swift link (scripts/mac/mac-run.sh recipe).
-          workdir="$(mktemp -d)"
-          ( cd "$workdir" && ar x "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" && chmod 644 *.o && libtool -static -o "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" *.o )
-          rm -rf "$workdir"
-      - name: Build Swift shell
-        run: cd swift && swift build -c release
+      - name: Build AppKit host (libnd repack + Swift shell)
+        run: ./scripts/mac/build-appkit-host.sh
       - name: bun install (workspace)
         run: bun install --frozen-lockfile
       - name: Drive the counter (headful, TCC-free)

@@ -1,0 +1,17 @@
+{
+  "name": "@nativedesktop/host-linux-x64",
+  "version": "0.1.0",
+  "description": "Prebuilt NativeDesktop GTK host binary (nd-hello) for x86_64 Linux",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/host-linux-x64"
+  },
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
+  "publishConfig": { "access": "public" },
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin"]
+}

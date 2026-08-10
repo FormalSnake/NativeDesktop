@@ -1,6 +1,7 @@
 {
   "name": "nativedesktop-monorepo",
   "private": true,
+  "license": "MIT",
   "workspaces": ["packages/*", "examples/*"],
   "devDependencies": {
     "@types/bun": "1.3.13"

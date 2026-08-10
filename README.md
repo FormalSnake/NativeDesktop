@@ -35,6 +35,16 @@ import for you. See [State & Hot Reload][state] and [Monorepo & Code Sharing][mo
 
 ## Getting started
 
+Install from npm. The host binary ships prebuilt for macOS on Apple silicon and x86_64 Linux; on
+Linux the system needs GTK4 and libadwaita at run time, see [Requirements](docs/runtime-deps.md):
+
+```bash
+bun add @nativedesktop/cli @nativedesktop/react react
+bunx nd dev src/main.tsx
+```
+
+### Working on the framework
+
 You need Zig 0.16.0, Bun 1.3.13, and on Linux GTK4 plus libadwaita. The repo pins all of it in a Nix
 flake:
 
@@ -204,7 +214,7 @@ src/gtk/          GTK4 + libadwaita backend, compiled into the Linux host
 swift/            AppKit backend: NDShell (hand-written), NDGen (generated), CNd (bridges libnd.a)
 schema/           widgets.json, protocol.json, rpc.json
 tools/            codegen.ts, packaging, ndshot screenshot helper
-packages/         react, nd, host, data, native, mcp, babel-plugin-nativedesktop
+packages/         react, nd (published as @nativedesktop/cli), host + host-<os>-<arch> binaries, data, native, mcp, babel-plugin-nativedesktop
 examples/         13 runnable apps, from counter to a tabbed browser
 runtime/          NDP client and its tests
 plugins/          sample native plugins
@@ -257,3 +267,9 @@ run dev`. Start with [Introduction][intro] and [Quick Start][quickstart].
 [webview]: docs-site/src/content/docs/components/webview.md
 [automation]: docs-site/src/content/docs/automation-testing/automation-socket.md
 [mcp]: docs-site/src/content/docs/automation-testing/mcp-tools.md
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party attributions, including the vendored
+libghostty-vt archives and the dynamically linked LGPL GTK stack on Linux, are
+in [NOTICE](NOTICE).

@@ -1,17 +1,25 @@
 {
   "name": "@nativedesktop/host",
   "version": "0.1.0",
+  "description": "Resolves the prebuilt NativeDesktop host binary for the current platform",
   "type": "module",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
     "directory": "packages/host"
   },
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
   "publishConfig": { "access": "public" },
-  "files": ["bin", "src"],
+  "files": ["src"],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "optionalDependencies": {
+    "@nativedesktop/host-darwin-arm64": "workspace:*",
+    "@nativedesktop/host-linux-x64": "workspace:*"
   }
 }

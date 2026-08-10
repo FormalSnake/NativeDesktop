@@ -1,12 +1,16 @@
 {
-  "name": "nd",
+  "name": "@nativedesktop/cli",
   "version": "0.1.0",
+  "description": "The nd CLI: dev-runs, builds, and packages NativeDesktop apps",
   "type": "module",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
     "directory": "packages/nd"
   },
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
   "publishConfig": { "access": "public" },
   "files": ["src"],
   "bin": { "nd": "src/index.ts" },
@@ -15,6 +19,6 @@
     "./config": "./src/config.ts"
   },
   "dependencies": {
-    "@nativedesktop/host": "file:../host"
+    "@nativedesktop/host": "workspace:*"
   }
 }

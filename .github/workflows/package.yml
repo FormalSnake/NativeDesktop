@@ -35,13 +35,9 @@ jobs:
         with: { bun-version: 1.3.13 }
       - name: minisign (for update signing)
         run: brew install minisign
-      - name: Build libnd.a (+ repack for Apple ld) + Swift shell
+      - name: Build AppKit host (libnd repack + Swift shell)
         run: |
-          zig build libnd -Dbackend=abi
-          workdir="$(mktemp -d)"
-          ( cd "$workdir" && ar x "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" && chmod 644 *.o && libtool -static -o "$GITHUB_WORKSPACE/zig-out/lib/libnd.a" *.o )
-          rm -rf "$workdir"
-          (cd swift && swift build -c release)
+          ./scripts/mac/build-appkit-host.sh
           zig build update-verify
       - name: bun install (workspace)
         run: bun install --frozen-lockfile

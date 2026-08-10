@@ -2,6 +2,9 @@
   "name": "@nativedesktop/native",
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",

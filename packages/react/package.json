@@ -2,6 +2,9 @@
   "name": "@nativedesktop/react",
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
@@ -27,7 +30,8 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh",
-    "postinstall": "bun run build"
+    "prepack": "bun run build",
+    "prepare": "bun run build"
   },
   "peerDependencies": {
     "react": "^19.2.7"
