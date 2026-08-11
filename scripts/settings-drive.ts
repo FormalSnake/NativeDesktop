@@ -1,84 +1,62 @@
 #!/usr/bin/env bun
-// Drives the semantic settings groups through the automation socket. This is
-// specifically an interop regression test: controls remain AppKit/GTK widgets
-// parented by the settings group while macOS draws the card with SwiftUI.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+// scripts/settings-drive.ts [gtk|appkit] — drives examples/settings/main.tsx
+// via @nativedesktop/test. Acceptance for the boxed-list wave: the settings
+// pages are real <settingsgroup title>/<row>/<switchrow> widgets (SwitchRow
+// a11y role/value + setValue toggle path, Row suffix controls, activatable
+// Row activation, SettingsGroup role), navigation runs through the
+// <sourcelist> sidebar, and React state survives page remounts. Prints
+// ND_ROWS_OK on success.
+import { launchApp } from "../packages/test/src/index.ts";
+import type { Backend } from "@nativedesktop/host";
 
-interface TreeNode {
-  ref: number;
-  type: string;
-  testID: string | null;
-  text: string | null;
-  checked?: boolean | null;
-  value?: number | null;
-  selectedIndex?: number | null;
-  children: TreeNode[];
+const backend = process.argv[2] as Backend | undefined;
+const shotDir = process.env.ND_SHOT_DIR ?? "/tmp";
+
+const app = await launchApp({ entry: "examples/settings/main.tsx", backend });
+try {
+  // ---- leg 1: boxed-list shape — group + rows with roles ---------------------
+  const card = await app.mustFind("general-card");
+  if (card.role !== "group") throw new Error(`general-card role=${card.role}, want "group"`);
+  const launch = await app.mustFind("setting-launch");
+  if (launch.role !== "switch") throw new Error(`setting-launch role=${launch.role}, want "switch"`);
+  await app.waitForValue("setting-launch", true, { timeoutMs: 3000 });
+  console.log("ND_ROWS_SHAPE_OK settingsgroup=group switchrow=switch");
+
+  // ---- leg 2: switchrow setValue -> toggled -> React state -------------------
+  await app.setValue("setting-launch", false);
+  await app.waitForText("launch false", { timeoutMs: 3000 });
+  await app.waitForValue("setting-launch", false, { timeoutMs: 3000 });
+  console.log("ND_ROWS_TOGGLE_OK switchrow setValue round-trip");
+
+  // ---- leg 3: sidebar navigation via <sourcelist> ----------------------------
+  await app.setValue("settings-categories", 1);
+  await app.waitForPresent("appearance-card", { timeoutMs: 3000 });
+  const slider = await app.mustFind("setting-textsize");
+  await app.setValue("setting-textsize", 21);
+  await app.waitForValue("setting-textsize", 21, { timeoutMs: 3000 });
+  console.log(`ND_ROWS_NAV_OK sourcelist page switch; row-suffix slider ref=${slider.ref} accepts setValue`);
+
+  // ---- leg 4: state survives remounts; activatable row; reset ----------------
+  await app.setValue("settings-categories", 2);
+  await app.waitForPresent("advanced-card", { timeoutMs: 3000 });
+  await app.setValue("setting-devmode", true);
+  await app.waitForText("devmode true", { timeoutMs: 3000 });
+  await app.setValue("settings-categories", 1);
+  await app.waitForPresent("appearance-card", { timeoutMs: 3000 });
+  await app.waitForValue("setting-textsize", 21, { timeoutMs: 3000 }); // remount kept React state
+  await app.setValue("settings-categories", 2);
+  await app.waitForPresent("advanced-card", { timeoutMs: 3000 });
+  await app.click("check-updates-row");
+  await app.waitForText("updates checked", { timeoutMs: 3000 });
+  await app.click("reset-button");
+  await app.waitForText("settings reset", { timeoutMs: 3000 });
+  await app.waitForValue("setting-devmode", false, { timeoutMs: 3000 });
+  console.log("ND_ROWS_STATE_OK remount persistence + activatable row + reset");
+
+  const shot = await app.screenshot(`${shotDir}/settings-rows-${app.backend}.png`, { minBytes: 2000 });
+  console.log(`ND_ROWS_SHOT ${shot.path} ${shot.width}x${shot.height}`);
+
+  console.log(`ND_ROWS_OK backend=${app.backend}`);
+} finally {
+  await app.close();
 }
-interface GetTreeResult { root: TreeNode }
-
-const client = await AutomationClient.connect();
-const tree = async () => (await client.call("getTree")) as GetTreeResult;
-function find(node: TreeNode, testID: string): TreeNode | null {
-  if (node.testID === testID) return node;
-  for (const child of node.children) {
-    const result = find(child, testID);
-    if (result) return result;
-  }
-  return null;
-}
-async function node(testID: string): Promise<TreeNode> {
-  const result = find((await tree()).root, testID);
-  if (!result) throw new Error(`${testID} not found`);
-  return result;
-}
-async function set(testID: string, value: boolean | number): Promise<void> {
-  const target = await node(testID);
-  const result = (await client.call("setValue", { ref: target.ref, value })) as { applied: boolean };
-  if (!result.applied) throw new Error(`setValue did not apply to ${testID}`);
-}
-async function click(testID: string): Promise<void> {
-  const target = await node(testID);
-  const result = (await client.call("click", { ref: target.ref })) as { dispatched: boolean };
-  if (!result.dispatched) throw new Error(`click did not dispatch to ${testID}`);
-}
-async function waitFor(testID: string, predicate: (n: TreeNode) => boolean): Promise<TreeNode> {
-  let last: TreeNode | null = null;
-  for (let i = 0; i < 30; i++) {
-    last = find((await tree()).root, testID);
-    if (last && predicate(last)) return last;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`${testID} did not reach expected state; last=${JSON.stringify(last)}`);
-}
-
-const group = await node("general-card");
-if (group.type !== "SettingsGroup") throw new Error(`general-card type=${group.type}`);
-
-// These dispatch through the existing native controls nested inside the
-// SwiftUI-backed group. A successful setValue plus the host's follow-up commit
-// proves both event paths remain connected.
-await set("setting-launch", false);
-await set("setting-status-icon", false);
-await set("setting-folder", 2);
-
-await click("category-appearance");
-await waitFor("appearance-card", (n) => n.type === "Box");
-await set("setting-textsize", 21);
-await waitFor("setting-textsize-caption", (n) => n.text === "21pt");
-
-// Remount the conditional settings groups and ensure React-owned state survives.
-await click("category-advanced");
-await waitFor("advanced-card", (n) => n.type === "Box");
-await click("category-appearance");
-await waitFor("setting-textsize-caption", (n) => n.text === "21pt");
-await click("category-advanced");
-await waitFor("advanced-card", (n) => n.type === "Box");
-await click("reset-button");
-await click("category-appearance");
-await waitFor("setting-textsize-caption", (n) => n.text === "14pt");
-
-const shotPath = process.env.ND_SHOT_PATH ?? "/tmp/nd-settings-swiftui.png";
-const shot = (await client.call("screenshot", { path: shotPath })) as { width: number; height: number };
-if (shot.width <= 0 || shot.height <= 0) throw new Error("settings screenshot has no dimensions");
-console.log(`SETTINGS_REACTIVE_OK SwiftUI-hosted group preserved events, updates, remounts, and reset state; screenshot=${shotPath}`);
-client.close();

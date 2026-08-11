@@ -383,6 +383,10 @@ fn asObject(ptr: anytype) *gobject.Object {
 /// (apply-prop arms, the \`listview-inner\` signal target) never special-case
 /// which kind got the implicit Viewport.
 pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
+    // Empty-state swap: while an AdwStatusPage is parked as the scroller's
+    // child, the REAL inner view lives detached in the emptystate registry —
+    // resolve through it first so every inner-widget consumer stays correct.
+    if (ndempty_gtk.innerOf(sw)) |inner| return inner;
     const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
     if (gobject.ext.isA(child, gtk.Viewport)) {
         const vp: *gtk.Viewport = @ptrCast(@alignCast(child));
@@ -404,15 +408,104 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
 fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
     const existing = adw.OverlaySplitView.getContent(sv);
     if (existing) |cur| {
-        if (gobject.ext.isA(cur, adw.OverlaySplitView)) return @ptrCast(@alignCast(cur));
+        // Only a start-positioned inner is the list host — an end-positioned
+        // one is the inspector inner (ndSplitViewInspectorInner) and must
+        // stay nested INSIDE the list inner, not be mistaken for it.
+        if (gobject.ext.isA(cur, adw.OverlaySplitView)) {
+            const cur_sv: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
+            if (adw.OverlaySplitView.getSidebarPosition(cur_sv) == .start) return cur_sv;
+        }
     }
     const inner = adw.OverlaySplitView.new();
     if (split_list_widths.get(@intFromPtr(sv))) |lw| {
         if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
     }
-    if (existing) |cur| adw.OverlaySplitView.setContent(inner, cur);
+    if (existing) |cur| {
+        // Detach before reattach (ref bracket, tabs.zig page-transfer idiom):
+        // GTK4 rejects parenting a widget that still has a parent, which
+        // would leave the moved content orphaned and unmapped.
+        _ = gobject.Object.ref(asObject(cur));
+        adw.OverlaySplitView.setContent(sv, null);
+        adw.OverlaySplitView.setContent(inner, cur);
+        gobject.Object.unref(asObject(cur));
+    }
     adw.OverlaySplitView.setContent(sv, inner.as(gtk.Widget));
     return inner;
+}
+
+/// The inspector peer of ndSplitViewInner: a lazily-created inner
+/// AdwOverlaySplitView with an END-positioned sidebar (the utility pane
+/// alongside content — the AppKit peer is
+/// NSSplitViewItem(inspectorWithViewController:)). Nested INNERMOST, past
+/// any list inner, so the pane order stays sidebar | list | content |
+/// inspector regardless of mount order.
+fn ndSplitViewInspectorInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
+    var host = sv;
+    while (adw.OverlaySplitView.getContent(host)) |cur| {
+        if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;
+        const cur_sv: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
+        if (adw.OverlaySplitView.getSidebarPosition(cur_sv) == .end) return cur_sv;
+        host = cur_sv;
+    }
+    const inner = adw.OverlaySplitView.new();
+    adw.OverlaySplitView.setSidebarPosition(inner, .end);
+    if (adw.OverlaySplitView.getContent(host)) |cur| {
+        // Same detach-before-reattach ref bracket as ndSplitViewInner.
+        _ = gobject.Object.ref(asObject(cur));
+        adw.OverlaySplitView.setContent(host, null);
+        adw.OverlaySplitView.setContent(inner, cur);
+        gobject.Object.unref(asObject(cur));
+    }
+    adw.OverlaySplitView.setContent(host, inner.as(gtk.Widget));
+    return inner;
+}
+
+/// The split whose CONTENT slot the app's content pane belongs in: the
+/// innermost nested AdwOverlaySplitView (list and/or inspector inners may
+/// each be interposed), else the outer split itself.
+fn ndSplitViewContentTarget(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
+    var host = sv;
+    while (adw.OverlaySplitView.getContent(host)) |cur| {
+        if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;
+        host = @ptrCast(@alignCast(cur));
+    }
+    return host;
+}
+
+// Badge label a Button carries (qdata key), so a badge update finds the
+// existing suffix instead of stacking a second one.
+const ND_BUTTON_BADGE_LABEL = "nd-button-badge-label";
+
+/// Button.badge on GTK: a capsule count/text suffix packed after the
+/// button's own content (AppKit peer: NSItemBadge on the promoted toolbar
+/// item). First call wraps the existing child in a horizontal box and
+/// appends the badge label (classes nd-badge + numeric, styled in
+/// src/gtk/style.zig); later calls retarget the stored label. An empty
+/// string hides the badge without unwrapping.
+fn ndButtonApplyBadge(button: *gtk.Button, badge: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const obj = asObject(button);
+    if (gobject.Object.getData(obj, ND_BUTTON_BADGE_LABEL)) |ptr| {
+        const label: *gtk.Label = @ptrCast(@alignCast(ptr));
+        gtk.Label.setText(label, dupeZ(badge));
+        gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
+        return;
+    }
+    const label = gtk.Label.new(dupeZ(badge));
+    gtk.Widget.addCssClass(label.as(gtk.Widget), "nd-badge");
+    gtk.Widget.addCssClass(label.as(gtk.Widget), "numeric");
+    const wrap = gtk.Box.new(.horizontal, 6);
+    if (gtk.Button.getChild(button)) |child| {
+        // Reparent the existing content into the wrap box (ref held across
+        // the unparent, mirroring the tabs.zig page-transfer idiom).
+        _ = gobject.Object.ref(asObject(child));
+        gtk.Button.setChild(button, null);
+        gtk.Box.append(wrap, child);
+        gobject.Object.unref(asObject(child));
+    }
+    gtk.Box.append(wrap, label.as(gtk.Widget));
+    gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
+    gtk.Button.setChild(button, wrap.as(gtk.Widget));
+    gobject.Object.setData(obj, ND_BUTTON_BADGE_LABEL, label);
 }
 
 /// Builds a NULL-terminated strv (\`?[*]const [*:0]const u8\`) from a JSON
@@ -1347,6 +1440,65 @@ pub fn ndPanedStructuralTeardown(child: *gtk.Widget) void {
     gobject.Object.setData(obj, ND_PANED_DEBOUNCE_ID, null);
     gobject.Object.unref(obj); // the cancelled timer's ref
 }
+
+// ---- HIG-gap wave: ToolbarView bar styles, HeaderBar subtitle, TabView
+// view-stack access, SplitView adaptive breakpoint ----
+
+fn ndToolbarStyleFromString(s: []const u8) adw.ToolbarStyle {
+    if (std.mem.eql(u8, s, "raised")) return .raised;
+    if (std.mem.eql(u8, s, "raised-border")) return .raised_border;
+    return .flat;
+}
+
+/// Subtitle update on a live header. A header created with neither title nor
+/// subtitle has no AdwWindowTitle — build one on the first non-empty subtitle.
+fn ndHeaderBarSetSubtitle(hb: *adw.HeaderBar, subtitle: [:0]const u8) void {
+    if (adw.HeaderBar.getTitleWidget(hb)) |tw| {
+        if (gobject.ext.isA(tw, adw.WindowTitle)) {
+            adw.WindowTitle.setSubtitle(@ptrCast(@alignCast(tw)), subtitle);
+            return;
+        }
+    }
+    if (subtitle.len == 0) return;
+    const wt = adw.WindowTitle.new("", subtitle);
+    adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+    adw.HeaderBar.setShowTitle(hb, 1);
+}
+
+/// The AdwViewStack inside a TabView's wrapping box (switcher above, stack
+/// below — see the TabView create arm).
+fn ndTabViewStack(widget: *gtk.Widget) ?*adw.ViewStack {
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (gobject.ext.isA(c, adw.ViewStack)) return @ptrCast(@alignCast(c));
+    }
+    return null;
+}
+
+const ND_SPLIT_PENDING_BREAKPOINT = "nd-split-pending-breakpoint";
+
+/// Installs the stashed \`breakpoint\` px value as an AdwBreakpoint on the
+/// SplitView's AdwApplicationWindow ancestor at first map — the window does
+/// not exist at SplitView create (same pending-qdata + map shape as
+/// ND_PANED_PENDING_FRACTION; an int px never needs the +1 float trick since
+/// 0 means "off" and is never stashed). The breakpoint's setter flips this
+/// split view's \`collapsed\` below max-width: Npx; apps that also want the
+/// signal listen for their own state via the collapsed prop round-trip.
+fn cbSplitViewMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const raw = gobject.Object.getData(obj, ND_SPLIT_PENDING_BREAKPOINT) orelse return;
+    gobject.Object.setData(obj, ND_SPLIT_PENDING_BREAKPOINT, null);
+    const px: f64 = @floatFromInt(@as(usize, @intFromPtr(raw)));
+    const widget: *gtk.Widget = @ptrCast(@alignCast(obj));
+    const root = gtk.Widget.getRoot(widget) orelse return;
+    if (!gobject.ext.isA(root, adw.ApplicationWindow)) return;
+    const win: *adw.ApplicationWindow = @ptrCast(@alignCast(root));
+    const cond = adw.BreakpointCondition.newLength(.max_width, px, .px);
+    const bp = adw.Breakpoint.new(cond); // takes ownership of cond
+    var v = gobject.ext.Value.newFrom(true);
+    defer gobject.Value.unset(&v);
+    adw.Breakpoint.addSetter(bp, obj, "collapsed", &v);
+    adw.ApplicationWindow.addBreakpoint(win, bp); // takes ownership of bp
+}
 `;
 
 function genZig(s: Schema): string {
@@ -1370,6 +1522,7 @@ function genZig(s: Schema): string {
   out += "const ndsourcetree_gtk = @import(\"../gtk/sourcetree.zig\");\n";
   out += "const ndtoast_gtk = @import(\"../gtk/toast.zig\");\n";
   out += "const ndpalette_gtk = @import(\"../gtk/commandpalette.zig\");\n";
+  out += "const ndempty_gtk = @import(\"../gtk/emptystate.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
   out += ZIG_HELPERS;
   out += "\n";
@@ -1514,11 +1667,27 @@ function genZigCreateBody(w: Widget): string {
     // owning gtk.Window.
     out += `        const w: c_int = @intCast(propInt(props, "defaultWidth") orelse ${dflt(w, "defaultWidth")});\n`;
     out += `        const h: c_int = @intCast(propInt(props, "defaultHeight") orelse ${dflt(w, "defaultHeight")});\n`;
-    out += "        return ndtabs_gtk.createWindow(app, propStr(props, \"tabGroup\"), propStr(props, \"title\"), w, h, the_window, dupeZ);\n";
+    out += "        const handle = try ndtabs_gtk.createWindow(app, propStr(props, \"tabGroup\"), propStr(props, \"title\"), w, h, the_window, dupeZ);\n";
+    out += "        // toolbarStyle is macOS window-chrome vocabulary (unified/expanded/\n";
+    out += "        // preference NSToolbar shapes); GTK's native chrome is the one\n";
+    out += "        // AdwHeaderBar idiom, so the prop is deliberately inert here.\n";
+    out += "        // frameAutosaveName maps to NSWindow's session frame store; GTK4\n";
+    out += "        // dropped session geometry persistence — apps persist size via the\n";
+    out += "        // JS-side settings store instead.\n";
+    out += "        // density=compact tightens control metrics via the nd-compact CSS\n";
+    out += "        // block (src/gtk/style.zig), the peer of Tahoe's\n";
+    out += "        // prefersCompactControlSizeMetrics.\n";
+    out += "        if (propStr(props, \"density\")) |d| {\n";
+    out += "            if (std.mem.eql(u8, d, \"compact\")) gtk.Widget.addCssClass(handle, \"nd-compact\");\n";
+    out += "        }\n";
+    out += "        return handle;\n";
   } else if (w.name === "Box") {
     out += "        const vertical = if (propStr(props, \"orientation\")) |o| std.mem.eql(u8, o, \"vertical\") else true;\n";
     out += "        const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;\n";
-    out += `        const spacing: c_int = @intCast(propInt(props, "spacing") orelse ${dflt(w, "spacing")});\n`;
+    out += `        const spacing_raw = propInt(props, "spacing") orelse ${dflt(w, "spacing")};\n`;
+    out += "        // -1 is the \"platform standard\" sentinel (schema default): 6 on\n";
+    out += "        // GTK (the Adwaita gutter), 8 on the AppKit peer.\n";
+    out += "        const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);\n";
     out += "        const box = gtk.Box.new(orientation, spacing);\n";
     out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Paned") {
@@ -1541,10 +1710,36 @@ function genZigCreateBody(w: Widget): string {
     out += "        _ = gobject.signalConnectData(asObject(paned), \"map\", @ptrCast(&cbPanedMapped), null, null, .{});\n";
     out += "        return paned.as(gtk.Widget);\n";
   } else if (w.name === "SettingsGroup") {
-    out += `        const spacing: c_int = @intCast(propInt(props, "spacing") orelse ${dflt(w, "spacing")});\n`;
-    out += "        const box = gtk.Box.new(.vertical, spacing);\n";
-    out += "        gtk.Widget.addCssClass(box.as(gtk.Widget), \"card\");\n";
-    out += "        return box.as(gtk.Widget);\n";
+    out += "        // The real HIG boxed-list container: AdwPreferencesGroup renders\n";
+    out += "        // AdwPreferencesRow children in its rounded list box and any other\n";
+    out += "        // child in a plain box below it, with native title/description.\n";
+    out += "        const group = adw.PreferencesGroup.new();\n";
+    out += `        const t = propStr(props, "title") orelse ${zigDefaultStr(w, "title")};\n`;
+    out += "        if (t.len > 0) adw.PreferencesGroup.setTitle(group, dupeZ(t));\n";
+    out += "        if (propStr(props, \"description\")) |d| adw.PreferencesGroup.setDescription(group, dupeZ(d));\n";
+    out += "        return group.as(gtk.Widget);\n";
+  } else if (w.name === "Row") {
+    out += "        const row = adw.ActionRow.new();\n";
+    out += `        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
+    out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(row, dupeZ(s));\n";
+    out += "        if (propStr(props, \"iconName\")) |ic| {\n";
+    out += "            const img = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic)));\n";
+    out += "            adw.ActionRow.addPrefix(row, img.as(gtk.Widget));\n";
+    out += "        }\n";
+    out += "        // GtkListBoxRow defaults to activatable — a plain data row must opt in.\n";
+    out += `        gtk.ListBoxRow.setActivatable(row.as(gtk.ListBoxRow), @intFromBool(propBool(props, "activatable") orelse ${dflt(w, "activatable")}));\n`;
+    out += "        return row.as(gtk.Widget);\n";
+  } else if (w.name === "SwitchRow") {
+    out += "        const row = adw.SwitchRow.new();\n";
+    out += `        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
+    out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(row.as(adw.ActionRow), dupeZ(s));\n";
+    out += `        adw.SwitchRow.setActive(row, @intFromBool(propBool(props, "checked") orelse ${dflt(w, "checked")}));\n`;
+    out += "        return row.as(gtk.Widget);\n";
+  } else if (w.name === "Clamp") {
+    out += "        const clamp = adw.Clamp.new();\n";
+    out += `        adw.Clamp.setMaximumSize(clamp, @intCast(propInt(props, "maximumSize") orelse ${dflt(w, "maximumSize")}));\n`;
+    out += `        adw.Clamp.setTighteningThreshold(clamp, @intCast(propInt(props, "tighteningThreshold") orelse ${dflt(w, "tighteningThreshold")}));\n`;
+    out += "        return clamp.as(gtk.Widget);\n";
   } else if (w.name === "Label") {
     out += `        const text = propStr(props, "text") orelse ${zigDefaultStr(w, "text")};\n`;
     out += "        const label = gtk.Label.new(dupeZ(text));\n";
@@ -1597,6 +1792,15 @@ function genZigCreateBody(w: Widget): string {
     out += "            }\n";
     out += "        }\n";
     out += "        if (propStr(props, \"tooltip\")) |tt| gtk.Widget.setTooltipText(button.as(gtk.Widget), dupeZ(tt));\n";
+    out += "        // prominent -> the Adwaita accent treatment (AppKit peer:\n";
+    out += "        // NSToolbarItem.style .prominent / an accent bezel).\n";
+    out += `        if (propBool(props, "prominent") orelse ${dflt(w, "prominent")}) gtk.Widget.addCssClass(button.as(gtk.Widget), "suggested-action");\n`;
+    out += "        if (propStr(props, \"badge\")) |bd| ndButtonApplyBadge(button, bd, dupeZ);\n";
+    out += "        // size -> compact/large button metrics (src/gtk/style.zig defines\n";
+    out += "        // both classes; AppKit peer: NSControl.controlSize).\n";
+    out += `        const size = propStr(props, "size") orelse ${zigDefaultStr(w, "size")};\n`;
+    out += "        if (std.mem.eql(u8, size, \"small\")) gtk.Widget.addCssClass(button.as(gtk.Widget), \"compact\")\n";
+    out += "        else if (std.mem.eql(u8, size, \"large\")) gtk.Widget.addCssClass(button.as(gtk.Widget), \"large\");\n";
     out += "        return button.as(gtk.Widget);\n";
   } else if (w.name === "TextInput") {
     out += "        const entry = gtk.Entry.new();\n";
@@ -1671,6 +1875,13 @@ function genZigCreateBody(w: Widget): string {
     out += "        } else if (propStr(props, \"iconName\")) |n| {\n";
     out += "            gtk.Image.setFromIconName(img, ndicons.symbolic(dupeZ(n)));\n";
     out += "        }\n";
+    out += "        // symbolScale -> pixel size (the GTK icon-size axis). symbolWeight/\n";
+    out += "        // symbolRenderingMode have no GTK peer: symbolic icons carry one\n";
+    out += "        // stroke weight and recolor via CSS — deliberately inert here.\n";
+    out += "        if (propStr(props, \"symbolScale\")) |sc| {\n";
+    out += "            const px: c_int = if (std.mem.eql(u8, sc, \"small\")) 16 else if (std.mem.eql(u8, sc, \"large\")) 24 else 20;\n";
+    out += "            gtk.Image.setPixelSize(img, px);\n";
+    out += "        }\n";
     out += "        return img.as(gtk.Widget);\n";
   } else if (w.name === "ScrollView") {
     out += "        const sw = gtk.ScrolledWindow.new();\n";
@@ -1690,9 +1901,20 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propBool(props, \"spinning\") orelse true) gtk.Spinner.setSpinning(sp, 1);\n";
     out += "        return sp.as(gtk.Widget);\n";
   } else if (w.name === "TabView") {
-    out += "        // selectedIndex is ignored at create: pages attach afterwards (M5b-D4).\n";
-    out += "        const nb = gtk.Notebook.new();\n";
-    out += "        return nb.as(gtk.Widget);\n";
+    out += "        // In-window view switching, the libadwaita idiom: AdwViewSwitcher\n";
+    out += "        // (policy wide) over an AdwViewStack. Document-style tabs are the\n";
+    out += "        // <window tabGroup> path, not this widget. selectedIndex is ignored\n";
+    out += "        // at create: pages attach afterwards (M5b-D4).\n";
+    out += "        const stack = adw.ViewStack.new();\n";
+    out += "        gtk.Widget.setVexpand(stack.as(gtk.Widget), 1);\n";
+    out += "        const switcher = adw.ViewSwitcher.new();\n";
+    out += "        adw.ViewSwitcher.setStack(switcher, stack);\n";
+    out += "        adw.ViewSwitcher.setPolicy(switcher, .wide);\n";
+    out += "        gtk.Widget.setHalign(switcher.as(gtk.Widget), .center);\n";
+    out += "        const box = gtk.Box.new(.vertical, 6);\n";
+    out += "        gtk.Box.append(box, switcher.as(gtk.Widget));\n";
+    out += "        gtk.Box.append(box, stack.as(gtk.Widget));\n";
+    out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Grid") {
     out += "        const grid = gtk.Grid.new();\n";
     out += "        return grid.as(gtk.Widget);\n";
@@ -1709,6 +1931,9 @@ function genZigCreateBody(w: Widget): string {
     out += "        const list = gtk.ListView.new(selection.as(gtk.SelectionModel), factory.as(gtk.ListItemFactory)); // transfer-full: list owns selection+factory\n";
     out += "        const sw = gtk.ScrolledWindow.new(); // M5c-D3: ListView needs a scroller\n";
     out += "        gtk.ScrolledWindow.setChild(sw, list.as(gtk.Widget));\n";
+    out += "        ndempty_gtk.register(sw, list.as(gtk.Widget));\n";
+    out += "        ndempty_gtk.configure(sw, propStr(props, \"emptyIconName\"), propStr(props, \"emptyTitle\"), propStr(props, \"emptyDescription\"));\n";
+    out += "        ndempty_gtk.update(sw, strv.len <= 1); // strv always carries the NULL terminator\n";
     out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "SourceList") {
     out += "        const box = gtk.ListBox.new();\n";
@@ -1720,6 +1945,10 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (sel_idx >= 0) { if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r); }\n";
     out += "        const sw = gtk.ScrolledWindow.new();\n";
     out += "        gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));\n";
+    out += "        ndempty_gtk.register(sw, box.as(gtk.Widget));\n";
+    out += "        ndempty_gtk.configure(sw, propStr(props, \"emptyIconName\"), propStr(props, \"emptyTitle\"), propStr(props, \"emptyDescription\"));\n";
+    out += "        const n_rows: usize = if (propArray(props, \"items\")) |arr| arr.items.len else 0;\n";
+    out += "        ndempty_gtk.update(sw, n_rows == 0);\n";
     out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "WebView") {
     out += "        // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at\n";
@@ -1731,6 +1960,14 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
     out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
     out += "        if (propFloat(props, \"listWidth\")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }\n";
+    out += "        // Adaptive collapse: the AdwBreakpoint needs the window, which doesn't\n";
+    out += "        // exist yet — stash the px value and install on map (cbSplitViewMapped),\n";
+    out += "        // the ND_PANED_PENDING_FRACTION shape. 0 = off, so no +1 offset needed.\n";
+    out += `        const bp_px = propInt(props, "breakpoint") orelse ${dflt(w, "breakpoint")};\n`;
+    out += "        if (bp_px > 0) {\n";
+    out += "            gobject.Object.setData(asObject(sv), ND_SPLIT_PENDING_BREAKPOINT, @ptrFromInt(@as(usize, @intCast(bp_px))));\n";
+    out += "            _ = gobject.signalConnectData(asObject(sv), \"map\", @ptrCast(&cbSplitViewMapped), null, null, .{});\n";
+    out += "        }\n";
     out += "        return sv.as(gtk.Widget);\n";
   } else if (w.name === "HeaderBar") {
     out += "        const hb = adw.HeaderBar.new();\n";
@@ -1738,17 +1975,27 @@ function genZigCreateBody(w: Widget): string {
     out += "        // AdwHeaderBar's default title widget would otherwise fall back to\n";
     out += "        // the window title, which the app never declared on this header.\n";
     out += "        const t = propStr(props, \"title\") orelse \"\";\n";
-    out += "        if (t.len > 0) {\n";
-    out += "            const wt = adw.WindowTitle.new(dupeZ(t), \"\");\n";
+    out += "        const st = propStr(props, \"subtitle\") orelse \"\";\n";
+    out += "        if (t.len > 0 or st.len > 0) {\n";
+    out += "            const wt = adw.WindowTitle.new(dupeZ(t), dupeZ(st));\n";
     out += "            adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));\n";
     out += "        } else {\n";
     out += "            adw.HeaderBar.setShowTitle(hb, 0);\n";
+    out += "        }\n";
+    out += "        // Split-view side panes suppress the window controls (GNOME HIG:\n";
+    out += "        // only one pane's header carries them).\n";
+    out += `        if (!(propBool(props, "showTitleButtons") orelse ${dflt(w, "showTitleButtons")})) {\n`;
+    out += "            adw.HeaderBar.setShowStartTitleButtons(hb, 0);\n";
+    out += "            adw.HeaderBar.setShowEndTitleButtons(hb, 0);\n";
     out += "        }\n";
     out += "        ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)\n";
     out += "        ndHeaderBarApplyNav(hb, propBool(props, \"canGoBack\"), propBool(props, \"canGoForward\"));\n";
     out += "        return hb.as(gtk.Widget);\n";
   } else if (w.name === "ToolbarView") {
     out += "        const tv = adw.ToolbarView.new();\n";
+    out += `        adw.ToolbarView.setTopBarStyle(tv, ndToolbarStyleFromString(propStr(props, "topBarStyle") orelse ${zigDefaultStr(w, "topBarStyle")}));\n`;
+    out += `        adw.ToolbarView.setBottomBarStyle(tv, ndToolbarStyleFromString(propStr(props, "bottomBarStyle") orelse ${zigDefaultStr(w, "bottomBarStyle")}));\n`;
+    out += `        if (propBool(props, "extendContentToTopEdge") orelse ${dflt(w, "extendContentToTopEdge")}) adw.ToolbarView.setExtendContentToTopEdge(tv, 1);\n`;
     out += "        return tv.as(gtk.Widget);\n";
   } else if (w.name === "Menubar") {
     out += `        const defaults = propBool(props, "defaults") orelse ${dflt(w, "defaults")};\n`;
@@ -2016,10 +2263,32 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   if (w.name === "CommandPalette") return "        ndpalette_gtk.applyProps(widget, props, dupeZ);\n";
   let out = "";
   for (const p of updProps) {
-    if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
+    if (w.name === "Box" && p.name === "spacing") {
       out += "        if (propInt(props, \"spacing\")) |s| {\n";
       out += "            const box: *gtk.Box = @ptrCast(@alignCast(widget));\n";
-      out += "            gtk.Box.setSpacing(box, @intCast(s));\n";
+      out += "            // -1 sentinel = platform standard (6), same as the create arm.\n";
+      out += "            gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));\n";
+      out += "        }\n";
+    } else if (w.name === "SettingsGroup" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| adw.PreferencesGroup.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
+    } else if (w.name === "SettingsGroup" && p.name === "description") {
+      out += "        if (propStr(props, \"description\")) |d| adw.PreferencesGroup.setDescription(@ptrCast(@alignCast(widget)), if (d.len > 0) dupeZ(d).ptr else null);\n";
+    } else if (w.name === "Row" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| adw.PreferencesRow.setTitle(@as(*adw.ActionRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));\n";
+    } else if (w.name === "Row" && p.name === "subtitle") {
+      out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(@ptrCast(@alignCast(widget)), dupeZ(s));\n";
+    } else if (w.name === "SwitchRow" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| adw.PreferencesRow.setTitle(@as(*adw.SwitchRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));\n";
+    } else if (w.name === "SwitchRow" && p.name === "subtitle") {
+      out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(@as(*adw.SwitchRow, @ptrCast(@alignCast(widget))).as(adw.ActionRow), dupeZ(s));\n";
+    } else if (w.name === "SwitchRow" && p.name === "checked") {
+      out += "        if (propBool(props, \"checked\")) |c| {\n";
+      out += "            const row: *adw.SwitchRow = @ptrCast(@alignCast(widget));\n";
+      out += "            if ((adw.SwitchRow.getActive(row) != 0) != c) {\n";
+      out += "                blockEcho(asObject(widget));\n";
+      out += "                adw.SwitchRow.setActive(row, @intFromBool(c));\n";
+      out += "                unblockEcho(asObject(widget));\n";
+      out += "            }\n";
       out += "        }\n";
     } else if (w.name === "Window" && p.name === "title") {
       // Routes through tabs.zig: plain window -> gtk_window_set_title; tab
@@ -2089,6 +2358,20 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"label\")) |l| gtk.CheckButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
     } else if (w.name === "Button" && p.name === "tooltip") {
       out += "        if (propStr(props, \"tooltip\")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));\n";
+    } else if (w.name === "Button" && p.name === "prominent") {
+      out += "        if (propBool(props, \"prominent\")) |pr| {\n";
+      out += "            if (pr) gtk.Widget.addCssClass(widget, \"suggested-action\")\n";
+      out += "            else gtk.Widget.removeCssClass(widget, \"suggested-action\");\n";
+      out += "        }\n";
+    } else if (w.name === "Button" && p.name === "badge") {
+      out += "        if (propStr(props, \"badge\")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);\n";
+    } else if (w.name === "Button" && p.name === "size") {
+      out += "        if (propStr(props, \"size\")) |sz| {\n";
+      out += "            gtk.Widget.removeCssClass(widget, \"compact\");\n";
+      out += "            gtk.Widget.removeCssClass(widget, \"large\");\n";
+      out += "            if (std.mem.eql(u8, sz, \"small\")) gtk.Widget.addCssClass(widget, \"compact\")\n";
+      out += "            else if (std.mem.eql(u8, sz, \"large\")) gtk.Widget.addCssClass(widget, \"large\");\n";
+      out += "        }\n";
     } else if (w.name === "Select" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
       out += "            const dd: *gtk.DropDown = @ptrCast(@alignCast(widget));\n";
@@ -2120,25 +2403,46 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
-      out += "        if (propInt(props, \"selectedIndex\")) |idx| gtk.Notebook.setCurrentPage(@ptrCast(@alignCast(widget)), @intCast(idx));\n";
+      out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
+      out += "            if (ndTabViewStack(widget)) |stack| {\n";
+      out += "                var i: i64 = 0;\n";
+      out += "                var page_child = gtk.Widget.getFirstChild(stack.as(gtk.Widget));\n";
+      out += "                while (page_child) |c| : (page_child = gtk.Widget.getNextSibling(c)) {\n";
+      out += "                    if (i == idx) {\n";
+      out += "                        adw.ViewStack.setVisibleChild(stack, c);\n";
+      out += "                        break;\n";
+      out += "                    }\n";
+      out += "                    i += 1;\n";
+      out += "                }\n";
+      out += "            }\n";
+      out += "        }\n";
     } else if (w.name === "ListView" && p.name === "items") {
       out += "        {\n";
       out += "            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));\n";
-      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));\n";
+      out += "            // scrolledWindowInner (not getChild): the empty-state swap may have\n";
+      out += "            // parked an AdwStatusPage as the scroller's child.\n";
+      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(scrolledWindowInner(sw).?));\n";
       out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
       out += "            const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));\n";
       out += "            const n_old = gio.ListModel.getNItems(model.as(gio.ListModel));\n";
       out += "            const strv = buildStrv(propArray(props, \"items\"), dupeZ); // O(n) bulk build, not per-item append\n";
       out += "            defer std.heap.page_allocator.free(strv);\n";
       out += "            gtk.StringList.splice(model, 0, n_old, @ptrCast(strv.ptr)); // one call: replace-all\n";
+      out += "            ndempty_gtk.update(sw, strv.len <= 1); // strv always carries the NULL terminator\n";
       out += "        }\n";
     } else if (w.name === "ListView" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
       out += "            const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));\n";
-      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));\n";
+      out += "            const list: *gtk.ListView = @ptrCast(@alignCast(scrolledWindowInner(sw).?));\n";
       out += "            const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));\n";
       out += "            if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));\n";
       out += "        }\n";
+    } else if ((w.name === "ListView" || w.name === "SourceList") && p.name === "emptyIconName") {
+      out += "        // emptyIconName/emptyTitle/emptyDescription merge in one call\n";
+      out += "        // (absent keys keep prior state).\n";
+      out += "        ndempty_gtk.configure(@ptrCast(@alignCast(widget)), propStr(props, \"emptyIconName\"), propStr(props, \"emptyTitle\"), propStr(props, \"emptyDescription\"));\n";
+    } else if ((w.name === "ListView" || w.name === "SourceList") && (p.name === "emptyTitle" || p.name === "emptyDescription")) {
+      out += `        // "${p.name}" handled together with emptyIconName above (ndempty_gtk.configure merges all three).\n`;
     } else if (w.name === "SourceList" && p.name === "items") {
       out += "        {\n";
       out += "            const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));\n";
@@ -2158,6 +2462,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "                if (gtk.ListBox.getRowAtIndex(box, prev_idx)) |r| gtk.ListBox.selectRow(box, r);\n";
       out += "            }\n";
       out += "            unblockEcho(asObject(box));\n";
+      out += "            const n_rows: usize = if (propArray(props, \"items\")) |arr| arr.items.len else 0;\n";
+      out += "            ndempty_gtk.update(@ptrCast(@alignCast(widget)), n_rows == 0);\n";
       out += "        }\n";
     } else if (w.name === "SourceList" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
@@ -2176,6 +2482,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += "        if (propBool(props, \"enabled\")) |en| ndMenuItemSetEnabled(widget, en);\n";
+    } else if (w.name === "HeaderBar" && p.name === "subtitle") {
+      out += "        if (propStr(props, \"subtitle\")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));\n";
     } else if (w.name === "HeaderBar" && p.name === "canGoBack") {
       out += "        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, \"canGoBack\"), null);\n";
     } else if (w.name === "HeaderBar" && p.name === "canGoForward") {
@@ -2409,6 +2717,9 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Window.newTabRequested":      { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Window.closed":               { signal: "",              target: "windowtabs",    cb: "", suppress: false },
   "Window.focused":              { signal: "",              target: "windowtabs",    cb: "", suppress: false },
+  "Window.sizeChanged":          { signal: "",              target: "windowtabs",    cb: "", suppress: false },
+  "Row.activated":               { signal: "activated",     target: "widget", cb: "cbRowActivated", suppress: false },
+  "SwitchRow.toggled":           { signal: "notify::active", target: "widget", cb: "cbSwitchRowToggled", suppress: true },
   "ToggleButton.toggled":        { signal: "toggled",          target: "widget", cb: "cbToggleButtonToggled", suppress: true },
   "SegmentedControl.selectionChanged": { signal: "notify::active", target: "widget", cb: "cbToggleGroupActive", suppress: true },
   "NumberInput.valueChanged":    { signal: "value-changed",    target: "widget", cb: "cbSpinValueChanged", suppress: true },
@@ -2525,6 +2836,18 @@ fn cbListActivate(obj: *gobject.Object, position: c_uint, data: ?*anyopaque) cal
   cbListBoxRowActivated: `fn cbListBoxRowActivated(_: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyopaque) callconv(.c) void {
     const node_id: u32 = @intCast(@intFromPtr(data));
     if (emit) |f| f(node_id, "rowActivated", .{ .index = gtk.ListBoxRow.getIndex(row) });
+}
+`,
+  cbRowActivated: `fn cbRowActivated(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "activated", .{});
+}
+`,
+  cbSwitchRowToggled: `// notify:: handlers get (object, pspec, user_data).
+fn cbSwitchRowToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const row: *adw.SwitchRow = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = adw.SwitchRow.getActive(row) != 0 });
 }
 `,
   cbToggleButtonToggled: `fn cbToggleButtonToggled(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -2868,20 +3191,63 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     remove: () => "        if (gobject.ext.isA(child, gtk.Widget)) ndtabs_gtk.removeFromWindow(parent, child);\n",
   },
   SettingsGroup: {
+    // AdwPreferencesGroup has add/remove only — no reorder primitive and no
+    // insert-at-index, so an already-parented child moves by remove+add
+    // (ref-bracketed: unparenting an interior node otherwise destroys its
+    // subtree, the M8 GC lesson) and insertBefore degenerates to append order.
     append: () => {
-      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
-      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent))\n";
-      s += "        else gtk.Box.append(box, child);\n";
+      let s = "        const group: *adw.PreferencesGroup = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            _ = gobject.Object.ref(asObject(child));\n";
+      s += "            adw.PreferencesGroup.remove(group, child);\n";
+      s += "            adw.PreferencesGroup.add(group, child);\n";
+      s += "            gobject.Object.unref(asObject(child));\n";
+      s += "        } else adw.PreferencesGroup.add(group, child);\n";
       return s;
     },
     insertBefore: () => {
-      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
-      s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
-      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)\n";
-      s += "        else gtk.Box.insertChildAfter(box, child, prev);\n";
+      let s = "        // AdwPreferencesGroup cannot insert at an index: a mid-list insert\n";
+      s += "        // lands at the end (documented asymmetry; remount re-adds settle order).\n";
+      s += "        const group: *adw.PreferencesGroup = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            _ = gobject.Object.ref(asObject(child));\n";
+      s += "            adw.PreferencesGroup.remove(group, child);\n";
+      s += "            adw.PreferencesGroup.add(group, child);\n";
+      s += "            gobject.Object.unref(asObject(child));\n";
+      s += "        } else adw.PreferencesGroup.add(group, child);\n";
       return s;
     },
-    remove: () => "        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        adw.PreferencesGroup.remove(@ptrCast(@alignCast(parent)), child);\n",
+  },
+  Row: {
+    // Slot-addressed (prefix/suffix), not order-addressed — insertBefore is
+    // identical to append. Suffix controls stay centered so they don't
+    // stretch the row (HIG boxed-list metrics).
+    append: () => {
+      let s = "        const row: *adw.ActionRow = @ptrCast(@alignCast(parent));\n";
+      s += "        gtk.Widget.setValign(child, .center);\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"prefix\")) {\n";
+      s += "                adw.ActionRow.addPrefix(row, child);\n";
+      s += "            } else adw.ActionRow.addSuffix(row, child);\n";
+      s += "        } else adw.ActionRow.addSuffix(row, child);\n";
+      return s;
+    },
+    insertBefore: () => {
+      let s = "        const row: *adw.ActionRow = @ptrCast(@alignCast(parent));\n";
+      s += "        gtk.Widget.setValign(child, .center);\n";
+      s += "        if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"prefix\")) {\n";
+      s += "                adw.ActionRow.addPrefix(row, child);\n";
+      s += "            } else adw.ActionRow.addSuffix(row, child);\n";
+      s += "        } else adw.ActionRow.addSuffix(row, child);\n";
+      return s;
+    },
+    remove: () => "        adw.ActionRow.remove(@ptrCast(@alignCast(parent)), child);\n",
+  },
+  Clamp: {
+    append: () => "        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), child);\n",
+    remove: () => "        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), null);\n",
   },
   Box: {
     append: () => {
@@ -2957,22 +3323,32 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   },
   TabView: {
     append: () => {
-      let s = "        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));\n";
-      s += "        _ = gtk.Notebook.appendPage(nb, child, null);\n";
-      s += "        if (attached.tab_label) |tl| gtk.Notebook.setTabLabelText(nb, child, dupeZ(tl));\n";
+      let s = "        const stack = ndTabViewStack(parent) orelse return;\n";
+      s += "        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else \"\";\n";
+      s += "        const page = adw.ViewStack.addTitled(stack, child, null, title);\n";
+      s += "        if (attached.tab_icon) |ic| {\n";
+      s += "            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "        }\n";
       return s;
     },
     insertBefore: () => {
-      let s = "        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));\n";
-      s += "        const pos = gtk.Notebook.pageNum(nb, b);\n";
-      s += "        _ = gtk.Notebook.insertPage(nb, child, null, pos);\n";
-      s += "        if (attached.tab_label) |tl| gtk.Notebook.setTabLabelText(nb, child, dupeZ(tl));\n";
+      // AdwViewStack has add_titled only, no insert-at-index — insertBefore
+      // DEGENERATES TO APPEND on this backend (documented asymmetry;
+      // AppKit's NSTabView arm honors position). View-switcher pages are
+      // navigation targets, not an ordered document list, so mid-list
+      // inserts are rare and self-heal on remount.
+      let s = "        // `b` unused: AdwViewStack cannot insert at an index — append (see template comment).\n";
+      s += "        const stack = ndTabViewStack(parent) orelse return;\n";
+      s += "        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else \"\";\n";
+      s += "        const page = adw.ViewStack.addTitled(stack, child, null, title);\n";
+      s += "        if (attached.tab_icon) |ic| {\n";
+      s += "            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "        }\n";
       return s;
     },
     remove: () => {
-      let s = "        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));\n";
-      s += "        const pos = gtk.Notebook.pageNum(nb, child);\n";
-      s += "        if (pos >= 0) gtk.Notebook.removePage(nb, pos);\n";
+      let s = "        const stack = ndTabViewStack(parent) orelse return;\n";
+      s += "        adw.ViewStack.remove(stack, child);\n";
       return s;
     },
   },
@@ -2996,11 +3372,12 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);\n";
-      s += "            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {\n";
-      s += "                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)\n";
-      s += "                else adw.OverlaySplitView.setContent(sv, child);\n";
-      s += "            } else adw.OverlaySplitView.setContent(sv, child);\n";
-      s += "        } else adw.OverlaySplitView.setContent(sv, child);\n";
+      s += "            } else if (std.mem.eql(u8, sl, \"inspector\")) {\n";
+      s += "                // Inspector pane: an end-positioned inner split's sidebar\n";
+      s += "                // (AppKit peer: NSSplitViewItem inspector).\n";
+      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);\n";
+      s += "            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
+      s += "        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       return s;
     },
     insertBefore: () => {
@@ -3013,25 +3390,28 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);\n";
-      s += "            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {\n";
-      s += "                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)\n";
-      s += "                else adw.OverlaySplitView.setContent(sv, child);\n";
-      s += "            } else adw.OverlaySplitView.setContent(sv, child);\n";
-      s += "        } else adw.OverlaySplitView.setContent(sv, child);\n";
+      s += "            } else if (std.mem.eql(u8, sl, \"inspector\")) {\n";
+      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);\n";
+      s += "            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
+      s += "        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       return s;
     },
     remove: () => {
-      let s = "        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));\n";
-      s += "        if (adw.OverlaySplitView.getSidebar(sv) == child) {\n";
-      s += "            adw.OverlaySplitView.setSidebar(sv, null);\n";
-      s += "        } else if (adw.OverlaySplitView.getContent(sv)) |cur| {\n";
-      s += "            if (cur == child) {\n";
-      s += "                adw.OverlaySplitView.setContent(sv, null);\n";
-      s += "            } else if (gobject.ext.isA(cur, adw.OverlaySplitView)) {\n";
-      s += "                const inner: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));\n";
-      s += "                if (adw.OverlaySplitView.getSidebar(inner) == child) adw.OverlaySplitView.setSidebar(inner, null)\n";
-      s += "                else if (adw.OverlaySplitView.getContent(inner) == child) adw.OverlaySplitView.setContent(inner, null);\n";
+      // Walk the nested inner-split chain (list and/or inspector inners may
+      // each be interposed) and detach the child from whichever slot holds it.
+      let s = "        var host: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));\n";
+      s += "        while (true) {\n";
+      s += "            if (adw.OverlaySplitView.getSidebar(host) == child) {\n";
+      s += "                adw.OverlaySplitView.setSidebar(host, null);\n";
+      s += "                break;\n";
       s += "            }\n";
+      s += "            const cur = adw.OverlaySplitView.getContent(host) orelse break;\n";
+      s += "            if (cur == child) {\n";
+      s += "                adw.OverlaySplitView.setContent(host, null);\n";
+      s += "                break;\n";
+      s += "            }\n";
+      s += "            if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;\n";
+      s += "            host = @ptrCast(@alignCast(cur));\n";
       s += "        }\n";
       return s;
     },
@@ -3046,15 +3426,22 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     remove: () => "        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);\n",
   },
   ToolbarView: {
-    // Child routing is by widget TYPE (like Window's HeaderBar check): a
-    // HeaderBar child becomes a top bar, anything else the content pane.
-    // tabs.zig hooks headerbar attach: when this toolbarview lives inside a
-    // tab page, the header gains the AdwTabButton overview toggle.
+    // A HeaderBar child is always a top bar (type check, so headerbar apps
+    // need no slot); everything else routes by the `slot` attached prop:
+    // "top" -> add_top_bar, "bottom" -> add_bottom_bar, "content"/absent ->
+    // set_content. tabs.zig hooks headerbar attach: when this toolbarview
+    // lives inside a tab page, the header gains the AdwTabButton toggle.
     append: () => {
       let s = "        const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));\n";
       s += "        if (gobject.ext.isA(child, adw.HeaderBar)) {\n";
       s += "            adw.ToolbarView.addTopBar(tv, child);\n";
       s += "            ndtabs_gtk.onHeaderBarAttached(tv, child);\n";
+      s += "        } else if (attached.slot) |sl| {\n";
+      s += "            if (std.mem.eql(u8, sl, \"top\")) {\n";
+      s += "                adw.ToolbarView.addTopBar(tv, child);\n";
+      s += "            } else if (std.mem.eql(u8, sl, \"bottom\")) {\n";
+      s += "                adw.ToolbarView.addBottomBar(tv, child);\n";
+      s += "            } else adw.ToolbarView.setContent(tv, child);\n";
       s += "        } else adw.ToolbarView.setContent(tv, child);\n";
       return s;
     },
@@ -3317,20 +3704,32 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        // dealloc the window while the retained tree still references it.\n";
     out += "        win.isReleasedWhenClosed = false\n";
     out += "        win.contentView = content\n";
+    out += "        ndAutomationApplyWindowPolicy(win) // automation runs float past tiling WMs (Automation.swift)\n";
     out += "        gWindow = win\n";
-    out += "        let manager = NDToolbarManager()\n";
+    out += "        // toolbarStyle is consumed by NDToolbarManager.attachForSidebar once\n";
+    out += "        // a headerbar/sidebar attaches the unified toolbar; frameAutosaveName\n";
+    out += "        // doubles as the toolbar-customization autosave key (HeaderBar.swift).\n";
+    out += '        ndWindowToolbarStyles[ObjectIdentifier(win)] = propStr(props, "toolbarStyle") ?? "unified"\n';
+    out += '        ndApplyDensity(win, propStr(props, "density") ?? "standard")\n';
+    out += '        let manager = NDToolbarManager(autosaveName: propStr(props, "frameAutosaveName"))\n';
     out += "        ndWindowToolbarManager = manager\n";
     out += "        ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)\n";
     out += "        // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window\n";
     out += "        // joins its group's native tab bar via addTabbedWindow; a plain\n";
     out += "        // window centers and orders front as before.\n";
     out += '        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))\n';
+    out += "        // After present: a session frame saved under this name must win\n";
+    out += "        // over the default center()+defaultWidth/Height placement.\n";
+    out += '        if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }\n';
     out += "        return content\n";
   } else if (w.name === "Box") {
     out += "        let stack = NSStackView()\n";
     out += '        let vertical = (propStr(props, "orientation") ?? "vertical") == "vertical"\n';
     out += "        stack.orientation = vertical ? .vertical : .horizontal\n";
-    out += `        stack.spacing = CGFloat(propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")})\n`;
+    out += "        // -1 is the \"platform standard\" sentinel (schema default):\n";
+    out += "        // ndStandardSpacing (8) here, 6 on the GTK peer.\n";
+    out += `        let spacingRaw = propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")}\n`;
+    out += "        stack.spacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)\n";
     out += "        stack.alignment = vertical ? .leading : .centerY\n";
     out += "        stack.distribution = .gravityAreas\n";
     out += "        return stack\n";
@@ -3348,8 +3747,15 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return split\n";
   } else if (w.name === "SettingsGroup") {
     out += "        let group = NDSettingsGroupView()\n";
-    out += `        group.spacing = CGFloat(propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")})\n`;
+    out += `        group.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
+    out += `        group.ndDescription = propStr(props, "description") ?? ""\n`;
     out += "        return group\n";
+  } else if (w.name === "Row") {
+    out += "        return makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)\n";
+  } else if (w.name === "SwitchRow") {
+    out += "        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
+  } else if (w.name === "Clamp") {
+    out += "        return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)\n";
   } else if (w.name === "Label") {
     out += `        let text = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        let label = NDTextField(labelWithString: text)\n";
@@ -3376,6 +3782,9 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)\n";
     out += "        }\n";
     out += '        if let tt = propStr(props, "tooltip") { b.toolTip = tt }\n';
+    out += `        if propBool(props, "prominent") ?? ${swiftDefaultBool(w, "prominent")} { ndButtonApplyProminent(b, true) }\n`;
+    out += '        if let badge = propStr(props, "badge") { ndButtonApplyBadge(b, badge) }\n';
+    out += `        ndButtonApplySize(b, propStr(props, "size") ?? ${swiftDefaultStr(w, "size")})\n`;
     out += "        return b\n";
   } else if (w.name === "TextInput") {
     out += `        let field = NDTextField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
@@ -3445,10 +3854,16 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return pb\n";
   } else if (w.name === "Image") {
     out += "        let iv = NSImageView()\n";
+    out += "        // symbolScale/symbolWeight/symbolRenderingMode are create-only; the\n";
+    out += "        // configuration is captured per view so an iconName update re-resolves\n";
+    out += "        // with the same symbol treatment (Icons.swift).\n";
+    out += '        if let cfg = ndSymbolConfiguration(scale: propStr(props, "symbolScale"), weight: propStr(props, "symbolWeight"), renderingMode: propStr(props, "symbolRenderingMode")) {\n';
+    out += "            ndImageSymbolConfigs[ObjectIdentifier(iv)] = cfg\n";
+    out += "        }\n";
     out += '        if let p = propStr(props, "path") {\n';
     out += "            iv.image = NSImage(contentsOfFile: p)\n";
     out += '        } else if let n = propStr(props, "iconName") {\n';
-    out += "            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)\n";
+    out += "            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)\n";
     out += "        }\n";
     out += "        return iv\n";
   } else if (w.name === "ScrollView") {
@@ -3533,6 +3948,9 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "HeaderBar") {
     out += "        let bar = NDHeaderBarView()\n";
     out += `        bar.ndTitle = propStr(props, "title") ?? ${swiftDefaultStr(w, "title")}\n`;
+    out += "        // showTitleButtons is GTK-side chrome (per-pane window controls);\n";
+    out += "        // the traffic lights are window-level on this platform.\n";
+    out += `        bar.ndSubtitle = propStr(props, "subtitle") ?? ""\n`;
     out += '        ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))\n';
     out += "        return bar\n";
   } else if (w.name === "ToolbarView") {
@@ -3587,6 +4005,7 @@ function genSwiftCreateBody(w: Widget): string {
     // NSButton .pushOnPushOff — NSSwitch is a different HIG semantic (M15).
     out += `        let lbl = propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}\n`;
     out += "        let b = NDButton(title: lbl, target: nil, action: nil)\n";
+    out += "        b.ndIsToggle = true // keeps its view in a toolbar (no promotion; state must stay visible)\n";
     out += "        b.setButtonType(.pushOnPushOff); b.bezelStyle = .rounded\n";
     out += '        if let icon = propStr(props, "iconName") {\n';
     out += "            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
@@ -3689,6 +4108,7 @@ const SWIFT_SUPPRESSED = new Set([
   "SourceTree.selectedId",
   "FontPicker.value",
   "CommandPalette.query",
+  "SwitchRow.checked",
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
@@ -3715,10 +4135,23 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     const key = `${w.name}.${p.name}`;
     if (w.name === "Window" && p.name === "title") {
       out += '        if let t = propStr(props, "title"), let win = view.window { win.title = t }\n';
-    } else if ((w.name === "Box" || w.name === "SettingsGroup") && p.name === "spacing") {
+    } else if (w.name === "Box" && p.name === "spacing") {
       out += '        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {\n';
-      out += "            stack.spacing = CGFloat(sp)\n";
+      out += "            // -1 sentinel = platform standard, same as the create arm.\n";
+      out += "            stack.spacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)\n";
       out += "        }\n";
+    } else if (w.name === "SettingsGroup" && p.name === "title") {
+      out += "        ndSettingsGroupApply(view, props)  // title/description merged\n";
+    } else if (w.name === "SettingsGroup") {
+      out += `        // "${p.name}" handled by ndSettingsGroupApply above (merged).\n`;
+    } else if (w.name === "Row" && p.name === "title") {
+      out += "        ndRowApply(view, props)  // title/subtitle merged\n";
+    } else if (w.name === "Row") {
+      out += `        // "${p.name}" handled by ndRowApply above (merged).\n`;
+    } else if (w.name === "SwitchRow" && p.name === "title") {
+      out += "        ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)\n";
+    } else if (w.name === "SwitchRow") {
+      out += `        // "${p.name}" handled by ndSwitchRowApply above (merged).\n`;
     } else if (w.name === "TextInput" && p.name === "text") {
       out += '        if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {\n';
       out += "            withEchoSuppressed(view) { field.stringValue = t }\n";
@@ -3757,6 +4190,12 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "Button" && p.name === "tooltip") {
       out += '        if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }\n';
+    } else if (w.name === "Button" && p.name === "prominent") {
+      out += '        if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }\n';
+    } else if (w.name === "Button" && p.name === "badge") {
+      out += '        if let bd = propStr(props, "badge"), let btn = view as? NSButton { ndButtonApplyBadge(btn, bd) }\n';
+    } else if (w.name === "Button" && p.name === "size") {
+      out += '        if let sz = propStr(props, "size"), let btn = view as? NSButton { ndButtonApplySize(btn, sz) }\n';
     } else if (w.name === "Select" && p.name === "selectedIndex") {
       out += '        if let idx = propInt(props, "selectedIndex"), let pop = view as? NSPopUpButton, pop.indexOfSelectedItem != idx {\n';
       out += "            withEchoSuppressed(view) { pop.selectItem(at: idx) }\n";
@@ -3775,7 +4214,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "Image" && p.name === "iconName") {
       out += '        if let n = propStr(props, "iconName"), let iv = view as? NSImageView {\n';
-      out += "            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)\n";
+      out += "            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)\n";
       out += "        }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += '        if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {\n';
@@ -3802,6 +4241,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let idx = propInt(props, "selectedIndex") {\n';
       out += "            ndSourceListSetSelectedIndex(view, idx)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)\n";
       out += "        }\n";
+    } else if (["ListView", "SourceList", "Table", "TreeView", "SourceTree"].includes(w.name) && p.name === "emptyIconName") {
+      out += "        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)\n";
+    } else if (["ListView", "SourceList", "Table", "TreeView", "SourceTree"].includes(w.name) && (p.name === "emptyTitle" || p.name === "emptyDescription")) {
+      out += `        // "${p.name}" handled by ndEmptyStateApply above (merged).\n`;
     } else if (w.name === "SplitView" && p.name === "collapsed") {
       out += '        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,\n';
       out += "           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {\n";
@@ -3814,6 +4257,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += '        if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }\n';
+    } else if (w.name === "HeaderBar" && p.name === "subtitle") {
+      out += '        if let s = propStr(props, "subtitle"), let bar = view as? NDHeaderBarView { ndHeaderBarApplySubtitle(bar, s) }\n';
     } else if (w.name === "HeaderBar" && (p.name === "canGoBack" || p.name === "canGoForward")) {
       // Both nav flags feed one NSSegmentedControl — apply once, reading both.
       if (!navEmitted) {
@@ -4034,6 +4479,11 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "Window.newTabRequested":      { selector: "windowtabs",    payload: "data" },
   "Window.closed":               { selector: "windowtabs",    payload: "data" },
   "Window.focused":              { selector: "windowtabs",    payload: "checked" },
+  "Window.sizeChanged":          { selector: "windowtabs",    payload: "data" },
+  // Row/SwitchRow fire from their hand-written views (NDShell/Rows.swift) —
+  // one connect records the nodeID (webview idiom).
+  "Row.activated":               { selector: "row",           payload: "none" },
+  "SwitchRow.toggled":           { selector: "switchrow",     payload: "checked" },
   // PanedController IS the NSSplitViewDelegate and emits onPositionChanged
   // directly (debounced) — connectEvents just records the node id.
   "Paned.positionChanged":       { selector: "paned",         payload: "position" },
@@ -4043,6 +4493,8 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
 /// id; the widget's own code emits directly via ndEmitEvent). Keyed by the
 /// SWIFT_SIGNALS selector string; emitted once per widget in ndConnectEvents.
 const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
+  row: "ndRowConnect",
+  switchrow: "ndSwitchRowConnect",
   numberinput: "ndNumberInputConnect",
   linkbutton: "ndLinkButtonConnect",
   banner: "ndBannerConnect",
@@ -4258,10 +4710,25 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            }\n" +
   "            let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0\n" +
   "            controller.insertSplitViewItem(item, at: insertIndex)\n" +
+  // HIG Tahoe: an inspector is the edge-to-edge glass utility pane ALONGSIDE
+  // content (vs the sidebar's floating glass). The inspector item is always
+  // last; the content arm below inserts BEFORE it so pane order holds
+  // regardless of mount order. Its divider deliberately gets NO tracking
+  // separator (NDToolbarManager only emits separators for dividers 0/1
+  // between sidebar/list/content).
+  '        } else if attachedSlot == "inspector" {\n' +
+  "            let item = NSSplitViewItem(inspectorWithViewController: vc)\n" +
+  "            item.minimumThickness = 220\n" +
+  "            item.canCollapse = true\n" +
+  "            controller.addSplitViewItem(item)\n" +
   "        } else {\n" +
   "            let item = NSSplitViewItem(viewController: vc)\n" +
   "            item.automaticallyAdjustsSafeAreaInsets = true\n" +
-  "            controller.addSplitViewItem(item)\n" +
+  "            if let last = controller.splitViewItems.last, last.behavior == .inspector {\n" +
+  "                controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)\n" +
+  "            } else {\n" +
+  "                controller.addSplitViewItem(item)\n" +
+  "            }\n" +
   "        }\n";
 
 const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
@@ -4401,6 +4868,17 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        group.insertReactView(child, before: before)\n",
     remove: () => "        let group = parent as! NDSettingsGroupView\n        group.removeReactView(child)\n",
   },
+  // Slot-addressed (prefix/suffix) — insertBefore is identical to append,
+  // mirroring the Zig Row template.
+  Row: {
+    append: () => "        ndRowPack(parent as! NDRowView, child, slot: attachedSlot)\n",
+    insertBefore: () => "        ndRowPack(parent as! NDRowView, child, slot: attachedSlot)\n",
+    remove: () => "        ndRowUnpack(parent as! NDRowView, child)\n",
+  },
+  Clamp: {
+    append: () => "        (parent as! NDClampView).setClampChild(child)\n",
+    remove: () => "        (parent as! NDClampView).clearClampChild(child)\n",
+  },
   Box: {
     // Cross-axis "fill" + main-axis expand are both handled by
     // ndBoxChildAttached (Layout.swift), driven off the hexpand/vexpand/
@@ -4512,13 +4990,13 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     remove: () => "        ndHeaderBarUnpack(parent as! NDHeaderBarView, child)\n",
   },
   ToolbarView: {
-    // Child routing is by widget TYPE (like Window's HeaderBar check): a
-    // <headerbar> child is recorded as the pane's header (its items feed the
-    // window toolbar, tagged by pane slot, once the pane is in the split); any
-    // other child becomes the pane's content view. `before` is irrelevant —
-    // a pane has at most one header and one content child.
-    append: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child)\n",
-    insertBefore: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child)\n",
+    // A <headerbar> child is recorded as the pane's header (its items feed
+    // the window toolbar, tagged by pane slot, once the pane is in the
+    // split); a slot="top"/"bottom" child becomes an auxiliary bar stacked
+    // around the content; any other child becomes the pane's content view.
+    // `before` is irrelevant — slots are position-independent.
+    append: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)\n",
+    insertBefore: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)\n",
     remove: () => "        ndToolbarPaneUnpack(parent as! NDToolbarPaneView, child)\n",
   },
   // M13 menu containers: parent/child are NDMenuNodeView host handles. The

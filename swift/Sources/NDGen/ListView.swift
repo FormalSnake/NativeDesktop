@@ -101,6 +101,8 @@ func makeListView(_ props: [String: Any]) -> NSView {
         tableView.selectRowIndexes(IndexSet(integer: source.selectedIndex), byExtendingSelection: false)
     }
     tableView.reloadData()
+    ndEmptyStateApply(scrollView, props)
+    ndEmptyStateUpdate(scrollView, isEmpty: source.items.isEmpty)
     return scrollView
 }
 
@@ -114,6 +116,7 @@ func ndListViewSetItems(_ view: NSView, _ items: [String]) {
     guard let source = dataSource(for: view) else { return }
     source.items = items
     source.tableView?.reloadData()
+    ndEmptyStateUpdate(view, isEmpty: items.isEmpty)
 }
 
 /// `ndApplyProps`'s ListView.selectedIndex arm (generated) calls this.

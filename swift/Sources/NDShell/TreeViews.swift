@@ -138,6 +138,7 @@ func makeTreeView(_ props: [String: Any]) -> NSView {
     source.scrollView = scrollView
     treeDataSources[ObjectIdentifier(scrollView)] = source
 
+    ndEmptyStateApply(scrollView, props)
     ndTreeViewSetNodes(scrollView, propObjArray(props, "nodes") ?? [])
     let selIdx = propInt(props, "selectedIndex") ?? -1
     if selIdx >= 0 { ndTreeViewSetSelectedIndex(scrollView, selIdx) }
@@ -150,6 +151,7 @@ func makeTreeView(_ props: [String: Any]) -> NSView {
 /// preserved by node id across the rebuild.
 func ndTreeViewSetNodes(_ view: NSView, _ raw: [[String: Any]]) {
     guard let source = treeDataSource(for: view), let outlineView = source.outlineView else { return }
+    ndEmptyStateUpdate(view, isEmpty: raw.isEmpty)
     let prevSelectedID: String? = MainActor.assumeIsolated {
         (outlineView.item(atRow: outlineView.selectedRow) as? NDTreeItem)?.nodeId
     }

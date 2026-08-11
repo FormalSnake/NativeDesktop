@@ -194,7 +194,7 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         card.blendingMode = .withinWindow
         card.state = .active
         card.wantsLayer = true
-        card.layer?.cornerRadius = 12
+        card.layer?.cornerRadius = ndConcentricRadius(in: card, fallback: NDRadius.palette)
         card.layer?.masksToBounds = true
         scrim.addSubview(card)
 

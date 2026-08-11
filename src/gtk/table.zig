@@ -19,6 +19,7 @@ const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const protocol = @import("../protocol.zig");
+const ndempty = @import("emptystate.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -28,6 +29,16 @@ var emit: ?EmitFn = null;
 /// GtkSingleSelection ptr -> its notify::selected handler id (local echo
 /// suppression — the generated blockEcho map is file-private to widgets.zig).
 var select_handlers: std.AutoHashMapUnmanaged(usize, c_ulong) = .empty;
+
+fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
+    const v = props orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .string => field.string,
+        else => null,
+    };
+}
 
 fn propArray(props: ?std.json.Value, key: []const u8) ?std.json.Array {
     const v = props orelse return null;
@@ -67,9 +78,11 @@ fn objStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 }
 
 /// The tracked handle is the GtkScrolledWindow; GtkColumnView implements
-/// GtkScrollable, so it is a direct child (never viewport-wrapped).
+/// GtkScrollable, so it is a direct child (never viewport-wrapped). The
+/// empty-state registry wins while an AdwStatusPage is swapped in.
 fn innerView(widget: *gtk.Widget) ?*gtk.ColumnView {
     const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+    if (ndempty.innerOf(sw)) |inner| return @ptrCast(@alignCast(inner));
     const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
     return @ptrCast(@alignCast(child));
 }
@@ -222,6 +235,10 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
 
     const sw = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(sw, view.as(gtk.Widget));
+    ndempty.register(sw, view.as(gtk.Widget));
+    ndempty.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+    const n_rows: usize = if (propArray(props, "rows")) |arr| arr.items.len else 0;
+    ndempty.update(sw, n_rows == 0);
     return sw.as(gtk.Widget);
 }
 
@@ -237,6 +254,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
     const view = innerView(widget) orelse return;
     const selection = viewSelection(view) orelse return;
 
+    ndempty.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     if (propArray(props, "columns")) |cols| rebuildColumns(view, cols, dupeZ);
     if (propArray(props, "rows")) |rows| {
         const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));
@@ -249,6 +267,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
         blockSelect(selection);
         gtk.StringList.splice(model, 0, n_old, @ptrCast(strv.buf.ptr));
         unblockSelect(selection);
+        ndempty.update(@ptrCast(@alignCast(widget)), rows.items.len == 0);
     }
     if (propInt(props, "selectedIndex")) |idx| {
         const cur = gtk.SingleSelection.getSelected(selection);

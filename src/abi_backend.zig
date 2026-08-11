@@ -199,6 +199,7 @@ fn attachedJsonZ(attached: protocol.Attached) [:0]const u8 {
         gridRowSpan: i64,
         gridColumnSpan: i64,
         tabLabel: ?[]const u8,
+        tabIcon: ?[]const u8,
         slot: ?[]const u8,
     };
     const shape = Shape{
@@ -207,6 +208,7 @@ fn attachedJsonZ(attached: protocol.Attached) [:0]const u8 {
         .gridRowSpan = attached.grid_row_span,
         .gridColumnSpan = attached.grid_column_span,
         .tabLabel = attached.tab_label,
+        .tabIcon = attached.tab_icon,
         .slot = attached.slot,
     };
     return allocZFromValue(shape);

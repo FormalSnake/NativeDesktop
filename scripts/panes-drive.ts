@@ -83,6 +83,25 @@ if (!restore) {
     throw new Error("inner split does not hold leaves 2 and 3");
   }
   mustFind(t, "panes-leaf-1");
+  // Nested-layout regression gate (AppKit once collapsed BOTH outer panes to
+  // width 0 when the inner split attached): every leaf must settle at real
+  // geometry. Polled — the divider re-apply after a structural change is
+  // deferred a runloop turn on AppKit, so the first tree read can race it.
+  const leafIDs = ["panes-leaf-1", "panes-leaf-2", "panes-leaf-3"];
+  let settled = false;
+  for (let attempt = 0; attempt < 20 && !settled; attempt++) {
+    const snap = await tree();
+    settled = leafIDs.every((id) => {
+      const g = find(snap.root, id)?.geometry;
+      return g != null && g.w >= 50 && g.h >= 50;
+    });
+    if (!settled) await sleep(150);
+  }
+  if (!settled) {
+    const snap = await tree();
+    const report = leafIDs.map((id) => `${id}=${JSON.stringify(find(snap.root, id)?.geometry)}`).join(" ");
+    throw new Error(`nested split leaves never got real geometry: ${report}`);
+  }
 
   await click("close-3"); // back to s2[1, 2], focus moves to 2
   await waitForText("panes:2");

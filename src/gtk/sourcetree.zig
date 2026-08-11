@@ -13,6 +13,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
+const ndempty = @import("emptystate.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -155,9 +156,11 @@ fn asObject(ptr: anytype) *gobject.Object {
 
 /// The tracked handle is the GtkScrolledWindow; GtkListBox is not
 /// GtkScrollable, so GTK wraps it in an implicit GtkViewport (same shape as
-/// SourceList — see codegen's scrolledWindowInner).
+/// SourceList — see codegen's scrolledWindowInner). The empty-state registry
+/// wins while an AdwStatusPage is swapped in.
 fn innerListBox(widget: *gtk.Widget) ?*gtk.ListBox {
     const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+    if (ndempty.innerOf(sw)) |inner| return @ptrCast(@alignCast(inner));
     const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
     if (gobject.ext.isA(child, gtk.Viewport)) {
         const vp: *gtk.Viewport = @ptrCast(@alignCast(child));
@@ -415,6 +418,9 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
 
     const sw = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));
+    ndempty.register(sw, box.as(gtk.Widget));
+    ndempty.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+    ndempty.update(sw, store.nodes.items.len == 0);
     return sw.as(gtk.Widget);
 }
 
@@ -423,6 +429,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
     const box = innerListBox(widget) orelse return;
     const store = stores.get(@intFromPtr(box)) orelse return;
 
+    ndempty.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     const nodes_arr = propArray(props, "nodes");
     const actions_arr = propArray(props, "actions");
     if (nodes_arr != null or actions_arr != null) {
@@ -445,6 +452,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
             parseNodes(store, arr);
         }
         rebuildRows(box, store, propStr(props, "selectedId") orelse prev_id);
+        ndempty.update(@ptrCast(@alignCast(widget)), store.nodes.items.len == 0);
     }
     if (propStr(props, "selectedId")) |sid| {
         const cur = selectedNodeId(box, store);

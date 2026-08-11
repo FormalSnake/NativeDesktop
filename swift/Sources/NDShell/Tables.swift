@@ -100,6 +100,7 @@ func makeTable(_ props: [String: Any]) -> NSView {
     source.scrollView = scrollView
     tableDataSources[ObjectIdentifier(scrollView)] = source
 
+    ndEmptyStateApply(scrollView, props)
     ndTableSetColumns(scrollView, propObjArray(props, "columns") ?? [])
     ndTableSetRows(scrollView, propObjArray(props, "rows") ?? [])
     ndTableSetShowRowSeparators(scrollView, propBool(props, "showRowSeparators") ?? true)
@@ -150,6 +151,7 @@ func ndTableSetRows(_ view: NSView, _ raw: [[String: Any]]) {
             tableView.selectRowIndexes(IndexSet(integer: prevSelected), byExtendingSelection: false)
         }
     }
+    ndEmptyStateUpdate(view, isEmpty: raw.isEmpty)
 }
 
 /// Generated ndApplyProps Table.selectedIndex arm.

@@ -31,6 +31,10 @@ final class NDMenuNode {
     let kind: NDMenuKind
     var label: String = ""
     var iconName: String?
+    /// `iconVisible` prop: explicit opt-in to keep the symbol image shown on
+    /// macOS 27, where NSMenu hides symbol images by default (see
+    /// `addMenuItem`). nil = leave the system default.
+    var iconVisible: Bool?
     var accelerator: String?
     var role: NDMenuRole = .none
     var enabled: Bool = true
@@ -88,6 +92,7 @@ func ndMenuItemCreate(_ props: [String: Any]) -> NSView {
     let node = NDMenuNode(.item)
     node.label = propStr(props, "label") ?? ""
     node.iconName = propStr(props, "iconName")
+    node.iconVisible = propBool(props, "iconVisible")
     node.accelerator = propStr(props, "accelerator")
     node.role = NDMenuRole(rawValue: propStr(props, "role") ?? "none") ?? .none
     node.enabled = propBool(props, "enabled") ?? true
@@ -351,9 +356,19 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
             let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName
             if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
                 it.image = img
-                // NSMenuItem.preferredImageVisibility (the macOS 27 "show symbol
-                // images" opt-in) is absent from the current SDK; images render
-                // by default here, so setting .image suffices.
+                // macOS 27 hides menu-item SYMBOL images by default (HIG:
+                // menu icons "sparingly and with purpose"), so `iconName`
+                // is advisory there. `iconVisible: true` is the app's
+                // explicit opt-in to force the image shown via
+                // NSMenuItem.preferredImageVisibility = .visible. The
+                // pinned macOS 26 SDK doesn't declare that property, so
+                // this is a KVC write of ImageVisibility.visible
+                // (rawValue 2: automatic/hidden/visible, NSInteger-backed)
+                // until the SDK moves; responds(to:) keeps it inert on 26.
+                if node.iconVisible == true, #available(macOS 27.0, *),
+                   it.responds(to: Selector(("setPreferredImageVisibility:"))) {
+                    it.setValue(2, forKey: "preferredImageVisibility")
+                }
             }
         }
         switch node.role {

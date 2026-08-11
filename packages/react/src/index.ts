@@ -2,6 +2,8 @@ export { render, sendCommand, sendNativeCommand, createPortal, createPool, moveN
 export type { Pool } from "./renderer.ts";
 export { Platform, hasWidget, hasCommand } from "./platform.ts";
 export type { Backend, OS } from "./platform.ts";
+export { Spacing, ContentMargin } from "./metrics.ts";
+export type { SpacingScale } from "./metrics.ts";
 export { getAppDataDir, ensureAppDataDir } from "./paths.ts";
 export { defineNativeComponent } from "./native-component.ts";
 export type { NativeComponentOptions, NativeComponentProps, NativeComponentRef } from "./native-component.ts";
@@ -64,6 +66,7 @@ export type {
   MessageOptions,
   NotificationOptions,
   Appearance,
+  AppearanceInfo,
   AudioPlayOptions,
   AudioState,
   AudioStateEvent,

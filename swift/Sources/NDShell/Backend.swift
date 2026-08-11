@@ -429,11 +429,15 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // switch below can touch to their baseline FIRST, so a class dropped from
     // the list actually clears its effect.
     if let btn = view as? NSButton {
-        btn.bezelColor = nil
+        // A standing `prominent` prop (ndButtonApplyProminent) owns the
+        // accent bezel — the class reset must not clear it on an unrelated
+        // cssClasses update.
+        btn.bezelColor = ndToolbarProminent.contains(ObjectIdentifier(btn)) ? .controlAccentColor : nil
         btn.keyEquivalent = ""
         btn.hasDestructiveAction = false
         btn.isBordered = true
         btn.showsBorderOnlyWhileMouseInside = false
+        btn.borderShape = .automatic
     }
 
     for cls in classes {
@@ -451,8 +455,10 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             btn.bezelColor = .systemRed
             btn.hasDestructiveAction = true
         case "pill":
-            // Modern AppKit buttons are already rounded — no layer hacks.
-            break
+            // A real capsule, not "rounded enough" (the reset above restores
+            // .automatic when the class drops). NSTextField pills are the
+            // set-replace block after this loop.
+            if let btn = view as? NSButton { btn.borderShape = .capsule }
         case "flat":
             guard let btn = view as? NSButton else { continue }
             // A sidebar row is a hidden table-row provider — `flat` is a no-op.
@@ -528,6 +534,25 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
+    // `pill` on a text label: the capsule count badge apps hand-roll on GTK.
+    // Set-replace, but gated on a recorded prior state — an unconditional
+    // disable would clobber a bezeled TextInput's own drawsBackground.
+    if let field = view as? NSTextField {
+        let had = ndPillBadged.contains(ObjectIdentifier(field))
+        let want = classes.contains("pill")
+        if want != had {
+            ndApplyPillBadge(field, enabled: want)
+            if want { ndPillBadged.insert(ObjectIdentifier(field)) } else { ndPillBadged.remove(ObjectIdentifier(field)) }
+        }
+    }
+
+    // `activatable` on a box row: native hover feedback (set-replace; the
+    // teardown lives HERE, the reset path, so a dropped class removes the
+    // live tracking area rather than leaking it).
+    if let stack = view as? NSStackView {
+        ndApplyActivatable(stack, enabled: classes.contains("activatable"))
+    }
+
     var typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
     typography.classes = classes
     ndNodeTypography[ObjectIdentifier(view)] = typography
@@ -572,7 +597,7 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
         backing.boxType = .custom
         backing.borderWidth = 0
         backing.borderColor = .clear
-        backing.cornerRadius = 10
+        backing.cornerRadius = ndConcentricRadius(in: stack, fallback: NDRadius.card)
         backing.titlePosition = .noTitle
         backing.contentViewMargins = .zero
         backing.translatesAutoresizingMaskIntoConstraints = false
@@ -634,6 +659,92 @@ func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
         hairline.heightAnchor.constraint(equalToConstant: 1),
     ])
     ndToolbarBackings[id] = backing
+}
+
+/// Text fields currently carrying the `pill` capsule treatment (set-replace
+/// bookkeeping — see the gated block in `ndApplyCssClasses`).
+nonisolated(unsafe) private var ndPillBadged: Set<ObjectIdentifier> = []
+
+/// Capsule badge treatment for a `pill`-classed text label. NOT the design
+/// doc's NSBox-behind-the-field: an NSTextField draws its own text FIRST and
+/// subviews after, so a backing subview would paint over the glyphs. The
+/// field's own `drawsBackground` path resolves its dynamic `backgroundColor`
+/// at draw time (appearance changes redraw correctly); only the SHAPE rides
+/// the layer, which is appearance-independent. Typography (`numeric`/
+/// `caption` classes) stays with the cascade — this is fill + shape + inset
+/// only.
+func ndApplyPillBadge(_ field: NSTextField, enabled: Bool) {
+    if enabled {
+        field.wantsLayer = true
+        field.layer?.cornerRadius = 9
+        field.layer?.masksToBounds = true
+        field.drawsBackground = true
+        field.backgroundColor = .quaternarySystemFill
+        if let nd = field as? NDTextField, nd.ndPadding.left == 0, nd.ndPadding.right == 0 {
+            nd.ndPadding = NSEdgeInsets(top: 1, left: 7, bottom: 1, right: 7)
+        }
+    } else {
+        field.drawsBackground = false
+        field.layer?.cornerRadius = 0
+        if let nd = field as? NDTextField, nd.ndPadding.top == 1, nd.ndPadding.left == 7 {
+            nd.ndPadding = NSEdgeInsets()
+        }
+    }
+}
+
+/// `activatable` hover feedback: the tracked box gets an NSTrackingArea
+/// (same `.inVisibleRect` idiom as Hover.swift) whose owner toggles a
+/// quaternary-fill NSBox behind the row's children at the concentric radius.
+/// NSBox.fillColor is a dynamic color that redraws on appearance change —
+/// never a CALayer cgColor. Teardown on class drop flips `enabled` off (the
+/// reset path in `ndApplyCssClasses`): the installed tracking area goes
+/// inert rather than being removed — storing/iterating NSTrackingArea
+/// around the nonisolated registry trips the region-isolation checker, and
+/// the tracker-lives-forever profile matches `ndHoverTrackers`.
+final class NDActivatableHighlighter: NSObject {
+    weak var overlay: NSBox?
+    var enabled = true
+    init(overlay: NSBox) { self.overlay = overlay }
+    @objc func mouseEntered(with event: NSEvent) { if enabled { overlay?.isHidden = false } }
+    @objc func mouseExited(with event: NSEvent) { overlay?.isHidden = true }
+}
+
+nonisolated(unsafe) private var ndActivatableState: [ObjectIdentifier: (highlighter: NDActivatableHighlighter, overlay: NSBox)] = [:]
+
+func ndApplyActivatable(_ stack: NSStackView, enabled: Bool) {
+    let id = ObjectIdentifier(stack)
+    if let state = ndActivatableState[id] {
+        state.highlighter.enabled = enabled
+        state.overlay.isHidden = true
+        return
+    }
+    guard enabled else { return }
+    let overlay = NSBox()
+    overlay.boxType = .custom
+    overlay.borderWidth = 0
+    overlay.borderColor = .clear
+    overlay.titlePosition = .noTitle
+    overlay.contentViewMargins = .zero
+    overlay.fillColor = .quaternarySystemFill
+    overlay.cornerRadius = ndConcentricRadius(in: stack, fallback: 6)
+    overlay.isHidden = true
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+    stack.addSubview(overlay, positioned: .below, relativeTo: nil)
+    NSLayoutConstraint.activate([
+        overlay.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+        overlay.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+        overlay.topAnchor.constraint(equalTo: stack.topAnchor),
+        overlay.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
+    ])
+    let highlighter = NDActivatableHighlighter(overlay: overlay)
+    ndActivatableState[id] = (highlighter, overlay)
+    let area = NSTrackingArea(
+        rect: .zero,
+        options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+        owner: highlighter,
+        userInfo: nil
+    )
+    stack.addTrackingArea(area)
 }
 
 /// Recomputes the full per-node typography cascade for `view`'s text target

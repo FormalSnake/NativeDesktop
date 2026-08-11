@@ -152,4 +152,25 @@ final class NDWindowTabDelegate: NSObject, NSWindowDelegate {
               let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
         ndEmitEvent(nodeID, "focused", "{\"checked\":false}")
     }
+
+    /// sizeChanged {width, height} — the window's content size in points
+    /// (peer of GTK's default-width/height notify). Live drags coalesce to
+    /// the end-of-resize emit; programmatic setFrame emits directly.
+    func windowDidResize(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow, !win.inLiveResize else { return }
+        emitSize(win)
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow else { return }
+        emitSize(win)
+    }
+
+    private func emitSize(_ win: NSWindow) {
+        guard let nodeID = ndTabWindowNodeIDs[ObjectIdentifier(win)] else { return }
+        // Delegate callbacks arrive on the main thread; the annotation just
+        // isn't part of the NSWindowDelegate protocol surface.
+        let size = MainActor.assumeIsolated { win.contentLayoutRect.size }
+        ndTabEmit(nodeID, "sizeChanged", ["width": Int(size.width), "height": Int(size.height)])
+    }
 }

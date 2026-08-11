@@ -176,6 +176,8 @@ func makeSourceList(_ props: [String: Any]) -> NSView {
         tableView.selectRowIndexes(IndexSet(integer: selIdx), byExtendingSelection: false)
     }
     tableView.reloadData()
+    ndEmptyStateApply(scrollView, props)
+    ndEmptyStateUpdate(scrollView, isEmpty: source.rows.isEmpty)
     return scrollView
 }
 
@@ -198,6 +200,7 @@ func ndSourceListSetItems(_ view: NSView, _ raw: [[String: Any]]) {
             tableView.selectRowIndexes(IndexSet(integer: prevSelected), byExtendingSelection: false)
         }
     }
+    ndEmptyStateUpdate(view, isEmpty: raw.isEmpty)
 }
 
 /// `ndApplyProps`'s SourceList.selectedIndex arm (generated) calls this.

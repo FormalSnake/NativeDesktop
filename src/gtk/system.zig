@@ -149,25 +149,40 @@ fn currentAppearance() []const u8 {
     return if (adw.StyleManager.getDark(sm) != 0) "dark" else "light";
 }
 
-/// Installs a one-time `notify::dark` watch on the default `AdwStyleManager`,
-/// pushing an `appearance` system event on every change. Idempotent (first
-/// `system.getAppearance` call wins) — mirrors `notif_action_registered`'s
-/// lazy-once pattern below.
+/// `#rrggbb` of the system accent (AdwStyleManager accent-color, adw 1.6+),
+/// written into `buf`.
+fn currentAccentColor(buf: []u8) []const u8 {
+    const sm = adw.StyleManager.getDefault();
+    const rgba = adw.StyleManager.getAccentColorRgba(sm);
+    defer gdk.RGBA.free(rgba);
+    const r: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_red), 0, 1) * 255.0));
+    const g: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_green), 0, 1) * 255.0));
+    const b: u32 = @intFromFloat(@round(std.math.clamp(@as(f64, rgba.f_blue), 0, 1) * 255.0));
+    return std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ r, g, b }) catch "#3584e4";
+}
+
+/// Installs one-time `notify::dark` + `notify::accent-color` watches on the
+/// default `AdwStyleManager`, pushing an `appearance` system event on every
+/// change. Idempotent (first `system.getAppearance` call wins) — mirrors
+/// `notif_action_registered`'s lazy-once pattern below.
 fn ensureAppearanceWatch() void {
     if (appearance_watch_installed) return;
     appearance_watch_installed = true;
     const sm = adw.StyleManager.getDefault();
     _ = gobject.Object.signals.notify.connect(sm, ?*anyopaque, &onAppearanceNotify, null, .{ .detail = "dark" });
+    _ = gobject.Object.signals.notify.connect(sm, ?*anyopaque, &onAppearanceNotify, null, .{ .detail = "accent-color" });
 }
 
 fn onAppearanceNotify(_: *adw.StyleManager, _: *gobject.ParamSpec, _: ?*anyopaque) callconv(.c) void {
     const ctx = the_ctx orelse return;
-    emitSystemEvent(ctx, "appearance", .{ .appearance = currentAppearance() });
+    var buf: [8]u8 = undefined;
+    emitSystemEvent(ctx, "appearance", .{ .appearance = currentAppearance(), .accentColor = currentAccentColor(&buf) });
 }
 
 fn getAppearance(ctx: *abi.NdContext, id: u32) void {
     ensureAppearanceWatch();
-    respondValue(ctx, id, currentAppearance());
+    var buf: [8]u8 = undefined;
+    respondValue(ctx, id, .{ .appearance = currentAppearance(), .accentColor = currentAccentColor(&buf) });
 }
 
 // ============================================================================

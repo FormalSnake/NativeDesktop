@@ -304,11 +304,12 @@ function App(): React.ReactNode {
               testID="pin-button"
               iconName="pin"
               label=""
+              tooltip="Pin"
               onClick={togglePinSelected}
               cssClasses={selected != null && selected.pinned ? ["flat", "accent"] : ["flat"]}
             />
-            <button slot="end" testID="delete-note-button" iconName="edit-delete" label="" onClick={deleteSelected} cssClasses={["flat"]} />
-            <button slot="end" testID="new-note-button" iconName="document-new" label="" onClick={createNote} cssClasses={["flat"]} />
+            <button slot="end" testID="delete-note-button" iconName="edit-delete" label="" tooltip="Delete" onClick={deleteSelected} cssClasses={["flat"]} />
+            <button slot="end" testID="new-note-button" iconName="document-new" label="" tooltip="New Note" onClick={createNote} cssClasses={["flat"]} />
           </headerbar>
           {/* hexpand+vexpand: the content pane claims all space the other panes don't. */}
           <box testID="content-body" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>

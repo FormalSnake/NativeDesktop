@@ -218,6 +218,8 @@ pub const Tree = struct {
         var owned_attached = attached;
         owned_attached.tab_label = try self.dupeOpt(attached.tab_label);
         errdefer if (owned_attached.tab_label) |v| self.gpa.free(v);
+        owned_attached.tab_icon = try self.dupeOpt(attached.tab_icon);
+        errdefer if (owned_attached.tab_icon) |v| self.gpa.free(v);
         owned_attached.slot = try self.dupeOpt(attached.slot);
         errdefer if (owned_attached.slot) |v| self.gpa.free(v);
         try self.meta.put(self.gpa, id, .{
@@ -339,6 +341,7 @@ pub const Tree = struct {
         if (kv.value.test_id) |v| self.gpa.free(v);
         if (kv.value.text) |v| self.gpa.free(v);
         if (kv.value.attached.tab_label) |v| self.gpa.free(v);
+        if (kv.value.attached.tab_icon) |v| self.gpa.free(v);
         if (kv.value.attached.slot) |v| self.gpa.free(v);
         freeRows(self.gpa, kv.value.rows);
         if (kv.value.tab_group) |v| self.gpa.free(v);
@@ -352,6 +355,7 @@ pub const Tree = struct {
             if (entry.value_ptr.test_id) |v| self.gpa.free(v);
             if (entry.value_ptr.text) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.tab_label) |v| self.gpa.free(v);
+            if (entry.value_ptr.attached.tab_icon) |v| self.gpa.free(v);
             if (entry.value_ptr.attached.slot) |v| self.gpa.free(v);
             freeRows(self.gpa, entry.value_ptr.rows);
             if (entry.value_ptr.tab_group) |v| self.gpa.free(v);

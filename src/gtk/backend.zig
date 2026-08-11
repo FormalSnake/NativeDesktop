@@ -20,6 +20,7 @@ const overlay = @import("overlay.zig");
 const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
 const system = @import("system.zig");
+const adw = @import("adw");
 const ndtabs_gtk = @import("tabs.zig");
 const ndpalette_gtk = @import("commandpalette.zig");
 const ndsourcetree_gtk = @import("sourcetree.zig");
@@ -595,6 +596,8 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
         value_json = if (gtk.CheckButton.getActive(@ptrCast(@alignCast(widget))) != 0) "true" else "false";
     } else if (std.mem.eql(u8, kind, "Switch")) {
         value_json = if (gtk.Switch.getActive(@ptrCast(@alignCast(widget))) != 0) "true" else "false";
+    } else if (std.mem.eql(u8, kind, "SwitchRow")) {
+        value_json = if (adw.SwitchRow.getActive(@ptrCast(@alignCast(widget))) != 0) "true" else "false";
     } else if (std.mem.eql(u8, kind, "Slider")) {
         const range = @as(*gtk.Scale, @ptrCast(@alignCast(widget))).as(gtk.Range);
         value_json = std.fmt.allocPrint(arena, "{d}", .{gtk.Range.getValue(range)}) catch "null";
@@ -705,6 +708,18 @@ fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, 
         return 0;
     }
     const kind = widgetKind(widget);
+    if (std.mem.eql(u8, kind, "SwitchRow")) {
+        // The row's activatable-widget is its switch: activate toggles it,
+        // firing notify::active exactly like a user click.
+        _ = gtk.Widget.activate(widget);
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
+    if (std.mem.eql(u8, kind, "Row")) {
+        adw.ActionRow.activate(@ptrCast(@alignCast(widget))); // emits "activated"
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
     if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Switch")) {
         // GtkCheckButton and GtkSwitch are not GtkButton subclasses in GTK4 —
         // they have no `clicked` signal, so the generic emit below is a silent
@@ -765,6 +780,9 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
     } else if (std.mem.eql(u8, kind, "Switch")) {
         if (value != .bool) return invalidValue(err_json_out, node_id);
         gtk.Switch.setActive(@ptrCast(@alignCast(widget)), @intFromBool(value.bool));
+    } else if (std.mem.eql(u8, kind, "SwitchRow")) {
+        if (value != .bool) return invalidValue(err_json_out, node_id);
+        adw.SwitchRow.setActive(@ptrCast(@alignCast(widget)), @intFromBool(value.bool)); // fires notify::active
     } else if (std.mem.eql(u8, kind, "Slider")) {
         const num: f64 = switch (value) {
             .float => value.float,
@@ -818,6 +836,8 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     if (std.mem.eql(u8, type_name, "GtkTextView")) return "TextArea";
     if (std.mem.eql(u8, type_name, "GtkCheckButton")) return "Checkbox";
     if (std.mem.eql(u8, type_name, "GtkSwitch")) return "Switch";
+    if (std.mem.eql(u8, type_name, "AdwSwitchRow")) return "SwitchRow";
+    if (std.mem.eql(u8, type_name, "AdwActionRow")) return "Row";
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
     if (std.mem.eql(u8, type_name, "GtkDropDown")) return "Select";
     if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) {

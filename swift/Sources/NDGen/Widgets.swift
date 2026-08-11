@@ -44,20 +44,32 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         // dealloc the window while the retained tree still references it.
         win.isReleasedWhenClosed = false
         win.contentView = content
+        ndAutomationApplyWindowPolicy(win) // automation runs float past tiling WMs (Automation.swift)
         gWindow = win
-        let manager = NDToolbarManager()
+        // toolbarStyle is consumed by NDToolbarManager.attachForSidebar once
+        // a headerbar/sidebar attaches the unified toolbar; frameAutosaveName
+        // doubles as the toolbar-customization autosave key (HeaderBar.swift).
+        ndWindowToolbarStyles[ObjectIdentifier(win)] = propStr(props, "toolbarStyle") ?? "unified"
+        ndApplyDensity(win, propStr(props, "density") ?? "standard")
+        let manager = NDToolbarManager(autosaveName: propStr(props, "frameAutosaveName"))
         ndWindowToolbarManager = manager
         ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)
         // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window
         // joins its group's native tab bar via addTabbedWindow; a plain
         // window centers and orders front as before.
         ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))
+        // After present: a session frame saved under this name must win
+        // over the default center()+defaultWidth/Height placement.
+        if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }
         return content
     } else if kind == "Box" {
         let stack = NSStackView()
         let vertical = (propStr(props, "orientation") ?? "vertical") == "vertical"
         stack.orientation = vertical ? .vertical : .horizontal
-        stack.spacing = CGFloat(propInt(props, "spacing") ?? 0)
+        // -1 is the "platform standard" sentinel (schema default):
+        // ndStandardSpacing (8) here, 6 on the GTK peer.
+        let spacingRaw = propInt(props, "spacing") ?? -1
+        stack.spacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)
         stack.alignment = vertical ? .leading : .centerY
         stack.distribution = .gravityAreas
         return stack
@@ -87,6 +99,9 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
             b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         if let tt = propStr(props, "tooltip") { b.toolTip = tt }
+        if propBool(props, "prominent") ?? false { ndButtonApplyProminent(b, true) }
+        if let badge = propStr(props, "badge") { ndButtonApplyBadge(b, badge) }
+        ndButtonApplySize(b, propStr(props, "size") ?? "regular")
         return b
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
@@ -142,10 +157,16 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return pb
     } else if kind == "Image" {
         let iv = NSImageView()
+        // symbolScale/symbolWeight/symbolRenderingMode are create-only; the
+        // configuration is captured per view so an iconName update re-resolves
+        // with the same symbol treatment (Icons.swift).
+        if let cfg = ndSymbolConfiguration(scale: propStr(props, "symbolScale"), weight: propStr(props, "symbolWeight"), renderingMode: propStr(props, "symbolRenderingMode")) {
+            ndImageSymbolConfigs[ObjectIdentifier(iv)] = cfg
+        }
         if let p = propStr(props, "path") {
             iv.image = NSImage(contentsOfFile: p)
         } else if let n = propStr(props, "iconName") {
-            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)
+            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)
         }
         return iv
     } else if kind == "ScrollView" {
@@ -218,6 +239,9 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "HeaderBar" {
         let bar = NDHeaderBarView()
         bar.ndTitle = propStr(props, "title") ?? ""
+        // showTitleButtons is GTK-side chrome (per-pane window controls);
+        // the traffic lights are window-level on this platform.
+        bar.ndSubtitle = propStr(props, "subtitle") ?? ""
         ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         return bar
     } else if kind == "ToolbarView" {
@@ -238,8 +262,15 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return ndMenuItemCreate(props)
     } else if kind == "SettingsGroup" {
         let group = NDSettingsGroupView()
-        group.spacing = CGFloat(propInt(props, "spacing") ?? 0)
+        group.ndTitle = propStr(props, "title") ?? ""
+        group.ndDescription = propStr(props, "description") ?? ""
         return group
+    } else if kind == "Row" {
+        return makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)
+    } else if kind == "SwitchRow" {
+        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)
+    } else if kind == "Clamp" {
+        return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)
     } else if kind == "Switch" {
         let toggle = NSSwitch()
         toggle.state = (propBool(props, "checked") ?? false) ? .on : .off
@@ -247,6 +278,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ToggleButton" {
         let lbl = propStr(props, "label") ?? ""
         let b = NDButton(title: lbl, target: nil, action: nil)
+        b.ndIsToggle = true // keeps its view in a toolbar (no promotion; state must stay visible)
         b.setButtonType(.pushOnPushOff); b.bezelStyle = .rounded
         if let icon = propStr(props, "iconName") {
             ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)
@@ -307,8 +339,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let fontSize = propInt(props, "fontSize") ?? 13
         let fontFamily = propStr(props, "fontFamily")
         let palette = propStr(props, "palette")
-        let foreground = propStr(props, "foreground") ?? "#cccccc"
-        let background = propStr(props, "background") ?? "#000000"
+        let foreground = propStr(props, "foreground") ?? ""
+        let background = propStr(props, "background") ?? ""
         // SEAM: NDTerminalView init signatures are the published contract with NDTerminalView.swift (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
         //   init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
         //   init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int)
@@ -337,10 +369,14 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let t = propStr(props, "title"), let win = view.window { win.title = t }
     } else if kind == "Box" {
         if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
-            stack.spacing = CGFloat(sp)
+            // -1 sentinel = platform standard, same as the create arm.
+            stack.spacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
     } else if kind == "Button" {
         if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }
+        if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }
+        if let bd = propStr(props, "badge"), let btn = view as? NSButton { ndButtonApplyBadge(btn, bd) }
+        if let sz = propStr(props, "size"), let btn = view as? NSButton { ndButtonApplySize(btn, sz) }
     } else if kind == "TextInput" {
         if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {
             withEchoSuppressed(view) { field.stringValue = t }
@@ -393,7 +429,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             iv.image = NSImage(contentsOfFile: p_)
         }
         if let n = propStr(props, "iconName"), let iv = view as? NSImageView {
-            iv.image = ndResolveSymbolImage(n)  // NDShell/Icons.swift (hand-written)
+            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)
         }
     } else if kind == "Spinner" {
         if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {
@@ -411,6 +447,9 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let idx = propInt(props, "selectedIndex") {
             ndListViewSetSelectedIndex(view, idx)  // NDGen/ListView.swift (T3, hand-written)
         }
+        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
+        // "emptyTitle" handled by ndEmptyStateApply above (merged).
+        // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "WebView" {
         if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }
     } else if kind == "NativeView" {
@@ -423,6 +462,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             sidebarItem.isCollapsed = c
         }
     } else if kind == "HeaderBar" {
+        if let s = propStr(props, "subtitle"), let bar = view as? NDHeaderBarView { ndHeaderBarApplySubtitle(bar, s) }
         if let bar = view as? NDHeaderBarView {
             ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         }
@@ -440,16 +480,28 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let idx = propInt(props, "selectedIndex") {
             ndSourceListSetSelectedIndex(view, idx)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)
         }
+        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
+        // "emptyTitle" handled by ndEmptyStateApply above (merged).
+        // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "SourceTree" {
         if let nodes = propObjArray(props, "nodes") { ndSourceTreeSetNodes(view, nodes) }
         if let actions = propObjArray(props, "actions") { ndSourceTreeSetActions(view, actions) }
         if let sel = propStr(props, "selectedId") { ndSourceTreeSetSelectedId(view, sel) }
+        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
+        // "emptyTitle" handled by ndEmptyStateApply above (merged).
+        // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "MenuItem" {
         if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
     } else if kind == "SettingsGroup" {
-        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
-            stack.spacing = CGFloat(sp)
-        }
+        ndSettingsGroupApply(view, props)  // title/description merged
+        // "description" handled by ndSettingsGroupApply above (merged).
+    } else if kind == "Row" {
+        ndRowApply(view, props)  // title/subtitle merged
+        // "subtitle" handled by ndRowApply above (merged).
+    } else if kind == "SwitchRow" {
+        ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)
+        // "subtitle" handled by ndSwitchRowApply above (merged).
+        // "checked" handled by ndSwitchRowApply above (merged).
     } else if kind == "Switch" {
         if let c = propBool(props, "checked"), let btn = view as? NSButton {
             let want: NSControl.StateValue = c ? .on : .off
@@ -517,9 +569,15 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let rows = propObjArray(props, "rows") { ndTableSetRows(view, rows) }
         if let idx = propInt(props, "selectedIndex") { ndTableSetSelectedIndex(view, idx) }
         if let sep = propBool(props, "showRowSeparators") { ndTableSetShowRowSeparators(view, sep) }
+        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
+        // "emptyTitle" handled by ndEmptyStateApply above (merged).
+        // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "TreeView" {
         if let nodes = propObjArray(props, "nodes") { ndTreeViewSetNodes(view, nodes) }
         if let idx = propInt(props, "selectedIndex") { ndTreeViewSetSelectedIndex(view, idx) }
+        ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
+        // "emptyTitle" handled by ndEmptyStateApply above (merged).
+        // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "FontPicker" {
         if let v = propStr(props, "value") { ndFontPickerSetValue(view, v) }
     } else if kind == "Video" {
@@ -583,6 +641,10 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndSourceTreeConnect(view, nodeID: nodeID)
     } else if kind == "MenuItem" {
         ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
+    } else if kind == "Row" {
+        ndRowConnect(view, nodeID: nodeID)
+    } else if kind == "SwitchRow" {
+        ndSwitchRowConnect(view, nodeID: nodeID)
     } else if kind == "Switch" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "toggled", payload: .checked, action: #selector(EventDispatcher.fireChecked(_:)))
     } else if kind == "ToggleButton" {
@@ -743,15 +805,24 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             }
             let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
             controller.insertSplitViewItem(item, at: insertIndex)
+        } else if attachedSlot == "inspector" {
+            let item = NSSplitViewItem(inspectorWithViewController: vc)
+            item.minimumThickness = 220
+            item.canCollapse = true
+            controller.addSplitViewItem(item)
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
-            controller.addSplitViewItem(item)
+            if let last = controller.splitViewItems.last, last.behavior == .inspector {
+                controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)
+            } else {
+                controller.addSplitViewItem(item)
+            }
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
-        ndToolbarPanePack(parent as! NDToolbarPaneView, child)
+        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)
     } else if parentKind == "Menubar" {
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
@@ -759,6 +830,10 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.appendReactView(child)
+    } else if parentKind == "Row" {
+        ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
+    } else if parentKind == "Clamp" {
+        (parent as! NDClampView).setClampChild(child)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "SplitButton" {
@@ -839,15 +914,24 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             }
             let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
             controller.insertSplitViewItem(item, at: insertIndex)
+        } else if attachedSlot == "inspector" {
+            let item = NSSplitViewItem(inspectorWithViewController: vc)
+            item.minimumThickness = 220
+            item.canCollapse = true
+            controller.addSplitViewItem(item)
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
-            controller.addSplitViewItem(item)
+            if let last = controller.splitViewItems.last, last.behavior == .inspector {
+                controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)
+            } else {
+                controller.addSplitViewItem(item)
+            }
         }
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
-        ndToolbarPanePack(parent as! NDToolbarPaneView, child)
+        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)
     } else if parentKind == "Menubar" {
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
@@ -855,6 +939,8 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.insertReactView(child, before: before)
+    } else if parentKind == "Row" {
+        ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "SplitButton" {
@@ -945,6 +1031,10 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.removeReactView(child)
+    } else if parentKind == "Row" {
+        ndRowUnpack(parent as! NDRowView, child)
+    } else if parentKind == "Clamp" {
+        (parent as! NDClampView).clearClampChild(child)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerRemove(parent, child)
     } else if parentKind == "SplitButton" {

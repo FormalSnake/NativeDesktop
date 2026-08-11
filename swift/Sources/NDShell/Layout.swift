@@ -40,6 +40,12 @@ final class NDButton: NSButton {
     /// resolve to a neighboring invisible button.
     var ndIsSidebarRowModel = false
 
+    /// Marked by the generated ToggleButton create arm: a toggle keeps its
+    /// custom view when placed in a toolbar — promotion to a system-drawn
+    /// momentary item (HeaderBar.swift's promotedItem) would hide its
+    /// on/off state.
+    var ndIsToggle = false
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         ndIsSidebarRowModel ? nil : super.hitTest(point)
     }

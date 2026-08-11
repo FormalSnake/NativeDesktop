@@ -51,7 +51,7 @@ enum NDSystem {
         case "audio.setVolume": NDAudio.setVolume(id, params)
         case "system.getAppearance":
             ensureAppearanceWatch()
-            respondResult(id, jsonFragment(currentAppearance()))
+            respondResult(id, appearancePayload())
         default:
             // The core already gates truly unknown methods before dispatch here.
             respondError(id, "not implemented")
@@ -253,6 +253,7 @@ enum NDSystem {
     // MARK: - appearance
 
     nonisolated(unsafe) private static var appearanceObs: NSKeyValueObservation?
+    nonisolated(unsafe) private static var accentObs: NSObjectProtocol?
 
     /// `"dark"`/`"light"` best-match of the effective appearance — the same
     /// aqua/darkAqua pair AppKit resolves menu bars and system chrome against,
@@ -262,16 +263,39 @@ enum NDSystem {
         NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? "dark" : "light"
     }
 
-    /// Installs a one-time KVO watch on `NSApp.effectiveAppearance`, pushing an
-    /// `appearance` system event on every change. Idempotent (first
-    /// `system.getAppearance` call wins) — mirrors `unAuthorizationRequested`'s
-    /// lazy-once pattern above.
+    /// `#rrggbb` of the system accent, resolved against the CURRENT effective
+    /// appearance (controlAccentColor is a dynamic color).
+    @MainActor private static func currentAccentColorHex() -> String {
+        let c = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? NSColor.systemBlue.usingColorSpace(.sRGB)!
+        let r = Int(round(c.redComponent * 255))
+        let g = Int(round(c.greenComponent * 255))
+        let b = Int(round(c.blueComponent * 255))
+        return String(format: "#%02x%02x%02x", r, g, b)
+    }
+
+    @MainActor private static func appearancePayload() -> String {
+        "{\"appearance\":\(jsonFragment(currentAppearance())),\"accentColor\":\(jsonFragment(currentAccentColorHex()))}"
+    }
+
+    /// Installs one-time watches — KVO on `NSApp.effectiveAppearance` plus the
+    /// system-colors notification (accent changes) — pushing an `appearance`
+    /// system event on every change. Idempotent (first `system.getAppearance`
+    /// call wins) — mirrors `unAuthorizationRequested`'s lazy-once pattern
+    /// above.
     @MainActor private static func ensureAppearanceWatch() {
         guard appearanceObs == nil else { return }
         appearanceObs = NSApp.observe(\.effectiveAppearance, options: [.new]) { _, _ in
             DispatchQueue.main.async {
-                let appearance = MainActor.assumeIsolated { currentAppearance() }
-                emitEvent(channel: "appearance", dataJson: "{\"appearance\":\(jsonFragment(appearance))}")
+                let payload = MainActor.assumeIsolated { appearancePayload() }
+                emitEvent(channel: "appearance", dataJson: payload)
+            }
+        }
+        accentObs = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main
+        ) { _ in
+            DispatchQueue.main.async {
+                let payload = MainActor.assumeIsolated { appearancePayload() }
+                emitEvent(channel: "appearance", dataJson: payload)
             }
         }
     }

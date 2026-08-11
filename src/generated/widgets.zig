@@ -18,6 +18,7 @@ const ndtree_gtk = @import("../gtk/treeview.zig");
 const ndsourcetree_gtk = @import("../gtk/sourcetree.zig");
 const ndtoast_gtk = @import("../gtk/toast.zig");
 const ndpalette_gtk = @import("../gtk/commandpalette.zig");
+const ndempty_gtk = @import("../gtk/emptystate.zig");
 const nd_plugin = @import("../plugin.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -83,6 +84,10 @@ fn asObject(ptr: anytype) *gobject.Object {
 /// (apply-prop arms, the `listview-inner` signal target) never special-case
 /// which kind got the implicit Viewport.
 pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
+    // Empty-state swap: while an AdwStatusPage is parked as the scroller's
+    // child, the REAL inner view lives detached in the emptystate registry —
+    // resolve through it first so every inner-widget consumer stays correct.
+    if (ndempty_gtk.innerOf(sw)) |inner| return inner;
     const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
     if (gobject.ext.isA(child, gtk.Viewport)) {
         const vp: *gtk.Viewport = @ptrCast(@alignCast(child));
@@ -104,15 +109,104 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
 fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
     const existing = adw.OverlaySplitView.getContent(sv);
     if (existing) |cur| {
-        if (gobject.ext.isA(cur, adw.OverlaySplitView)) return @ptrCast(@alignCast(cur));
+        // Only a start-positioned inner is the list host — an end-positioned
+        // one is the inspector inner (ndSplitViewInspectorInner) and must
+        // stay nested INSIDE the list inner, not be mistaken for it.
+        if (gobject.ext.isA(cur, adw.OverlaySplitView)) {
+            const cur_sv: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
+            if (adw.OverlaySplitView.getSidebarPosition(cur_sv) == .start) return cur_sv;
+        }
     }
     const inner = adw.OverlaySplitView.new();
     if (split_list_widths.get(@intFromPtr(sv))) |lw| {
         if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
     }
-    if (existing) |cur| adw.OverlaySplitView.setContent(inner, cur);
+    if (existing) |cur| {
+        // Detach before reattach (ref bracket, tabs.zig page-transfer idiom):
+        // GTK4 rejects parenting a widget that still has a parent, which
+        // would leave the moved content orphaned and unmapped.
+        _ = gobject.Object.ref(asObject(cur));
+        adw.OverlaySplitView.setContent(sv, null);
+        adw.OverlaySplitView.setContent(inner, cur);
+        gobject.Object.unref(asObject(cur));
+    }
     adw.OverlaySplitView.setContent(sv, inner.as(gtk.Widget));
     return inner;
+}
+
+/// The inspector peer of ndSplitViewInner: a lazily-created inner
+/// AdwOverlaySplitView with an END-positioned sidebar (the utility pane
+/// alongside content — the AppKit peer is
+/// NSSplitViewItem(inspectorWithViewController:)). Nested INNERMOST, past
+/// any list inner, so the pane order stays sidebar | list | content |
+/// inspector regardless of mount order.
+fn ndSplitViewInspectorInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
+    var host = sv;
+    while (adw.OverlaySplitView.getContent(host)) |cur| {
+        if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;
+        const cur_sv: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
+        if (adw.OverlaySplitView.getSidebarPosition(cur_sv) == .end) return cur_sv;
+        host = cur_sv;
+    }
+    const inner = adw.OverlaySplitView.new();
+    adw.OverlaySplitView.setSidebarPosition(inner, .end);
+    if (adw.OverlaySplitView.getContent(host)) |cur| {
+        // Same detach-before-reattach ref bracket as ndSplitViewInner.
+        _ = gobject.Object.ref(asObject(cur));
+        adw.OverlaySplitView.setContent(host, null);
+        adw.OverlaySplitView.setContent(inner, cur);
+        gobject.Object.unref(asObject(cur));
+    }
+    adw.OverlaySplitView.setContent(host, inner.as(gtk.Widget));
+    return inner;
+}
+
+/// The split whose CONTENT slot the app's content pane belongs in: the
+/// innermost nested AdwOverlaySplitView (list and/or inspector inners may
+/// each be interposed), else the outer split itself.
+fn ndSplitViewContentTarget(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
+    var host = sv;
+    while (adw.OverlaySplitView.getContent(host)) |cur| {
+        if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;
+        host = @ptrCast(@alignCast(cur));
+    }
+    return host;
+}
+
+// Badge label a Button carries (qdata key), so a badge update finds the
+// existing suffix instead of stacking a second one.
+const ND_BUTTON_BADGE_LABEL = "nd-button-badge-label";
+
+/// Button.badge on GTK: a capsule count/text suffix packed after the
+/// button's own content (AppKit peer: NSItemBadge on the promoted toolbar
+/// item). First call wraps the existing child in a horizontal box and
+/// appends the badge label (classes nd-badge + numeric, styled in
+/// src/gtk/style.zig); later calls retarget the stored label. An empty
+/// string hides the badge without unwrapping.
+fn ndButtonApplyBadge(button: *gtk.Button, badge: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const obj = asObject(button);
+    if (gobject.Object.getData(obj, ND_BUTTON_BADGE_LABEL)) |ptr| {
+        const label: *gtk.Label = @ptrCast(@alignCast(ptr));
+        gtk.Label.setText(label, dupeZ(badge));
+        gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
+        return;
+    }
+    const label = gtk.Label.new(dupeZ(badge));
+    gtk.Widget.addCssClass(label.as(gtk.Widget), "nd-badge");
+    gtk.Widget.addCssClass(label.as(gtk.Widget), "numeric");
+    const wrap = gtk.Box.new(.horizontal, 6);
+    if (gtk.Button.getChild(button)) |child| {
+        // Reparent the existing content into the wrap box (ref held across
+        // the unparent, mirroring the tabs.zig page-transfer idiom).
+        _ = gobject.Object.ref(asObject(child));
+        gtk.Button.setChild(button, null);
+        gtk.Box.append(wrap, child);
+        gobject.Object.unref(asObject(child));
+    }
+    gtk.Box.append(wrap, label.as(gtk.Widget));
+    gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
+    gtk.Button.setChild(button, wrap.as(gtk.Widget));
+    gobject.Object.setData(obj, ND_BUTTON_BADGE_LABEL, label);
 }
 
 /// Builds a NULL-terminated strv (`?[*]const [*:0]const u8`) from a JSON
@@ -1032,6 +1126,65 @@ pub fn ndPanedStructuralTeardown(child: *gtk.Widget) void {
     gobject.Object.unref(obj); // the cancelled timer's ref
 }
 
+// ---- HIG-gap wave: ToolbarView bar styles, HeaderBar subtitle, TabView
+// view-stack access, SplitView adaptive breakpoint ----
+
+fn ndToolbarStyleFromString(s: []const u8) adw.ToolbarStyle {
+    if (std.mem.eql(u8, s, "raised")) return .raised;
+    if (std.mem.eql(u8, s, "raised-border")) return .raised_border;
+    return .flat;
+}
+
+/// Subtitle update on a live header. A header created with neither title nor
+/// subtitle has no AdwWindowTitle — build one on the first non-empty subtitle.
+fn ndHeaderBarSetSubtitle(hb: *adw.HeaderBar, subtitle: [:0]const u8) void {
+    if (adw.HeaderBar.getTitleWidget(hb)) |tw| {
+        if (gobject.ext.isA(tw, adw.WindowTitle)) {
+            adw.WindowTitle.setSubtitle(@ptrCast(@alignCast(tw)), subtitle);
+            return;
+        }
+    }
+    if (subtitle.len == 0) return;
+    const wt = adw.WindowTitle.new("", subtitle);
+    adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+    adw.HeaderBar.setShowTitle(hb, 1);
+}
+
+/// The AdwViewStack inside a TabView's wrapping box (switcher above, stack
+/// below — see the TabView create arm).
+fn ndTabViewStack(widget: *gtk.Widget) ?*adw.ViewStack {
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (gobject.ext.isA(c, adw.ViewStack)) return @ptrCast(@alignCast(c));
+    }
+    return null;
+}
+
+const ND_SPLIT_PENDING_BREAKPOINT = "nd-split-pending-breakpoint";
+
+/// Installs the stashed `breakpoint` px value as an AdwBreakpoint on the
+/// SplitView's AdwApplicationWindow ancestor at first map — the window does
+/// not exist at SplitView create (same pending-qdata + map shape as
+/// ND_PANED_PENDING_FRACTION; an int px never needs the +1 float trick since
+/// 0 means "off" and is never stashed). The breakpoint's setter flips this
+/// split view's `collapsed` below max-width: Npx; apps that also want the
+/// signal listen for their own state via the collapsed prop round-trip.
+fn cbSplitViewMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const raw = gobject.Object.getData(obj, ND_SPLIT_PENDING_BREAKPOINT) orelse return;
+    gobject.Object.setData(obj, ND_SPLIT_PENDING_BREAKPOINT, null);
+    const px: f64 = @floatFromInt(@as(usize, @intFromPtr(raw)));
+    const widget: *gtk.Widget = @ptrCast(@alignCast(obj));
+    const root = gtk.Widget.getRoot(widget) orelse return;
+    if (!gobject.ext.isA(root, adw.ApplicationWindow)) return;
+    const win: *adw.ApplicationWindow = @ptrCast(@alignCast(root));
+    const cond = adw.BreakpointCondition.newLength(.max_width, px, .px);
+    const bp = adw.Breakpoint.new(cond); // takes ownership of cond
+    var v = gobject.ext.Value.newFrom(true);
+    defer gobject.Value.unset(&v);
+    adw.Breakpoint.addSetter(bp, obj, "collapsed", &v);
+    adw.ApplicationWindow.addBreakpoint(win, bp); // takes ownership of bp
+}
+
 /// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-
 /// terminated GTK string using the backend arena (passed by the caller).
 pub fn create(
@@ -1044,11 +1197,27 @@ pub fn create(
     if (std.mem.eql(u8, kind, "Window")) {
         const w: c_int = @intCast(propInt(props, "defaultWidth") orelse 480);
         const h: c_int = @intCast(propInt(props, "defaultHeight") orelse 320);
-        return ndtabs_gtk.createWindow(app, propStr(props, "tabGroup"), propStr(props, "title"), w, h, the_window, dupeZ);
+        const handle = try ndtabs_gtk.createWindow(app, propStr(props, "tabGroup"), propStr(props, "title"), w, h, the_window, dupeZ);
+        // toolbarStyle is macOS window-chrome vocabulary (unified/expanded/
+        // preference NSToolbar shapes); GTK's native chrome is the one
+        // AdwHeaderBar idiom, so the prop is deliberately inert here.
+        // frameAutosaveName maps to NSWindow's session frame store; GTK4
+        // dropped session geometry persistence — apps persist size via the
+        // JS-side settings store instead.
+        // density=compact tightens control metrics via the nd-compact CSS
+        // block (src/gtk/style.zig), the peer of Tahoe's
+        // prefersCompactControlSizeMetrics.
+        if (propStr(props, "density")) |d| {
+            if (std.mem.eql(u8, d, "compact")) gtk.Widget.addCssClass(handle, "nd-compact");
+        }
+        return handle;
     } else if (std.mem.eql(u8, kind, "Box")) {
         const vertical = if (propStr(props, "orientation")) |o| std.mem.eql(u8, o, "vertical") else true;
         const orientation: gtk.Orientation = if (vertical) .vertical else .horizontal;
-        const spacing: c_int = @intCast(propInt(props, "spacing") orelse 0);
+        const spacing_raw = propInt(props, "spacing") orelse -1;
+        // -1 is the "platform standard" sentinel (schema default): 6 on
+        // GTK (the Adwaita gutter), 8 on the AppKit peer.
+        const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);
         const box = gtk.Box.new(orientation, spacing);
         return box.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Label")) {
@@ -1103,6 +1272,15 @@ pub fn create(
             }
         }
         if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(button.as(gtk.Widget), dupeZ(tt));
+        // prominent -> the Adwaita accent treatment (AppKit peer:
+        // NSToolbarItem.style .prominent / an accent bezel).
+        if (propBool(props, "prominent") orelse false) gtk.Widget.addCssClass(button.as(gtk.Widget), "suggested-action");
+        if (propStr(props, "badge")) |bd| ndButtonApplyBadge(button, bd, dupeZ);
+        // size -> compact/large button metrics (src/gtk/style.zig defines
+        // both classes; AppKit peer: NSControl.controlSize).
+        const size = propStr(props, "size") orelse "regular";
+        if (std.mem.eql(u8, size, "small")) gtk.Widget.addCssClass(button.as(gtk.Widget), "compact")
+        else if (std.mem.eql(u8, size, "large")) gtk.Widget.addCssClass(button.as(gtk.Widget), "large");
         return button.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
@@ -1167,6 +1345,13 @@ pub fn create(
         } else if (propStr(props, "iconName")) |n| {
             gtk.Image.setFromIconName(img, ndicons.symbolic(dupeZ(n)));
         }
+        // symbolScale -> pixel size (the GTK icon-size axis). symbolWeight/
+        // symbolRenderingMode have no GTK peer: symbolic icons carry one
+        // stroke weight and recolor via CSS — deliberately inert here.
+        if (propStr(props, "symbolScale")) |sc| {
+            const px: c_int = if (std.mem.eql(u8, sc, "small")) 16 else if (std.mem.eql(u8, sc, "large")) 24 else 20;
+            gtk.Image.setPixelSize(img, px);
+        }
         return img.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ScrollView")) {
         const sw = gtk.ScrolledWindow.new();
@@ -1186,9 +1371,20 @@ pub fn create(
         if (propBool(props, "spinning") orelse true) gtk.Spinner.setSpinning(sp, 1);
         return sp.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TabView")) {
-        // selectedIndex is ignored at create: pages attach afterwards (M5b-D4).
-        const nb = gtk.Notebook.new();
-        return nb.as(gtk.Widget);
+        // In-window view switching, the libadwaita idiom: AdwViewSwitcher
+        // (policy wide) over an AdwViewStack. Document-style tabs are the
+        // <window tabGroup> path, not this widget. selectedIndex is ignored
+        // at create: pages attach afterwards (M5b-D4).
+        const stack = adw.ViewStack.new();
+        gtk.Widget.setVexpand(stack.as(gtk.Widget), 1);
+        const switcher = adw.ViewSwitcher.new();
+        adw.ViewSwitcher.setStack(switcher, stack);
+        adw.ViewSwitcher.setPolicy(switcher, .wide);
+        gtk.Widget.setHalign(switcher.as(gtk.Widget), .center);
+        const box = gtk.Box.new(.vertical, 6);
+        gtk.Box.append(box, switcher.as(gtk.Widget));
+        gtk.Box.append(box, stack.as(gtk.Widget));
+        return box.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Grid")) {
         const grid = gtk.Grid.new();
         return grid.as(gtk.Widget);
@@ -1205,6 +1401,9 @@ pub fn create(
         const list = gtk.ListView.new(selection.as(gtk.SelectionModel), factory.as(gtk.ListItemFactory)); // transfer-full: list owns selection+factory
         const sw = gtk.ScrolledWindow.new(); // M5c-D3: ListView needs a scroller
         gtk.ScrolledWindow.setChild(sw, list.as(gtk.Widget));
+        ndempty_gtk.register(sw, list.as(gtk.Widget));
+        ndempty_gtk.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+        ndempty_gtk.update(sw, strv.len <= 1); // strv always carries the NULL terminator
         return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at
@@ -1226,6 +1425,14 @@ pub fn create(
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
         if (propFloat(props, "listWidth")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }
+        // Adaptive collapse: the AdwBreakpoint needs the window, which doesn't
+        // exist yet — stash the px value and install on map (cbSplitViewMapped),
+        // the ND_PANED_PENDING_FRACTION shape. 0 = off, so no +1 offset needed.
+        const bp_px = propInt(props, "breakpoint") orelse 0;
+        if (bp_px > 0) {
+            gobject.Object.setData(asObject(sv), ND_SPLIT_PENDING_BREAKPOINT, @ptrFromInt(@as(usize, @intCast(bp_px))));
+            _ = gobject.signalConnectData(asObject(sv), "map", @ptrCast(&cbSplitViewMapped), null, null, .{});
+        }
         return sv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         const hb = adw.HeaderBar.new();
@@ -1233,17 +1440,27 @@ pub fn create(
         // AdwHeaderBar's default title widget would otherwise fall back to
         // the window title, which the app never declared on this header.
         const t = propStr(props, "title") orelse "";
-        if (t.len > 0) {
-            const wt = adw.WindowTitle.new(dupeZ(t), "");
+        const st = propStr(props, "subtitle") orelse "";
+        if (t.len > 0 or st.len > 0) {
+            const wt = adw.WindowTitle.new(dupeZ(t), dupeZ(st));
             adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
         } else {
             adw.HeaderBar.setShowTitle(hb, 0);
+        }
+        // Split-view side panes suppress the window controls (GNOME HIG:
+        // only one pane's header carries them).
+        if (!(propBool(props, "showTitleButtons") orelse true)) {
+            adw.HeaderBar.setShowStartTitleButtons(hb, 0);
+            adw.HeaderBar.setShowEndTitleButtons(hb, 0);
         }
         ndMenuNoteHeaderBar(hb); // M13: track for primary-menu-button placement (no-op sans <menubar>)
         ndHeaderBarApplyNav(hb, propBool(props, "canGoBack"), propBool(props, "canGoForward"));
         return hb.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ToolbarView")) {
         const tv = adw.ToolbarView.new();
+        adw.ToolbarView.setTopBarStyle(tv, ndToolbarStyleFromString(propStr(props, "topBarStyle") orelse "flat"));
+        adw.ToolbarView.setBottomBarStyle(tv, ndToolbarStyleFromString(propStr(props, "bottomBarStyle") orelse "flat"));
+        if (propBool(props, "extendContentToTopEdge") orelse false) adw.ToolbarView.setExtendContentToTopEdge(tv, 1);
         return tv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         const search = gtk.SearchEntry.new();
@@ -1261,6 +1478,10 @@ pub fn create(
         if (sel_idx >= 0) { if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r); }
         const sw = gtk.ScrolledWindow.new();
         gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));
+        ndempty_gtk.register(sw, box.as(gtk.Widget));
+        ndempty_gtk.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+        const n_rows: usize = if (propArray(props, "items")) |arr| arr.items.len else 0;
+        ndempty_gtk.update(sw, n_rows == 0);
         return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SourceTree")) {
         return ndsourcetree_gtk.create(props, dupeZ);
@@ -1273,10 +1494,36 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         return ndMenuItemCreate(app, props, dupeZ);
     } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
-        const spacing: c_int = @intCast(propInt(props, "spacing") orelse 0);
-        const box = gtk.Box.new(.vertical, spacing);
-        gtk.Widget.addCssClass(box.as(gtk.Widget), "card");
-        return box.as(gtk.Widget);
+        // The real HIG boxed-list container: AdwPreferencesGroup renders
+        // AdwPreferencesRow children in its rounded list box and any other
+        // child in a plain box below it, with native title/description.
+        const group = adw.PreferencesGroup.new();
+        const t = propStr(props, "title") orelse "";
+        if (t.len > 0) adw.PreferencesGroup.setTitle(group, dupeZ(t));
+        if (propStr(props, "description")) |d| adw.PreferencesGroup.setDescription(group, dupeZ(d));
+        return group.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Row")) {
+        const row = adw.ActionRow.new();
+        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ""));
+        if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(row, dupeZ(s));
+        if (propStr(props, "iconName")) |ic| {
+            const img = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic)));
+            adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
+        }
+        // GtkListBoxRow defaults to activatable — a plain data row must opt in.
+        gtk.ListBoxRow.setActivatable(row.as(gtk.ListBoxRow), @intFromBool(propBool(props, "activatable") orelse false));
+        return row.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SwitchRow")) {
+        const row = adw.SwitchRow.new();
+        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ""));
+        if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(row.as(adw.ActionRow), dupeZ(s));
+        adw.SwitchRow.setActive(row, @intFromBool(propBool(props, "checked") orelse false));
+        return row.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Clamp")) {
+        const clamp = adw.Clamp.new();
+        adw.Clamp.setMaximumSize(clamp, @intCast(propInt(props, "maximumSize") orelse 600));
+        adw.Clamp.setTighteningThreshold(clamp, @intCast(propInt(props, "tighteningThreshold") orelse 400));
+        return clamp.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Switch")) {
         const sw = gtk.Switch.new();
         gtk.Switch.setActive(sw, @intFromBool(propBool(props, "checked") orelse false));
@@ -1483,8 +1730,8 @@ pub fn create(
         const font_size: c_int = @intCast(propInt(props, "fontSize") orelse 13);
         const font_family: ?[*:0]const u8 = if (propStr(props, "fontFamily")) |f| dupeZ(f).ptr else null;
         const palette: ?[*:0]const u8 = if (propStr(props, "palette")) |p| dupeZ(p).ptr else null;
-        const fg: [*:0]const u8 = dupeZ(propStr(props, "foreground") orelse "#cccccc").ptr;
-        const bg: [*:0]const u8 = dupeZ(propStr(props, "background") orelse "#000000").ptr;
+        const fg: [*:0]const u8 = dupeZ(propStr(props, "foreground") orelse "").ptr;
+        const bg: [*:0]const u8 = dupeZ(propStr(props, "background") orelse "").ptr;
         const cols: u16 = @intCast(propInt(props, "cols") orelse 80);
         const rows: u16 = @intCast(propInt(props, "rows") orelse 24);
         // SEAM: ndterm_gtk create/createRemote signatures are the published contract with src/gtk/terminal.zig (package nd-terminal-surfaces) — keep both sides byte-for-byte in sync.
@@ -1528,10 +1775,22 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "Box")) {
         if (propInt(props, "spacing")) |s| {
             const box: *gtk.Box = @ptrCast(@alignCast(widget));
-            gtk.Box.setSpacing(box, @intCast(s));
+            // -1 sentinel = platform standard (6), same as the create arm.
+            gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));
         }
     } else if (std.mem.eql(u8, kind, "Button")) {
         if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));
+        if (propBool(props, "prominent")) |pr| {
+            if (pr) gtk.Widget.addCssClass(widget, "suggested-action")
+            else gtk.Widget.removeCssClass(widget, "suggested-action");
+        }
+        if (propStr(props, "badge")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);
+        if (propStr(props, "size")) |sz| {
+            gtk.Widget.removeCssClass(widget, "compact");
+            gtk.Widget.removeCssClass(widget, "large");
+            if (std.mem.eql(u8, sz, "small")) gtk.Widget.addCssClass(widget, "compact")
+            else if (std.mem.eql(u8, sz, "large")) gtk.Widget.addCssClass(widget, "large");
+        }
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         if (propStr(props, "text")) |t| {
             const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
@@ -1606,24 +1865,44 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "Spinner")) {
         if (propBool(props, "spinning")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));
     } else if (std.mem.eql(u8, kind, "TabView")) {
-        if (propInt(props, "selectedIndex")) |idx| gtk.Notebook.setCurrentPage(@ptrCast(@alignCast(widget)), @intCast(idx));
+        if (propInt(props, "selectedIndex")) |idx| {
+            if (ndTabViewStack(widget)) |stack| {
+                var i: i64 = 0;
+                var page_child = gtk.Widget.getFirstChild(stack.as(gtk.Widget));
+                while (page_child) |c| : (page_child = gtk.Widget.getNextSibling(c)) {
+                    if (i == idx) {
+                        adw.ViewStack.setVisibleChild(stack, c);
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+        }
     } else if (std.mem.eql(u8, kind, "ListView")) {
         {
             const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
-            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));
+            // scrolledWindowInner (not getChild): the empty-state swap may have
+            // parked an AdwStatusPage as the scroller's child.
+            const list: *gtk.ListView = @ptrCast(@alignCast(scrolledWindowInner(sw).?));
             const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
             const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));
             const n_old = gio.ListModel.getNItems(model.as(gio.ListModel));
             const strv = buildStrv(propArray(props, "items"), dupeZ); // O(n) bulk build, not per-item append
             defer std.heap.page_allocator.free(strv);
             gtk.StringList.splice(model, 0, n_old, @ptrCast(strv.ptr)); // one call: replace-all
+            ndempty_gtk.update(sw, strv.len <= 1); // strv always carries the NULL terminator
         }
         if (propInt(props, "selectedIndex")) |idx| {
             const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
-            const list: *gtk.ListView = @ptrCast(@alignCast(gtk.ScrolledWindow.getChild(sw).?));
+            const list: *gtk.ListView = @ptrCast(@alignCast(scrolledWindowInner(sw).?));
             const selection: *gtk.SingleSelection = @ptrCast(@alignCast(gtk.ListView.getModel(list).?));
             if (idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(idx));
         }
+        // emptyIconName/emptyTitle/emptyDescription merge in one call
+        // (absent keys keep prior state).
+        ndempty_gtk.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+        // "emptyTitle" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
+        // "emptyDescription" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (propStr(props, "url")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));
     } else if (std.mem.eql(u8, kind, "NativeView")) {
@@ -1635,6 +1914,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
+        if (propStr(props, "subtitle")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, "canGoBack"), null);
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, "canGoForward"));
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
@@ -1660,6 +1940,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 if (gtk.ListBox.getRowAtIndex(box, prev_idx)) |r| gtk.ListBox.selectRow(box, r);
             }
             unblockEcho(asObject(box));
+            const n_rows: usize = if (propArray(props, "items")) |arr| arr.items.len else 0;
+            ndempty_gtk.update(@ptrCast(@alignCast(widget)), n_rows == 0);
         }
         if (propInt(props, "selectedIndex")) |idx| {
             const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
@@ -1673,14 +1955,31 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 unblockEcho(asObject(box));
             }
         }
+        // emptyIconName/emptyTitle/emptyDescription merge in one call
+        // (absent keys keep prior state).
+        ndempty_gtk.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+        // "emptyTitle" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
+        // "emptyDescription" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
     } else if (std.mem.eql(u8, kind, "SourceTree")) {
         ndsourcetree_gtk.applyProps(widget, props, dupeZ);
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         if (propBool(props, "enabled")) |en| ndMenuItemSetEnabled(widget, en);
     } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
-        if (propInt(props, "spacing")) |s| {
-            const box: *gtk.Box = @ptrCast(@alignCast(widget));
-            gtk.Box.setSpacing(box, @intCast(s));
+        if (propStr(props, "title")) |t| adw.PreferencesGroup.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
+        if (propStr(props, "description")) |d| adw.PreferencesGroup.setDescription(@ptrCast(@alignCast(widget)), if (d.len > 0) dupeZ(d).ptr else null);
+    } else if (std.mem.eql(u8, kind, "Row")) {
+        if (propStr(props, "title")) |t| adw.PreferencesRow.setTitle(@as(*adw.ActionRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));
+        if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(@ptrCast(@alignCast(widget)), dupeZ(s));
+    } else if (std.mem.eql(u8, kind, "SwitchRow")) {
+        if (propStr(props, "title")) |t| adw.PreferencesRow.setTitle(@as(*adw.SwitchRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));
+        if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(@as(*adw.SwitchRow, @ptrCast(@alignCast(widget))).as(adw.ActionRow), dupeZ(s));
+        if (propBool(props, "checked")) |c| {
+            const row: *adw.SwitchRow = @ptrCast(@alignCast(widget));
+            if ((adw.SwitchRow.getActive(row) != 0) != c) {
+                blockEcho(asObject(widget));
+                adw.SwitchRow.setActive(row, @intFromBool(c));
+                unblockEcho(asObject(widget));
+            }
         }
     } else if (std.mem.eql(u8, kind, "Switch")) {
         if (propBool(props, "checked")) |c| {
@@ -1936,6 +2235,18 @@ fn cbListBoxRowActivated(_: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyop
     if (emit) |f| f(node_id, "rowActivated", .{ .index = gtk.ListBoxRow.getIndex(row) });
 }
 
+fn cbRowActivated(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "activated", .{});
+}
+
+// notify:: handlers get (object, pspec, user_data).
+fn cbSwitchRowToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const row: *adw.SwitchRow = @ptrCast(@alignCast(obj));
+    if (emit) |f| f(node_id, "toggled", .{ .checked = adw.SwitchRow.getActive(row) != 0 });
+}
+
 // notify:: handlers get (object, pspec, user_data).
 fn cbSwitchToggled(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
     const node_id: u32 = @intCast(@intFromPtr(data));
@@ -2119,6 +2430,14 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         if (emit) |f| ndsourcetree_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal
+    } else if (std.mem.eql(u8, kind, "Row")) {
+        const obj_Row_activated = asObject(widget);
+        const hid_Row_activated = gobject.signalConnectData(obj_Row_activated, "activated", @ptrCast(&cbRowActivated), data, null, .{});
+        _ = hid_Row_activated;
+    } else if (std.mem.eql(u8, kind, "SwitchRow")) {
+        const obj_SwitchRow_toggled = asObject(widget);
+        const hid_SwitchRow_toggled = gobject.signalConnectData(obj_SwitchRow_toggled, "notify::active", @ptrCast(&cbSwitchRowToggled), data, null, .{});
+        noteSuppressible(obj_SwitchRow_toggled, hid_SwitchRow_toggled);
     } else if (std.mem.eql(u8, kind, "Switch")) {
         const obj_Switch_toggled = asObject(widget);
         const hid_Switch_toggled = gobject.signalConnectData(obj_Switch_toggled, "notify::active", @ptrCast(&cbSwitchToggled), data, null, .{});
@@ -2223,9 +2542,12 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
         gtk.ScrolledWindow.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
-        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));
-        _ = gtk.Notebook.appendPage(nb, child, null);
-        if (attached.tab_label) |tl| gtk.Notebook.setTabLabelText(nb, child, dupeZ(tl));
+        const stack = ndTabViewStack(parent) orelse return;
+        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else "";
+        const page = adw.ViewStack.addTitled(stack, child, null, title);
+        if (attached.tab_icon) |ic| {
+            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+        }
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));
     } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
@@ -2235,11 +2557,12 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
                 adw.OverlaySplitView.setSidebar(sv, child);
             } else if (std.mem.eql(u8, sl, "list")) {
                 adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
-            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
-                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)
-                else adw.OverlaySplitView.setContent(sv, child);
-            } else adw.OverlaySplitView.setContent(sv, child);
-        } else adw.OverlaySplitView.setContent(sv, child);
+            } else if (std.mem.eql(u8, sl, "inspector")) {
+                // Inspector pane: an end-positioned inner split's sidebar
+                // (AppKit peer: NSSplitViewItem inspector).
+                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);
+            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
+        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
         if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
@@ -2255,15 +2578,35 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (gobject.ext.isA(child, adw.HeaderBar)) {
             adw.ToolbarView.addTopBar(tv, child);
             ndtabs_gtk.onHeaderBarAttached(tv, child);
+        } else if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "top")) {
+                adw.ToolbarView.addTopBar(tv, child);
+            } else if (std.mem.eql(u8, sl, "bottom")) {
+                adw.ToolbarView.addBottomBar(tv, child);
+            } else adw.ToolbarView.setContent(tv, child);
         } else adw.ToolbarView.setContent(tv, child);
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
         ndMenubarAppendMenu(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
         ndMenuAppendItem(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
-        const box: *gtk.Box = @ptrCast(@alignCast(parent));
-        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent))
-        else gtk.Box.append(box, child);
+        const group: *adw.PreferencesGroup = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) != null) {
+            _ = gobject.Object.ref(asObject(child));
+            adw.PreferencesGroup.remove(group, child);
+            adw.PreferencesGroup.add(group, child);
+            gobject.Object.unref(asObject(child));
+        } else adw.PreferencesGroup.add(group, child);
+    } else if (std.mem.eql(u8, parent_kind, "Row")) {
+        const row: *adw.ActionRow = @ptrCast(@alignCast(parent));
+        gtk.Widget.setValign(child, .center);
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "prefix")) {
+                adw.ActionRow.addPrefix(row, child);
+            } else adw.ActionRow.addSuffix(row, child);
+        } else adw.ActionRow.addSuffix(row, child);
+    } else if (std.mem.eql(u8, parent_kind, "Clamp")) {
+        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
         ndMenuOwnerAppend(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
@@ -2315,10 +2658,13 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             gtk.Box.insertChildAfter(box, child, prev);
         }
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
-        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));
-        const pos = gtk.Notebook.pageNum(nb, b);
-        _ = gtk.Notebook.insertPage(nb, child, null, pos);
-        if (attached.tab_label) |tl| gtk.Notebook.setTabLabelText(nb, child, dupeZ(tl));
+        // `b` unused: AdwViewStack cannot insert at an index — append (see template comment).
+        const stack = ndTabViewStack(parent) orelse return;
+        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else "";
+        const page = adw.ViewStack.addTitled(stack, child, null, title);
+        if (attached.tab_icon) |ic| {
+            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+        }
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         // Grid children are position-addressed; sibling order is irrelevant.
         gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));
@@ -2329,11 +2675,10 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
                 adw.OverlaySplitView.setSidebar(sv, child);
             } else if (std.mem.eql(u8, sl, "list")) {
                 adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
-            } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
-                if (gobject.ext.isA(cur, adw.OverlaySplitView)) adw.OverlaySplitView.setContent(@ptrCast(@alignCast(cur)), child)
-                else adw.OverlaySplitView.setContent(sv, child);
-            } else adw.OverlaySplitView.setContent(sv, child);
-        } else adw.OverlaySplitView.setContent(sv, child);
+            } else if (std.mem.eql(u8, sl, "inspector")) {
+                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);
+            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
+        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
         if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
@@ -2345,10 +2690,23 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             else adw.HeaderBar.packStart(hb, child);
         } else adw.HeaderBar.packStart(hb, child);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
-        const box: *gtk.Box = @ptrCast(@alignCast(parent));
-        const prev = gtk.Widget.getPrevSibling(b);
-        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)
-        else gtk.Box.insertChildAfter(box, child, prev);
+        // AdwPreferencesGroup cannot insert at an index: a mid-list insert
+        // lands at the end (documented asymmetry; remount re-adds settle order).
+        const group: *adw.PreferencesGroup = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) != null) {
+            _ = gobject.Object.ref(asObject(child));
+            adw.PreferencesGroup.remove(group, child);
+            adw.PreferencesGroup.add(group, child);
+            gobject.Object.unref(asObject(child));
+        } else adw.PreferencesGroup.add(group, child);
+    } else if (std.mem.eql(u8, parent_kind, "Row")) {
+        const row: *adw.ActionRow = @ptrCast(@alignCast(parent));
+        gtk.Widget.setValign(child, .center);
+        if (attached.slot) |sl| {
+            if (std.mem.eql(u8, sl, "prefix")) {
+                adw.ActionRow.addPrefix(row, child);
+            } else adw.ActionRow.addSuffix(row, child);
+        } else adw.ActionRow.addSuffix(row, child);
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
         const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
@@ -2386,23 +2744,24 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
         gtk.ScrolledWindow.setChild(@ptrCast(@alignCast(parent)), null);
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
-        const nb: *gtk.Notebook = @ptrCast(@alignCast(parent));
-        const pos = gtk.Notebook.pageNum(nb, child);
-        if (pos >= 0) gtk.Notebook.removePage(nb, pos);
+        const stack = ndTabViewStack(parent) orelse return;
+        adw.ViewStack.remove(stack, child);
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         gtk.Grid.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "SplitView")) {
-        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
-        if (adw.OverlaySplitView.getSidebar(sv) == child) {
-            adw.OverlaySplitView.setSidebar(sv, null);
-        } else if (adw.OverlaySplitView.getContent(sv)) |cur| {
-            if (cur == child) {
-                adw.OverlaySplitView.setContent(sv, null);
-            } else if (gobject.ext.isA(cur, adw.OverlaySplitView)) {
-                const inner: *adw.OverlaySplitView = @ptrCast(@alignCast(cur));
-                if (adw.OverlaySplitView.getSidebar(inner) == child) adw.OverlaySplitView.setSidebar(inner, null)
-                else if (adw.OverlaySplitView.getContent(inner) == child) adw.OverlaySplitView.setContent(inner, null);
+        var host: *adw.OverlaySplitView = @ptrCast(@alignCast(parent));
+        while (true) {
+            if (adw.OverlaySplitView.getSidebar(host) == child) {
+                adw.OverlaySplitView.setSidebar(host, null);
+                break;
             }
+            const cur = adw.OverlaySplitView.getContent(host) orelse break;
+            if (cur == child) {
+                adw.OverlaySplitView.setContent(host, null);
+                break;
+            }
+            if (!gobject.ext.isA(cur, adw.OverlaySplitView)) break;
+            host = @ptrCast(@alignCast(cur));
         }
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);
@@ -2413,7 +2772,11 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
         // M13: item removal rebuilds on next refresh (v1 no-op)
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
-        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);
+        adw.PreferencesGroup.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "Row")) {
+        adw.ActionRow.remove(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "Clamp")) {
+        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), null);
     } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
         ndMenuOwnerRemove(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
@@ -2465,4 +2828,4 @@ pub const style_subkeys = [_]StyleSubDef{
     .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
     .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
 };
-pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline"};
+pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline", "large-title", "property", "round", "opaque", "devel", "icon-dropshadow", "lowres-icon"};

@@ -223,9 +223,16 @@ Attached props (set on children):
 | Prop | Type | Default |
 |---|---|---|
 | `tabLabel` | string | (empty) |
+| `tabIcon` | string | (empty) |
 
 Attached props apply at attach time only. Changing one after mount is a no-op. `selectedIndex` takes
 effect on update; initial page is 0.
+
+On Linux this renders as an `AdwViewSwitcher` over an `AdwViewStack` (the modern in-window view
+switcher), on macOS as an `NSTabView`. One documented asymmetry: `AdwViewStack` cannot insert a page
+at an index, so inserting a page between existing siblings lands it at the END on Linux
+(insertBefore degenerates to append); macOS honors the position. `tabIcon` names the page icon shown
+in the switcher on Linux; document-style tabs remain the `<window tabGroup>` path.
 
 ## Grid (`<grid>`)
 

@@ -14,6 +14,9 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `defaultWidth` | int | 480 | create |
 | `defaultHeight` | int | 320 | create |
 | `tabGroup` | string | none | create |
+| `toolbarStyle` | unified \| unifiedCompact \| expanded \| preference | unified | create |
+| `frameAutosaveName` | string | none | create |
+| `density` | standard \| compact | standard | create |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -24,6 +27,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `newTabRequested` | `onNewTabRequested` | data |
 | `closed` | `onClosed` | data |
 | `focused` | `onFocused` | checked |
+| `sizeChanged` | `onSizeChanged` | data |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
 
@@ -34,7 +38,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `orientation` | vertical \| horizontal | vertical | create |
-| `spacing` | int | 0 | createAndUpdate |
+| `spacing` | int | -1 | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -63,6 +67,9 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `labelAlign` | start \| center \| end | center | create |
 | `ellipsize` | bool | false | create |
 | `tooltip` | string | none | createAndUpdate |
+| `prominent` | bool | false | createAndUpdate |
+| `badge` | string | none | createAndUpdate |
+| `size` | small \| regular \| large | regular | createAndUpdate |
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -178,6 +185,9 @@ Automation role: `image`. Text source: none. Children: none.
 |---|---|---|---|
 | `path` | string | none | createAndUpdate |
 | `iconName` | string | none | createAndUpdate |
+| `symbolScale` | small \| medium \| large | medium | create |
+| `symbolWeight` | regular \| medium \| semibold \| bold | regular | create |
+| `symbolRenderingMode` | monochrome \| hierarchical \| multicolor | monochrome | create |
 | `testID` | string | none | meta |
 
 ## ScrollView (`<scrollview>`)
@@ -222,6 +232,7 @@ Attached props (set on children):
 | Prop | Type | Default |
 |---|---|---|
 | `tabLabel` | string |  |
+| `tabIcon` | string |  |
 
 Attached props apply at attach time only. Changing one after mount is a no-op.
 
@@ -254,6 +265,9 @@ Automation role: `list`. Text source: none. Children: none.
 |---|---|---|---|
 | `items` | stringList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -307,6 +321,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `sidebarWidth` | float | 0 | create |
 | `collapsed` | bool | false | createAndUpdate |
 | `listWidth` | float | 0 | create |
+| `breakpoint` | int | 0 | create |
 | `testID` | string | none | meta |
 
 Attached props (set on children):
@@ -324,6 +339,8 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `title` | string |  | create |
+| `subtitle` | string | none | createAndUpdate |
+| `showTitleButtons` | bool | true | create |
 | `canGoBack` | bool | false | createAndUpdate |
 | `canGoForward` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
@@ -347,7 +364,18 @@ Automation role: `group`. Text source: none. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
+| `topBarStyle` | flat \| raised \| raised-border | flat | create |
+| `bottomBarStyle` | flat \| raised \| raised-border | flat | create |
+| `extendContentToTopEdge` | bool | false | create |
 | `testID` | string | none | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `slot` | enum | content |
+
+Attached props apply at attach time only. Changing one after mount is a no-op.
 
 ## SearchInput (`<searchinput>`)
 
@@ -372,6 +400,9 @@ Automation role: `list`. Text source: none. Children: none.
 |---|---|---|---|
 | `items` | objectList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -390,6 +421,9 @@ Automation role: `tree`. Text source: none. Children: none.
 | `selectedId` | string |  | createAndUpdate |
 | `actionVisibility` | hover \| always | hover | create |
 | `indentationPerLevel` | int | 14 | create |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -426,6 +460,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 |---|---|---|---|
 | `label` | string |  | create |
 | `iconName` | string | none | create |
+| `iconVisible` | bool | false | create |
 | `accelerator` | string | none | create |
 | `role` | none \| separator \| about \| settings \| quit \| undo \| redo \| cut \| copy \| paste \| delete \| selectAll \| close \| minimize \| zoom \| fullscreen | none | create |
 | `enabled` | bool | true | createAndUpdate |
@@ -437,11 +472,61 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 
 ## SettingsGroup (`<settingsgroup>`)
 
-Automation role: `group`. Text source: none. Children: multi.
+Automation role: `group`. Text source: `title`. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `spacing` | int | 0 | createAndUpdate |
+| `title` | string |  | createAndUpdate |
+| `description` | string | none | createAndUpdate |
+| `testID` | string | none | meta |
+
+## Row (`<row>`)
+
+Automation role: `listitem`. Text source: `title`. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `title` | string |  | createAndUpdate |
+| `subtitle` | string | none | createAndUpdate |
+| `iconName` | string | none | create |
+| `activatable` | bool | false | create |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `activated` | `onActivate` | none |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `slot` | enum | suffix |
+
+Attached props apply at attach time only. Changing one after mount is a no-op.
+
+## SwitchRow (`<switchrow>`)
+
+Automation role: `switch`. Text source: `title`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `title` | string |  | createAndUpdate |
+| `subtitle` | string | none | createAndUpdate |
+| `checked` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `toggled` | `onToggled` | checked |
+
+## Clamp (`<clamp>`)
+
+Automation role: `group`. Text source: none. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `maximumSize` | int | 600 | create |
+| `tighteningThreshold` | int | 400 | create |
 | `testID` | string | none | meta |
 
 ## Switch (`<switch>`)
@@ -667,6 +752,9 @@ Automation role: `table`. Text source: none. Children: none.
 | `rows` | objectList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
 | `showRowSeparators` | bool | true | createAndUpdate |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -684,6 +772,9 @@ Automation role: `tree`. Text source: none. Children: none.
 | `nodes` | objectList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
 | `indentationPerLevel` | int | 16 | create |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -754,8 +845,8 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `fontSize` | int | 13 | create |
 | `fontFamily` | string | none | create |
 | `palette` | string | none | create |
-| `foreground` | string | #cccccc | create |
-| `background` | string | #000000 | create |
+| `foreground` | string |  | create |
+| `background` | string |  | create |
 | `cols` | int | 80 | create |
 | `rows` | int | 24 | create |
 | `remote` | bool | false | create |

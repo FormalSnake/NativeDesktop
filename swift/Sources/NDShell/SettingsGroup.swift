@@ -25,6 +25,8 @@ private struct NDSettingsGroupRow: NSViewRepresentable {
 
 private struct NDSettingsGroupSurface: View {
     let rows: [NSView]
+    let title: String
+    let subtitle: String
 
     var body: some View {
         Form {
@@ -32,6 +34,10 @@ private struct NDSettingsGroupSurface: View {
                 ForEach(Array(rows.enumerated()), id: \.element) { _, row in
                     NDSettingsGroupRow(view: row)
                 }
+            } header: {
+                if !title.isEmpty { Text(title) }
+            } footer: {
+                if !subtitle.isEmpty { Text(subtitle) }
             }
         }
         .formStyle(.grouped)
@@ -57,7 +63,15 @@ private struct NDSettingsGroupSurface: View {
 /// existing handles as native form rows.
 final class NDSettingsGroupView: NSStackView {
     private var rows: [NSView] = []
-    private lazy var host = NSHostingView(rootView: NDSettingsGroupSurface(rows: rows))
+    /// AdwPreferencesGroup parity: `title` renders as the Section header,
+    /// `description` as its footer text (set at create + applyProps).
+    var ndTitle: String = "" {
+        didSet { if ndTitle != oldValue { refresh() } }
+    }
+    var ndDescription: String = "" {
+        didSet { if ndDescription != oldValue { refresh() } }
+    }
+    private lazy var host = NSHostingView(rootView: NDSettingsGroupSurface(rows: rows, title: ndTitle, subtitle: ndDescription))
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -111,13 +125,23 @@ final class NDSettingsGroupView: NSStackView {
     /// vertical inset and makes every macOS row taller than System Settings.
     private func normalizeNativeRow(_ view: NSView) {
         ndSettingsGroupRows.insert(ObjectIdentifier(view))
+        // NDRowView/NDSwitchRowView own their internal layout — the shared
+        // box-child reconcile would fight their gravity constraints.
+        if view is NDRowView { return }
         guard let stack = view as? NSStackView else { return }
         stack.edgeInsets = .init()
         ndBoxReconcileChildren(stack)
     }
 
     private func refresh() {
-        host.rootView = NDSettingsGroupSurface(rows: rows)
+        host.rootView = NDSettingsGroupSurface(rows: rows, title: ndTitle, subtitle: ndDescription)
         invalidateIntrinsicContentSize()
     }
+}
+
+/// Generated SettingsGroup applyProps arm: title/description merged.
+func ndSettingsGroupApply(_ view: NSView, _ props: [String: Any]) {
+    guard let group = view as? NDSettingsGroupView else { return }
+    if let t = propStr(props, "title") { group.ndTitle = t }
+    if let d = propStr(props, "description") { group.ndDescription = d }
 }

@@ -36,7 +36,9 @@
     "accent", "success", "warning", "error",
     "boxed-list", "boxed-list-separate", "card", "activatable",
     "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd",
-    "dimmed", "background", "view", "frame", "compact", "menu", "inline"
+    "dimmed", "background", "view", "frame", "compact", "menu", "inline",
+    "large-title", "property", "round", "opaque", "devel",
+    "icon-dropshadow", "lowres-icon"
   ],
   "types": [
     {
@@ -120,6 +122,9 @@
         { "name": "defaultWidth", "type": "int", "default": 480, "appliesTo": "create" },
         { "name": "defaultHeight", "type": "int", "default": 320, "appliesTo": "create" },
         { "name": "tabGroup", "type": "string", "appliesTo": "create" },
+        { "name": "toolbarStyle", "type": "enum", "values": ["unified", "unifiedCompact", "expanded", "preference"], "default": "unified", "appliesTo": "create" },
+        { "name": "frameAutosaveName", "type": "string", "appliesTo": "create" },
+        { "name": "density", "type": "enum", "values": ["standard", "compact"], "default": "standard", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -128,7 +133,8 @@
         { "name": "saveFileResult", "ndpName": "onSaveFileResult", "payload": "data" },
         { "name": "newTabRequested", "ndpName": "onNewTabRequested", "payload": "data" },
         { "name": "closed", "ndpName": "onClosed", "payload": "data" },
-        { "name": "focused", "ndpName": "onFocused", "payload": "checked" }
+        { "name": "focused", "ndpName": "onFocused", "payload": "checked" },
+        { "name": "sizeChanged", "ndpName": "onSizeChanged", "payload": "data" }
       ],
       "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
       "automation": { "role": "window", "textFrom": "title" }
@@ -139,7 +145,7 @@
       "container": { "childModel": "multi" },
       "props": [
         { "name": "orientation", "type": "enum", "values": ["vertical", "horizontal"], "default": "vertical", "appliesTo": "create" },
-        { "name": "spacing", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "spacing", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -169,7 +175,10 @@
         { "name": "iconName", "type": "string", "appliesTo": "create" },
         { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" },
         { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
-        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" }
+        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "prominent", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "badge", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "size", "type": "enum", "values": ["small", "regular", "large"], "default": "regular", "appliesTo": "createAndUpdate" }
       ],
       "events": [
         { "name": "clicked", "ndpName": "onClick" },
@@ -285,6 +294,9 @@
       "props": [
         { "name": "path", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "symbolScale", "type": "enum", "values": ["small", "medium", "large"], "default": "medium", "appliesTo": "create" },
+        { "name": "symbolWeight", "type": "enum", "values": ["regular", "medium", "semibold", "bold"], "default": "regular", "appliesTo": "create" },
+        { "name": "symbolRenderingMode", "type": "enum", "values": ["monochrome", "hierarchical", "multicolor"], "default": "monochrome", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -330,7 +342,8 @@
       "container": {
         "childModel": "multi",
         "attachedProps": [
-          { "name": "tabLabel", "type": "string", "default": "" }
+          { "name": "tabLabel", "type": "string", "default": "" },
+          { "name": "tabIcon", "type": "string", "default": "" }
         ]
       },
       "props": [
@@ -365,6 +378,9 @@
       "props": [
         { "name": "items", "type": "stringList", "appliesTo": "createAndUpdate" },
         { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "emptyIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyTitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyDescription", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -416,13 +432,14 @@
       "container": {
         "childModel": "multi",
         "attachedProps": [
-          { "name": "slot", "type": "enum", "values": ["sidebar", "content", "list"], "default": "content" }
+          { "name": "slot", "type": "enum", "values": ["sidebar", "content", "list", "inspector"], "default": "content" }
         ]
       },
       "props": [
         { "name": "sidebarWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
         { "name": "collapsed", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "listWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
+        { "name": "breakpoint", "type": "int", "default": 0, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -439,6 +456,8 @@
       },
       "props": [
         { "name": "title", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "subtitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "showTitleButtons", "type": "bool", "default": true, "appliesTo": "create" },
         { "name": "canGoBack", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "canGoForward", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
@@ -452,8 +471,16 @@
     {
       "name": "ToolbarView",
       "intrinsic": "toolbarview",
-      "container": { "childModel": "multi" },
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "slot", "type": "enum", "values": ["top", "content", "bottom"], "default": "content" }
+        ]
+      },
       "props": [
+        { "name": "topBarStyle", "type": "enum", "values": ["flat", "raised", "raised-border"], "default": "flat", "appliesTo": "create" },
+        { "name": "bottomBarStyle", "type": "enum", "values": ["flat", "raised", "raised-border"], "default": "flat", "appliesTo": "create" },
+        { "name": "extendContentToTopEdge", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -481,6 +508,9 @@
       "props": [
         { "name": "items", "type": "objectList", "appliesTo": "createAndUpdate" },
         { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "emptyIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyTitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyDescription", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -499,6 +529,9 @@
         { "name": "selectedId", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "actionVisibility", "type": "enum", "values": ["hover", "always"], "default": "hover", "appliesTo": "create" },
         { "name": "indentationPerLevel", "type": "int", "default": 14, "appliesTo": "create" },
+        { "name": "emptyIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyTitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyDescription", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -539,6 +572,7 @@
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "create" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "iconVisible", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "accelerator", "type": "string", "appliesTo": "create" },
         { "name": "role", "type": "enum", "values": ["none", "separator", "about", "settings", "quit", "undo", "redo", "cut", "copy", "paste", "delete", "selectAll", "close", "minimize", "zoom", "fullscreen"], "default": "none", "appliesTo": "create" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
@@ -554,7 +588,56 @@
       "intrinsic": "settingsgroup",
       "container": { "childModel": "multi" },
       "props": [
-        { "name": "spacing", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "description", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [],
+      "automation": { "role": "group", "textFrom": "title" }
+    },
+    {
+      "name": "Row",
+      "intrinsic": "row",
+      "container": {
+        "childModel": "multi",
+        "attachedProps": [
+          { "name": "slot", "type": "enum", "values": ["prefix", "suffix"], "default": "suffix" }
+        ]
+      },
+      "props": [
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "subtitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "activatable", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "activated", "ndpName": "onActivate" }
+      ],
+      "automation": { "role": "listitem", "textFrom": "title" }
+    },
+    {
+      "name": "SwitchRow",
+      "intrinsic": "switchrow",
+      "container": null,
+      "props": [
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "subtitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "checked", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "toggled", "ndpName": "onToggled", "payload": "checked" }
+      ],
+      "automation": { "role": "switch", "textFrom": "title" }
+    },
+    {
+      "name": "Clamp",
+      "intrinsic": "clamp",
+      "container": { "childModel": "single" },
+      "props": [
+        { "name": "maximumSize", "type": "int", "default": 600, "appliesTo": "create" },
+        { "name": "tighteningThreshold", "type": "int", "default": 400, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -787,6 +870,9 @@
         { "name": "rows", "type": "objectList", "itemShape": "TableRow", "appliesTo": "createAndUpdate" },
         { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
         { "name": "showRowSeparators", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "emptyIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyTitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyDescription", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -804,6 +890,9 @@
         { "name": "nodes", "type": "objectList", "itemShape": "TreeNode", "appliesTo": "createAndUpdate" },
         { "name": "selectedIndex", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
         { "name": "indentationPerLevel", "type": "int", "default": 16, "appliesTo": "create" },
+        { "name": "emptyIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyTitle", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "emptyDescription", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -878,8 +967,8 @@
         { "name": "fontSize", "type": "int", "default": 13, "appliesTo": "create" },
         { "name": "fontFamily", "type": "string", "appliesTo": "create" },
         { "name": "palette", "type": "string", "appliesTo": "create" },
-        { "name": "foreground", "type": "string", "default": "#cccccc", "appliesTo": "create" },
-        { "name": "background", "type": "string", "default": "#000000", "appliesTo": "create" },
+        { "name": "foreground", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "background", "type": "string", "default": "", "appliesTo": "create" },
         { "name": "cols", "type": "int", "default": 80, "appliesTo": "create" },
         { "name": "rows", "type": "int", "default": 24, "appliesTo": "create" },
         { "name": "remote", "type": "bool", "default": false, "appliesTo": "create" },

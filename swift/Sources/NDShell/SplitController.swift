@@ -122,31 +122,73 @@ func ndInstallSplitAsWindowContent(_ split: NSSplitView, _ controller: NSSplitVi
     }
 }
 
-/// Wraps a pane's content in a flipped plain-NSView host pinned below the
-/// safe area (generated SplitView append/insertBefore arms). The
-/// NSSplitViewItem supplies the sidebar material/glass BEHIND this host, but
-/// nothing insets the content stack below the titlebar of a
-/// fullSizeContentView window on its own — this re-applies the same
-/// safe-area top pin the pre-glass wrappers had. A plain NSView host does
-/// not block the glass the way the old NSVisualEffectView wrapper did.
+/// A pane whose content root scrolls its own content: an NSScrollView, or a
+/// Box whose sole arranged subview is one. Such a pane may extend under the
+/// floating glass chrome — the scroll view insets its content via the safe
+/// area itself and AppKit draws the scroll edge effect under the glass.
+private func ndIsScrollShaped(_ view: NSView) -> Bool {
+    if view is NSScrollView { return true }
+    if let stack = view as? NSStackView, stack.arrangedSubviews.count == 1,
+       stack.arrangedSubviews[0] is NSScrollView {
+        return true
+    }
+    return false
+}
+
+/// Wraps a pane's content in a flipped plain-NSView host (generated
+/// SplitView append/insertBefore arms). The NSSplitViewItem supplies the
+/// sidebar material/glass BEHIND this host; a plain NSView host does not
+/// block the glass the way the old NSVisualEffectView wrapper did.
+///
+/// Two layouts (HIG Tahoe edge-to-edge layering):
+///  - Scroll-shaped content pins to the HOST EDGES inside an
+///    NSBackgroundExtensionView, so content scrolls under the floating
+///    glass toolbar (scroll edge effect) and its background mirrors into
+///    the unsafe regions. The extension view is nested INSIDE the flipped
+///    host — automation's y-order contract rides the host class, never
+///    swap it out (see NDPaneHostView).
+///  - Anything else keeps the safe-area pin: nothing insets a control
+///    stack below the titlebar of a fullSizeContentView window on its own,
+///    and edge-pinned controls rendered underneath the sidebar
+///    (title field poking out past the glass, owner-reported).
 func ndMakePaneViewController(_ content: NSView) -> NSViewController {
     let host = NDPaneHostView()
     host.translatesAutoresizingMaskIntoConstraints = false
     content.translatesAutoresizingMaskIntoConstraints = false
-    host.addSubview(content)
-    // ALL leading/trailing/top pins go through the safe-area guide, not the
-    // host edges: with the content item's automaticallyAdjustsSafeAreaInsets,
-    // the pane's FRAME extends under the floating glass sidebar (Tahoe
-    // layering — the editor background is what the glass blurs), but its
-    // LAYOUT must inset past it; edge-pinned content rendered underneath the
-    // sidebar (title field poking out past the glass, owner-reported).
-    // For the sidebar pane those insets are zero, so one form serves both.
-    NSLayoutConstraint.activate([
-        content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
-        content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
-        content.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-    ])
+    if ndIsScrollShaped(content) {
+        let extended = NSBackgroundExtensionView()
+        extended.translatesAutoresizingMaskIntoConstraints = false
+        // Manual placement: automatic placement would park the scroll view
+        // inside the safe area, exactly the inset-below-the-toolbar layout
+        // this branch exists to remove.
+        extended.automaticallyPlacesContentView = false
+        extended.contentView = content
+        host.addSubview(extended)
+        NSLayoutConstraint.activate([
+            extended.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            extended.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            extended.topAnchor.constraint(equalTo: host.topAnchor),
+            extended.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: extended.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: extended.trailingAnchor),
+            content.topAnchor.constraint(equalTo: extended.topAnchor),
+            content.bottomAnchor.constraint(equalTo: extended.bottomAnchor),
+        ])
+    } else {
+        host.addSubview(content)
+        // ALL leading/trailing/top pins go through the safe-area guide, not
+        // the host edges: with the content item's
+        // automaticallyAdjustsSafeAreaInsets, the pane's FRAME extends under
+        // the floating glass sidebar (Tahoe layering — the editor background
+        // is what the glass blurs), but its LAYOUT must inset past it. For
+        // the sidebar pane those insets are zero, so one form serves both.
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
+        ])
+    }
     let vc = NSViewController()
     vc.view = host
     return vc

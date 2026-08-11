@@ -30,6 +30,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
+const ndstyle = @import("style.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -135,6 +136,7 @@ pub fn createWindow(
     the_window: *?*gtk.Window,
     dupeZ: *const fn ([]const u8) [:0]const u8,
 ) !*gtk.Widget {
+    ndstyle.ensureBaseCss(); // display is live here; badge/size/density classes need it
     const group_name = tab_group orelse {
         const window = adw.ApplicationWindow.new(app);
         const win = window.as(gtk.Window);
@@ -470,6 +472,45 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
         _ = gtk.Widget.signals.destroy.connect(widget, ?*anyopaque, &onPlainWindowDestroy, null, .{});
         _ = gobject.signalConnectData(@ptrCast(@alignCast(widget)), "notify::is-active", @ptrCast(&onPlainWindowActive), null, null, .{});
     }
+    // sizeChanged: GTK4 keeps default-width/height synced to the live window
+    // size while mapped, so their notify is the resize signal. Connected on
+    // the OWNING window with the node handle as data (tab members share one
+    // scaffold; each tab node reports the shared size). Debounced — the
+    // notify fires per resize step. A tab dragged to another scaffold keeps
+    // reporting its original window's size (accepted: the handle rebinding
+    // is a drag-out edge; the next resize of the new window re-syncs apps
+    // that also listen there).
+    if (owningWindow(widget)) |win| {
+        _ = gobject.signalConnectData(@ptrCast(@alignCast(win)), "notify::default-width", @ptrCast(&cbWindowSizeNotify), widget, null, .{});
+        _ = gobject.signalConnectData(@ptrCast(@alignCast(win)), "notify::default-height", @ptrCast(&cbWindowSizeNotify), widget, null, .{});
+    }
+}
+
+const K_SIZE_DEBOUNCE = "nd-size-debounce";
+
+// notify:: handlers get (object, pspec, user_data).
+fn cbWindowSizeNotify(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const handle: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    if (getData(handle, K_SIZE_DEBOUNCE)) |raw| _ = glib.Source.remove(@intCast(@intFromPtr(raw)));
+    const id = glib.timeoutAdd(120, &cbEmitWindowSize, handle);
+    setData(handle, K_SIZE_DEBOUNCE, @ptrFromInt(@as(usize, id)));
+}
+
+fn cbEmitWindowSize(user_data: ?*anyopaque) callconv(.c) c_int {
+    const handle: *gtk.Widget = @ptrCast(@alignCast(user_data.?));
+    setData(handle, K_SIZE_DEBOUNCE, null);
+    const f = emit orelse return 0;
+    const node_id = binNodeId(handle) orelse return 0;
+    const win = owningWindow(handle) orelse return 0;
+    var w: c_int = 0;
+    var h: c_int = 0;
+    gtk.Window.getDefaultSize(win, &w, &h);
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "width", .{ .integer = w }) catch {};
+    payload.put(alloc, "height", .{ .integer = h }) catch {};
+    f(node_id, "sizeChanged", .{ .data = .{ .object = payload } });
+    return 0; // G_SOURCE_REMOVE
 }
 
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {

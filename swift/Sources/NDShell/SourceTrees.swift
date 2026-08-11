@@ -394,6 +394,7 @@ func makeSourceTree(_ props: [String: Any]) -> NSView {
     source.scrollView = scrollView
     sourceTreeDataSources[ObjectIdentifier(scrollView)] = source
 
+    ndEmptyStateApply(scrollView, props)
     ndSourceTreeSetNodes(scrollView, propObjArray(props, "nodes") ?? [])
     if let sel = propStr(props, "selectedId"), !sel.isEmpty { ndSourceTreeSetSelectedId(scrollView, sel) }
     return scrollView
@@ -405,6 +406,7 @@ func makeSourceTree(_ props: [String: Any]) -> NSView {
 /// is preserved by node id across the rebuild.
 func ndSourceTreeSetNodes(_ view: NSView, _ raw: [[String: Any]]) {
     guard let source = sourceTreeDataSource(for: view), let outlineView = source.outlineView else { return }
+    ndEmptyStateUpdate(view, isEmpty: raw.isEmpty)
     let prevSelectedID: String? = MainActor.assumeIsolated {
         (outlineView.item(atRow: outlineView.selectedRow) as? NDSourceTreeItem)?.nodeId
     }

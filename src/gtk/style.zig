@@ -18,6 +18,31 @@ pub fn init(allocator: std.mem.Allocator, err_fn: StyleErrorFn) void {
     ready = true;
 }
 
+// Framework base CSS for the ND-owned classes the generated arms add outside
+// the per-node style pipeline: Button.badge's capsule suffix, Button.size
+// metrics (AppKit peer: NSControl.controlSize), and Window.density=compact
+// (AppKit peer: prefersCompactControlSizeMetrics). Installed once at display
+// level; providers restyle retroactively, so a lazy install is safe.
+var base_installed = false;
+const nd_base_css =
+    \\.nd-badge { background: alpha(currentColor, 0.12); border-radius: 99px; padding: 1px 7px; font-size: 0.85em; font-weight: bold; }
+    \\button.compact { min-height: 24px; padding: 0 8px; }
+    \\button.large { min-height: 40px; padding: 0 18px; }
+    \\.nd-compact button { min-height: 26px; }
+    \\.nd-compact entry { min-height: 26px; }
+;
+
+/// Called from tabs.zig's createWindow (a live display is guaranteed there);
+/// a no-op after the first successful install.
+pub fn ensureBaseCss() void {
+    if (base_installed) return;
+    const display = gdk.Display.getDefault() orelse return;
+    const p = gtk.CssProvider.new();
+    gtk.CssProvider.loadFromString(p, nd_base_css);
+    gtk.StyleContext.addProviderForDisplay(display, p.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
+    base_installed = true;
+}
+
 fn findKey(name: []const u8) ?generated.StyleKeyDef {
     for (generated.style_keys) |k| {
         if (std.mem.eql(u8, k.name, name)) return k;
@@ -222,26 +247,47 @@ pub fn applyCssClasses(widget: *gtk.Widget, value: std.json.Value) void {
         defer gpa.free(z);
         if (present) {
             gtk.Widget.addCssClass(widget, z);
+            warnMistargetedClass(widget, name);
         } else {
             gtk.Widget.removeCssClass(widget, z);
         }
     }
+}
 
-    // libadwaita's `.boxed-list` styles a GtkListBox (`list.boxed-list`); on a
-    // plain GtkBox it draws nothing. Pair it with `.card` — which styles ANY
-    // widget as a rounded grouped container — so a `<box class="boxed-list">`
-    // renders as GNOME's grouped-list card, its `<separator>` children reading
-    // as the card's internal dividers. Emitted after the reconcile loop so it
-    // wins even when the app doesn't also request `card`; when `boxed-list` is
-    // later dropped, the loop above removes `card` (unless requested outright).
-    var boxed_list = false;
-    for (value.array.items) |item| {
-        if (item == .string and std.mem.eql(u8, item.string, "boxed-list")) {
-            boxed_list = true;
+/// (widget ptr ^ class index) already warned about — one ND_WARN per
+/// widget+class, not one per re-render.
+var mistarget_warned: std.AutoHashMapUnmanaged(usize, void) = .empty;
+
+/// Container-scoped libadwaita classes silently style NOTHING on the wrong
+/// widget type (`.navigation-sidebar` on a GtkBox was the canonical trap:
+/// the class only targets GtkListBox/GtkListView/GtkFlowBox/GtkGridView).
+/// Warn once so the mistake fails loudly instead of shipping as a no-op.
+fn warnMistargetedClass(widget: *gtk.Widget, name: []const u8) void {
+    const ok = if (std.mem.eql(u8, name, "navigation-sidebar"))
+        gobject.ext.isA(widget, gtk.ListBox) or gobject.ext.isA(widget, gtk.ListView) or
+            gobject.ext.isA(widget, gtk.FlowBox) or gobject.ext.isA(widget, gtk.GridView)
+    else if (std.mem.eql(u8, name, "boxed-list") or std.mem.eql(u8, name, "boxed-list-separate"))
+        gobject.ext.isA(widget, gtk.ListBox)
+    else if (std.mem.eql(u8, name, "menu"))
+        gobject.ext.isA(widget, gtk.Popover)
+    else if (std.mem.eql(u8, name, "inline"))
+        gobject.ext.isA(widget, gtk.SearchBar)
+    else
+        return;
+    if (ok) return;
+    var idx: usize = 0;
+    for (generated.css_class_spec, 0..) |n, i| {
+        if (std.mem.eql(u8, n, name)) {
+            idx = i;
             break;
         }
     }
-    if (boxed_list) gtk.Widget.addCssClass(widget, "card");
+    const key = @intFromPtr(widget) ^ idx;
+    if (mistarget_warned.contains(key)) return;
+    mistarget_warned.put(gpa, key, {}) catch {};
+    const instance: *gobject.TypeInstance = @ptrCast(@alignCast(widget));
+    const type_name = std.mem.span(gobject.typeNameFromInstance(instance));
+    std.debug.print("ND_WARN cssClass \"{s}\" has no effect on {s} — libadwaita only styles list widgets with it (use <sourcelist>/<sourcetree>/<settingsgroup> for native list chrome)\n", .{ name, type_name });
 }
 
 test "compileCss emits scoped block, splits margin out, rejects unknown key" {

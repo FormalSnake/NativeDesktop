@@ -1,6 +1,6 @@
 ---
 title: Form Controls
-description: ToggleButton, SegmentedControl, NumberInput, LinkButton, and LevelIndicator, five widgets for input shapes that Checkbox, Radio, and Slider don't cover.
+description: ToggleButton, SegmentedControl, NumberInput, LinkButton, and LevelIndicator — plus the boxed-list settings widgets SettingsGroup, Row, SwitchRow, and Clamp.
 ---
 
 Five widgets round out the input vocabulary beyond [Checkbox, Radio, Select, and
@@ -116,3 +116,40 @@ No events. It is display-only.
 
 See the [Widget Reference](/components/widget-reference/) for the generated prop tables and
 `examples/gallery/main.tsx`'s "Controls" tab for all five wired to live state together.
+
+## Boxed-list settings: SettingsGroup, Row, SwitchRow, Clamp
+
+Preference pages are built from four structural widgets instead of hand-rolled `<box>` +
+`<separator>` rows. On Linux they are the real libadwaita boxed-list stack (`AdwPreferencesGroup`,
+`AdwActionRow`, `AdwSwitchRow`, `AdwClamp`); on macOS a SwiftUI grouped `Form` hosts the same rows
+natively.
+
+```tsx
+<clamp maximumSize={560}>
+  <settingsgroup title="General" description="Applied at next launch.">
+    <switchrow title="Launch at login" checked={launch} onToggled={(e) => setLaunch(e.checked)} />
+    <row title="Default folder" subtitle="Where new documents land">
+      <select options={folders} selectedIndex={idx} onSelectionChanged={(e) => setIdx(e.index)} />
+    </row>
+    <row title="Check for updates" activatable onActivate={checkNow} />
+  </settingsgroup>
+</clamp>
+```
+
+- **`<settingsgroup>`** — `title` and `description` (both createAndUpdate) render as the group's
+  native heading and footer. Row children join the rounded list; any other child lands below it.
+  Reordering an already-mounted child settles in append order on Linux (`AdwPreferencesGroup` has
+  no insert-at-index).
+- **`<row>`** — `title`, `subtitle` (createAndUpdate), `iconName` (create), `activatable` (create;
+  fires `onActivate` on click). Children mount into slots: `slot="prefix"` leads the row,
+  the default `suffix` trails it. Suffix controls are vertically centered and keep their natural
+  size; a `<slider>` should set `style={{ hexpand: true }}` for a usable track.
+- **`<switchrow>`** — `title`/`subtitle` plus a controlled `checked` + `onToggled`, the boxed-list
+  form of `<switch>`.
+- **`<clamp>`** — single child, `maximumSize` (default 600) and `tighteningThreshold` (default 400,
+  Linux only): the content column fills the window up to the ceiling, then stays centered, so forms
+  don't stretch edge-to-edge when maximized.
+
+`examples/settings/main.tsx` is the reference composition. The remaining Adwaita row family
+(EntryRow, ComboRow, SpinRow, ExpanderRow) is planned; until then a `<row>` with a suffix
+`<textinput>`/`<select>`/`<numberinput>` covers the same ground.

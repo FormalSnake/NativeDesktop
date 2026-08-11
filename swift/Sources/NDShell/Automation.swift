@@ -8,6 +8,21 @@ import Foundation
 // framing/waitFor/SLO machinery is core-owned and starts answering
 // the moment these are wired into buildVTable().
 
+// MARK: - automation window policy
+
+/// NATIVE_AUTOMATION hosts opt their windows out of tiling window managers.
+/// Drive scripts assert defaultWidth/Height geometry, and a tiler (OmniWM on
+/// the dev box) retiles any standard resizable window ~200ms after present —
+/// measured: 1100x700 -> a 1008x1267 half-screen tile with no user input —
+/// turning every geometry gate into a race. The AXDialog subrole is the
+/// conventional "leave me floating" signal tilers honor. User-facing runs
+/// (no NATIVE_AUTOMATION) keep the standard subrole: being managed by the
+/// user's window manager is correct platform behavior, not a defect.
+func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
+    guard ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" else { return }
+    win.setAccessibilitySubrole(.dialog)
+}
+
 // MARK: - node_visible / node_bounds
 
 /// `visible` folds "mapped" into the same contract GTK's vtNodeVisible
@@ -32,7 +47,36 @@ import Foundation
        let win = overlay.ndHostWindow {
         return win.isVisible
     }
+    // A header button promoted into the window toolbar (HeaderBar.swift's
+    // system-drawn items) leaves the view hierarchy but stays the tracked
+    // model — visible while the current rebuild promoted it.
+    if let btn = view as? NDButton, ndToolbarPromotedItems[ObjectIdentifier(btn)] != nil {
+        return ndWindowToolbarManager?.ownerWindow()?.isVisible ?? false
+    }
     return !view.isHidden && view.window != nil
+}
+
+/// Frame (in the live content view's flipped space) of the internal control
+/// AppKit draws for a promoted toolbar button — located in the window's
+/// theme frame by TARGET identity (each promoted button has a unique
+/// NDToolbarItemTarget adapter, and the system copies the item's
+/// target/action onto its internal NSToolbarButton; measured on macOS 26).
+/// nil while the item sits in the overflow menu.
+@MainActor private func ndPromotedControlRect(for button: NDButton) -> NSRect? {
+    guard let adapter = ndToolbarItemTargets[ObjectIdentifier(button)],
+          let win = ndWindowToolbarManager?.ownerWindow(),
+          let theme = win.contentView?.superview,
+          let content = ndLiveContentView(ofWindow: win),
+          let control = ndFindControl(in: theme, target: adapter) else { return nil }
+    return control.convert(control.bounds, to: content)
+}
+
+@MainActor private func ndFindControl(in root: NSView, target: AnyObject) -> NSControl? {
+    for sub in root.subviews {
+        if let control = sub as? NSControl, control.target === target { return control }
+        if let found = ndFindControl(in: sub, target: target) { return found }
+    }
+    return nil
 }
 
 /// `bounds` = the view's frame converted into the window's content-view
@@ -77,6 +121,18 @@ import Foundation
         guard let live = ndLiveContentView(ofWindow: win) else { return false }
         live.layoutSubtreeIfNeeded()
         out = nd_rect(x: 0, y: 0, w: Int32(live.bounds.width), h: Int32(live.bounds.height))
+        return true
+    }
+    // Promoted toolbar button (see ndNodeVisible): geometry lives in the
+    // toolbar's internal control, not the detached tracked view. An item in
+    // overflow reports a nominal non-degenerate rect so checkActionable
+    // still admits it for semanticClick (menu-node precedent above).
+    if let btn = view as? NDButton, ndToolbarPromotedItems[ObjectIdentifier(btn)] != nil {
+        if let r = ndPromotedControlRect(for: btn) {
+            out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
+        } else {
+            out = nd_rect(x: 0, y: 0, w: 1, h: 1)
+        }
         return true
     }
     // Resolve the LIVE, flipped content — see
@@ -514,6 +570,9 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
     // NSSwitch is an NSControl rather than an NSButton despite sharing the
     // button state API, so classify it explicitly before the generic button.
     if view is NSSwitch { return "Switch" }
+    // SwitchRow subclasses Row (NDRowView) — check the subclass first.
+    if view is NDSwitchRowView { return "SwitchRow" }
+    if view is NDRowView { return "Row" }
     // NSPopUpButton is an NSButton subclass — must be checked before the
     // generic NSButton arm below, or every Select misclassifies as Button.
     if view is NSPopUpButton { return "Select" }
@@ -570,6 +629,28 @@ private func escapeJSONString(_ s: String) -> String {
     // deviation from GTK's fallback-to-first-row as SourceList above.
     if widgetKind(view) == "SourceTree" {
         _ = ndSourceTreeSemanticActivate(view)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    // SwitchRow click toggles like a user tap (row activation = its switch);
+    // Row click emits `activated` (the boxed-list row affordance).
+    if let row = view as? NDSwitchRowView {
+        row.toggle.state = row.toggle.state == .on ? .off : .on
+        ndEmitEvent(row.ndNodeID, "toggled", "{\"checked\":\(row.toggle.state == .on)}")
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    if let row = view as? NDRowView {
+        ndEmitEvent(row.ndNodeID, "activated", "{}")
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    // Promoted toolbar button: the tracked view is detached (performClick
+    // would try to highlight in a nil window) — fire its wired action with
+    // the button as sender, exactly what the toolbar item's adapter does.
+    if let btn = view as? NDButton, btn.window == nil,
+       ndToolbarPromotedItems[ObjectIdentifier(btn)] != nil {
+        if let action = btn.action { _ = NSApp.sendAction(action, to: btn.target, from: btn) }
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
@@ -658,6 +739,12 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         guard let boolValue = value as? Bool, let toggle = view as? NSSwitch else { return invalidValue(errOut, nodeID) }
         toggle.state = boolValue ? .on : .off
         EventDispatcher.shared.fireChecked(toggle)
+    case "SwitchRow":
+        guard let boolValue = value as? Bool, let row = view as? NDSwitchRowView else { return invalidValue(errOut, nodeID) }
+        row.toggle.state = boolValue ? .on : .off
+        // The switch's own action doesn't fire on programmatic writes —
+        // replay the row's emit exactly like a user toggle.
+        ndEmitEvent(row.ndNodeID, "toggled", "{\"checked\":\(boolValue)}")
     case "Slider":
         let num: Double?
         if let n = value as? NSNumber { num = n.doubleValue } else { num = nil }
@@ -766,6 +853,8 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         if let button = view as? NSButton { valueJson = button.state == .on ? "true" : "false" }
     case "Switch":
         if let toggle = view as? NSSwitch { valueJson = toggle.state == .on ? "true" : "false" }
+    case "SwitchRow":
+        if let row = view as? NDSwitchRowView { valueJson = row.toggle.state == .on ? "true" : "false" }
     case "Slider":
         if let slider = view as? NSSlider { valueJson = "\(slider.doubleValue)" }
     case "Select":

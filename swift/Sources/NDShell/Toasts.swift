@@ -217,7 +217,7 @@ final class NDToastOverlayView: NSView {
         let chrome: NSView
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
-            glass.cornerRadius = 14
+            glass.cornerRadius = NDRadius.overlay
             glass.contentView = content
             chrome = glass
         } else {
@@ -226,7 +226,7 @@ final class NDToastOverlayView: NSView {
             effect.blendingMode = .behindWindow
             effect.state = .active
             effect.wantsLayer = true
-            effect.layer?.cornerRadius = 14
+            effect.layer?.cornerRadius = NDRadius.overlay
             effect.layer?.masksToBounds = true
             content.translatesAutoresizingMaskIntoConstraints = false
             effect.addSubview(content)

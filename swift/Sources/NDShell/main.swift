@@ -47,6 +47,17 @@ nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 
+// Screenshot-harness appearance pin: render one appearance regardless of the
+// system setting (the visual acceptance captures light AND dark without
+// flipping the machine's preference).
+if let appearance = ProcessInfo.processInfo.environment["ND_APPEARANCE"] {
+    switch appearance {
+    case "light": app.appearance = NSAppearance(named: .aqua)
+    case "dark": app.appearance = NSAppearance(named: .darkAqua)
+    default: FileHandle.standardError.write("ND_WARN unknown ND_APPEARANCE \(appearance)\n".data(using: .utf8)!)
+    }
+}
+
 guard let ctx = nd_init() else {
     FileHandle.standardError.write("ND_RUNTIME_ERROR nd_init failed\n".data(using: .utf8)!)
     exit(1)

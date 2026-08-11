@@ -183,6 +183,27 @@ parent row (GtkListBox has no native outline affordance) and renders `captionIco
 second prefix icon; macOS sections have no disclosure triangle (native source-list group look) and
 inline the caption icon on the caption line.
 
+## Native empty states
+
+Every collection widget — `<sourcelist>`, `<listview>`, `<table>`, `<treeview>`, `<sourcetree>` —
+takes three optional createAndUpdate props: `emptyIconName`, `emptyTitle`, `emptyDescription`. When
+the item array is empty AND at least one of them is set, the widget shows platform empty-state
+chrome in place of the blank list (a compact `AdwStatusPage` on Linux, a centered
+icon/title/description stack on macOS) and swaps the real list back the moment items return:
+
+```tsx
+<table
+  columns={columns}
+  rows={rows}
+  emptyIconName="folder-open"
+  emptyTitle="No results"
+  emptyDescription="Try a broader filter."
+/>
+```
+
+Unset (the default) means no swap ever happens — existing lists are unaffected. This replaces the
+hand-composed `<statuspage>`-next-to-an-empty-list pattern.
+
 See `examples/gallery/main.tsx`'s "Table", "Tree" and "SourceTree" tabs for all three wired to full
 controlled state (including the JS-side sort), and the
 [Widget Reference](/components/widget-reference/) for the generated prop tables.

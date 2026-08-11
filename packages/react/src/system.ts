@@ -248,16 +248,22 @@ export const app = {
 
 export type Appearance = "dark" | "light";
 
+/** Result of `system.getAppearance` and payload of `onAppearanceChange`:
+ *  light/dark plus the OS accent as `#rrggbb` (AdwStyleManager accent-color
+ *  on Linux, `NSColor.controlAccentColor` on macOS). */
+export interface AppearanceInfo {
+  appearance: Appearance;
+  accentColor: string;
+}
+
 export const system = {
-  /** Reads the OS's current light/dark appearance. Default-granted. */
-  getAppearance(): Promise<Appearance> {
-    return call("system.getAppearance") as Promise<Appearance>;
+  /** Reads the OS's current light/dark appearance + accent color. Default-granted. */
+  getAppearance(): Promise<AppearanceInfo> {
+    return call("system.getAppearance") as Promise<AppearanceInfo>;
   },
-  /** Subscribes to system appearance changes. Returns an unsubscribe function. */
-  onAppearanceChange(handler: (appearance: Appearance) => void): () => void {
-    return subscribe("appearance", "system.onAppearanceChange", (data) =>
-      handler((data as { appearance: Appearance }).appearance),
-    );
+  /** Subscribes to system appearance/accent changes. Returns an unsubscribe function. */
+  onAppearanceChange(handler: (info: AppearanceInfo) => void): () => void {
+    return subscribe("appearance", "system.onAppearanceChange", (data) => handler(data as AppearanceInfo));
   },
 };
 

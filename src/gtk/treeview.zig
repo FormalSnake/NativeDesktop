@@ -12,6 +12,7 @@ const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const protocol = @import("../protocol.zig");
+const ndempty = @import("emptystate.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -59,6 +60,16 @@ const TreeData = struct {
     }
 };
 
+fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
+    const v = props orelse return null;
+    if (v != .object) return null;
+    const field = v.object.get(key) orelse return null;
+    return switch (field) {
+        .string => field.string,
+        else => null,
+    };
+}
+
 fn propArray(props: ?std.json.Value, key: []const u8) ?std.json.Array {
     const v = props orelse return null;
     if (v != .object) return null;
@@ -94,9 +105,11 @@ fn objBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
 }
 
 /// The tracked handle is the GtkScrolledWindow; GtkListView implements
-/// GtkScrollable, so it is a direct child (never viewport-wrapped).
+/// GtkScrollable, so it is a direct child (never viewport-wrapped). The
+/// empty-state registry wins while an AdwStatusPage is swapped in.
 fn innerList(widget: *gtk.Widget) ?*gtk.ListView {
     const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+    if (ndempty.innerOf(sw)) |inner| return @ptrCast(@alignCast(inner));
     const child = gtk.ScrolledWindow.getChild(sw) orelse return null;
     return @ptrCast(@alignCast(child));
 }
@@ -312,6 +325,10 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
 
     const sw = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(sw, lv.as(gtk.Widget));
+    ndempty.register(sw, lv.as(gtk.Widget));
+    ndempty.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
+    const n_nodes: usize = if (propArray(props, "nodes")) |arr| arr.items.len else 0;
+    ndempty.update(sw, n_nodes == 0);
     return sw.as(gtk.Widget);
 }
 
@@ -320,6 +337,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
     const lv = innerList(widget) orelse return;
     const lv_ptr = @intFromPtr(lv);
 
+    ndempty.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     if (propArray(props, "nodes")) |arr| {
         // Full rebuild: fresh TreeData + model chain; the OLD TreeData is
         // freed by the old model's DestroyNotify once setModel releases it.
@@ -330,6 +348,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
         gtk.ListView.setModel(lv, selection.as(gtk.SelectionModel));
         sync_depth -= 1;
         gobject.Object.unref(@ptrCast(@alignCast(selection))); // setModel refs; the view owns it now
+        ndempty.update(@ptrCast(@alignCast(widget)), arr.items.len == 0);
         const live = currentSelection(lv) orelse return;
         syncExpansion(live, tree);
         if (node_ids.get(lv_ptr)) |nid| connectSelection(live, nid);

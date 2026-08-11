@@ -73,6 +73,20 @@ final class PanedController: NSObject, NSSplitViewDelegate {
     /// value is unchanged (so no prop update arrives to restore it).
     /// Re-applies the last known fraction once both panes exist.
     func reapplyFraction() {
+        guard lastFraction != nil, split.subviews.count == 2 else { return }
+        // Deferred one runloop turn (capture-nothing idiom, see frameChanged):
+        // the structural arms call this mid-commit, when a freshly added pane
+        // (a nested split in particular) is still zero-sized — a synchronous
+        // setPosition against that half-built state re-enters NSSplitView
+        // layout and collapses BOTH panes to zero (measured). One turn later
+        // the split has tiled its subviews and the divider write is clean.
+        let key = ObjectIdentifier(split)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { ndPanedControllers[key]?.reapplyFractionNow() }
+        }
+    }
+
+    private func reapplyFractionNow() {
         guard let frac = lastFraction, split.subviews.count == 2 else { return }
         guard extent > 0 else { pendingFraction = frac; return }
         suppressed = true
@@ -80,10 +94,26 @@ final class PanedController: NSObject, NSSplitViewDelegate {
         suppressed = false
     }
 
-    @objc private func frameChanged() {
+    /// Applies (and clears) the stashed pending fraction, if geometry exists.
+    func applyPendingFraction() {
         guard let frac = pendingFraction, extent > 0 else { return }
         pendingFraction = nil
         setPositionFraction(frac)
+    }
+
+    @objc private func frameChanged() {
+        guard pendingFraction != nil, extent > 0 else { return }
+        // Deferred one runloop turn: a NESTED paned's first real frame
+        // arrives from inside its ancestor split's adjustSubviews pass, and
+        // a synchronous setPosition here re-enters NSSplitView layout —
+        // measured: both ancestor panes collapse to width 0. By the next
+        // turn the ancestor's pass has settled and the divider write is
+        // safe. Same capture-nothing dispatch idiom as scheduleRebuild:
+        // resolve the controller through the registry at fire time.
+        let key = ObjectIdentifier(split)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { ndPanedControllers[key]?.applyPendingFraction() }
+        }
     }
 
     /// Fires continuously while dragging (and once per programmatic write,
