@@ -11,7 +11,7 @@
 //     (GTK) / NSMenuItem validation (mac) blocks its onSelect, so a second
 //     enabled click yields count=2, never count=102. Contract: a disabled
 //     menuitem's click dispatches but its onSelect never fires.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

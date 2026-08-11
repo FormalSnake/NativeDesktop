@@ -110,6 +110,13 @@ final class EventDispatcher: NSObject {
         wiring[ObjectIdentifier(view)]?[name]
     }
 
+    /// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+    func purge(_ view: NSView) {
+        let key = ObjectIdentifier(view)
+        wiring[key] = nil
+        suppressed.remove(key)
+    }
+
     private func emit(_ view: NSView, name: String, json: String) {
         let key = ObjectIdentifier(view)
         guard !suppressed.contains(key), let w = wiring(for: view, name: name) else { return }

@@ -550,6 +550,14 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`) — a
+/// `<listview>` recycled onto a dead `<sourcelist>`'s address must not
+/// answer `widgetKind` as "SourceList" and route semantic actions through
+/// the wrong arm.
+@MainActor func ndAutomationPurge(_ view: NSView) {
+    buttonKindOverride[ObjectIdentifier(view)] = nil
+}
+
 /// Widget-kind lookup for the semantic-action dispatch (peer of GTK's
 /// `widgetKind`): the vtable call carries only the widget handle + node_id,
 /// not the tracked `widget_type` string (that lives in core-owned

@@ -49,7 +49,15 @@ export function seedPanes<T>(leaves: readonly T[], id?: (data: T, i: number) => 
     id: id ? id(data, i) : String(i + 1),
     data,
   }));
-  let counter = leaves.length + 1;
+  // Custom leaf ids can collide with ids minted later (`s${n}` below,
+  // `String(nextId)` in splitPane), so the counter starts past every numeric
+  // id actually issued — the same /^s?(\d+)$/ scan migratePanes uses.
+  let maxNumericId = 0;
+  for (const leaf of leafNodes) {
+    const match = /^s?(\d+)$/.exec(leaf.id);
+    if (match) maxNumericId = Math.max(maxNumericId, Number(match[1]));
+  }
+  let counter = Math.max(leaves.length, maxNumericId) + 1;
   function build(lo: number, hi: number): PaneNode<T> {
     if (hi - lo === 1) return leafNodes[lo]!;
     const mid = lo + Math.ceil((hi - lo) / 2);

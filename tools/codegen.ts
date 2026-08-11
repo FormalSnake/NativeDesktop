@@ -5556,7 +5556,7 @@ function genRpcTs(s: RpcSchema): string {
   let out = HEADER_TS;
   out += "// Single source of truth: schema/rpc.json — the Zig mirror is\n";
   out += "// src/generated/rpc.zig (consumed by src/automation.zig). Typed client:\n";
-  out += "// packages/mcp/src/socket.ts constrains AutomationClient.call with the\n";
+  out += "// packages/test/src/socket.ts constrains AutomationClient.call with the\n";
   out += "// RpcMethods map below, tRPC-style.\n\n";
   for (const t of s.types) {
     out += tsDocLine(t.doc);

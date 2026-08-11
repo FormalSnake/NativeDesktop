@@ -7,8 +7,8 @@ description: "@nativedesktop/test: launchApp/AppHandle — launch a host, connec
 `launchApp`/`AppHandle` API: spawn a host binary, wait for it to be ready, connect, and drive it
 with the same RPC surface that page documents — without hand-rolling process spawn, marker
 parsing, socket connect, or a `find`/`mustFind` tree walker in every script. It reuses
-`packages/mcp/src/socket.ts`'s `AutomationClient` for the wire framing (length-prefixed JSON-RPC
-2.0) rather than a second implementation.
+its own `src/socket.ts` `AutomationClient` for the wire framing (length-prefixed JSON-RPC
+2.0); `packages/mcp` imports it from here rather than keeping a second implementation.
 
 ```ts
 import { launchApp } from "@nativedesktop/test";

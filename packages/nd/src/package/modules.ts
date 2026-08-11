@@ -4,7 +4,7 @@
 // (node_modules/.bun/<pkg>/node_modules/<pkg> siblings), workspace symlinks,
 // and file: deps; replaces `bun install` inside the bundle.
 import { cpSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 
 interface QueueEntry {
   spec: string;
@@ -45,6 +45,20 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
   // First claim of a name wins the flat slot; a later claim with a different
   // realpath nests under the requiring package's own node_modules.
   const claimed = new Map<string, string>();
+  // Conflict copies already made, keyed by dest-relative slot. Consulted up
+  // the requirer chain (Node resolution order) so a dependency cycle whose
+  // version is already reachable stops instead of nesting forever.
+  const nested = new Map<string, string>();
+  const resolvedInDest = (spec: string, requirer: string): string | undefined => {
+    for (let dir = requirer; ; ) {
+      const hit = nested.get(join(dir, "node_modules", spec));
+      if (hit) return hit;
+      const cut = dir.lastIndexOf(`${sep}node_modules${sep}`);
+      if (cut === -1) break;
+      dir = dir.slice(0, cut);
+    }
+    return claimed.get(spec);
+  };
   mkdirSync(dest, { recursive: true });
 
   while (queue.length) {
@@ -66,7 +80,9 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
       continue;
     } else {
       if (!entry.requirer) throw new Error(`nd: conflicting versions of "${entry.spec}" among the app's direct dependencies`);
+      if (resolvedInDest(entry.spec, entry.requirer) === root) continue;
       destDir = join(entry.requirer, "node_modules", entry.spec);
+      nested.set(destDir, root);
     }
     cpSync(root, join(dest, destDir), { recursive: true, dereference: true, filter: skipNodeModules });
 
@@ -96,6 +112,14 @@ export function assertResolvableEntries(appRoot: string, names: string[]): void 
     try {
       Bun.resolveSync(name, appRoot);
     } catch {
+      // A package that declares no entry point at all (binary/asset carriers
+      // like the platform host packages) is legitimately unresolvable.
+      const pkg = JSON.parse(readFileSync(join(appRoot, "node_modules", name, "package.json"), "utf8")) as {
+        main?: string;
+        module?: string;
+        exports?: unknown;
+      };
+      if (pkg.main === undefined && pkg.module === undefined && pkg.exports === undefined) continue;
       throw new Error(
         `nd: bundled package "${name}" has no resolvable entry (its build output is missing). ` +
         `Run \`bun run build\` in ${name} and package again.`,

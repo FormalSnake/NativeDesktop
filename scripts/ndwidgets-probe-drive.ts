@@ -7,7 +7,7 @@
 // -32003, src/gtk/backend.zig's vtSemanticAction — so real onHoverChanged
 // interaction is verified on AppKit instead, where `hover` posts a real
 // mouseMoved).
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 import type { JsonNode, GetTreeResult } from "../packages/react/src/generated/rpc.ts";
 
 function find(node: JsonNode, testID: string): JsonNode | null {

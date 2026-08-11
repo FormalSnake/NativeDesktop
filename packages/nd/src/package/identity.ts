@@ -11,12 +11,21 @@ function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/**
+ * Replaces a plist key's <string> value, tolerating any whitespace between
+ * the tags (Xcode/plutil put the <string> on its own line). Throws when the
+ * key is absent so a custom plist can't ship silently unstamped.
+ */
+function stampPlistString(xml: string, key: string, value: string): string {
+  const re = new RegExp(`(<key>${key}</key>\\s*<string>)[^<]*(</string>)`);
+  if (!re.test(xml)) throw new Error(`nd: Info.plist has no <key>${key}</key> entry to stamp (add it to the mac.infoPlist file)`);
+  return xml.replace(re, `$1${escapeXml(value)}$2`);
+}
+
 /** Inject CFBundleURLTypes / CFBundleDocumentTypes / CFBundleIdentifier into an Info.plist's XML text. */
 export function injectInfoPlist(plistXml: string, app: AppIdentity | undefined): string {
   if (!app) return plistXml;
-  let out = app.id
-    ? plistXml.replace(/(<key>CFBundleIdentifier<\/key><string>)[^<]*(<\/string>)/, `$1${escapeXml(app.id)}$2`)
-    : plistXml;
+  let out = app.id ? stampPlistString(plistXml, "CFBundleIdentifier", app.id) : plistXml;
 
   let extra = "";
   if (app.urlSchemes?.length) {
@@ -152,9 +161,9 @@ export function buildInfoPlist(
     iconFile,
   });
   if (customXml) {
-    xml = xml.replace(/(<key>CFBundleExecutable<\/key><string>)[^<]*(<\/string>)/, `$1${escapeXml(identity.name)}$2`);
-    xml = xml.replace(/(<key>CFBundleShortVersionString<\/key><string>)[^<]*(<\/string>)/, `$1${identity.version}$2`);
-    xml = xml.replace(/(<key>CFBundleVersion<\/key><string>)[^<]*(<\/string>)/, `$1${identity.version}$2`);
+    xml = stampPlistString(xml, "CFBundleExecutable", identity.name);
+    xml = stampPlistString(xml, "CFBundleShortVersionString", identity.version);
+    xml = stampPlistString(xml, "CFBundleVersion", identity.version);
   }
   xml = injectInfoPlist(xml, {
     id: identity.id,

@@ -26,6 +26,15 @@ nonisolated(unsafe) var ndLayoutFlags: [ObjectIdentifier: NDLayoutFlags] = [:]
 /// of accumulating a duplicate every time style is re-applied.
 nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLayoutConstraint] = [:]
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`) for
+/// this file's registries (the divider-pin table is declared further down).
+func ndLayoutPurge(_ view: NSView) {
+    let id = ObjectIdentifier(view)
+    ndLayoutFlags[id] = nil
+    ndCrossAxisConstraints[id] = nil
+    ndBoxedListDividerPins[id] = nil
+}
+
 /// `NSButton` subclass carrying GTK-style `padding` — AppKit buttons have no
 /// content-inset API, so padding is folded into `intrinsicContentSize`
 /// instead (mirrors NDTextField below). `.rounded` bezels draw a fixed-height
@@ -45,6 +54,18 @@ final class NDButton: NSButton {
     /// momentary item (HeaderBar.swift's promotedItem) would hide its
     /// on/off state.
     var ndIsToggle = false
+
+    /// A promoted toolbar item snapshots tooltip (and the label derived from
+    /// it for icon-only buttons) at build time (HeaderBar.swift's
+    /// promotedItem) — a later tooltip update must rebuild that item or the
+    /// toolbar keeps showing and speaking the stale text for the session.
+    override var toolTip: String? {
+        didSet {
+            guard toolTip != oldValue,
+                  ndToolbarPromotedItems[ObjectIdentifier(self)] != nil else { return }
+            ndWindowToolbarManager?.reseedItem(for: self)
+        }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         ndIsSidebarRowModel ? nil : super.hitTest(point)

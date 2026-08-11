@@ -18,6 +18,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@nativedesktop/host": "workspace:*"
+    "@nativedesktop/host": "workspace:*",
+    "@nativedesktop/react": "workspace:*"
   }
 }

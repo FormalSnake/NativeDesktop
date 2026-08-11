@@ -13,5 +13,5 @@
   "publishConfig": { "access": "public" },
   "os": ["linux"],
   "cpu": ["x64"],
-  "files": ["bin"]
+  "files": ["bin", "LICENSE", "NOTICE"]
 }

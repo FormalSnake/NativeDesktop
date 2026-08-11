@@ -4,7 +4,7 @@
 // re-renders on a background tick, so this proves the routed palette actions
 // (type/click/setValue string|index|bool -> queryChanged/activate/submit) reach
 // React reliably under the same churn that broke Return/click before the fix.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

@@ -62,12 +62,26 @@ func ndCaptureWindowSCK(windowID: CGWindowID, to path: String) async -> Bool {
     final class Box: @unchecked Sendable {
         var done = false
         var ok = false
+        var timedOut = false
     }
     let box = Box()
+    // Capture to a sibling temp path and promote on the main thread only
+    // while the deadline hasn't passed: a capture that outlives the timeout
+    // (the TCC prompt blocking SCShareableContent on an ungranted machine)
+    // must not overwrite `path` AFTER the fallback ladder already wrote it
+    // and the RPC answered.
+    let tmpPath = path + ".sck-tmp"
     Task.detached {
-        let ok = await ndCaptureWindowSCK(windowID: windowID, to: path)
+        let ok = await ndCaptureWindowSCK(windowID: windowID, to: tmpPath)
         await MainActor.run {
-            box.ok = ok
+            if box.timedOut {
+                try? FileManager.default.removeItem(atPath: tmpPath)
+                return
+            }
+            if ok {
+                try? FileManager.default.removeItem(atPath: path)
+                box.ok = (try? FileManager.default.moveItem(atPath: tmpPath, toPath: path)) != nil
+            }
             box.done = true
         }
     }
@@ -75,5 +89,8 @@ func ndCaptureWindowSCK(windowID: CGWindowID, to path: String) async -> Bool {
     while !box.done && Date() < deadline {
         RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
     }
+    // Both sides of this flag run on the main thread, so the late capture
+    // sees it before it can touch `path`.
+    if !box.done { box.timedOut = true }
     return box.done && box.ok
 }

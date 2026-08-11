@@ -1,14 +1,14 @@
 // §1.4's launchApp/AppHandle: spawns a host binary with NATIVE_AUTOMATION=1,
-// waits for the ready markers on stderr, and connects packages/mcp/src/
-// socket.ts's AutomationClient (wrapped in client.ts's TimedClient) over the
-// parsed socket path. One AppHandle owns exactly one host process at a time;
+// waits for the ready markers on stderr, and connects socket.ts's
+// AutomationClient (wrapped in client.ts's TimedClient) over the parsed
+// socket path. One AppHandle owns exactly one host process at a time;
 // restart() tears it down and relaunches in place.
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Backend } from "@nativedesktop/host";
 import { resolveBackend, resolveHostBinary } from "@nativedesktop/host";
-import { AutomationClient } from "../../mcp/src/socket.ts";
+import { AutomationClient } from "./socket.ts";
 import type {
   DragParams,
   DragResult,
@@ -23,7 +23,7 @@ import type {
   WaitCondition,
   WaitForResult,
   WindowsResult,
-} from "../../react/src/generated/rpc.ts";
+} from "@nativedesktop/react/rpc";
 import { TimedClient } from "./client.ts";
 import { type DialogScript, dialogScriptEnv } from "./dialogs.ts";
 import { findAllNodes, findMatchingNode, findNode, resolveTarget, type Target } from "./query.ts";

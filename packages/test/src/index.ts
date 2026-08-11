@@ -1,6 +1,7 @@
 // @nativedesktop/test — §1.4: launchApp/AppHandle over the automation socket.
-// Reuses packages/mcp/src/socket.ts's AutomationClient verbatim (wrapped for
-// per-call timeouts in client.ts) rather than forking the framing code.
+// socket.ts's AutomationClient is the repo's ONE copy of the wire framing;
+// packages/mcp and the drive scripts import it from here rather than forking.
+export { AutomationClient } from "./socket.ts";
 export { launchApp, AppHandle, killAll } from "./launch.ts";
 export type { LaunchOptions } from "./launch.ts";
 
@@ -22,5 +23,5 @@ export { pngSize } from "./png.ts";
 export type { PngSize } from "./png.ts";
 
 // Tree types a caller needs to type find()/tree() results, re-exported so
-// nothing outside this package has to reach into packages/react/src/generated.
-export type { GetTreeResult, JsonNode } from "../../react/src/generated/rpc.ts";
+// nothing outside this package has to import @nativedesktop/react/rpc itself.
+export type { GetTreeResult, JsonNode } from "@nativedesktop/react/rpc";

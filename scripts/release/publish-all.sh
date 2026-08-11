@@ -17,6 +17,8 @@ for dir in \
   packages/host-linux-x64 \
   packages/host \
   packages/react \
+  packages/rpc \
+  packages/test \
   packages/native \
   packages/data \
   packages/panes \

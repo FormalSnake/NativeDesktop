@@ -64,6 +64,30 @@ export function socketTransport(target: { path: string } | { host: string; port:
     let sock: import("bun").Socket | undefined;
     let buffer = "";
     const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    // Outbound backpressure (the hazard runtime/ndp.ts documents): a Bun
+    // socket write can accept fewer bytes than given (or -1 while closing),
+    // and the unwritten remainder must be queued and flushed from `drain`,
+    // or it is silently lost and the NDJSON stream is mis-framed from that
+    // point on. A FIFO of whole frames — byte-encoded up front so the
+    // offset arithmetic survives multi-byte UTF-8 — keeps a second send()
+    // ordered behind a still-draining large frame.
+    const outbox: Uint8Array[] = [];
+    let outboxOffset = 0;
+    const pump = (s: import("bun").Socket): void => {
+      while (outbox.length > 0) {
+        const front = outbox[0]!;
+        const n = s.write(front.subarray(outboxOffset));
+        if (n <= 0) return; // buffer full (or closing); wait for the next drain
+        outboxOffset += n;
+        if (outboxOffset >= front.length) {
+          outbox.shift();
+          outboxOffset = 0;
+        } else {
+          return; // partial write; the rest goes out on drain
+        }
+      }
+    };
     const emitClose = (): void => {
       if (closed) return;
       closed = true;
@@ -85,6 +109,9 @@ export function socketTransport(target: { path: string } | { host: string; port:
           if (line.length > 0) handlers.onMessage(line);
         }
       },
+      drain(s: import("bun").Socket) {
+        if (!closed) pump(s);
+      },
       close() {
         emitClose();
       },
@@ -102,7 +129,9 @@ export function socketTransport(target: { path: string } | { host: string; port:
     connecting.catch(() => emitClose());
     return {
       send: (frame) => {
-        sock?.write(frame + "\n");
+        if (closed || !sock) return;
+        outbox.push(encoder.encode(frame + "\n"));
+        pump(sock);
       },
       close: () => {
         closed = true;

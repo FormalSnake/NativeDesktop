@@ -29,14 +29,14 @@ The macOS-only tools post real `NSEvent`s through the app's event queue; on GTK 
 
 ## Talking to the socket directly
 
-`packages/mcp/src/socket.ts`'s `AutomationClient` is the client-side pattern every
+`@nativedesktop/test`'s `AutomationClient` (`packages/test/src/socket.ts`) is the client-side pattern every
 `scripts/*-drive.ts` script in this repo uses, and is a reasonable template for a custom driver.
 `AutomationClient.call` is generic over the method names generated from `schema/rpc.json`, so the
 method name, its params, and its result type are all checked at compile time; a typo or a stale
 param shape is a `tsc` error, not a runtime surprise:
 
 ```ts
-import { AutomationClient } from "../packages/mcp/src/socket.ts"; // path relative to your script
+import { AutomationClient } from "@nativedesktop/test";
 
 const client = await AutomationClient.connect(); // reads ND_AUTOMATION_SOCKET, or pass a path
 await client.call("setValue", { ref, value: true });

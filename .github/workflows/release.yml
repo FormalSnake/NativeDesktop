@@ -105,6 +105,6 @@ jobs:
           cp artifacts/darwin-arm64/NDShell nd-shell
           cp artifacts/linux-x64/zig-out/bin/nd-hello nd-hello
           cp artifacts/linux-x64/nd-hello.ldd.txt .
-          gh release create "$GITHUB_REF_NAME" nd-shell nd-hello nd-hello.ldd.txt --generate-notes
+          gh release create "$GITHUB_REF_NAME" nd-shell nd-hello nd-hello.ldd.txt NOTICE --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

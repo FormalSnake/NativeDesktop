@@ -69,6 +69,11 @@ private final class NSTableCellField: NSTableCellView {
 // nothing else references it).
 nonisolated(unsafe) private var listDataSources: [ObjectIdentifier: ListViewDataSource] = [:]
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndListViewPurge(_ view: NSView) {
+    listDataSources[ObjectIdentifier(view)] = nil
+}
+
 /// `ndCreate`'s ListView arm (generated) calls this. Builds the
 /// NSScrollView + single-column NSTableView; the returned NSScrollView is
 /// the tracked `nd_widget` handle.

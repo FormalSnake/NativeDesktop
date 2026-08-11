@@ -114,16 +114,26 @@ export async function installLinuxIcon(identity: ResolvedIdentity, appDir: strin
     return;
   }
   if (ext !== ".png") throw new Error(`nd: unsupported linux icon source "${source}" (want .png or .svg)`);
-  const resizer = firstOnPath(["sips", "magick", "convert", "rsvg-convert"]);
+  // rsvg-convert is deliberately absent: it only rasterizes SVGs and this
+  // branch always feeds it a PNG.
+  const resizer = firstOnPath(["sips", "magick", "convert"]);
   if (!resizer) {
     console.error("ND_PACKAGE_ICON_SKIPPED reason=no-resizer");
     cpSync(src, rootIcon);
     return;
   }
-  for (const px of HICOLOR_SIZES) {
-    const dir = join(appdir, `usr/share/icons/hicolor/${px}x${px}/apps`);
-    mkdirSync(dir, { recursive: true });
-    await resizePng(resizer, src, px, join(dir, `${identity.slug}.png`));
+  try {
+    for (const px of HICOLOR_SIZES) {
+      const dir = join(appdir, `usr/share/icons/hicolor/${px}x${px}/apps`);
+      mkdirSync(dir, { recursive: true });
+      await resizePng(resizer, src, px, join(dir, `${identity.slug}.png`));
+    }
+  } catch (err) {
+    // A broken resizer degrades like a missing one: drop the (possibly
+    // partial) hicolor set and ship the root icon only.
+    rmSync(join(appdir, "usr/share/icons/hicolor"), { recursive: true, force: true });
+    console.error(String(err));
+    console.error("ND_PACKAGE_ICON_SKIPPED reason=resize-failed");
   }
   cpSync(src, rootIcon);
 }

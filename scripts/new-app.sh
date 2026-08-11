@@ -26,5 +26,17 @@ sed -i \
   -e "s#\"babel-plugin-nativedesktop\": \"[^\"]*\"#\"babel-plugin-nativedesktop\": \"file:${REL_PACKAGES}/babel-plugin-nativedesktop\"#" \
   "$DEST/package.json"
 
+# packages/nd itself depends on "@nativedesktop/host": "workspace:*", which
+# only resolves inside this monorepo's workspace. Reached via the file: edge
+# above from a destination outside it, that transitive spec can't resolve, so
+# pin it the same way with an override.
+DEST_PKG="$DEST/package.json" REL_PACKAGES="$REL_PACKAGES" bun -e '
+const path = process.env.DEST_PKG;
+const relPackages = process.env.REL_PACKAGES;
+const pkg = await Bun.file(path).json();
+pkg.overrides = { ...(pkg.overrides ?? {}), "@nativedesktop/host": `file:${relPackages}/host` };
+await Bun.write(path, JSON.stringify(pkg, null, 2) + "\n");
+'
+
 echo "Scaffolded $NAME at $DEST"
 echo "Next: cd $DEST && bun install && bun run dev"

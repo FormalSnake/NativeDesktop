@@ -25,6 +25,11 @@ nonisolated(unsafe) private var ndHoverTrackers: [ObjectIdentifier: NDHoverTrack
 /// Generated `ndConnectEvents` hover arm (Button/Box `onHoverChanged`, C4).
 /// `.inVisibleRect` keeps the tracked rect correct across resizes/reparenting
 /// with no `updateTrackingAreas` override needed.
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndHoverPurge(_ view: NSView) {
+    ndHoverTrackers[ObjectIdentifier(view)] = nil
+}
+
 func ndHoverConnect(_ view: NSView, nodeID: UInt32) {
     let tracker = NDHoverTracker(nodeID: nodeID)
     ndHoverTrackers[ObjectIdentifier(view)] = tracker

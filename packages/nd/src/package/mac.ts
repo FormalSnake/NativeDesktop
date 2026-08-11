@@ -14,6 +14,11 @@ import { ENTITLEMENTS_PLIST } from "./templates.ts";
 import { maybePublishUpdate } from "./updates.ts";
 import type { PackageOptions, PackageResult } from "./index.ts";
 
+/** Notarization decision: an explicit flag/config wins; the auto default needs credentials AND a signed bundle. */
+export function resolveNotarize(explicit: boolean | undefined, creds: boolean, signed: boolean): boolean {
+  return explicit ?? (creds && signed);
+}
+
 export async function packageMacApp(
   appDir: string,
   config: NativeDesktopConfig,
@@ -77,10 +82,12 @@ export async function packageMacApp(
   }
 
   // Notarization: explicit --notarize/--no-notarize/config wins; the default
-  // is auto (run only when all three Apple credentials are present).
+  // is auto (run only when all three Apple credentials are present AND the
+  // bundle was signed - Apple rejects unsigned submissions outright).
   const { APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD } = process.env;
   const creds = !!(APPLE_ID && APPLE_TEAM_ID && APPLE_APP_PASSWORD);
-  const notarize = options.notarize ?? mac?.notarize ?? creds;
+  const notarize = resolveNotarize(options.notarize ?? mac?.notarize, creds, sign !== null);
+  if (notarize && sign === null) throw new Error("nd: notarize requested but signing is disabled (--no-sign)");
   if (notarize && !creds) throw new Error("nd: notarize requested but APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD are not all set");
   if (notarize) {
     const zip = join(dist, `${identity.name}.zip`);
@@ -89,7 +96,8 @@ export async function packageMacApp(
     await $`xcrun stapler staple ${app}`;
     console.error(`ND_PACKAGE_NOTARIZE_OK ${app}`);
   } else {
-    console.error(`ND_PACKAGE_NOTARIZE_SKIPPED reason=${options.notarize === false || mac?.notarize === false ? "disabled" : "no-credentials"}`);
+    const reason = options.notarize === false || mac?.notarize === false ? "disabled" : sign === null ? "unsigned" : "no-credentials";
+    console.error(`ND_PACKAGE_NOTARIZE_SKIPPED reason=${reason}`);
   }
 
   const update = await maybePublishUpdate(config.package?.updates, {

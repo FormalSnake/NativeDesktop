@@ -157,6 +157,20 @@ describe("createStore", () => {
     expect(JSON.parse(readFileSync(join(dir, `${name}.json`), "utf8")).data.theme).toBe("second");
   });
 
+  test("exit flush persists a value whose queued async write has not landed yet", async () => {
+    const dir = freshDir();
+    const name = freshName();
+    const store = createStore<Settings>({ name, version: 1, defaults: DEFAULTS, dir, debounceMs: 1 });
+    await store.load();
+    store.set({ theme: "dark", count: 1 });
+    // Queue the async write exactly as the debounce timer would, then run the
+    // exit flush before the rename lands — the SIGTERM interleaving.
+    void store.flush();
+    (store as unknown as { writeSyncPending(): void }).writeSyncPending();
+    expect(JSON.parse(readFileSync(join(dir, `${name}.json`), "utf8")).data).toEqual({ theme: "dark", count: 1 });
+    await store.flush();
+  });
+
   test("flush() with nothing pending resolves without writing", async () => {
     const dir = freshDir();
     const name = freshName();

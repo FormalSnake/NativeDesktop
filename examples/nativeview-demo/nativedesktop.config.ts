@@ -1,4 +1,4 @@
-import { defineConfig } from "nd/config";
+import { defineConfig } from "@nativedesktop/cli/config";
 
 // nd dev/build run these with ND_NATIVE_PACKAGE set to the installed
 // @nativedesktop/native root and, on darwin, a cleaned Xcode toolchain env.

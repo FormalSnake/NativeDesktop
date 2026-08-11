@@ -339,16 +339,31 @@ export class RpcClient<C extends RpcContract> {
     return new Promise((resolve, reject) => {
       this.#setState(isReconnect ? "reconnecting" : "connecting");
       const session: Session = { transport: undefined as unknown as Transport, detached: false };
+      // An already-open transport (a child process's stdio, a test mock) may
+      // fire onOpen from inside the factory call, before `session.transport`
+      // or the connect timer exist — #handleOpen would then send the
+      // handshake through an undefined transport, and the resulting throw
+      // would ride the factory-failure branch below as a permanent dial
+      // failure. Events fired during the factory call are buffered and
+      // replayed once the session is fully wired.
+      let preWireBuffer: Array<() => void> | undefined = [];
+      const deliver = (event: () => void): void => {
+        if (preWireBuffer) preWireBuffer.push(event);
+        else event();
+      };
       const handlers: TransportHandlers = {
-        onOpen: () => {
-          if (!session.detached) this.#handleOpen(isReconnect, resolve, reject);
-        },
-        onMessage: (frame) => {
-          if (!session.detached) this.#handleMessage(frame);
-        },
-        onClose: () => {
-          if (!session.detached) this.#handleClose();
-        },
+        onOpen: () =>
+          deliver(() => {
+            if (!session.detached) this.#handleOpen(isReconnect, resolve, reject);
+          }),
+        onMessage: (frame) =>
+          deliver(() => {
+            if (!session.detached) this.#handleMessage(frame);
+          }),
+        onClose: () =>
+          deliver(() => {
+            if (!session.detached) this.#handleClose();
+          }),
       };
       let transport: Transport;
       try {
@@ -411,6 +426,14 @@ export class RpcClient<C extends RpcContract> {
         }
         rejectHandshake(new RpcError(`rpc connect timed out after ${this.#connectTimeoutMs}ms`));
       }, this.#connectTimeoutMs);
+
+      // Replay AFTER the reject/timer wiring above: a replayed onOpen with
+      // no handshake configured clears both on its way to ready, and wiring
+      // them afterwards would arm a connect timer against an already-ready
+      // session.
+      const replay = preWireBuffer;
+      preWireBuffer = undefined;
+      for (const event of replay) event();
     });
   }
 

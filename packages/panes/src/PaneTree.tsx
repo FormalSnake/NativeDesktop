@@ -65,12 +65,17 @@ export function PaneTree<T>(props: PaneTreeProps<T>): ReactNode {
         position={node.ratio}
         testID={testID ? `${testID}-split-${node.id}` : undefined}
         onPositionChanged={(e) => {
-          // Both backends enforce a native minimum pane extent, so a settled
-          // drag can never rest at or beyond the clamp bounds; an echo out
-          // there is a zero-size mid-layout artifact (structural commits
-          // racing the backend's debounced echo), not a drag. Feeding it to
-          // the model would collapse the pane on the next render.
-          if (e.position <= 0.05 || e.position >= 0.95) return;
+          // Exact 0/1 (or non-finite) is dropped: structural commits racing
+          // the backend's debounced echo report a zero-size mid-layout
+          // artifact at exactly those values, and feeding one to the model
+          // would collapse the pane on the next render. Anything inside
+          // (0, 1) is a settled drag and flows through — AppKit pins a
+          // 120pt minimum pane extent, but GTK only floors at the CHILD's
+          // own minimum size, so a min-size-zero child can rest out past
+          // the clamp bounds; setPaneRatio's clamp then updates the model
+          // and the position prop write snaps the native divider back to
+          // the bound instead of desyncing the two.
+          if (!Number.isFinite(e.position) || e.position <= 0 || e.position >= 1) return;
           const current = modelRef.current;
           // setPaneRatio returns the same reference when the clamped ratio is
           // unchanged; skipping onChange there is what stops the programmatic

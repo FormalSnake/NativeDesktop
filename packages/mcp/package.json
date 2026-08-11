@@ -6,6 +6,7 @@
   "bin": { "nd-mcp": "src/index.ts" },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@nativedesktop/test": "workspace:*",
     "zod": "4.4.3"
   }
 }

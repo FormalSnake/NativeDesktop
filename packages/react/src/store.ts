@@ -65,6 +65,11 @@ class StoreImpl<T> implements Store<T> {
   #subscribers = new Set<(value: T) => void>();
   #timer: ReturnType<typeof setTimeout> | undefined;
   #dirty = false;
+  // Set while a queued async write is not yet durable (rename not resolved);
+  // the exit flush must fire on this too, not just on #dirty — between the
+  // debounce timer firing and the rename landing, the value exists only in
+  // the write chain, and process.exit() would drop it.
+  #pendingSnapshot: string | undefined;
   // Serializes writes so an older snapshot can never land after a newer one.
   #writeChain: Promise<void> = Promise.resolve();
 
@@ -187,12 +192,16 @@ class StoreImpl<T> implements Store<T> {
   #queueWrite(): void {
     this.#dirty = false;
     const snapshot = this.#serialize();
+    this.#pendingSnapshot = snapshot;
     this.#writeChain = this.#writeChain
       .then(async () => {
         await mkdir(dirname(this.path), { recursive: true });
         const tmp = `${this.path}.tmp-${process.pid}`;
         await writeFile(tmp, snapshot);
         await rename(tmp, this.path);
+        // Only this link's own snapshot is durable now; a newer queued one
+        // (identity check) must keep the exit flush armed.
+        if (this.#pendingSnapshot === snapshot) this.#pendingSnapshot = undefined;
       })
       .catch((err) => {
         console.error(`[nd] store "${this.name}" write failed:`, err);
@@ -207,15 +216,19 @@ class StoreImpl<T> implements Store<T> {
   /** Exit-path flush: synchronous, no allocation of new timers, safe inside
    * a signal handler or the "exit" event. */
   writeSyncPending(): void {
-    if (!this.#loaded || !this.#dirty) return;
+    if (!this.#loaded || (!this.#dirty && this.#pendingSnapshot === undefined)) return;
     this.#dirty = false;
+    this.#pendingSnapshot = undefined;
     if (this.#timer) {
       clearTimeout(this.#timer);
       this.#timer = undefined;
     }
     try {
       mkdirSync(dirname(this.path), { recursive: true });
-      const tmp = `${this.path}.tmp-${process.pid}`;
+      // Distinct tmp name: an already-submitted async writeFile may still be
+      // mid-flight on the threadpool, and interleaving two writers on one
+      // tmp file could rename garbage over the real file.
+      const tmp = `${this.path}.tmp-exit-${process.pid}`;
       writeFileSync(tmp, this.#serialize());
       renameSync(tmp, this.path);
     } catch (err) {

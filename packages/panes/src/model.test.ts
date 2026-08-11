@@ -51,6 +51,15 @@ describe("seedPanes", () => {
     const m = seedPanes(["a", "b"], (_d, i) => `pane-${i}`);
     expect(paneLeaves(m).map((l) => l.id)).toEqual(["pane-0", "pane-1"]);
   });
+
+  test("numeric custom ids advance nextId past them, so splits mint fresh ids", () => {
+    const m = seedPanes(["a", "b"], (d) => (d === "a" ? "7" : "8"));
+    expect(paneLeaves(m).map((l) => l.id)).toEqual(["7", "8"]);
+    expect((m.root as PaneSplit<string>).id).toBe("s9");
+    expect(m.nextId).toBe(10);
+    const split = splitPane(m, "7", "horizontal", "c");
+    expect(paneLeaves(split).map((l) => l.id)).toEqual(["7", "10", "8"]);
+  });
 });
 
 describe("splitPane", () => {

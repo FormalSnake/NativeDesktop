@@ -4,7 +4,7 @@
 // Run with: nix develop -c bun test packages/mcp/
 
 import { test, expect, afterAll } from "bun:test";
-import { AutomationClient } from "./src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 function frame(json: string): Uint8Array {
   const body = new TextEncoder().encode(json);

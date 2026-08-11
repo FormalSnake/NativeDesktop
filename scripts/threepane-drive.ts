@@ -4,7 +4,7 @@
 // find scaffold). Proves the M13 Feature B three-pane SplitView: all three
 // panes (sidebar/list/content) are present, laid out left-to-right in that
 // order, and each is wide enough to be usable.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

@@ -6,7 +6,7 @@
 // with auto-dismiss, hover, keyboard typing + chords, and getTree's window
 // param. macOS-only legs (input synthesis is -32003 on GTK); run via
 // scripts/mac/mac-gestures.sh.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 import type { JsonNode, GetTreeResult } from "../packages/react/src/generated/rpc.ts";
 
 function find(node: JsonNode, testID: string): JsonNode | null {

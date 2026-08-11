@@ -461,7 +461,10 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
             sync_depth += 1;
             defer sync_depth -= 1;
             if (sid.len == 0) {
-                gtk.ListBox.unselectAll(box);
+                // unselectAll is a documented no-op in browse mode (which
+                // stays: it is the native sidebar behavior). selectRow(null)
+                // reaches the internal unselect that works in every mode.
+                gtk.ListBox.selectRow(box, null);
             } else if (rowForId(box, store, sid)) |row| {
                 gtk.ListBox.selectRow(box, row);
             }
@@ -575,7 +578,9 @@ pub fn semanticSelect(widget: *gtk.Widget, id: []const u8) bool {
     const box = innerListBox(widget) orelse return false;
     const store = stores.get(@intFromPtr(box)) orelse return false;
     if (id.len == 0) {
-        gtk.ListBox.unselectAll(box);
+        // Same browse-mode constraint as applyProps: selectRow(null) is the
+        // clear path that actually works; unselectAll no-ops in browse.
+        gtk.ListBox.selectRow(box, null);
         return true;
     }
     const row = rowForId(box, store, id) orelse return false;

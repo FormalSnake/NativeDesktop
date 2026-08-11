@@ -114,6 +114,21 @@ pub fn selectedTabContent(root: *gtk.Widget) ?*gtk.Widget {
     return adw.TabPage.getChild(page);
 }
 
+/// True when a page bin is its owning view's selected page (false once the
+/// page is gone or mid-close). Backend windowState answers per tab with it.
+pub fn tabIsSelected(bin: *gtk.Widget) bool {
+    const view = owningView(bin) orelse return false;
+    const page = adw.TabView.getSelectedPage(view) orelse return false;
+    return adw.TabPage.getChild(page) == bin;
+}
+
+/// The bin's AdwTabPage title. The scaffold window's own title tracks only
+/// the SELECTED tab, so per-tab probes must read the page's.
+pub fn tabTitle(bin: *gtk.Widget) ?[*:0]const u8 {
+    const view = owningView(bin) orelse return null;
+    return adw.TabPage.getTitle(adw.TabView.getPage(view, bin));
+}
+
 fn emitEmpty(node_id: u32, name: []const u8) void {
     if (emit) |f| f(node_id, name, .{ .data = .{ .object = .empty } });
 }
@@ -474,19 +489,34 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     }
     // sizeChanged: GTK4 keeps default-width/height synced to the live window
     // size while mapped, so their notify is the resize signal. Connected on
-    // the OWNING window with the node handle as data (tab members share one
-    // scaffold; each tab node reports the shared size). Debounced — the
-    // notify fires per resize step. A tab dragged to another scaffold keeps
+    // the OWNING window (tab members share one scaffold; each tab node
+    // reports the shared size), via signalConnectObject with the handle as
+    // the object: closing one tab finalizes its bin while the scaffold
+    // lives on, and a plain signalConnectData handler would keep firing on
+    // the freed handle. Debounced (the notify fires per resize step); the
+    // destroy handler below cancels a pending source so the timer can't
+    // outlive the handle either. A tab dragged to another scaffold keeps
     // reporting its original window's size (accepted: the handle rebinding
     // is a drag-out edge; the next resize of the new window re-syncs apps
     // that also listen there).
     if (owningWindow(widget)) |win| {
-        _ = gobject.signalConnectData(@ptrCast(@alignCast(win)), "notify::default-width", @ptrCast(&cbWindowSizeNotify), widget, null, .{});
-        _ = gobject.signalConnectData(@ptrCast(@alignCast(win)), "notify::default-height", @ptrCast(&cbWindowSizeNotify), widget, null, .{});
+        _ = gobject.signalConnectObject(@ptrCast(@alignCast(win)), "notify::default-width", @ptrCast(&cbWindowSizeNotify), @ptrCast(@alignCast(widget)), .{});
+        _ = gobject.signalConnectObject(@ptrCast(@alignCast(win)), "notify::default-height", @ptrCast(&cbWindowSizeNotify), @ptrCast(@alignCast(widget)), .{});
     }
+    _ = gtk.Widget.signals.destroy.connect(widget, ?*anyopaque, &onHandleDestroy, null, .{});
 }
 
 const K_SIZE_DEBOUNCE = "nd-size-debounce";
+
+/// Handle dispose (destroy always precedes finalize, on every teardown
+/// path): kill a pending size debounce so the 120 ms timer can't fire
+/// against a finalized handle.
+fn onHandleDestroy(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    if (getData(w, K_SIZE_DEBOUNCE)) |raw| {
+        _ = glib.Source.remove(@intCast(@intFromPtr(raw)));
+        setData(w, K_SIZE_DEBOUNCE, null);
+    }
+}
 
 // notify:: handlers get (object, pspec, user_data).
 fn cbWindowSizeNotify(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {

@@ -632,17 +632,28 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
 /// `windows`/`resolve` ranking. Walks to the handle's own GtkWindow root
 /// (a tab member's page-bin handle resolves to its CURRENT scaffold
 /// window). GTK draws no key/main distinction, so `is-active` fills both.
+/// Tab members answer per PAGE, not per scaffold: a background tab is not
+/// visible and never key, and its title is its AdwTabPage's. Otherwise
+/// every tab of a group would report the scaffold's identical state and
+/// `windows` could not tell them apart.
 fn semanticWindowState(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
     const root = gtk.Widget.getRoot(widget) orelse {
         result_json_out.* = mallocZ("{\"key\":false,\"main\":false,\"visible\":false,\"title\":null}");
         return 0;
     };
     const win: *gtk.Window = @ptrCast(@alignCast(root));
-    const active = gtk.Window.isActive(win) != 0;
-    const visible = gtk.Widget.getVisible(win.as(gtk.Widget)) != 0;
+    var active = gtk.Window.isActive(win) != 0;
+    var visible = gtk.Widget.getVisible(win.as(gtk.Widget)) != 0;
+    var title: ?[*:0]const u8 = gtk.Window.getTitle(win);
+    if (ndtabs_gtk.isTabBin(widget)) {
+        const selected = ndtabs_gtk.tabIsSelected(widget);
+        active = active and selected;
+        visible = visible and selected;
+        if (ndtabs_gtk.tabTitle(widget)) |t| title = t;
+    }
     var title_json: []const u8 = "null";
     var owned = false;
-    if (gtk.Window.getTitle(win)) |t| {
+    if (title) |t| {
         if (std.json.Stringify.valueAlloc(arena, std.mem.span(t), .{}) catch null) |tj| {
             title_json = tj;
             owned = true;

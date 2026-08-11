@@ -4,34 +4,14 @@
 // pinned-dispatcher contract for `nd dev` hot re-eval).
 
 import { useMemo, useSyncExternalStore } from "@nativedesktop/react";
-import type { RpcClient, RpcContract, RpcState } from "./client.ts";
+import type { RpcClient, RpcContract } from "./client.ts";
+import { createRpcStatusStore } from "./status-store.ts";
+import type { RpcStatus } from "./status-store.ts";
 
-export interface RpcStatus {
-  state: RpcState;
-  attempt: number;
-  nextRetryInMs: number | undefined;
-  detail: string | undefined;
-}
+export type { RpcStatus } from "./status-store.ts";
 
-/** Subscribes a component to the client's connection status. The snapshot is
- * rebuilt inside the state-change callback, where `attempt`/`nextRetryInMs`
- * are guaranteed to already reflect the transition being notified. */
+/** Subscribes a component to the client's connection status. */
 export function useRpcStatus<C extends RpcContract>(client: RpcClient<C>): RpcStatus {
-  const source = useMemo(() => {
-    let snapshot: RpcStatus = {
-      state: client.state,
-      attempt: client.attempt,
-      nextRetryInMs: client.nextRetryInMs,
-      detail: undefined,
-    };
-    return {
-      subscribe: (onChange: () => void) =>
-        client.onStateChange((state, detail) => {
-          snapshot = { state, attempt: client.attempt, nextRetryInMs: client.nextRetryInMs, detail };
-          onChange();
-        }),
-      get: () => snapshot,
-    };
-  }, [client]);
+  const source = useMemo(() => createRpcStatusStore(client), [client]);
   return useSyncExternalStore(source.subscribe, source.get);
 }

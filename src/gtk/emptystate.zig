@@ -23,6 +23,7 @@ const Entry = struct {
     title: ?[:0]u8 = null,
     desc: ?[:0]u8 = null,
     swapped: bool = false,
+    empty: bool = false, // last emptiness `update` saw, so configure alone can re-swap
 };
 
 var entries: std.AutoHashMapUnmanaged(usize, *Entry) = .empty;
@@ -64,6 +65,10 @@ pub fn configure(sw: *gtk.ScrolledWindow, icon: ?[]const u8, title: ?[]const u8,
     if (title) |v| setStr(&e.title, v);
     if (desc) |v| setStr(&e.desc, v);
     if (e.page) |p| applyToPage(e, p);
+    // A diffed update can carry ONLY empty-* props (item array untouched),
+    // which still flips the swap decision: re-run it against the emptiness
+    // the last item update recorded.
+    update(sw, e.empty);
 }
 
 fn configured(e: *Entry) bool {
@@ -81,6 +86,7 @@ fn applyToPage(e: *Entry, page: *adw.StatusPage) void {
 /// child; the registry's own refs on inner/page keep both alive across swaps.
 pub fn update(sw: *gtk.ScrolledWindow, is_empty: bool) void {
     const e = entries.get(@intFromPtr(sw)) orelse return;
+    e.empty = is_empty;
     if (is_empty and configured(e)) {
         if (e.swapped) return;
         const page = e.page orelse blk: {

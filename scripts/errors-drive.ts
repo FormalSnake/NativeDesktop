@@ -14,7 +14,7 @@
 //   --overlay-check: assert nd-overlay-error shows the sync throw's message,
 //                    NOT the earlier non-fatal one (the no-stash rule) ->
 //                    ERRORS_OVERLAY_OK.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

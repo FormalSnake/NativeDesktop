@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { Backend } from "@nativedesktop/host";
-import type { ScreenshotResult } from "../../react/src/generated/rpc.ts";
+import type { ScreenshotResult } from "@nativedesktop/react/rpc";
 import { pngSize } from "./png.ts";
 
 export interface ScreenshotOptions {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // scripts/m5b-drive.ts — drives the gallery over the automation socket:
 // setValue/type/scroll semantic actions -> React state round-trips -> waitFor.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

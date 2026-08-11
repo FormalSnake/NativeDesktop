@@ -10,6 +10,11 @@ func ndUsesNativeSettingsInsets(_ view: NSView) -> Bool {
     view is NDSettingsGroupView || ndSettingsGroupRows.contains(ObjectIdentifier(view))
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndSettingsGroupPurge(_ view: NSView) {
+    ndSettingsGroupRows.remove(ObjectIdentifier(view))
+}
+
 /// Bridges an existing React-owned AppKit view into a native SwiftUI form row.
 /// SwiftUI controls only placement: identity, props, and event handlers remain
 /// attached to the original `NSView` instance.

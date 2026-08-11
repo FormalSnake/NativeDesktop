@@ -17,6 +17,14 @@ private final class NDEmptyStateEntry {
 
 nonisolated(unsafe) private var ndEmptyStates: [ObjectIdentifier: NDEmptyStateEntry] = [:]
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`) — a
+/// recycled scroll-view address must not inherit the dead widget's
+/// empty-state text, nor its `overlay` (still a subview of the dead view,
+/// so `refresh` reusing it would never show anything).
+func ndEmptyStatePurge(_ view: NSView) {
+    ndEmptyStates[ObjectIdentifier(view)] = nil
+}
+
 private func entry(for view: NSView) -> NDEmptyStateEntry {
     let key = ObjectIdentifier(view)
     if let existing = ndEmptyStates[key] { return existing }

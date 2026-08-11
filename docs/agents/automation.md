@@ -3,7 +3,7 @@
 Ground truth for the method surface, param/result shapes, and error codes below is
 `schema/rpc.json` (M8-D8), the single source of truth `tools/codegen.ts` compiles into both
 `src/generated/rpc.zig` (consumed by `src/automation.zig`'s dispatch) and
-`packages/react/src/generated/rpc.ts` (consumed by `packages/mcp/src/socket.ts`'s typed
+`packages/react/src/generated/rpc.ts` (consumed by `packages/test/src/socket.ts`'s typed
 `AutomationClient.call<M>`). A method/param/result rename in the schema is a compile error on
 whichever side still references the old shape instead of a silent wire mismatch, the same
 schema-to-dual-codegen pattern already used for `schema/widgets.json`. This doc is a
@@ -78,7 +78,7 @@ above:
 - `nd_wait_for({textContains?, refVisible?, timeoutMs?})` → `waitFor`
 
 `setValue`/`type`/`scroll` exist on the raw socket but do not yet have MCP tool wrappers; drive
-them by talking to the automation socket directly (see `packages/mcp/src/socket.ts`'s
+them by talking to the automation socket directly (see `packages/test/src/socket.ts`'s
 `AutomationClient` for the client-side pattern, used by every `scripts/*-drive.ts` script).
 `AutomationClient.call<M extends RpcMethodName>(method, ...params): Promise<RpcResult<M>>` is
 schema-typed, tRPC-style (M8-D8): the method name, its params shape, and its result type are all

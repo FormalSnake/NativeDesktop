@@ -26,6 +26,17 @@ test("show() stores data; click echoes it once and deletes the entry", async () 
   expect(seen[1]).toEqual([id, undefined]);
 });
 
+test("every onClick subscriber sees the payload, not just the first", async () => {
+  const id = await notifications.show({ title: "t", data: { run: 42 } });
+  const first: unknown[] = [];
+  const second: unknown[] = [];
+  notifications.onClick((e) => first.push(e.data));
+  notifications.onClick((e) => second.push(e.data));
+  dispatchSystemEvent("notification.click", { id });
+  expect(first).toEqual([{ run: 42 }]);
+  expect(second).toEqual([{ run: 42 }]);
+});
+
 test("a notification shown without data clicks through with data absent", async () => {
   const id = await notifications.show({ title: "plain" });
   let got: { id: string; data?: unknown } | undefined;

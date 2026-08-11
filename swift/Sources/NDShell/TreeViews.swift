@@ -111,6 +111,11 @@ private func treeDataSource(for view: NSView) -> NDTreeDataSource? {
     treeDataSources[ObjectIdentifier(view)]
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndTreeViewPurge(_ view: NSView) {
+    treeDataSources[ObjectIdentifier(view)] = nil
+}
+
 /// `ndCreate`'s TreeView arm (generated) calls this.
 func makeTreeView(_ props: [String: Any]) -> NSView {
     let outlineView = NSOutlineView()

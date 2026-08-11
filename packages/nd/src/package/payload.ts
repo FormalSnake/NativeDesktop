@@ -2,7 +2,7 @@
 // (Resources/app on mac, AppDir/app on linux). The app root mirrors the
 // configured workspaceRoot, so the app's own files land at their
 // workspace-relative path and relative imports keep resolving packaged.
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { buildNativePlugins, type NativeDesktopConfig, type PackageConfig } from "../config.ts";
 import type { ResolvedIdentity } from "./identity.ts";
@@ -48,6 +48,30 @@ export interface PayloadOptions {
 
 const skipNodeModules = (src: string) => basename(src) !== "node_modules";
 
+/**
+ * Copies a payload tree without ever descending into the bundle output
+ * (`appRoot`), which nests inside the copied tree under the default config
+ * (compile outDir == package outDir == "dist"). cpSync refuses a destination
+ * inside its source outright, so that case walks the top level by hand.
+ */
+function copyPayloadTree(src: string, dest: string, appRoot: string, filter: (p: string) => boolean): void {
+  const bundle = resolve(appRoot);
+  const containsBundle = (p: string) => {
+    const r = resolve(p);
+    return r === bundle || bundle.startsWith(r + sep);
+  };
+  if (!containsBundle(src)) {
+    cpSync(src, dest, { recursive: true, dereference: true, filter });
+    return;
+  }
+  mkdirSync(dest, { recursive: true });
+  for (const name of readdirSync(src)) {
+    const child = join(src, name);
+    if (!filter(child) || containsBundle(child)) continue;
+    cpSync(child, join(dest, name), { recursive: true, dereference: true, filter });
+  }
+}
+
 async function runCompile(appDir: string, script: string): Promise<void> {
   const proc = Bun.spawn(["bun", "run", script], {
     cwd: appDir,
@@ -87,13 +111,13 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
   mkdirSync(destAppDir, { recursive: true });
   const entryDir = entry.includes("/") ? entry.split("/")[0]! : null;
   if (entryDir) {
-    cpSync(join(appDir, entryDir), join(destAppDir, entryDir), { recursive: true, dereference: true, filter: skipNodeModules });
+    copyPayloadTree(join(appDir, entryDir), join(destAppDir, entryDir), o.appRoot, skipNodeModules);
   } else {
     // Root-level entry: ship the whole app dir (minus node_modules and any
     // build output nested inside it, which would recurse into the copy).
     const bundleOut = resolve(workspaceRoot, pkg.outDir ?? "dist");
     const skip = (src: string) => skipNodeModules(src) && resolve(src) !== bundleOut;
-    cpSync(appDir, destAppDir, { recursive: true, dereference: true, filter: skip });
+    copyPayloadTree(appDir, destAppDir, o.appRoot, skip);
   }
   cpSync(join(appDir, "package.json"), join(destAppDir, "package.json"));
 

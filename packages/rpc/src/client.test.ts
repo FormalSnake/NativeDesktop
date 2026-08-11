@@ -51,6 +51,29 @@ describe("RpcClient", () => {
     client.close();
   });
 
+  test("a transport that opens synchronously inside the factory still handshakes", async () => {
+    // Stdio-shaped: the pipe is already open, so onOpen fires during the
+    // factory call, before the client has stored the session/transport.
+    const sent: string[] = [];
+    let push!: (frame: string) => void;
+    const client = new RpcClient<RpcContract>({
+      transport: (handlers) => {
+        push = (frame) => handlers.onMessage(frame);
+        handlers.onOpen();
+        return { send: (f) => sent.push(f), close: () => {} };
+      },
+      handshake: { method: "hello", params: { token: "t" } },
+      connectTimeoutMs: 100,
+    });
+    const p = client.connect();
+    const hello = JSON.parse(sent[0]!) as { id: number; method: string };
+    expect(hello.method).toBe("hello");
+    push(JSON.stringify({ jsonrpc: "2.0", id: hello.id, result: { ok: true } }));
+    expect(await p).toEqual({ ok: true });
+    expect(client.state).toBe("ready");
+    client.close();
+  });
+
   test("a drop mid-handshake does not emit offline while retryForever", async () => {
     const ft = fakeTransport();
     const client = makeClient(ft);

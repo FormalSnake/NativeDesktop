@@ -179,6 +179,14 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         scheduleRebuild()
     }
 
+    /// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`):
+    /// the weak `view` self-heals on rebuild, but a recycled address BEFORE
+    /// a rebuild would hand the new owner the dead entry (nil view, stale
+    /// children) and its menu would never be assigned.
+    func purgeOwner(_ view: NSView) {
+        owners[ObjectIdentifier(view)] = nil
+    }
+
     /// Coalesces bursts of menu structural ops within one commit into a single
     /// rebuild on the next main-queue turn (the NDToolbarManager idiom: reach
     /// the sole manager via the global, so nothing non-Sendable is captured).

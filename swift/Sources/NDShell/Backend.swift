@@ -316,11 +316,65 @@ func buildVTable() -> nd_backend {
         let widgetBits = Int(bitPattern: w)
         MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
+            let view = Unmanaged<NSView>.fromOpaque(widgetPtr).takeUnretainedValue()
+            ndPurgeNodeRegistries(view)
             Unmanaged<NSView>.fromOpaque(widgetPtr).release()
         }
     }
 
     return vt
+}
+
+/// Purges every ObjectIdentifier-keyed side table entry for a view the core
+/// is about to release. ObjectIdentifier is a raw address: once the view
+/// deallocates, the allocator can hand the same block to the next same-size
+/// widget, which would silently inherit the dead node's state (a stale
+/// toolbar click adapter, another widget's badge or empty-state overlay, a
+/// wrong automation kind). One call site, invoked from `vt.release_node`
+/// right before the ownership release, so new registries have exactly one
+/// place to hook into. Registries private to other files purge through
+/// their own `nd*Purge` helpers below; registries keyed by NSWindow
+/// (ndWindowToolbarStyles, WindowTabs.swift's tables) are exempt — windows
+/// never ride `release_node`.
+@MainActor func ndPurgeNodeRegistries(_ view: NSView) {
+    let id = ObjectIdentifier(view)
+    ndNodeTypography[id] = nil
+    ndNavigationSidebars.remove(id)
+    ndBoxedLists.remove(id)
+    ndBoxedListBackings[id] = nil
+    ndToolbarStrips.remove(id)
+    ndToolbarBackings[id] = nil
+    ndPillBadged.remove(id)
+    ndActivatableState[id] = nil
+    gridCells[id] = nil
+    for grid in gridCells.keys { gridCells[grid]?[id] = nil }
+    // HeaderBar.swift's toolbar state (a promoted button's prominence/badge/
+    // item/click adapter — the adapter's weak backref is what made a
+    // recycled button render normal but dead to clicks).
+    ndToolbarProminent.remove(id)
+    ndToolbarBadges[id] = nil
+    ndToolbarPromotedItems[id] = nil
+    ndToolbarItemTargets[id] = nil
+    ndImageSymbolConfigs[id] = nil
+    ndSidebarTables[id] = nil
+    ndSidebarRowButtons.remove(id)
+    ndSplitControllers[id] = nil
+    ndContentToWindow[id] = nil
+    radioGroupIdentifier[id] = nil
+    EventDispatcher.shared.purge(view)
+    ndMenuManager?.purgeOwner(view)
+    ndLayoutPurge(view)
+    ndHoverPurge(view)
+    ndEmptyStatePurge(view)
+    ndAutomationPurge(view)
+    ndTablePurge(view)
+    ndTreeViewPurge(view)
+    ndSourceTreePurge(view)
+    ndSettingsGroupPurge(view)
+    ndWindowDialogsPurge(view)
+    ndListViewPurge(view)
+    ndSourceListPurge(view)
+    ndPanedTeardown(view)
 }
 
 /// testIDs: mirrors the tracked `testID` prop onto AppKit's own

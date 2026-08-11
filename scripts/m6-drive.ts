@@ -6,7 +6,7 @@
 //   counter: getTree -> click x3 -> waitFor "Clicks: 3" -> non-blank screenshot
 //   gallery: styled/type asserts + ListView itemCount contract (m5c-drive.ts)
 //   --slo:   getTree + screenshot only (child SIGSTOPped, D11 SLO leg)
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

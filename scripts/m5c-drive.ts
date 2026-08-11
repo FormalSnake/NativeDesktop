@@ -4,7 +4,7 @@
 // waitFor scaffold. Phase A only (styled widgets + ListView); Phase B (the
 // web-CSS-rejection negative test) runs as a separate host process and is
 // driven by scripts/headless-m5c.sh via stderr grep, not this script.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

@@ -8,14 +8,13 @@ export const PUBLISHABLE = [
   "packages/host-linux-x64",
   "packages/host",
   "packages/react",
+  "packages/rpc",
   "packages/native",
   "packages/data",
   "packages/panes",
   "packages/babel-plugin-nativedesktop",
   "packages/nd",
-  // packages/test is deliberately unpublished: its client relative-imports
-  // packages/mcp/src/socket.ts and react's generated rpc types, which only
-  // resolve inside this checkout. Re-add once that import boundary is fixed.
+  "packages/test",
 ];
 
 const expected = process.argv[2];

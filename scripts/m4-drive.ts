@@ -4,7 +4,7 @@
 // Two modes:
 //   default: getTree -> find "increment-button" -> click x3 -> waitFor "Clicks: 3" -> screenshot -> assert
 //   --slo:   getTree + screenshot only (used while the JS child is SIGSTOPped for the D11 SLO test)
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

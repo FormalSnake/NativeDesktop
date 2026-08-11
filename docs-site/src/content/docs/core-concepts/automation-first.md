@@ -45,7 +45,7 @@ drive script or an agent waits for a marker instead of parsing arbitrary host ou
 
 Every `scripts/*-drive.ts` in this repo has the same shape. Launch the host with
 `NATIVE_AUTOMATION=1`, wait for `ND_AUTOMATION_LISTENING` on stderr to learn the socket path,
-connect an `AutomationClient` (`packages/mcp/src/socket.ts`), then issue `getTree`, `click`,
+connect an `AutomationClient` (`packages/test/src/socket.ts`), then issue `getTree`, `click`,
 `setValue`, and `waitFor` calls that assert on the results. That is the loop a coding agent runs
 interactively, written down. `scripts/notes-drive.ts` and the HMR leg of `scripts/headless-m8.sh`
 are worked examples: click to a known state, edit a live source file, and assert the UI reflects it

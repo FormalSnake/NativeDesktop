@@ -84,17 +84,69 @@ final class NDToolbarPaneView: NSView {
     private var assembly: NDPaneAssemblyView?
 
     func refreshAssembly() {
+        let newContent: NSView?
         if topViews.isEmpty && bottomViews.isEmpty {
-            contentView = mainContent
-            return
+            newContent = mainContent
+        } else {
+            newContent = assembly ?? {
+                let a = NDPaneAssemblyView()
+                assembly = a
+                return a
+            }()
         }
-        let host = assembly ?? {
-            let a = NDPaneAssemblyView()
-            assembly = a
-            return a
-        }()
-        host.setParts(top: topViews, content: mainContent, bottom: bottomViews)
-        contentView = host
+        // The generated SplitView/Window append arms snapshot `contentView`
+        // ONCE, at attach time — when the logical root changes later (first
+        // bar added, last bar removed) the previously installed view must be
+        // physically replaced where it stands, or the pane goes blank (the
+        // live content gets reparented into a never-attached assembly).
+        // Swap BEFORE setParts: setParts pulls mainContent into the
+        // assembly, which would tear down the installed constraints the
+        // swap re-targets.
+        if let old = contentView, let new = newContent, old !== new {
+            ndSwapInstalledPaneContent(old, new)
+        }
+        if let host = newContent as? NDPaneAssemblyView {
+            host.setParts(top: topViews, content: mainContent, bottom: bottomViews)
+        }
+        contentView = newContent
+    }
+}
+
+/// Replaces `old` with `new` in the pane slot `old` is installed in: same
+/// superview, same constraints re-targeted onto `new`, and the same
+/// `NSBackgroundExtensionView` content slot for a scroll-shaped pane
+/// (SplitController.swift's `ndMakePaneViewController`). No-op while the
+/// pane hasn't been installed yet — the append arm picks up the current
+/// `contentView` when it runs.
+private func ndSwapInstalledPaneContent(_ old: NSView, _ new: NSView) {
+    guard let superview = old.superview else { return }
+    new.translatesAutoresizingMaskIntoConstraints = false
+    let repinned = ndRetargetConstraints(in: superview, from: old, to: new)
+    if let extended = superview as? NSBackgroundExtensionView {
+        extended.contentView = new
+    } else {
+        superview.addSubview(new)
+    }
+    old.removeFromSuperview()
+    NSLayoutConstraint.activate(repinned)
+}
+
+/// Clones every constraint in `container` that references `old`, with `new`
+/// substituted — the install pins live in the installed view's superview
+/// (edge/safe-area anchors from the generated arms), so this reproduces the
+/// slot geometry exactly whatever arm installed it.
+private func ndRetargetConstraints(in container: NSView, from old: NSView, to new: NSView) -> [NSLayoutConstraint] {
+    container.constraints.compactMap { c in
+        let firstIsOld = c.firstItem === old
+        let secondIsOld = c.secondItem === old
+        guard firstIsOld || secondIsOld else { return nil }
+        guard let firstItem = firstIsOld ? new : c.firstItem else { return nil }
+        let clone = NSLayoutConstraint(
+            item: firstItem, attribute: c.firstAttribute, relatedBy: c.relation,
+            toItem: secondIsOld ? new : c.secondItem, attribute: c.secondAttribute,
+            multiplier: c.multiplier, constant: c.constant)
+        clone.priority = c.priority
+        return clone
     }
 }
 
@@ -141,10 +193,12 @@ final class NDPaneAssemblyView: NSView {
     }
 }
 
-// Monotonic source for per-child item identifiers ("nd-hb-<n>") and toolbar
-// identifiers — single global counter, module scope, same `nonisolated(unsafe)`
-// idiom as Backend.swift's `gridCells` (this process's UI code runs on one
-// thread in practice).
+// Monotonic source for the per-launch TOOLBAR identifier of a window with no
+// `frameAutosaveName` (nothing persists there, so a counter is fine). Item
+// identifiers are content-derived instead — see `stableItemKey` — so the
+// autosaved configuration can resolve them next launch. Same
+// `nonisolated(unsafe)` idiom as Backend.swift's `gridCells` (this process's
+// UI code runs on one thread in practice).
 nonisolated(unsafe) private var ndHeaderBarNextID = 0
 private func ndHeaderBarFreshID() -> Int {
     ndHeaderBarNextID += 1
@@ -221,14 +275,14 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
         ndToolbarProminent.remove(ObjectIdentifier(b))
     }
     b.bezelColor = prominent ? .controlAccentColor : nil
-    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.scheduleRebuild() }
+    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.reseedItem(for: b) }
 }
 
 /// `Button.badge` (generated Button create + applyProps arms). Empty string
 /// clears the badge.
 func ndButtonApplyBadge(_ b: NSButton, _ badge: String) {
     ndToolbarBadges[ObjectIdentifier(b)] = badge.isEmpty ? nil : badge
-    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.scheduleRebuild() }
+    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.reseedItem(for: b) }
 }
 
 /// `Button.size` -> `NSControl.controlSize` (generated Button arms).
@@ -246,6 +300,12 @@ func ndButtonApplySize(_ b: NSButton, _ size: String) {
 final class NDToolbarManager: NSObject, NSToolbarDelegate {
     private(set) var toolbar: NSToolbar
     private var idsByView: [ObjectIdentifier: NSToolbarItem.Identifier] = [:]
+    /// Raw identifiers claimed in the current assignment generation —
+    /// deterministic dedup for same-key siblings (traversal order is stable,
+    /// so the same view gets the same `-2`/`-3` suffix every recompute AND
+    /// every launch, which is what makes the autosaved configuration's
+    /// identifiers resolvable next launch).
+    private var assignedIDs: Set<String> = []
     /// Group identifier per run of consecutive promoted buttons, keyed by the
     /// run's LEAD view (stable across `defaultItemIdentifiers()` recomputes,
     /// which the delegate calls several times per rebuild).
@@ -253,6 +313,21 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// Members of each `NSToolbarItemGroup` run, keyed by group identifier —
     /// rebuilt by `defaultItemIdentifiers()`, consumed by the item builder.
     private var groupMembers: [NSToolbarItem.Identifier: [NDButton]] = [:]
+    /// Views whose current toolbar item must be rebuilt on the next rebuild
+    /// even though its identifier is unchanged: a search field whose free-run
+    /// width moved (NSSearchToolbarItem captures width at insertion), or a
+    /// promoted button whose prominent/badge/tooltip changed (promotedItem
+    /// snapshots them at build time).
+    private var reseedViews: Set<ObjectIdentifier> = []
+    /// Identifiers the user dragged OUT via Customize Toolbar this session —
+    /// the diff in `rebuild()` must not re-insert them on the next React
+    /// update. (Cross-launch removals are not honored yet: this set starts
+    /// empty, so a removed default returns on the first post-restore rebuild.)
+    private var userRemovedItemIDs: Set<NSToolbarItem.Identifier> = []
+    /// True while `rebuild()` mutates the item list, so the will-add/
+    /// did-remove delegate notifications can tell user customization apart
+    /// from our own programmatic churn.
+    private var rebuilding = false
 
     // Pane header handles, once their panes have landed in the split. `list`
     // is the middle "folders / list / content" pane of a three-pane
@@ -426,51 +501,164 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
     }
 
+    /// Stable content-derived key for a header child's item identifier —
+    /// testID first (the app's own stable name), then the button's visible
+    /// title/tooltip/symbol description; class name as the last resort
+    /// (deterministically suffixed by `claimIdentifier` for duplicates).
+    /// Counter-based per-launch identifiers made `autosavesConfiguration`
+    /// meaningless: the saved configuration referenced identifiers that no
+    /// longer existed on the next launch.
+    private func stableItemKey(_ view: NSView) -> String {
+        // assumeIsolated: accessibilityIdentifier() is MainActor-isolated and
+        // every manager call arrives on the UI thread (the vtable contract).
+        let testID = MainActor.assumeIsolated { view.accessibilityIdentifier() }
+        if !testID.isEmpty { return testID }
+        if let b = view as? NSButton {
+            if !b.title.isEmpty { return b.title }
+            if let tip = b.toolTip, !tip.isEmpty { return tip }
+            if let desc = b.image?.accessibilityDescription, !desc.isEmpty { return desc }
+        }
+        // The search field's stringValue changes with every keystroke — key
+        // on the placeholder so typing can't churn the identifier (which
+        // would remove + re-insert the item and drop focus mid-word).
+        if let search = view as? NDSearchField { return search.placeholderString ?? "search" }
+        if view is NSSegmentedControl { return "nav" }
+        if let field = view as? NSTextField, !field.stringValue.isEmpty { return field.stringValue }
+        return String(describing: type(of: view))
+    }
+
+    private func claimIdentifier(_ base: String) -> NSToolbarItem.Identifier {
+        var raw = base
+        if assignedIDs.contains(raw) {
+            var n = 2
+            while assignedIDs.contains("\(base)-\(n)") { n += 1 }
+            raw = "\(base)-\(n)"
+        }
+        assignedIDs.insert(raw)
+        return NSToolbarItem.Identifier(rawValue: raw)
+    }
+
     private func identifier(for view: NSView) -> NSToolbarItem.Identifier {
         let key = ObjectIdentifier(view)
         if let existing = idsByView[key] { return existing }
-        let id = NSToolbarItem.Identifier(rawValue: "nd-hb-\(ndHeaderBarFreshID())")
+        let id = claimIdentifier("nd-hb-\(stableItemKey(view))")
         idsByView[key] = id
         return id
     }
 
-    /// Rebuilds the toolbar item list from scratch (fresh identifiers) rather
-    /// than mutating a live list in place — simple and reliable for a full
-    /// re-pack, and cheap for a handful of items.
+    /// Marks a header child's live toolbar item for a rebuild-time re-insert
+    /// (see `reseedViews`) — how a promoted button's prominent/badge/tooltip
+    /// change reaches the system-drawn item that snapshotted them.
+    func reseedItem(for view: NSView) {
+        reseedViews.insert(ObjectIdentifier(view))
+        scheduleRebuild()
+    }
+
+    private func itemNeedsReseed(_ item: NSToolbarItem) -> Bool {
+        if reseedViews.isEmpty { return false }
+        if let v = item.view, reseedViews.contains(ObjectIdentifier(v)) { return true }
+        if let group = item as? NSToolbarItemGroup {
+            return group.subitems.contains { itemNeedsReseed($0) }
+        }
+        // Promoted items carry no view — resolve the tracked button by item
+        // identity through the promotion registry.
+        if let key = ndToolbarPromotedItems.first(where: { $0.value === item })?.key {
+            return reseedViews.contains(key)
+        }
+        return false
+    }
+
+    /// Drops the promotion-registry entries automation reads for
+    /// visibility/bounds when `item` leaves the toolbar (group items drop
+    /// every subitem's entry).
+    private func dropPromotedEntries(for item: NSToolbarItem) {
+        var doomed: [NSToolbarItem] = [item]
+        if let group = item as? NSToolbarItemGroup { doomed += group.subitems }
+        for d in doomed {
+            if let key = ndToolbarPromotedItems.first(where: { $0.value === d })?.key {
+                ndToolbarPromotedItems.removeValue(forKey: key)
+            }
+        }
+    }
+
+    /// Reconciles the live item list against the identifiers the current
+    /// header children produce — remove what React no longer declares,
+    /// insert what's missing at its declared position, leave everything else
+    /// where it stands. Items the user reordered keep their positions and an
+    /// in-session Customize Toolbar removal stays removed; the old
+    /// remove-all/insert-all rebuild silently undid both on every React
+    /// update (and on any window resize that moved the search run).
     func rebuild() {
         idsByView.removeAll()
+        assignedIDs.removeAll()
         groupIDByLead.removeAll()
         groupMembers.removeAll()
-        // Rebuilt from scratch below: only buttons the fresh item list still
-        // promotes belong here (automation reads this for visibility/bounds).
-        ndToolbarPromotedItems.removeAll()
+        let desired = defaultItemIdentifiers()
+        let desiredSet = Set(desired)
+        rebuilding = true
         for idx in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
-            toolbar.removeItem(at: idx)
+            let item = toolbar.items[idx]
+            if !desiredSet.contains(item.itemIdentifier) || itemNeedsReseed(item) {
+                dropPromotedEntries(for: item)
+                toolbar.removeItem(at: idx)
+            }
         }
-        var pos = 0
-        for id in defaultItemIdentifiers() {
-            toolbar.insertItem(withItemIdentifier: id, at: pos)
-            pos += 1
+        reseedViews.removeAll()
+        var cursor = 0
+        for id in desired {
+            if let existing = toolbar.items.firstIndex(where: { $0.itemIdentifier == id }) {
+                cursor = existing + 1
+                continue
+            }
+            if userRemovedItemIDs.contains(id) { continue }
+            toolbar.insertItem(withItemIdentifier: id, at: cursor)
+            cursor += 1
         }
+        rebuilding = false
         // Visible iff it has items (see init) — plain apps keep the standard
         // titlebar; headerbar apps get the unified toolbar strip.
-        toolbar.isVisible = pos > 0
+        toolbar.isVisible = !toolbar.items.isEmpty
         applySubtitles()
         updateSearchFieldWidths()
+    }
+
+    /// User customization bookkeeping (both fire during our own rebuild too,
+    /// hence the `rebuilding` guard): a drag out of the toolbar sticks for
+    /// the session; a drag back in from the palette clears the veto.
+    func toolbarDidRemoveItem(_ notification: Notification) {
+        guard !rebuilding, let item = notification.userInfo?["item"] as? NSToolbarItem else { return }
+        userRemovedItemIDs.insert(item.itemIdentifier)
+        dropPromotedEntries(for: item)
+    }
+
+    func toolbarWillAddItem(_ notification: Notification) {
+        guard !rebuilding, let item = notification.userInfo?["item"] as? NSToolbarItem else { return }
+        userRemovedItemIDs.remove(item.itemIdentifier)
     }
 
     /// HeaderBar.subtitle -> NSWindow.subtitle. The content header wins
     /// (GNOME homes the meaningful title there); side panes fall back in
     /// list/sidebar order. A non-empty subtitle re-shows the title area,
     /// which `attachForSidebar` hides by default — the app asked for text in
-    /// the titlebar, so the sidebar-app default yields.
+    /// the titlebar, so the sidebar-app default yields. Clearing the
+    /// subtitle mirrors the attach-time decision again: without that, a
+    /// once-shown subtitle left the title text visible for good, pushing
+    /// toolbar items to the trailing edge (the exact state attach hides).
     func applySubtitles() {
         guard let win = resolveOwnerWindow() else { return }
         let subtitle = [contentHeader, listHeader, sidebarHeader]
             .compactMap { $0?.ndSubtitle }
             .first { !$0.isEmpty } ?? ""
         win.subtitle = subtitle
-        if !subtitle.isEmpty { win.titleVisibility = .visible }
+        // Only once this manager's toolbar is attached — before that the
+        // window keeps its standard titlebar untouched.
+        guard win.toolbar === toolbar else { return }
+        if !subtitle.isEmpty {
+            win.titleVisibility = .visible
+        } else {
+            let styleName = ndWindowToolbarStyles[ObjectIdentifier(win)] ?? "unified"
+            win.titleVisibility = (styleName == "unified" || styleName == "unifiedCompact") ? .hidden : .visible
+        }
     }
 
     /// Stretches every header search field across the toolbar's free run
@@ -514,9 +702,14 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // NSSearchToolbarItem captures its width at INSERTION (later preferred/
         // intrinsic writes don't relayout a live item — measured) — when the
         // computed run differs from what the items were seeded with, one
-        // coalesced re-insert lands them at the right width. Converges in a
-        // single extra pass: same items ⇒ same computation ⇒ changed=false.
-        if changed { scheduleRebuild() }
+        // coalesced re-insert of just the search items (reseedViews; the diff
+        // rebuild leaves every other item in place) lands them at the right
+        // width. Converges in a single extra pass: same items ⇒ same
+        // computation ⇒ changed=false.
+        if changed {
+            for s in searches { reseedViews.insert(ObjectIdentifier(s)) }
+            scheduleRebuild()
+        }
     }
 
     /// Whether a header child is promoted to a system-drawn toolbar item
@@ -545,7 +738,10 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
                 if let cached = groupIDByLead[lead] {
                     id = cached
                 } else {
-                    id = NSToolbarItem.Identifier(rawValue: "nd-hbg-\(ndHeaderBarFreshID())")
+                    // Derived from EVERY member's key, not just the lead's:
+                    // a membership change within the run must change the
+                    // identifier so the diff in rebuild() replaces the group.
+                    id = claimIdentifier("nd-hbg-\(run.map { stableItemKey($0) }.joined(separator: "+"))")
                     groupIDByLead[lead] = id
                 }
                 groupMembers[id] = run
@@ -626,6 +822,12 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             // dividerIndex 1: list (arranged subview 1) vs. content — only
             // constructed when a `list` pane is registered.
             return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split, dividerIndex: 1)
+        }
+        // Configuration restore at attach time asks for saved identifiers
+        // before any rebuild has assigned ids — populate the id tables from
+        // whatever headers have registered so a saved item can resolve.
+        if groupMembers[itemIdentifier] == nil && !idsByView.values.contains(itemIdentifier) {
+            _ = defaultItemIdentifiers()
         }
         // A group identifier resolves through groupMembers, not idsByView —
         // its member buttons never got per-view identifiers.

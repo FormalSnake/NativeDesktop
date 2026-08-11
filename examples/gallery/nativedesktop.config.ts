@@ -1,4 +1,4 @@
-import { defineConfig } from "nd/config";
+import { defineConfig } from "@nativedesktop/cli/config";
 
 export default defineConfig({
   app: {

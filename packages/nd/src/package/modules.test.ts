@@ -73,6 +73,41 @@ describe("flattenRuntimeModules", () => {
     expect(JSON.parse(readFileSync(nested, "utf8")).version).toBe("2.0.0");
   });
 
+  test("terminates on a dependency cycle with version conflicts and reuses reachable copies", () => {
+    // a@1 <-> b@1 at the top, with b@1 -> a@2 -> b@2 -> a@2 cycling on
+    // conflicting versions. Nesting must stop once the needed version already
+    // resolves from an ancestor slot.
+    const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
+    const appDir = join(root, "app");
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(join(appDir, "package.json"), JSON.stringify({
+      name: "fixture-app",
+      dependencies: { "dep-a": "1.0.0", "dep-b": "1.0.0" },
+    }));
+    const a1 = storePackage(root, { name: "dep-a", version: "1.0.0", dependencies: { "dep-b": "1.0.0" } });
+    const b1 = storePackage(root, { name: "dep-b", version: "1.0.0", dependencies: { "dep-a": "2.0.0" } });
+    const a2 = storePackage(root, { name: "dep-a", version: "2.0.0", dependencies: { "dep-b": "2.0.0" } });
+    const b2 = storePackage(root, { name: "dep-b", version: "2.0.0", dependencies: { "dep-a": "2.0.0" } });
+    storeSibling(root, "dep-a@1.0.0", "dep-b", b1);
+    storeSibling(root, "dep-b@1.0.0", "dep-a", a2);
+    storeSibling(root, "dep-a@2.0.0", "dep-b", b2);
+    storeSibling(root, "dep-b@2.0.0", "dep-a", a2);
+    mkdirSync(join(appDir, "node_modules"), { recursive: true });
+    symlinkSync(a1, join(appDir, "node_modules", "dep-a"));
+    symlinkSync(b1, join(appDir, "node_modules", "dep-b"));
+
+    const dest = join(root, "out", "node_modules");
+    const flat = flattenRuntimeModules({ appDir, dest });
+    expect(flat.sort()).toEqual(["dep-a", "dep-b"]);
+    const version = (p: string) => JSON.parse(readFileSync(join(dest, p, "package.json"), "utf8")).version;
+    expect(version("dep-a")).toBe("1.0.0");
+    expect(version("dep-b")).toBe("1.0.0");
+    expect(version("dep-b/node_modules/dep-a")).toBe("2.0.0");
+    expect(version("dep-b/node_modules/dep-a/node_modules/dep-b")).toBe("2.0.0");
+    // b@2's dep-a@2 resolves via the copy two levels up: no deeper nesting.
+    expect(existsSync(join(dest, "dep-b/node_modules/dep-a/node_modules/dep-b/node_modules/dep-a"))).toBe(false);
+  });
+
   test("skips unresolvable peer dependencies but throws on a missing hard dependency", () => {
     const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
     const appDir = join(root, "app");
@@ -98,5 +133,13 @@ describe("assertResolvableEntries", () => {
     mkdirSync(broken, { recursive: true });
     writeFileSync(join(broken, "package.json"), JSON.stringify({ name: "needs-build", main: "./dist/index.js" }));
     expect(() => assertResolvableEntries(root, ["needs-build"])).toThrow("bun run build");
+  });
+
+  test("tolerates a package that declares no entry point (binary carrier)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
+    const carrier = join(root, "node_modules", "host-binary");
+    mkdirSync(carrier, { recursive: true });
+    writeFileSync(join(carrier, "package.json"), JSON.stringify({ name: "host-binary", files: ["bin"] }));
+    expect(() => assertResolvableEntries(root, ["host-binary"])).not.toThrow();
   });
 });

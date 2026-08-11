@@ -132,6 +132,11 @@ final class NDSourceCell: NSTableCellView {
 // idiom as ListView.swift's `listDataSources`).
 nonisolated(unsafe) private var sourceListDataSources: [ObjectIdentifier: SourceListDataSource] = [:]
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndSourceListPurge(_ view: NSView) {
+    sourceListDataSources[ObjectIdentifier(view)] = nil
+}
+
 private func sourceRow(from obj: [String: Any]) -> SourceRow {
     SourceRow(
         title: obj["title"] as? String ?? "",

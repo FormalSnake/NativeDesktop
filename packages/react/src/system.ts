@@ -56,6 +56,12 @@ export function dispatchSystemEvent(channel: string, data: unknown): void {
   if (channel === "app.activate") globalThis.__nd_app_active = true;
   else if (channel === "app.deactivate") globalThis.__nd_app_active = false;
   for (const handler of registry().get(channel) ?? []) handler(data);
+  // Deleted AFTER the fan-out, not inside each handler wrapper: every
+  // subscriber must see the payload; a later click for the same id has none.
+  if (channel === "notification.click") {
+    const id = (data as { id?: string } | null)?.id;
+    if (id !== undefined) notificationData().delete(id);
+  }
 }
 
 // --- option / filter types ---------------------------------------------------
@@ -105,7 +111,8 @@ export interface NotificationOptions {
 }
 
 // id -> data for notifications shown this session, FIFO-capped at 128.
-// Entries are deleted when their click dispatches.
+// Entries are deleted once their click has fanned out to every subscriber
+// (dispatchSystemEvent above).
 const NOTIFICATION_DATA_CAP = 128;
 
 function notificationData(): Map<string, unknown> {
@@ -171,9 +178,7 @@ export const notifications = {
   onClick(handler: (e: { id: string; data?: unknown }) => void): () => void {
     return subscribe("notification.click", "notifications.onClick", (raw) => {
       const { id } = raw as { id: string };
-      const map = notificationData();
-      const data = map.get(id);
-      map.delete(id);
+      const data = notificationData().get(id);
       handler(data === undefined ? { id } : { id, data });
     });
   },

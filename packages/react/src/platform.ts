@@ -17,24 +17,56 @@ import { intrinsicToName, widgetCommands } from "./generated/schema-meta.ts";
 export type Backend = "gtk" | "appkit" | "unknown";
 export type OS = "macos" | "linux" | "windows";
 
-let backend: Backend = "unknown";
+// Backend + manifest live on globalThis (same pattern as hmr.ts's __nd_hmr):
+// `bun --hot` re-evals reset module-local bindings, and render() skips the
+// connect block on a re-eval, so module-local state would silently fall back
+// to the pre-handshake defaults after the first hot edit.
+//
+// The manifest is the host build's capability set (helloAck hostWidgets/
+// hostCommands). null = the host predates the fields; hasWidget/hasCommand
+// then fall back to this runtime's own generated schema tables — exactly the
+// pre-manifest behavior, where JS-schema knowledge was the only answer
+// available.
+interface PlatformState {
+  backend: Backend;
+  hostWidgets: Set<string> | null;
+  hostCommands: Set<string> | null;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __nd_platform: PlatformState | undefined;
+}
+
+function state(): PlatformState {
+  if (!globalThis.__nd_platform) {
+    globalThis.__nd_platform = { backend: "unknown", hostWidgets: null, hostCommands: null };
+  }
+  return globalThis.__nd_platform;
+}
+
+// Module-local on purpose: a hot re-eval resets the list, each subscriber
+// module re-registers on its own re-eval, and the immediate fire below covers
+// the backend already being known by then.
+const backendListeners: Array<() => void> = [];
+
+/** Package-internal (metrics.ts): runs `cb` once the backend is known —
+ * immediately when it already is. */
+export function onBackendKnown(cb: () => void): void {
+  backendListeners.push(cb);
+  if (state().backend !== "unknown") cb();
+}
 
 /** Renderer-internal: called once from `render()` after the handshake. */
 export function setBackend(name: string): void {
-  backend = name as Backend;
+  state().backend = name as Backend;
+  for (const cb of backendListeners) cb();
 }
-
-// The host build's capability manifest (helloAck hostWidgets/hostCommands).
-// null = the host predates the fields; hasWidget/hasCommand then fall back
-// to this runtime's own generated schema tables — exactly the pre-manifest
-// behavior, where JS-schema knowledge was the only answer available.
-let hostWidgets: Set<string> | null = null;
-let hostCommands: Set<string> | null = null;
 
 /** Renderer-internal: called once from `render()` beside `setBackend`. */
 export function setHostManifest(widgets: Set<string> | null, commands: Set<string> | null): void {
-  hostWidgets = widgets;
-  hostCommands = commands;
+  state().hostWidgets = widgets;
+  state().hostCommands = commands;
 }
 
 /**
@@ -44,6 +76,7 @@ export function setHostManifest(widgets: Set<string> | null, commands: Set<strin
  * own schema table (i.e. "the JS side knows it").
  */
 export function hasWidget(type: string): boolean {
+  const { hostWidgets } = state();
   if (hostWidgets) return hostWidgets.has(type);
   return type in intrinsicToName;
 }
@@ -55,6 +88,7 @@ export function hasWidget(type: string): boolean {
  * detection.
  */
 export function hasCommand(type: string, command: string): boolean {
+  const { hostCommands } = state();
   if (hostCommands) return hostCommands.has(`${type}.${command}`);
   return (widgetCommands[type] ?? []).includes(command);
 }
@@ -73,7 +107,7 @@ function currentOS(): OS {
 export const Platform = {
   /** The native widget backend drawing this app: "gtk" | "appkit". */
   get backend(): Backend {
-    return backend;
+    return state().backend;
   },
   /** The OS this app is running on. */
   get os(): OS {
@@ -84,6 +118,7 @@ export const Platform = {
    * Returns `default` when the active backend has no matching entry.
    */
   select<T>(spec: Partial<Record<Backend, T>> & { default?: T }): T | undefined {
+    const { backend } = state();
     return backend in spec ? spec[backend] : spec.default;
   },
 };

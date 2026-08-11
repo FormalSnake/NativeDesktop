@@ -17,5 +17,5 @@
     "rootDir": "../..",
     "outDir": "dist"
   },
-  "include": ["src/index.ts", "src/jsx-runtime.ts", "src/jsx-dev-runtime.ts"]
+  "include": ["src/index.ts", "src/jsx-runtime.ts", "src/jsx-dev-runtime.ts", "src/generated/rpc.ts"]
 }

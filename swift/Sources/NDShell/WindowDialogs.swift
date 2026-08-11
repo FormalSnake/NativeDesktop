@@ -36,6 +36,11 @@ private func ndWindowNodeID(_ view: NSView) -> UInt32? {
     ndWindowNodeIDs[ObjectIdentifier(view)]
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndWindowDialogsPurge(_ view: NSView) {
+    ndWindowNodeIDs[ObjectIdentifier(view)] = nil
+}
+
 /// data-payload emit through JSONSerialization (paths and labels are
 /// arbitrary strings; hand-rolled escaping isn't worth the risk here).
 private func ndEmitData(_ nodeID: UInt32, _ name: String, _ payload: [String: Any]) {

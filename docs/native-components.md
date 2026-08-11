@@ -30,7 +30,7 @@ const MapView = defineNativeComponent<
 Declare `@nativedesktop/native` as a dependency and create `nativedesktop.config.ts`:
 
 ```ts
-import { defineConfig } from "nd/config";
+import { defineConfig } from "@nativedesktop/cli/config";
 
 export default defineConfig({ native: { plugins: [{
   darwin: "native/build/libapp.dylib",

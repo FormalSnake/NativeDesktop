@@ -79,6 +79,11 @@ private func tableDataSource(for view: NSView) -> NDTableDataSource? {
     tableDataSources[ObjectIdentifier(view)]
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndTablePurge(_ view: NSView) {
+    tableDataSources[ObjectIdentifier(view)] = nil
+}
+
 /// `ndCreate`'s Table arm (generated) calls this.
 func makeTable(_ props: [String: Any]) -> NSView {
     let tableView = NSTableView()

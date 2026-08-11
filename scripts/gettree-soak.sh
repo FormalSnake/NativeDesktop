@@ -42,7 +42,7 @@ for i in $(seq 1 "$CYCLES"); do
   if [ "$ready" = 1 ]; then
     SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
     if ND_AUTOMATION_SOCKET="$SOCK" bun -e '
-      const { AutomationClient } = await import("./packages/mcp/src/socket.ts");
+      const { AutomationClient } = await import("@nativedesktop/test");
       const client = await AutomationClient.connect();
       const tree = await Promise.race([
         client.call("getTree"),

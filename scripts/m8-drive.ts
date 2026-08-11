@@ -9,7 +9,7 @@
 //                 (run AFTER the fixture edit)
 //   default (crash leg): getTree -> assert nd-overlay-error present with non-empty text ->
 //                 click nd-overlay-restart -> waitFor "Clicks:" (app re-mounted) -> M8_CRASH_OK
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

@@ -99,6 +99,32 @@ describe("assemblePayload", () => {
     });
   });
 
+  test("default config: bundle output nested in the compile outDir is not copied into itself", async () => {
+    // The template shape: no `package` block, a `compile` script emitting
+    // dist/, so the bundle output (<appDir>/dist/mac/...) nests inside the
+    // copied entry dir (<appDir>/dist).
+    const appDir = mkdtempSync(join(tmpdir(), "nd-payload-default-"));
+    mkdirSync(join(appDir, "src"), { recursive: true });
+    writeFileSync(join(appDir, "package.json"), JSON.stringify({
+      name: "fixture",
+      version: "1.0.0",
+      scripts: { compile: "mkdir -p dist && cp src/main.tsx dist/main.tsx" },
+    }));
+    writeFileSync(join(appDir, "src", "main.tsx"), "export {};\n");
+
+    // appRoot exactly as mac.ts derives it from the default outDir.
+    const contents = join(appDir, "dist", "mac", "Fixture.app", "Contents");
+    for (const dir of ["MacOS", "Resources", "Frameworks"]) mkdirSync(join(contents, dir), { recursive: true });
+    const appRoot = join(contents, "Resources", "app");
+
+    const result = await assemblePayload({ appDir, config: {}, identity, appRoot });
+
+    expect(result).toEqual({ entry: "dist/main.tsx", cwd: ".", pluginPaths: [] });
+    expect(existsSync(join(appRoot, "dist/main.tsx"))).toBe(true);
+    expect(existsSync(join(appRoot, "package.json"))).toBe(true);
+    expect(existsSync(join(appRoot, "dist", "mac"))).toBe(false);
+  });
+
   test("root-level entry ships the whole app dir minus node_modules", async () => {
     const root = mkdtempSync(join(tmpdir(), "nd-payload-"));
     const appDir = join(root, "app");

@@ -3,7 +3,7 @@
 // key equivalents: cmd+n against examples/notes must run File > New Note
 // (the same handler scripts/notes-drive.ts exercises by clicking the menu
 // item), observed as note-list's itemCount incrementing.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 import type { JsonNode, GetTreeResult } from "../packages/react/src/generated/rpc.ts";
 
 function find(node: JsonNode, testID: string): JsonNode | null {

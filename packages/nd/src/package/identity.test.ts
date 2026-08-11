@@ -159,6 +159,29 @@ describe("buildInfoPlist", () => {
     expect(xml).toContain("<key>CFBundleShortVersionString</key><string>0.9.0</string>");
     expect(xml).toContain("<key>CFBundleIdentifier</key><string>com.nativedesktop.gallery</string>");
   });
+
+  test("stamps an Xcode-formatted plist (key and string on separate lines)", () => {
+    const custom = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<plist version="1.0">\n<dict>\n'
+      + "\t<key>CFBundleExecutable</key>\n\t<string>$(EXECUTABLE_NAME)</string>\n"
+      + "\t<key>CFBundleIdentifier</key>\n\t<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n"
+      + "\t<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>\n"
+      + "\t<key>CFBundleVersion</key>\n\t<string>1</string>\n"
+      + "</dict>\n</plist>\n";
+    const xml = buildInfoPlist(IDENTITY, undefined, custom);
+    expect(xml).not.toContain("$(EXECUTABLE_NAME)");
+    expect(xml).not.toContain("$(PRODUCT_BUNDLE_IDENTIFIER)");
+    expect(xml).toContain("<string>Gallery</string>");
+    expect(xml).toContain("<string>com.nativedesktop.gallery</string>");
+    expect(xml.match(/<string>0\.9\.0<\/string>/g)?.length).toBe(2);
+  });
+
+  test("throws when a custom plist is missing a key it promises to stamp", () => {
+    const custom = '<plist version="1.0">\n<dict>\n'
+      + "\t<key>CFBundleExecutable</key>\n\t<string>X</string>\n"
+      + "</dict>\n</plist>\n";
+    expect(() => buildInfoPlist(IDENTITY, undefined, custom)).toThrow("CFBundleShortVersionString");
+  });
 });
 
 describe("buildDesktopEntry / appRunTemplate", () => {

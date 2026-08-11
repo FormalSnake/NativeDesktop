@@ -51,6 +51,16 @@ try {
   await app.waitForValue("st-tree", "run-1", { timeoutMs: 3000 });
   console.log("ND_ST_SELECT_OK selectionChanged {nodeId} + a11y value by id");
 
+  // ---- leg 3b: selectedId "" clears the selection ---------------------------
+  // GTK regression: unselectAll is a documented no-op in browse mode, so the
+  // clear path goes through selectRow(null). Re-select before leg 4, whose
+  // semantic click activates the selected row.
+  await app.setValue("st-tree", "");
+  await app.waitForText("sel (none)", { timeoutMs: 3000 });
+  await app.setValue("st-tree", "run-1");
+  await app.waitForText("sel run-1", { timeoutMs: 3000 });
+  console.log('ND_ST_CLEAR_OK setValue("") deselected; re-select landed');
+
   // ---- leg 4: semantic click activates the selected row ---------------------
   await app.click("st-tree");
   await app.waitForText("act run-1", { timeoutMs: 3000 });

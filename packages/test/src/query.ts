@@ -3,7 +3,7 @@
 // client-side half of §1.2a's targeting: a caller passes a testID, a raw ref,
 // or an explicit {testId?, ref?, window?}, and every action RPC accepts
 // exactly one of ref/testId (validated host-side).
-import type { JsonNode } from "../../react/src/generated/rpc.ts";
+import type { JsonNode } from "@nativedesktop/react/rpc";
 
 export function findNode(node: JsonNode, testId: string): JsonNode | null {
   if (node.testID === testId) return node;

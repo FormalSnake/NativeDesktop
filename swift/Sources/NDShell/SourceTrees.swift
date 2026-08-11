@@ -347,6 +347,11 @@ private func sourceTreeDataSource(for view: NSView) -> NDSourceTreeDataSource? {
     sourceTreeDataSources[ObjectIdentifier(view)]
 }
 
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndSourceTreePurge(_ view: NSView) {
+    sourceTreeDataSources[ObjectIdentifier(view)] = nil
+}
+
 private func sourceTreeAction(from obj: [String: Any]) -> NDSourceTreeAction? {
     guard let id = obj["id"] as? String else { return nil }
     return NDSourceTreeAction(

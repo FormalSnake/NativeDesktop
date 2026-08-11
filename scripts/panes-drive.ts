@@ -9,7 +9,7 @@
 // --restore (second host run against the same ND_STORE_DIR) asserts the
 // persisted model came back: two panes, ratio 0.30, pane 3 gone ->
 // ND_PANES_RESTORE_OK.
-import { AutomationClient } from "../packages/mcp/src/socket.ts";
+import { AutomationClient } from "@nativedesktop/test";
 
 interface TreeNode {
   ref: number;

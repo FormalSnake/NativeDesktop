@@ -26,10 +26,14 @@
     "./jsx-dev-runtime": {
       "types": "./dist/packages/react/src/jsx-dev-runtime.d.ts",
       "default": "./dist/jsx-dev-runtime.js"
+    },
+    "./rpc": {
+      "types": "./dist/packages/react/src/generated/rpc.d.ts",
+      "default": "./dist/generated/rpc.js"
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts ./src/generated/rpc.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh",
     "prepack": "bun run build",
     "prepare": "bun run build"
   },

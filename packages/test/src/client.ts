@@ -1,9 +1,9 @@
-// Wraps packages/mcp/src/socket.ts's AutomationClient (reused, not forked —
-// same framing, same generated RpcMethods map) so every call in the harness
-// carries a timeout: a hung host (deadlock, crashed reader thread) fails a
-// test in rpcTimeoutMs instead of the whole run hanging forever.
-import { AutomationClient } from "../../mcp/src/socket.ts";
-import type { RpcMethodName, RpcParams, RpcResult } from "../../react/src/generated/rpc.ts";
+// Wraps socket.ts's AutomationClient (reused, not forked — same framing, same
+// generated RpcMethods map) so every call in the harness carries a timeout: a
+// hung host (deadlock, crashed reader thread) fails a test in rpcTimeoutMs
+// instead of the whole run hanging forever.
+import { AutomationClient } from "./socket.ts";
+import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/react/rpc";
 
 export class TimedClient {
   constructor(

@@ -250,6 +250,7 @@
       },
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.29.0",
+        "@nativedesktop/test": "workspace:*",
         "zod": "4.4.3",
       },
     },
@@ -311,6 +312,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@nativedesktop/host": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
       },
     },
   },
