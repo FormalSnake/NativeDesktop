@@ -130,3 +130,8 @@ this repo links via `file:`/`workspace:` paths (see [Project Layout](/get-starte
 If you publish your own `shared-hooks` package, give it the same shape. Declare `react` as a
 `peerDependency` rather than a regular dependency, so it keeps resolving to whatever single `react`
 instance the consuming workspace hoists, whether that workspace is desktop, web, or React Native.
+
+## Where to go next
+
+- [Architecture](/core-concepts/architecture/): how the two processes and the NDP protocol fit together.
+- [State & Hot Reload](/core-concepts/state-hot-reload/): the hooks re-export convention this page's rewrite mechanics build on.

@@ -19,6 +19,18 @@ Three load-bearing rules:
 3. **Styling is not web CSS.** There is no `flex`, `grid`, `position`, `display`, or
    `justifyContent`. See `docs/agents/styling.md`.
 
+The CLI is `@nativedesktop/cli` (the `nd` bin): `nd dev` for hot reload, `nd build` to compile to
+`dist/`, `nd package [mac|linux]` to assemble and sign the platform bundle from
+`nativedesktop.config.ts`, and `nd doctor` for packaging/toolchain readiness checks. The app depends
+on `@nativedesktop/react` plus `@nativedesktop/native`; optional packages from the same family are
+`@nativedesktop/data` (worker SQLite), `@nativedesktop/rpc`, `@nativedesktop/panes`, and
+`@nativedesktop/test` (the automation harness for scripted tests).
+
+Two framework defaults: unhandled promise rejections are reported and survived while uncaught
+exceptions stay fatal (tune with `setUnhandledErrorPolicy`, subscribe with `onUnhandledError`), and
+persistent settings go through `createStore` (`await store.load()` before `render()`, then
+synchronous `get()` and reactive `useStoreValue`). All of these come from `@nativedesktop/react`.
+
 If you touch the framework itself rather than this app, read `docs/agents/zig-idiom.md` first. The
 Zig here is 0.16, not the pre-2025 APIs most training data assumes.
 

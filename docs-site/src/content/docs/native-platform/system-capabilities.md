@@ -1,11 +1,12 @@
 ---
 title: System Capabilities
-description: Native file dialogs, clipboard, notifications, recent documents, credentials, and app-level OS events, with one API and real native behavior on each backend.
+description: Native file dialogs, clipboard, notifications, recent documents, credentials, live appearance, and app-level OS events, with one API and real native behavior on each backend.
 ---
 
 `@nativedesktop/react` exposes the OS-level surface every desktop app eventually needs as a small
 set of promise-based calls: file pickers, clipboard, notifications, "Open Recent", the system
-credential store, audio playback, and app lifecycle events like activation and file drops. Every
+credential store, audio playback, the live light/dark + accent color, and app lifecycle events like
+activation and file drops. Every
 call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
 `NSPasteboard`/`GdkClipboard`, `UNUserNotificationCenter`/`GNotification`, Keychain/Secret Service,
 `AVPlayer`/GStreamer) from the same app code on both backends.
@@ -173,6 +174,29 @@ There are two event subscriptions; each returns an unsubscribe function like the
   normalized 0..1, log-spaced across roughly 50 Hz to 16 kHz. It fires only for handles played with
   `spectrum: true`.
 
+## Appearance
+
+```tsx
+import { system, useEffect, useState } from "@nativedesktop/react";
+
+function AccentDot(): React.ReactNode {
+  const [info, setInfo] = useState({ appearance: "light", accentColor: "#0066cc" });
+  useEffect(() => {
+    system.getAppearance().then(setInfo);
+    return system.onAppearanceChange(setInfo);
+  }, []);
+  return <box style={{ background: info.accentColor }} />;
+}
+```
+
+`system.getAppearance()` resolves `{ appearance: "light" | "dark", accentColor: "#rrggbb" }` and
+`system.onAppearanceChange(handler)` subscribes to changes to either — the `AdwStyleManager` accent
+color on GTK, `NSColor.controlAccentColor` on macOS. Reach for it when you need the live accent for
+something dynamic (a status dot, a chart series) instead of a hardcoded hex; see
+[Styling & Design Language](/core-concepts/styling-design-language/#dark-mode-is-automatic) for why
+that's preferred over a color literal. Dark/light itself needs no polling: unstyled widgets and
+`cssClasses` already track the system automatically.
+
 ## App-level events
 
 ```tsx
@@ -219,10 +243,10 @@ runtime; see [Architecture](/core-concepts/architecture/).
 
 ## Permissions
 
-Every `dialog.*`/`clipboard.*`/`notification.*`/`recent.*`/`credentials.*`/`audio.*` call is gated
-host-side by the same capability ACL that guards widget commits. Some groups are granted by default; the rest
-reject with `Error("capability denied")` until the app's host process is started with an explicit
-grant.
+Every `dialog.*`/`clipboard.*`/`notification.*`/`recent.*`/`credentials.*`/`audio.*`/`system.*` call
+is gated host-side by the same capability ACL that guards widget commits. Some groups are granted by
+default; the rest reject with `Error("capability denied")` until the app's host process is started
+with an explicit grant.
 
 | Group | Default | Covers |
 | --- | --- | --- |
@@ -231,6 +255,7 @@ grant.
 | `core:recent` | granted | `recentDocuments.add`, `recentDocuments.clear` |
 | `core:clipboard.write` | granted | `clipboard.writeText` |
 | `core:audio` | granted | all `audio.*` calls |
+| `core:system` | granted | `system.getAppearance`, `system.onAppearanceChange` |
 | `core:clipboard.read` | **denied** | `clipboard.readText` |
 | `core:credentials` | **denied** | `credentials.set`, `credentials.get`, `credentials.delete` |
 
@@ -248,8 +273,8 @@ easy to trace back to the missing grant.
 
 ## How it works
 
-Every `dialog`/`clipboard`/`notification`/`recentDocuments`/`credentials`/`audio` call sends an
-id-correlated `systemRequest` NDP frame to the host, which resolves the method to a `core:*` capability, runs the
+Every `dialog`/`clipboard`/`notification`/`recentDocuments`/`credentials`/`system`/`audio` call sends
+an id-correlated `systemRequest` NDP frame to the host, which resolves the method to a `core:*` capability, runs the
 ACL check, and, for an allowed request, runs the real native API on the UI thread before replying
 with a `systemResponse` frame that settles the promise. `app.on*` subscriptions instead receive
 host-initiated `systemEvent` frames, pushed whenever the OS delivers an activation, launch, or file

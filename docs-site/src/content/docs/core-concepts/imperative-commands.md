@@ -99,6 +99,16 @@ The channel is a dedicated `widget_command` entry on the `nd_backend` ABI vtable
 the native widget through the same C ABI as every other host operation; there is no widget-specific
 side path.
 
+## A sibling channel: `sendNativeCommand`
+
+`<nativeview>` (the generic host for an app-owned native plugin widget, see
+[Native Modules](/native-platform/native-modules/)) declares no `commands` in the schema, because
+there's nothing to validate against: its commands are whatever the plugin's own `command` handler
+chooses to accept. `sendNativeCommand(ref, command, arg?)` rides the same underlying dispatch as
+`sendCommand`, but skips the schema-typed name check and hands the command straight to the plugin.
+Use `sendCommand` for the built-in widgets above; use `sendNativeCommand` only for a `<nativeview>`
+ref, ideally through the `send()` helper `defineNativeComponent` returns.
+
 ## Capability gating
 
 A widget command mutates live UI, so it goes through the same capability gate as commit

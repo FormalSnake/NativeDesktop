@@ -84,7 +84,8 @@ Offscreen automation screenshots have a known macOS 26 caveat: `_NSCoreHostingVi
 CoreAnimation when actually composited on screen, so an in-process offscreen render can return blank
 `TextInput`/`TextArea` content. `tools/ndshot/` (a small Swift ScreenCaptureKit tool with its own
 stable code-signing identity) works around this by capturing the live composited window instead;
-see `docs/agents/automation.md` for the one-time Screen Recording grant flow.
+see [Screenshots on macOS (ndshot)](/automation-testing/automation-socket/#screenshots-on-macos-ndshot)
+for the one-time Screen Recording grant flow.
 
 ## Windows: designed, not built
 
@@ -92,6 +93,7 @@ The Windows backend is fully specified (raw Win32 windowing via `zigwin32`, cust
 Direct2D/DirectWrite widgets each carrying a UIA provider and `AutomationId` from day one) but not
 yet implemented. The design doc budgets two to three times the effort of the other two backends and
 schedules it last, since Windows has no first-class native-toolkit equivalent to GTK4 or AppKit that a
-thin binding could sit on top of. `tools/package.ts` already reflects this: it accepts `linux` and
-`mac` as packaging targets and exits with an explicit error for anything else. Don't rely on any
-Windows-specific prop, flag, or command not documented elsewhere on this site.
+thin binding could sit on top of. [`nd package`](/packaging/) already reflects this: it accepts
+`mac` and `linux` as packaging targets and exits with an explicit error for anything else (`windows`
+included). Don't rely on any Windows-specific prop, flag, or command not documented elsewhere on
+this site.

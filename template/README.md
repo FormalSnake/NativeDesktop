@@ -19,6 +19,11 @@ bun run dev
 | `nd dev [entry]` | Dev mode. `entry` defaults to `src/main.tsx`. |
 | `nd dev --backend gtk\|appkit` | Force a backend. Also reads `ND_BACKEND`. |
 | `nd build` | Compile to `dist/` through Babel, the same as `bun run compile`. |
+| `nd package [mac\|linux]` | Assemble and sign the platform bundle (`.app` / AppImage). Platform defaults to the host. Also `bun run package`. |
+| `nd doctor [--json]` | Check packaging and toolchain readiness for this directory. |
+
+App identity (bundle id, name, icon, file associations, URL schemes) and packaging options live in
+`nativedesktop.config.ts`; `nd package` reads them.
 
 `nd dev` does not set `NATIVE_AUTOMATION=1`. Export it in your shell first if you want the
 automation socket.
@@ -49,14 +54,31 @@ exception: write those against `react` and the build rewrites the import for you
 
 ## How this app links to the framework
 
-`package.json` points at `@nativedesktop/react` and `nd` (which pulls in `@nativedesktop/host`)
-through `file:` paths into a NativeDesktop checkout. None of them are published to npm yet, so this
-app has to sit next to one. `scripts/new-app.sh` rewrites every `file:../packages/*` path to the
-right relative location when it scaffolds, which is why it is the supported scaffolder.
+`package.json` depends on the published npm packages: `@nativedesktop/react` (the renderer),
+`@nativedesktop/native` (native-plugin headers), and `@nativedesktop/cli` (the `nd` bin, which pulls
+in `@nativedesktop/host` and the prebuilt host binary for your platform). Optional additions from
+the same family: `@nativedesktop/data` (worker-backed SQLite), `@nativedesktop/rpc` (resilient
+JSON-RPC client for your own services), `@nativedesktop/panes` (split-pane tree over `<paned>`), and
+`@nativedesktop/test` (automation harness for scripted app tests).
+
+When scaffolded from a framework checkout, `scripts/new-app.sh` rewrites those registry versions to
+`file:` paths into the checkout so the app exercises your local build instead of npm.
 
 `@nativedesktop/react` declares `react` as a `peerDependency` rather than a regular dependency, so
 Bun hoists one shared `react` for this app and the linked package. That is what prevents the
 two-copies "Invalid hook call" failure.
+
+## Errors and settings
+
+Two framework defaults worth knowing from day one:
+
+- **Async errors do not kill the app by default.** An unhandled promise rejection is reported and
+  the app keeps running; an uncaught exception is fatal (the host paints the crash overlay). Tune it
+  with `setUnhandledErrorPolicy` and subscribe with `onUnhandledError`, both from
+  `@nativedesktop/react`.
+- **Settings persist through `createStore`.** A versioned JSON file under the app data dir; call
+  `await store.load()` before `render()` and `store.get()` is synchronous in every component, with
+  `useStoreValue(store)` for reactive reads. Writes are debounced and crash-safe.
 
 ## React Compiler
 

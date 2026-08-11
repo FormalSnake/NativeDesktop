@@ -100,7 +100,12 @@ import { Spacing, ContentMargin } from "@nativedesktop/react";
 <box spacing={Spacing.sm} style={{ padding: ContentMargin }} />;
 ```
 
-`Spacing` is `{ xs, sm, md, lg, xl }` — `3/6/12/18/24` on Linux (GNOME's multiples of 6),
-`4/8/12/20/24` on macOS — and `ContentMargin` is the standard window-edge margin (`12` / `20`).
-The structural widgets (`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics
-themselves and need none of this.
+`Spacing` is `{ xs, sm, md, lg, xl }` — `3/6/12/18/24` on the GTK backend (GNOME's multiples of 6),
+`4/8/12/20/24` on the AppKit backend — and `ContentMargin` is the standard window-edge margin (`12`
+on GTK, `20` on AppKit). Both are keyed on `Platform.backend`, not `Platform.os`: the GTK backend
+running on macOS via Quartz still lays out GNOME's numbers, matching [Which backend is
+drawing](/core-concepts/architecture/#which-backend-is-drawing). Both resolve after `render()`'s
+handshake (`Spacing`'s fields are live getters; `ContentMargin` is a plain binding re-assigned once
+the backend is known), and fall back to the OS's convention before that. The structural widgets
+(`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics themselves and need
+none of this.

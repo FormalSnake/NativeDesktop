@@ -19,7 +19,14 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `defaultWidth` | int | 480 | create |
 | `defaultHeight` | int | 320 | create |
 | `tabGroup` | string | none | create |
+| `toolbarStyle` | unified \| unifiedCompact \| expanded \| preference | unified | create |
+| `frameAutosaveName` | string | none | create |
+| `density` | standard \| compact | standard | create |
 | `testID` | string | none | meta |
+
+`toolbarStyle`, `frameAutosaveName`, and `density` shape the macOS unified toolbar and window
+chrome; see [Windows & Chrome](/native-platform/windows-chrome/) for what each one does on each
+platform.
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -29,9 +36,10 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `newTabRequested` | `onNewTabRequested` | data |
 | `closed` | `onClosed` | data |
 | `focused` | `onFocused` | checked |
+| `sizeChanged` | `onSizeChanged` | data |
 
 Imperative commands (via `sendCommand(ref.current, …)`): `showAlert`, `openFile`, `saveFile`,
-`showAbout`, `showTabOverview`. See [Dialogs](/components/dialogs/) and
+`showAbout`, `showTabOverview`, `present`. See [Dialogs](/components/dialogs/) and
 [Native Tabs](/native-platform/tabs/).
 
 ## Box (`<box>`)
@@ -41,8 +49,17 @@ Automation role: `group`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `orientation` | vertical \| horizontal | vertical | create |
-| `spacing` | int | 0 | createAndUpdate |
+| `spacing` | int | -1 | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `hoverChanged` | `onHoverChanged` | checked |
+
+`spacing`'s default, `-1`, is the "platform standard" sentinel: 6 on the GTK backend (the Adwaita
+gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See
+[Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`,
+the typed export built on the same platform-standard numbers.
 
 ## Label (`<label>`)
 
@@ -51,6 +68,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `text` | string | (empty) | create |
+| `ellipsize` | bool | false | create |
 | `testID` | string | none | meta |
 
 ## Button (`<button>`)
@@ -63,10 +81,20 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `testID` | string | none | meta |
 | `iconName` | string | none | create |
 | `labelAlign` | start \| center \| end | center | create |
+| `ellipsize` | bool | false | create |
+| `tooltip` | string | none | createAndUpdate |
+| `prominent` | bool | false | createAndUpdate |
+| `badge` | string | none | createAndUpdate |
+| `size` | small \| regular \| large | regular | createAndUpdate |
+
+`prominent`, `badge`, and `size` render natively on both backends; see
+[Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each
+platform's controls.
 
 | Event | Handler | Payload |
 |---|---|---|
 | `clicked` | `onClick` | none |
+| `hoverChanged` | `onHoverChanged` | checked |
 
 ## TextInput (`<textinput>`)
 
@@ -180,7 +208,13 @@ Automation role: `image`. Text source: none. Children: none.
 |---|---|---|---|
 | `path` | string | none | createAndUpdate |
 | `iconName` | string | none | createAndUpdate |
+| `symbolScale` | small \| medium \| large | medium | create |
+| `symbolWeight` | regular \| medium \| semibold \| bold | regular | create |
+| `symbolRenderingMode` | monochrome \| hierarchical \| multicolor | monochrome | create |
 | `testID` | string | none | meta |
+
+`symbolScale`/`symbolWeight`/`symbolRenderingMode` configure the resolved SF Symbol on macOS and are
+inert on GTK; see [Icons](/native-platform/icons/#symbol-configuration).
 
 ## ScrollView (`<scrollview>`)
 
@@ -189,6 +223,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `minContentHeight` | int | 0 | create |
+| `hscroll` | auto \| never | auto | create |
 | `testID` | string | none | meta |
 
 ## Separator (`<separator>`)
@@ -261,11 +296,17 @@ Automation role: `list`. Text source: none. Children: none.
 |---|---|---|---|
 | `items` | stringList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `rowActivated` | `onRowActivated` | index |
+
+The three `empty*` props swap in platform empty-state chrome when `items` is empty; see
+[Native empty states](/components/data-views/#native-empty-states).
 
 `itemCount` (reported by `getTree`) is the row count, never a walk of GTK's recycled row widgets.
 React item-template components, rendering arbitrary JSX per row, are not implemented. Today
@@ -297,6 +338,24 @@ Imperative commands (via `sendCommand(ref.current, …)`): `goBack`, `goForward`
 `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`. See
 [WebView](/components/webview/).
 
+## NativeView (`<nativeview>`)
+
+Automation role: `custom`. Text source: none. Children: none (an opaque leaf).
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `viewKind` | string | none | create |
+| `props` | string | `{}` | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `nativeEvent` | `onNativeEvent` | data |
+
+The generic host for an app-owned native plugin widget. Apps use `defineNativeComponent` rather
+than this intrinsic directly. See [Native Modules](/native-platform/native-modules/) for the plugin
+ABI, build config, and a working example.
+
 ## SplitView (`<splitview>`)
 
 Automation role: `group`. Text source: none. Children: multi.
@@ -306,6 +365,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `sidebarWidth` | float | 0 | create |
 | `collapsed` | bool | false | createAndUpdate |
 | `listWidth` | float | 0 | create |
+| `breakpoint` | int | 0 | create |
 | `testID` | string | none | meta |
 
 Attached props (set on children):
@@ -325,7 +385,20 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `title` | string | (empty) | create |
+| `subtitle` | string | none | createAndUpdate |
+| `showTitleButtons` | bool | true | create |
+| `canGoBack` | bool | false | createAndUpdate |
+| `canGoForward` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `back` | `onBack` | none |
+| `forward` | `onForward` | none |
+
+Setting either `canGoBack` or `canGoForward` opts a headerbar into a pair of native back/forward
+buttons (a header with neither prop set gets none); each prop only enables/disables its own button,
+and `back`/`forward` fire when the user clicks one.
 
 Attached props (set on children):
 
@@ -343,7 +416,18 @@ Automation role: `group`. Text source: none. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
+| `topBarStyle` | flat \| raised \| raised-border | flat | create |
+| `bottomBarStyle` | flat \| raised \| raised-border | flat | create |
+| `extendContentToTopEdge` | bool | false | create |
 | `testID` | string | none | meta |
+
+Attached props (set on children):
+
+| Prop | Type | Default |
+|---|---|---|
+| `slot` | enum | content |
+
+Attached props apply at attach time only. Changing one after mount is a no-op.
 
 ## SearchInput (`<searchinput>`)
 
@@ -368,6 +452,9 @@ Automation role: `list`. Text source: none. Children: none.
 |---|---|---|---|
 | `items` | objectList | none | createAndUpdate |
 | `selectedIndex` | int | -1 | createAndUpdate |
+| `emptyIconName` | string | none | createAndUpdate |
+| `emptyTitle` | string | none | createAndUpdate |
+| `emptyDescription` | string | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -404,6 +491,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none. An item has e
 |---|---|---|---|
 | `label` | string | (empty) | create |
 | `iconName` | string | none | create |
+| `iconVisible` | bool | false | create |
 | `accelerator` | string | none | create |
 | `role` | none \| separator \| about \| settings \| quit \| undo \| redo \| cut \| copy \| paste \| delete \| selectAll \| close \| minimize \| zoom \| fullscreen | none | create |
 | `enabled` | bool | true | createAndUpdate |
@@ -412,3 +500,31 @@ Automation role: `menuitem`. Text source: `label`. Children: none. An item has e
 | Event | Handler | Payload |
 |---|---|---|
 | `selected` | `onSelect` | none |
+
+`iconVisible` opts an item's `iconName` back in on macOS 27, where menu-item symbol images are
+hidden by default; see
+[Icons](/native-platform/icons/#macos-27-hides-menu-item-symbol-images-by-default).
+
+## CommandPalette (`<commandpalette>`)
+
+Automation role: `dialog`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `open` | bool | false | createAndUpdate |
+| `placeholder` | string | none | createAndUpdate |
+| `query` | string | (empty) | createAndUpdate |
+| `items` | objectList (`CommandPaletteItem[]`) | none | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `queryChanged` | `onQueryChanged` | text |
+| `activate` | `onActivate` | text |
+| `submit` | `onSubmit` | text |
+| `cancel` | `onCancel` | none |
+
+A controlled Cmd-K style overlay: the app owns `query`/`items` and does all filtering and ranking,
+the widget only renders rows and reports interaction. See
+[Command Palette](/components/command-palette/) for the full pattern, platform presentation, and
+automation notes.

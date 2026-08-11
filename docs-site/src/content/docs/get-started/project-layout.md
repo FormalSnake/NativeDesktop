@@ -51,16 +51,19 @@ bridges `libnd.a`.
 | Package | What it is |
 |---|---|
 | `@nativedesktop/react` | The renderer app code imports. Turns React commits into NDP `CommitBatch` ops and re-exports the hooks your app uses. `react` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
-| `nd` | The CLI. `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation; `nd build` runs the Babel and React Compiler pre-pass. See [Quick Start](/get-started/quick-start/). |
+| `@nativedesktop/cli` | The `nd` CLI (bin `nd`). `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation, `nd build` runs the Babel and React Compiler pre-pass, `nd package` assembles the platform bundle, `nd doctor` checks toolchain/config readiness. See [Quick Start](/get-started/quick-start/) and [Packaging](/packaging/). |
 | `@nativedesktop/host` | `resolveHostBinary()` finds the prebuilt host for the current platform under `bin/<os>-<arch>/`, and builds one on first run inside this checkout. |
 | `@nativedesktop/data` | Worker-backed `bun:sqlite`, so queries never block React's commit loop. See [App Data & Storage](/core-concepts/app-data-storage/). |
 | `@nativedesktop/native` | Support for app-owned native plugins. |
+| `@nativedesktop/rpc` | A resilient JSON-RPC 2.0 client (reconnect ladder, call queueing, liveness watchdog) for an app that talks to a daemon or remote server. See [RPC Client](/core-concepts/rpc-client/). |
+| `@nativedesktop/panes` | Pane-tree state for resizable split layouts (split/close/focus/resize a tree of panes) plus a `PaneTree`/`usePaneTree` React binding. |
+| `@nativedesktop/test` | `launchApp`/`AppHandle`: spawn a host, connect, and drive it over the automation socket from a Bun test or drive script. See [Test Harness](/automation-testing/test-harness/). |
 | `@nativedesktop/mcp` | A stdio MCP server bridging the automation socket to MCP tool calls. See [MCP Tools](/automation-testing/mcp-tools/). |
 | `babel-plugin-nativedesktop` | Rewrites `react` hook imports to `@nativedesktop/react` in shared logic modules. |
 
 ## `examples/`
 
-Thirteen driven apps that stress-test the framework. The ones to read first:
+Eighteen driven apps that stress-test the framework. The ones to read first:
 
 - `examples/counter/`: the minimal app. State, a click handler, `Suspense`, and an interval, in one
   `<window>`.
@@ -74,11 +77,12 @@ Thirteen driven apps that stress-test the framework. The ones to read first:
 
 ## `template/`
 
-What `scripts/new-app.sh` copies to start a new app: a `package.json` linking
-`@nativedesktop/react`, `nd`, and transitively `@nativedesktop/host` through `file:` paths into this
-checkout (none are published to npm yet), a `src/main.tsx` entry, a `babel.config.json` for the
-opt-in React Compiler and hook-import rewrite, and a `bunfig.toml` that preloads the `bun --hot`
-twin of that rewrite.
+What `scripts/new-app.sh` copies to start a new app: a `package.json` linking `@nativedesktop/react`,
+`@nativedesktop/native`, `@nativedesktop/cli` (bin `nd`), and transitively `@nativedesktop/host`
+through `file:` paths into this checkout (a scaffold made from a checkout exercises the checkout, not
+the npm registry the template's own `^0.1.0` ranges point at), a `src/main.tsx` entry, a
+`babel.config.json` for the opt-in React Compiler and hook-import rewrite, and a `bunfig.toml` that
+preloads the `bun --hot` twin of that rewrite.
 
 ## `tools/` and `scripts/`
 

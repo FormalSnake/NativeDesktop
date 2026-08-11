@@ -37,6 +37,13 @@ string \| null}[] \| null}`. `itemCount` is non-null only for data-driven widget
 only for row-driven widgets (currently `SourceList`, M11) and carries each row's ordered
 `{title, badge, iconName}`.
 
+The table above covers the core semantic set. The full surface also includes `testId` targeting on
+the action methods, `resolve` (testID → actionable ref), `windows` (live per-window state),
+`doubleClick`/`rightClick`/`hover` and `pointer`/`drag`/`keys` (real input synthesis, macOS only),
+and the extended `waitFor` vocabulary (`testId` selector with state predicates). Ground truth is
+`schema/rpc.json`; the narrative doc is
+`docs-site/src/content/docs/automation-testing/automation-socket.md`.
+
 ## Error codes
 
 | Code | Meaning | `data` shape |
@@ -69,16 +76,11 @@ logical units (not device pixels), relative to the window's top-left corner, com
 
 ## MCP tool names
 
-`packages/mcp/src/index.ts` exposes four tools today, each a thin pass-through to the raw methods
-above:
+`packages/mcp/src/index.ts` exposes ten tools, each a thin pass-through to the raw methods:
+`nd_get_tree`, `nd_screenshot`, `nd_click`, `nd_wait_for`, `nd_set_value`, `nd_type`, `nd_scroll`,
+`nd_double_click`, `nd_right_click`, `nd_hover`.
 
-- `nd_get_tree` → `getTree`
-- `nd_screenshot({path})` → `screenshot`
-- `nd_click({ref})` → `click`
-- `nd_wait_for({textContains?, refVisible?, timeoutMs?})` → `waitFor`
-
-`setValue`/`type`/`scroll` exist on the raw socket but do not yet have MCP tool wrappers; drive
-them by talking to the automation socket directly (see `packages/test/src/socket.ts`'s
+For anything beyond those, talk to the automation socket directly (see `packages/test/src/socket.ts`'s
 `AutomationClient` for the client-side pattern, used by every `scripts/*-drive.ts` script).
 `AutomationClient.call<M extends RpcMethodName>(method, ...params): Promise<RpcResult<M>>` is
 schema-typed, tRPC-style (M8-D8): the method name, its params shape, and its result type are all
@@ -113,22 +115,17 @@ runtime surprise.
   (`gtk_check_button_set_active`) and is the kind-dispatched path automation was designed around for
   these two kinds. Prefer it whenever the script cares about the target state rather than a toggle.
 
-## Crash/overlay contract (planned, not yet landed)
+## Crash/overlay contract
 
-The plan for the M8 overlay task (see `docs/superpowers/plans/2026-07-10-m8-dx.md`) is: after a
-runtime crash or disconnect, the host paints an in-window overlay and registers its widgets in the
-tree under a reserved generation (`0xFFFF`), specifically so `getTree` keeps answering through a
-crash instead of going stale. Planned testIDs: `nd-overlay-title`, `nd-overlay-error`,
-`nd-overlay-restart`. Read `nd-overlay-error`'s `text` for the failure message, and (dev-mode only)
-`click` the `nd-overlay-restart` ref to respawn the crashed child. The runtime is planned to report
-uncaught exceptions via an additive `runtimeError {message, stack}` NDP control frame before it
-dies, so the overlay shows the real error rather than a bare disconnect notice.
-
-None of the above exists in `src/automation.zig` or
-`src/runtime.zig` today. A crash today is simply `ND_CHILD_EXITED` on stderr with no tracked
-recovery node in the tree; `getTree` after a crash will fail or return stale data, not an overlay
-snapshot. Do not write agent logic that assumes `nd-overlay-*` testIDs exist until this section is
-updated to say the task has landed.
+After a runtime crash or disconnect, the host paints an in-window overlay on every open window and
+registers its widgets in the tree, so `getTree` keeps answering through a crash instead of going
+stale. TestIDs: `nd-overlay-title`, `nd-overlay-error`, `nd-overlay-restart`. Read
+`nd-overlay-error`'s `text` for the failure message, and (dev mode only; `ND_DEV=1` gates the
+Restart button, not the overlay) `click` the `nd-overlay-restart` ref to respawn the crashed child.
+The runtime reports the error via the `runtimeError {message, stack, fatal}` NDP frame before it
+dies, so the overlay shows the real error rather than a bare disconnect notice. `fatal=false`
+reports (survived errors under the default policy) print `ND_RUNTIME_ERROR_NONFATAL` and never
+become overlay text.
 
 ## Screenshots on macOS (ndshot)
 

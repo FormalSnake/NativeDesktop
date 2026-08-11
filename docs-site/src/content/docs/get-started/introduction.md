@@ -75,7 +75,9 @@ rather than implying otherwise.
 
 **Fail loudly, never silently.** An unknown `style` key is rejected at the React renderer with a
 fix-it message and rejected again host-side. A bad automation action returns a real JSON-RPC error
-code instead of being swallowed as a no-op.
+code instead of being swallowed as a no-op. The same rule governs app code's own errors: a render
+throw or an unhandled rejection is reported rather than swallowed. See
+[Error Handling](/core-concepts/error-handling/).
 
 ## Where to go next
 

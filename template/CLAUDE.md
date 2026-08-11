@@ -1,6 +1,8 @@
 # CLAUDE.md — NativeDesktop app
 
-See `AGENTS.md` in this directory for the three load-bearing rules (dev mode, styling, Zig idiom).
+See `AGENTS.md` in this directory for the three load-bearing rules (dev mode, hook imports, styling),
+the `nd` CLI surface (`@nativedesktop/cli`: `nd dev` / `nd build` / `nd package` / `nd doctor`), the
+`@nativedesktop/*` package set, and the error-policy/settings-store defaults.
 The full framework agent docs live in `docs/agents/` (copied in at scaffold time):
 
 - `docs/agents/README.md` — entry point, MCP tools, marker vocabulary, HMR/crash-debugging story.

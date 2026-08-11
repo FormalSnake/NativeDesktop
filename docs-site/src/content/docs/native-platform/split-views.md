@@ -124,7 +124,7 @@ worked example (and the headless acceptance fixture, `scripts/headless-panes.sh`
 
 ## Automation
 
-Three-pane trees expose the same `getTree`/`semanticClick` contract as any other widget nesting (see
+Three-pane trees expose the same `getTree`/`click` contract as any other widget nesting (see
 [Automation Socket](/automation-testing/automation-socket/)). Each pane's rows are ordinary nodes
 at their real geometry, so an automation script can assert x-order across panes (a sidebar row
 sits left of a list row, which sits left of the content pane) the same way it would for the

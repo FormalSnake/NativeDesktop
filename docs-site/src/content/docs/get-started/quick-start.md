@@ -122,3 +122,9 @@ devshell can leak into the system Swift toolchain:
 ( cd swift && env -u SDKROOT -u DEVELOPER_DIR swift build -c release )
 ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 swift/.build/release/NDShell
 ```
+
+## Where to go next
+
+- [Project Layout](/get-started/project-layout/): where the schema, codegen output, and app code live.
+- [App Model](/core-concepts/app-model/): how a window and its chrome are built from JSX.
+- [Automation-First](/core-concepts/automation-first/): drive the app you just ran from a script or a coding agent.

@@ -6,8 +6,8 @@ Entry point for coding agents working on or building with NativeDesktop. See als
 
 ## What this framework is
 
-NativeDesktop is a two-process framework: a Zig host owns a real native window (GTK4 on Linux,
-AppKit/Win32 planned) and a Bun/TypeScript child renders a React tree into it over a local
+NativeDesktop is a two-process framework: a native host owns a real native window (GTK4/libadwaita
+on Linux, AppKit on macOS; Windows planned) and a Bun/TypeScript child renders a React tree into it over a local
 protocol (NDP). There is no DOM and no Electron; the `<webview>` widget embeds the platform's own
 engine for web content, and the UI itself never renders through a browser. The host is automation-first: every widget the
 React tree creates is tracked and answerable over a JSON-RPC socket, so an agent can inspect and
@@ -15,7 +15,7 @@ drive the app the same way a user would. Full design: `docs/superpowers/specs/20
 
 ## Running an app
 
-**The `nd` CLI (`packages/nd`).** A scaffolded app or `examples/*` package declares `"dev": "nd dev"`
+**The `nd` CLI (`packages/nd`, published as `@nativedesktop/cli`).** A scaffolded app or `examples/*` package declares `"dev": "nd dev"`
 (or `"nd dev main.tsx"` for the flat-layout `examples/*`), so `nd dev [entry]` is the canonical way
 to run one. `entry` defaults to `src/main.tsx`. `nd dev` resolves the native backend for the current
 platform through `@nativedesktop/host`'s `resolveHostBinary()`: the AppKit `nd-shell` on macOS, the
@@ -23,7 +23,9 @@ GTK `nd-hello` on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND`
 prebuilt from the installed platform package (`@nativedesktop/host-darwin-arm64` or
 `@nativedesktop/host-linux-x64`), or is built on first run inside a framework checkout
 (see `packages/host/src/index.ts`). It then spawns that binary with `ND_DEV=1 ND_SCRIPT=<entry>`.
-`nd build` runs `bun run compile`, the Babel and React Compiler pre-pass described below. `nd dev`
+`nd build` runs `bun run compile`, the Babel and React Compiler pre-pass described below.
+`nd package [mac|linux]` assembles and signs the platform bundle (pipeline in
+`packages/nd/src/package/`), and `nd doctor` checks packaging/toolchain readiness. `nd dev`
 does not set `NATIVE_AUTOMATION=1`, so export it before running if you need the automation socket.
 
 `nd dev` prefers the *prebuilt* binary bundled with `@nativedesktop/host` (building it once inside a
@@ -47,7 +49,8 @@ grep for in the host's stderr (all `ND_*` markers print to stderr; capture `2>&1
 | `ND_CHILD_EXITED` | the child disconnected (crash, `kill -9`, or clean exit) | landed |
 | `ND_OVERLAY_SHOWN dev=…` | the host painted the crash overlay | landed |
 | `ND_GC_SWEEP gen=… removed=…` | generation GC swept orphaned widgets after a reload | landed |
-| `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported an uncaught error before dying | landed |
+| `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported a fatal error before dying | landed |
+| `ND_RUNTIME_ERROR_NONFATAL …` | the runtime reported a survived error; the app keeps running | landed |
 
 `NDP_TRACE=1` (env var on the host) enables verbose per-frame NDP tracing, useful when a
 commit isn't showing up as expected.
@@ -174,25 +177,28 @@ reload and react-refresh are unaffected; use `bun run compile && ND_SCRIPT=dist/
 
 ## MCP tools
 
-`packages/mcp` is a stdio MCP server that bridges to the host's automation socket. Four tools,
-today:
+`packages/mcp` is a stdio MCP server that bridges to the host's automation socket. Ten tools:
 
-- `nd_get_tree`: snapshot the widget tree (refs, testIDs, text, geometry).
+- `nd_get_tree`: snapshot the widget tree (refs, testIDs, text, geometry, accessibility state).
 - `nd_screenshot`: render the window to a PNG at an absolute path.
-- `nd_click`: semantic click on a widget by ref.
+- `nd_click`, `nd_set_value`, `nd_type`, `nd_scroll`: semantic input, both backends.
 - `nd_wait_for`: poll a tree condition (`textContains` or `refVisible`) until it holds or times out.
+- `nd_double_click`, `nd_right_click`, `nd_hover`: real input synthesis, macOS only (`-32003` on GTK).
 
-These are a thin pass-through to the raw RPC methods; see `automation.md` for the full method
-list (including `setValue`/`type`/`scroll`, which exist on the raw socket but do not yet have MCP
-tool wrappers) and the error-code contract.
+These are a thin pass-through to the raw RPC methods; see `automation.md` for the full method list
+(the raw socket adds `resolve`, `windows`, `pointer`/`drag`/`keys`, and the testId-targeted forms)
+and the error-code contract. For scripted tests, prefer the `@nativedesktop/test` harness
+(`packages/test/`): `launchApp` spawns a host with the automation socket on, targets widgets by
+`ref` or `testId`, drives the host-side `waitFor` vocabulary, and scripts native dialogs through
+`ND_AUTOMATION_DIALOG_SCRIPT`.
 
 ## Crash debugging for agents
 
-**Not yet landed** (lands with the M8 overlay task). Once shipped: when the Bun child crashes or
-disconnects, the host paints an in-window overlay and tracks its widgets under a reserved
-generation (`0xFFFF`) specifically so `getTree` keeps answering through a crash; an agent reads
-the crash the same way it reads any other tree state. The plan: `getTree` will expose
-`nd-overlay-title` / `nd-overlay-error` / `nd-overlay-restart` testIDs; read `nd-overlay-error`'s
-`text` for the failure message, and (dev-mode only) `click` `nd-overlay-restart` to respawn the
-child and recover. Today, a crash simply prints `ND_CHILD_EXITED` and the window goes stale with no
-tracked recovery path. Treat any crash as fatal to the current run until this lands.
+When the Bun child crashes or disconnects, the host paints an in-window overlay on every open
+window and keeps its widgets tracked, so `getTree` keeps answering through the crash; an agent
+reads the crash the same way it reads any other tree state. The overlay exposes
+`nd-overlay-title` / `nd-overlay-error` / `nd-overlay-restart` testIDs: read `nd-overlay-error`'s
+`text` for the failure message, and (dev mode only; `ND_DEV=1` gates the Restart button, not the
+overlay) `click` `nd-overlay-restart` to respawn the child and recover. Under the default error
+policy an unhandled promise rejection does NOT crash the child: it prints
+`ND_RUNTIME_ERROR_NONFATAL` and the app keeps running, and its message never becomes overlay text.

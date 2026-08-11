@@ -106,7 +106,7 @@ three places; only the owning widget differs.
 
 Menu nodes appear in `getTree` (see [Automation Socket](/automation-testing/automation-socket/))
 with labels as their text and nominal (non-visual) bounds, since they're chrome rather than an
-on-screen widget. `semanticClick` on a `menuitem` ref dispatches `onSelect` (or fires the role's
+on-screen widget. The `click` RPC on a `menuitem` ref dispatches `onSelect` (or fires the role's
 native action) on both backends, so an automation-driving agent can exercise a File > New Note
 command the same way it clicks a button.
 
