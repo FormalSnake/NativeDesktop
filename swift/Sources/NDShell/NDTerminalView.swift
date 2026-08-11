@@ -37,6 +37,9 @@ final class NDTerminalView: NSView {
     /// the whole grid so the ASCII run path and the per-cell fallback path put
     /// every glyph on the same line, regardless of bold or substitute face.
     private let ascent: CGFloat
+    /// Light line weight (points) for geometric box/block/powerline sprites.
+    /// Heavy strokes are twice this. See `NDSprite`.
+    private let boxThickness: CGFloat
     /// Current grid dimensions. Start from the create-time props, then track
     /// the view's pixel size in `setFrameSize`/`layout` (→ `ndterm_resize`/
     /// `ndrt_resize`).
@@ -104,7 +107,7 @@ final class NDTerminalView: NSView {
     /// keep cell rects on integral pixels. The fourth return is the baseline
     /// ascent. `fontFamily` unset (or not resolvable by name) falls back to the
     /// system monospace face — never hardcodes Menlo.
-    private static func metrics(_ fontSize: Int, _ fontFamily: String?) -> (NSFont, NSFont, CGFloat, CGFloat, CGFloat) {
+    private static func metrics(_ fontSize: Int, _ fontFamily: String?) -> (NSFont, NSFont, CGFloat, CGFloat, CGFloat, CGFloat) {
         let f = fontFamily.flatMap { NSFont(name: $0, size: CGFloat(fontSize)) }
             ?? NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
         let bold = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
@@ -116,11 +119,17 @@ final class NDTerminalView: NSView {
         CTFontGetAdvancesForGlyphs(f as CTFont, .horizontal, &glyphs, &advances, chars.count)
         let cellWidth = advances.reduce(CGFloat(0)) { max($0, $1.width) }
 
-        return (f, bold, ceil(cellWidth), ceil(NSLayoutManager().defaultLineHeight(for: f)), f.ascender)
+        // Light box-line weight: the font's underline thickness, falling back to
+        // ~9% of the row height. Sprites share this so box joints line up.
+        let cellHeight = ceil(NSLayoutManager().defaultLineHeight(for: f))
+        let underline = CTFontGetUnderlineThickness(f as CTFont)
+        let boxThickness = max(underline > 0 ? underline : (cellHeight * 0.09).rounded(), 1)
+
+        return (f, bold, ceil(cellWidth), cellHeight, f.ascender, boxThickness)
     }
 
     init(command: String?, cwd: String?, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
-        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent) = Self.metrics(fontSize, fontFamily)
+        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent, self.boxThickness) = Self.metrics(fontSize, fontFamily)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
         self.isRemote = false
@@ -165,7 +174,7 @@ final class NDTerminalView: NSView {
     /// the daemon for retained-ring replay, so the VT rebuilds scrollback (the
     /// core falls back to snapshot/live when history is unavailable).
     init(remote: Bool, host: String?, port: Int, sessionId: String?, ticket: String?, restoreScrollback: Bool, fontSize: Int, fontFamily: String?, palette: String?, foreground: String, background: String, cols: Int, rows: Int) {
-        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent) = Self.metrics(fontSize, fontFamily)
+        (self.font, self.boldFont, self.cellW, self.cellH, self.ascent, self.boxThickness) = Self.metrics(fontSize, fontFamily)
         self.cols = max(1, cols)
         self.rows = max(1, rows)
         self.isRemote = true
@@ -369,6 +378,7 @@ final class NDTerminalView: NSView {
         bounds.fill()
 
         let ctx = NSGraphicsContext.current?.cgContext
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
         let defBgKey = UInt32(defBg[0]) << 16 | UInt32(defBg[1]) << 8 | UInt32(defBg[2])
 
         var cell = nd_term_cell()
@@ -456,7 +466,13 @@ final class NDTerminalView: NSView {
                 } else {
                     flushRun()
                     let s = graphemeString(cell)
-                    if !s.isEmpty {
+                    let cp = s.unicodeScalars.first?.value ?? 0
+                    if let ctx, NDSprite.isSprite(cp) {
+                        NDSprite.draw(cp: cp, ctx: ctx,
+                                      x: CGFloat(x) * cellW, y: CGFloat(y) * cellH,
+                                      w: isWide ? cellW * 2 : cellW, h: cellH,
+                                      color: nsColor(fgTuple), thickness: boxThickness, scale: scale)
+                    } else if !s.isEmpty {
                         drawCellIndividual(ctx, grapheme: s, x: x, y: y, isWide: isWide,
                                            bold: bold, underline: underline, fg: nsColor(fgTuple))
                     }
@@ -481,7 +497,12 @@ final class NDTerminalView: NSView {
             nsColor(cell.fg).setFill()
             curRect.fill()
             let s = graphemeString(cell)
-            if !s.isEmpty {
+            let cp = s.unicodeScalars.first?.value ?? 0
+            if let ctx, NDSprite.isSprite(cp) {
+                NDSprite.draw(cp: cp, ctx: ctx, x: curRect.minX, y: curRect.minY,
+                              w: curRect.width, h: curRect.height,
+                              color: nsColor(cell.bg), thickness: boxThickness, scale: scale)
+            } else if !s.isEmpty {
                 drawCellIndividual(ctx, grapheme: s, x: Int(cursor.x), y: Int(cursor.y),
                                    isWide: isWide, bold: (flags & NDTERM_FLAG_BOLD) != 0,
                                    underline: (flags & NDTERM_FLAG_UNDERLINE) != 0, fg: nsColor(cell.bg))
@@ -511,15 +532,19 @@ final class NDTerminalView: NSView {
                width: CGFloat(cols) * cellW, height: cellH).fill()
     }
 
-    /// Draw a coalesced ASCII run as glyphs at fixed per-cell positions. The
-    /// view is flipped (y-down), so the text matrix is y-flipped to keep glyphs
-    /// upright and each glyph is placed at its exact `col*cellW` origin — no
-    /// natural-advance drift off the grid. Underline spans the whole run.
+    /// Draw a coalesced ASCII run as glyphs at fixed per-cell positions. Each
+    /// glyph sits at its exact `col*cellW` origin (no natural-advance drift off
+    /// the grid). The view is flipped (y-down); `CTFontDrawGlyphs` maps its
+    /// `positions` through the text matrix, so a y-flipped text matrix would
+    /// mirror the whole run's baseline about y=0 and only the top row would land
+    /// on screen. Instead flip the CTM once and place glyphs in bottom-origin
+    /// space, which keeps the outlines upright without touching the positions.
     private func drawGlyphRun(_ ctx: CGContext?, glyphs: [CGGlyph], startCol: Int, row: Int,
                               bold: Bool, color: NSColor, underline: Bool) {
         guard let ctx, !glyphs.isEmpty else { return }
         let face = bold ? boldFont : font
-        let baseline = CGFloat(row) * cellH + ascent
+        let h = bounds.height
+        let baseline = h - (CGFloat(row) * cellH + ascent)
         var positions = [CGPoint]()
         positions.reserveCapacity(glyphs.count)
         for i in 0..<glyphs.count {
@@ -529,7 +554,9 @@ final class NDTerminalView: NSView {
         ctx.setShouldAntialias(true)
         ctx.setShouldSmoothFonts(true)
         ctx.setFillColor(color.cgColor)
-        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textMatrix = .identity
+        ctx.translateBy(x: 0, y: h)
+        ctx.scaleBy(x: 1, y: -1)
         CTFontDrawGlyphs(face as CTFont, glyphs, positions, glyphs.count, ctx)
         ctx.restoreGState()
         if underline {
