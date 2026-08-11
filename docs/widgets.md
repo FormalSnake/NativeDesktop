@@ -379,6 +379,27 @@ Automation role: `list`. Text source: none. Children: none.
 | `selectionChanged` | `onSelectionChanged` | index |
 | `rowActivated` | `onRowActivated` | index |
 
+## SourceTree (`<sourcetree>`)
+
+Automation role: `tree`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `nodes` | objectList | none | createAndUpdate |
+| `actions` | objectList | none | createAndUpdate |
+| `selectedId` | string |  | createAndUpdate |
+| `actionVisibility` | hover \| always | hover | create |
+| `indentationPerLevel` | int | 14 | create |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | data |
+| `rowActivated` | `onRowActivated` | data |
+| `nodeExpanded` | `onNodeExpanded` | data |
+| `nodeCollapsed` | `onNodeCollapsed` | data |
+| `actionClicked` | `onActionClicked` | data |
+
 ## Menubar (`<menubar>`)
 
 Automation role: `menubar`. Text source: none. Children: multi.

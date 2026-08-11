@@ -59,19 +59,27 @@ clipboard holds no text, but reading the clipboard is default-denied; see
 ```tsx
 import { notifications, useEffect } from "@nativedesktop/react";
 
-function useNotifyOnDone(done: boolean) {
+function useNotifyOnDone(done: boolean, runId: string) {
   useEffect(() => {
-    const unsubscribe = notifications.onClick((id) => console.log("clicked", id));
+    const unsubscribe = notifications.onClick((e) => {
+      const clicked = (e.data ?? {}) as { runId?: string };
+      if (clicked.runId) revealRun(clicked.runId);
+    });
     return unsubscribe;
   }, []);
 
-  if (done) notifications.show({ title: "Build finished", body: "0 errors, 0 warnings" });
+  if (done) notifications.show({ title: "Build finished", body: "0 errors, 0 warnings", data: { runId } });
 }
 ```
 
-`notifications.show({ title, body? })` resolves to a notification id you can correlate against
-`notifications.onClick(handler)`, which fires when the user clicks the banner. `onClick` returns an
-unsubscribe function, so it's safe to call straight from a `useEffect` cleanup.
+`notifications.show({ title, body?, data? })` resolves to a notification id;
+`notifications.onClick(handler)` fires `{ id, data? }` when the user clicks the banner, where
+`data` is whatever you passed to `show()`. The payload lives in a process-local map (never sent to
+the host), capped at 128 entries and cleared per-notification once its click dispatches, so it
+survives `bun --hot` re-evals but not an app restart. That limit costs nothing in practice: a click
+arriving after a restart is dropped by the transport today anyway (no host-side buffering, same gap
+as `onOpenUrl` below). `onClick` returns an unsubscribe function, so it's safe to call straight
+from a `useEffect` cleanup.
 
 ## Recent documents
 
@@ -176,6 +184,10 @@ function useFileDrop(onFiles: (paths: string[]) => void) {
   }, [onFiles]);
 }
 ```
+
+`app.isActive()` answers the standing question synchronously (no await, no subscription), backed
+by the same activation stream. The host replays the current state right after the NDP handshake, so
+it's already correct in your first render (and after an HMR or crash respawn).
 
 | Subscription | Fires when… |
 | --- | --- |

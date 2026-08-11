@@ -1,6 +1,6 @@
 export { render, sendCommand, sendNativeCommand, createPortal, createPool, moveNode } from "./renderer.ts";
 export type { Pool } from "./renderer.ts";
-export { Platform } from "./platform.ts";
+export { Platform, hasWidget, hasCommand } from "./platform.ts";
 export type { Backend, OS } from "./platform.ts";
 export { getAppDataDir, ensureAppDataDir } from "./paths.ts";
 export { defineNativeComponent } from "./native-component.ts";
@@ -32,7 +32,7 @@ export type {
 export { showToast, dismissToast, onToastButtonClicked, onToastDismissed } from "./toast.ts";
 export type { ToastPriority, ShowToastOptions, ToastResult } from "./toast.ts";
 export type { Instance } from "./host-config.ts";
-export type { NdNodeRef, WidgetType, TableColumn, TableRow, TreeNode } from "./generated/intrinsics.ts";
+export type { NdNodeRef, WidgetType, TableColumn, TableRow, TreeNode, SourceTreeAction, SourceTreeNode } from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {
   useState,

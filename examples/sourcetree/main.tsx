@@ -1,0 +1,111 @@
+// Target app for scripts/sourcetree-drive.ts: a single window (no tabs,
+// unlike the gallery's SourceTree tab, so every surface is visible for
+// screenshots) holding a `toolbar` strip, a
+// <sourcetree> with sections + a 3-level chain + captions/badges + two
+// actions, and readout labels the drive asserts through. Row order puts the
+// actionable project row FIRST so the AppKit pointer leg can hit its
+// trailing action button at a predictable y. actionVisibility "always" for
+// the same reason (hover can't be a precondition for a coordinate click).
+import { render, useState, useMountEffect, app, hasCommand, hasWidget } from "@nativedesktop/react";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
+
+const actions: SourceTreeAction[] = [
+  { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },
+  { id: "close-run", iconName: "window-close-symbolic", tooltip: "Close run", destructive: true },
+];
+
+const nodeMeta: Omit<SourceTreeNode, "expanded">[] = [
+  { id: "proj-nd", title: "NativeDesktop", hasChildren: true, actionIds: ["new-run"], testID: "st-proj-nd" },
+  { id: "run-1", parentId: "proj-nd", title: "fix sidebar", caption: "running · 2m", badge: "3",
+    actionIds: ["close-run"], testID: "st-run-1" },
+  { id: "run-2", parentId: "proj-nd", title: "docs pass", caption: "idle", testID: "st-run-2" },
+  { id: "sec-hosts", title: "Hosts", section: true, hasChildren: true, testID: "st-sec-hosts" },
+  { id: "host-mac", parentId: "sec-hosts", title: "macbook", caption: "connected", iconName: "computer-symbolic",
+    captionIconName: "network-transmit-receive-symbolic", hasChildren: true, testID: "st-host-mac" },
+  { id: "proj-two", parentId: "host-mac", title: "Docs", hasChildren: true, testID: "st-proj-two" },
+  { id: "run-3", parentId: "proj-two", title: "deep run", caption: "level three", testID: "st-run-3" },
+  { id: "sec-settled", title: "Settled", section: true, hasChildren: true, testID: "st-sec-settled" },
+  { id: "run-old", parentId: "sec-settled", title: "old run", caption: "settled yesterday", testID: "st-run-old" },
+];
+
+function App(): React.ReactNode {
+  const [expanded, setExpanded] = useState<Set<string>>(
+    new Set(["proj-nd", "sec-hosts", "host-mac", "proj-two"]),
+  );
+  const [selectedId, setSelectedId] = useState("");
+  const [lastActivated, setLastActivated] = useState("");
+  const [lastAction, setLastAction] = useState("");
+  const [lastExpandEvent, setLastExpandEvent] = useState("");
+  const nodes: SourceTreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.id) }));
+
+  // Activation transitions re-render the readouts below; the drive frontmosts
+  // the process and waits for the active label to flip.
+  const [, setActivationTick] = useState(0);
+  useMountEffect(() => {
+    const offActivate = app.onActivate(() => setActivationTick((t) => t + 1));
+    const offDeactivate = app.onDeactivate(() => setActivationTick((t) => t + 1));
+    return () => {
+      offActivate();
+      offDeactivate();
+    };
+  });
+
+  // Render-time (no await): hasCommand/hasWidget answer from the handshake
+  // manifest; app.isActive() from the host's replayed activation state.
+  const capsText = `caps present=${hasCommand("window", "present")} nope=${hasCommand("window", "nope")} sourcetree=${hasWidget("sourcetree")}`;
+  const activeText = `active ${app.isActive()} replay=${globalThis.__nd_app_active !== undefined ? "yes" : "no"}`;
+
+  return (
+    <window title="SourceTree Drive" defaultWidth={480} defaultHeight={640}>
+      <box orientation="vertical" spacing={8}>
+        <box orientation="horizontal" spacing={6} cssClasses={["toolbar"]} testID="st-toolbar">
+          <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]} />
+          <button testID="st-toolbar-add" iconName="list-add-symbolic" cssClasses={["flat"]} />
+        </box>
+        <sourcetree
+          testID="st-tree"
+          nodes={nodes}
+          actions={actions}
+          selectedId={selectedId}
+          actionVisibility="always"
+          onSelectionChanged={(e) => setSelectedId((e.data as { nodeId: string | null }).nodeId ?? "")}
+          onRowActivated={(e) => setLastActivated((e.data as { nodeId: string }).nodeId)}
+          onNodeExpanded={(e) => {
+            const { nodeId } = e.data as { nodeId: string };
+            setLastExpandEvent(`expanded:${nodeId}`);
+            setExpanded((prev) => new Set(prev).add(nodeId));
+          }}
+          onNodeCollapsed={(e) => {
+            const { nodeId } = e.data as { nodeId: string };
+            setLastExpandEvent(`collapsed:${nodeId}`);
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              next.delete(nodeId);
+              return next;
+            });
+          }}
+          onActionClicked={(e) => {
+            const { nodeId, actionId } = e.data as { nodeId: string; actionId: string };
+            setLastAction(`${actionId}@${nodeId}`);
+          }}
+          style={{ vexpand: true }}
+        />
+        <checkbox testID="st-settled-toggle" label="Show settled" checked={expanded.has("sec-settled")}
+          onToggled={(e) => setExpanded((prev) => {
+            const next = new Set(prev);
+            if (e.checked) next.add("sec-settled");
+            else next.delete("sec-settled");
+            return next;
+          })} />
+        <label testID="st-selected-readout" text={`sel ${selectedId || "(none)"}`} />
+        <label testID="st-activated-readout" text={`act ${lastActivated || "(none)"}`} />
+        <label testID="st-action-readout" text={`action ${lastAction || "(none)"}`} />
+        <label testID="st-expand-readout" text={`expand ${lastExpandEvent || "(none)"}`} />
+        <label testID="st-caps-readout" text={capsText} />
+        <label testID="st-active-readout" text={activeText} />
+      </box>
+    </window>
+  );
+}
+
+await render(<App />);

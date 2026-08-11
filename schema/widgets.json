@@ -70,6 +70,36 @@
       ]
     },
     {
+      "name": "SourceTreeAction",
+      "doc": "One trailing row affordance, declared once in the widget's `actions` prop and referenced by nodes via actionIds.",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "iconName", "type": "string" },
+        { "name": "label", "type": "string", "optional": true },
+        { "name": "tooltip", "type": "string", "optional": true },
+        { "name": "destructive", "type": "bool", "optional": true }
+      ]
+    },
+    {
+      "name": "SourceTreeNode",
+      "doc": "Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state.",
+      "fields": [
+        { "name": "id", "type": "string" },
+        { "name": "parentId", "type": "string", "optional": true },
+        { "name": "title", "type": "string" },
+        { "name": "caption", "type": "string", "optional": true },
+        { "name": "iconName", "type": "string", "optional": true },
+        { "name": "captionIconName", "type": "string", "optional": true },
+        { "name": "badge", "type": "string", "optional": true },
+        { "name": "section", "type": "bool", "optional": true },
+        { "name": "hasChildren", "type": "bool", "optional": true },
+        { "name": "expanded", "type": "bool", "optional": true },
+        { "name": "selectable", "type": "bool", "optional": true },
+        { "name": "actionIds", "type": "string", "list": true, "optional": true },
+        { "name": "testID", "type": "string", "optional": true }
+      ]
+    },
+    {
       "name": "CommandPaletteItem",
       "doc": "CommandPalette result row: stable string id (echoed in onActivate), title, optional subtitle + leading icon. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders.",
       "fields": [
@@ -458,6 +488,27 @@
         { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "index" }
       ],
       "automation": { "role": "list", "textFrom": null }
+    },
+    {
+      "name": "SourceTree",
+      "intrinsic": "sourcetree",
+      "container": null,
+      "props": [
+        { "name": "nodes", "type": "objectList", "itemShape": "SourceTreeNode", "appliesTo": "createAndUpdate" },
+        { "name": "actions", "type": "objectList", "itemShape": "SourceTreeAction", "appliesTo": "createAndUpdate" },
+        { "name": "selectedId", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "actionVisibility", "type": "enum", "values": ["hover", "always"], "default": "hover", "appliesTo": "create" },
+        { "name": "indentationPerLevel", "type": "int", "default": 14, "appliesTo": "create" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "selectionChanged", "ndpName": "onSelectionChanged", "payload": "data" },
+        { "name": "rowActivated", "ndpName": "onRowActivated", "payload": "data" },
+        { "name": "nodeExpanded", "ndpName": "onNodeExpanded", "payload": "data" },
+        { "name": "nodeCollapsed", "ndpName": "onNodeCollapsed", "payload": "data" },
+        { "name": "actionClicked", "ndpName": "onActionClicked", "payload": "data" }
+      ],
+      "automation": { "role": "tree", "textFrom": null }
     },
     {
       "name": "Menubar",

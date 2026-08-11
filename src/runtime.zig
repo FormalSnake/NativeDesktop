@@ -11,6 +11,7 @@ const ndp_binary = @import("ndp_binary.zig");
 // `abi_backend.bind` already wired for the structural seam calls.
 const abi_backend = @import("abi_backend.zig");
 const automation_dialogs = @import("automation_dialogs.zig");
+const widget_types = @import("generated/widget_types.zig");
 
 var trace: bool = false;
 
@@ -116,6 +117,11 @@ pub const Runtime = struct {
     overlay_shown: bool = false,
 
     var singleton: ?*Runtime = null;
+    /// Last app.activate/app.deactivate transition, recorded even before the
+    /// child connects (backends emit the initial one at launch). Replayed
+    /// right after HelloAck so app.isActive() is correct from the first
+    /// render — including HMR/crash respawns.
+    var last_app_active: ?bool = null;
 
     pub fn start(
         gpa: std.mem.Allocator,
@@ -279,8 +285,18 @@ pub const Runtime = struct {
                 return;
             }
         }
-        self.writeFrame(protocol.HelloAck{ .ndpVersion = protocol.ndp_version, .encodings = &.{ "binary", "json" }, .backend = self.backend_name });
+        self.writeFrame(protocol.HelloAck{
+            .ndpVersion = protocol.ndp_version,
+            .encodings = &.{ "binary", "json" },
+            .backend = self.backend_name,
+            .hostWidgets = widget_types.host_widgets,
+            .hostCommands = widget_types.host_commands,
+        });
         std.debug.print("ND_HELLO_OK\n", .{});
+        // Replay the standing activation state: the launch transition fired
+        // before this child connected (or before a respawn), so without the
+        // replay the child would never learn it.
+        if (last_app_active) |a| sendSystemEvent(if (a) "app.activate" else "app.deactivate", "{}");
 
         // Frame loop.
         while (true) {
@@ -620,6 +636,13 @@ pub const Runtime = struct {
     /// wire. A malformed payload is dropped with a diagnostic rather than
     /// corrupting the frame.
     pub fn sendSystemEvent(channel: []const u8, data_json: []const u8) void {
+        // Record BEFORE the singleton guard: the launch transition arrives
+        // pre-connect, and dropping it would make the HelloAck replay a no-op.
+        if (std.mem.eql(u8, channel, "app.activate")) {
+            last_app_active = true;
+        } else if (std.mem.eql(u8, channel, "app.deactivate")) {
+            last_app_active = false;
+        }
         const self = singleton orelse return;
         const validated = std.json.parseFromSlice(std.json.Value, self.gpa, data_json, .{}) catch {
             std.debug.print("ND_SYSTEM_BAD_EVENT channel={s}\n", .{channel});

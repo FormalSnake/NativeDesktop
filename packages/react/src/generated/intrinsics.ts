@@ -3,8 +3,8 @@ import type { ReactNode, Ref } from "react";
 
 export { jsx, jsxs, Fragment } from "react/jsx-runtime";
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton" | "Terminal" | "Paned" | "CommandPalette";
-export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "nativeview" | "splitview" | "headerbar" | "toolbarview" | "searchinput" | "sourcelist" | "menubar" | "menu" | "menuitem" | "settingsgroup" | "switch" | "togglebutton" | "segmentedcontrol" | "numberinput" | "linkbutton" | "levelindicator" | "colorpicker" | "banner" | "menubutton" | "splitbutton" | "popover" | "expander" | "statuspage" | "toastoverlay" | "datepicker" | "table" | "treeview" | "fontpicker" | "video" | "trayitem" | "sharebutton" | "terminal" | "paned" | "commandpalette";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "SourceTree" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton" | "Terminal" | "Paned" | "CommandPalette";
+export type WidgetType = "window" | "box" | "label" | "button" | "textinput" | "textarea" | "checkbox" | "radio" | "select" | "slider" | "progressbar" | "image" | "scrollview" | "separator" | "spinner" | "tabview" | "grid" | "listview" | "webview" | "nativeview" | "splitview" | "headerbar" | "toolbarview" | "searchinput" | "sourcelist" | "sourcetree" | "menubar" | "menu" | "menuitem" | "settingsgroup" | "switch" | "togglebutton" | "segmentedcontrol" | "numberinput" | "linkbutton" | "levelindicator" | "colorpicker" | "banner" | "menubutton" | "splitbutton" | "popover" | "expander" | "statuspage" | "toastoverlay" | "datepicker" | "table" | "treeview" | "fontpicker" | "video" | "trayitem" | "sharebutton" | "terminal" | "paned" | "commandpalette";
 
 /** What a host-element `ref` resolves to (the reconciler's public
  *  instance): the node's wire id + intrinsic type — the handle
@@ -60,6 +60,30 @@ export interface TreeNode {
   hasChildren: boolean;
   expanded: boolean;
 }
+/** One trailing row affordance, declared once in the widget's `actions` prop and referenced by nodes via actionIds. */
+export interface SourceTreeAction {
+  id: string;
+  iconName: string;
+  label?: string;
+  tooltip?: string;
+  destructive?: boolean;
+}
+/** Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state. */
+export interface SourceTreeNode {
+  id: string;
+  parentId?: string;
+  title: string;
+  caption?: string;
+  iconName?: string;
+  captionIconName?: string;
+  badge?: string;
+  section?: boolean;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  selectable?: boolean;
+  actionIds?: string[];
+  testID?: string;
+}
 /** CommandPalette result row: stable string id (echoed in onActivate), title, optional subtitle + leading icon. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders. */
 export interface CommandPaletteItem {
   id: string;
@@ -95,6 +119,7 @@ export namespace JSX {
     toolbarview: { testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"toolbarview">>; children?: ReactNode };
     searchinput: { text?: string; placeholder?: string; testID?: string; onChanged?: (e: { text: string }) => void; onActivate?: (e: { text: string }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"searchinput">>; children?: ReactNode };
     sourcelist: { items?: { title: string; badge?: string; iconName?: string }[]; selectedIndex?: number; testID?: string; onSelectionChanged?: (e: { index: number }) => void; onRowActivated?: (e: { index: number }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"sourcelist">>; children?: ReactNode };
+    sourcetree: { nodes?: SourceTreeNode[]; actions?: SourceTreeAction[]; selectedId?: string; actionVisibility?: "hover" | "always"; indentationPerLevel?: number; testID?: string; onSelectionChanged?: (e: { data: unknown }) => void; onRowActivated?: (e: { data: unknown }) => void; onNodeExpanded?: (e: { data: unknown }) => void; onNodeCollapsed?: (e: { data: unknown }) => void; onActionClicked?: (e: { data: unknown }) => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"sourcetree">>; children?: ReactNode };
     menubar: { defaults?: boolean; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menubar">>; children?: ReactNode };
     menu: { label?: string; testID?: string; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menu">>; children?: ReactNode };
     menuitem: { label?: string; iconName?: string; accelerator?: string; role?: "none" | "separator" | "about" | "settings" | "quit" | "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll" | "close" | "minimize" | "zoom" | "fullscreen"; enabled?: boolean; testID?: string; onSelect?: () => void; tabLabel?: string; gridRow?: number; gridColumn?: number; gridRowSpan?: number; gridColumnSpan?: number; slot?: "sidebar" | "content" | "list" | "start" | "end"; style?: StyleProp; cssClasses?: string[]; key?: string | number | null; ref?: Ref<NdNodeRef<"menuitem">>; children?: ReactNode };

@@ -55,11 +55,17 @@ pub const Hello = struct {
 /// order (ndp-binary spec §2); the runtime picks the first one it supports. `backend` names the
 /// host's active widget backend ("gtk" | "appkit") — the authoritative source for
 /// `Platform.backend`, since the OS alone can't distinguish it (GTK runs on macOS too).
+/// `hostWidgets`/`hostCommands` are the host build's capability manifest: every intrinsic it
+/// knows, and every "<intrinsic>.<command>" it dispatches — the source for
+/// hasWidget()/hasCommand(); optional so a runtime can still talk to an older host (both absent
+/// = fall back to the runtime's own schema tables).
 pub const HelloAck = struct {
     type: []const u8 = "helloAck",
     ndpVersion: u32,
     encodings: []const []const u8,
     backend: []const u8,
+    hostWidgets: ?[]const []const u8 = null,
+    hostCommands: ?[]const []const u8 = null,
 };
 
 pub const ErrorFrame = struct {

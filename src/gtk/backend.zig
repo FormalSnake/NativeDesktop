@@ -22,6 +22,7 @@ const tree_mod = @import("../tree.zig");
 const system = @import("system.zig");
 const ndtabs_gtk = @import("tabs.zig");
 const ndpalette_gtk = @import("commandpalette.zig");
+const ndsourcetree_gtk = @import("sourcetree.zig");
 
 pub const Widget = gtk.Widget;
 
@@ -608,6 +609,12 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
             value_json = std.fmt.allocPrint(arena, "{d}", .{gtk.ListBoxRow.getIndex(row)}) catch "null";
             owned = true;
         }
+    } else if (std.mem.eql(u8, kind, "SourceTree")) {
+        // Value is the selected node ID (id-addressed widget, not indexed).
+        if (ndsourcetree_gtk.selectedIdOf(widget)) |id| {
+            value_json = std.json.Stringify.valueAlloc(arena, id, .{}) catch "null";
+            owned = true;
+        }
     }
     defer if (owned) arena.free(@constCast(value_json));
 
@@ -687,6 +694,13 @@ fn semanticClick(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, 
         const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
         const row = gtk.ListBox.getSelectedRow(box) orelse gtk.ListBox.getRowAtIndex(box, 0);
         if (row) |r| gobject.signalEmitByName(@ptrCast(@alignCast(box)), "row-activated", r);
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
+    }
+    if (std.mem.eql(u8, widgetKind(widget), "SourceTree")) {
+        // "click" activates the selected row (first selectable row when
+        // nothing is selected), emitting rowActivated {nodeId}.
+        _ = ndsourcetree_gtk.semanticActivate(widget);
         setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
         return 0;
     }
@@ -773,6 +787,11 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
         } else {
             return invalidValue(err_json_out, node_id);
         }
+    } else if (std.mem.eql(u8, kind, "SourceTree")) {
+        // Id-addressed: value is a node ID string ("" deselects); fires
+        // "row-selected" -> Event -> React, same contract as SourceList.
+        if (value != .string) return invalidValue(err_json_out, node_id);
+        if (!ndsourcetree_gtk.semanticSelect(widget, value.string)) return invalidValue(err_json_out, node_id);
     } else {
         setErr(err_json_out, node_id);
         return -32602;
@@ -812,7 +831,13 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
         if (generated.scrolledWindowInner(sw)) |child| {
             const child_instance: *gobject.TypeInstance = @ptrCast(@alignCast(child));
             const child_type_name = std.mem.span(gobject.typeNameFromInstance(child_instance));
-            if (std.mem.eql(u8, child_type_name, "GtkListBox")) return "SourceList";
+            if (std.mem.eql(u8, child_type_name, "GtkListBox")) {
+                // SourceTree wraps the same ScrolledWindow>GtkListBox pair —
+                // disambiguated by the flag its create arm sets on the box.
+                const child_obj: *gobject.Object = @ptrCast(@alignCast(child));
+                if (gobject.Object.getData(child_obj, "nd-sourcetree") != null) return "SourceTree";
+                return "SourceList";
+            }
             if (std.mem.eql(u8, child_type_name, "GtkColumnView")) return "Table"; // TreeView's GtkListView stays "" like ListView's
         }
         return "ScrollView";

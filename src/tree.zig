@@ -28,7 +28,7 @@ pub const NodeMeta = struct {
     /// `windows` RPC. Null for plain windows and every non-Window widget.
     tab_group: ?[]u8 = null,
 
-    pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8 };
+    pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8, test_id: ?[]u8 = null };
 };
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -55,16 +55,18 @@ fn propArrayLen(props: ?std.json.Value, key: []const u8) ?u32 {
 }
 
 /// Parses SourceList's `items` (an `objectList` of `{title, badge?,
-/// iconName?}`) into heap-owned `NodeMeta.Row`s for `NodeMeta.rows`. Every
+/// iconName?}`) into heap-owned `NodeMeta.Row`s for `NodeMeta.rows`,
+/// falling back to `nodes` so SourceTree's rows (same title/badge/iconName
+/// shape, plus a per-node testID) report the same way. Every
 /// string is duped into `gpa` — the source `std.json.Value` tree is
 /// transient (freed with the CommitBatch's parse arena once `apply`
-/// returns). Returns null if `items` is absent or not an array; an
+/// returns). Returns null if neither prop is present as an array; an
 /// individual malformed row (missing/non-string `title`) is skipped, not
 /// fatal to the rest of the list.
 fn parseRows(gpa: std.mem.Allocator, props: ?std.json.Value) ?[]NodeMeta.Row {
     const v = props orelse return null;
     if (v != .object) return null;
-    const field = v.object.get("items") orelse return null;
+    const field = v.object.get("items") orelse v.object.get("nodes") orelse return null;
     if (field != .array) return null;
     var out: std.ArrayList(NodeMeta.Row) = .empty;
     for (field.array.items) |it| {
@@ -80,10 +82,15 @@ fn parseRows(gpa: std.mem.Allocator, props: ?std.json.Value) ?[]NodeMeta.Row {
         if (it.object.get("iconName")) |ic| {
             if (ic == .string) icon_name = gpa.dupe(u8, ic.string) catch null;
         }
-        out.append(gpa, .{ .title = title, .badge = badge, .icon_name = icon_name }) catch {
+        var test_id: ?[]u8 = null;
+        if (it.object.get("testID")) |t| {
+            if (t == .string) test_id = gpa.dupe(u8, t.string) catch null;
+        }
+        out.append(gpa, .{ .title = title, .badge = badge, .icon_name = icon_name, .test_id = test_id }) catch {
             gpa.free(title);
             if (badge) |b| gpa.free(b);
             if (icon_name) |i| gpa.free(i);
+            if (test_id) |t| gpa.free(t);
         };
     }
     return out.toOwnedSlice(gpa) catch null;
@@ -98,6 +105,7 @@ fn freeRows(gpa: std.mem.Allocator, rows: ?[]NodeMeta.Row) void {
         gpa.free(row.title);
         if (row.badge) |b| gpa.free(b);
         if (row.icon_name) |i| gpa.free(i);
+        if (row.test_id) |t| gpa.free(t);
     }
     gpa.free(r);
 }

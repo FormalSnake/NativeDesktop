@@ -490,7 +490,7 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// carried — the ground truth `widgetKind` below would otherwise have to
 /// guess at via reflection.
 @MainActor func ndRecordButtonKind(_ view: NSView, _ kind: String) {
-    guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button" || kind == "SourceList" else { return }
+    guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button" || kind == "SourceList" || kind == "SourceTree" else { return }
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
@@ -562,6 +562,14 @@ private func escapeJSONString(_ s: String) -> String {
     if widgetKind(view) == "SourceList", let scroll = view as? NSScrollView,
        let tableView = scroll.documentView as? NSTableView, tableView.selectedRow >= 0 {
         EventDispatcher.shared.fireIndexNamed(scroll, name: "rowActivated", index: tableView.selectedRow)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    // SourceTree: "click" activates the selected row (rowActivated {nodeId});
+    // no-op (still reports dispatched) when nothing is selected, same
+    // deviation from GTK's fallback-to-first-row as SourceList above.
+    if widgetKind(view) == "SourceTree" {
+        _ = ndSourceTreeSemanticActivate(view)
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
@@ -672,6 +680,11 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         // where AppKit's own notification already replays what a live user
         // selection would produce, so re-firing here would double the event.
         tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+    case "SourceTree":
+        // Id-addressed: the value is a node ID string ("" deselects).
+        // selectRowIndexes posts the selection notification itself, same
+        // no-explicit-fire contract as the SourceList arm above.
+        guard let id = value as? String, ndSourceTreeSemanticSelect(view, id) else { return invalidValue(errOut, nodeID) }
     default:
         setErrRaw(errOut, nodeID)
         return -32602
@@ -762,6 +775,9 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
            tableView.selectedRow >= 0 {
             valueJson = "\(tableView.selectedRow)"
         }
+    case "SourceTree":
+        // Id-addressed widget: the value is the selected node's ID, not a row index.
+        if let id = ndSourceTreeSelectedId(view) { valueJson = "\"\(escapeJSONString(id))\"" }
     default:
         break
     }

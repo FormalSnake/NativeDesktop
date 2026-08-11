@@ -28,6 +28,10 @@ type SystemEventHandler = (data: unknown) => void;
 declare global {
   // eslint-disable-next-line no-var
   var __nd_system_events: Map<string, Set<SystemEventHandler>> | undefined;
+  // eslint-disable-next-line no-var
+  var __nd_notification_data: Map<string, unknown> | undefined;
+  // eslint-disable-next-line no-var
+  var __nd_app_active: boolean | undefined;
 }
 
 function registry(): Map<string, Set<SystemEventHandler>> {
@@ -45,6 +49,12 @@ function subscribe(channel: string, name: string, handler: SystemEventHandler): 
 
 /** Wired up by renderer.ts from `ndp.onSystemEvent()` — not part of the public API. */
 export function dispatchSystemEvent(channel: string, data: unknown): void {
+  // Standing activation state behind app.isActive(), updated BEFORE the
+  // fan-out so a handler reading isActive() inside its own onActivate sees
+  // the new state. The host replays the current transition right after the
+  // handshake, so this is correct from the first render.
+  if (channel === "app.activate") globalThis.__nd_app_active = true;
+  else if (channel === "app.deactivate") globalThis.__nd_app_active = false;
   for (const handler of registry().get(channel) ?? []) handler(data);
 }
 
@@ -84,6 +94,23 @@ export interface MessageOptions {
 export interface NotificationOptions {
   title: string;
   body?: string;
+  /**
+   * App payload echoed on the matching `onClick` event. Held in a
+   * process-local map (never sent to the host), so it survives `bun --hot`
+   * re-evals but NOT an app restart — a click arriving after a restart is
+   * dropped by the transport today anyway (no host-side buffering), so the
+   * same-session limit costs nothing extra.
+   */
+  data?: unknown;
+}
+
+// id -> data for notifications shown this session, FIFO-capped at 128.
+// Entries are deleted when their click dispatches.
+const NOTIFICATION_DATA_CAP = 128;
+
+function notificationData(): Map<string, unknown> {
+  if (!globalThis.__nd_notification_data) globalThis.__nd_notification_data = new Map();
+  return globalThis.__nd_notification_data;
 }
 
 // --- dialogs -----------------------------------------------------------------
@@ -125,12 +152,30 @@ export const clipboard = {
 
 export const notifications = {
   /** Shows a native OS notification. Resolves to the notification's id (correlates a later `notification.click` event). Default-granted. */
-  show(options: NotificationOptions): Promise<string> {
-    return call("notification.show", options) as Promise<string>;
+  async show(options: NotificationOptions): Promise<string> {
+    const { data, ...wire } = options;
+    const id = (await call("notification.show", wire)) as string;
+    if (data !== undefined) {
+      const map = notificationData();
+      map.set(id, data);
+      // FIFO eviction: Map iterates in insertion order.
+      while (map.size > NOTIFICATION_DATA_CAP) {
+        const oldest = map.keys().next().value;
+        if (oldest === undefined) break;
+        map.delete(oldest);
+      }
+    }
+    return id;
   },
-  /** Subscribes to notification-click events. Returns an unsubscribe function, usable directly as a `useEffect` cleanup. */
-  onClick(handler: (id: string) => void): () => void {
-    return subscribe("notification.click", "notifications.onClick", (data) => handler((data as { id: string }).id));
+  /** Subscribes to notification-click events; `e.data` is the payload passed to `show()`, same-session only. Returns an unsubscribe function, usable directly as a `useEffect` cleanup. */
+  onClick(handler: (e: { id: string; data?: unknown }) => void): () => void {
+    return subscribe("notification.click", "notifications.onClick", (raw) => {
+      const { id } = raw as { id: string };
+      const map = notificationData();
+      const data = map.get(id);
+      map.delete(id);
+      handler(data === undefined ? { id } : { id, data });
+    });
   },
 };
 
@@ -168,6 +213,15 @@ export const credentials = {
 // --- app lifecycle / OS events -----------------------------------------------------------------
 
 export const app = {
+  /**
+   * Whether the app is currently active (frontmost), synchronously. Backed by
+   * the host's app.activate/app.deactivate stream — the host replays the
+   * standing state right after the handshake, so this is correct from the
+   * first render. Defaults to true before any transition has been seen.
+   */
+  isActive(): boolean {
+    return globalThis.__nd_app_active ?? true;
+  },
   /** Subscribes to app-activation (e.g. Dock/taskbar re-activation). Returns an unsubscribe function. */
   onActivate(handler: () => void): () => void {
     return subscribe("app.activate", "app.onActivate", () => handler());

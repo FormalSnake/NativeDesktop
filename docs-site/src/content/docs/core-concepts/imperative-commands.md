@@ -63,6 +63,28 @@ through to the host; no current command uses it, but the channel carries it for 
 Call `sendCommand` from an event handler (a click, a menu selection), never from render. It is a
 side effect, not derived state.
 
+## Feature detection: hasCommand / hasWidget
+
+When your app may run against host builds of different ages, ask before sending instead of wrapping
+`sendCommand` in try/catch:
+
+```tsx
+import { hasCommand, hasWidget, sendCommand } from "@nativedesktop/react";
+
+if (hasCommand("window", "present")) sendCommand(win.current, "present");
+if (hasWidget("sourcetree")) {
+  /* render <sourcetree>; otherwise fall back to <sourcelist> */
+}
+```
+
+Both answer from the host's handshake manifest (`helloAck.hostWidgets`/`hostCommands`): the list of
+intrinsics and `"<intrinsic>.<command>"` entries *that host build* actually dispatches, so the
+answer reflects the binary you're connected to, not the schema your JS was compiled against.
+Against an older host that predates the manifest, they fall back to the runtime's own generated
+schema tables: exactly the pre-manifest behavior. `sendCommand` still throws on a JS-schema-unknown
+command either way (so existing try/catch call sites stay valid), and in `nd dev` it warns once per
+command that is JS-known but host-unknown.
+
 ## What happens on the wire
 
 `sendCommand` emits a `widgetCommand` NDP frame, `{ nodeId, command, arg }`, from the runtime to the

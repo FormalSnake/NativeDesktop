@@ -384,6 +384,17 @@ nonisolated(unsafe) var ndBoxedLists: Set<ObjectIdentifier> = []
 /// removed when the class drops. See `ndApplyBoxedListCard`.
 nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] = [:]
 
+/// Box views (`NSStackView`) carrying the `toolbar` structural class. They
+/// render as a native header strip on the Mac: an `NSVisualEffectView`
+/// `.headerView` backing plus a 1 pt bottom hairline — see
+/// `ndApplyToolbarStrip`. Set-replace like `ndBoxedLists`.
+nonisolated(unsafe) private var ndToolbarStrips: Set<ObjectIdentifier> = []
+
+/// The `NSVisualEffectView` backing each `toolbar` strip (the hairline NSBox
+/// lives inside it, so removing the backing removes both). Reused on
+/// re-apply, removed when the class drops. See `ndApplyToolbarStrip`.
+nonisolated(unsafe) private var ndToolbarBackings: [ObjectIdentifier: NSVisualEffectView] = [:]
+
 /// `ndApplyCssClasses` is a real semantic mapping: it maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
 /// properties. Every color used is a dynamic system color
@@ -403,14 +414,15 @@ nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] =
 /// `ndRecomputeTypography`, which also layers in any standing `style` font/
 /// color (see that function's doc comment for the full cascade order).
 ///
-/// Most structural classes (`card`, `view`, `toolbar`, `osd`, ...) are
+/// Most structural classes (`card`, `view`, `osd`, ...) are
 /// silently ignored — those roles come from the SplitView/HeaderBar widgets
-/// themselves on the Mac, not from class strings. `nd-native-sidebar` and
-/// `boxed-list` are the exceptions: recorded into their registries and turned
-/// into a real source-list `NSTableView` (SidebarTable.swift) and a native
-/// grouped `NSBox` card respectively — so the box-of-flat-buttons sidebar and
-/// boxed-list forms the app declares render natively on both backends without
-/// any per-platform app code.
+/// themselves on the Mac, not from class strings. `nd-native-sidebar`,
+/// `boxed-list` and `toolbar` are the exceptions: recorded into their
+/// registries and turned into a real source-list `NSTableView`
+/// (SidebarTable.swift), a native grouped `NSBox` card, and a `.headerView`
+/// material strip respectively — so the sidebar, boxed-list and toolbar
+/// forms the app declares render natively on both backends without any
+/// per-platform app code.
 func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // Set-replace, not additive (mirrors GTK's applyCssClasses, which removes
     // every allowlist class not in `value`): reset the button properties the
@@ -449,9 +461,9 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             btn.showsBorderOnlyWhileMouseInside = true
         default:
             // Typography classes are handled by ndRecomputeTypography below,
-            // not this switch. `nd-native-sidebar`/`boxed-list` are structural
-            // and handled in the NSStackView blocks after this loop. The rest
-            // (card, view, toolbar, osd, ...) are roles owned by the
+            // not this switch. `nd-native-sidebar`/`boxed-list`/`toolbar` are
+            // structural and handled in the NSStackView blocks after this
+            // loop. The rest (card, view, osd, ...) are roles owned by the
             // SplitView/HeaderBar widgets on the Mac — silently ignored here.
             break
         }
@@ -501,6 +513,18 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             for sub in stack.arrangedSubviews {
                 if let sep = sub as? NSBox { ndUnstyleBoxedListDivider(sep, in: stack) }
             }
+        }
+    }
+
+    // Record `toolbar` (set-replace) and apply the native header-strip
+    // treatment (mirror of the boxed-list block above).
+    if let stack = view as? NSStackView {
+        let id = ObjectIdentifier(stack)
+        if classes.contains("toolbar") {
+            ndToolbarStrips.insert(id)
+            ndApplyToolbarStrip(stack, enabled: true)
+        } else if ndToolbarStrips.remove(id) != nil {
+            ndApplyToolbarStrip(stack, enabled: false)
         }
     }
 
@@ -562,6 +586,54 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
         ndBoxedListBackings[id] = backing
     }
     backing.fillColor = .underPageBackgroundColor
+}
+
+/// Native header-strip treatment for a `toolbar` box: an `NSVisualEffectView`
+/// drawn behind the stack's controls (`.headerView` — the interior header
+/// material; `.titlebar` is the window's own titlebar material and over-blurs
+/// an interior pane strip) plus a 1 pt `.separatorColor` bottom hairline.
+/// The hairline `NSBox` lives inside the effect view, so `enabled: false`
+/// removes both in one `removeFromSuperview` (set-replace when the class
+/// drops). Modeled line-for-line on `ndApplyBoxedListCard` above.
+func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
+    guard let stack = box as? NSStackView else { return }
+    let id = ObjectIdentifier(stack)
+    guard enabled else {
+        if let backing = ndToolbarBackings[id] {
+            backing.removeFromSuperview()
+            ndToolbarBackings[id] = nil
+        }
+        return
+    }
+    if ndToolbarBackings[id] != nil { return }
+    let backing = NSVisualEffectView()
+    backing.material = .headerView
+    backing.blendingMode = .withinWindow
+    backing.state = .followsWindowActiveState
+    backing.translatesAutoresizingMaskIntoConstraints = false
+    stack.addSubview(backing, positioned: .below, relativeTo: nil)
+
+    let hairline = NSBox()
+    hairline.boxType = .custom
+    hairline.borderWidth = 0
+    hairline.borderColor = .clear
+    hairline.titlePosition = .noTitle
+    hairline.contentViewMargins = .zero
+    hairline.fillColor = .separatorColor
+    hairline.translatesAutoresizingMaskIntoConstraints = false
+    backing.addSubview(hairline)
+
+    NSLayoutConstraint.activate([
+        backing.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+        backing.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+        backing.topAnchor.constraint(equalTo: stack.topAnchor),
+        backing.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
+        hairline.leadingAnchor.constraint(equalTo: backing.leadingAnchor),
+        hairline.trailingAnchor.constraint(equalTo: backing.trailingAnchor),
+        hairline.bottomAnchor.constraint(equalTo: backing.bottomAnchor),
+        hairline.heightAnchor.constraint(equalToConstant: 1),
+    ])
+    ndToolbarBackings[id] = backing
 }
 
 /// Recomputes the full per-node typography cascade for `view`'s text target

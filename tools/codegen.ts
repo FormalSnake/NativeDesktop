@@ -607,6 +607,9 @@ fn ndMenubarCreate(app: *gtk.Application, window: ?*gtk.Window, defaults: bool) 
     const m = gio.Menu.new();
     the_menubar = m;
     menu_defaults = defaults;
+    // Native tabs share one scaffold window, so the single primary button must
+    // follow the selected tab; onSelectedPage calls back here to re-home it.
+    ndtabs_gtk.onTabSelected = &ndMenuRefresh;
     return @ptrCast(@alignCast(m));
 }
 
@@ -857,17 +860,33 @@ fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
         }
     }
     if (!found_root) return null;
+    // Native tabs: every <window ln> tab is a page in one scaffold window, so a
+    // whole-window search pins the button to the first tab's header. Scope the
+    // search to the SELECTED page so the button rides whichever tab is visible;
+    // a plain window has no tab view and searches the whole root as before.
+    const search_root: *gtk.Widget = ndtabs_gtk.selectedTabContent(root) orelse root;
     var split_opt: ?*adw.OverlaySplitView = null;
-    ndMenuFindSplit(@ptrCast(@alignCast(root)), &split_opt);
-    var split = split_opt orelse return null;
-    var content = adw.OverlaySplitView.getContent(split) orelse return null;
-    while (gobject.ext.isA(content, adw.OverlaySplitView)) {
-        split = @ptrCast(@alignCast(content));
-        content = adw.OverlaySplitView.getContent(split) orelse return null;
+    ndMenuFindSplit(search_root, &split_opt);
+    if (split_opt) |split0| {
+        var split = split0;
+        var content = adw.OverlaySplitView.getContent(split) orelse return null;
+        while (gobject.ext.isA(content, adw.OverlaySplitView)) {
+            split = @ptrCast(@alignCast(content));
+            content = adw.OverlaySplitView.getContent(split) orelse return null;
+        }
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(content, &hb_opt);
+        return hb_opt;
     }
-    var hb_opt: ?*adw.HeaderBar = null;
-    ndMenuFirstHeaderBar(content, &hb_opt);
-    return hb_opt;
+    // A tab page without a split layout (a plain <toolbarview> tab): the page's
+    // own first header. Non-tab windows fall through to the caller's
+    // last-registered-header fallback exactly as before.
+    if (ndtabs_gtk.selectedTabContent(root)) |page| {
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(page, &hb_opt);
+        return hb_opt;
+    }
+    return null;
 }
 
 fn ndMenuRefresh() void {
@@ -1348,6 +1367,7 @@ function genZig(s: Schema): string {
   out += "const ndtabs_gtk = @import(\"../gtk/tabs.zig\");\n";
   out += "const ndtable_gtk = @import(\"../gtk/table.zig\");\n";
   out += "const ndtree_gtk = @import(\"../gtk/treeview.zig\");\n";
+  out += "const ndsourcetree_gtk = @import(\"../gtk/sourcetree.zig\");\n";
   out += "const ndtoast_gtk = @import(\"../gtk/toast.zig\");\n";
   out += "const ndpalette_gtk = @import(\"../gtk/commandpalette.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
@@ -1945,6 +1965,8 @@ function genZigCreateBody(w: Widget): string {
     out += "        return ndtable_gtk.create(props, dupeZ);\n";
   } else if (w.name === "TreeView") {
     out += "        return ndtree_gtk.create(props, dupeZ);\n";
+  } else if (w.name === "SourceTree") {
+    out += "        return ndsourcetree_gtk.create(props, dupeZ);\n";
   } else if (w.name === "FontPicker") {
     out += "        const dialog = gtk.FontDialog.new();\n";
     out += "        const btn = gtk.FontDialogButton.new(dialog); // transfer-full: button owns the dialog\n";
@@ -1990,6 +2012,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   // hand-written modules — one forwarding call covers every update key.
   if (w.name === "Table") return "        ndtable_gtk.applyProps(widget, props, dupeZ);\n";
   if (w.name === "TreeView") return "        ndtree_gtk.applyProps(widget, props, dupeZ);\n";
+  if (w.name === "SourceTree") return "        ndsourcetree_gtk.applyProps(widget, props, dupeZ);\n";
   if (w.name === "CommandPalette") return "        ndpalette_gtk.applyProps(widget, props, dupeZ);\n";
   let out = "";
   for (const p of updProps) {
@@ -2322,7 +2345,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "commandpalette" | "terminal" | "hover"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "sourcetree" | "commandpalette" | "terminal" | "hover"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   // C4: hover isn't a plain GObject signal on the widget itself — it's an
@@ -2410,6 +2433,11 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "TreeView.rowActivated":       { signal: "",              target: "treeview", cb: "", suppress: false },
   "TreeView.nodeExpanded":       { signal: "",              target: "treeview", cb: "", suppress: false },
   "TreeView.nodeCollapsed":      { signal: "",              target: "treeview", cb: "", suppress: false },
+  "SourceTree.selectionChanged": { signal: "",              target: "sourcetree", cb: "", suppress: false },
+  "SourceTree.rowActivated":     { signal: "",              target: "sourcetree", cb: "", suppress: false },
+  "SourceTree.nodeExpanded":     { signal: "",              target: "sourcetree", cb: "", suppress: false },
+  "SourceTree.nodeCollapsed":    { signal: "",              target: "sourcetree", cb: "", suppress: false },
+  "SourceTree.actionClicked":    { signal: "",              target: "sourcetree", cb: "", suppress: false },
   // CommandPalette events (queryChanged/activate/submit/cancel) all fire from
   // inside src/gtk/commandpalette.zig — connectEvents hands it node id + emit once.
   "CommandPalette.queryChanged": { signal: "",              target: "commandpalette", cb: "", suppress: false },
@@ -2662,7 +2690,7 @@ function genZigEvents(s: Schema): string {
     }
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
       || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview"
-      || t.target === "commandpalette" || t.target === "terminal" || t.target === "hover") continue; // custom connect, no GTK callback body
+      || t.target === "sourcetree" || t.target === "commandpalette" || t.target === "terminal" || t.target === "hover") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
 
@@ -2770,6 +2798,13 @@ function genZigEvents(s: Schema): string {
       if (t.target === "treeview") {
         if (!navConnected) {
           out += "        if (emit) |f| ndtree_gtk.connectEvents(widget, node_id, f);\n";
+          navConnected = true;
+        }
+        continue;
+      }
+      if (t.target === "sourcetree") {
+        if (!navConnected) {
+          out += "        if (emit) |f| ndsourcetree_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
         }
         continue;
@@ -3602,6 +3637,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return makeTable(props)  // view-based NSTableView in NSScrollView (M15, NDShell/Tables.swift)\n";
   } else if (w.name === "TreeView") {
     out += "        return makeTreeView(props)  // NSOutlineView in NSScrollView (M15, NDShell/TreeViews.swift)\n";
+  } else if (w.name === "SourceTree") {
+    out += "        return makeSourceTree(props)  // NSOutlineView .sourceList in NSScrollView (NDShell/SourceTrees.swift)\n";
   } else if (w.name === "FontPicker") {
     out += "        return makeFontPicker(props)  // shared NSFontPanel + coordinator (M15, NDShell/FontPickers.swift)\n";
   } else if (w.name === "Video") {
@@ -3647,6 +3684,9 @@ const SWIFT_SUPPRESSED = new Set([
   "Table.selectedIndex",
   "TreeView.nodes",
   "TreeView.selectedIndex",
+  "SourceTree.nodes",
+  "SourceTree.actions",
+  "SourceTree.selectedId",
   "FontPicker.value",
   "CommandPalette.query",
 ]);
@@ -3864,6 +3904,12 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let nodes = propObjArray(props, "nodes") { ndTreeViewSetNodes(view, nodes) }\n';
     } else if (w.name === "TreeView" && p.name === "selectedIndex") {
       out += '        if let idx = propInt(props, "selectedIndex") { ndTreeViewSetSelectedIndex(view, idx) }\n';
+    } else if (w.name === "SourceTree" && p.name === "nodes") {
+      out += '        if let nodes = propObjArray(props, "nodes") { ndSourceTreeSetNodes(view, nodes) }\n';
+    } else if (w.name === "SourceTree" && p.name === "actions") {
+      out += '        if let actions = propObjArray(props, "actions") { ndSourceTreeSetActions(view, actions) }\n';
+    } else if (w.name === "SourceTree" && p.name === "selectedId") {
+      out += '        if let sel = propStr(props, "selectedId") { ndSourceTreeSetSelectedId(view, sel) }\n';
     } else if (w.name === "FontPicker" && p.name === "value") {
       out += '        if let v = propStr(props, "value") { ndFontPickerSetValue(view, v) }\n';
     } else if (w.name === "Video" && p.name === "src") {
@@ -3969,6 +4015,11 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "TreeView.rowActivated":       { selector: "treeview",      payload: "data" },
   "TreeView.nodeExpanded":       { selector: "treeview",      payload: "data" },
   "TreeView.nodeCollapsed":      { selector: "treeview",      payload: "data" },
+  "SourceTree.selectionChanged": { selector: "sourcetree",    payload: "data" },
+  "SourceTree.rowActivated":     { selector: "sourcetree",    payload: "data" },
+  "SourceTree.nodeExpanded":     { selector: "sourcetree",    payload: "data" },
+  "SourceTree.nodeCollapsed":    { selector: "sourcetree",    payload: "data" },
+  "SourceTree.actionClicked":    { selector: "sourcetree",    payload: "data" },
   // CommandPalette events fire from NDShell/CommandPalette.swift — one connect
   // records the nodeID (webview idiom), the handle emits directly.
   "CommandPalette.queryChanged": { selector: "commandpalette", payload: "text" },
@@ -4001,6 +4052,7 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   toastoverlay: "ndToastOverlayConnect",
   table: "ndTableConnect",
   treeview: "ndTreeViewConnect",
+  sourcetree: "ndSourceTreeConnect",
   commandpalette: "ndCommandPaletteConnect",
   windowdialogs: "ndWindowDialogsConnect",
   windowtabs: "ndWindowTabsConnect",
@@ -4722,7 +4774,26 @@ function genWidgetTypesZig(s: Schema): string {
   out += "/// The widget's schema-declared automation role (getTree's `role` field).\n";
   out += "pub fn roleOf(name: []const u8) ?[]const u8 {\n";
   out += "    for (widget_types) |e| if (std.mem.eql(u8, e.name, name)) return e.role;\n";
-  out += "    return null;\n}\n";
+  out += "    return null;\n}\n\n";
+  out += genZigHostManifest(s);
+  return out;
+}
+
+/** Handshake capability manifest for helloAck's hostWidgets/hostCommands
+ *  (hasWidget()/hasCommand() feature detection). Emitted into the CORE-safe
+ *  widget_types.zig, not widgets.zig — src/runtime.zig reads it and must stay
+ *  GTK-free (widgets.zig imports the gtk modules). */
+function genZigHostManifest(s: Schema): string {
+  let out = "/// Every intrinsic this host build knows (helloAck.hostWidgets).\n";
+  out += "pub const host_widgets: []const []const u8 = &.{\n";
+  for (const w of s.widgets) out += `    ${JSON.stringify(w.intrinsic)},\n`;
+  out += "};\n\n";
+  out += "/// Every \"<intrinsic>.<command>\" this host build dispatches (helloAck.hostCommands).\n";
+  out += "pub const host_commands: []const []const u8 = &.{\n";
+  for (const w of s.widgets) for (const c of w.commands ?? []) {
+    out += `    ${JSON.stringify(`${w.intrinsic}.${c}`)},\n`;
+  }
+  out += "};\n";
   return out;
 }
 

@@ -60,11 +60,13 @@ pub const Geometry = struct {
 };
 
 /// SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName,
-/// matching the schema prop shape.
+/// matching the schema prop shape. testID carries SourceTree's per-node testID (null for
+/// SourceList rows, which have none).
 pub const RowJson = struct {
     title: []const u8,
     badge: ?[]const u8 = null,
     iconName: ?[]const u8 = null,
+    testID: ?[]const u8 = null,
 };
 
 /// One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget

@@ -15,7 +15,7 @@ import {
   onToastButtonClicked,
   onToastDismissed,
 } from "@nativedesktop/react";
-import type { NdNodeRef, TableColumn, TableRow, TreeNode } from "@nativedesktop/react";
+import type { NdNodeRef, SourceTreeAction, SourceTreeNode, TableColumn, TableRow, TreeNode } from "@nativedesktop/react";
 
 // Widget gallery: every widget here has live controlled state + testIDs,
 // driven headlessly by scripts/m5b-drive.ts and scripts/m5c-drive.ts over
@@ -79,6 +79,27 @@ function treeNodeTitle(nodeId: string | null): string {
 }
 
 const sampleVideoPath = `${import.meta.dir}/assets/sample.mp4`;
+
+// SourceTree: sections + a 3-level host -> project -> run hierarchy with
+// captions, badges, and two trailing actions. Expansion is app-controlled
+// (the expanded set below), exactly like the TreeView tab.
+const sourceTreeActions: SourceTreeAction[] = [
+  { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },
+  { id: "close-run", iconName: "window-close-symbolic", tooltip: "Close run", destructive: true },
+];
+
+const sourceTreeMeta: Omit<SourceTreeNode, "expanded">[] = [
+  { id: "sec-hosts", title: "Hosts", section: true, hasChildren: true, testID: "st-sec-hosts" },
+  { id: "host-mac", parentId: "sec-hosts", title: "macbook", caption: "connected", iconName: "computer-symbolic",
+    captionIconName: "network-transmit-receive-symbolic", hasChildren: true, testID: "st-host-mac" },
+  { id: "proj-nd", parentId: "host-mac", title: "NativeDesktop", hasChildren: true,
+    actionIds: ["new-run"], testID: "st-proj-nd" },
+  { id: "run-1", parentId: "proj-nd", title: "fix sidebar", caption: "running · 2m", badge: "3",
+    actionIds: ["close-run"], testID: "st-run-1" },
+  { id: "run-2", parentId: "proj-nd", title: "docs pass", caption: "idle", testID: "st-run-2" },
+  { id: "sec-settled", title: "Settled", section: true, hasChildren: true, testID: "st-sec-settled" },
+  { id: "run-old", parentId: "sec-settled", title: "old run", caption: "settled yesterday", testID: "st-run-old" },
+];
 
 function App(): React.ReactNode {
   const [name, setName] = useState("");
@@ -159,6 +180,14 @@ function App(): React.ReactNode {
   const [selectedTreeNodeId, setSelectedTreeNodeId] = useState<string | null>(null);
   const [activatedTreeNodeId, setActivatedTreeNodeId] = useState<string | null>(null);
   const treeNodes: TreeNode[] = treeNodeMeta.map((n) => ({ ...n, expanded: treeExpanded.has(n.id) }));
+
+  // --- SourceTree tab ---
+  const [stExpanded, setStExpanded] = useState<Set<string>>(new Set(["sec-hosts", "host-mac", "proj-nd"]));
+  const [stSelectedId, setStSelectedId] = useState("");
+  const [stLastAction, setStLastAction] = useState("");
+  const [stLastActivated, setStLastActivated] = useState("");
+  const [stLastExpandEvent, setStLastExpandEvent] = useState("");
+  const stNodes: SourceTreeNode[] = sourceTreeMeta.map((n) => ({ ...n, expanded: stExpanded.has(n.id) }));
 
   // --- Dialogs tab ---
   const [alertResultText, setAlertResultText] = useState("(none yet)");
@@ -505,6 +534,58 @@ function App(): React.ReactNode {
               />
               <label testID="tree-selection-readout"
                 text={`Selected: ${treeNodeTitle(selectedTreeNodeId)} · Activated: ${treeNodeTitle(activatedTreeNodeId)}`}
+                cssClasses={["dimmed", "caption"]} />
+            </box>
+
+            <box tabLabel="SourceTree" orientation="vertical" spacing={8} testID="sourcetree-tab" style={{ padding: 12 }}>
+              {/* `toolbar` is a structural class on BOTH backends now: GTK's
+                  Adwaita toolbar styling, AppKit's .headerView material strip
+                  with a bottom hairline. */}
+              <box orientation="horizontal" spacing={6} cssClasses={["toolbar"]} testID="st-toolbar">
+                <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]} />
+                <button testID="st-toolbar-add" iconName="list-add-symbolic" cssClasses={["flat"]} />
+              </box>
+              <sourcetree
+                testID="gallery-sourcetree-tree"
+                nodes={stNodes}
+                actions={sourceTreeActions}
+                selectedId={stSelectedId}
+                onSelectionChanged={(e) => setStSelectedId((e.data as { nodeId: string | null }).nodeId ?? "")}
+                onRowActivated={(e) => setStLastActivated((e.data as { nodeId: string }).nodeId)}
+                onNodeExpanded={(e) => {
+                  const { nodeId } = e.data as { nodeId: string };
+                  setStLastExpandEvent(`expanded:${nodeId}`);
+                  setStExpanded((prev) => new Set(prev).add(nodeId));
+                }}
+                onNodeCollapsed={(e) => {
+                  const { nodeId } = e.data as { nodeId: string };
+                  setStLastExpandEvent(`collapsed:${nodeId}`);
+                  setStExpanded((prev) => {
+                    const next = new Set(prev);
+                    next.delete(nodeId);
+                    return next;
+                  });
+                }}
+                onActionClicked={(e) => {
+                  const { nodeId, actionId } = e.data as { nodeId: string; actionId: string };
+                  setStLastAction(`${actionId}@${nodeId}`);
+                }}
+                style={{ vexpand: true }}
+              />
+              <checkbox testID="st-settled-toggle" label="Show settled" checked={stExpanded.has("sec-settled")}
+                onToggled={(e) => setStExpanded((prev) => {
+                  const next = new Set(prev);
+                  if (e.checked) next.add("sec-settled");
+                  else next.delete("sec-settled");
+                  return next;
+                })} />
+              <label testID="st-selected-readout" text={`Selected: ${stSelectedId || "(none)"}`}
+                cssClasses={["dimmed", "caption"]} />
+              <label testID="st-activated-readout" text={`Activated: ${stLastActivated || "(none)"}`}
+                cssClasses={["dimmed", "caption"]} />
+              <label testID="st-action-readout" text={`Action: ${stLastAction || "(none)"}`}
+                cssClasses={["dimmed", "caption"]} />
+              <label testID="st-expand-readout" text={`Expand event: ${stLastExpandEvent || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 

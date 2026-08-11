@@ -34,6 +34,12 @@ const protocol = @import("../protocol.zig");
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
 var emit: ?EmitFn = null;
+
+/// Set by the generated app-menu runtime (widgets.zig) when a <menubar> exists,
+/// so switching native tabs re-homes the primary menu button into the newly
+/// selected page's content header. Null keeps non-menu apps free of the call.
+pub var onTabSelected: ?*const fn () void = null;
+
 const alloc = std.heap.page_allocator;
 
 // g_object data keys. On page bins: node id, chrome pointers, close-protocol
@@ -95,6 +101,16 @@ pub fn owningWindow(widget: *gtk.Widget) ?*gtk.Window {
     if (gobject.ext.isA(widget, gtk.Window)) return @ptrCast(@alignCast(widget));
     const root = gtk.Widget.getRoot(widget) orelse return null;
     return @ptrCast(@alignCast(root));
+}
+
+/// The selected tab page's node-handle bin for a scaffold window `root`, or
+/// null for a plain (non-tab) window. Lets the app-menu runtime home its
+/// primary button into whichever tab is visible instead of the first page.
+pub fn selectedTabContent(root: *gtk.Widget) ?*gtk.Widget {
+    const raw = getData(root, K_VIEW) orelse return null;
+    const view: *adw.TabView = @ptrCast(@alignCast(raw));
+    const page = adw.TabView.getSelectedPage(view) orelse return null;
+    return adw.TabPage.getChild(page);
 }
 
 fn emitEmpty(node_id: u32, name: []const u8) void {
@@ -352,9 +368,21 @@ pub fn onHeaderBarAttached(tv: *adw.ToolbarView, header: *gtk.Widget) void {
     if (inSidebarSlot(tvw)) return;
     if (getData(bin, K_TAB_BAR)) |tb| {
         const bar: *adw.TabBar = @ptrCast(@alignCast(tb));
-        if (gtk.Widget.getParent(bar.as(gtk.Widget)) == tvw) {
-            adw.ToolbarView.remove(tv, bar.as(gtk.Widget));
-            adw.ToolbarView.addTopBar(tv, bar.as(gtk.Widget));
+        const bar_w = bar.as(gtk.Widget);
+        // AdwToolbarView packs top bars into an internal box, so the tab bar's
+        // GTK parent is that box, never `tv` itself — test top-bar membership
+        // by ancestor. A header attaching after the tab bar (a remount) stacks
+        // BELOW it; move the tab bar back to the bottom so the order stays
+        // [header, tabbar]. Ref-bracket the move: ToolbarView.remove drops the
+        // view's only ref and would finalize the tab bar before re-adding it
+        // (the M8 GC lesson — same bracket appendToWindow uses on reparent).
+        if (gtk.Widget.getAncestor(bar_w, adw.ToolbarView.getGObjectType())) |anc| {
+            if (anc == tvw) {
+                _ = gobject.Object.ref(@as(*gobject.Object, @ptrCast(@alignCast(bar_w))));
+                adw.ToolbarView.remove(tv, bar_w);
+                adw.ToolbarView.addTopBar(tv, bar_w);
+                _ = gobject.Object.unref(@as(*gobject.Object, @ptrCast(@alignCast(bar_w))));
+            }
         }
     }
     injectTabButton(bin, @ptrCast(@alignCast(header)));
@@ -562,6 +590,8 @@ fn reapIdle(data: ?*anyopaque) callconv(.c) c_int {
 fn onSelectedPage(view: *adw.TabView, _: ?*anyopaque, win: *gtk.Window) callconv(.c) void {
     const page = adw.TabView.getSelectedPage(view) orelse return;
     gtk.Window.setTitle(win, adw.TabPage.getTitle(page));
+    // Ride the app-menu primary button onto the newly selected page's header.
+    if (onTabSelected) |f| f();
     recomputeBinFocus(view, win);
 }
 

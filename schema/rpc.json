@@ -14,11 +14,12 @@
     },
     {
       "name": "RowJson",
-      "doc": "SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape.",
+      "doc": "SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have none).",
       "fields": [
         { "name": "title", "type": "string" },
         { "name": "badge", "type": "string", "nullable": true },
-        { "name": "iconName", "type": "string", "nullable": true }
+        { "name": "iconName", "type": "string", "nullable": true },
+        { "name": "testID", "type": "string", "nullable": true }
       ]
     },
     {

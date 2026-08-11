@@ -44,6 +44,11 @@ export class Ndp {
   // Active host widget backend, learned from the helloAck ("gtk" | "appkit").
   // "unknown" until the handshake completes.
   private backendName = "unknown";
+  // Host capability manifest (helloAck hostWidgets/hostCommands). null when
+  // the host predates the fields — callers fall back to their own schema
+  // tables (see packages/react/src/platform.ts's setHostManifest).
+  private hostWidgetsSet: Set<string> | null = null;
+  private hostCommandsSet: Set<string> | null = null;
   // systemRequest/systemResponse correlation (system capabilities API, M15):
   // one entry per in-flight request, keyed by the id sent on the wire.
   private pending = new Map<number, PendingRequest>();
@@ -57,6 +62,16 @@ export class Ndp {
   /** The host's active widget backend, valid after `handshake()` resolves. */
   get backend(): string {
     return this.backendName;
+  }
+
+  /** Intrinsics the host build knows, or null on a pre-manifest host. Valid after `handshake()`. */
+  get hostWidgets(): Set<string> | null {
+    return this.hostWidgetsSet;
+  }
+
+  /** "<intrinsic>.<command>" entries the host dispatches, or null on a pre-manifest host. Valid after `handshake()`. */
+  get hostCommands(): Set<string> | null {
+    return this.hostCommandsSet;
   }
 
   static async connect(): Promise<Ndp> {
@@ -132,6 +147,8 @@ export class Ndp {
       // "binary" so the JSON leg can be measured against the same host build.
       if (msg.encodings?.includes("binary") && process.env.ND_FORCE_JSON !== "1") this.encoding = "binary";
       this.backendName = msg.backend;
+      this.hostWidgetsSet = msg.hostWidgets ? new Set(msg.hostWidgets) : null;
+      this.hostCommandsSet = msg.hostCommands ? new Set(msg.hostCommands) : null;
       this.helloAckResolve?.();
     } else if (msg.type === "error") {
       throw new Error(`host error: ${msg.message} (expected ${msg.expected}, got ${msg.got})`);

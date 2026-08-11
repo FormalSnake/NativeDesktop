@@ -7,7 +7,7 @@ import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta
 import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from "./host-config.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
-import { setBackend } from "./platform.ts";
+import { hasCommand, setBackend, setHostManifest } from "./platform.ts";
 import { dispatchSystemEvent } from "./system.ts";
 import {
   getHmrState,
@@ -36,8 +36,15 @@ export async function render(element: ReactNode): Promise<void> {
   let state = getHmrState();
   if (!state) {
     const ndp = await Ndp.connect();
+    // Registered BEFORE the handshake: the host replays the standing
+    // app-activation state in a systemEvent written right after HelloAck,
+    // and both frames can land in one socket chunk — a callback registered
+    // after the awaited handshake would miss it (the dispatch loop runs
+    // synchronously; the await's continuation is a microtask behind it).
+    ndp.onSystemEvent((channel, data) => dispatchSystemEvent(channel, data));
     await ndp.handshake({ name: "bun", version: Bun.version });
     setBackend(ndp.backend);
+    setHostManifest(ndp.hostWidgets, ndp.hostCommands);
 
     const batch = new Batch();
     const registry = new NodeRegistry();
@@ -56,7 +63,6 @@ export async function render(element: ReactNode): Promise<void> {
       setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete");
       registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
     });
-    ndp.onSystemEvent((channel, data) => dispatchSystemEvent(channel, data));
 
     const Reconciler = (ReconcilerFactory as unknown as (c: typeof configWithFlush) => ReconcilerInstance)(
       configWithFlush,
@@ -138,8 +144,20 @@ export function sendCommand<T extends keyof WidgetCommandNames & WidgetType>(
   if (!allowed.includes(command)) {
     throw new Error(`<${node.type}> does not accept command "${command}" (valid: ${allowed.join(", ") || "none"})`);
   }
+  // JS-known but host-unknown (an older host build): still sent (the host
+  // logs and drops it), but warn once in dev — mirrors host-config.ts's
+  // checkPlatform gating.
+  if (isHot() && !hasCommand(node.type, command)) {
+    const key = `${node.type}.${command}`;
+    if (!warnedHostUnknownCommand.has(key)) {
+      warnedHostUnknownCommand.add(key);
+      console.warn(`sendCommand: the connected host does not dispatch "${key}" — gate it with hasCommand("${node.type}", "${command}").`);
+    }
+  }
   dispatchWidgetCommand("sendCommand", node, command, arg);
 }
+
+const warnedHostUnknownCommand = new Set<string>();
 
 /// Sends an imperative command to an app-owned <nativeview>. Command names
 /// are plugin-defined (native-module ABI), not schema-validated — only a

@@ -15,6 +15,7 @@ const nddialog_gtk = @import("../gtk/dialogs.zig");
 const ndtabs_gtk = @import("../gtk/tabs.zig");
 const ndtable_gtk = @import("../gtk/table.zig");
 const ndtree_gtk = @import("../gtk/treeview.zig");
+const ndsourcetree_gtk = @import("../gtk/sourcetree.zig");
 const ndtoast_gtk = @import("../gtk/toast.zig");
 const ndpalette_gtk = @import("../gtk/commandpalette.zig");
 const nd_plugin = @import("../plugin.zig");
@@ -293,6 +294,9 @@ fn ndMenubarCreate(app: *gtk.Application, window: ?*gtk.Window, defaults: bool) 
     const m = gio.Menu.new();
     the_menubar = m;
     menu_defaults = defaults;
+    // Native tabs share one scaffold window, so the single primary button must
+    // follow the selected tab; onSelectedPage calls back here to re-home it.
+    ndtabs_gtk.onTabSelected = &ndMenuRefresh;
     return @ptrCast(@alignCast(m));
 }
 
@@ -543,17 +547,33 @@ fn ndMenuContentHeaderBar() ?*adw.HeaderBar {
         }
     }
     if (!found_root) return null;
+    // Native tabs: every <window ln> tab is a page in one scaffold window, so a
+    // whole-window search pins the button to the first tab's header. Scope the
+    // search to the SELECTED page so the button rides whichever tab is visible;
+    // a plain window has no tab view and searches the whole root as before.
+    const search_root: *gtk.Widget = ndtabs_gtk.selectedTabContent(root) orelse root;
     var split_opt: ?*adw.OverlaySplitView = null;
-    ndMenuFindSplit(@ptrCast(@alignCast(root)), &split_opt);
-    var split = split_opt orelse return null;
-    var content = adw.OverlaySplitView.getContent(split) orelse return null;
-    while (gobject.ext.isA(content, adw.OverlaySplitView)) {
-        split = @ptrCast(@alignCast(content));
-        content = adw.OverlaySplitView.getContent(split) orelse return null;
+    ndMenuFindSplit(search_root, &split_opt);
+    if (split_opt) |split0| {
+        var split = split0;
+        var content = adw.OverlaySplitView.getContent(split) orelse return null;
+        while (gobject.ext.isA(content, adw.OverlaySplitView)) {
+            split = @ptrCast(@alignCast(content));
+            content = adw.OverlaySplitView.getContent(split) orelse return null;
+        }
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(content, &hb_opt);
+        return hb_opt;
     }
-    var hb_opt: ?*adw.HeaderBar = null;
-    ndMenuFirstHeaderBar(content, &hb_opt);
-    return hb_opt;
+    // A tab page without a split layout (a plain <toolbarview> tab): the page's
+    // own first header. Non-tab windows fall through to the caller's
+    // last-registered-header fallback exactly as before.
+    if (ndtabs_gtk.selectedTabContent(root)) |page| {
+        var hb_opt: ?*adw.HeaderBar = null;
+        ndMenuFirstHeaderBar(page, &hb_opt);
+        return hb_opt;
+    }
+    return null;
 }
 
 fn ndMenuRefresh() void {
@@ -1242,6 +1262,8 @@ pub fn create(
         const sw = gtk.ScrolledWindow.new();
         gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));
         return sw.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "SourceTree")) {
+        return ndsourcetree_gtk.create(props, dupeZ);
     } else if (std.mem.eql(u8, kind, "Menubar")) {
         const defaults = propBool(props, "defaults") orelse true;
         return ndMenubarCreate(app, the_window.*, defaults);
@@ -1651,6 +1673,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 unblockEcho(asObject(box));
             }
         }
+    } else if (std.mem.eql(u8, kind, "SourceTree")) {
+        ndsourcetree_gtk.applyProps(widget, props, dupeZ);
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         if (propBool(props, "enabled")) |en| ndMenuItemSetEnabled(widget, en);
     } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
@@ -2091,6 +2115,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_SourceList_rowActivated = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
         const hid_SourceList_rowActivated = gobject.signalConnectData(obj_SourceList_rowActivated, "row-activated", @ptrCast(&cbListBoxRowActivated), data, null, .{});
         _ = hid_SourceList_rowActivated;
+    } else if (std.mem.eql(u8, kind, "SourceTree")) {
+        if (emit) |f| ndsourcetree_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
         ndMenuItemConnect(widget, node_id); // M13: GSimpleAction wiring, not a GtkWidget signal
     } else if (std.mem.eql(u8, kind, "Switch")) {

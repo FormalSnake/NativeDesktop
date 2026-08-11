@@ -50,10 +50,12 @@ throughout so dark mode keeps working:
 | `heading`, `body`, `caption`, `caption-heading` | matching `preferredFont` text styles |
 | `dimmed` | `.textColor = .secondaryLabelColor` |
 | `monospace`, `numeric` | monospaced and monospaced-digit system font |
+| `toolbar` (on a `<box>`) | `NSVisualEffectView` `.headerView` backing plus a 1 pt bottom hairline |
+| `boxed-list` (on a `<box>`) | native grouped `NSBox` card with inset hairline dividers |
 
-Structural classes (`navigation-sidebar`, `card`, `toolbar`, `boxed-list`, `osd`) are ignored on
-macOS. That chrome comes from the `<splitview>` and `<headerbar>` widgets themselves rather than
-from class strings.
+The remaining structural classes (`navigation-sidebar`, `card`, `osd`) are ignored on macOS. That
+chrome comes from the `<splitview>` and `<headerbar>` widgets themselves rather than from class
+strings.
 
 ## Dark mode is automatic
 

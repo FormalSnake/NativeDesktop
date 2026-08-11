@@ -67,6 +67,7 @@ const State = struct {
     font_size: f64,
     cell_w: f64,
     cell_h: f64,
+    cell_baseline: f64, // cell top to text baseline (Pango ascent), see measureCell
     cols: u16,
     rows: u16,
     node_id: u32 = 0, // set by connectEvents; effect emits gate on it (0 = unwired)
@@ -258,35 +259,86 @@ pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, t
     return widget;
 }
 
-/// Allocate + init per-widget State (term set by the caller after open).
-/// Monospace cell metric from the point size (measuring via pango would be more
-/// precise, but this keeps the grid internally consistent because the draw func
-/// reuses these same numbers).
+/// Allocate + init per-widget State (term set by the caller after open). Cell
+/// metrics are measured from the font (measureCell), not derived from the point
+/// size, so glyphs sit on a real baseline and the grid matches the font's box.
 fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, font_family: ?[*:0]const u8, cols: u16, rows: u16) *State {
     const fs: f64 = @floatFromInt(font_size);
-    const cell_w = @round(fs * 0.6);
-    const cell_h = @round(fs * 1.2);
-
-    gtk.DrawingArea.setContentWidth(area, @intFromFloat(cell_w * @as(f64, @floatFromInt(cols))));
-    gtk.DrawingArea.setContentHeight(area, @intFromFloat(cell_h * @as(f64, @floatFromInt(rows))));
-
     const family: [*:0]const u8 = font_family orelse "monospace";
     const font_regular = makeFontDesc(family, fs, .normal);
     const font_bold = makeFontDesc(family, fs, .bold);
+
+    const m = measureCell(font_regular, fs);
+
+    gtk.DrawingArea.setContentWidth(area, @intFromFloat(m.cell_w * @as(f64, @floatFromInt(cols))));
+    gtk.DrawingArea.setContentHeight(area, @intFromFloat(m.cell_h * @as(f64, @floatFromInt(rows))));
 
     const state = std.heap.c_allocator.create(State) catch @panic("OOM allocating terminal State");
     state.* = .{
         .term = undefined,
         .widget = widget,
         .font_size = fs,
-        .cell_w = cell_w,
-        .cell_h = cell_h,
+        .cell_w = m.cell_w,
+        .cell_h = m.cell_h,
+        .cell_baseline = m.cell_baseline,
         .cols = cols,
         .rows = rows,
         .font_regular = font_regular,
         .font_bold = font_bold,
     };
     return state;
+}
+
+const CellMetrics = struct { cell_w: f64, cell_h: f64, cell_baseline: f64 };
+
+/// Grayscale AA + slight hinting (Ghostty's default look), applied to both the
+/// metric-measuring context and the per-frame draw layout so the numbers agree.
+fn makeFontOptions() *cairo.FontOptions {
+    const opts = cairo.FontOptions.create();
+    cairo.FontOptions.setAntialias(opts, .gray);
+    cairo.FontOptions.setHintStyle(opts, .slight);
+    cairo.FontOptions.setHintMetrics(opts, .on);
+    return opts;
+}
+
+/// Measure the monospace cell box from the actual font via Pango. cell_w is the
+/// max advance over a few wide ASCII glyphs; cell_h is ascent+descent (Pango's
+/// line height, no separate line gap); cell_baseline is the ascent, i.e. the
+/// distance from the cell top down to the text baseline. Falls back to the old
+/// point-size heuristic if the font map yields no usable metrics (headless /
+/// missing font).
+fn measureCell(font_regular: *pango.FontDescription, fs: f64) CellMetrics {
+    const fontmap = pangocairo.FontMap.getDefault();
+    const ctx = pango.FontMap.createContext(fontmap);
+    defer gobject.Object.unref(ctx.as(gobject.Object));
+
+    const fopts = makeFontOptions();
+    defer cairo.FontOptions.destroy(fopts);
+    pangocairo.contextSetFontOptions(ctx, fopts);
+
+    const metrics = pango.Context.getMetrics(ctx, font_regular, pango.Language.getDefault());
+    defer pango.FontMetrics.unref(metrics);
+    const ascent = @as(f64, @floatFromInt(pango.FontMetrics.getAscent(metrics))) / pango.SCALE;
+    const descent = @as(f64, @floatFromInt(pango.FontMetrics.getDescent(metrics))) / pango.SCALE;
+
+    const layout = pango.Layout.new(ctx);
+    defer gobject.Object.unref(layout.as(gobject.Object));
+    pango.Layout.setFontDescription(layout, font_regular);
+    var max_w: c_int = 0;
+    for ([_][*:0]const u8{ "M", "W", "@", "0" }) |s| {
+        pango.Layout.setText(layout, s, -1);
+        var w: c_int = 0;
+        pango.Layout.getPixelSize(layout, &w, null);
+        if (w > max_w) max_w = w;
+    }
+
+    const line_h = ascent + descent;
+    const cw: f64 = @floatFromInt(max_w);
+    return .{
+        .cell_w = if (cw > 0) @round(cw) else @round(fs * 0.6),
+        .cell_h = if (line_h > 0) @round(line_h) else @round(fs * 1.2),
+        .cell_baseline = if (line_h > 0) ascent else @round(fs * 1.2) * 0.8,
+    };
 }
 
 fn makeFontDesc(family: [*:0]const u8, size_px: f64, weight: pango.Weight) *pango.FontDescription {
@@ -640,18 +692,53 @@ fn setRgb(cr: *cairo.Context, rgb: [3]u8) void {
     );
 }
 
-/// Draws one cell's grapheme at (px, py), clipped to its owned cell rect
-/// (`own_w` x cell_h) so a fontconfig fallback face wider than the fixed
-/// cw/ch metric box (PUA/emoji substitutes) can't smear into the neighbor.
-fn drawGlyph(cr: *cairo.Context, layout: *pango.Layout, desc: *pango.FontDescription, txt: [*:0]const u8, px: f64, py: f64, own_w: f64, ch: f64, rgb: [3]u8) void {
+/// A grapheme up to this multiple of the cell is drawn at natural size (clipped
+/// to the cell); larger than this it is scaled to fit. Box-drawing and Powerline
+/// glyphs overhang the advance by design to tile (measured ~1.15-1.22x), so the
+/// slack keeps them tiling while genuinely oversized icons/emoji (~1.5-2x) still
+/// scale instead of being sliced. Interim heuristic until box-drawing/Powerline
+/// get procedural sprites.
+const FIT_SLACK: f64 = 1.3;
+
+/// Draws one cell's grapheme in the cell box at (px, py) sized own_w x ch, on
+/// the text baseline at py + baseline. A grapheme whose ink fits (within
+/// FIT_SLACK) is drawn at natural size; an oversized one (Nerd Font PUA icon,
+/// emoji substitute) is uniformly scaled to contain within the box (never
+/// enlarged) and centered, instead of being sliced. The clip to the cell box is
+/// a safety bound against spill into the neighbor, never a tighter cut.
+fn drawGlyph(cr: *cairo.Context, layout: *pango.Layout, desc: *pango.FontDescription, txt: [*:0]const u8, px: f64, py: f64, own_w: f64, ch: f64, baseline: f64, rgb: [3]u8) void {
     pango.Layout.setFontDescription(layout, desc);
     pango.Layout.setText(layout, txt, -1);
     setRgb(cr, rgb);
+
+    var ink: pango.Rectangle = undefined;
+    pango.Layout.getPixelExtents(layout, &ink, null);
+    const ink_w: f64 = @floatFromInt(ink.f_width);
+    const ink_h: f64 = @floatFromInt(ink.f_height);
+
     cairo.Context.save(cr);
     cairo.Context.rectangle(cr, px, py, own_w, ch);
     cairo.Context.clip(cr);
-    cairo.Context.moveTo(cr, px, py);
-    pangocairo.showLayout(cr, layout);
+    if (ink_w <= own_w * FIT_SLACK and ink_h <= ch * FIT_SLACK) {
+        // Natural size on the baseline. The cell-box clip turns a glyph that
+        // overhangs the advance (box-drawing/powerline are cut to overhang by
+        // design so neighbours tile) into an edge-to-edge fill; a plain ASCII
+        // glyph sits well inside it.
+        const layout_baseline = @as(f64, @floatFromInt(pango.Layout.getBaseline(layout))) / pango.SCALE;
+        cairo.Context.moveTo(cr, px, py + baseline - layout_baseline);
+        pangocairo.showLayout(cr, layout);
+    } else {
+        const sx = if (ink_w > 0) own_w / ink_w else 1.0;
+        const sy = if (ink_h > 0) ch / ink_h else 1.0;
+        const scale = @min(@as(f64, 1.0), @min(sx, sy));
+        const ox = px + (own_w - ink_w * scale) / 2.0;
+        const oy = py + (ch - ink_h * scale) / 2.0;
+        cairo.Context.translate(cr, ox, oy);
+        cairo.Context.scale(cr, scale, scale);
+        cairo.Context.translate(cr, -@as(f64, @floatFromInt(ink.f_x)), -@as(f64, @floatFromInt(ink.f_y)));
+        cairo.Context.moveTo(cr, 0, 0);
+        pangocairo.showLayout(cr, layout);
+    }
     cairo.Context.restore(cr);
 }
 
@@ -703,6 +790,10 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
     const layout = pangocairo.createLayout(cr);
     defer gobject.Object.unref(layout.as(gobject.Object));
     pango.Layout.setSingleParagraphMode(layout, 1);
+    const fopts = makeFontOptions();
+    defer cairo.FontOptions.destroy(fopts);
+    pangocairo.contextSetFontOptions(pango.Layout.getContext(layout), fopts);
+    pango.Layout.contextChanged(layout);
 
     var y: u16 = 0;
     while (y < rows) : (y += 1) {
@@ -760,7 +851,7 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
             if (cell.utf8[0] != 0) {
                 const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
                 const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
-                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, fg);
+                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, fg);
             }
 
             if ((cell.flags & FLAG_UNDERLINE) != 0) {
@@ -790,7 +881,7 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
         if (cell.utf8[0] != 0) {
             const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
             const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
-            drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, cell.bg);
+            drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, cell.bg);
         }
     }
 

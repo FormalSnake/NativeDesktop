@@ -228,6 +228,8 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         return search
     } else if kind == "SourceList" {
         return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)
+    } else if kind == "SourceTree" {
+        return makeSourceTree(props)  // NSOutlineView .sourceList in NSScrollView (NDShell/SourceTrees.swift)
     } else if kind == "Menubar" {
         return ndMenubarCreate(propBool(props, "defaults") ?? true)
     } else if kind == "Menu" {
@@ -438,6 +440,10 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         if let idx = propInt(props, "selectedIndex") {
             ndSourceListSetSelectedIndex(view, idx)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)
         }
+    } else if kind == "SourceTree" {
+        if let nodes = propObjArray(props, "nodes") { ndSourceTreeSetNodes(view, nodes) }
+        if let actions = propObjArray(props, "actions") { ndSourceTreeSetActions(view, actions) }
+        if let sel = propStr(props, "selectedId") { ndSourceTreeSetSelectedId(view, sel) }
     } else if kind == "MenuItem" {
         if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
     } else if kind == "SettingsGroup" {
@@ -573,6 +579,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     } else if kind == "SourceList" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "selectionChanged", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
+    } else if kind == "SourceTree" {
+        ndSourceTreeConnect(view, nodeID: nodeID)
     } else if kind == "MenuItem" {
         ndMenuItemConnect(view, nodeID: nodeID) // M13: NSMenuItem target/action, not EventDispatcher
     } else if kind == "Switch" {

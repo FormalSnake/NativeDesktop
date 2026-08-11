@@ -1,6 +1,6 @@
 ---
 title: Data Views
-description: "Table and TreeView render multi-column and hierarchical data with one shared rule: the native widget never reorders or re-nests your data."
+description: "Table, TreeView and SourceTree render multi-column and hierarchical data with one shared rule: the native widget never reorders or re-nests your data."
 ---
 
 `<table>` and `<treeview>` both take a plain data prop (`rows`/`nodes`) you own in React state, and
@@ -115,6 +115,74 @@ Expansion is controlled state, not native state: the widget asks (via `nodeExpan
 app can never silently collapse a branch the user opened. Track expansion yourself (a `Set<string>`
 of expanded ids, as above) and feed it back into every node's `expanded` field.
 
-See `examples/gallery/main.tsx`'s "Table" and "Tree" tabs for both wired to full controlled state
-(including the JS-side sort), and the [Widget Reference](/components/widget-reference/) for the
-generated prop tables.
+## SourceTree (`<sourcetree>`)
+
+A hierarchical *sidebar*: section headers, id/parentId rows with a caption line, badges, and
+trailing per-row actions. GTK renders a `navigation-sidebar` GtkListBox of AdwActionRows; macOS a
+`.sourceList`-style `NSOutlineView`. Use `<sourcelist>` for a flat index-addressed sidebar and
+`<treeview>` for a generic disclosure tree in a content pane; `<sourcetree>` is the one that owns
+"app chrome sidebar with structure".
+
+Rows are the same flat `id`/`parentId` shape as TreeView, with sidebar extras:
+
+```tsx
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
+
+const actions: SourceTreeAction[] = [
+  { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },
+  { id: "close-run", iconName: "window-close-symbolic", tooltip: "Close run", destructive: true },
+];
+
+const nodes: SourceTreeNode[] = [
+  { id: "sec-hosts", title: "Hosts", section: true, hasChildren: true, expanded: true },
+  { id: "host-mac", parentId: "sec-hosts", title: "macbook", caption: "connected",
+    iconName: "computer-symbolic", hasChildren: true, expanded: true },
+  { id: "run-1", parentId: "host-mac", title: "fix sidebar", caption: "running · 2m",
+    badge: "3", actionIds: ["close-run"], testID: "run-row-1" },
+];
+
+<sourcetree
+  nodes={nodes}
+  actions={actions}
+  selectedId={selectedId}
+  onSelectionChanged={(e) => setSelectedId((e.data as { nodeId: string | null }).nodeId ?? "")}
+  onActionClicked={(e) => {
+    const { nodeId, actionId } = e.data as { nodeId: string; actionId: string };
+    // ...
+  }}
+/>;
+```
+
+| Prop | Type | Applied | Notes |
+| --- | --- | --- | --- |
+| `nodes` | `SourceTreeNode[]` | createAndUpdate | Flat `{ id, parentId?, title, caption?, iconName?, captionIconName?, badge?, section?, hasChildren?, expanded?, selectable?, actionIds?, testID? }`. |
+| `actions` | `SourceTreeAction[]` | createAndUpdate | The action catalog rows reference by `actionIds`: `{ id, iconName, label?, tooltip?, destructive? }`. |
+| `selectedId` | string | createAndUpdate | Controlled selection by node id; `""` means none. There is no `selectedIndex`. |
+| `actionVisibility` | `"hover"` \| `"always"` | create | Default `"hover"`: action buttons show only while the pointer is over the row. |
+| `indentationPerLevel` | int | create | Pixels per depth level, default `14`. |
+
+| Event | Handler | Payload |
+| --- | --- | --- |
+| `selectionChanged` | `onSelectionChanged` | `{ data: { nodeId } }` (`nodeId` null on deselect) |
+| `rowActivated` | `onRowActivated` | `{ data: { nodeId } }` |
+| `nodeExpanded` | `onNodeExpanded` | `{ data: { nodeId } }` |
+| `nodeCollapsed` | `onNodeCollapsed` | `{ data: { nodeId } }` |
+| `actionClicked` | `onActionClicked` | `{ data: { nodeId, actionId } }` |
+
+Semantics shared with TreeView: expansion is controlled state (track a `Set<string>` of expanded
+ids and feed it back into `expanded`), and events address rows by `nodeId` because visible indexes
+shift under expand/collapse. `section: true` marks a group header: non-selectable, styled as a
+native section label on both platforms; a section with `hasChildren` is a collapsible shelf.
+`selectable: false` makes an informational row (an empty-state line) unselectable without making it
+a header. Hover is the widget's own native affordance; there is deliberately no `hoverChanged`
+event, so apps stop hand-rolling per-row hover state.
+
+Per-node `testID` surfaces in the automation tree's `rows` (see the getTree docs), so tests target
+rows without depending on row order. Platform asymmetries: GTK draws a manual disclosure button per
+parent row (GtkListBox has no native outline affordance) and renders `captionIconName` as a small
+second prefix icon; macOS sections have no disclosure triangle (native source-list group look) and
+inline the caption icon on the caption line.
+
+See `examples/gallery/main.tsx`'s "Table", "Tree" and "SourceTree" tabs for all three wired to full
+controlled state (including the JS-side sort), and the
+[Widget Reference](/components/widget-reference/) for the generated prop tables.

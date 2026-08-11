@@ -5,7 +5,7 @@
 
 export const NDP_VERSION = 1;
 
-export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton" | "Terminal" | "Paned" | "CommandPalette";
+export type WidgetName = "Window" | "Box" | "Label" | "Button" | "TextInput" | "TextArea" | "Checkbox" | "Radio" | "Select" | "Slider" | "ProgressBar" | "Image" | "ScrollView" | "Separator" | "Spinner" | "TabView" | "Grid" | "ListView" | "WebView" | "NativeView" | "SplitView" | "HeaderBar" | "ToolbarView" | "SearchInput" | "SourceList" | "SourceTree" | "Menubar" | "Menu" | "MenuItem" | "SettingsGroup" | "Switch" | "ToggleButton" | "SegmentedControl" | "NumberInput" | "LinkButton" | "LevelIndicator" | "ColorPicker" | "Banner" | "MenuButton" | "SplitButton" | "Popover" | "Expander" | "StatusPage" | "ToastOverlay" | "DatePicker" | "Table" | "TreeView" | "FontPicker" | "Video" | "TrayItem" | "ShareButton" | "Terminal" | "Paned" | "CommandPalette";
 
 /** Child runtime identity, carried inside the hello frame. */
 export interface Runtime {
@@ -41,12 +41,14 @@ export interface HelloMsg {
   runtime: Runtime;
 }
 
-/** Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference order (ndp-binary spec §2); the runtime picks the first one it supports. `backend` names the host's active widget backend ("gtk" | "appkit") — the authoritative source for `Platform.backend`, since the OS alone can't distinguish it (GTK runs on macOS too). */
+/** Handshake reply. `encodings` lists CommitBatch encodings the host accepts, host-preference order (ndp-binary spec §2); the runtime picks the first one it supports. `backend` names the host's active widget backend ("gtk" | "appkit") — the authoritative source for `Platform.backend`, since the OS alone can't distinguish it (GTK runs on macOS too). `hostWidgets`/`hostCommands` are the host build's capability manifest: every intrinsic it knows, and every "<intrinsic>.<command>" it dispatches — the source for hasWidget()/hasCommand(); optional so a runtime can still talk to an older host (both absent = fall back to the runtime's own schema tables). */
 export interface HelloAckMsg {
   type: "helloAck";
   ndpVersion: number;
   encodings: string[];
   backend: string;
+  hostWidgets?: string[];
+  hostCommands?: string[];
 }
 
 export interface ErrorMsg {

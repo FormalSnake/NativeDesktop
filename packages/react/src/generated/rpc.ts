@@ -12,11 +12,12 @@ export interface Geometry {
   h: number;
 }
 
-/** SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape. */
+/** SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have none). */
 export interface RowJson {
   title: string;
   badge: string | null;
   iconName: string | null;
+  testID: string | null;
 }
 
 /** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. */

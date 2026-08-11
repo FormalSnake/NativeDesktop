@@ -88,7 +88,16 @@ final class NDAppDelegate: NSObject, NSApplicationDelegate {
         if let ctx = gCtx { nd_shutdown(ctx) }
     }
 
-    // App-level activation stream (system-capability seam).
+    // App-level activation stream (system-capability seam). Launch emits the
+    // standing state once: a background spawn (nd dev, the automation harness)
+    // never fires applicationDidBecomeActive, and without a recorded value the
+    // core has nothing to replay after HelloAck.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NDSystem.emitEvent(
+            channel: NSApp.isActive ? "app.activate" : "app.deactivate",
+            dataJson: "{}")
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         NDSystem.emitEvent(channel: "app.activate", dataJson: "{}")
     }

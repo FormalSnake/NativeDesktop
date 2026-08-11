@@ -12,6 +12,8 @@
 // before render()'s handshake completes. `os` derives from the Bun child's own
 // `process.platform`, which is co-located with the host.
 
+import { intrinsicToName, widgetCommands } from "./generated/schema-meta.ts";
+
 export type Backend = "gtk" | "appkit" | "unknown";
 export type OS = "macos" | "linux" | "windows";
 
@@ -20,6 +22,41 @@ let backend: Backend = "unknown";
 /** Renderer-internal: called once from `render()` after the handshake. */
 export function setBackend(name: string): void {
   backend = name as Backend;
+}
+
+// The host build's capability manifest (helloAck hostWidgets/hostCommands).
+// null = the host predates the fields; hasWidget/hasCommand then fall back
+// to this runtime's own generated schema tables — exactly the pre-manifest
+// behavior, where JS-schema knowledge was the only answer available.
+let hostWidgets: Set<string> | null = null;
+let hostCommands: Set<string> | null = null;
+
+/** Renderer-internal: called once from `render()` beside `setBackend`. */
+export function setHostManifest(widgets: Set<string> | null, commands: Set<string> | null): void {
+  hostWidgets = widgets;
+  hostCommands = commands;
+}
+
+/**
+ * True when the connected host build knows the intrinsic (e.g.
+ * `hasWidget("sourcetree")`). Answers from the host's handshake manifest;
+ * against an older host that doesn't send one, falls back to this runtime's
+ * own schema table (i.e. "the JS side knows it").
+ */
+export function hasWidget(type: string): boolean {
+  if (hostWidgets) return hostWidgets.has(type);
+  return type in intrinsicToName;
+}
+
+/**
+ * True when the connected host build dispatches `command` on `type` (e.g.
+ * `hasCommand("window", "present")`). Same manifest-with-fallback semantics
+ * as `hasWidget`. Replaces try/catch around `sendCommand` for feature
+ * detection.
+ */
+export function hasCommand(type: string, command: string): boolean {
+  if (hostCommands) return hostCommands.has(`${type}.${command}`);
+  return (widgetCommands[type] ?? []).includes(command);
 }
 
 function currentOS(): OS {

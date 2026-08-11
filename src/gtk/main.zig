@@ -143,6 +143,14 @@ fn onWindowAdded(_: *gtk.Application, window: *gtk.Window, _: ?*anyopaque) callc
     _ = gtk.Window.signals.close_request.connect(window, ?*anyopaque, &onCloseRequest, null, .{});
     // Track per-window active state to derive whole-app activation (below).
     _ = gobject.signalConnectData(window.as(gobject.Object), "notify::is-active", @ptrCast(&onNotifyActive), null, null, .{});
+    // Schedule the launch recompute: a background spawn starts with no window
+    // active and no notify::is-active ever fires, yet the core still needs a
+    // standing value to replay after HelloAck. recomputeActive emits
+    // unconditionally the first time (app_active starts null).
+    if (!active_recheck_scheduled) {
+        active_recheck_scheduled = true;
+        _ = glib.idleAdd(&recomputeActive, null);
+    }
     if (hold_released) return;
     hold_released = true;
     if (global_app) |app| gio.Application.release(app.as(gio.Application));
@@ -153,7 +161,7 @@ fn onWindowAdded(_: *gtk.Application, window: *gtk.Window, _: ?*anyopaque) callc
 // focus moves between two of this app's windows, so the recompute is deferred
 // to idle where those paired notifications collapse into one net state — only
 // a real app-level gain/loss of focus emits app.activate/app.deactivate.
-var app_active = false;
+var app_active: ?bool = null; // null until the launch recompute records a value
 var active_recheck_scheduled = false;
 
 fn onNotifyActive(_: *gobject.Object, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
@@ -174,7 +182,8 @@ fn recomputeActive(_: ?*anyopaque) callconv(.c) c_int {
             break;
         }
     }
-    if (any_active != app_active) {
+    const changed = if (app_active) |prev| any_active != prev else true;
+    if (changed) {
         app_active = any_active;
         if (global_ctx) |ctx| {
             abi.nd_system_event(ctx, if (any_active) "app.activate" else "app.deactivate", "{}");
