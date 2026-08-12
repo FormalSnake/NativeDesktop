@@ -30,7 +30,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
-const ndstyle = @import("style.zig");
+const ndbasecss = @import("basecss.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -151,7 +151,7 @@ pub fn createWindow(
     the_window: *?*gtk.Window,
     dupeZ: *const fn ([]const u8) [:0]const u8,
 ) !*gtk.Widget {
-    ndstyle.ensureBaseCss(); // display is live here; badge/size/density classes need it
+    ndbasecss.ensureBaseCss(); // display is live here; badge/size/density classes need it
     const group_name = tab_group orelse {
         const window = adw.ApplicationWindow.new(app);
         const win = window.as(gtk.Window);
