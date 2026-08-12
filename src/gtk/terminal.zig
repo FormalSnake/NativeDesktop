@@ -19,6 +19,7 @@ const adw = @import("adw");
 const ndt = @import("../core/terminal.zig");
 const ndremote = @import("../core/remote_terminal.zig");
 const protocol = @import("../protocol.zig");
+const sprite = @import("sprite.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents Terminal arm.
@@ -69,6 +70,7 @@ const State = struct {
     cell_w: f64,
     cell_h: f64,
     cell_baseline: f64, // cell top to text baseline (Pango ascent), see measureCell
+    box_thickness: u32, // light line weight for geometric sprites, see newState
     cols: u16,
     rows: u16,
     node_id: u32 = 0, // set by connectEvents; effect emits gate on it (0 = unwired)
@@ -316,6 +318,11 @@ fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, font_
     gtk.DrawingArea.setContentWidth(area, @intFromFloat(m.cell_w * @as(f64, @floatFromInt(cols))));
     gtk.DrawingArea.setContentHeight(area, @intFromFloat(m.cell_h * @as(f64, @floatFromInt(rows))));
 
+    // Light line weight for box/block/Powerline sprites, from the cell height
+    // (Ghostty derives box_thickness from the font's underline thickness; we
+    // don't measure that here, so use its documented fallback). Heavy = 2x.
+    const box_thickness: u32 = @max(1, @as(u32, @intFromFloat(@round(m.cell_h * 0.09))));
+
     const state = std.heap.c_allocator.create(State) catch @panic("OOM allocating terminal State");
     state.* = .{
         .term = undefined,
@@ -324,6 +331,7 @@ fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, font_
         .cell_w = m.cell_w,
         .cell_h = m.cell_h,
         .cell_baseline = m.cell_baseline,
+        .box_thickness = box_thickness,
         .cols = cols,
         .rows = rows,
         .font_regular = font_regular,
@@ -747,6 +755,18 @@ fn setRgb(cr: *cairo.Context, rgb: [3]u8) void {
 /// get procedural sprites.
 const FIT_SLACK: f64 = 1.3;
 
+/// First codepoint of a cell's grapheme, but only when it is a geometric
+/// sprite (box-drawing/block/braille/Powerline). Those are drawn as cairo
+/// geometry so borders tile and Powerline separators meet the neighbour with
+/// no seam; null falls through to the font path.
+fn spriteCodepoint(utf8: *const [16]u8) ?u32 {
+    if (utf8[0] == 0) return null;
+    const n = std.unicode.utf8ByteSequenceLength(utf8[0]) catch return null;
+    if (n > utf8.len) return null;
+    const cp = std.unicode.utf8Decode(utf8[0..n]) catch return null;
+    return if (sprite.contains(cp)) cp else null;
+}
+
 /// Draws one cell's grapheme in the cell box at (px, py) sized own_w x ch, on
 /// the text baseline at py + baseline. A grapheme whose ink fits (within
 /// FIT_SLACK) is drawn at natural size; an oversized one (Nerd Font PUA icon,
@@ -912,9 +932,13 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
             const own_w = if (wide) cw * 2 else cw;
 
             if (cell.utf8[0] != 0) {
-                const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
-                const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
-                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, fg);
+                if (spriteCodepoint(&cell.utf8)) |cp| {
+                    _ = sprite.draw(cr, cp, px, py, own_w, ch, state.box_thickness, fg);
+                } else {
+                    const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
+                    const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
+                    drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, fg);
+                }
             }
 
             if ((cell.flags & FLAG_UNDERLINE) != 0) {
@@ -942,9 +966,13 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
         cairo.Context.rectangle(cr, px, py, own_w, ch);
         cairo.Context.fill(cr);
         if (cell.utf8[0] != 0) {
-            const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
-            const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
-            drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, mapCellColor(cell.bg, def_fg, def_bg, draw_fg, draw_bg));
+            if (spriteCodepoint(&cell.utf8)) |cp| {
+                _ = sprite.draw(cr, cp, px, py, own_w, ch, state.box_thickness, mapCellColor(cell.bg, def_fg, def_bg, draw_fg, draw_bg));
+            } else {
+                const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
+                const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
+                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, mapCellColor(cell.bg, def_fg, def_bg, draw_fg, draw_bg));
+            }
         }
     }
 
