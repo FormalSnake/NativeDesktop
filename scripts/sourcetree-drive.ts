@@ -36,7 +36,13 @@ try {
   // HelloAck; a background spawn legitimately starts inactive, so first assert
   // only that the replay landed, then frontmost the process (works for both
   // backends; nd-hello runs via Quartz on macOS) and wait for the live flip.
+  // The replay frame races the child's FIRST render (under load it lands
+  // after commit 0) and the readout only recomputes on a re-render: poke one
+  // with a selection round-trip before asserting.
+  await app.setValue("st-tree", "run-1");
   await app.waitForText("replay=yes", { timeoutMs: 3000 });
+  await app.setValue("st-tree", "");
+  await app.waitForText("sel (none)", { timeoutMs: 3000 });
   const frontmost = Bun.spawnSync([
     "osascript", "-e",
     `tell application "System Events" to set frontmost of (first application process whose unix id is ${app.pid}) to true`,
@@ -91,6 +97,22 @@ try {
   }
   await app.waitForText("sel run-old", { timeoutMs: 3000 });
   console.log("ND_ST_EXPAND_PROP_OK collapsed shelf hides rows; expanding reveals them");
+
+  // ---- leg 5b: semantic row action (both backends) ---------------------------
+  // click {testId: <row testID>, action} dispatches the named trailing action
+  // without a real pointer, the path GTK needs (no input synthesis) and the
+  // one CanaryOrchestrator-style e2e flows use for row-level buttons.
+  await app.click({ testId: "st-run-1", action: "close-run" });
+  await app.waitForText("action close-run@run-1", { timeoutMs: 3000 });
+  // An action the node does not declare must fail loudly, not silently no-op.
+  let undeclaredRejected = false;
+  try {
+    await app.click({ testId: "st-run-1", action: "new-run" });
+  } catch {
+    undeclaredRejected = true;
+  }
+  if (!undeclaredRejected) throw new Error("click(st-run-1, action new-run) should have failed: node does not declare it");
+  console.log("ND_ST_ROWACTION_OK click {testId, action} dispatched actionClicked; undeclared action rejected");
 
   // ---- leg 6: native gestures (AppKit only; GTK4 cannot synthesize input) ---
   if (app.backend === "appkit") {

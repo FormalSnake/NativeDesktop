@@ -139,9 +139,11 @@ function isSourceCheckout(repoRoot: string): boolean {
  * Outside a checkout with no prebuilt, throws naming the missing platform
  * package (or the supported target list when none exists for this machine).
  */
-export async function resolveHostBinary(opts: { backend?: Backend } = {}): Promise<string> {
+export async function resolveHostBinary(
+  opts: { backend?: Backend; platform?: string; arch?: string; packageDir?: string } = {},
+): Promise<string> {
   const backend = resolveBackend(opts);
-  const { packageName, binaryName, repoRoot, fresh } = hostBinaryCandidates(backend);
+  const { packageName, binaryName, repoRoot, fresh } = hostBinaryCandidates(backend, opts);
   const prebuilt = prebuiltHostBinary(backend);
   const source = isSourceCheckout(repoRoot);
 
@@ -163,12 +165,25 @@ export async function resolveHostBinary(opts: { backend?: Backend } = {}): Promi
     return buildBackend(backend, repoRoot, fresh);
   }
 
+  const key = hostPlatformKey(opts.platform, opts.arch);
+  // gtk-on-macOS is the one combination that will never get a package entry
+  // (see PLATFORM_PACKAGES above), so the generic "unsupported target" hint
+  // below reads as a dead end instead of the three real ways forward. State
+  // them explicitly: this is by design, not missing packaging.
+  if (!packageName && backend === "gtk" && key.startsWith("darwin-")) {
+    throw new Error(
+      `@nativedesktop/host: no gtk host binary for "${key}". The gtk backend ships no macOS prebuilt ` +
+        `by design (it links Homebrew paths). Either build one from a NativeDesktop source checkout ` +
+        `(${backendBuildHint(backend)}), or pass an explicit binary path instead of resolving one ` +
+        `(e.g. launchApp({ hostBinary }) in @nativedesktop/test).`,
+    );
+  }
   const hint = packageName
     ? `Expected ${packageName}/bin/${binaryName} (an optionalDependency of @nativedesktop/host); ` +
       `reinstall without --no-optional, or build in a NativeDesktop checkout (${backendBuildHint(backend)}).`
     : `No prebuilt package exists for this target; supported targets are darwin-arm64 (appkit) and ` +
       `linux-x64 (gtk). Build in a NativeDesktop checkout (${backendBuildHint(backend)}).`;
-  throw new Error(`@nativedesktop/host: no ${backend} host binary for "${hostPlatformKey()}". ${hint}`);
+  throw new Error(`@nativedesktop/host: no ${backend} host binary for "${key}". ${hint}`);
 }
 
 function backendBuildHint(backend: Backend): string {

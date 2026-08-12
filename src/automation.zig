@@ -67,6 +67,8 @@ const UiJob = struct {
     window: ?u32 = null, // screenshot/getTree/window_action, or testId resolution scope (null = root/first)
     action: ?[]const u8 = null, // window_action: the semantic_action string ("pointer"|"drag"|"keys")
     args_json: ?[:0]const u8 = null, // window_action: pre-serialized arg_json (owned by dispatch)
+    row_action: ?[]const u8 = null, // click: params.action (SourceTree row action id)
+    row_matched: bool = false, // click: testId resolved to a SourceTree ROW, not a widget
 
     // output (filled on the UI thread by `handleOnUi`)
     result_json: ?[]u8 = null, // owned by gpa; the automation thread frees
@@ -140,7 +142,7 @@ fn handleOnUi(job: *UiJob) void {
     switch (job.kind) {
         .get_tree => handleGetTree(job),
         .screenshot => handleScreenshot(job),
-        .click => handleSemanticAction(job, "click"),
+        .click => handleSemanticAction(job, if (job.row_action != null) "rowAction" else "click"),
         .wait_poll => handleWaitPoll(job),
         .set_value => handleSemanticAction(job, "setValue"),
         .type_text => handleSemanticAction(job, "type"),
@@ -272,6 +274,16 @@ fn resolveJobTarget(job: *UiJob) bool {
     defer arena_state.deinit();
     const candidates = collectTestIdMatches(arena_state.allocator(), job, needle);
     if (candidates.len == 0) {
+        // A rowAction click may target a SourceTree ROW by its per-node
+        // testID; rows are meta data, not tree nodes, so resolve to the
+        // owning widget and let the backend's rowAction arm find the row.
+        if (job.row_action != null) {
+            if (rowTestIdOwner(job, needle)) |owner| {
+                job.ref = owner;
+                job.row_matched = true;
+                return true;
+            }
+        }
         job.err_code = rpc.code_not_actionable;
         job.err_msg = rpc.msg_not_actionable;
         const tid_json = std.json.Stringify.valueAlloc(job.gpa, needle, .{}) catch null;
@@ -281,6 +293,25 @@ fn resolveJobTarget(job: *UiJob) bool {
     }
     job.ref = rankBest(job.tree, candidates);
     return true;
+}
+
+/// The widget owning a row whose per-row testID equals `needle` (scoped to
+/// `job.window`'s subtree when set); SourceTree publishes its nodes' testIDs
+/// through `NodeMeta.rows`. UI thread only.
+fn rowTestIdOwner(job: *UiJob, needle: []const u8) ?u32 {
+    var it = job.tree.meta.iterator();
+    while (it.next()) |entry| {
+        const rows = entry.value_ptr.rows orelse continue;
+        for (rows) |row| {
+            const tid = row.test_id orelse continue;
+            if (!std.mem.eql(u8, tid, needle)) continue;
+            if (job.window) |wid| {
+                if (windowOf(job.tree, entry.key_ptr.*) != wid) continue;
+            }
+            return entry.key_ptr.*;
+        }
+    }
+    return null;
 }
 
 /// The `waitFor` state names `testId` conditions accept (validated at
@@ -468,6 +499,15 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
         .set_value => allocZFromValue(job.gpa, .{ .value = job.value orelse .null }),
         .type_text => allocZFromValue(job.gpa, .{ .text = job.text orelse "" }),
         .scroll => allocZFromValue(job.gpa, .{ .dx = job.dx, .dy = job.dy }),
+        // rowAction: the row testID rides along only when the target resolved
+        // to a ROW; a widget-targeted rowAction acts on the selected row.
+        .click => if (job.row_action) |a|
+            (if (job.row_matched)
+                allocZFromValue(job.gpa, .{ .actionId = a, .testId = job.test_id.? })
+            else
+                allocZFromValue(job.gpa, .{ .actionId = a }))
+        else
+            job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
         else => job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
     };
 }
@@ -898,7 +938,7 @@ pub const Server = struct {
                     return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
                 };
                 defer p.deinit();
-                var job = UiJob{ .tree = self.tree, .kind = .click, .gpa = self.gpa, .io = self.io };
+                var job = UiJob{ .tree = self.tree, .kind = .click, .gpa = self.gpa, .io = self.io, .row_action = p.value.action };
                 if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
                 return self.runJobAndEnvelope(&job, id);
             },

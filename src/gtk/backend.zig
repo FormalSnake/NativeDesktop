@@ -24,6 +24,8 @@ const adw = @import("adw");
 const ndtabs_gtk = @import("tabs.zig");
 const ndpalette_gtk = @import("commandpalette.zig");
 const ndsourcetree_gtk = @import("sourcetree.zig");
+const ndwebview_gtk = @import("webview.zig");
+const pango = @import("pango");
 
 pub const Widget = gtk.Widget;
 
@@ -472,7 +474,16 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
     return false;
 }
 
-/// `vtable.snapshot`: the GTK-native WidgetPaintable render path.
+/// `vtable.snapshot`: the GTK-native WidgetPaintable render path. Live
+/// WebKit content is the one thing the renderers cannot rasterize (headless
+/// cairo fails outright, GL only for a webview sitting directly in the
+/// window, DMABUF on a real GPU neither). Full WebKit rasterization is out
+/// of scope, so when the pixel-true pass fails and webviews are in the
+/// window, the snapshot DEGRADES instead of erroring: each webview is hidden
+/// for the pass (child_visible keeps its allocation, nothing reflows) and a
+/// flat placeholder plate is painted over its rect, with
+/// `ND_SNAPSHOT_DEGRADED webviews=N` on stderr as the machine-readable
+/// marker (the frozen ABI's `snapshot` returns only a bool).
 fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     // One-shot: the target set by the preceding `resolve_window` (see
     // selectSnapshotWindow) wins; consumed here so a later stray snapshot falls
@@ -495,6 +506,57 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
         r.as(gsk.Renderer).unref();
     };
 
+    if (renderWindowPng(win_widget, renderer, png_path, &.{})) return true;
+
+    var views: std.ArrayList(WebViewRect) = .empty;
+    defer views.deinit(std.heap.page_allocator);
+    collectWebViews(win_widget, win_widget, &views);
+    if (views.items.len == 0) return false;
+    // Hide AFTER the rects are captured: computeBounds on an unmapped widget
+    // answers a degenerate full-window rect, which would plate over the
+    // window's chrome too.
+    for (views.items) |v| gtk.Widget.setChildVisible(v.widget, 0);
+    defer for (views.items) |v| gtk.Widget.setChildVisible(v.widget, 1);
+    // A window whose every frame failed on the webview node has no painted
+    // state for WidgetPaintable to reproduce, so the base pass would come out
+    // empty (measured: freeToNode answers null). Iterate the main context,
+    // BLOCKING, for up to ~250ms so the now-webview-less window gets a real
+    // compositor frame tick and paints once (the snapshot job already runs
+    // on the UI thread; automation serves one RPC at a time).
+    gtk.Widget.queueDraw(win_widget);
+    const deadline = glib.getMonotonicTime() + 250_000;
+    while (glib.getMonotonicTime() < deadline) {
+        // Non-blocking iteration + sleep, never a may_block wait: an idle
+        // context would otherwise park past the deadline.
+        while (glib.MainContext.iteration(null, 0) != 0) {}
+        glib.usleep(10_000);
+    }
+    const ok = renderWindowPng(win_widget, renderer, png_path, views.items);
+    if (ok) std.debug.print("ND_SNAPSHOT_DEGRADED webviews={d}\n", .{views.items.len});
+    return ok;
+}
+
+const WebViewRect = struct { widget: *gtk.Widget, rect: graphene.Rect };
+
+/// Depth-first live-webview collection (with window-relative bounds) for the
+/// degraded snapshot pass; a webview's own subtree is WebKit internals,
+/// never descended into.
+fn collectWebViews(win_widget: *gtk.Widget, root: *gtk.Widget, out: *std.ArrayList(WebViewRect)) void {
+    if (ndwebview_gtk.isRealWebView(root)) {
+        var rect: graphene.Rect = undefined;
+        if (gtk.Widget.computeBounds(root, win_widget, &rect) != 0) {
+            out.append(std.heap.page_allocator, .{ .widget = root, .rect = rect }) catch {};
+        }
+        return;
+    }
+    var child = gtk.Widget.getFirstChild(root);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) collectWebViews(win_widget, c, out);
+}
+
+/// One WidgetPaintable render of `win_widget` to `png_path`. Each
+/// `placeholders` entry gets a flat plate + centered "WebView" label drawn
+/// over its rect (the degraded webview pass); empty for the pixel-true pass.
+fn renderWindowPng(win_widget: *gtk.Widget, renderer: *gsk.Renderer, png_path: [*:0]const u8, placeholders: []const WebViewRect) bool {
     const paintable = gtk.WidgetPaintable.new(win_widget);
     defer paintable.unref();
 
@@ -503,6 +565,8 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     const height = gtk.Widget.getHeight(win_widget);
     gdk.Paintable.snapshot(paintable.as(gdk.Paintable), snapshot.as(gdk.Snapshot), @floatFromInt(width), @floatFromInt(height));
 
+    for (placeholders) |v| appendPlaceholder(snapshot, win_widget, v);
+
     const node = gtk.Snapshot.freeToNode(snapshot) orelse return false;
     defer gsk.RenderNode.unref(node);
 
@@ -510,6 +574,27 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     defer texture.unref();
 
     return gdk.Texture.saveToPng(texture, png_path) != 0;
+}
+
+fn appendPlaceholder(snapshot: *gtk.Snapshot, win_widget: *gtk.Widget, entry: WebViewRect) void {
+    const rect = entry.rect;
+    // Mid-gray plate + white label: legible under both light and dark
+    // Adwaita without consulting the theme.
+    const plate = gdk.RGBA{ .f_red = 0.53, .f_green = 0.55, .f_blue = 0.58, .f_alpha = 1 };
+    gtk.Snapshot.appendColor(snapshot, &plate, &rect);
+    const layout = gtk.Widget.createPangoLayout(win_widget, "WebView");
+    defer gobject.Object.unref(@ptrCast(@alignCast(layout)));
+    var tw: c_int = 0;
+    var th: c_int = 0;
+    pango.Layout.getPixelSize(layout, &tw, &th);
+    const text_color = gdk.RGBA{ .f_red = 1, .f_green = 1, .f_blue = 1, .f_alpha = 1 };
+    gtk.Snapshot.save(snapshot);
+    gtk.Snapshot.translate(snapshot, &graphene.Point{
+        .f_x = rect.f_origin.f_x + (rect.f_size.f_width - @as(f32, @floatFromInt(tw))) / 2,
+        .f_y = rect.f_origin.f_y + (rect.f_size.f_height - @as(f32, @floatFromInt(th))) / 2,
+    });
+    gtk.Snapshot.appendLayout(snapshot, layout, &text_color);
+    gtk.Snapshot.restore(snapshot);
 }
 
 /// `vtable.semantic_action`: dispatches on `action` to the
@@ -557,6 +642,8 @@ fn vtSemanticAction(
         return semanticType(w, node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "scroll")) {
         return semanticScroll(w, node_id, args, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "rowAction")) {
+        return semanticRowAction(w, node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "a11y")) {
         return semanticA11y(w, node_id, result_json_out);
     } else if (std.mem.eql(u8, action_s, "windowState")) {
@@ -832,6 +919,24 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
 fn invalidValue(err_json_out: *?[*:0]u8, node_id: u32) i32 {
     setErr(err_json_out, node_id);
     return -32602;
+}
+
+/// "rowAction" {actionId, testId?}, SourceTree only: dispatches a row's
+/// trailing action as if its button were clicked (actionClicked
+/// {nodeId, actionId}). testId picks the row by its per-node testID; absent,
+/// the selected row is the target.
+fn semanticRowAction(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    if (!std.mem.eql(u8, widgetKind(widget), "SourceTree")) return invalidValue(err_json_out, node_id);
+    const obj: ?std.json.ObjectMap = if (args) |a| (if (a == .object) a.object else null) else null;
+    const o = obj orelse return invalidValue(err_json_out, node_id);
+    const action_id = switch (o.get("actionId") orelse return invalidValue(err_json_out, node_id)) {
+        .string => |s| s,
+        else => return invalidValue(err_json_out, node_id),
+    };
+    const test_id: ?[]const u8 = if (o.get("testId")) |t| (if (t == .string) t.string else null) else null;
+    if (!ndsourcetree_gtk.semanticRowAction(widget, action_id, test_id)) return invalidValue(err_json_out, node_id);
+    setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+    return 0;
 }
 
 /// Best-effort widget-kind sniff for the semantic-action dispatch: the

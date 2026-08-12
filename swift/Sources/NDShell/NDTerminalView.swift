@@ -267,6 +267,14 @@ final class NDTerminalView: NSView {
         super.viewDidMoveToWindow()
         // mouseMoved: only reaches a view when its window opts in.
         window?.acceptsMouseMovedEvents = true
+        // Claim first responder when nothing else has (a fresh window's
+        // firstResponder is the window itself): an unfocused terminal window
+        // routes bare keystrokes to the macOS 26 Window > Fill/tiling key
+        // equivalents, so "f" resizes the window instead of typing into the
+        // shell. Never steals from a control that already holds focus.
+        if let win = window, win.firstResponder === win {
+            win.makeFirstResponder(self)
+        }
     }
 
     // MARK: - tuple bridging

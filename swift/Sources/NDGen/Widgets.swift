@@ -366,7 +366,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
 func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
     let props = parseProps(propsJson)
     if kind == "Window" {
-        if let t = propStr(props, "title"), let win = view.window { win.title = t }
+        if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }
     } else if kind == "Box" {
         if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
             // -1 sentinel = platform standard, same as the create arm.

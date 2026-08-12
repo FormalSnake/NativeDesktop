@@ -28,7 +28,7 @@ tree — `@nativedesktop/test` wraps the raw RPC calls documented on this page i
 |---|---|---|---|
 | `getTree` | `{window?}` | `{coordinateSpace, root: JsonNode}` | accessibility-tree snapshot; `window` (a Window node ref) scopes it to that window's subtree |
 | `screenshot` | `{path, window?}` | `{path, width, height}` | in-process render → PNG; `window` picks any open window's Window node ref |
-| `click` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | actionability-checked, emits `clicked` semantically; on `CommandPalette` activates the currently-highlighted row |
+| `click` | `{ref?, testId?, window?, action?}` | `{ref, dispatched: true}` | actionability-checked, emits `clicked` semantically; on `CommandPalette` activates the currently-highlighted row; `action` invokes a SourceTree row action (see below) |
 | `waitFor` | `{condition: WaitCondition, timeoutMs?, window?}` | `{matched, ref, count}` | polls at ~50ms; default `timeoutMs` 2000; see [waitFor conditions](#waitfor-conditions) |
 | `setValue` | `{ref?, testId?, window?, value}` | `{ref, applied: true}` | kind-dispatched: `TextInput`/`TextArea` need a string, `Checkbox`/`Radio` a bool, `Slider` a number, `Select` an integer index |
 | `type` | `{ref?, testId?, window?, text}` | `{ref, text: <full text after insert>}` | `TextInput` only; semantic append via `GtkEditable.insertText`, never synthetic keysyms |
@@ -46,6 +46,19 @@ tree — `@nativedesktop/test` wraps the raw RPC calls documented on this page i
 one of `ref` or `testId`** (`invalidParams` otherwise); `window` optionally scopes `testId`
 resolution to one window, using the same actionable-first ranking as `resolve`. Targeting by
 `testId` is one round trip with host-side resolution — no `getTree` walk needed first.
+
+### SourceTree row actions
+
+`click` with `action` invokes a `<sourcetree>` row's trailing action semantically, dispatching
+`actionClicked {nodeId, actionId}` exactly like a real click on the row's button. This is the path
+to use when a flow's affordance is a row action (hover-only buttons included), and the only one on
+GTK (no input synthesis). `testId` may be a **row's** per-node testID (SourceTree rows are meta
+data, not tree nodes, so the host resolves a row testID to its owning widget and the backend picks
+the row) or the widget's own `testId`/`ref`, in which case the currently-selected row is the target.
+The row must be realized under the current expansion (a collapsed ancestor makes it unreachable,
+like for a user) and must declare the action in its `actionIds`; otherwise the call answers
+`invalidParams` (-32602). `@nativedesktop/test`: `app.click({ testId: "row-testid", action:
+"action-id" })`.
 
 `JsonNode` (from `getTree`, nested under `root`/`children`):
 `{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount, rows, role,
@@ -173,6 +186,18 @@ logical units (not device pixels), relative to the window's top-left corner.
   has content or explicit sizing.
 - Prefer `setValue({ref, value: boolean})` over `click` for `Checkbox`/`Radio`: `click` toggles the
   current state (relative), while `setValue` sets an exact, deterministic state.
+- **GTK cannot rasterize live WebKit content into a screenshot.** Full WebKit rasterization is out
+  of scope: the render-to-texture path fails whenever WebKit hands the compositor a texture the
+  snapshot renderer can't download (headless cairo fails outright; GL only works for a webview
+  sitting directly in the window; DMABUF on a real GPU fails for both). When the pixel-true pass
+  works (WebKit rendering in software/SHM mode, common under headless weston once a page has
+  settled), the screenshot carries real web content. When it fails and webviews are in the window,
+  the snapshot **degrades instead of erroring**: each `<webview>` region is painted as a flat gray
+  plate with a centered "WebView" label, the rest of the window renders normally, and the host
+  prints `ND_SNAPSHOT_DEGRADED webviews=N` on stderr (the frozen ABI's `snapshot` op returns only
+  a bool, so the marker is the machine-readable signal). Windows containing webviews (browser,
+  multiwindow) are therefore always capturable; treat a degraded capture as layout-true but not
+  pixel-true for the web content itself.
 
 ## Crash/overlay contract
 
@@ -240,3 +265,13 @@ invocation of `list`/`capture` triggers the system's one-time, headful Screen Re
 prompt. Grant it once via System Settings → Privacy & Security → Screen Recording; the grant then
 sticks to this binary's path and ad hoc signature across future runs and rebuilds. A rebuild that
 changes the binary's bytes counts as a new identity and needs re-granting.
+
+Freshness contract: ScreenCaptureKit samples the **window server's composite**, not the live view
+tree, so a commit AppKit has applied but never displayed would capture stale (measured on the
+panes example: a status label reached the composite while a freshly inserted `NSSplitView` subtree
+stayed blank until the RPC ladder's own `displayIfNeeded` healed it). `NATIVE_AUTOMATION=1` hosts
+therefore run a ~100ms main-runloop tick that forces `layoutSubtreeIfNeeded`/`displayIfNeeded` on
+every visible window plus a `CATransaction.flush`, and the in-process SCK rung
+(`ND_AUTOMATION_CAPTURE=screencapturekit`) flushes the same way immediately before capturing. An
+external `ndshot` capture of an automation host is current as of the last tick (well inside its
+own ~250ms frame-stability resample); capturing a NON-automation app has no such guarantee.

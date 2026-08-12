@@ -59,6 +59,10 @@ func ndCaptureWindowSCK(windowID: CGWindowID, to path: String) async -> Bool {
 @MainActor func ndSnapshotViaSCK(_ window: NSWindow, _ path: String) -> Bool {
     let windowID = CGWindowID(window.windowNumber)
     guard window.windowNumber > 0 else { return false }
+    // SCK samples the window server's composite, not the live view tree: a
+    // committed-but-undisplayed subtree would capture stale (the ladder's
+    // later displayIfNeeded runs AFTER this rung). Flush first.
+    ndFlushWindowServerSurfaces()
     final class Box: @unchecked Sendable {
         var done = false
         var ok = false

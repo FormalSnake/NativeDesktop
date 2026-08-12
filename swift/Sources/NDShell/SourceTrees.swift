@@ -159,8 +159,12 @@ final class NDSourceTreeDataSource: NSObject, NSOutlineViewDataSource, NSOutline
     }
 
     @objc func actionClicked(_ sender: NDSourceTreeActionButton) {
+        emitAction(sender.nodeId, sender.actionId)
+    }
+
+    func emitAction(_ nodeId: String, _ actionId: String) {
         ndEmitEvent(nodeID, "actionClicked",
-                    "{\"data\":{\"nodeId\":\(ndJsonString(sender.nodeId)),\"actionId\":\(ndJsonString(sender.actionId))}}")
+                    "{\"data\":{\"nodeId\":\(ndJsonString(nodeId)),\"actionId\":\(ndJsonString(actionId))}}")
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
@@ -534,6 +538,25 @@ func ndSourceTreeSelectedId(_ view: NSView) -> String? {
     let row = outlineView.row(forItem: item)
     guard row >= 0 else { return false }
     outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    return true
+}
+
+/// rowAction {actionId, testId?}: dispatches a row's trailing action as if
+/// its button were clicked (actionClicked {nodeId, actionId}). testId picks
+/// the node by its per-node testID; absent, the selected row is the target.
+/// The row must be realized (visible under the current expansion, like a
+/// user-reachable button) and the action declared on that node.
+@MainActor func ndSourceTreeSemanticRowAction(_ view: NSView, actionId: String, testId: String?) -> Bool {
+    guard let source = sourceTreeDataSource(for: view), let outlineView = source.outlineView else { return false }
+    let item: NDSourceTreeItem?
+    if let testId {
+        item = source.itemsByID.values.first { $0.testID == testId }
+    } else {
+        item = outlineView.item(atRow: outlineView.selectedRow) as? NDSourceTreeItem
+    }
+    guard let item, outlineView.row(forItem: item) >= 0,
+          item.actionIds.contains(actionId), source.actions[actionId] != nil else { return false }
+    source.emitAction(item.nodeId, actionId)
     return true
 }
 

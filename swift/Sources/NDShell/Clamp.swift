@@ -17,7 +17,12 @@ final class NDClampView: NSView {
         addSubview(view)
         view.translatesAutoresizingMaskIntoConstraints = false
         let fill = view.widthAnchor.constraint(equalTo: widthAnchor)
-        fill.priority = NSLayoutConstraint.Priority(750)
+        // Below windowSizeStayPut (500): at 750 the solver preferred shrinking
+        // the WINDOW to the required maximumSize cap over leaving this equality
+        // unsatisfied (measured: defaultWidth 720 launched at the cap and
+        // resizes snapped back). Above content hugging (250) so the child
+        // still stretches edge-to-edge in narrow windows.
+        fill.priority = NSLayoutConstraint.Priority(490)
         NSLayoutConstraint.activate([
             view.topAnchor.constraint(equalTo: topAnchor),
             view.bottomAnchor.constraint(equalTo: bottomAnchor),

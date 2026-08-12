@@ -60,7 +60,20 @@ export async function takeScreenshot(
 async function captureViaNdshot(deps: ScreenshotDeps, path: string): Promise<ScreenshotResult> {
   if (deps.backend !== "appkit") throw new Error(`via: "ndshot" is macOS/AppKit-only (backend=${deps.backend})`);
   if (!existsSync(NDSHOT_BIN)) throw new Error(`ndshot binary missing at ${NDSHOT_BIN} — run tools/ndshot/build.sh`);
-  const proc = Bun.spawn([NDSHOT_BIN, "capture", "--out", path, "--pid", String(deps.pid)], {
+  // The bare --pid path captures the FIRST window matching the pid, which is
+  // the app's menu-bar strip, not its content window. Resolve the real
+  // window (largest on-screen) via `ndshot list` and capture by --window-id.
+  const list = Bun.spawnSync([NDSHOT_BIN, "list"]);
+  if (list.exitCode !== 0) throw new Error(`ndshot list failed: ${list.stderr.toString().trim()}`);
+  const win = list.stdout
+    .toString()
+    .split("\n")
+    .filter((l) => l.trim().startsWith("{"))
+    .map((l) => JSON.parse(l) as { pid: number; windowID: number; width: number; height: number; onScreen: boolean })
+    .filter((w) => w.pid === deps.pid && w.onScreen && w.height > 100)
+    .sort((a, b) => b.width * b.height - a.width * a.height)[0];
+  if (!win) throw new Error(`ndshot list found no capturable window for pid ${deps.pid}`);
+  const proc = Bun.spawn([NDSHOT_BIN, "capture", "--out", path, "--window-id", String(win.windowID)], {
     stdout: "ignore",
     stderr: "pipe",
   });

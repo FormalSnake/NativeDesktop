@@ -29,10 +29,13 @@ export function findMatchingNode(node: JsonNode, pred: (n: JsonNode) => boolean)
   return null;
 }
 
-/** A widget reference for the action RPCs: a bare testID, a bare ref, or an explicit descriptor. */
-export type Target = string | number | { testId?: string; ref?: number; window?: number };
+/** A widget reference for the action RPCs: a bare testID, a bare ref, or an
+ * explicit descriptor. `action` applies to click only: a SourceTree row
+ * action id, dispatched on the row the testId names (or the selected row
+ * when targeting the widget itself). */
+export type Target = string | number | { testId?: string; ref?: number; window?: number; action?: string };
 
-export function resolveTarget(t: Target): { testId?: string; ref?: number; window?: number } {
+export function resolveTarget(t: Target): { testId?: string; ref?: number; window?: number; action?: string } {
   if (typeof t === "string") return { testId: t };
   if (typeof t === "number") return { ref: t };
   return { ...t };

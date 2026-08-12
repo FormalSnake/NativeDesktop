@@ -3,7 +3,7 @@
 // layout. Run with: bun test packages/host/
 import { test, expect } from "bun:test";
 import { resolve } from "node:path";
-import { hostBinaryCandidates, hostPackageName, hostPlatformKey, resolveBackend } from "./index.ts";
+import { hostBinaryCandidates, hostPackageName, hostPlatformKey, resolveBackend, resolveHostBinary } from "./index.ts";
 
 // --- backend selection: platform × env × flag ------------------------------
 
@@ -81,4 +81,21 @@ test("repoRoot is two levels above the package", () => {
 test("hostPlatformKey rejects unsupported platforms", () => {
   expect(hostPlatformKey("darwin", "arm64")).toBe("darwin-arm64");
   expect(() => hostPlatformKey("sunos", "arm64")).toThrow(/unsupported platform/);
+});
+
+// --- resolveHostBinary error path: gtk on macOS, installed (not a checkout) ---
+
+test("gtk on darwin outside a source checkout states the three real options", async () => {
+  // packageDir has no build.zig/swift two levels up, so isSourceCheckout is
+  // false -- the shape of an installed copy inside some other project's
+  // node_modules (packageName is already undefined for gtk+darwin regardless
+  // of packageDir, since PLATFORM_PACKAGES has no entry for it).
+  const err = await resolveHostBinary({ backend: "gtk", platform: "darwin", arch: "arm64", packageDir: "/tmp/not-a-checkout/node_modules/@nativedesktop/host" }).catch(
+    (e: Error) => e,
+  );
+  expect(err).toBeInstanceOf(Error);
+  const message = (err as Error).message;
+  expect(message).toContain("by design");
+  expect(message).toContain("source checkout");
+  expect(message).toContain("explicit binary path");
 });

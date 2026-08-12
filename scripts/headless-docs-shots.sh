@@ -10,9 +10,11 @@ shift || true
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}"
 export WAYLAND_DISPLAY=wl-docs-shots-0
-# cairo is the known-good headless renderer, but its snapshot path cannot
-# rasterize a <webview>'s texture (screenshot answers -32603); the webview
-# examples re-run with ND_SHOT_RENDERER=gl (llvmpipe software GL).
+# cairo is the known-good headless renderer. A <webview>'s texture may not
+# rasterize under it; the snapshot then degrades to a flat placeholder over
+# the webview region (ND_SNAPSHOT_DEGRADED on host stderr) instead of
+# erroring. ND_SHOT_RENDERER=gl (llvmpipe software GL) remains the knob for
+# pixel-true web content when the page renders GL-compatibly.
 export GSK_RENDERER="${ND_SHOT_RENDERER:-cairo}"
 export GDK_BACKEND=wayland
 export ADW_DEBUG_COLOR_SCHEME=prefer-light

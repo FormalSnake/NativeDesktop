@@ -150,9 +150,15 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         // not merely the handle's own window, so the overlay covers whatever the
         // user is looking at regardless of where the handle sits in the tree.
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow ?? self.window, let content = window.contentView else {
-            // Not mounted/realized yet (create-time open): retry next turn.
+            // Not mounted/realized yet (create-time open): retry on a short
+            // tick until an anchor window exists. A single same-turn retry
+            // lost the race whenever the handle took more than one main-queue
+            // turn to land in a window, leaving the panel unpresented for
+            // good; the spin variant also saturated the main queue while
+            // unanchored. dismiss() clears pendingOpen, which stops the
+            // chain; a deallocated handle stops it via the weak self.
             pendingOpen = true
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 guard let self, self.pendingOpen else { return }
                 self.pendingOpen = false
                 self.presentPalette()
@@ -160,6 +166,13 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
             return
         }
         pendingOpen = false
+        // A background-spawned host is inactive: no key window, and the field
+        // never receives focus. Automation runs opt into activation so the
+        // palette anchors and types like it would for a user; real apps open
+        // palettes from user input, when the app is already active.
+        if !NSApp.isActive, ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         buildUI(in: content)
         presented = true
         highlight(rows.isEmpty ? -1 : 0)

@@ -1,0 +1,13 @@
+# Bun 1.3+ defaults `bun install` to the isolated (pnpm-style) linker whenever
+# no lockfile exists yet AND the project has workspaces — which this monorepo
+# does. A worktree or fresh clone with no bun.lock therefore silently gets a
+# different node_modules topology than the one everyone develops against:
+# under isolated, a package pulled in via a `file:` dependency (the shape
+# consumers outside this repo use, e.g. CanaryOrchestrator's
+# `file:../NativeDesktop/packages/react`) is copied into the isolated store
+# with none of its own transitive deps materialized on disk, so the host's
+# Bun child can fail to resolve react-reconciler at runtime. Pin hoisted so
+# `bun install` always produces the flat, symlinked layout this framework is
+# built and tested against, lockfile or not.
+[install]
+linker = "hoisted"

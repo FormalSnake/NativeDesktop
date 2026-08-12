@@ -138,11 +138,12 @@ export interface ScreenshotParams {
   window?: number;
 }
 
-/** Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. Target by exactly one of ref / testId (window optionally scopes testId resolution). */
+/** Actionability-checked semantic click; emits clicked exactly like real user input. On CommandPalette activates the currently-highlighted row. Target by exactly one of ref / testId (window optionally scopes testId resolution). With `action` the target must be a SourceTree: the named row action is dispatched (actionClicked {nodeId, actionId}) exactly like a click on the row's trailing button. testId may be a row's per-node testID (that row) or the widget's own testID/ref (the selected row); the row must be realized under the current expansion and declare the action. */
 export interface ClickParams {
   ref?: number;
   testId?: string;
   window?: number;
+  action?: string;
 }
 
 /** Polls the tree at ~50ms until the condition holds or timeoutMs elapses. window (if given) scopes every predicate to that Window node's subtree. */

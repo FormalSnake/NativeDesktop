@@ -164,13 +164,27 @@ func ndMakePaneViewController(_ content: NSView) -> NSViewController {
         extended.automaticallyPlacesContentView = false
         extended.contentView = content
         host.addSubview(extended)
+        // Horizontal pins ride the safe-area guide, vertical pins the edges.
+        // A floating glass sidebar projects a LEFT safe-area inset into the
+        // content pane, and the scroll view's automatic content insets
+        // translate it into contentInsets.left; with the document
+        // width-pinned to the clip (generated ScrollView create arm) that
+        // shifted the whole document right and pushed its tail off the
+        // window. Content starting at the safe leading edge sees a zero
+        // horizontal inset, and the extension view still mirrors its
+        // background beneath the glass. Vertically the content keeps the
+        // full-height frame so it scrolls under the toolbar, with the
+        // automatic TOP inset holding the resting position clear of the
+        // titlebar. The guide is `extended`'s own (same region as the host's,
+        // since extended is edge-pinned) so every content constraint lives in
+        // `extended` and `ndSwapInstalledPaneContent` can retarget them all.
         NSLayoutConstraint.activate([
             extended.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             extended.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             extended.topAnchor.constraint(equalTo: host.topAnchor),
             extended.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: extended.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: extended.trailingAnchor),
+            content.leadingAnchor.constraint(equalTo: extended.safeAreaLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: extended.safeAreaLayoutGuide.trailingAnchor),
             content.topAnchor.constraint(equalTo: extended.topAnchor),
             content.bottomAnchor.constraint(equalTo: extended.bottomAnchor),
         ])

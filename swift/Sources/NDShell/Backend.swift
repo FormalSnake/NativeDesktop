@@ -1036,6 +1036,13 @@ private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
     } else if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
         textView.textContainerInset = NSSize(width: (insets.left + insets.right) / 2, height: (insets.top + insets.bottom) / 2)
     } else if let scrollView = view as? NSScrollView {
+        // A style with no padding must not seize the insets: every styled
+        // widget lands here with all-zero insets (the set-replace baseline),
+        // and disabling automaticallyAdjustsContentInsets then strips the
+        // safe-area content insets a pane-root scroll view needs to keep its
+        // rows out of the titlebar region. Only real padding takes over.
+        let zero = insets.top == 0 && insets.left == 0 && insets.bottom == 0 && insets.right == 0
+        if zero && scrollView.automaticallyAdjustsContentInsets { return }
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = insets
     }

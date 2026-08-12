@@ -82,7 +82,9 @@ What `scripts/new-app.sh` copies to start a new app: a `package.json` linking `@
 through `file:` paths into this checkout (a scaffold made from a checkout exercises the checkout, not
 the npm registry the template's own `^0.1.0` ranges point at), a `src/main.tsx` entry, a
 `babel.config.json` for the opt-in React Compiler and hook-import rewrite, and a `bunfig.toml` that
-preloads the `bun --hot` twin of that rewrite.
+preloads the `bun --hot` twin of that rewrite and pins `install.linker = "hoisted"` (Bun 1.3+ defaults
+a lockfile-less install to the isolated linker once workspaces are involved, which can leave a
+`file:`/`link:`-referenced package's own dependencies unresolved at runtime).
 
 ## `tools/` and `scripts/`
 

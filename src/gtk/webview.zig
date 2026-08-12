@@ -178,6 +178,13 @@ fn isReal(widget: *gtk.Widget) bool {
     return gobject.Object.getData(widget.as(gobject.Object), MARKER_KEY) != null;
 }
 
+/// backend.zig's snapshot degrade pass: a live WebKitWebView (never the
+/// no-webkitgtk placeholder label) is content the snapshot renderers cannot
+/// rasterize.
+pub fn isRealWebView(widget: *gtk.Widget) bool {
+    return isReal(widget);
+}
+
 fn widgetNodeId(widget: *gtk.Widget) ?u32 {
     const raw = gobject.Object.getData(widget.as(gobject.Object), NODE_ID_KEY) orelse return null;
     return @intCast(@intFromPtr(raw));

@@ -41,9 +41,6 @@ interface Shot {
   /** Additional copies of the same capture (component-focused names). */
   alsoAs?: string[];
   env?: Record<string, string>;
-  /** AppKit capture path. ndshot (default) is pixel-true SCK; "rpc" is the
-   * automation screenshot for windows SCK serves stale frames for. */
-  via?: "ndshot" | "rpc";
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -67,10 +64,6 @@ const SHOTS: Shot[] = [
     // Fresh store dir per run: the shot always starts from the seeded single
     // pane and splits deterministically instead of restoring old layouts.
     env: { ND_STORE_DIR: mkdtempSync(resolve(tmpdir(), "nd-shots-panes-")) },
-    // SCK returns stale frames for this window (content committed after
-    // launch never reaches the composite it captures); the RPC path is
-    // correct here.
-    via: "rpc",
     interact: async (app) => {
       // The panes store persists across runs; only split when the restored
       // layout is still the single seeded root pane.
@@ -240,10 +233,8 @@ async function captureOne(shot: Shot): Promise<void> {
     }
     await sleep(shot.settleMs ?? 500);
     if (shot.interact) await shot.interact(app);
-    if (backend === "appkit" && shot.via !== "rpc") {
+    if (backend === "appkit") {
       await captureNdshot(app.pid, outPath, shot.windowTitle);
-    } else if (backend === "appkit") {
-      await app.screenshot(outPath, { minBytes: 4000 });
     } else {
       let window: number | undefined;
       if (shot.windowTitle) {

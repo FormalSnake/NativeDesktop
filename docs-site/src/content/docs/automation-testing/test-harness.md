@@ -32,6 +32,7 @@ const app = await launchApp({
   entry: "src/main.tsx",            // -> ND_SCRIPT
   cwd?: string,                     // default process.cwd()
   backend?: "gtk" | "appkit",       // default @nativedesktop/host's resolveBackend()
+  hostBinary?: string,              // pre-resolved binary path, bypasses resolveHostBinary()
   env?: Record<string, string | undefined>,
   dev?: boolean,                    // ND_DEV=1, default false
   acl?: Record<string, string[]>,   // -> ND_ACL_GRANTS JSON
@@ -44,6 +45,11 @@ const app = await launchApp({
   onStderr?: (line: string) => void,
 });
 ```
+
+`hostBinary` is for callers `@nativedesktop/host`'s own resolution can't place: a consumer outside a
+NativeDesktop checkout (installed as a `file:`/`link:` dep, so the source-checkout fallback can't find
+it either), or the gtk-on-macOS dev path (no prebuilt ships there by design — resolve `nd-hello` from
+a sibling checkout yourself and pass its path).
 
 `entry` is resolved relative to `cwd`. The GTK host (including GTK-via-Quartz on macOS) fails to
 start when `XDG_RUNTIME_DIR` is unset or points at a directory that doesn't exist —
@@ -73,8 +79,12 @@ to `retries` more times before rejecting with the last `retries + 1` attempts' f
 | `close()` / `kill()` | graceful (`SIGTERM`, falls back to `SIGKILL` after 3s) / immediate |
 | `[Symbol.asyncDispose]` | `await using app = await launchApp(...)` closes it automatically |
 
-Every action method takes a **target**: `t: string | number | {testId?, ref?, window?}`. A bare
-string is a `testId`, a bare number is a `ref`; an object descriptor passes through. Exactly one of
+Every action method takes a **target**: `t: string | number | {testId?, ref?, window?, action?}`.
+A bare string is a `testId`, a bare number is a `ref`; an object descriptor passes through.
+`action` applies to `click` only: `app.click({ testId: "row-testid", action: "action-id" })`
+invokes a SourceTree row's trailing action semantically (see
+[SourceTree row actions](/automation-testing/automation-socket/#sourcetree-row-actions)).
+Exactly one of
 `ref`/`testId` must resolve — the host validates it (`invalidParams` otherwise).
 
 ### waitFor sugar

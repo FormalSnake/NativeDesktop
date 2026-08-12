@@ -4134,7 +4134,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
   for (const p of updProps) {
     const key = `${w.name}.${p.name}`;
     if (w.name === "Window" && p.name === "title") {
-      out += '        if let t = propStr(props, "title"), let win = view.window { win.title = t }\n';
+      // ndWindow(for:), not view.window: the handle is orphaned once a
+      // SplitView takes over as contentViewController, and view.window is
+      // nil from then on (title updates silently dropped).
+      out += '        if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }\n';
     } else if (w.name === "Box" && p.name === "spacing") {
       out += '        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {\n';
       out += "            // -1 sentinel = platform standard, same as the create arm.\n";

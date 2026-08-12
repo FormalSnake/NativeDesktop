@@ -36,6 +36,12 @@ export interface LaunchOptions {
   entry: string;
   cwd?: string;
   backend?: Backend;
+  /** Pre-resolved host binary path, bypassing @nativedesktop/host's own
+   * resolution. For callers @nativedesktop/host can't place on its own: a
+   * consumer outside a NativeDesktop checkout (installed as a `file:`/`link:`
+   * dep, so the source-checkout fallback can't find it either), or the
+   * gtk-on-macOS dev path (no prebuilt ships there by design). */
+  hostBinary?: string;
   env?: Record<string, string | undefined>;
   /** ND_DEV=1. Default false. */
   dev?: boolean;
@@ -57,6 +63,7 @@ const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_RPC_TIMEOUT_MS = 8_000;
 const DEFAULT_RETRIES = 2;
 const MAX_STDERR_LINES = 5000;
+const STDERR_DRAIN_GRACE_MS = 1000;
 const SOCKET_PATH_RE = /ND_AUTOMATION_LISTENING path=(\S+)/;
 
 function buildEnv(opts: LaunchOptions): Record<string, string> {
@@ -84,27 +91,43 @@ function buildEnv(opts: LaunchOptions): Record<string, string> {
   return env;
 }
 
+interface StderrPump {
+  /** Resolves once the stream hits EOF, or once `cancel()` forces it to stop. */
+  done: Promise<void>;
+  /** Stops the pump without waiting for EOF -- the host's own child (spawned
+   * with `.stderr = .inherit`, see src/runtime.zig) can outlive the host and
+   * keep the pipe's write end open, so EOF is not guaranteed. */
+  cancel: () => void;
+}
+
 /** Splits a byte stream into lines, decoding across chunk boundaries. */
-async function pumpStderr(
+function pumpStderr(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
   onChunk?: (chunk: Uint8Array) => void,
-): Promise<void> {
+): StderrPump {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    onChunk?.(value);
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n")) >= 0) {
-      onLine(buf.slice(0, idx));
-      buf = buf.slice(idx + 1);
+  const done = (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        onChunk?.(value);
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          onLine(buf.slice(0, idx));
+          buf = buf.slice(idx + 1);
+        }
+      }
+    } catch {
+      // reader.cancel() below rejects the in-flight read; nothing left to drain.
     }
-  }
-  if (buf.length) onLine(buf);
+    if (buf.length) onLine(buf);
+  })();
+  return { done, cancel: () => void reader.cancel().catch(() => {}) };
 }
 
 interface ResolvedConfig {
@@ -134,6 +157,7 @@ interface LiveHost {
   exited: boolean;
   exitCode: number | null;
   pumpDone: Promise<void>;
+  cancelStderr: () => void;
   exitedPromise: Promise<number>;
 }
 
@@ -183,6 +207,7 @@ export class AppHandle {
       exited: false,
       exitCode: null,
       pumpDone: Promise.resolve(),
+      cancelStderr: () => {},
       exitedPromise: Promise.resolve(0),
     };
     this.live = live;
@@ -198,9 +223,9 @@ export class AppHandle {
       this.config.onStderr?.(line);
     };
 
-    live.pumpDone = pumpStderr(proc.stderr, onLine, logSink ? (chunk) => void logSink.write(chunk) : undefined).finally(
-      () => logSink?.end(),
-    );
+    const pump = pumpStderr(proc.stderr, onLine, logSink ? (chunk) => void logSink.write(chunk) : undefined);
+    live.pumpDone = pump.done.finally(() => logSink?.end());
+    live.cancelStderr = pump.cancel;
     live.exitedPromise = proc.exited.then((code) => {
       live.exited = true;
       live.exitCode = code;
@@ -264,7 +289,21 @@ export class AppHandle {
       if (!exited && !live.exited) live.proc.kill("SIGKILL");
     }
     await live.exitedPromise.catch(() => {});
-    await live.pumpDone.catch(() => {});
+    // The host process above is confirmed dead, but a crash (or a plain
+    // SIGTERM the host never handles) can leave its OWN bun child -- spawned
+    // with `.stderr = .inherit` (src/runtime.zig) -- orphaned and still
+    // holding the write end of this pipe, so `pumpDone` would never see EOF.
+    // Give it a short grace period, then force the pump to stop so close()
+    // always resolves rather than hanging on a process we don't own a
+    // handle to.
+    const drained = await Promise.race([
+      live.pumpDone.then(() => true).catch(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), STDERR_DRAIN_GRACE_MS)),
+    ]);
+    if (!drained) {
+      live.cancelStderr();
+      await live.pumpDone.catch(() => {});
+    }
   }
 
   // --- identity ------------------------------------------------------------
@@ -469,7 +508,7 @@ function tail(lines: string[], n: number): string {
 
 export async function launchApp(opts: LaunchOptions): Promise<AppHandle> {
   const backend = resolveBackend({ backend: opts.backend });
-  const binary = await resolveHostBinary({ backend });
+  const binary = opts.hostBinary ?? (await resolveHostBinary({ backend }));
   const config: ResolvedConfig = {
     binary,
     cwd: opts.cwd ?? process.cwd(),

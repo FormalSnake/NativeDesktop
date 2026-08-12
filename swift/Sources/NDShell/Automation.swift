@@ -1,6 +1,7 @@
 import AppKit
 import CNd
 import Foundation
+import QuartzCore
 
 // The AppKit peer of src/gtk/backend.zig's vtNodeVisible/vtNodeBounds/
 // vtSnapshot/vtSemanticAction. node_visible/node_bounds/snapshot/
@@ -21,6 +22,40 @@ import Foundation
 func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     guard ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" else { return }
     win.setAccessibilitySubrole(.dialog)
+    MainActor.assumeIsolated { ndAutomationInstallFlushTick() }
+}
+
+/// NATIVE_AUTOMATION hosts keep the window-server surface current. AppKit's
+/// own display refresh can leave a committed subtree undisplayed (measured on
+/// examples/panes: the status label reached the window-server composite while
+/// the freshly split NSSplitView subtree stayed blank), and an OUT-OF-PROCESS
+/// ScreenCaptureKit capture (tools/ndshot) then faithfully reproduces that
+/// stale surface, while the in-process screenshot ladder self-heals via its
+/// own layoutSubtreeIfNeeded/displayIfNeeded (ndSnapshot). A ~100ms main-
+/// runloop tick forces the same pass on every visible window plus an explicit
+/// CATransaction.flush, so external captures converge with the committed tree
+/// within one tick. displayIfNeeded on a clean window is a no-op, so the tick
+/// costs nothing while the UI is idle. Automation runs only.
+@MainActor private var ndFlushTickInstalled = false
+@MainActor private func ndAutomationInstallFlushTick() {
+    guard !ndFlushTickInstalled else { return }
+    ndFlushTickInstalled = true
+    let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+        MainActor.assumeIsolated { ndFlushWindowServerSurfaces() }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+}
+
+/// One forced layout+display pass over every visible window, pushed to the
+/// window server immediately (the explicit flush, instead of waiting for the
+/// end-of-runloop commit). Shared by the tick above and the SCK capture rung
+/// (AutomationCapture.swift), which must not sample a stale surface.
+@MainActor func ndFlushWindowServerSurfaces() {
+    for win in NSApp.windows where win.isVisible {
+        win.contentView?.layoutSubtreeIfNeeded()
+        win.displayIfNeeded()
+    }
+    CATransaction.flush()
 }
 
 // MARK: - node_visible / node_bounds
@@ -915,6 +950,16 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
         return semanticType(view, nodeID, args, resultOut, errOut)
     case "scroll":
         return semanticScroll(view, nodeID, args, resultOut)
+    case "rowAction":
+        // SourceTree only: dispatch a row's trailing action (actionClicked
+        // {nodeId, actionId}). args.testId picks the row by its per-node
+        // testID; absent, the selected row is the target.
+        guard widgetKind(view) == "SourceTree",
+              let actionId = args["actionId"] as? String,
+              ndSourceTreeSemanticRowAction(view, actionId: actionId, testId: args["testId"] as? String)
+        else { return invalidValue(errOut, nodeID) }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
     case "a11y":
         return semanticA11y(view, nodeID, resultOut, errOut)
     case "windowState":

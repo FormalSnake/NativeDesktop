@@ -42,6 +42,7 @@ const Node = struct {
     has_children: bool = false,
     expanded: bool = false,
     selectable: bool = true,
+    test_id: ?[]u8 = null,
     action_ids: std.ArrayList([]u8) = .empty,
     children: std.ArrayList(u32) = .empty,
 };
@@ -73,6 +74,7 @@ const Store = struct {
             if (n.icon) |i| alloc.free(i);
             if (n.caption_icon) |i| alloc.free(i);
             if (n.badge) |b| alloc.free(b);
+            if (n.test_id) |t| alloc.free(t);
             for (n.action_ids.items) |a| alloc.free(a);
             n.action_ids.deinit(alloc);
             n.children.deinit(alloc);
@@ -190,6 +192,7 @@ fn parseNodes(store: *Store, arr: std.json.Array) void {
         node.has_children = objBool(it.object, "hasChildren") orelse false;
         node.expanded = objBool(it.object, "expanded") orelse false;
         node.selectable = objBool(it.object, "selectable") orelse !node.section;
+        if (objStr(it.object, "testID")) |t| node.test_id = alloc.dupe(u8, t) catch null;
         if (it.object.get("actionIds")) |ids| {
             if (ids == .array) for (ids.array.items) |aid| {
                 if (aid != .string) continue;
@@ -586,6 +589,42 @@ pub fn semanticSelect(widget: *gtk.Widget, id: []const u8) bool {
     const row = rowForId(box, store, id) orelse return false;
     if (gtk.ListBoxRow.getSelectable(row) == 0) return false;
     gtk.ListBox.selectRow(box, row);
+    return true;
+}
+
+/// rowAction {actionId, testId?}: dispatches a row's trailing action as if
+/// its button were clicked, emitting actionClicked {nodeId, actionId}. testId
+/// picks the node by its per-node testID; absent, the selected row is the target.
+/// The row must be realized (visible under the current expansion, like a
+/// user-reachable button) and the action declared on that node.
+pub fn semanticRowAction(widget: *gtk.Widget, action_id: []const u8, test_id: ?[]const u8) bool {
+    const box = innerListBox(widget) orelse return false;
+    const store = stores.get(@intFromPtr(box)) orelse return false;
+    const nd_id = node_ids.get(@intFromPtr(box)) orelse return false;
+    const node: *Node = blk: {
+        if (test_id) |tid| {
+            for (store.nodes.items) |*n| {
+                if (n.test_id) |nt| {
+                    if (std.mem.eql(u8, nt, tid)) break :blk n;
+                }
+            }
+            return false;
+        }
+        const row = gtk.ListBox.getSelectedRow(box) orelse return false;
+        const idx = getIdx(asObject(row), "nd-node-idx") orelse return false;
+        break :blk &store.nodes.items[idx];
+    };
+    if (rowForId(box, store, node.id) == null) return false;
+    const action_idx = store.action_by_id.get(action_id) orelse return false;
+    var declared = false;
+    for (node.action_ids.items) |aid| {
+        if (std.mem.eql(u8, aid, action_id)) {
+            declared = true;
+            break;
+        }
+    }
+    if (!declared) return false;
+    emitAction(nd_id, node.id, store.actions.items[action_idx].id);
     return true;
 }
 
