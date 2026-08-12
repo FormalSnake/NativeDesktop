@@ -8,6 +8,10 @@ Cmd-K pattern. It follows the same controlled contract as `<table>` and `<treevi
 never filters, ranks, or reorders anything itself. Every keystroke fires `queryChanged`, the app
 recomputes the result set (locally or over an RPC), and hands the new `items` array back down.
 
+![The command palette open over the demo app on macOS (AppKit)](../../../assets/screens/appkit/commandpalette-open.png)
+
+![The command palette open over the demo app on GNOME (GTK)](../../../assets/screens/gtk/commandpalette-open.png)
+
 ```tsx
 import { render, useMemo, useState } from "@nativedesktop/react";
 

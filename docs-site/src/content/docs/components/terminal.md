@@ -9,6 +9,10 @@ escape-sequence stream into a cell grid, and draws that grid with the platform's
 CoreText on macOS, cairo and Pango on GTK. The surface captures keystrokes and writes them straight to
 the PTY.
 
+![The terminal widget running a shell on macOS (AppKit)](../../../assets/screens/appkit/terminal.png)
+
+![The terminal widget running a shell on GNOME (GTK)](../../../assets/screens/gtk/terminal.png)
+
 ```tsx
 import { render } from "@nativedesktop/react";
 

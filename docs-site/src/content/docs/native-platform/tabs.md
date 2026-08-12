@@ -10,6 +10,8 @@ back in, and Show All Tabs. On GNOME the group renders as an `AdwTabView` with a
 `AdwTabBar` under your header bar plus the `AdwTabButton` overview toggle, the same setup Ghostty
 uses. All tab chrome comes from the framework. Your app owns only the list of open tabs.
 
+![Two native NSWindow tabs and the new-tab button in the terminal example on macOS (AppKit)](../../../assets/screens/appkit/tabs.png)
+
 `examples/browser/main.tsx` and `examples/terminal/main.tsx` are the reference apps for this page.
 
 ## Tabs are windows

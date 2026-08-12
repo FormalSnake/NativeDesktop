@@ -8,6 +8,10 @@ open-file panel, a save-file panel, and the app's About panel) as promise-return
 over the `<window>` widget's [imperative commands](/core-concepts/imperative-commands/). They render
 as `NSAlert`/`NSOpenPanel`/`NSSavePanel` sheets on macOS and `AdwAlertDialog`/`GtkFileDialog` on GTK.
 
+![A showAlert confirmation sheet on macOS (AppKit)](../../../assets/screens/appkit/dialogs.png)
+
+![A showAlert AdwAlertDialog on GNOME (GTK)](../../../assets/screens/gtk/dialogs.png)
+
 :::note
 This is a different mechanism from the ACL-gated `dialog.*` API documented in
 [System Capabilities](/native-platform/system-capabilities/#dialogs). Use `dialog.*` for an

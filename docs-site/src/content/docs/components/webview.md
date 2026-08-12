@@ -8,6 +8,10 @@ WebKitGTK on GTK), so a page renders with the same engine the rest of the system
 no bundled Chromium: the OS engine is the widget, the same real-native-widgets contract the rest
 of the toolkit follows.
 
+![The webview widget rendering a page inside the browser example on macOS (AppKit)](../../../assets/screens/appkit/browser.png)
+
+![The webview widget rendering a page inside the browser example on GNOME (GTK)](../../../assets/screens/gtk/browser.png)
+
 ```tsx
 import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";

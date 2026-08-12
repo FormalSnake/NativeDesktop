@@ -73,6 +73,10 @@ jobs:
     needs: [build-darwin-arm64, build-linux-x64]
     permissions:
       contents: write
+      # OIDC for npm trusted publishing: once each package lists this repo +
+      # workflow as a trusted publisher on npmjs.com, npm publish authenticates
+      # tokenlessly; the NPM_TOKEN .npmrc below stays as the fallback.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

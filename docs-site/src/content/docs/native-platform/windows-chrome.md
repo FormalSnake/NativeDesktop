@@ -10,6 +10,10 @@ compose into the same chrome; see [Menu Bar](/native-platform/menu-bar/) and
 [Split Views](/native-platform/split-views/). Both `examples/notes/main.tsx` and
 `examples/gallery/` exercise the two-pane shape end to end on both platforms.
 
+![The inspector example's toolbar, split view, and inspector pane on macOS (AppKit)](../../../assets/screens/appkit/inspector.png)
+
+![The inspector example's toolbar, split view, and inspector pane on GNOME (GTK)](../../../assets/screens/gtk/inspector.png)
+
 ## `<window>`
 
 The JSX root of an app. `title`, `defaultWidth`, and `defaultHeight` are honored on both platforms;

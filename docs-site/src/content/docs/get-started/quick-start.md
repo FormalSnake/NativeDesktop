@@ -1,130 +1,138 @@
 ---
 title: Quick Start
-description: Build the host binary and run a real NativeDesktop example, in dev mode or a plain run.
+description: From an empty directory to a running native window in under five minutes.
 ---
 
-The fastest way to see a real native window driven by React is `bun run dev` in one of the
-framework's own examples. It runs the native backend for your platform, the AppKit shell on macOS or
-the GTK host on Linux, with no build step to remember.
+You write React in TypeScript. A native host process renders it as real platform widgets: AppKit on
+macOS, GTK4 with libadwaita on Linux. This page takes you from an empty directory to a running
+window.
+
+## Create a project
 
 ```bash
-cd examples/counter && bun run dev        # == nd dev main.tsx: native backend, hot reload
-bun run dev -- --backend gtk              # cross-check the same app on the GTK host
+mkdir hello-native && cd hello-native
+bun add @nativedesktop/cli @nativedesktop/react react
+bun add -d typescript @types/react @types/bun
 ```
 
-`nd dev` resolves the backend's binary through `@nativedesktop/host` and, inside this checkout,
-builds it on first run (`nd: building appkit host (first run)…`). The rest of this page covers the
-raw host invocation and manual builds, which you only need while working on the host itself.
+Add a `dev` script to the generated `package.json`:
 
-## Prerequisites
+```json
+{
+  "scripts": {
+    "dev": "nd dev"
+  }
+}
+```
 
-The repo pins its toolchain via a Nix flake: Zig 0.16.0, Bun 1.3.13, and (on Linux) GTK4 +
-libadwaita + a headless Weston compositor for CI. Enter it with:
+Create a `tsconfig.json`. The `jsxImportSource` line matters twice: it types the JSX against
+NativeDesktop's widgets, and Bun reads it to transpile your JSX at run time.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@nativedesktop/react",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["bun", "react"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}
+```
+
+There is no scaffolding command yet; these three files are the whole setup.
+
+## First component
+
+Create `src/main.tsx`, the default entry point for `nd dev`:
+
+```tsx
+import { render } from "@nativedesktop/react";
+
+function App() {
+  return (
+    <window title="Hello" defaultWidth={480} defaultHeight={320}>
+      <box orientation="vertical" spacing={8}>
+        <label text="Hello from React" />
+      </box>
+    </window>
+  );
+}
+
+await render(<App />);
+```
+
+`<window>`, `<box>`, and `<label>` are NativeDesktop intrinsics. Each one is a real native widget:
+`NSWindow` and `NSTextField` on macOS, `AdwApplicationWindow` and `GtkLabel` on Linux. There is no
+DOM anywhere.
+
+## Run it
 
 ```bash
-nix develop
+bun run dev
 ```
 
-On macOS, nixpkgs' `libadwaita` fails to build under Nix (an `appstream` dependency issue), so the
-Mac devshell borrows Homebrew's GTK stack. Install it once with `brew install libadwaita`, which
-also pulls in `gtk4`. The GTK backend still runs natively on macOS through GTK4's Quartz `gdk`
-backend, but the AppKit backend covered below is the one that ships.
+A native window opens. The terminal prints `ND_CHILD_CONNECTED` when your React process attaches to
+the host, then `ND_COMMIT_APPLIED` for every commit React ships across.
 
-## Build the host
+## Add state
+
+State is plain React. Replace `src/main.tsx`:
+
+```tsx
+import { render, useState } from "@nativedesktop/react";
+
+function App() {
+  const [clicks, setClicks] = useState(0);
+
+  return (
+    <window title="Hello" defaultWidth={480} defaultHeight={320}>
+      <box orientation="vertical" spacing={8}>
+        <label text={`Clicks: ${clicks}`} />
+        <button label="Increment" onClick={() => setClicks((c) => c + 1)} />
+      </box>
+    </window>
+  );
+}
+
+await render(<App />);
+```
+
+Import hooks from `@nativedesktop/react`, not from `react`. Hot reload re-evaluates the whole module
+graph, and a bare `react` import would resolve to a fresh module instance with no attached
+dispatcher. See [State & Hot Reload](/core-concepts/state-hot-reload/) for the mechanics.
+
+## Hot reload
+
+Leave `bun run dev` running. Click the button a few times, then change the label text in
+`src/main.tsx` and save. The window updates in place and the click count survives the edit:
+`react-refresh` patches the live component tree instead of remounting it.
+
+If your code throws, the window stays up. The host owns the native process, so a JS crash shows an
+error overlay with a Restart button instead of taking the window down.
+
+## Pick a backend
+
+`nd dev` picks the native backend for your platform: AppKit on macOS, GTK on Linux. The
+`--backend` flag and the `ND_BACKEND` env var override it:
 
 ```bash
-nix develop -c zig build
+bunx nd dev --backend gtk
 ```
 
-This produces `zig-out/bin/nd-hello`, the Zig host executable. `zig build test` runs the unit test
-suite the same way.
-
-## Run an example
-
-Point the host at a React entry point via `ND_SCRIPT`, and turn on the automation socket:
-
-```bash
-ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello
-```
-
-Watch stderr for the markers every NativeDesktop host prints. All `ND_*` markers go to stderr, so
-capture them with `2>&1`:
-
-| Marker | Meaning |
-|---|---|
-| `ND_CHILD_CONNECTED` | the Bun child connected over the NDP socket |
-| `ND_COMMIT_APPLIED commitId=…` | a `CommitBatch` was applied to the retained widget tree |
-| `ND_AUTOMATION_LISTENING path=…` | the automation RPC socket is ready, and at what path |
-| `ND_CHILD_EXITED` | the child disconnected (crash, `kill -9`, or clean exit) |
-
-`examples/notes/` is a larger example, a two-pane notes app that exercises native chrome (see
-[Windows & Chrome](/native-platform/windows-chrome/)). Run it the same way with
-`ND_SCRIPT=examples/notes/main.tsx`.
-
-Every `examples/*` package also declares `"dev": "nd dev main.tsx"`, so
-`cd examples/counter && bun run dev` matches the raw invocation above except for
-`NATIVE_AUTOMATION=1`. `nd dev` does not set that, so export it first if you need the automation
-socket. `nd dev` picks the native backend (AppKit on macOS, GTK on Linux, overridable with
-`--backend gtk|appkit` or `ND_BACKEND`), resolves a prebuilt binary through `@nativedesktop/host`,
-and builds it on first run inside this checkout. Use the raw `ND_SCRIPT` form when you want to run
-one specific freshly built host while iterating on the host itself.
-
-## Dev mode: hot reload
-
-Set `ND_DEV=1` on the host to run the Bun child under `bun --hot` and enable the crash-overlay's
-Restart button:
-
-```bash
-ND_DEV=1 ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 ./zig-out/bin/nd-hello
-```
-
-`bun --hot` keeps the same OS process and socket across an edit but re-evaluates the entire module
-graph, so import hooks from `@nativedesktop/react`, never directly from `react`:
-
-```ts
-// Correct: resolves against the reconciler's live dispatcher across hot reloads
-import { useState } from "@nativedesktop/react";
-
-// Wrong: resolves against a fresh module instance with no attached dispatcher
-import { useState } from "react";
-```
-
-See [State & Hot Reload](/core-concepts/state-hot-reload/) for why this convention exists.
-
-## Verbose tracing
-
-Set `NDP_TRACE=1` on the host for verbose per-frame NDP tracing. Reach for it when a commit is not
-showing up the way you expect.
-
-## Building the macOS shell by hand
-
-`nd dev` and `resolveHostBinary({ backend: "appkit" })` build the AppKit shell for you on first run,
-so you rarely need this. Use it when you are changing the Swift host itself and want to drive one
-specific build. The AppKit backend is a Swift shell linked against a GTK-free static build of the
-Zig core:
-
-```bash
-zig build libnd -Dbackend=abi
-```
-
-Zig's archiver emits object members Apple's linker rejects; repack the archive with the system
-tools before the Swift link:
-
-```bash
-workdir="$(mktemp -d)"
-( cd "$workdir" && ar x "$PWD"/../zig-out/lib/libnd.a && chmod 644 *.o && libtool -static -o ../zig-out/lib/libnd.a *.o )
-```
-
-Then build and run the shell. `-u SDKROOT -u DEVELOPER_DIR` avoids a stale SDK path that a Nix
-devshell can leak into the system Swift toolchain:
-
-```bash
-( cd swift && env -u SDKROOT -u DEVELOPER_DIR swift build -c release )
-ND_SCRIPT=examples/counter/main.tsx NATIVE_AUTOMATION=1 swift/.build/release/NDShell
-```
+From an npm install this only matters inside the framework's source checkout, where macOS can
+cross-check the GTK host through its Quartz backend. Prebuilt binaries ship one host per platform,
+so `--backend gtk` on a macOS npm install fails with a resolution error.
 
 ## Where to go next
 
-- [Project Layout](/get-started/project-layout/): where the schema, codegen output, and app code live.
+- [Build a Counter](/get-started/tutorial-counter/): components, state, and native styling classes.
+- [Build a Settings Window](/get-started/tutorial-settings/): sidebar navigation, settings rows, persistence, dialogs.
+- [Build a Tabbed Terminal](/get-started/tutorial-terminal/): the `<terminal>` widget and native system tabs.
 - [App Model](/core-concepts/app-model/): how a window and its chrome are built from JSX.
-- [Automation-First](/core-concepts/automation-first/): drive the app you just ran from a script or a coding agent.

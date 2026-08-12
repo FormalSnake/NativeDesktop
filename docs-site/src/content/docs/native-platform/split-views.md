@@ -8,6 +8,10 @@ extends to a third pane, `list`, for the folders/list/content shape apps like No
 and Files all share: a source list on the left, a filtered list of items in the middle, and a detail
 view on the right.
 
+![The notes example's three-pane splitview on macOS (AppKit)](../../../assets/screens/appkit/notes.png)
+
+![The notes example's three-pane splitview on GNOME (GTK)](../../../assets/screens/gtk/notes.png)
+
 ## Shape
 
 Panes are still distinguished by the `slot` attached prop, now with a third value:

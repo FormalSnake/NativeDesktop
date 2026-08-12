@@ -17,9 +17,19 @@ export default defineConfig({
 					label: 'Get Started',
 					items: [
 						{ label: 'Introduction', slug: 'get-started/introduction' },
+						{ label: 'Installation', slug: 'get-started/installation' },
 						{ label: 'Quick Start', slug: 'get-started/quick-start' },
 						{ label: 'Project Layout', slug: 'get-started/project-layout' },
 						{ label: 'Monorepo & Code Sharing', slug: 'get-started/monorepo' },
+						{ label: 'Example Apps', slug: 'get-started/examples' },
+					],
+				},
+				{
+					label: 'Tutorials',
+					items: [
+						{ label: 'Build a Counter', slug: 'get-started/tutorial-counter' },
+						{ label: 'Build a Settings Window', slug: 'get-started/tutorial-settings' },
+						{ label: 'Build a Tabbed Terminal', slug: 'get-started/tutorial-terminal' },
 					],
 				},
 				{

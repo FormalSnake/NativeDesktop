@@ -9,6 +9,10 @@ event, when the user wants something to change. It never reorders or re-nests th
 your React state stays the single source of truth, the same discipline `<listview>`'s `items`
 already follows.
 
+![The sourcetree sidebar widget with sections, badges, and a selected row on macOS (AppKit)](../../../assets/screens/appkit/sourcetree.png)
+
+![The sourcetree sidebar widget with sections, badges, and a selected row on GNOME (GTK)](../../../assets/screens/gtk/sourcetree.png)
+
 ## Table (`<table>`)
 
 A multi-column list, backed by `GtkColumnView` on GTK and `NSTableView` on macOS. You describe it

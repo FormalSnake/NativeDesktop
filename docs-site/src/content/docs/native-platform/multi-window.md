@@ -9,6 +9,8 @@ driven by the same Bun/React process. `examples/multiwindow/main.tsx` is the ref
 everything on this page. Windows sharing a `tabGroup` prop render as one tabbed window instead. See
 [Native Tabs](/native-platform/tabs/).
 
+![One of the multiwindow example's two windows hosting a live webview on macOS (AppKit)](../../../assets/screens/appkit/multiwindow.png)
+
 ## Rendering more than one window
 
 ```tsx
