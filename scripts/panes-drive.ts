@@ -54,7 +54,9 @@ async function click(testID: string): Promise<void> {
   if (!res.dispatched) throw new Error(`${testID} click did not dispatch`);
 }
 
-async function waitForText(text: string, timeoutMs = 3000): Promise<void> {
+// 15s ceiling: software-rendered weston on a loaded CI runner lands the
+// ratio echo well past 3s; an upper bound costs nothing when fast.
+async function waitForText(text: string, timeoutMs = 15000): Promise<void> {
   const waited = (await client.call("waitFor", { condition: { textContains: text }, timeoutMs })) as {
     matched: boolean;
   };
