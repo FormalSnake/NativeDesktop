@@ -98,13 +98,19 @@ jobs:
       - name: Build @nativedesktop/react dist
         run: bun run --cwd packages/react build
       - name: Write npm token
-        run: printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+        # wc proves the secret is non-empty in the log without printing it.
+        run: |
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
+          wc -c "$HOME/.npmrc"
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish all packages
+        # NPM_CONFIG_TOKEN as well: bun's token lookup on the runner ignored a
+        # freshly written $HOME/.npmrc in the first live run.
         run: ./scripts/release/publish-all.sh
         env:
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release with raw binaries (for Nix and non-npm consumers)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
