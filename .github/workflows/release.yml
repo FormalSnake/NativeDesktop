@@ -11,7 +11,9 @@ on:
 
 jobs:
   build-darwin-arm64:
-    runs-on: macos-15
+    # macos-26: the Swift package declares tools 6.2, which older runner
+    # images' default toolchain (6.1) refuses.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Install Zig 0.16.0
@@ -31,10 +33,12 @@ jobs:
   build-linux-x64:
     runs-on: ubuntu-latest
     # Deliberately NOT the Nix devshell: nix develop bakes /nix/store RPATHs
-    # into the binary. ubuntu:24.04 (glibc 2.39, GTK 4.14, libadwaita 1.5)
-    # links by soname, which is the published runtime contract
-    # (docs/runtime-deps.md).
-    container: ubuntu:24.04
+    # into the binary. The container links by soname, which is the published
+    # runtime contract (docs/runtime-deps.md). ubuntu:26.04 because the GTK
+    # backend calls AdwToggleGroup and the accent-color API (libadwaita 1.7+),
+    # which 24.04's 1.5 lacks; the "Print library floors" step records what
+    # the resulting binary actually requires.
+    container: ubuntu:26.04
     steps:
       - name: Install build dependencies
         run: |
@@ -54,6 +58,8 @@ jobs:
         run: |
           strip zig-out/bin/nd-hello
           ldd zig-out/bin/nd-hello | tee nd-hello.ldd.txt
+      - name: Print library floors (recorded in the release notes contract)
+        run: dpkg-query -W libc6 libgtk-4-1 libadwaita-1-0 | tee nd-hello.floors.txt
       - uses: actions/upload-artifact@v4
         with:
           name: nd-hello

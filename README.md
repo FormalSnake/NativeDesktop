@@ -102,7 +102,7 @@ cd ../my-app && bun install && bun run dev
 ## Requirements
 
 macOS 15 or newer on Apple silicon; the shell links only system frameworks. On x86_64 Linux the
-floor is glibc 2.39, GTK 4.14, and libadwaita 1.5, linked dynamically at run time. Details and
+floor is libadwaita 1.7 with the glibc and GTK versions of the ubuntu:26.04 build container, linked dynamically at run time. Details and
 per-distro package names: [docs/runtime-deps.md](docs/runtime-deps.md).
 
 ## Status
