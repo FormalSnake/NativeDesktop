@@ -35,7 +35,30 @@ function textOf(children: unknown): string | undefined {
   return undefined;
 }
 
+// A function-valued `on*` prop the schema does not declare is dropped on the
+// floor: collectHandlers reads only declared names, so `onClicked` on a
+// <button> (whose event prop is `onClick`) never registers a listener while
+// the click RPC still answers dispatched:true and the GTK signal is still
+// connected. Nothing else in the stack notices, because examples/ and app
+// trees are not covered by any tsconfig, so the JSX type error never runs.
+// Warn once per type+prop.
+const warnedUnknownHandler = new Set<string>();
+function warnUnknownHandlers(type: string, props: Record<string, unknown>): void {
+  const declared = handlerPropNames[type] ?? [];
+  for (const key of Object.keys(props)) {
+    if (typeof props[key] !== "function") continue;
+    if (key.length < 3 || !key.startsWith("on") || key[2]! !== key[2]!.toUpperCase()) continue;
+    if (declared.includes(key)) continue;
+    const seen = `${type}.${key}`;
+    if (warnedUnknownHandler.has(seen)) continue;
+    warnedUnknownHandler.add(seen);
+    const hint = declared.length ? `Declared events: ${declared.join(", ")}.` : "This widget declares no events.";
+    console.warn(`ND_WARN <${type}> has no "${key}" event, so the handler will never fire. ${hint}`);
+  }
+}
+
 function collectHandlers(type: string, props: Record<string, unknown>): Record<string, Handler> {
+  warnUnknownHandlers(type, props);
   const out: Record<string, Handler> = {};
   for (const ev of widgetEvents[type] ?? []) {
     const h = props[ev.handler];

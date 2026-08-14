@@ -75,11 +75,18 @@ check_webview() { ./scripts/headless-webview.sh; }
 
 # The sourcetree drive spawns its own host (launchApp), so it needs a
 # compositor but not the ND_AUTOMATION_SOCKET harness headless-run.sh sets up.
+# It still needs headless-run.sh's other two isolations, because XDG_RUNTIME_DIR
+# and the session bus are shared by every process on the box:
+#   * a per-run wayland socket and application id, or a second gate running
+#     concurrently fails to bind the socket and its host exits mutely with
+#     ND_ALREADY_RUNNING (GApplication is single-instance per id on the bus);
+#   * a PRIVATE session bus, or the settings portal outranks headless-theme.sh
+#     and the capture picks up the host's GTK theme.
 check_sourcetree() {
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}"
-  export WAYLAND_DISPLAY=nd-headless-sourcetree
+  export WAYLAND_DISPLAY="nd-headless-sourcetree-$$"
   export GSK_RENDERER=cairo GDK_BACKEND=wayland
-  export ND_APP_ID=dev.nativedesktop.headlessSourcetree
+  export ND_APP_ID="dev.nativedesktop.headlessSourcetree$$"
   export ND_SHOT_DIR="${ND_SHOT_DIR:-$XDG_RUNTIME_DIR}"
   # The drive's own 3s waits are tuned for an idle machine; this runs right
   # after a full build, and the box may be shared.
@@ -95,7 +102,11 @@ check_sourcetree() {
     sleep 0.1
   done
   local rc=0
-  bun scripts/sourcetree-drive.ts gtk || rc=$?
+  if command -v dbus-run-session >/dev/null 2>&1; then
+    dbus-run-session -- bun scripts/sourcetree-drive.ts gtk || rc=$?
+  else
+    bun scripts/sourcetree-drive.ts gtk || rc=$?
+  fi
   kill "$ST_WESTON_PID" 2>/dev/null
   return "$rc"
 }
