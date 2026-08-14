@@ -779,7 +779,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
         guard !searches.isEmpty else { return }
         let lightsAndMargins: CGFloat = 116
-        let free = max(160, (win.frame.width - lightsAndMargins - others) / CGFloat(searches.count))
+        // Floor is Apple's own default for a toolbar search field
+        // (`NSSearchToolbarItem.preferredWidthForSearchField`, 240pt measured
+        // on 26.5.1): a crowded toolbar shrinks the run, but never below the
+        // width the system itself would hand a search item.
+        let free = max(240, (win.frame.width - lightsAndMargins - others) / CGFloat(searches.count))
         let changed = lastSearchWidth.map { abs($0 - free) > 1 } ?? true
         lastSearchWidth = free
         for s in searches { s.ndPreferredWidth = free }
