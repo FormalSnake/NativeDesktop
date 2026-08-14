@@ -55,7 +55,7 @@ export async function packageMacApp(
   cpSync(bunPath, join(c, "MacOS", "bun"), { dereference: true });
   chmodSync(join(c, "MacOS", "bun"), 0o755);
 
-  const iconFile = await installMacIcon(identity, appDir, join(c, "Resources"));
+  const iconFile = await installMacIcon(identity, appDir, join(c, "Resources"), mac?.minimumSystemVersion ?? "26.0");
   const customXml = mac?.infoPlist ? readFileSync(resolve(appDir, mac.infoPlist), "utf8") : undefined;
   writeFileSync(join(c, "Info.plist"), buildInfoPlist(identity, mac, customXml, iconFile));
 

@@ -3,10 +3,10 @@ title: Dialogs
 description: showAlert, openFile, saveFile, and showAbout, native modal dialogs scoped to one <window> and driven as promise-wrapped imperative commands.
 ---
 
-`@nativedesktop/react` exposes four native, per-window modal dialogs (a confirmation alert, an
-open-file panel, a save-file panel, and the app's About panel) as promise-returning functions layered
-over the `<window>` widget's [imperative commands](/core-concepts/imperative-commands/). They render
-as `NSAlert`/`NSOpenPanel`/`NSSavePanel` sheets on macOS and `AdwAlertDialog`/`GtkFileDialog` on GTK.
+Four native per-window modal dialogs (a confirmation alert, an open-file panel, a save-file panel,
+and the About panel) exposed as promise-returning functions over the `<window>` widget's
+[imperative commands](/core-concepts/imperative-commands/). They render as `NSAlert`, `NSOpenPanel`,
+and `NSSavePanel` sheets on macOS, `AdwAlertDialog` and `GtkFileDialog` on GTK.
 
 ![A showAlert confirmation sheet on macOS (AppKit)](../../../assets/screens/appkit/dialogs.png)
 
@@ -22,10 +22,10 @@ content `dialog.showMessage` doesn't cover).
 
 ## Wiring a window for dialogs
 
-Because a modal dialog is one-per-window on both backends, these calls correlate their result to the
-`<window>`'s own wire id rather than a generated per-call token. That means the window needs a `ref`
-and three result-event props wired back to the matching helper, once, regardless of how many places
-in your tree trigger a dialog:
+A modal dialog is one-per-window on both backends, so these calls correlate their result to the
+`<window>`'s own wire id rather than a generated per-call token. The window needs a `ref` and three
+result-event props wired back to the matching helper, once, however many places in your tree
+trigger a dialog:
 
 ```tsx
 import {
@@ -65,9 +65,9 @@ function App() {
 }
 ```
 
-The `on*Result` props aren't optional: skip one and its matching call's promise never settles,
-because the result event is how the promise learns the dialog closed. `showAbout` has no result
-event and needs no wiring; see below.
+The `on*Result` props are not optional. Skip one and its matching call's promise never settles,
+since the result event is how the promise learns the dialog closed. `showAbout` has no result event
+and needs no wiring.
 
 ## API
 
@@ -78,23 +78,22 @@ event and needs no wiring; see below.
 | `saveFile(node, options?)` | `{ suggestedName?, defaultDir?, filters? }` | `{ canceled, path }`, with `path: null` if canceled |
 | `showAbout(node, options)` | `{ appName, version, developer?, website? }` | none; fire-and-forget, no promise |
 
-`style` on an alert button is `"default" | "suggested" | "destructive"`. The destructive style is the
-red warning treatment: `NSAlertStyle.critical`-adjacent styling on macOS, `.destructive-action` on
-GTK.
+`style` on an alert button is `"default" | "suggested" | "destructive"`. Destructive is the red
+warning treatment: `NSAlertStyle.critical`-adjacent styling on macOS, `.destructive-action` on GTK.
 
 ## One dialog per window at a time
 
-`showAlert`/`openFile`/`saveFile` each claim their window's single dialog slot for as long as they're
-pending; neither backend has a way to stack two native sheets on one window. Calling a second one
-before the first resolves rejects immediately with an error naming the dialog that is still open,
-rather than queueing or silently clobbering the first caller's promise:
+`showAlert`, `openFile`, and `saveFile` each claim their window's single dialog slot while pending,
+because neither backend can stack two native sheets on one window. Calling a second before the
+first resolves rejects immediately with an error naming the dialog still open, rather than queueing
+or clobbering the first caller's promise:
 
 ```
 Error: <window> already has a "showAlert" dialog pending; only one modal dialog per window is allowed at a time
 ```
 
-`showAbout` is the exception: it has no result event to correlate, so it doesn't claim the slot and
-can be called freely alongside a pending `showAlert`/`openFile`/`saveFile`.
+`showAbout` has no result event to correlate, so it never claims the slot and can be called
+alongside a pending `showAlert`, `openFile`, or `saveFile`.
 
-See `packages/react/src/dialogs.ts` for the full implementation and `examples/gallery/main.tsx`'s
-"Dialogs" tab for all four calls wired to readouts.
+See `packages/react/src/dialogs.ts` for the implementation and `examples/gallery/main.tsx`'s
+Dialogs tab for all four calls wired to readouts.

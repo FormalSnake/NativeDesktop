@@ -422,7 +422,7 @@ await store.load();
 await render(<App />);
 ```
 
-## Where to go next
+## Next
 
 - [Build a Tabbed Terminal](/get-started/tutorial-terminal/): the `<terminal>` widget and native system tabs.
 - [App Data & Storage](/core-concepts/app-data-storage/): the store API in full, plus worker-backed SQLite.

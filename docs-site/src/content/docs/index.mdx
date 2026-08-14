@@ -22,22 +22,20 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 ## Why NativeDesktop
 
-A Bun/TypeScript child process renders a React tree over a local protocol (NDP) into a Zig host that
-owns real native widgets. There is no embedded browser and no DOM. The widgets your app renders
-*are* `GtkBox`, `AdwHeaderBar`, `NSButton`, `NSSplitView`. One React tree adopts both platforms'
-current design languages, Liquid Glass on macOS and Adwaita on GNOME, because nothing stands between
-your JSX and the platform's own toolkit. `react` is a `peerDependency` of the renderer, so a
-NativeDesktop app can live in a monorepo beside a web or React Native app and share a hooks and
-logic package with them. See [Monorepo & Code Sharing](/get-started/monorepo/).
+Your app runs as two processes. A Bun/TypeScript child renders a React tree over a local protocol
+into a Zig host that owns real native widgets. No embedded browser, no DOM. The widgets your JSX
+describes *are* `GtkBox`, `AdwHeaderBar`, `NSButton`, `NSSplitView`, so one tree renders in Liquid
+Glass on macOS and Adwaita on GNOME without a lookalike layer in between.
 
 <CardGrid stagger>
 	<Card title="Real native widgets" icon="approve-check">
 		GTK4 with libadwaita on Linux, AppKit on macOS. The same widget classes a native app would
 		use, not a styled approximation of them.
 	</Card>
-	<Card title="Automation-first" icon="setting">
+	<Card title="Built for coding agents" icon="setting">
 		Every widget is inspectable and drivable over a JSON-RPC socket from the moment it mounts.
-		Coding agents are a first-class consumer here, not an afterthought.
+		`getTree` returns an accessibility tree with roles and live values; agents click, type, and
+		wait on real widgets.
 	</Card>
 	<Card title="Theme-neutral styling" icon="pencil">
 		`style` is geometry (padding, layout), `cssClasses` reaches named design-language classes.

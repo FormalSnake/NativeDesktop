@@ -3,11 +3,10 @@ title: Icons
 description: freedesktop icon names are canonical; macOS maps a known subset to SF Symbols and passes everything else through.
 ---
 
-`Button.iconName` and `MenuItem.iconName` (see the [Widget Reference](/components/widget-reference/))
-both take a **freedesktop icon name**, the same vocabulary GTK/GNOME apps use, as the canonical
-cross-platform identifier. The mapping below is shared by both widgets; see
-[Menu Bar](/native-platform/menu-bar/) for why `MenuItem.iconName` renders on macOS but is
-intentionally invisible on GNOME.
+`Button.iconName` and `MenuItem.iconName` both take a freedesktop icon name, the vocabulary GTK and
+GNOME apps use, as the canonical cross-platform identifier. Both widgets share the mapping below.
+See [Menu Bar](/native-platform/menu-bar/) for why `MenuItem.iconName` renders on macOS but stays
+invisible on GNOME.
 
 ## Linux: native, direct
 
@@ -66,19 +65,19 @@ and prints an `ND_WARN unknown iconName` diagnostic instead of failing silently.
 
 ## Symbol configuration
 
-Resolved SF Symbols ship configured, not bare: a `<button iconName>` derives its symbol's point
-size from the button font, uses the `.large` scale when icon-only and `.medium` next to a label,
-and prefers hierarchical rendering (the HIG guidance for control glyphs). `<image>` exposes the
-same axes as create-only props: `symbolScale` (`small`/`medium`/`large`), `symbolWeight`
+Resolved SF Symbols ship configured rather than bare. A `<button iconName>` derives its symbol's
+point size from the button font, uses the `.large` scale when icon-only and `.medium` next to a
+label, and prefers hierarchical rendering, per the HIG guidance for control glyphs. `<image>`
+exposes the same axes as create-only props: `symbolScale` (`small`/`medium`/`large`), `symbolWeight`
 (`regular`/`medium`/`semibold`/`bold`), and `symbolRenderingMode`
 (`monochrome`/`hierarchical`/`multicolor`). On GTK, `symbolScale` maps to the icon pixel size;
-weight and rendering mode have no GTK peer (symbolic icons carry one stroke weight and recolor via
-CSS) and are deliberately inert there.
+weight and rendering mode have no GTK peer, since symbolic icons carry one stroke weight and recolor
+via CSS, so they are inert there.
 
 ## macOS 27 hides menu-item symbol images by default
 
-Starting with macOS 27, `NSMenu` hides menu-item **symbol** images unless the item opts in — the
-revised HIG wants menu icons used sparingly. `MenuItem.iconName` is therefore advisory on macOS 27:
-the system may not show it. An item that must keep its image sets `iconVisible` alongside
-`iconName`, which maps to `NSMenuItem.preferredImageVisibility = .visible` on macOS 27 and is a
-no-op on earlier releases (images still render by default there).
+Starting with macOS 27, `NSMenu` hides menu-item symbol images unless the item opts in, following a
+revised HIG that wants menu icons used sparingly. `MenuItem.iconName` is advisory there: the system
+may not show it. An item that must keep its image sets `iconVisible` alongside `iconName`, which
+maps to `NSMenuItem.preferredImageVisibility = .visible` on macOS 27 and is a no-op on earlier
+releases, where images still render by default.

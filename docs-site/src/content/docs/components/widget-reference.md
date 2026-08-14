@@ -61,13 +61,13 @@ gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See
 [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`,
 the typed export built on the same platform-standard numbers.
 
-The two backends default the cross axis differently, on purpose. GTK stretches every child across
-the box's perpendicular axis. On AppKit a child with a natural cross-axis size keeps that size
-instead: buttons, switches, segmented controls, steppers, date pickers, color wells, non-editable
-labels, and sliders and progress bars on their thickness axis. A control stretched to the window
-width is not native there. Containers, scroll shapes, editable or bezeled text fields, and image
-views still fill, because filling is their native form. To stretch one of the others, set
-`style.halign` (or `valign`, in a horizontal box) to `"fill"`, or set the cross-axis expand flag.
+The two backends default the cross axis differently. GTK stretches every child across the box's
+perpendicular axis. On AppKit a child with a natural cross-axis size keeps that size: buttons,
+switches, segmented controls, steppers, date pickers, color wells, non-editable labels, and sliders
+and progress bars on their thickness axis. A control stretched to the window width is not native
+there. Containers, scroll shapes, editable or bezeled text fields, and image views still fill,
+because filling is their native form. To stretch one of the others, set `style.halign` (or `valign`,
+in a horizontal box) to `"fill"`, or set the cross-axis expand flag.
 
 ## Label (`<label>`)
 

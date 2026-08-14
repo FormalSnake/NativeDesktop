@@ -1,12 +1,12 @@
 ---
 title: Example Apps
-description: Every example app in the repository, captured live on both backends — AppKit on macOS and GTK/libadwaita on GNOME.
+description: "Every example app in the repository, captured live on both backends: AppKit on macOS and GTK/libadwaita on GNOME."
 ---
 
 Each example in [`examples/`](https://github.com/FormalSnake/NativeDesktop/tree/main/examples) is a
-complete runnable app (`ND_SCRIPT=examples/<name>/main.tsx`), and each doubles as the acceptance
-surface for a framework capability. The screenshots below are captured from the real hosts: the
-AppKit shell on macOS and the GTK host under GNOME, both rendering the same unchanged app tree.
+runnable app (`ND_SCRIPT=examples/<name>/main.tsx`) that doubles as the acceptance surface for one
+framework capability. Every screenshot below comes from a real host: the AppKit shell on macOS and
+the GTK host under GNOME, both rendering the same unchanged app tree.
 
 ## Counter
 
@@ -30,7 +30,7 @@ scaled down to one window.
 ## Notes
 
 A three-pane note-taking app (folders, list, editor) with native chrome, a menu bar, search, and
-pinning — the framework-suitability stress test.
+pinning. The framework-suitability stress test.
 [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/notes)
 
 ![The notes example on macOS (AppKit)](../../../assets/screens/appkit/notes.png)
@@ -49,7 +49,7 @@ GTK, grouped form rows on macOS.
 
 ## Gallery
 
-Every widget in one tabbed window — the acceptance surface the drive scripts assert against.
+Every widget in one tabbed window. This is what the drive scripts assert against.
 [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/gallery)
 
 ![The widget gallery example on macOS (AppKit)](../../../assets/screens/appkit/gallery.png)
@@ -86,7 +86,7 @@ independent shell over a real PTY.
 
 ## Browser
 
-A small Min-style browser with native system tabs — one `<webview>` per tab window, popups and
+A small Min-style browser with native system tabs: one `<webview>` per tab window, popups and
 downloads routed through app events.
 [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/browser)
 

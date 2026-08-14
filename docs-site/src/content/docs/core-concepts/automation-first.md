@@ -3,17 +3,16 @@ title: Automation-First
 description: Every widget is inspectable and drivable over a JSON-RPC socket, so coding agents are a first-class user.
 ---
 
-Automation is a design constraint in NativeDesktop, present from the first milestone. Every widget
-the React tree creates is tracked host-side and answerable over a socket, so an agent or a headless
-CI script inspects and drives an app the way a person would.
+Every widget the React tree creates is tracked host-side and answerable over a socket, so an agent
+or a headless CI script inspects and drives an app the way a person does.
 
 ## The RPC surface
 
 Every method's params, result shape, and error code is generated from `schema/rpc.json`, shared by
 the Zig host (`src/generated/rpc.zig`, consumed by `src/automation.zig`) and the TypeScript client
 (`packages/react/src/generated/rpc.ts`). Rename or retype a field there and both sides regenerate,
-so a mismatch is a compile error rather than a silent wire break. It is the same `tools/codegen.ts`
-pipeline that generates widget bindings from `schema/widgets.json`.
+making a mismatch a compile error rather than a silent wire break. Same `tools/codegen.ts` pipeline
+that generates widget bindings from `schema/widgets.json`.
 
 The host exposes a framed JSON-RPC 2.0 socket, gated on `NATIVE_AUTOMATION=1`. Seven methods are
 semantic and work on both backends:
@@ -46,16 +45,15 @@ drive script or an agent waits for a marker instead of parsing arbitrary host ou
 Every `scripts/*-drive.ts` in this repo has the same shape. Launch the host with
 `NATIVE_AUTOMATION=1`, wait for `ND_AUTOMATION_LISTENING` on stderr to learn the socket path,
 connect an `AutomationClient` (`packages/test/src/socket.ts`), then issue `getTree`, `click`,
-`setValue`, and `waitFor` calls that assert on the results. That is the loop a coding agent runs
-interactively, written down. `scripts/notes-drive.ts` and the HMR leg of `scripts/headless-m8.sh`
-are worked examples: click to a known state, edit a live source file, and assert the UI reflects it
-without losing state or disconnecting.
+`setValue`, and `waitFor` calls that assert on the results. `scripts/notes-drive.ts` and the HMR leg
+of `scripts/headless-m8.sh` are worked examples: click to a known state, edit a live source file,
+then assert the UI reflects it without losing state or disconnecting.
 
 ## Actionability checks
 
 `click`, `setValue`, `type`, and `scroll` are actionability-checked first. The ref must exist, be
-visible, be mapped, and have non-degenerate on-screen bounds relative to the window, which mirrors
-what a real user could reach. A failed check returns error `-32001` with a reason (`unknown`,
+visible, be mapped, and have non-degenerate on-screen bounds relative to the window, mirroring what
+a real user could reach. A failed check returns error `-32001` with a reason (`unknown`,
 `invisible`, `unmapped`, or `offscreen`) instead of no-opping quietly.
 
 See [Automation Socket](/automation-testing/automation-socket/) for the full transport and method

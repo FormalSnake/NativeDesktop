@@ -71,6 +71,22 @@ cd examples/counter && bun run dev
 needs Homebrew's GTK stack (`brew install libadwaita`); the AppKit backend does not. Scaffold an app
 wired to the checkout with `./scripts/new-app.sh ../my-app`.
 
+## Pointing at a host binary yourself
+
+`ND_HOST_BINARY=<path>` skips resolution entirely and runs that binary, for `nd dev`, `nd package`
+and `nd doctor` alike. It exists for the machines resolution cannot serve: a distro whose loader
+rejects a generic prebuilt (NixOS without `programs.nix-ld`), an arch with no published package, or
+the GTK backend on macOS. Build the host in a checkout and export the path:
+
+```bash
+export ND_HOST_BINARY="$HOME/src/NativeDesktop/zig-out/bin/nd-hello"
+bun run dev
+```
+
+A path that does not exist is a hard error rather than a silent fallback, and `nd doctor` prints the
+override so it always reports the binary `nd dev` will actually run. In `@nativedesktop/test`, the
+per-launch equivalent is `launchApp({ hostBinary })`.
+
 ## Troubleshooting
 
 Run `nd doctor` in your project directory. It checks the entry point, the Bun install, the host
@@ -101,10 +117,14 @@ Common failures:
 - **App does not start on Linux**: a required library is missing. Check with
   `ldd node_modules/@nativedesktop/host-linux-x64/bin/nd-hello`; any `not found` line names the
   package to install.
+- **NixOS: `Could not start dynamically linked executable`**: the prebuilt is a generic-glibc binary
+  and NixOS ships no loader for one unless `programs.nix-ld` is enabled. Either enable it with the
+  GTK stack in `programs.nix-ld.libraries`, or build the host in a checkout
+  (`nix develop -c zig build`) and set `ND_HOST_BINARY` to `zig-out/bin/nd-hello`.
 - **`<webview>` shows an unavailable placeholder on Linux**: install `libwebkitgtk-6.0` and
   `glib-networking`. The webview engine is loaded at run time and degrades when absent.
 
-## Where to go next
+## Next
 
 - [Quick Start](/get-started/quick-start/): a running window in under five minutes.
 - [Build a Counter](/get-started/tutorial-counter/): the first tutorial.

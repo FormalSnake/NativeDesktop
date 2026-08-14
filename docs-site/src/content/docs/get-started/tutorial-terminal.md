@@ -226,7 +226,7 @@ own window. The shell in each tab keeps running through all of it.
 
 ![The terminal app rendered by the GTK backend on GNOME](../../../assets/screens/gtk/terminal.png)
 
-## Where to go next
+## Next
 
 - [Terminal](/components/terminal/): the widget's full prop and event surface.
 - [Native Tabs](/native-platform/tabs/): tab groups in depth, including cross-window tab dragging.

@@ -3,10 +3,9 @@ title: WebView
 description: The <webview> widget embeds the operating system's own web engine (WKWebView on macOS, WebKitGTK on GTK) with no bundled browser.
 ---
 
-`<webview>` embeds the platform's own web engine as a native subtree (WKWebView on macOS,
-WebKitGTK on GTK), so a page renders with the same engine the rest of the system uses. There is
-no bundled Chromium: the OS engine is the widget, the same real-native-widgets contract the rest
-of the toolkit follows.
+`<webview>` embeds the platform's own web engine as a native subtree: WKWebView on macOS,
+WebKitGTK on GTK. Pages render with the same engine the rest of the system uses, and nothing
+Chromium-shaped is bundled.
 
 ![The webview widget rendering a page inside the browser example on macOS (AppKit)](../../../assets/screens/appkit/browser.png)
 
@@ -58,11 +57,10 @@ The full version of this example lives at `examples/browser/main.tsx`.
 | `suppressContextMenu` | bool    | `false` | create          | Suppresses the engine's own context menu so the app can show a native one off the `contextMenu` event. |
 | `testID`              | string  | none    | meta            | Automation handle, not rendered.                          |
 
-`url` is a controlled prop: the widget navigates to it whenever it changes, but the host holds an
-echo guard and reloads only when the new `url` differs from the engine's current URI, so
-feeding `onNavigate` back into your `url` state does not re-trigger a load. A `<webview>` also expands
-into whatever space its parent gives it (a zero-size web view would collapse inside a `<box>`), so it
-is set to fill by default.
+`url` is controlled: the widget navigates whenever it changes. The host holds an echo guard and
+reloads only when the new `url` differs from the engine's current URI, so feeding `onNavigate` back
+into your `url` state does not re-trigger a load. The widget fills whatever space its parent gives
+it, since a zero-size web view would collapse inside a `<box>`.
 
 ## Events
 
@@ -95,32 +93,30 @@ widget-specific object nested under `data` instead.
 | `sessionSaved`       | `onSessionSaved`       | `{ data: { id, state } }`              | A `saveSession` command completes. |
 | `audioStateChanged`  | `onAudioStateChanged`  | `{ data: { playing, muted } }`         | The page started/stopped playing audio, or was muted. |
 
-On macOS, `navigate`/`titleChanged`/`loadingChanged`/`backAvailable`/`forwardAvailable`/
-`loadProgress` are derived by polling the view's navigation properties on a 10 Hz timer and emitting
-an event on change, the same poll-don't-push idiom the terminal surface uses. Polling also catches
-single-page apps that change the URL via `pushState` without a `WKNavigationDelegate` callback. On
-GTK those are wired to the corresponding WebKit signals (`load-changed`, `notify::uri`,
-`notify::title`, `notify::estimated-load-progress`). `loadFailed`, `newWindow`,
-`downloadRequested`, and `javaScriptResult` are delegate/signal-driven on both backends, since
-polling can't observe them.
+On macOS, `navigate`, `titleChanged`, `loadingChanged`, `backAvailable`, `forwardAvailable`, and
+`loadProgress` are derived by polling the view's navigation properties on a 10 Hz timer and
+emitting on change. Polling also catches single-page apps that change the URL via `pushState`
+without a `WKNavigationDelegate` callback. On GTK those are wired to the corresponding WebKit
+signals (`load-changed`, `notify::uri`, `notify::title`, `notify::estimated-load-progress`).
+`loadFailed`, `newWindow`, `downloadRequested`, and `javaScriptResult` are delegate-driven on both
+backends, since polling cannot observe them.
 
-No native popup window is ever created for `target="_blank"`/`window.open()`: the host denies it
-and emits `newWindow` with the requested URL instead, so the app decides what to do with it (open a
-native tab, for example — see `examples/browser/main.tsx` for the tabbed-browsing pattern this
-event is meant to feed). Likewise `downloadRequested` fires when the engine hits a response it can't
-render itself; the in-engine download is always cancelled (GTK omits `suggestedFilename`, which
-only WebKit's macOS delegate provides), and the app is expected to fetch the URL itself, through Bun
-rather than the browser engine.
+`target="_blank"` and `window.open()` never create a native popup. The host denies the popup and
+emits `newWindow` with the requested URL, leaving the app to decide what to do with it, usually
+opening a native tab. `examples/browser/main.tsx` is the worked pattern.
 
-`loadFailed` filters out two classes of routine navigation noise rather than firing on every
-cancelled load: a newer navigation superseding an in-flight one, and the tail of a navigation the
-engine cancelled itself (a response that turned into a `downloadRequested` instead of a page).
+`downloadRequested` fires when the engine hits a response it cannot render. The in-engine download
+is always cancelled and the app fetches the URL itself through Bun. GTK omits `suggestedFilename`,
+which only WebKit's macOS delegate provides.
 
-## Driving it with commands
+`loadFailed` filters two classes of routine navigation noise instead of firing on every cancelled
+load: a newer navigation superseding an in-flight one, and the tail of a navigation the engine
+cancelled itself, such as a response that turned into a `downloadRequested`.
 
-Navigation to a URL is the `url` prop, but history, load control, and page-level actions are
-one-shot imperative actions with no declarative state to bind, so they are exposed as
-[imperative commands](/core-concepts/imperative-commands/). Take a `ref` on the `<webview>`, then
+## Commands
+
+Set the `url` prop to load a page. History, load control, and page-level actions are one-shot
+[imperative commands](/core-concepts/imperative-commands/). Take a `ref` on the `<webview>` and
 call `sendCommand`:
 
 ```tsx
@@ -157,11 +153,11 @@ sendCommand(page.current, "setZoom", 1.5);
 | `restoreSession`     | `{ state }`              | Restores a previously saved history blob.                    |
 | `setMuted`           | bool                     | Mutes or unmutes the page's audio.                           |
 
-`executeJavaScript` has no synchronous return path, so use the `executeJavaScript(node, code)`
-helper from `@nativedesktop/react` instead of calling the raw command — it generates the `id`,
-sends the command, and returns a `Promise<string>` that resolves or rejects from the matching
-`javaScriptResult` event. Wire the widget's `onJavaScriptResult` prop straight to the paired
-`onJavaScriptResult` export so the promise has something to settle it:
+`executeJavaScript` has no synchronous return path. Use the `executeJavaScript(node, code)` helper
+from `@nativedesktop/react` rather than the raw command: it generates the `id`, sends the command,
+and returns a `Promise<string>` that settles from the matching `javaScriptResult` event. Wire the
+widget's `onJavaScriptResult` prop straight to the paired `onJavaScriptResult` export so the
+promise has something to settle it:
 
 ```tsx
 import { executeJavaScript, onJavaScriptResult } from "@nativedesktop/react";
@@ -179,10 +175,10 @@ const hidden = await executeJavaScript(page.current!, "window.secret", "my-exten
 no programmatic "open the inspector" API on macOS: the command instead makes the view inspectable
 (`isInspectable = true`, macOS 13.3+) and logs a reminder to attach through Safari's Develop menu.
 
-Command names are checked against the schema both at compile time (through `WidgetCommandNames`) and
+Command names are checked against the schema at compile time (through `WidgetCommandNames`) and
 again at runtime, so a stale string fails loudly. See
-[Imperative Commands & Refs](/core-concepts/imperative-commands/) for the full mechanism. There is no
-`loadURL` command. To load a page, set the `url` prop.
+[Imperative Commands & Refs](/core-concepts/imperative-commands/). There is no `loadURL` command;
+set the `url` prop.
 
 ## User scripts and isolated worlds
 
@@ -261,23 +257,21 @@ supply; both backends look the live cookie up first, because both engines delete
 cache and local storage; `private…` gets an ephemeral partition that leaves nothing on disk. On GTK
 this is a `WebKitNetworkSession`, on macOS a `WKWebsiteDataStore` (named stores need macOS 14+).
 
-## How it works
+## Engine resolution
 
-On macOS the widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework, so it is
-always present and there is nothing to detect.
+On macOS the widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework, always
+present, nothing to detect.
 
-On GTK, WebKitGTK is resolved at runtime, not at link time. The surface `dlopen`s
+On GTK, WebKitGTK is resolved at runtime rather than link time. The surface `dlopen`s
 `libwebkitgtk-6.0.so.4` (falling back to `libwebkitgtk-6.0.so` / `.dylib`) and looks up the handful
-of `webkit_web_view_*` symbols it needs. If the library is present, you get a real `WebKitWebView`
-and the log line `ND_WEBVIEW_ENGINE webkitgtk`.
+of `webkit_web_view_*` symbols it needs. When the library is present you get a real
+`WebKitWebView` and the log line `ND_WEBVIEW_ENGINE webkitgtk`.
 
-This runtime-load design is deliberate. WebKitGTK is a ~1 GB closure with frequent soname churn and no
-headless-CI story, so making it a link-time dependency would bloat every build and break the pinned
-Nix flake and the Homebrew GTK stack (Homebrew ships no webkitgtk). Because the symbols are resolved
-with `std.DynLib` instead, the build stays untouched. When webkitgtk is absent, the widget shows a
-placeholder label reading "WebView unavailable (webkitgtk not installed)" and logs
-`ND_WARN WebView unavailable` rather than failing to link. An app that uses `<webview>` still
-builds and runs everywhere; it just shows no live page where the engine is missing.
+Linking it at build time is not an option: WebKitGTK is a ~1 GB closure with frequent soname churn,
+and Homebrew's GTK stack ships no webkitgtk at all. Resolving through `std.DynLib` keeps the build
+independent of it. When webkitgtk is absent the widget shows a placeholder label reading "WebView
+unavailable (webkitgtk not installed)" and logs `ND_WARN WebView unavailable`, so an app that uses
+`<webview>` still builds and runs everywhere.
 
 Every symbol beyond the base navigation set is looked up on its own, so a WebKitGTK too old for one
 feature degrades only that feature, with one `ND_WARN` line naming the missing symbol. Cookies

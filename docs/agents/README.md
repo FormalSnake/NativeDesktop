@@ -9,9 +9,10 @@ Entry point for coding agents working on or building with NativeDesktop. See als
 NativeDesktop is a two-process framework: a native host owns a real native window (GTK4/libadwaita
 on Linux, AppKit on macOS; Windows planned) and a Bun/TypeScript child renders a React tree into it over a local
 protocol (NDP). There is no DOM and no Electron; the `<webview>` widget embeds the platform's own
-engine for web content, and the UI itself never renders through a browser. The host is automation-first: every widget the
-React tree creates is tracked and answerable over a JSON-RPC socket, so an agent can inspect and
-drive the app the same way a user would. Full design: `docs/superpowers/specs/2026-07-09-nativedesktop-design.md`.
+engine for web content, and the UI itself never renders through a browser. The host is
+automation-first: every widget the React tree creates is tracked and answerable over a JSON-RPC
+socket, so an agent can inspect and drive the app the same way a user would. Architecture in depth:
+`docs-site/src/content/docs/core-concepts/architecture.md`.
 
 ## Running an app
 
@@ -22,7 +23,10 @@ platform through `@nativedesktop/host`'s `resolveHostBinary()`: the AppKit `nd-s
 GTK `nd-hello` on Linux, overridable with `--backend gtk|appkit` or `ND_BACKEND`. The binary comes
 prebuilt from the installed platform package (`@nativedesktop/host-darwin-arm64` or
 `@nativedesktop/host-linux-x64`), or is built on first run inside a framework checkout
-(see `packages/host/src/index.ts`). It then spawns that binary with `ND_DEV=1 ND_SCRIPT=<entry>`.
+(see `packages/host/src/index.ts`). `ND_HOST_BINARY=<path>` skips that resolution outright, for
+hosts it cannot serve (NixOS without `nix-ld`, an arch with no package, GTK on macOS); a path that
+does not exist errors instead of falling back. It then spawns that binary with
+`ND_DEV=1 ND_SCRIPT=<entry>`.
 `nd build` runs `bun run compile`, the Babel and React Compiler pre-pass described below.
 `nd package [mac|linux]` assembles and signs the platform bundle (pipeline in
 `packages/nd/src/package/`), and `nd doctor` checks packaging/toolchain readiness. `nd dev`
@@ -102,7 +106,7 @@ Shared, non-component `.ts` modules are the one exception (see the hook-rewrite 
 fixture) end to end: click to a known state, edit a label string in a temp copy, and assert the
 label changed, the click count survived, and the child never disconnected.
 
-## Hook imports: sharing hooks with web/React Native (M8-D8)
+## Hook imports: sharing hooks with web and React Native
 
 The convention above is a hard requirement for `.tsx`/`.desktop.tsx` component files,
 but shared, platform-agnostic logic (a hook also meant to be consumed by a web or React Native
@@ -151,7 +155,7 @@ hook-rewrite transform above both apply to it exactly as they do to a plain `.ts
 keep NativeDesktop-only UI visually separated from source shared with web/React Native in the same
 monorepo; there is nothing else framework-specific about it.
 
-## React Compiler (M8-D7)
+## React Compiler
 
 React Compiler support is opt-in and off by default. `babel-plugin-react-compiler@1.0.0` runs
 cleanly as a build pre-pass over the template's `src/`, and the compiled output runs correctly

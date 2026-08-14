@@ -3,12 +3,11 @@ title: Imperative Commands & Refs
 description: A schema-typed channel for one-shot imperative actions on a live widget, using sendCommand and a host-element ref, marshaled to the UI thread over the widgetCommand NDP frame.
 ---
 
-Most of what an app does to a widget is declarative: you set a prop and the host reconciles the
-native widget to match. A few things aren't. "Go back in history", "reload", "stop the load" are
-one-shot actions with no state to bind; there is no `didGoBack` prop that makes sense to hold in
-React. NativeDesktop models these as **imperative commands**: you take a `ref` on a widget and call
-`sendCommand(ref, command)`. This is the escape hatch for genuinely imperative operations; anything
-that *is* stateful should stay a prop.
+Most of what an app does to a widget is declarative: set a prop, and the host reconciles the native
+widget to match. A few things are not. "Go back in history", "reload", "stop the load" are one-shot
+actions with no state to bind, and there is no `didGoBack` prop worth holding in React. Those are
+**imperative commands**: take a `ref` on a widget and call `sendCommand(ref, command)`. Anything
+stateful stays a prop.
 
 ## Declaring commands in the schema
 
@@ -24,15 +23,15 @@ names it accepts:
 }
 ```
 
-`tools/codegen.ts` turns that one declaration into every piece of the pipeline: the TypeScript
-`WidgetCommandNames` map that types `sendCommand`, the runtime `widgetCommands` validation table, and
-a per-backend dispatch arm on each host (Zig and Swift). A widget with a non-empty `commands` array
-that lacks a host dispatch template makes codegen throw (the same fail-loud contract the create/apply
-templates use), so the three sides can never drift. `<webview>` (`goBack`/`goForward`/`reload`/`stop`)
-was the first widget on this channel; `<window>` (`showAlert`/`openFile`/`saveFile`/`showAbout`, see
-[Dialogs](/components/dialogs/)) and `<toastoverlay>` (`showToast`/`dismissToast`, see
-[Feedback](/components/feedback/)) followed, both
-wrapped in a promise-correlating helper rather than called through raw `sendCommand`.
+`tools/codegen.ts` turns that declaration into every piece of the pipeline: the TypeScript
+`WidgetCommandNames` map that types `sendCommand`, the runtime `widgetCommands` validation table,
+and a per-backend dispatch arm on each host. A widget with a non-empty `commands` array but no host
+dispatch template makes codegen throw, so the three sides cannot drift.
+
+Widgets on this channel today: `<webview>` (`goBack`, `goForward`, `reload`, `stop`), `<window>`
+(`showAlert`, `openFile`, `saveFile`, `showAbout`, see [Dialogs](/components/dialogs/)), and
+`<toastoverlay>` (`showToast`, `dismissToast`, see [Feedback](/components/feedback/)). The last two
+are wrapped in promise-correlating helpers rather than called through raw `sendCommand`.
 
 ## Getting a ref and calling sendCommand
 
@@ -85,35 +84,31 @@ schema tables: exactly the pre-manifest behavior. `sendCommand` still throws on 
 command either way (so existing try/catch call sites stay valid), and in `nd dev` it warns once per
 command that is JS-known but host-unknown.
 
-## What happens on the wire
+## On the wire
 
-`sendCommand` emits a `widgetCommand` NDP frame, `{ nodeId, command, arg }`, from the runtime to the
-host. On the host it is handled exactly like a commit: it is marshaled onto the UI thread, because
-it touches live native widgets. Socket FIFO ordering guarantees a command sent right after a commit is
-applied after that commit, so a node created in the previous batch is always resolvable by the time
-its command runs. The host resolves `nodeId` to the widget, looks up its kind, and calls the
-generated `widgetCommand` dispatcher, which routes to the widget's arm (`goBack` etc.). Unknown
-node ids or command names are dropped host-side with an `ND_WARN` line.
+`sendCommand` emits a `widgetCommand` NDP frame, `{ nodeId, command, arg }`. The host handles it
+like a commit and marshals it onto the UI thread, since it touches live native widgets. Socket FIFO
+ordering guarantees a command sent right after a commit is applied after that commit, so a node
+created in the previous batch is always resolvable by the time its command runs. The host resolves
+`nodeId` to the widget, looks up its kind, and calls the generated `widgetCommand` dispatcher.
+Unknown node ids and command names are dropped host-side with an `ND_WARN` line.
 
-The channel is a dedicated `widget_command` entry on the `nd_backend` ABI vtable, so a command reaches
-the native widget through the same C ABI as every other host operation; there is no widget-specific
-side path.
+The channel is a `widget_command` entry on the `nd_backend` ABI vtable, so a command reaches the
+native widget through the same C ABI as every other host operation.
 
-## A sibling channel: `sendNativeCommand`
+## `sendNativeCommand`
 
 `<nativeview>` (the generic host for an app-owned native plugin widget, see
 [Native Modules](/native-platform/native-modules/)) declares no `commands` in the schema, because
-there's nothing to validate against: its commands are whatever the plugin's own `command` handler
-chooses to accept. `sendNativeCommand(ref, command, arg?)` rides the same underlying dispatch as
-`sendCommand`, but skips the schema-typed name check and hands the command straight to the plugin.
-Use `sendCommand` for the built-in widgets above; use `sendNativeCommand` only for a `<nativeview>`
-ref, ideally through the `send()` helper `defineNativeComponent` returns.
+its commands are whatever the plugin's own `command` handler accepts.
+`sendNativeCommand(ref, command, arg?)` rides the same dispatch as `sendCommand` but skips the
+schema-typed name check. Use it only for a `<nativeview>` ref, ideally through the `send()` helper
+`defineNativeComponent` returns.
 
 ## Capability gating
 
 A widget command mutates live UI, so it goes through the same capability gate as commit
-application: the runtime checks `core:commit` before dispatching. If the app's grants manifest
+application: the runtime checks `core:commit` before dispatching. When the app's grants manifest
 denies it, the command is refused with `ND_ACL_DENY permission=core:commit` and an `error` frame
-("capability denied") goes back to the app instead of touching the widget. An app that is allowed to
-render is therefore allowed to command; one that is sandboxed out of committing cannot drive widgets
-imperatively either.
+("capability denied") goes back to the app. An app allowed to render is allowed to command; one
+sandboxed out of committing cannot drive widgets imperatively either.

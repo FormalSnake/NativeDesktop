@@ -44,10 +44,14 @@ GTK-free *and* AppKit-free: protocol, reconciler (`src/tree.zig`), runtime
 (`GtkWidget*` / `NSView*`) the core never dereferences. The vtable is
 **append-only** — append new ops at the END, never reorder or remove. There is
 no ABI version *constant* ("ABI v3" in git is a milestone label); the guard is a
-compile-time layout assert (`@sizeOf(NdBackend) == N * @sizeOf(usize)`) plus
-`scripts/sync-native-headers.sh`, which mirrors the header into
+compile-time layout assert (`@sizeOf(NdBackend) == 23 * @sizeOf(usize)` today)
+plus `scripts/sync-native-headers.sh`, which mirrors the header into
 `packages/native/include/` (CI cmp-checks it). Adding an op means: append it,
-bump the assert, run the sync script.
+bump the assert, run the sync script. Node ownership: each backend holds ONE
+strong ref per tracked node (GTK `ref_sink` at create, AppKit `passRetained`),
+dropped through the appended `release_node` op (word 23) when the core forgets
+the id (remove arm, generation GC). Before that op, GTK handles were floating
+refs and the first `getTree` could probe a freed GObject.
 
 **Why GTK looks "built-in" but AppKit looks "separate" — it's packaging, not
 architecture.** GTK is a C library, so Zig drives it natively and the GTK
@@ -77,15 +81,13 @@ fragment) and each opens an independent OS window on both backends. The core
 reconciler (`src/tree.zig`) pools window handles by node id; the ABI's
 `resolve_window` op rebinds windows on crash/HMR respawn. Because all windows
 live in one Bun/React process, cross-window state sync is trivial — shared
-state, no IPC. Per-window scoping is now done: automation measures each widget
-against its OWN window (so `getTree` bounds, `click`, `setValue`, `type`,
-`scroll`, `waitFor` are per-window-correct), `screenshot` targets the requested
-`window` (via the existing `resolve_window` op — no new ABI op), the crash
-overlay paints on every open window, each toolbar attaches to its owning window,
-and `core:window.create` is ACL-gated per window id. `getTree` takes an
-optional `window` param (M16) scoping the snapshot to that window's subtree;
-without it the root window's tree is returned with other windows' nodes
-attached as orphans.
+state, no IPC. Per-window scoping is done: automation measures each widget
+against its OWN window, `screenshot` targets the requested `window` (existing
+`resolve_window` op, no new ABI op), the crash overlay paints on every open
+window, toolbars attach to their owning window, and `core:window.create` is
+ACL-gated per window id. `getTree` takes an optional `window` param scoping the
+snapshot to that window's subtree; absent, the root window's tree is returned
+with other windows' nodes attached as orphans.
 
 **Agentic testing (M16):** `getTree` is an accessibility tree — every node
 carries `role` (schema-declared, on the wire via the generated widget table),
@@ -100,6 +102,29 @@ app-constructible events) — semantic click/setValue/type/scroll remain the
 Linux path. Acceptance: `scripts/mac/mac-gestures.sh` (examples/gestures +
 gestures-drive.ts, keys-menu-drive.ts) → `MAC_GESTURES_OK`. Full surface doc:
 `docs-site/src/content/docs/automation-testing/automation-socket.md`.
+
+**Automation vocabulary + test harness:** `waitFor` runs host-side on the
+retained tree (~50ms tick, never a getTree round-trip): exactly one selector of
+`textContains` | `refVisible` | `testId`, and with `testId` a `state` of
+present|gone|visible|enabled|disabled|focused plus `countAtLeast` /
+`valueEquals` / `valueContains` refinements (compared against the a11y value's
+STRING rendering, so one predicate fits TextInput and Slider alike). Every
+targeting RPC (`click`/`setValue`/`type`/`scroll`/`doubleClick`/`rightClick`/
+`hover`) takes exactly one of `ref`/`testId`; `resolve` ranks a testID's matches
+(actionable first, key window first, then tree order); `windows` lists each
+Window node's live key/main/visible/title plus `tabGroup`. Dialog scripting:
+`ND_AUTOMATION_DIALOG_SCRIPT` (per-method FIFO JSON, `src/automation_dialogs.zig`)
+answers `dialog.openFile/saveFile/showMessage` and
+`window.showAlert/openFile/saveFile` with the REAL landed result shapes
+(string[] / string|null / button index / dialogs.ts result objects), so drives
+never block on a native dialog. `@nativedesktop/test` (`packages/test/`) is the
+harness: `launchApp`/`AppHandle` spawn a host with `NATIVE_AUTOMATION=1`, parse
+the stderr markers, and connect `socket.ts`'s `AutomationClient`, the repo's ONE
+copy of the wire framing (packages/mcp and the drive scripts import it); plus
+`poll` (for conditions the vocabulary can't express, e.g. window count),
+`dialogScriptEnv`, `takeScreenshot`/`pngSize`. Screenshot: AppKit ghosting fixed
+(stale cached bitmap reps); `ND_AUTOMATION_CAPTURE=screencapturekit` opts into a
+ScreenCaptureKit rung.
 
 **Native system tabs (M17):** `<window tabGroup="x">` roots render as one
 tabbed window per platform's real tab system — macOS: each tab IS an NSWindow
@@ -136,7 +161,7 @@ reload). Solution: render the movable node via `createPortal(node, pool)` into a
 process-lifetime **pool** so React never unmounts it, then relocate the *live
 native widget* imperatively with `moveNode(ref, slotRef)`. That rides the
 existing `widgetCommand` frame (reserved `__ndReparent`) into the appended
-`reparent_child` ABI op (vtable now 21 words); GTK brackets the move in
+`reparent_child` ABI op (vtable word 21); GTK brackets the move in
 `g_object_ref`/`unref`, AppKit relies on the core's `passRetained` +1. See
 `examples/multiwindow/`. `moveNode` is imperative BY DESIGN — preserving state
 React would otherwise destroy is outside `UI = f(state)`.
@@ -194,8 +219,8 @@ widget-level `onKeyDown` yet.
   urlSchemes }` in `nativedesktop.config.ts` (`packages/nd/src/config.ts`),
   injected at package time into Info.plist (`CFBundleDocumentTypes` /
   `CFBundleURLTypes`) and the Linux `.desktop` `MimeType=` + shared-mime-info
-  XML (`tools/app-identity.ts`). OS launches land as `app.onOpenFile` /
-  `app.onOpenUrl` events.
+  XML (`packages/nd/src/package/identity.ts`). OS launches land as
+  `app.onOpenFile` / `app.onOpenUrl` events.
 - **App data dir** — `getAppDataDir()` / `ensureAppDataDir()` from
   `@nativedesktop/react` (`packages/react/src/paths.ts`). Electron-style
   userData path; app name comes from the app's `package.json` `name`. macOS
@@ -246,6 +271,83 @@ widget-level `onKeyDown` yet.
   `onNodeExpanded`/`onNodeCollapsed` fire `{nodeId}` and expansion is
   app-controlled state, never native state, so an unrelated re-render can't
   silently collapse a branch the user opened.
+- **Survivable error policy**: `setUnhandledErrorPolicy` / `onUnhandledError`
+  (`packages/react/src/errors.ts`): `uncaughtException` defaults to fatal,
+  `unhandledRejection` to report-and-survive (`ND_FATAL_REJECTIONS=1` flips
+  it); render-phase errors route through the reconciler's createContainer
+  callbacks. Non-fatal reports are rate-capped (20 per 10s) so an error loop
+  can't saturate the NDP outbox. The `runtimeError` frame carries `fatal`: the
+  host stashes overlay text only for fatal=true and prints
+  `ND_RUNTIME_ERROR_NONFATAL` otherwise, so a stale report never becomes
+  overlay text.
+- **Settings store**: `createStore` / `useStoreValue`
+  (`packages/react/src/store.ts`): versioned `${name}.json` under the app data
+  dir. Intended launch shape: `await store.load()` above `render()`, which
+  makes `get()` synchronous inside components (no loading flash, no restore
+  effect). Writes are debounced, serialized on one promise chain, land via
+  tmp+rename, with a synchronous last-resort flush on exit/SIGINT/SIGTERM.
+  `migrate` runs on EVERY load (validate and upgrade in one hook; return null
+  to reset); a corrupt file is backed up, defaults win, `loadError` is set.
+- **`@nativedesktop/rpc`** (`packages/rpc/`): resilient JSON-RPC client for an
+  app's own external services: typed `RpcContract`, `socketTransport` /
+  `webSocketTransport`, `ConnectionLadder` reconnect backoff with a stability
+  window. React binding lives at `@nativedesktop/rpc/react` (`useRpcStatus`
+  subscribes to connection status) so the core client stays React-free;
+  `@nativedesktop/react` is an optional peer dep.
+- **`@nativedesktop/panes`** (`packages/panes/`): pure split-pane tree model
+  over the existing `<paned>` widget (no schema/ABI change). Every model op
+  (`splitPane`/`closePane`/`focusNeighbor`/`setPaneRatio`/`seedPanes`/
+  `migratePanes`) returns the SAME reference when nothing changed, which stops
+  a native positionChanged echo from looping a render+persist cycle.
+  `PaneTree`/`usePaneTree` render the nested paneds; `renderLeaf` owns all
+  per-pane chrome.
+- **SourceTree sidebar**: `<sourcetree>`, a data-driven hierarchical sidebar
+  (flat `id`/`parentId` nodes like `<treeview>`, controlled `selectedId` and
+  expansion, per-row trailing `actions` with hover|always visibility, section
+  group rows, badges, empty-state props). Events all carry `{nodeId}`
+  (`actionClicked` adds `actionId`); no index payloads, since visible indexes
+  are unstable across expand/collapse. macOS: `.sourceList` NSOutlineView that
+  REUSES item instances by id so open branches survive React updates; GTK:
+  `navigation-sidebar` GtkListBox of AdwActionRows, rebuilt per update. See
+  `examples/sourcetree` + `scripts/sourcetree-drive.ts`.
+- **HIG batch (GNOME + macOS 26/27 design language)**: new `<row>` /
+  `<switchrow>` / `<clamp>` widgets (real AdwPreferencesGroup settings groups),
+  ToolbarView top/content/bottom slots + bar styles, AdwViewSwitcher tab views,
+  SplitView breakpoints + Window `sizeChanged`, empty-state AdwStatusPage on
+  data views, `accentColor` in the appearance payload, and the spacing scale
+  `Spacing`/`ContentMargin` (`packages/react/src/metrics.ts`). AppKit:
+  system-drawn toolbar items (labels, overflow, customization,
+  NSToolbarItemGroup runs), badges, edge-to-edge content via
+  NSBackgroundExtensionView, ~50 new SF Symbol mappings, window `toolbarStyle`/
+  `frameAutosaveName`/density, inspector split slot. **Box.spacing default is
+  now the platform standard (8 AppKit / 6 GTK) instead of 0**; the schema
+  default `-1` is the sentinel for it.
+- **Feature detection + app state**: `hasWidget(type)` / `hasCommand(type,
+  command)` (`packages/react/src/platform.ts`) answer from a helloAck host
+  manifest, replacing try/catch around `sendCommand` (fallback semantics for
+  hosts predating the fields). `app.isActive()` is synchronous, kept current by
+  host-side state replay after HelloAck. `NotificationOptions.data` is echoed
+  on the notification click event.
+- **npm publishing + release**: everything ships under `@nativedesktop/*`;
+  `packages/nd` publishes as **`@nativedesktop/cli`** (bin `nd`: `nd dev` /
+  `nd build` / `nd package [mac|linux]` / `nd doctor`). The packaging pipeline
+  lives in `packages/nd/src/package/` (identity, icons, payload, mac, linux,
+  updates, doctor); `tools/package.ts` is a legacy shim that packages the
+  gallery example through it. `@nativedesktop/host` resolves the prebuilt host
+  binary from optionalDependencies `@nativedesktop/host-darwin-arm64` /
+  `host-linux-x64`, building in place only inside a framework checkout;
+  `ND_HOST_BINARY=<path>` overrides all of that, and is the only way through
+  `nd dev` on a machine that cannot run a generic prebuilt (NixOS) or has none
+  (gtk on macOS). `.github/workflows/release.yml` (v* tags, or manual dry-run):
+  builds both hosts (macos-26 for Swift tools 6.2; ubuntu:26.04 container so
+  the GTK host links by soname against libadwaita 1.7, not nix RPATHs), stages
+  them into the platform packages, checks lockstep versions, publishes, and
+  attaches raw binaries to a GitHub release. **Commit a version bump together
+  with its `bun install`**: `bun pm pack` rewrites `workspace:*` from the lock,
+  and `--frozen-lockfile` does not object to a workspace version the lock
+  predates, so v0.1.1 published eleven 0.1.1 packages that each depended on
+  0.1.0 siblings — consumers resolved 0.1.1 TypeScript onto 0.1.0 host
+  binaries. `scripts/release/check-versions.ts` fails on that now.
 - **Codegen per-widget template protocol** — every widget needs a
   create/applyProps/signal template on both Zig and Swift (containers also
   need a structural attach/detach template); one missing makes
@@ -262,14 +364,17 @@ widget-level `onKeyDown` yet.
   `src/abi_backend.zig` (ABI seam), `src/runtime.zig`, `src/protocol.zig`,
   `src/acl.zig`, `src/backend.zig`.
 - **GTK backend:** `src/gtk/` — `main.zig`, `backend.zig`, `webview.zig`,
-  `style.zig`, `terminal.zig`.
+  `style.zig`, `terminal.zig`, `tabs.zig`, `sourcetree.zig`, `audio.zig`.
 - **AppKit backend:** `swift/Sources/NDShell/` (hand-written) +
   `swift/Sources/NDGen/` (generated) + `swift/Sources/CNd/` (bridges `libnd.a`);
   build scripts under `scripts/mac/`.
 - **JS packages:** `packages/react` (`@nativedesktop/react`: reconciler,
-  intrinsics, `Platform`, paths), `packages/host` (resolves the prebuilt host
-  binary), `packages/nd` (the `nd` CLI — `nd dev` / `nd build`), `packages/data`
-  (worker SQLite).
+  intrinsics, `Platform`, paths, store, errors), `packages/nd`
+  (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
+  (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`
+  (worker SQLite), `packages/rpc`, `packages/panes`, `packages/test`
+  (automation harness), `packages/mcp` (MCP bridge),
+  `packages/babel-plugin-nativedesktop`.
 - **Schemas:** `schema/{widgets,protocol,rpc}.json` → `tools/codegen.ts` →
   generated Zig/TS/Swift.
 - **Build:** `zig build` → `zig-out/bin/nd-hello` (Zig host); the SwiftPM

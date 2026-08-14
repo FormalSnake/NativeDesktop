@@ -1,14 +1,13 @@
 ---
 title: Test Harness
-description: "@nativedesktop/test: launchApp/AppHandle — launch a host, connect, query/act/wait on the tree, and screenshot, all from a Bun test or drive script."
+description: "@nativedesktop/test: launchApp and AppHandle. Launch a host, connect, query, act, wait on the tree, and screenshot from a Bun test or drive script."
 ---
 
 `@nativedesktop/test` wraps the [automation socket](/automation-testing/automation-socket/) into a
 `launchApp`/`AppHandle` API: spawn a host binary, wait for it to be ready, connect, and drive it
-with the same RPC surface that page documents — without hand-rolling process spawn, marker
-parsing, socket connect, or a `find`/`mustFind` tree walker in every script. It reuses
-its own `src/socket.ts` `AutomationClient` for the wire framing (length-prefixed JSON-RPC
-2.0); `packages/mcp` imports it from here rather than keeping a second implementation.
+with the same RPC surface, without hand-rolling process spawn, marker parsing, socket connect, or a
+`find`/`mustFind` tree walker in every script. Wire framing comes from its own `src/socket.ts`
+`AutomationClient`, which `packages/mcp` imports rather than keeping a second implementation.
 
 ```ts
 import { launchApp } from "@nativedesktop/test";
@@ -46,32 +45,32 @@ const app = await launchApp({
 });
 ```
 
-`hostBinary` is for callers `@nativedesktop/host`'s own resolution can't place: a consumer outside a
-NativeDesktop checkout (installed as a `file:`/`link:` dep, so the source-checkout fallback can't find
-it either), or the gtk-on-macOS dev path (no prebuilt ships there by design — resolve `nd-hello` from
-a sibling checkout yourself and pass its path).
+`hostBinary` is for callers `@nativedesktop/host`'s own resolution cannot place: a consumer outside
+a NativeDesktop checkout (installed as a `file:` or `link:` dep, so the source-checkout fallback
+misses it too), or the GTK-on-macOS dev path, where no prebuilt ships. Resolve `nd-hello` from a
+sibling checkout yourself and pass its path.
 
-`entry` is resolved relative to `cwd`. The GTK host (including GTK-via-Quartz on macOS) fails to
-start when `XDG_RUNTIME_DIR` is unset or points at a directory that doesn't exist —
-`launchApp` creates a fresh one automatically unless the environment already provides a valid one,
-so callers never have to remember `export XDG_RUNTIME_DIR="$(mktemp -d)"` themselves.
+`entry` resolves relative to `cwd`. The GTK host, including GTK-via-Quartz on macOS, fails to start
+when `XDG_RUNTIME_DIR` is unset or points at a directory that does not exist. `launchApp` creates a
+fresh one unless the environment already provides a valid one, so callers never have to remember
+`export XDG_RUNTIME_DIR="$(mktemp -d)"`.
 
-If the ready markers never appear (or the process exits first), `launchApp` kills it and retries up
-to `retries` more times before rejecting with the last `retries + 1` attempts' failure and the last
-40 lines of stderr.
+If the ready markers never appear, or the process exits first, `launchApp` kills it and retries up
+to `retries` more times before rejecting with all `retries + 1` failures and the last 40 lines of
+stderr.
 
 ## `AppHandle`
 
 | Member | Notes |
 |---|---|
 | `pid`, `logPath`, `socketPath`, `backend` | identity of the current live process |
-| `rpc` | the wrapped `AutomationClient` — every call races a `rpcTimeoutMs` timeout and, on timeout, rejects with `` `${method} timed out after Nms` `` plus the last 40 stderr lines |
+| `rpc` | the wrapped `AutomationClient`. Every call races a `rpcTimeoutMs` timeout and, on timeout, rejects with `` `${method} timed out after Nms` `` plus the last 40 stderr lines |
 | `stderr()` / `stderrTail(n = 40)` | the full captured stderr, or its last `n` lines |
 | `tree(window?)` | raw `getTree` result |
 | `find(testId, {window?})` / `findAll(testId, {window?})` / `mustFind(testId, {window?})` / `findMatching(pred, {window?})` | tree-walk helpers over the current snapshot; `mustFind` throws when nothing matches |
-| `click(t)`, `setValue(t, v)`, `type(t, s)`, `scroll(t, {dx?, dy?})`, `hover(t)`, `doubleClick(t)`, `rightClick(t)` | single-RPC, actionability-checked, host-side `testId` resolution — no client-side retry loop |
+| `click(t)`, `setValue(t, v)`, `type(t, s)`, `scroll(t, {dx?, dy?})`, `hover(t)`, `doubleClick(t)`, `rightClick(t)` | single-RPC, actionability-checked, host-side `testId` resolution, no client-side retry loop |
 | `keys(spec, {window?})`, `drag(opts)` | input synthesis; macOS only, `-32003` on GTK |
-| `waitFor(condition, {timeoutMs?, window?})` + sugar (below) | thin pass-throughs to the `waitFor` RPC — the host does the polling, not this client |
+| `waitFor(condition, {timeoutMs?, window?})` plus the sugar below | thin pass-throughs to the `waitFor` RPC. The host polls, not this client |
 | `waitForMarker(marker, timeoutMs?)` | polls captured stderr for a substring (dialog-script exhaustion, crash markers, anything else the host logs) |
 | `windows()` / `waitForWindows(count, timeoutMs?)` | the `windows` RPC / poll it until the count matches |
 | `screenshot(path, opts?)` | see below |
@@ -79,17 +78,16 @@ to `retries` more times before rejecting with the last `retries + 1` attempts' f
 | `close()` / `kill()` | graceful (`SIGTERM`, falls back to `SIGKILL` after 3s) / immediate |
 | `[Symbol.asyncDispose]` | `await using app = await launchApp(...)` closes it automatically |
 
-Every action method takes a **target**: `t: string | number | {testId?, ref?, window?, action?}`.
-A bare string is a `testId`, a bare number is a `ref`; an object descriptor passes through.
-`action` applies to `click` only: `app.click({ testId: "row-testid", action: "action-id" })`
-invokes a SourceTree row's trailing action semantically (see
-[SourceTree row actions](/automation-testing/automation-socket/#sourcetree-row-actions)).
-Exactly one of
-`ref`/`testId` must resolve — the host validates it (`invalidParams` otherwise).
+Every action method takes a target: `t: string | number | {testId?, ref?, window?, action?}`. A bare
+string is a `testId`, a bare number is a `ref`, and an object descriptor passes through. `action`
+applies to `click` only: `app.click({ testId: "row-testid", action: "action-id" })` invokes a
+SourceTree row's trailing action semantically (see
+[SourceTree row actions](/automation-testing/automation-socket/#sourcetree-row-actions)). Exactly
+one of `ref` or `testId` must resolve; the host validates it and answers `invalidParams` otherwise.
 
 ### waitFor sugar
 
-Every one of these is a single `waitFor` RPC call — no client-side polling:
+Each of these is a single `waitFor` RPC call with no client-side polling:
 
 | Method | Condition |
 |---|---|
@@ -124,15 +122,16 @@ non-zero dimensions regardless of `minHeight`/`minBytes`. `pngSize(path)` (also 
 PNG's width/height from its IHDR chunk, independent of the harness.
 
 `via: "ndshot"` runs `tools/ndshot capture --out <path> --pid <app.pid>` instead of the in-process
-`screenshot` RPC — the workaround for macOS 26's offscreen-render blanking of `TextInput`/
-`TextArea` documented in [ndshot](/automation-testing/automation-socket/#screenshots-on-macos-ndshot).
-Requires `tools/ndshot/build.sh` to have run at least once.
+`screenshot` RPC. That is the workaround for macOS 26's offscreen-render blanking of `TextInput` and
+`TextArea`, documented in
+[ndshot](/automation-testing/automation-socket/#screenshots-on-macos-ndshot). It requires
+`tools/ndshot/build.sh` to have run at least once.
 
 ### Dialog scripts
 
-`dialogScript` takes the same shape `ND_AUTOMATION_DIALOG_SCRIPT` parses — see
+`dialogScript` takes the same shape `ND_AUTOMATION_DIALOG_SCRIPT` parses. See
 [Scripted native dialogs](/automation-testing/automation-socket/#scripted-native-dialogs) for the
-full per-method entry shapes and the exhaustion contract:
+per-method entry shapes and the exhaustion contract:
 
 ```ts
 import type { DialogScript } from "@nativedesktop/test";
@@ -146,20 +145,20 @@ const app = await launchApp({ entry: "examples/dialogs/main.tsx", dialogScript }
 
 ### Lifecycle and cleanup
 
-`killAll()` (also exported at module scope) kills every host process any `launchApp` call in the
-current process has spawned, and is wired to `process.on("exit"/"SIGINT"/"SIGTERM")` — a thrown
-assertion partway through a script never leaves an orphaned window behind. Prefer `await
-app.close()` when a test finishes normally; reach for `killAll()` in a top-level `finally` or a
-test runner's global teardown instead of tracking handles yourself.
+`killAll()`, also exported at module scope, kills every host process any `launchApp` call in the
+current process has spawned. It is wired to `process.on("exit"/"SIGINT"/"SIGTERM")`, so a thrown
+assertion partway through a script never leaves an orphaned window behind. Use `await app.close()`
+when a test finishes normally, and `killAll()` in a top-level `finally` or a test runner's global
+teardown instead of tracking handles yourself.
 
 ## Also exported
 
-- `pngSize(path)` — PNG dimensions from the IHDR chunk (used by `screenshot()`, useful standalone).
-- `poll(fn, pred, {timeoutMs?, intervalMs?})` — generic poll-until-predicate, for the rare
-  condition `waitFor`'s vocabulary doesn't cover (e.g. window count settling, a `SourceList`'s
-  `rows` array reordering after a click).
-- `resolveTarget(t)`, `findNode`/`findAllNodes`/`findMatchingNode` — the target-normalization and
-  tree-walk primitives `AppHandle` is built on, for scoped subtree searches (`findNode(paneNode,
-  "some-child-testid")`) rather than a whole-tree `find`.
-- `JsonNode`, `GetTreeResult` — re-exported from `packages/react/src/generated/rpc.ts` so a caller
+- `pngSize(path)`: PNG dimensions from the IHDR chunk. Used by `screenshot()`, useful standalone.
+- `poll(fn, pred, {timeoutMs?, intervalMs?})`: generic poll-until-predicate, for the rare condition
+  `waitFor`'s vocabulary does not cover, such as window count settling or a `SourceList`'s `rows`
+  array reordering after a click.
+- `resolveTarget(t)`, `findNode`, `findAllNodes`, `findMatchingNode`: the target-normalization and
+  tree-walk primitives `AppHandle` is built on, for scoped subtree searches like
+  `findNode(paneNode, "some-child-testid")` rather than a whole-tree `find`.
+- `JsonNode`, `GetTreeResult`: re-exported from `packages/react/src/generated/rpc.ts` so a caller
   never has to reach into the generated tree outside this package.

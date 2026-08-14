@@ -19,6 +19,31 @@ function which(tool: string): boolean {
   return Bun.which(tool) !== null;
 }
 
+/** Every mac icon source needs a different converter, so the check follows the
+ * same resolution order `installMacIcon` uses. */
+function macIconChecks(config: NativeDesktopConfig): Check[] {
+  const icon = typeof config.app?.icon === "string" ? { source: config.app.icon } : config.app?.icon;
+  if (!icon) return [];
+  const source = icon.layered ? ".icon" : icon.macos ?? icon.source;
+  if (!source) return [];
+  if (source.endsWith(".icon")) {
+    return [which("xcrun")
+      ? { name: "icon-tools", status: "ok", detail: "layered icon configured, actool available" }
+      : { name: "icon-tools", status: "error", detail: "layered icon configured but Xcode's actool is missing" }];
+  }
+  if (source.endsWith(".icns")) return [];
+  if (source.endsWith(".iconset")) {
+    return which("iconutil") ? [] : [{ name: "icon-tools", status: "error", detail: "iconset icon configured but iconutil is missing" }];
+  }
+  if (source.endsWith(".svg") && !["rsvg-convert", "magick", "convert", "qlmanage"].some(which)) {
+    return [{ name: "icon-tools", status: "error", detail: "SVG icon configured but no rasterizer (librsvg, ImageMagick, or qlmanage) is available" }];
+  }
+  if (!(which("sips") && which("iconutil"))) {
+    return [{ name: "icon-tools", status: "error", detail: `${source} icon configured but sips/iconutil are missing` }];
+  }
+  return [];
+}
+
 export async function collectChecks(cwd: string): Promise<Check[]> {
   const checks: Check[] = [];
   const configPath = resolve(cwd, "nativedesktop.config.ts");
@@ -63,10 +88,17 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
   try {
     const backend = resolveBackend(process.platform === "darwin" ? { backend: config.package?.mac?.backend ?? "appkit" } : { backend: "gtk" });
     const { fresh } = hostBinaryCandidates(backend);
-    const found = prebuiltHostBinary(backend) ?? fresh.find(existsSync);
-    checks.push(found
-      ? { name: "host", status: "ok", detail: found }
-      : { name: "host", status: "warn", detail: `no ${backend} host binary built yet (nd dev / nd package builds it on first run in a source checkout)` });
+    // ND_HOST_BINARY is what `nd dev` will actually run, so report that rather
+    // than the prebuilt it overrides.
+    const explicit = process.env.ND_HOST_BINARY;
+    const found = explicit || prebuiltHostBinary(backend) || fresh.find(existsSync);
+    if (explicit && !existsSync(explicit)) {
+      checks.push({ name: "host", status: "error", detail: `ND_HOST_BINARY points at ${explicit}, which does not exist` });
+    } else {
+      checks.push(found
+        ? { name: "host", status: "ok", detail: explicit ? `${found} (ND_HOST_BINARY)` : found }
+        : { name: "host", status: "warn", detail: `no ${backend} host binary built yet (nd dev / nd package builds it on first run in a source checkout)` });
+    }
   } catch (err) {
     checks.push({ name: "host", status: "error", detail: String(err) });
   }
@@ -75,10 +107,7 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
     checks.push(which("codesign")
       ? { name: "codesign", status: "ok", detail: "codesign available" }
       : { name: "codesign", status: "error", detail: "codesign not found (install the Xcode command line tools)" });
-    const icon = typeof config.app?.icon === "string" ? config.app.icon : config.app?.icon?.macos ?? config.app?.icon?.source;
-    if (icon && icon.endsWith(".png") && !(which("sips") && which("iconutil"))) {
-      checks.push({ name: "icon-tools", status: "error", detail: "PNG icon configured but sips/iconutil are missing" });
-    }
+    checks.push(...macIconChecks(config));
   } else if (process.platform === "linux") {
     checks.push(which("appimagetool") || which("mksquashfs")
       ? { name: "appimage", status: "ok", detail: which("appimagetool") ? "appimagetool available" : "mksquashfs fallback available" }

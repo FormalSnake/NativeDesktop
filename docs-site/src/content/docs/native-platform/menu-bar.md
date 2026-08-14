@@ -3,10 +3,8 @@ title: Menu Bar
 description: One <menubar> declaration becomes a real NSApp.mainMenu on macOS and a primary GtkMenuButton on GNOME.
 ---
 
-A `<menubar>` is the clearest demonstration of the design-language philosophy (see
-[App Model](/core-concepts/app-model/)): the same declared tree adopts each platform's own idiom for
-where the app's commands live, rather than drawing one widget identically everywhere. On macOS
-that's a real menu bar; on GNOME it's a primary hamburger menu.
+One `<menubar>` declaration renders as each platform's own idiom for where an app's commands live:
+a real `NSApp.mainMenu` on macOS, a primary hamburger menu on GNOME.
 
 ## Shape
 
@@ -39,15 +37,13 @@ contains `<menu label>` entries, which in turn contain `<menuitem>` entries:
 </window>
 ```
 
-(Adapted from `examples/notes/menubar-probe.tsx`, the headless acceptance fixture for this
-machinery.)
+(Adapted from `examples/notes/menubar-probe.tsx`, the headless acceptance fixture.)
 
-## MenuItem: role or onSelect, never both in effect
+## MenuItem: role or onSelect, never both
 
-A `<menuitem>` has either a `role`, meaning platform-provided behavior, or an `onSelect` handler for
-custom behavior. If both are set, `onSelect` wins and the role contributes nothing beyond
-documentation. `role="separator"` renders a native separator, and `label`, `iconName`, and
-`accelerator` are ignored on it.
+A `<menuitem>` takes either a `role`, meaning platform-provided behavior, or an `onSelect` handler
+for custom behavior. Set both and `onSelect` wins; the role contributes nothing.
+`role="separator"` renders a native separator and ignores `label`, `iconName`, and `accelerator`.
 
 The full prop set (the [Widget Reference](/components/widget-reference/) has the generated table):
 
@@ -64,11 +60,11 @@ The full prop set (the [Widget Reference](/components/widget-reference/) has the
 
 ### macOS: a real main menu, with or without a declared `<menubar>`
 
-macOS installs the full standard main menu (App, File, Edit, View, Window, Help, each wired to the
-responder chain via `NSText` selectors and `NSApplication` actions) at window creation, even when
-the tree has no `<menubar>` at all. That's why `Edit > Copy`, `Cut`, `Paste`, `Select
-All`, `Quit`, `Minimize`, and friends work in every text field with no app code: they're
-responder-chain selectors with a nil target, not custom handlers.
+macOS installs the full standard main menu at window creation even when the tree has no `<menubar>`:
+App, File, Edit, View, Window, Help, each wired to the responder chain via `NSText` selectors and
+`NSApplication` actions. That is why Copy, Cut, Paste, Select All, Quit, and Minimize work in every
+text field with no app code. They are responder-chain selectors with a nil target, not custom
+handlers.
 
 A declared `<menu label>` is merged into that default chrome:
 
@@ -80,42 +76,40 @@ A declared `<menu label>` is merged into that default chrome:
 `<menubar defaults={false}>` opts out of the merge: only the App menu (About/Hide/Quit) plus your
 declared menus are installed. The default File/Edit/View/Window/Help menus are not.
 
-### GNOME: no top menubar, by design
+### GNOME: no top menubar
 
-GNOME Shell doesn't show a top-level menubar; that's correct GNOME design. Instead, `<menubar>`
-renders as a primary menu button (`GtkMenuButton`, `open-menu-symbolic`,
-tooltip "Main Menu") homed in the last headerbar in document order (by GNOME convention, the
-content pane's header). If the tree has no headerbar at all, it falls back to
-`gtk.Application.setMenubar`, an in-window menu strip.
+GNOME Shell shows no top-level menubar, which is correct GNOME design. `<menubar>` renders instead
+as a primary menu button (`GtkMenuButton`, `open-menu-symbolic`, tooltip "Main Menu") homed in the
+last headerbar in document order, by GNOME convention the content pane's header. With no headerbar
+in the tree at all, it falls back to `gtk.Application.setMenubar`, an in-window menu strip.
 
-Roles that would duplicate window or system chrome are dropped per the GNOME HIG: `quit`,
-`close`, `minimize`, `undo`, `cut`, `copy`, `paste`, `delete`, `selectAll`, `zoom`, `fullscreen`. A
-menu whose items all drop is omitted entirely. The two roles that do survive get GNOME-native
-treatment instead of a plain menu item: `about` opens an `AdwAboutDialog`, and `settings` renders as
-a "Preferences" item that emits `onSelect` like any custom item.
+Roles that would duplicate window or system chrome are dropped per the GNOME HIG: `quit`, `close`,
+`minimize`, `undo`, `cut`, `copy`, `paste`, `delete`, `selectAll`, `zoom`, `fullscreen`. A menu whose
+items all drop is omitted entirely. The two surviving roles get GNOME-native treatment rather than a
+plain menu item: `about` opens an `AdwAboutDialog`, and `settings` renders as a Preferences item that
+emits `onSelect` like any custom item.
 
 ## Beyond the menu bar
 
-`<menu>`/`<menuitem>` aren't exclusive to `<menubar>`. The same elements are also the dropdown
+`<menu>` and `<menuitem>` are not exclusive to `<menubar>`. The same elements are the dropdown
 content for [`<menubutton>` and `<splitbutton>`](/components/menus-and-popovers/), and for a macOS
 [`<trayitem>`](/native-platform/platform-support/#platform-only-widgets)'s right-click menu. The prop
-set, `role`/`onSelect` exclusivity, and accelerator grammar documented above apply identically in all
-three places; only the owning widget differs.
+set, `role`/`onSelect` exclusivity, and accelerator grammar above apply identically in all three
+places.
 
 ## Automation
 
 Menu nodes appear in `getTree` (see [Automation Socket](/automation-testing/automation-socket/))
-with labels as their text and nominal (non-visual) bounds, since they're chrome rather than an
-on-screen widget. The `click` RPC on a `menuitem` ref dispatches `onSelect` (or fires the role's
-native action) on both backends, so an automation-driving agent can exercise a File > New Note
-command the same way it clicks a button.
+with labels as their text and nominal, non-visual bounds, since they are chrome rather than
+on-screen widgets. The `click` RPC on a `menuitem` ref dispatches `onSelect` (or fires the role's
+native action) on both backends, so an agent exercises File > New Note the same way it clicks a
+button.
 
 ## Caveats
 
-- `iconName` on a `<menuitem>` has no visible effect on GNOME. This is intentional; don't rely on
-  the icon for information the label doesn't already carry.
-- macOS has one merge rule (append after a separator on a title match, otherwise insert
-  before Window). There's no way to target Edit/View/Help insertion order beyond that.
-- `role` and `onSelect` are not additive: setting both silently drops the role's native behavior in
-  favor of the custom handler, so don't expect e.g. `role="quit"` plus an `onSelect` to run your
-  handler *and* quit.
+- `iconName` on a `<menuitem>` has no visible effect on GNOME. Do not rely on the icon for
+  information the label does not already carry.
+- macOS has one merge rule: append after a separator on a title match, otherwise insert before
+  Window. There is no way to target Edit/View/Help insertion order beyond that.
+- `role` and `onSelect` are not additive. Setting both drops the role's native behavior, so
+  `role="quit"` plus an `onSelect` runs your handler and does not quit.

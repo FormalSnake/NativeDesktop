@@ -1,13 +1,11 @@
 ---
 title: Data Views
-description: "Table, TreeView and SourceTree render multi-column and hierarchical data with one shared rule: the native widget never reorders or re-nests your data."
+description: "Table, TreeView, and SourceTree render multi-column and hierarchical data. The native widget never reorders or re-nests your data."
 ---
 
-`<table>` and `<treeview>` both take a plain data prop (`rows`/`nodes`) you own in React state, and
-both follow the same contract: the native widget renders exactly what you give it and asks you, via an
-event, when the user wants something to change. It never reorders or re-nests the data itself, so
-your React state stays the single source of truth, the same discipline `<listview>`'s `items`
-already follows.
+`<table>`, `<treeview>`, and `<sourcetree>` take a plain data prop you own in React state. The
+native widget renders exactly what you give it and fires an event when the user wants something to
+change. It never reorders or re-nests the data itself.
 
 ![The sourcetree sidebar widget with sections, badges, and a selected row on macOS (AppKit)](../../../assets/screens/appkit/sourcetree.png)
 
@@ -15,9 +13,8 @@ already follows.
 
 ## Table (`<table>`)
 
-A multi-column list, backed by `GtkColumnView` on GTK and `NSTableView` on macOS. You describe it
-with a columns array and a rows array kept separate, so a column resize or reorder never has to touch
-every row.
+A multi-column list. `GtkColumnView` on GTK, `NSTableView` on macOS. Columns and rows are separate
+arrays, so a column resize or reorder never has to touch every row.
 
 ```tsx
 import type { TableColumn, TableRow } from "@nativedesktop/react";
@@ -62,17 +59,13 @@ function handleSortChanged(e: { data: unknown }) {
 | `rowActivated` | `onRowActivated` | `{ index }` (double-click / Enter) |
 | `sortChanged` | `onSortChanged` | `{ data: { columnId, direction } }` |
 
-Clicking a column header fires `sortChanged` and stops there: the native widget shows the sort
-indicator arrow but never reorders `rows` itself. Your `onSortChanged` handler owns sorting: re-sort
-`rows` in JS as above and pass the new array back down. This mirrors `<listview>`'s "native never
-mutates your data" contract and keeps sorting logic in one place, where you can test it outside the
-UI.
+Clicking a column header fires `sortChanged` and stops there. The widget shows the sort indicator
+arrow but does not reorder `rows`. Sort in your handler and pass the new array back down.
 
 ## TreeView (`<treeview>`)
 
-A hierarchical outline, backed by `GtkTreeListView`/`GtkColumnView` on GTK and `NSOutlineView` on
-macOS. You describe it as a flat array keyed by `id`/`parentId`, not nested JS objects. Root nodes
-omit `parentId`.
+A hierarchical outline. `GtkTreeListView`/`GtkColumnView` on GTK, `NSOutlineView` on macOS. Nodes
+are a flat array keyed by `id`/`parentId`, not nested objects. Root nodes omit `parentId`.
 
 ```tsx
 import type { TreeNode } from "@nativedesktop/react";
@@ -103,7 +96,7 @@ const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `nodes` | `TreeNode[]` | createAndUpdate | `{ id, parentId?, title, badge?, iconName?, hasChildren, expanded }`, a flat list rather than a nested one. |
+| `nodes` | `TreeNode[]` | createAndUpdate | `{ id, parentId?, title, badge?, iconName?, hasChildren, expanded }`, flat rather than nested. |
 | `selectedIndex` | int | createAndUpdate | Default `-1`, indexes the flattened *visible* rows. |
 | `indentationPerLevel` | int | create | Pixels per depth level, default `16`. |
 
@@ -114,20 +107,19 @@ const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.
 | `nodeExpanded` | `onNodeExpanded` | `{ data: { nodeId } }` |
 | `nodeCollapsed` | `onNodeCollapsed` | `{ data: { nodeId } }` |
 
-Expansion is controlled state, not native state: the widget asks (via `nodeExpanded`/
-`nodeCollapsed`) rather than deciding on its own, so a re-render triggered by something else in your
-app can never silently collapse a branch the user opened. Track expansion yourself (a `Set<string>`
-of expanded ids, as above) and feed it back into every node's `expanded` field.
+Expansion is controlled state, not native state. Track a `Set<string>` of expanded ids as above and
+feed it back into every node's `expanded` field, otherwise an unrelated re-render can collapse a
+branch the user opened.
 
 ## SourceTree (`<sourcetree>`)
 
-A hierarchical *sidebar*: section headers, id/parentId rows with a caption line, badges, and
-trailing per-row actions. GTK renders a `navigation-sidebar` GtkListBox of AdwActionRows; macOS a
-`.sourceList`-style `NSOutlineView`. Use `<sourcelist>` for a flat index-addressed sidebar and
-`<treeview>` for a generic disclosure tree in a content pane; `<sourcetree>` is the one that owns
-"app chrome sidebar with structure".
+A hierarchical sidebar: section headers, `id`/`parentId` rows with a caption line, badges, and
+trailing per-row actions. GTK renders a `navigation-sidebar` GtkListBox of AdwActionRows, macOS a
+`.sourceList`-style `NSOutlineView`.
 
-Rows are the same flat `id`/`parentId` shape as TreeView, with sidebar extras:
+Pick between the three sidebar-ish widgets: `<sourcelist>` for a flat index-addressed sidebar,
+`<treeview>` for a disclosure tree in a content pane, `<sourcetree>` for an app chrome sidebar with
+structure.
 
 ```tsx
 import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
@@ -163,7 +155,7 @@ const nodes: SourceTreeNode[] = [
 | `actions` | `SourceTreeAction[]` | createAndUpdate | The action catalog rows reference by `actionIds`: `{ id, iconName, label?, tooltip?, destructive? }`. |
 | `selectedId` | string | createAndUpdate | Controlled selection by node id; `""` means none. There is no `selectedIndex`. |
 | `actionVisibility` | `"hover"` \| `"always"` | create | Default `"hover"`: action buttons show only while the pointer is over the row. |
-| `indentationPerLevel` | int | create | Pixels per depth level. Left unset, each backend uses its own native step: 24 on GTK (matching the disclosure gutter), 14 on macOS. |
+| `indentationPerLevel` | int | create | Pixels per depth level. Unset, each backend uses its native step: 24 on GTK, 14 on macOS. |
 
 | Event | Handler | Payload |
 | --- | --- | --- |
@@ -173,29 +165,34 @@ const nodes: SourceTreeNode[] = [
 | `nodeCollapsed` | `onNodeCollapsed` | `{ data: { nodeId } }` |
 | `actionClicked` | `onActionClicked` | `{ data: { nodeId, actionId } }` |
 
-Semantics shared with TreeView: expansion is controlled state (track a `Set<string>` of expanded
-ids and feed it back into `expanded`), and events address rows by `nodeId` because visible indexes
-shift under expand/collapse. `section: true` marks a group header: non-selectable, styled as a
-native section label on both platforms; a section with `hasChildren` is a collapsible shelf.
-`selectable: false` makes an informational row (an empty-state line) unselectable without making it
-a header. Hover is the widget's own native affordance; there is deliberately no `hoverChanged`
-event, so apps stop hand-rolling per-row hover state.
+Expansion is controlled state, same as TreeView. Events address rows by `nodeId` because visible
+indexes shift under expand and collapse.
 
-Per-node `testID` surfaces in the automation tree's `rows` (see the getTree docs), so tests target
-rows without depending on row order. Platform asymmetries: GTK draws a manual disclosure arrow per
-parent row (GtkListBox has no native outline affordance), reserves that 24px gutter on every row so
-a parent's title stays left of its children's, paints the `sidebar-pane` fill when the tree is not
-already in a split view's sidebar slot, and renders `captionIconName` as a small second prefix icon;
-macOS sections have no disclosure triangle (native source-list group look) and inline the caption
-icon on the caption line.
+Row kinds:
+
+- `section: true` is a group header. Non-selectable, styled as a native section label. A section
+  with `hasChildren` is a collapsible shelf.
+- `selectable: false` is an informational row, such as an empty-state line, that is not a header.
+
+There is no `hoverChanged` event. Hover is the widget's own native affordance.
+
+Per-node `testID` surfaces in the automation tree's `rows`, so tests target rows without depending
+on row order.
+
+Platform differences: GTK draws a manual disclosure arrow per parent row (GtkListBox has no native
+outline affordance), reserves that 24px gutter on every row so a parent's title stays left of its
+children's, paints the `sidebar-pane` fill when the tree is not already in a split view's sidebar
+slot, and renders `captionIconName` as a small second prefix icon. macOS sections have no
+disclosure triangle (the native source-list group look) and inline the caption icon on the caption
+line.
 
 ## Native empty states
 
-Every collection widget — `<sourcelist>`, `<listview>`, `<table>`, `<treeview>`, `<sourcetree>` —
-takes three optional createAndUpdate props: `emptyIconName`, `emptyTitle`, `emptyDescription`. When
-the item array is empty AND at least one of them is set, the widget shows platform empty-state
-chrome in place of the blank list (a compact `AdwStatusPage` on Linux, a centered
-icon/title/description stack on macOS) and swaps the real list back the moment items return:
+`<sourcelist>`, `<listview>`, `<table>`, `<treeview>`, and `<sourcetree>` all take three optional
+createAndUpdate props: `emptyIconName`, `emptyTitle`, `emptyDescription`. When the item array is
+empty and at least one of them is set, the widget shows platform empty-state chrome in place of the
+blank list (a compact `AdwStatusPage` on Linux, a centered icon/title/description stack on macOS),
+and swaps the real list back when items return.
 
 ```tsx
 <table
@@ -207,9 +204,8 @@ icon/title/description stack on macOS) and swaps the real list back the moment i
 />
 ```
 
-Unset (the default) means no swap ever happens — existing lists are unaffected. This replaces the
-hand-composed `<statuspage>`-next-to-an-empty-list pattern.
+Leave them unset and no swap ever happens.
 
-See `examples/gallery/main.tsx`'s "Table", "Tree" and "SourceTree" tabs for all three wired to full
-controlled state (including the JS-side sort), and the
-[Widget Reference](/components/widget-reference/) for the generated prop tables.
+See `examples/gallery/main.tsx`'s Table, Tree, and SourceTree tabs for all three wired to
+controlled state, and the [Widget Reference](/components/widget-reference/) for the generated prop
+tables.

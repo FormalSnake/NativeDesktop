@@ -3,20 +3,19 @@ title: Menus & Popovers
 description: MenuButton, SplitButton, Popover, and Expander, the four widgets for content or actions that reveal on demand.
 ---
 
-Four widgets share one idea: content or actions that stay hidden until the user asks for them,
-rather than occupying permanent space. Two (`MenuButton`, `SplitButton`) reuse the same `<menu>`/
-`<menuitem>` vocabulary as [the menu bar](/native-platform/menu-bar/); the other two (`Popover`,
-`Expander`) host an arbitrary child tree instead of a menu.
+Four widgets for content or actions that stay hidden until the user asks for them. `MenuButton` and
+`SplitButton` reuse the `<menu>`/`<menuitem>` vocabulary from [the menu
+bar](/native-platform/menu-bar/); `Popover` and `Expander` host an arbitrary child tree.
 
 ## MenuButton (`<menubutton>`) and SplitButton (`<splitbutton>`)
 
 `<menubutton>` is a single button that opens a dropdown menu. `<splitbutton>` fuses two actions
-into one control: a primary click action plus a chevron that opens a dropdown for secondary
-actions. It's `AdwSplitButton` on GTK and an `NSButton` + attached `NSMenu` on macOS.
+into one control: a primary click action plus a chevron opening a dropdown for secondary actions.
+It is `AdwSplitButton` on GTK, an `NSButton` with an attached `NSMenu` on macOS.
 
-Both take `<menuitem>` children, plus `<menu>` for a nested submenu, the same elements the
-[`<menubar>`](/native-platform/menu-bar/) page documents, built into an `NSMenu`/`GMenuModel` instead
-of the app's main menu:
+Both take `<menuitem>` children, plus `<menu>` for a nested submenu. Same elements as
+[`<menubar>`](/native-platform/menu-bar/), built into an `NSMenu`/`GMenuModel` instead of the app's
+main menu:
 
 ```tsx
 <menubutton label="Actions" iconName="open-menu">
@@ -39,9 +38,9 @@ of the app's main menu:
 
 ## Popover (`<popover>`)
 
-An anchored transient surface (`GtkPopover` / `NSPopover`) for a small piece of arbitrary content
-attached to a trigger. Unlike `MenuButton`, its child is a full widget tree rather than
-`<menuitem>`s, so it can hold anything a `<box>` could.
+An anchored transient surface (`GtkPopover`, `NSPopover`) for a small piece of arbitrary content
+attached to a trigger. Its child is a full widget tree rather than `<menuitem>`s, so it holds
+anything a `<box>` could.
 
 ```tsx
 const [open, setOpen] = useState(false);
@@ -62,15 +61,15 @@ const [open, setOpen] = useState(false);
 | `open` | bool | createAndUpdate | Controlled. Set it from `onClosed` when the user dismisses the popover by clicking outside or pressing Escape. |
 | `position` | `top` \| `bottom` \| `left` \| `right` | createAndUpdate | Default `top`. |
 
-`closed` → `onClosed` fires with no payload. A `<popover>` attaches to whatever widget is its own
-tree parent on GTK (`gtk_widget_set_parent`), so put it in a `<box>` alongside the button that opens
-it, as above, rather than off on its own.
+`closed` → `onClosed` fires with no payload. On GTK a `<popover>` attaches to whatever widget is its
+tree parent (`gtk_widget_set_parent`), so put it in a `<box>` alongside the button that opens it, as
+above.
 
 ## Expander (`<expander>`)
 
-An inline disclosure widget (`AdwExpanderRow`-style on GTK, an `NSButton` disclosure triangle +
-container on macOS) for content that should stay in the layout flow, unlike `Popover`, which floats
-above it.
+An inline disclosure widget (`AdwExpanderRow`-style on GTK, an `NSButton` disclosure triangle plus
+a container on macOS) for content that stays in the layout flow instead of floating above it like a
+`Popover`.
 
 ```tsx
 const [open, setOpen] = useState(false);
@@ -89,5 +88,5 @@ const [open, setOpen] = useState(false);
 
 `toggled` → `onToggled` fires `{ checked }`.
 
-See `examples/gallery/main.tsx`'s "Popovers & Menus" tab for all four wired together, and the
+See `examples/gallery/main.tsx`'s Popovers & Menus tab for all four wired together, and the
 [Widget Reference](/components/widget-reference/) for the generated prop tables.

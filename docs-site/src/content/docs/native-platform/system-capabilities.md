@@ -3,13 +3,12 @@ title: System Capabilities
 description: Native file dialogs, clipboard, notifications, recent documents, credentials, live appearance, and app-level OS events, with one API and real native behavior on each backend.
 ---
 
-`@nativedesktop/react` exposes the OS-level surface every desktop app eventually needs as a small
-set of promise-based calls: file pickers, clipboard, notifications, "Open Recent", the system
-credential store, audio playback, the live light/dark + accent color, and app lifecycle events like
-activation and file drops. Every
-call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
-`NSPasteboard`/`GdkClipboard`, `UNUserNotificationCenter`/`GNotification`, Keychain/Secret Service,
-`AVPlayer`/GStreamer) from the same app code on both backends.
+`@nativedesktop/react` exposes the OS-level surface a desktop app eventually needs as promise-based
+calls: file pickers, clipboard, notifications, Open Recent, the system credential store, audio
+playback, live light/dark and accent color, and app lifecycle events like activation and file drops.
+Every call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
+`NSPasteboard`/`GdkClipboard`, `UNUserNotificationCenter`/`GNotification`, Keychain and Secret
+Service, `AVPlayer` and GStreamer) from the same app code on both backends.
 
 ## Dialogs
 
@@ -37,11 +36,11 @@ async function openMarkdownFile() {
 `message`, an optional `detail`, `level: "info" | "warning" | "error"`, and `buttons` (defaults to
 `["OK"]`); it resolves to the 0-based index of the clicked button.
 
-These are app-level dialogs backed by `NSOpenPanel`/`NSSavePanel`/`NSAlert` on macOS and
-`GtkFileDialog`/`GtkAlertDialog` on GTK. They're a different mechanism from the `<window>` widget's
-own `showAlert`/`openFile`/`saveFile`/`showAbout` imperative commands (see
-[Dialogs](/components/dialogs/)). Reach for `dialog.*` unless you specifically need a dialog scoped to
-one window's command channel, or the About panel, which only the `<window>` version exposes.
+These are app-level dialogs backed by `NSOpenPanel`, `NSSavePanel`, and `NSAlert` on macOS,
+`GtkFileDialog` and `GtkAlertDialog` on GTK. They are a different mechanism from the `<window>`
+widget's own `showAlert`/`openFile`/`saveFile`/`showAbout` imperative commands (see
+[Dialogs](/components/dialogs/)). Use `dialog.*` unless you need a dialog scoped to one window's
+command channel, or the About panel, which only the `<window>` version exposes.
 
 ## Clipboard
 
@@ -73,14 +72,13 @@ function useNotifyOnDone(done: boolean, runId: string) {
 }
 ```
 
-`notifications.show({ title, body?, data? })` resolves to a notification id;
-`notifications.onClick(handler)` fires `{ id, data? }` when the user clicks the banner, where
-`data` is whatever you passed to `show()`. The payload lives in a process-local map (never sent to
-the host), capped at 128 entries and cleared per-notification once its click dispatches, so it
-survives `bun --hot` re-evals but not an app restart. That limit costs nothing in practice: a click
-arriving after a restart is dropped by the transport today anyway (no host-side buffering, same gap
-as `onOpenUrl` below). `onClick` returns an unsubscribe function, so it's safe to call straight
-from a `useEffect` cleanup.
+`notifications.show({ title, body?, data? })` resolves to a notification id.
+`notifications.onClick(handler)` fires `{ id, data? }` when the user clicks the banner, where `data`
+is whatever you passed to `show()`. The payload lives in a process-local map, never sent to the
+host, capped at 128 entries and cleared per notification once its click dispatches. It survives
+`bun --hot` re-evals but not an app restart, which costs nothing today: a click arriving after a
+restart is dropped by the transport anyway, the same gap as `onOpenUrl` below. `onClick` returns an
+unsubscribe function, so it composes with a `useEffect` cleanup.
 
 ## Recent documents
 
@@ -190,12 +188,11 @@ function AccentDot(): React.ReactNode {
 ```
 
 `system.getAppearance()` resolves `{ appearance: "light" | "dark", accentColor: "#rrggbb" }` and
-`system.onAppearanceChange(handler)` subscribes to changes to either — the `AdwStyleManager` accent
-color on GTK, `NSColor.controlAccentColor` on macOS. Reach for it when you need the live accent for
-something dynamic (a status dot, a chart series) instead of a hardcoded hex; see
-[Styling & Design Language](/core-concepts/styling-design-language/#dark-mode-is-automatic) for why
-that's preferred over a color literal. Dark/light itself needs no polling: unstyled widgets and
-`cssClasses` already track the system automatically.
+`system.onAppearanceChange(handler)` subscribes to changes in either. The accent is
+`AdwStyleManager`'s on GTK, `NSColor.controlAccentColor` on macOS. Use it when you need the live
+accent for something dynamic, such as a status dot or a chart series, instead of a hardcoded hex.
+Light and dark itself needs no polling: unstyled widgets and `cssClasses` already track the system.
+See [Styling & Design Language](/core-concepts/styling-design-language/#dark-mode-is-automatic).
 
 ## App-level events
 
@@ -235,11 +232,11 @@ await openPath("/Users/me/notes.md");          // OS default app for the file
 await revealPath("/Users/me/notes.md");        // reveal + select in Finder/file manager
 ```
 
-`openExternal`, `openPath`, and `revealPath` are plain TypeScript: they spawn `open`/`xdg-open`
-(and, for `revealPath` on Linux, the freedesktop `FileManager1` D-Bus interface, falling back to
-`xdg-open` on the containing directory) directly in the app's own Bun process. They don't round-trip
-through the host and aren't gated by the ACL, because the Bun child is already a full, unsandboxed
-runtime; see [Architecture](/core-concepts/architecture/).
+`openExternal`, `openPath`, and `revealPath` are plain TypeScript. They spawn `open` or `xdg-open`
+directly in the app's Bun process (`revealPath` on Linux uses the freedesktop `FileManager1` D-Bus
+interface, falling back to `xdg-open` on the containing directory). They do not round-trip through
+the host and are not ACL-gated, because the Bun child is already a full unsandboxed runtime. See
+[Architecture](/core-concepts/architecture/).
 
 ## Permissions
 
@@ -273,13 +270,13 @@ easy to trace back to the missing grant.
 
 ## How it works
 
-Every `dialog`/`clipboard`/`notification`/`recentDocuments`/`credentials`/`system`/`audio` call sends
-an id-correlated `systemRequest` NDP frame to the host, which resolves the method to a `core:*` capability, runs the
-ACL check, and, for an allowed request, runs the real native API on the UI thread before replying
-with a `systemResponse` frame that settles the promise. `app.on*` subscriptions instead receive
-host-initiated `systemEvent` frames, pushed whenever the OS delivers an activation, launch, or file
-drop; `audio.onState`/`audio.onSpectrum` ride the same channel. The shell helpers (`openExternal`,
-`openPath`, `revealPath`) never touch this path. They run entirely in the Bun process.
+Every `dialog`, `clipboard`, `notification`, `recentDocuments`, `credentials`, `system`, and `audio`
+call sends an id-correlated `systemRequest` NDP frame to the host. The host resolves the method to a
+`core:*` capability, runs the ACL check, and for an allowed request runs the real native API on the
+UI thread before replying with a `systemResponse` frame that settles the promise. `app.on*`
+subscriptions receive host-initiated `systemEvent` frames instead, pushed whenever the OS delivers
+an activation, launch, or file drop; `audio.onState` and `audio.onSpectrum` ride the same channel.
+The shell helpers never touch this path.
 
 ## Platform notes
 

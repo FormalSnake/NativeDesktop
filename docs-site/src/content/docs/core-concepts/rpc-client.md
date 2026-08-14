@@ -4,11 +4,10 @@ description: "@nativedesktop/rpc: a resilient JSON-RPC 2.0 client with a reconne
 ---
 
 The Bun child is a full runtime, so an app that talks to a local daemon or a remote server just
-opens a socket. What it should not hand-roll is everything that goes wrong afterwards: silent
-half-open sockets, reconnect storms, calls fired during a blip, laptops waking from suspend.
-`@nativedesktop/rpc` (`packages/rpc/`) packages that machinery: a JSON-RPC 2.0 client with an
-exponential-backoff reconnect ladder, a handshake gate, call queueing across drops, and an
-rx-silence watchdog. Zero runtime dependencies; the core entry has no React in it.
+opens a socket. `@nativedesktop/rpc` (`packages/rpc/`) handles what goes wrong afterwards: silent
+half-open sockets, reconnect storms, calls fired during a blip, laptops waking from suspend. It is a
+JSON-RPC 2.0 client with an exponential-backoff reconnect ladder, a handshake gate, call queueing
+across drops, and an rx-silence watchdog. Zero runtime dependencies, and no React in the core entry.
 
 ## Setup
 
@@ -63,8 +62,7 @@ afterwards; the built-ins do.
 
 ## The reconnect ladder
 
-Failure handling follows a small number of hard rules, ported from a production control-plane
-client:
+Five rules govern failure handling:
 
 - **Fail fast only before first success.** A first `connect()` against a dead endpoint rejects
   (`state: "offline"`), so an interactive flow can roll back a typo'd address. Once the handshake

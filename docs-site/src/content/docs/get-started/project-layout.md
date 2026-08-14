@@ -3,12 +3,12 @@ title: Project Layout
 description: Where the widget schema, generated bindings, core, and app code live in the NativeDesktop repository.
 ---
 
-NativeDesktop is a monorepo. These are the pieces that matter when you build an app, or when you
-work on the framework itself.
+NativeDesktop is a monorepo. These are the pieces that matter when you build an app or work on the
+framework itself.
 
 ## `schema/widgets.json`, the single source of truth
 
-Every widget's props, defaults, events, commands, and automation role is declared once, here.
+Every widget's props, defaults, events, commands, and automation role is declared here, once.
 Nothing about a widget's shape is hand-written anywhere else. `tools/codegen.ts` reads this file and
 generates:
 
@@ -63,7 +63,8 @@ bridges `libnd.a`.
 
 ## `examples/`
 
-Eighteen driven apps that stress-test the framework. The ones to read first:
+Eighteen driven apps that stress-test the framework (see [Example Apps](/get-started/examples/) for
+all of them with screenshots). The ones to read first:
 
 - `examples/counter/`: the minimal app. State, a click handler, `Suspense`, and an interval, in one
   `<window>`.
@@ -77,22 +78,26 @@ Eighteen driven apps that stress-test the framework. The ones to read first:
 
 ## `template/`
 
-What `scripts/new-app.sh` copies to start a new app: a `package.json` linking `@nativedesktop/react`,
-`@nativedesktop/native`, `@nativedesktop/cli` (bin `nd`), and transitively `@nativedesktop/host`
-through `file:` paths into this checkout (a scaffold made from a checkout exercises the checkout, not
-the npm registry the template's own `^0.1.0` ranges point at), a `src/main.tsx` entry, a
-`babel.config.json` for the opt-in React Compiler and hook-import rewrite, and a `bunfig.toml` that
-preloads the `bun --hot` twin of that rewrite and pins `install.linker = "hoisted"` (Bun 1.3+ defaults
-a lockfile-less install to the isolated linker once workspaces are involved, which can leave a
-`file:`/`link:`-referenced package's own dependencies unresolved at runtime).
+What `scripts/new-app.sh` copies to start a new app:
+
+- A `package.json` linking `@nativedesktop/react`, `@nativedesktop/native`, `@nativedesktop/cli`
+  (bin `nd`), and transitively `@nativedesktop/host` through `file:` paths into this checkout, so a
+  scaffold made from a checkout exercises the checkout rather than the npm registry the template's
+  own `^0.1.0` ranges point at.
+- A `src/main.tsx` entry.
+- A `babel.config.json` for the opt-in React Compiler and hook-import rewrite.
+- A `bunfig.toml` preloading the `bun --hot` twin of that rewrite, pinning
+  `install.linker = "hoisted"`. Bun 1.3+ defaults a lockfile-less install to the isolated linker
+  once workspaces are involved, which can leave a `file:`/`link:`-referenced package's own
+  dependencies unresolved at runtime.
 
 ## `tools/` and `scripts/`
 
 `tools/` holds build-time scripts invoked directly with `bun`: `tools/codegen.ts` (schemas to
-bindings and docs), `tools/package.ts` (a thin shim that packages the gallery example through the
-real `nd package` implementation in `packages/nd/src/package/`, see [Packaging](/packaging/)), and
+bindings and docs), `tools/package.ts` (a shim that packages the gallery example through the real
+`nd package` implementation in `packages/nd/src/package/`, see [Packaging](/packaging/)), and
 `tools/ndshot/` for macOS screen capture. The `nd` CLI covers `nd dev`, `nd build`, `nd package`,
 and `nd doctor`. There is no `nd codegen`.
 
-`scripts/` holds the headless drive scripts the CI gate runs, `new-app.sh`, and
+`scripts/` holds the headless drive scripts the CI gate runs, plus `new-app.sh` and
 `regen-bindings.sh`.

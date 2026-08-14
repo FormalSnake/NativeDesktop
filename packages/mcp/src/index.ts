@@ -1,10 +1,9 @@
 #!/usr/bin/env bun
 // Stdio MCP server wrapping the NativeDesktop automation socket (ND_AUTOMATION_SOCKET).
 // Exposes the full automation RPC surface as agent tools, each a thin pass-through to
-// the framed JSON-RPC automation server (see docs/superpowers/plans
-// /2026-07-09-m4-automation.md for v1; input synthesis + a11y tree are M16).
-// pointer/drag/keys/double/right-click/hover post real native events on macOS and
-// answer -32003 on GTK (no in-process event synthesis on GTK4).
+// the framed JSON-RPC automation server. pointer/drag/keys/double/right-click/hover
+// post real native events on macOS and answer -32003 on GTK (no in-process event
+// synthesis on GTK4).
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

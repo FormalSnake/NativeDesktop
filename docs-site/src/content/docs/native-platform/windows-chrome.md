@@ -24,7 +24,7 @@ and windows sharing a `tabGroup` render as one tabbed window with
 [native system tabs](/native-platform/tabs/).
 
 The window's root child is inset by the platform's standard content margin (20pt on AppKit, 12px on
-GTK), so a button's corners aren't sliced by the window frame and a label's first glyph isn't half
+GTK), so a button's corners are not sliced by the window frame and a label's first glyph is not half
 off-screen. Two opt-outs on both backends: a root built around something that scrolls runs edge to
 edge (GTK counts a `<terminal>` or `<webview>` root as edge-to-edge too), and a root you padded
 yourself keeps exactly the padding it asked for rather than getting both.
@@ -37,11 +37,11 @@ nothing to drag by and no close button. A tree that declares its own `<toolbarvi
 Three create-only props shape the window chrome further:
 
 - `toolbarStyle` (`unified` default, `unifiedCompact`, `expanded`, `preference`) picks the macOS
-  `NSWindow.ToolbarStyle` once a `<headerbar>` attaches the unified toolbar — a settings window
-  declares `preference` and gets labelled toolbar items with the window title visible; the
-  `unified` styles keep the transparent-titlebar sidebar treatment and draw their toolbar items
-  icon-only, with each item's label reaching the overflow menu and VoiceOver instead. GTK's native
-  chrome is the one `AdwHeaderBar` idiom, so the prop is deliberately inert there.
+  `NSWindow.ToolbarStyle` once a `<headerbar>` attaches the unified toolbar. A settings window
+  declares `preference` and gets labelled toolbar items with the window title visible. The `unified`
+  styles keep the transparent-titlebar sidebar treatment and draw their toolbar items icon-only,
+  with each item's label reaching the overflow menu and VoiceOver instead. GTK's native chrome is
+  the one `AdwHeaderBar` idiom, so the prop is inert there.
 - `frameAutosaveName` persists the window's frame across launches under that key
   (`NSWindow.setFrameAutosaveName`), and doubles as the toolbar-customization autosave key: with it
   set, the unified toolbar allows user customization and saves the configuration. GTK4 dropped
@@ -84,38 +84,36 @@ shared window titlebar:
 </toolbarview>
 ```
 
-The two platforms render this identically-shaped tree differently, on purpose:
+The two platforms render this identically shaped tree differently:
 
 - On Linux, each `<toolbarview>` adds its `<headerbar>` as a real top bar
-  (`AdwToolbarView.addTopBar`). You get two independent `AdwHeaderBar`s, one per pane, the
+  (`AdwToolbarView.addTopBar`), giving two independent `AdwHeaderBar`s, one per pane. That is the
   native GNOME idiom for a sidebar app.
-- On macOS, the two `<headerbar>`s don't each create their own bar. Their items merge into
-  one unified `NSToolbar` spanning the window's top edge, split by an
-  `NSTrackingSeparatorToolbarItem` aligned to the split's divider: the sidebar's items sit left of
-  it, the content pane's items sit right of it. This is the native macOS idiom (Notes.app, Mail),
-  achieved via `.fullSizeContentView` + `titlebarAppearsTransparent` so the sidebar's vibrancy
-  reaches the very top, with the traffic-light window controls floating over it.
+- On macOS, the two `<headerbar>`s do not each create their own bar. Their items merge into one
+  unified `NSToolbar` spanning the window's top edge, split by an `NSTrackingSeparatorToolbarItem`
+  aligned to the split's divider: the sidebar's items left of it, the content pane's right of it.
+  This is the native macOS idiom (Notes, Mail), achieved via `.fullSizeContentView` and
+  `titlebarAppearsTransparent` so the sidebar's vibrancy reaches the very top, with the
+  traffic-light window controls floating over it.
 
-`<headerbar title="…">` sets the pane's title, and updates in place when it changes. On macOS every
-pane's header contributes its own title item to the shared toolbar, sidebar, list and inspector
-panes included, not just the content pane. On children, the `slot` attached prop (`start`/`end`)
-positions items on either side of the title.
+`<headerbar title="…">` sets the pane's title and updates in place. On macOS every pane's header
+contributes its own title item to the shared toolbar, sidebar, list, and inspector panes included.
+On children, the `slot` attached prop (`start`/`end`) positions items on either side of the title.
 
-On macOS, header `<button>` children are promoted to **system-drawn toolbar items** (image/action,
-no embedded custom view): the Tahoe item glass is the only bezel, runs of adjacent buttons group
-into one `NSToolbarItemGroup`, every item carries a real label for the overflow menu and VoiceOver
-(derived from the button's label, tooltip, or icon name), and the `prominent`/`badge` Button props
-render as `.prominent` tint and a native `NSItemBadge`. Non-interactive header children (labels,
-spinners, images) opt out of the item treatment. A `<togglebutton>` keeps its own view so its
-on/off state stays visible.
+On macOS, header `<button>` children are promoted to system-drawn toolbar items with no embedded
+custom view. The Tahoe item glass is the only bezel, runs of adjacent buttons group into one
+`NSToolbarItemGroup`, every item carries a real label for the overflow menu and VoiceOver (derived
+from the button's label, tooltip, or icon name), and the `prominent` and `badge` Button props render
+as `.prominent` tint and a native `NSItemBadge`. Non-interactive header children (labels, spinners,
+images) opt out. A `<togglebutton>` keeps its own view so its on/off state stays visible.
 
 ## Inspector pane and edge-to-edge content
 
-`<splitview>` also accepts a `slot="inspector"` pane — the HIG utility pane alongside content
-(edge-to-edge glass, unlike the sidebar's floating pane). On macOS it is a real
+`<splitview>` also accepts a `slot="inspector"` pane, the HIG utility pane alongside content. It is
+edge-to-edge glass, unlike the sidebar's floating pane. On macOS it is a real
 `NSSplitViewItem(inspectorWithViewController:)` pinned to the trailing edge with no tracking
 separator on its divider; on GTK it renders as an end-positioned `AdwOverlaySplitView` sidebar.
-`examples/inspector/` exercises it together with `prominent`/`badge` toolbar items.
+`examples/inspector/` exercises it alongside `prominent` and `badge` toolbar items.
 
 Panes whose content root scrolls (a `<scrollview>`, `<textarea>`, or a box holding just one)
 extend edge-to-edge under the floating glass chrome: the scroll view insets its content via the
@@ -131,9 +129,8 @@ glass blurs) while its layout stays inset past it. List and plain content panes 
 effect under toolbar items and split item accessories, and a bar stacked as a plain subview gets
 none.
 
-## Where this is headed
+## Not implemented yet
 
-A three-pane `<splitview>` (`sidebar`/`list`/`content`) and a dedicated `<menubar>` widget have
-landed; see [Split Views](/native-platform/split-views/) and [Menu Bar](/native-platform/menu-bar/).
-A `<window>` that composes more than one independent split is on the roadmap. Check back here
-once it lands rather than assuming prop names in advance.
+A `<window>` composing more than one independent split. The three-pane `<splitview>`
+(`sidebar`/`list`/`content`) and the `<menubar>` widget have landed; see
+[Split Views](/native-platform/split-views/) and [Menu Bar](/native-platform/menu-bar/).
