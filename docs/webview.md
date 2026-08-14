@@ -44,6 +44,43 @@ sendCommand(wv.current!, "openDevTools");
 const ua = await executeJavaScript(wv.current!, "navigator.userAgent");
 ```
 
+## Extension surface
+
+```tsx
+import { webviewEngine, executeJavaScript, getCookies, onCookiesResult } from "@nativedesktop/react";
+
+// Custom schemes bind to a frozen engine configuration — register BEFORE the
+// first <webview> mounts, then answer `schemeRequest` with `respondScheme`.
+await webviewEngine.registerScheme("crx");
+
+// User scripts, in the page's world or a named isolated one.
+sendCommand(wv.current!, "addUserScript", {
+  id: "content-script",
+  source: "window.__ext = 1",
+  injectionTime: "start",          // "start" | "end" (default)
+  world: "ext",                     // omit for the page's own world
+  allFrames: true,
+  allowList: ["https://*.example.com/*"],
+});
+sendCommand(wv.current!, "removeUserScript", { id: "content-script" });
+sendCommand(wv.current!, "clearUserScripts", { world: "ext" });
+
+// Page -> app messages: window.webkit.messageHandlers.bridge.postMessage(v)
+sendCommand(wv.current!, "registerScriptMessage", { name: "bridge", world: "ext" });
+
+// World-scoped eval reads what the isolated script stored.
+const value = await executeJavaScript(wv.current!, "window.__ext", "ext");
+
+// Cookies on the view's own profile.
+const cookies = await getCookies(wv.current!, "https://example.com/");
+sendCommand(wv.current!, "setCookie", { name: "a", value: "1", domain: "example.com", path: "/" });
+sendCommand(wv.current!, "deleteCookie", { name: "a", domain: "example.com", path: "/" });
+```
+
+Create-only props: `profile` (`""` = shared default, `private…` = ephemeral, any other name = its
+own persistent partition) and `suppressContextMenu` (the engine menu is suppressed and the app
+shows a native one off the `contextMenu` event).
+
 ## Event semantics
 
 `loadProgress` carries `{ value }`, an estimated 0..1 load progress, emitted on
@@ -66,12 +103,54 @@ intended path. `data:` URLs report `suggestedFilename: "Unknown"`.
 
 `javaScriptResult` carries `{ data: { id, ok, value?, error? } }` when
 `executeJavaScript` completes. Apps normally never touch it: pass the exported
-`onJavaScriptResult` handler and use the promise helper.
+`onJavaScriptResult` handler and use the promise helper. `cookiesResult` and
+`sessionSaved` follow the same id-correlated pattern behind `getCookies` and
+`saveSession`.
+
+`scriptMessage` carries `{ data: { name, world, body } }`. `body` is the posted
+value already decoded, so an object arrives as an object.
+
+`schemeRequest` carries `{ data: { id, url, scheme } }` on the view that made
+the request. Answer it with `respondScheme` (`{ id, base64, mime, status? }`, or
+`{ id, error }` to fail it); an unanswered id leaves the page waiting.
+
+`faviconChanged` carries `{ dataUrl }` on GTK (WebKit keeps a favicon database
+and the icon is encoded to a PNG data URL, capped at 48 KB of PNG) and
+`{ pageUrl, iconUrl }` on macOS, where WKWebView has no favicon API and the
+app fetches the bytes itself. Handle both.
+
+`findResult` carries `{ matchFound, matchCount?, done }`. `done: false` is a
+match-count update, which only WebKitGTK produces; `WKFindResult` reports
+match/no-match with no total, so `matchCount` is optional.
+
+`securityChanged` carries `{ secure, insecureContent, url?, error? }` on
+navigation commit, on mixed-content detection, and on a TLS failure. TLS errors
+are never auto-accepted: the load fails and the event carries the reason.
+
+`linkHover` (`{ text }`, empty on clear), `contextMenu`
+(`{ data: { x, y, link?, image?, selection?, hasSelection, editable } }`) and
+`audioStateChanged` (`{ data: { playing, muted } }`) are native WebKit signals
+on GTK. WKWebView exposes none of them, so on macOS they are observed in the
+page by the framework's own user script in a private world (`nd-internal`,
+handler `__ndInternal`) — those two names are reserved. `selection` carries the
+selected text only on macOS; WebKitGTK's hit test reports `hasSelection` alone.
 
 ## Command notes
 
-`executeJavaScript` takes `{ id, code }`. Prefer the promise helper. JS
-exceptions reject with the real message, for example `Error: boom`.
+`executeJavaScript` takes `{ id, code, world? }`. Prefer the promise helper
+(`executeJavaScript(node, code, world?)`). JS exceptions reject with the real
+message, for example `Error: boom`.
+
+`addUserScript` is a keyed registry: re-adding an `id` replaces it. GTK removes
+a script by identity through `WebKitUserContentManager`; WKUserContentController
+can only clear everything, so the AppKit side replays the surviving set on each
+mutation. `allowList`/`blockList` are native on GTK and compiled into a guard
+around the source on macOS, which WebKit gives no other way to express.
+
+`getCookies`/`setCookie`/`deleteCookie` act on the view's own profile.
+Deletion matches by name plus whichever of domain/path is given, and both
+backends read the live cookie first — each engine's jar deletes by identity, so
+a synthesized cookie never matches.
 
 `setZoom` takes a number, the page zoom factor. `setUserAgent` takes a string,
 and an empty string restores the engine default.
@@ -110,7 +189,20 @@ The opt-in is structural rather than a runtime flag:
   upstream (CEF issue #2804; ANGLE's Wayland support merged 2026-05); until it
   lands, embedded CEF on Wayland means off-screen rendering or XWayland.
 
-Status: the extended `<webview>` API above is implemented on both backends
-(runtime-verified on AppKit; GTK pending the Linux verification gate). CEF
-integration exists as a macOS proof-of-concept via the native-plugin seam and
-is not yet part of the framework.
+## Verification
+
+`scripts/headless-webview.sh` runs `examples/webview-probe` under weston and
+drives it with `scripts/webview-drive.ts` (marker `ND_WEBVIEW2_OK`). The probe
+hosts its own HTTP fixture and answers its own custom scheme, so the whole
+round trip stays in one process. The same drive script runs against the AppKit
+host directly.
+
+GTK4 removed app-constructible input events, so the automation socket cannot
+synthesize a pointer move or a right-click: `linkHover` and `contextMenu` report
+`skip` on GTK and are runtime-verified on AppKit, where they ride the page-side
+agent and a JS-dispatched event exercises the whole path. Everything else is
+runtime-verified on both backends.
+
+Status: the extended `<webview>` API above is implemented and runtime-verified
+on both backends. CEF integration exists as a macOS proof-of-concept via the
+native-plugin seam and is not yet part of the framework.
