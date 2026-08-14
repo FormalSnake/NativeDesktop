@@ -30,7 +30,14 @@ for dir in \
   echo "publishing $dir"
   (
     cd "$dir"
-    tarball="$(bun pm pack --quiet)"
+    # Take the last .tgz line rather than the whole of stdout: `bun pm pack
+    # --quiet` also emits blank//informational lines, and the stray newline
+    # ends up inside the path npm then fails to open (ENOENT on a filename
+    # with a leading newline, which is how v0.1.0 and the first v0.1.1 tag
+    # died on the very first package).
+    tarball="$(bun pm pack --quiet | tr -d '\r' | awk '/\.tgz$/ { last = $0 } END { if (last != "") print last }')"
+    [ -n "$tarball" ] || { echo "FAIL: bun pm pack printed no .tgz name in $dir"; exit 1; }
+    [ -f "$tarball" ] || { echo "FAIL: bun pm pack reported '$tarball' in $dir but it is not a file"; exit 1; }
     npm publish "$tarball" "${flags[@]}"
     rm -f "$tarball"
   )
