@@ -281,6 +281,8 @@ Automation role: `webview`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `url` | string |  | createAndUpdate |
+| `profile` | string |  | create |
+| `suppressContextMenu` | bool | false | create |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -295,8 +297,19 @@ Automation role: `webview`. Text source: none. Children: none.
 | `newWindow` | `onNewWindow` | text |
 | `downloadRequested` | `onDownloadRequested` | data |
 | `javaScriptResult` | `onJavaScriptResult` | data |
+| `scriptMessage` | `onScriptMessage` | data |
+| `schemeRequest` | `onSchemeRequest` | data |
+| `cookiesResult` | `onCookiesResult` | data |
+| `cookiesChanged` | `onCookiesChanged` | data |
+| `faviconChanged` | `onFaviconChanged` | data |
+| `findResult` | `onFindResult` | data |
+| `securityChanged` | `onSecurityChanged` | data |
+| `linkHover` | `onLinkHover` | text |
+| `contextMenu` | `onContextMenu` | data |
+| `sessionSaved` | `onSessionSaved` | data |
+| `audioStateChanged` | `onAudioStateChanged` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`.
 
 ## NativeView (`<nativeview>`)
 

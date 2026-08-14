@@ -2064,7 +2064,8 @@ function genZigCreateBody(w: Widget): string {
     out += "        // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at\n";
     out += "        // runtime; placeholder label otherwise (M5b-D7: no hard link dep).\n";
     out += "        const url: ?[*:0]const u8 = if (propStr(props, \"url\")) |u| dupeZ(u).ptr else null;\n";
-    out += "        return ndweb_gtk.create(url);\n";
+    out += "        const profile: []const u8 = propStr(props, \"profile\") orelse \"\";\n";
+    out += "        return ndweb_gtk.create(url, profile, propBool(props, \"suppressContextMenu\") orelse false);\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
     out += "        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is\n";
@@ -2816,6 +2817,17 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.newWindow":           { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.downloadRequested":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.javaScriptResult":    { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.scriptMessage":       { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.schemeRequest":       { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.cookiesResult":       { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.cookiesChanged":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.faviconChanged":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.findResult":          { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.securityChanged":     { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.linkHover":           { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.contextMenu":         { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.sessionSaved":        { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.audioStateChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
   "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
@@ -4163,7 +4175,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "SourceList") {
     out += "        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)\n";
   } else if (w.name === "WebView") {
-    out += '        return NDWebView(url: propStr(props, "url"))  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
+    out += '        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", suppressContextMenu: propBool(props, "suppressContextMenu") ?? false)  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
   } else if (w.name === "SplitView") {
     // NSSplitViewController (not a bare NSSplitView) is what earns the
     // automatic Liquid Glass sidebar treatment on macOS 26 — see
@@ -4705,6 +4717,17 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.newWindow":           { selector: "webview", payload: "text" },
   "WebView.downloadRequested":   { selector: "webview", payload: "data" },
   "WebView.javaScriptResult":    { selector: "webview", payload: "data" },
+  "WebView.scriptMessage":       { selector: "webview", payload: "data" },
+  "WebView.schemeRequest":       { selector: "webview", payload: "data" },
+  "WebView.cookiesResult":       { selector: "webview", payload: "data" },
+  "WebView.cookiesChanged":      { selector: "webview", payload: "data" },
+  "WebView.faviconChanged":      { selector: "webview", payload: "data" },
+  "WebView.findResult":          { selector: "webview", payload: "data" },
+  "WebView.securityChanged":     { selector: "webview", payload: "data" },
+  "WebView.linkHover":           { selector: "webview", payload: "text" },
+  "WebView.contextMenu":         { selector: "webview", payload: "data" },
+  "WebView.sessionSaved":        { selector: "webview", payload: "data" },
+  "WebView.audioStateChanged":   { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
   "Terminal.titleChanged":       { selector: "terminal", payload: "text" },

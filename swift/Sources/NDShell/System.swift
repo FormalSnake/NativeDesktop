@@ -52,6 +52,19 @@ enum NDSystem {
         case "system.getAppearance":
             ensureAppearanceWatch()
             respondResult(id, appearancePayload())
+        case "webviewEngine.registerScheme":
+            // WebKit binds scheme handlers to a WKWebViewConfiguration, which
+            // is frozen once a view exists, so this must land before the first
+            // <webview> mounts (the GTK peer enforces the same ordering).
+            guard let scheme = propStr(params, "scheme") else {
+                respondError(id, "registerScheme needs {scheme}")
+                return
+            }
+            if let failure = ndWebViewRegisterScheme(scheme) {
+                respondError(id, failure)
+            } else {
+                respondResult(id, "null")
+            }
         default:
             // The core already gates truly unknown methods before dispatch here.
             respondError(id, "not implemented")

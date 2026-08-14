@@ -36,6 +36,10 @@ pub const Acl = struct {
         self.default_perms.put(a, "core:clipboard.write", {}) catch {};
         self.default_perms.put(a, "core:audio", {}) catch {};
         self.default_perms.put(a, "core:system", {}) catch {};
+        // Engine-level webview configuration (custom URI scheme registration).
+        // It only affects the app's own embedded web content, so it rides the
+        // same default-granted tier as dialogs.
+        self.default_perms.put(a, "core:webview", {}) catch {};
         return self;
     }
 
@@ -120,6 +124,7 @@ test "default policy grants core ops, denies plugin ops" {
     try std.testing.expect(acl.isAllowed(0, "core:clipboard.write"));
     try std.testing.expect(acl.isAllowed(0, "core:audio"));
     try std.testing.expect(acl.isAllowed(0, "core:system"));
+    try std.testing.expect(acl.isAllowed(0, "core:webview"));
     // Privileged system capabilities stay default-deny.
     try std.testing.expect(!acl.isAllowed(0, "core:clipboard.read"));
     try std.testing.expect(!acl.isAllowed(0, "core:credentials"));

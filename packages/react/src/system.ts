@@ -272,6 +272,25 @@ export const system = {
   },
 };
 
+// --- webview engine -----------------------------------------------------------------
+
+/** Engine-level `<webview>` configuration. `core:webview` is default-granted. */
+export const webviewEngine = {
+  /**
+   * Registers a custom URI scheme (`crx`, `app`, …) with the web engine.
+   * Requests for it arrive as the `schemeRequest` event on the `<webview>`
+   * that made them, and the app answers with the `respondScheme` command.
+   *
+   * MUST be called before the first `<webview>` mounts: WebKit binds scheme
+   * handlers to a configuration/context that is frozen once a view exists.
+   * Calling it later rejects with "registerScheme must be called before the
+   * first <webview> mounts".
+   */
+  async registerScheme(scheme: string): Promise<void> {
+    await call("webviewEngine.registerScheme", { scheme });
+  },
+};
+
 // --- audio -----------------------------------------------------------------
 
 export interface AudioPlayOptions {

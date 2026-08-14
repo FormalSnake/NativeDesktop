@@ -1519,7 +1519,8 @@ pub fn create(
         // Real WebKitGTK surface when libwebkitgtk-6.0 is dlopen-able at
         // runtime; placeholder label otherwise (M5b-D7: no hard link dep).
         const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
-        return ndweb_gtk.create(url);
+        const profile: []const u8 = propStr(props, "profile") orelse "";
+        return ndweb_gtk.create(url, profile, propBool(props, "suppressContextMenu") orelse false);
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         const view_kind = propStr(props, "viewKind") orelse "";
         const props_json = propStr(props, "props") orelse "{}";

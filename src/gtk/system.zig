@@ -18,6 +18,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const abi = @import("../abi.zig");
 const audio = @import("audio.zig");
+const webview = @import("webview.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -66,7 +67,25 @@ pub fn handleRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params
     if (std.mem.eql(u8, m, "credentials.get")) return credentialsGet(ctx, id, p);
     if (std.mem.eql(u8, m, "credentials.delete")) return credentialsDelete(ctx, id, p);
     if (std.mem.eql(u8, m, "system.getAppearance")) return getAppearance(ctx, id);
+    if (std.mem.eql(u8, m, "webviewEngine.registerScheme")) return registerScheme(ctx, id, p);
     respond(ctx, id, false, "not implemented");
+}
+
+/// `webviewEngine.registerScheme` — WebKit wants custom schemes registered on
+/// the web context before any content asks for them, so this is an app-level
+/// call rather than a `<webview>` command. Requests then arrive as the
+/// `schemeRequest` event on the view that made them.
+fn registerScheme(ctx: *abi.NdContext, id: u32, p: []const u8) void {
+    const parsed = parseParams(struct { scheme: []const u8 }, p) orelse
+        return respond(ctx, id, false, "registerScheme needs {scheme}");
+    defer parsed.deinit();
+    webview.registerScheme(parsed.value.scheme) catch |err| return respond(ctx, id, false, switch (err) {
+        error.Unsupported => "custom URI schemes unavailable (webkitgtk missing or too old)",
+        error.TooLate => "registerScheme must be called before the first <webview> mounts",
+        error.AlreadyRegistered => "scheme already registered",
+        error.Invalid => "invalid scheme name (lowercase letters, digits, '+', '-' and '.' only)",
+    });
+    respond(ctx, id, true, "null");
 }
 
 // ============================================================================

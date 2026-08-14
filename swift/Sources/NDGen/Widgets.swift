@@ -295,7 +295,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ListView" {
         return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)
     } else if kind == "WebView" {
-        return NDWebView(url: propStr(props, "url"))  // WKWebView subclass (M14, NDShell/NDWebView.swift)
+        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", suppressContextMenu: propBool(props, "suppressContextMenu") ?? false)  // WKWebView subclass (M14, NDShell/NDWebView.swift)
     } else if kind == "NativeView" {
         let viewKind = propStr(props, "viewKind") ?? ""
         let propsJson = propStr(props, "props") ?? "{}"

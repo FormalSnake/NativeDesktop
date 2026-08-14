@@ -7,7 +7,15 @@ export type { SpacingScale } from "./metrics.ts";
 export { getAppDataDir, ensureAppDataDir } from "./paths.ts";
 export { defineNativeComponent } from "./native-component.ts";
 export type { NativeComponentOptions, NativeComponentProps, NativeComponentRef } from "./native-component.ts";
-export { executeJavaScript, onJavaScriptResult } from "./webview.ts";
+export {
+  executeJavaScript,
+  onJavaScriptResult,
+  getCookies,
+  onCookiesResult,
+  saveSession,
+  onSessionSaved,
+} from "./webview.ts";
+export type { Cookie } from "./webview.ts";
 export {
   showAlert,
   openFile,
@@ -57,7 +65,7 @@ export {
   Suspense,
   Fragment,
 } from "./dev-react.ts";
-export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio } from "./system.ts";
+export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio, webviewEngine } from "./system.ts";
 export type {
   FileFilter,
   OpenFileOptions,

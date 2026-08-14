@@ -394,6 +394,8 @@
       "container": null,
       "props": [
         { "name": "url", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
+        { "name": "profile", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "suppressContextMenu", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -406,9 +408,28 @@
         { "name": "loadFailed", "ndpName": "onLoadFailed", "payload": "data" },
         { "name": "newWindow", "ndpName": "onNewWindow", "payload": "text" },
         { "name": "downloadRequested", "ndpName": "onDownloadRequested", "payload": "data" },
-        { "name": "javaScriptResult", "ndpName": "onJavaScriptResult", "payload": "data" }
+        { "name": "javaScriptResult", "ndpName": "onJavaScriptResult", "payload": "data" },
+        { "name": "scriptMessage", "ndpName": "onScriptMessage", "payload": "data" },
+        { "name": "schemeRequest", "ndpName": "onSchemeRequest", "payload": "data" },
+        { "name": "cookiesResult", "ndpName": "onCookiesResult", "payload": "data" },
+        { "name": "cookiesChanged", "ndpName": "onCookiesChanged", "payload": "data" },
+        { "name": "faviconChanged", "ndpName": "onFaviconChanged", "payload": "data" },
+        { "name": "findResult", "ndpName": "onFindResult", "payload": "data" },
+        { "name": "securityChanged", "ndpName": "onSecurityChanged", "payload": "data" },
+        { "name": "linkHover", "ndpName": "onLinkHover", "payload": "text" },
+        { "name": "contextMenu", "ndpName": "onContextMenu", "payload": "data" },
+        { "name": "sessionSaved", "ndpName": "onSessionSaved", "payload": "data" },
+        { "name": "audioStateChanged", "ndpName": "onAudioStateChanged", "payload": "data" }
       ],
-      "commands": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools"],
+      "commands": [
+        "goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools",
+        "addUserScript", "removeUserScript", "clearUserScripts",
+        "registerScriptMessage", "unregisterScriptMessage",
+        "respondScheme",
+        "getCookies", "setCookie", "deleteCookie",
+        "findStart", "findNext", "findPrevious", "findStop",
+        "saveSession", "restoreSession", "setMuted"
+      ],
       "automation": { "role": "webview", "textFrom": null }
     },
     {

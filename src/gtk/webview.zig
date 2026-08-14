@@ -5,8 +5,18 @@
 // of C entry points this file needs are resolved once with std.DynLib, so the
 // pinned flake and the mac GTK build (brew has no webkitgtk) stay untouched
 // and degrade to the placeholder instead of failing to link.
+//
+// The same rule governs the browser/extension surface below (user scripts,
+// script messages, custom URI schemes, cookies, find-in-page, favicons, TLS
+// state, context menus, profiles, session state, audio): every symbol is
+// looked up on its own and a missing one degrades ONLY its feature, with one
+// ND_WARN line at load time. libsoup-3.0 (SoupCookie construction) and
+// libjavascriptcoregtk (JSCValue serialization) get their own dlopens for the
+// same reason.
 const std = @import("std");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
+const gio = @import("gio");
 const gobject = @import("gobject");
 const glib = @import("glib");
 const protocol = @import("../protocol.zig");
@@ -15,11 +25,15 @@ const protocol = @import("../protocol.zig");
 /// instance) — handed over once by the generated connectEvents WebView arm.
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
+const alloc = std.heap.page_allocator;
+
 const MARKER_KEY = "nd-webview-real";
 const NODE_ID_KEY = "nd-webview-node-id";
 const PROGRESS_KEY = "nd-webview-last-progress";
+const STATE_KEY = "nd-webview-state";
 
 // WebKitLoadEvent (WebKitGTK 6.0): STARTED=0, REDIRECTED=1, COMMITTED=2, FINISHED=3.
+const WEBKIT_LOAD_COMMITTED: c_int = 2;
 const WEBKIT_LOAD_FINISHED: c_int = 3;
 // WebKitNetworkError (WebKitGTK 6.0, webkit2/WebKitError.h) — the codes we
 // filter loadFailed on, so cancelling a navigation doesn't spam apps.
@@ -30,6 +44,28 @@ const WEBKIT_NETWORK_ERROR_CANCELLED: c_int = 302;
 // loadFailed right after downloadRequested. Peer of the AppKit backend
 // filtering WebKitErrorDomain 102 in NDWebView.swift.
 const WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE: c_int = 102;
+
+// WebKitUserContentInjectedFrames / WebKitUserScriptInjectionTime.
+const INJECT_ALL_FRAMES: c_int = 0;
+const INJECT_TOP_FRAME: c_int = 1;
+const INJECT_AT_DOCUMENT_START: c_int = 0;
+const INJECT_AT_DOCUMENT_END: c_int = 1;
+
+// WebKitFindOptions bits.
+const FIND_CASE_INSENSITIVE: u32 = 1 << 0;
+const FIND_WRAP_AROUND: u32 = 1 << 4;
+const FIND_MAX_MATCHES: c_uint = 1000;
+
+// WebKitHitTestResultContext bits.
+const HIT_LINK: c_uint = 1 << 2;
+const HIT_IMAGE: c_uint = 1 << 3;
+const HIT_MEDIA: c_uint = 1 << 4;
+const HIT_EDITABLE: c_uint = 1 << 5;
+const HIT_SELECTION: c_uint = 1 << 7;
+
+// A favicon larger than this is skipped rather than pushed down the NDP pipe:
+// base64 inflates by 4/3, so this caps the emitted data URL near 64 KB.
+const FAVICON_MAX_PNG_BYTES: usize = 48 * 1024;
 
 const Api = struct {
     web_view_new: *const fn () callconv(.c) *gtk.Widget,
@@ -73,16 +109,46 @@ fn lookupAll(lib: *std.DynLib) ?Api {
 // not libwebkitgtk, so it gets its own fallback dlopen.
 const FnGetF64 = *const fn (*anyopaque) callconv(.c) f64;
 const FnGetPtr = *const fn (*anyopaque) callconv(.c) ?*anyopaque;
+const FnGetPtrNoArg = *const fn () callconv(.c) ?*anyopaque;
 const FnGetCStr = *const fn (*anyopaque) callconv(.c) ?[*:0]const u8;
+const FnGetOwnedCStr = *const fn (*anyopaque) callconv(.c) ?[*:0]u8;
 const FnVoidOnPtr = *const fn (*anyopaque) callconv(.c) void;
+const FnBoolOnPtr = *const fn (*anyopaque) callconv(.c) c_int;
+const FnUIntOnPtr = *const fn (*anyopaque) callconv(.c) c_uint;
 const FnSetF64 = *const fn (*anyopaque, f64) callconv(.c) void;
 const FnSetCStrOpt = *const fn (*anyopaque, ?[*:0]const u8) callconv(.c) void;
 const FnSetBool = *const fn (*anyopaque, c_int) callconv(.c) void;
 const FnQuark = *const fn () callconv(.c) glib.Quark;
+const FnGType = *const fn () callconv(.c) usize;
 const FnEvalJsReady = *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void;
 const FnEvalJs = *const fn (*anyopaque, [*:0]const u8, isize, ?[*:0]const u8, ?[*:0]const u8, ?*anyopaque, ?FnEvalJsReady, ?*anyopaque) callconv(.c) void;
 const FnEvalJsFinish = *const fn (*anyopaque, ?*anyopaque, ?*?*glib.Error) callconv(.c) ?*anyopaque;
 const FnJscToString = *const fn (*anyopaque) callconv(.c) ?[*:0]u8;
+const FnJscToJson = *const fn (*anyopaque, c_uint) callconv(.c) ?[*:0]u8;
+const FnPtrPtr = *const fn (*anyopaque, *anyopaque) callconv(.c) void;
+const FnUserScriptNewForWorld = *const fn ([*:0]const u8, c_int, c_int, [*:0]const u8, ?[*]const ?[*:0]const u8, ?[*]const ?[*:0]const u8) callconv(.c) ?*anyopaque;
+const FnUserScriptNew = *const fn ([*:0]const u8, c_int, c_int, ?[*]const ?[*:0]const u8, ?[*]const ?[*:0]const u8) callconv(.c) ?*anyopaque;
+const FnUcmRegisterHandler = *const fn (*anyopaque, [*:0]const u8, ?[*:0]const u8) callconv(.c) c_int;
+const FnUcmUnregisterHandler = *const fn (*anyopaque, [*:0]const u8, ?[*:0]const u8) callconv(.c) void;
+const FnUriSchemeCallback = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void;
+const FnRegisterUriScheme = *const fn (*anyopaque, [*:0]const u8, FnUriSchemeCallback, ?*anyopaque, ?*anyopaque) callconv(.c) void;
+const FnSchemeFinish = *const fn (*anyopaque, *anyopaque, i64, ?[*:0]const u8) callconv(.c) void;
+const FnSchemeFinishError = *const fn (*anyopaque, *glib.Error) callconv(.c) void;
+const FnSchemeResponseNew = *const fn (*anyopaque, i64) callconv(.c) ?*anyopaque;
+const FnSchemeResponseSetStatus = *const fn (*anyopaque, c_uint, ?[*:0]const u8) callconv(.c) void;
+const FnSchemeResponseSetContentType = *const fn (*anyopaque, [*:0]const u8) callconv(.c) void;
+const FnAsyncReady = *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void;
+const FnCookieGet = *const fn (*anyopaque, ?[*:0]const u8, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
+const FnCookieGetAll = *const fn (*anyopaque, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
+const FnCookieListFinish = *const fn (*anyopaque, ?*anyopaque, ?*?*glib.Error) callconv(.c) ?*glib.List;
+const FnCookieMutate = *const fn (*anyopaque, *anyopaque, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
+const FnCookieMutateFinish = *const fn (*anyopaque, ?*anyopaque, ?*?*glib.Error) callconv(.c) c_int;
+const FnFindSearch = *const fn (*anyopaque, [*:0]const u8, u32, c_uint) callconv(.c) void;
+const FnGetTlsInfo = *const fn (*anyopaque, ?*?*anyopaque, ?*c_uint) callconv(.c) c_int;
+const FnContextMenuPosition = *const fn (*anyopaque, *c_int, *c_int) callconv(.c) c_int;
+const FnNetworkSessionNew = *const fn (?[*:0]const u8, ?[*:0]const u8) callconv(.c) ?*anyopaque;
+const FnSessionStateNew = *const fn (*glib.Bytes) callconv(.c) ?*anyopaque;
+const FnSessionStateSerialize = *const fn (*anyopaque) callconv(.c) ?*glib.Bytes;
 
 const ExtApi = struct {
     get_estimated_load_progress: ?FnGetF64 = null,
@@ -96,12 +162,81 @@ const ExtApi = struct {
     evaluate_javascript: ?FnEvalJs = null,
     evaluate_javascript_finish: ?FnEvalJsFinish = null,
     jsc_value_to_string: ?FnJscToString = null,
+    jsc_value_to_json: ?FnJscToJson = null,
     set_zoom_level: ?FnSetF64 = null,
     get_settings: ?FnGetPtr = null,
     settings_set_user_agent: ?FnSetCStrOpt = null,
     settings_set_enable_developer_extras: ?FnSetBool = null,
     get_inspector: ?FnGetPtr = null,
     web_inspector_show: ?FnVoidOnPtr = null,
+
+    // user scripts / script messages
+    get_user_content_manager: ?FnGetPtr = null,
+    user_script_new: ?FnUserScriptNew = null,
+    user_script_new_for_world: ?FnUserScriptNewForWorld = null,
+    user_script_unref: ?FnVoidOnPtr = null,
+    ucm_add_script: ?FnPtrPtr = null,
+    ucm_remove_script: ?FnPtrPtr = null,
+    ucm_remove_all_scripts: ?FnVoidOnPtr = null,
+    ucm_register_message_handler: ?FnUcmRegisterHandler = null,
+    ucm_unregister_message_handler: ?FnUcmUnregisterHandler = null,
+
+    // custom URI schemes
+    web_context_get_default: ?FnGetPtrNoArg = null,
+    web_context_register_uri_scheme: ?FnRegisterUriScheme = null,
+    scheme_request_get_uri: ?FnGetCStr = null,
+    scheme_request_get_scheme: ?FnGetCStr = null,
+    scheme_request_get_web_view: ?FnGetPtr = null,
+    scheme_request_finish: ?FnSchemeFinish = null,
+    scheme_request_finish_error: ?FnSchemeFinishError = null,
+    scheme_request_finish_with_response: ?FnPtrPtr = null,
+    scheme_response_new: ?FnSchemeResponseNew = null,
+    scheme_response_set_status: ?FnSchemeResponseSetStatus = null,
+    scheme_response_set_content_type: ?FnSchemeResponseSetContentType = null,
+
+    // cookies
+    network_session_get_default: ?FnGetPtrNoArg = null,
+    network_session_get_cookie_manager: ?FnGetPtr = null,
+    cookie_manager_get_cookies: ?FnCookieGet = null,
+    cookie_manager_get_cookies_finish: ?FnCookieListFinish = null,
+    cookie_manager_get_all_cookies: ?FnCookieGetAll = null,
+    cookie_manager_get_all_cookies_finish: ?FnCookieListFinish = null,
+    cookie_manager_add_cookie: ?FnCookieMutate = null,
+    cookie_manager_add_cookie_finish: ?FnCookieMutateFinish = null,
+    cookie_manager_delete_cookie: ?FnCookieMutate = null,
+    cookie_manager_delete_cookie_finish: ?FnCookieMutateFinish = null,
+
+    // browser chrome
+    get_favicon: ?FnGetPtr = null,
+    network_session_get_website_data_manager: ?FnGetPtr = null,
+    website_data_manager_set_favicons_enabled: ?FnSetBool = null,
+    get_find_controller: ?FnGetPtr = null,
+    find_search: ?FnFindSearch = null,
+    find_search_next: ?FnVoidOnPtr = null,
+    find_search_previous: ?FnVoidOnPtr = null,
+    find_search_finish: ?FnVoidOnPtr = null,
+    find_count_matches: ?FnFindSearch = null,
+    get_tls_info: ?FnGetTlsInfo = null,
+    hit_test_get_context: ?FnUIntOnPtr = null,
+    hit_test_get_link_uri: ?FnGetCStr = null,
+    hit_test_get_image_uri: ?FnGetCStr = null,
+    context_menu_get_position: ?FnContextMenuPosition = null,
+
+    // profiles / session state / audio
+    web_view_get_type: ?FnGType = null,
+    network_session_new: ?FnNetworkSessionNew = null,
+    network_session_new_ephemeral: ?FnGetPtrNoArg = null,
+    get_session_state: ?FnGetPtr = null,
+    session_state_serialize: ?FnSessionStateSerialize = null,
+    session_state_new: ?FnSessionStateNew = null,
+    session_state_unref: ?FnVoidOnPtr = null,
+    restore_session_state: ?FnPtrPtr = null,
+    get_back_forward_list: ?FnGetPtr = null,
+    bf_list_get_current_item: ?FnGetPtr = null,
+    go_to_bf_list_item: ?FnPtrPtr = null,
+    is_playing_audio: ?FnBoolOnPtr = null,
+    set_is_muted: ?FnSetBool = null,
+    get_is_muted: ?FnBoolOnPtr = null,
 };
 
 var ext: ExtApi = .{};
@@ -110,6 +245,28 @@ var ext_loaded = false;
 // webkitgtk handle; held open for the process lifetime like `webkit_lib`.
 var jsc_lib: std.DynLib = undefined;
 
+/// SoupCookie construction lives in libsoup-3.0, a separate shared object from
+/// libwebkitgtk — same optional-degrade discipline, its own dlopen.
+const SoupApi = struct {
+    cookie_new: *const fn ([*:0]const u8, [*:0]const u8, [*:0]const u8, [*:0]const u8, c_int) callconv(.c) ?*anyopaque,
+    cookie_free: FnVoidOnPtr,
+    cookie_get_name: FnGetCStr,
+    cookie_get_value: FnGetCStr,
+    cookie_get_domain: FnGetCStr,
+    cookie_get_path: FnGetCStr,
+    cookie_get_secure: FnBoolOnPtr,
+    cookie_get_http_only: FnBoolOnPtr,
+    cookie_get_expires: FnGetPtr,
+    cookie_get_same_site_policy: FnUIntOnPtr,
+    cookie_set_secure: FnSetBool,
+    cookie_set_http_only: FnSetBool,
+    cookie_set_same_site_policy: *const fn (*anyopaque, c_uint) callconv(.c) void,
+};
+
+var soup: ?SoupApi = null;
+var soup_attempted = false;
+var soup_lib: std.DynLib = undefined;
+
 fn lookupWarn(comptime T: type, lib: *std.DynLib, symbol: [:0]const u8, feature: []const u8) ?T {
     return lib.lookup(T, symbol) orelse {
         std.debug.print("ND_WARN WebView {s} unavailable (missing symbol {s})\n", .{ feature, symbol });
@@ -117,17 +274,97 @@ fn lookupWarn(comptime T: type, lib: *std.DynLib, symbol: [:0]const u8, feature:
     };
 }
 
-fn loadJscValueToString() ?FnJscToString {
+fn loadJsc(lib: *std.DynLib) void {
+    ext.jsc_value_to_string = lib.lookup(FnJscToString, "jsc_value_to_string");
+    ext.jsc_value_to_json = lib.lookup(FnJscToJson, "jsc_value_to_json");
+    if (ext.jsc_value_to_string != null and ext.jsc_value_to_json != null) return;
     const candidates = [_][]const u8{ "libjavascriptcoregtk-6.0.so.1", "libjavascriptcoregtk-6.0.so" };
     for (candidates) |name| {
-        var lib = std.DynLib.open(name) catch continue;
-        if (lib.lookup(FnJscToString, "jsc_value_to_string")) |f| {
-            jsc_lib = lib;
-            return f;
+        var l = std.DynLib.open(name) catch continue;
+        const to_str = l.lookup(FnJscToString, "jsc_value_to_string");
+        const to_json = l.lookup(FnJscToJson, "jsc_value_to_json");
+        if (to_str == null and to_json == null) {
+            l.close();
+            continue;
         }
-        lib.close();
+        jsc_lib = l;
+        if (ext.jsc_value_to_string == null) ext.jsc_value_to_string = to_str;
+        if (ext.jsc_value_to_json == null) ext.jsc_value_to_json = to_json;
+        break;
     }
-    std.debug.print("ND_WARN WebView executeJavaScript result stringification unavailable (missing symbol jsc_value_to_string)\n", .{});
+    if (ext.jsc_value_to_string == null) {
+        std.debug.print("ND_WARN WebView executeJavaScript result stringification unavailable (missing symbol jsc_value_to_string)\n", .{});
+    }
+    if (ext.jsc_value_to_json == null) {
+        std.debug.print("ND_WARN WebView scriptMessage structured bodies unavailable (missing symbol jsc_value_to_json)\n", .{});
+    }
+}
+
+fn loadSoup() ?*const SoupApi {
+    if (soup_attempted) return if (soup != null) &soup.? else null;
+    soup_attempted = true;
+    const candidates = [_][]const u8{ "libsoup-3.0.so.0", "libsoup-3.0.so" };
+    for (candidates) |name| {
+        var lib = std.DynLib.open(name) catch continue;
+        const a: SoupApi = .{
+            .cookie_new = lib.lookup(@FieldType(SoupApi, "cookie_new"), "soup_cookie_new") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_free = lib.lookup(FnVoidOnPtr, "soup_cookie_free") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_name = lib.lookup(FnGetCStr, "soup_cookie_get_name") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_value = lib.lookup(FnGetCStr, "soup_cookie_get_value") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_domain = lib.lookup(FnGetCStr, "soup_cookie_get_domain") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_path = lib.lookup(FnGetCStr, "soup_cookie_get_path") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_secure = lib.lookup(FnBoolOnPtr, "soup_cookie_get_secure") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_http_only = lib.lookup(FnBoolOnPtr, "soup_cookie_get_http_only") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_expires = lib.lookup(FnGetPtr, "soup_cookie_get_expires") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_get_same_site_policy = lib.lookup(FnUIntOnPtr, "soup_cookie_get_same_site_policy") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_set_secure = lib.lookup(FnSetBool, "soup_cookie_set_secure") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_set_http_only = lib.lookup(FnSetBool, "soup_cookie_set_http_only") orelse {
+                lib.close();
+                continue;
+            },
+            .cookie_set_same_site_policy = lib.lookup(@FieldType(SoupApi, "cookie_set_same_site_policy"), "soup_cookie_set_same_site_policy") orelse {
+                lib.close();
+                continue;
+            },
+        };
+        soup_lib = lib;
+        soup = a;
+        return &soup.?;
+    }
+    std.debug.print("ND_WARN WebView cookies unavailable (libsoup-3.0 not found)\n", .{});
     return null;
 }
 
@@ -137,20 +374,83 @@ fn loadExt(lib: *std.DynLib) void {
     ext.get_estimated_load_progress = lookupWarn(FnGetF64, lib, "webkit_web_view_get_estimated_load_progress", "loadProgress");
     ext.navigation_action_get_request = lookupWarn(FnGetPtr, lib, "webkit_navigation_action_get_request", "newWindow");
     ext.uri_request_get_uri = lookupWarn(FnGetCStr, lib, "webkit_uri_request_get_uri", "newWindow/downloadRequested");
-    ext.get_network_session = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_network_session", "downloadRequested");
+    ext.get_network_session = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_network_session", "downloadRequested/cookies");
     ext.download_get_request = lookupWarn(FnGetPtr, lib, "webkit_download_get_request", "downloadRequested");
     ext.download_cancel = lookupWarn(FnVoidOnPtr, lib, "webkit_download_cancel", "downloadRequested");
     ext.network_error_quark = lookupWarn(FnQuark, lib, "webkit_network_error_quark", "loadFailed cancellation filter");
     ext.policy_error_quark = lookupWarn(FnQuark, lib, "webkit_policy_error_quark", "loadFailed policy-interruption filter");
     ext.evaluate_javascript = lookupWarn(FnEvalJs, lib, "webkit_web_view_evaluate_javascript", "executeJavaScript");
     ext.evaluate_javascript_finish = lookupWarn(FnEvalJsFinish, lib, "webkit_web_view_evaluate_javascript_finish", "executeJavaScript");
-    ext.jsc_value_to_string = lib.lookup(FnJscToString, "jsc_value_to_string") orelse loadJscValueToString();
+    loadJsc(lib);
     ext.set_zoom_level = lookupWarn(FnSetF64, lib, "webkit_web_view_set_zoom_level", "setZoom");
     ext.get_settings = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_settings", "setUserAgent/openDevTools");
     ext.settings_set_user_agent = lookupWarn(FnSetCStrOpt, lib, "webkit_settings_set_user_agent", "setUserAgent");
     ext.settings_set_enable_developer_extras = lookupWarn(FnSetBool, lib, "webkit_settings_set_enable_developer_extras", "openDevTools");
     ext.get_inspector = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_inspector", "openDevTools");
     ext.web_inspector_show = lookupWarn(FnVoidOnPtr, lib, "webkit_web_inspector_show", "openDevTools");
+
+    ext.get_user_content_manager = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_user_content_manager", "user scripts");
+    ext.user_script_new = lookupWarn(FnUserScriptNew, lib, "webkit_user_script_new", "addUserScript");
+    ext.user_script_new_for_world = lookupWarn(FnUserScriptNewForWorld, lib, "webkit_user_script_new_for_world", "addUserScript (isolated worlds)");
+    ext.user_script_unref = lookupWarn(FnVoidOnPtr, lib, "webkit_user_script_unref", "addUserScript");
+    ext.ucm_add_script = lookupWarn(FnPtrPtr, lib, "webkit_user_content_manager_add_script", "addUserScript");
+    ext.ucm_remove_script = lookupWarn(FnPtrPtr, lib, "webkit_user_content_manager_remove_script", "removeUserScript");
+    ext.ucm_remove_all_scripts = lookupWarn(FnVoidOnPtr, lib, "webkit_user_content_manager_remove_all_scripts", "clearUserScripts");
+    ext.ucm_register_message_handler = lookupWarn(FnUcmRegisterHandler, lib, "webkit_user_content_manager_register_script_message_handler", "registerScriptMessage");
+    ext.ucm_unregister_message_handler = lookupWarn(FnUcmUnregisterHandler, lib, "webkit_user_content_manager_unregister_script_message_handler", "unregisterScriptMessage");
+
+    ext.web_context_get_default = lookupWarn(FnGetPtrNoArg, lib, "webkit_web_context_get_default", "registerScheme");
+    ext.web_context_register_uri_scheme = lookupWarn(FnRegisterUriScheme, lib, "webkit_web_context_register_uri_scheme", "registerScheme");
+    ext.scheme_request_get_uri = lookupWarn(FnGetCStr, lib, "webkit_uri_scheme_request_get_uri", "registerScheme");
+    ext.scheme_request_get_scheme = lookupWarn(FnGetCStr, lib, "webkit_uri_scheme_request_get_scheme", "registerScheme");
+    ext.scheme_request_get_web_view = lookupWarn(FnGetPtr, lib, "webkit_uri_scheme_request_get_web_view", "registerScheme");
+    ext.scheme_request_finish = lookupWarn(FnSchemeFinish, lib, "webkit_uri_scheme_request_finish", "respondScheme");
+    ext.scheme_request_finish_error = lookupWarn(FnSchemeFinishError, lib, "webkit_uri_scheme_request_finish_error", "respondScheme errors");
+    ext.scheme_request_finish_with_response = lookupWarn(FnPtrPtr, lib, "webkit_uri_scheme_request_finish_with_response", "respondScheme status codes");
+    ext.scheme_response_new = lookupWarn(FnSchemeResponseNew, lib, "webkit_uri_scheme_response_new", "respondScheme status codes");
+    ext.scheme_response_set_status = lookupWarn(FnSchemeResponseSetStatus, lib, "webkit_uri_scheme_response_set_status", "respondScheme status codes");
+    ext.scheme_response_set_content_type = lookupWarn(FnSchemeResponseSetContentType, lib, "webkit_uri_scheme_response_set_content_type", "respondScheme status codes");
+
+    ext.network_session_get_default = lookupWarn(FnGetPtrNoArg, lib, "webkit_network_session_get_default", "cookies");
+    ext.network_session_get_cookie_manager = lookupWarn(FnGetPtr, lib, "webkit_network_session_get_cookie_manager", "cookies");
+    ext.cookie_manager_get_cookies = lookupWarn(FnCookieGet, lib, "webkit_cookie_manager_get_cookies", "getCookies");
+    ext.cookie_manager_get_cookies_finish = lookupWarn(FnCookieListFinish, lib, "webkit_cookie_manager_get_cookies_finish", "getCookies");
+    ext.cookie_manager_get_all_cookies = lookupWarn(FnCookieGetAll, lib, "webkit_cookie_manager_get_all_cookies", "getCookies (no url)");
+    ext.cookie_manager_get_all_cookies_finish = lookupWarn(FnCookieListFinish, lib, "webkit_cookie_manager_get_all_cookies_finish", "getCookies (no url)");
+    ext.cookie_manager_add_cookie = lookupWarn(FnCookieMutate, lib, "webkit_cookie_manager_add_cookie", "setCookie");
+    ext.cookie_manager_add_cookie_finish = lookupWarn(FnCookieMutateFinish, lib, "webkit_cookie_manager_add_cookie_finish", "setCookie");
+    ext.cookie_manager_delete_cookie = lookupWarn(FnCookieMutate, lib, "webkit_cookie_manager_delete_cookie", "deleteCookie");
+    ext.cookie_manager_delete_cookie_finish = lookupWarn(FnCookieMutateFinish, lib, "webkit_cookie_manager_delete_cookie_finish", "deleteCookie");
+
+    ext.get_favicon = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_favicon", "faviconChanged");
+    ext.network_session_get_website_data_manager = lookupWarn(FnGetPtr, lib, "webkit_network_session_get_website_data_manager", "faviconChanged");
+    ext.website_data_manager_set_favicons_enabled = lookupWarn(FnSetBool, lib, "webkit_website_data_manager_set_favicons_enabled", "faviconChanged");
+    ext.get_find_controller = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_find_controller", "find-in-page");
+    ext.find_search = lookupWarn(FnFindSearch, lib, "webkit_find_controller_search", "findStart");
+    ext.find_search_next = lookupWarn(FnVoidOnPtr, lib, "webkit_find_controller_search_next", "findNext");
+    ext.find_search_previous = lookupWarn(FnVoidOnPtr, lib, "webkit_find_controller_search_previous", "findPrevious");
+    ext.find_search_finish = lookupWarn(FnVoidOnPtr, lib, "webkit_find_controller_search_finish", "findStop");
+    ext.find_count_matches = lookupWarn(FnFindSearch, lib, "webkit_find_controller_count_matches", "findResult match counts");
+    ext.get_tls_info = lookupWarn(FnGetTlsInfo, lib, "webkit_web_view_get_tls_info", "securityChanged");
+    ext.hit_test_get_context = lookupWarn(FnUIntOnPtr, lib, "webkit_hit_test_result_get_context", "linkHover/contextMenu");
+    ext.hit_test_get_link_uri = lookupWarn(FnGetCStr, lib, "webkit_hit_test_result_get_link_uri", "linkHover");
+    ext.hit_test_get_image_uri = lookupWarn(FnGetCStr, lib, "webkit_hit_test_result_get_image_uri", "contextMenu");
+    ext.context_menu_get_position = lookupWarn(FnContextMenuPosition, lib, "webkit_context_menu_get_position", "contextMenu coordinates");
+
+    ext.web_view_get_type = lookupWarn(FnGType, lib, "webkit_web_view_get_type", "profile");
+    ext.network_session_new = lookupWarn(FnNetworkSessionNew, lib, "webkit_network_session_new", "profile");
+    ext.network_session_new_ephemeral = lookupWarn(FnGetPtrNoArg, lib, "webkit_network_session_new_ephemeral", "profile (private)");
+    ext.get_session_state = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_session_state", "saveSession");
+    ext.session_state_serialize = lookupWarn(FnSessionStateSerialize, lib, "webkit_web_view_session_state_serialize", "saveSession");
+    ext.session_state_new = lookupWarn(FnSessionStateNew, lib, "webkit_web_view_session_state_new", "restoreSession");
+    ext.session_state_unref = lookupWarn(FnVoidOnPtr, lib, "webkit_web_view_session_state_unref", "saveSession/restoreSession");
+    ext.restore_session_state = lookupWarn(FnPtrPtr, lib, "webkit_web_view_restore_session_state", "restoreSession");
+    ext.get_back_forward_list = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_back_forward_list", "restoreSession navigation");
+    ext.bf_list_get_current_item = lookupWarn(FnGetPtr, lib, "webkit_back_forward_list_get_current_item", "restoreSession navigation");
+    ext.go_to_bf_list_item = lookupWarn(FnPtrPtr, lib, "webkit_web_view_go_to_back_forward_list_item", "restoreSession navigation");
+    ext.is_playing_audio = lookupWarn(FnBoolOnPtr, lib, "webkit_web_view_is_playing_audio", "audioStateChanged");
+    ext.set_is_muted = lookupWarn(FnSetBool, lib, "webkit_web_view_set_is_muted", "setMuted");
+    ext.get_is_muted = lookupWarn(FnBoolOnPtr, lib, "webkit_web_view_get_is_muted", "setMuted");
 }
 
 fn loadApi() ?*const Api {
@@ -174,6 +474,29 @@ fn loadApi() ?*const Api {
     return null;
 }
 
+// ============================================================================
+// Per-view state
+// ============================================================================
+
+const ScriptEntry = struct { script: *anyopaque, world: []const u8 };
+
+/// Everything a live WebKitWebView owns beyond the widget itself. Allocated
+/// once per view at `create` and hung off the GObject under STATE_KEY (the
+/// same idiom MARKER_KEY uses) so the command dispatch — which only ever
+/// receives the widget — can reach it.
+const ViewState = struct {
+    node_id: u32 = 0,
+    suppress_context_menu: bool = false,
+    scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
+    last_secure: ?bool = null,
+    last_playing_audio: bool = false,
+};
+
+fn stateOf(widget: *gtk.Widget) ?*ViewState {
+    const raw = gobject.Object.getData(widget.as(gobject.Object), STATE_KEY) orelse return null;
+    return @ptrCast(@alignCast(raw));
+}
+
 fn isReal(widget: *gtk.Widget) bool {
     return gobject.Object.getData(widget.as(gobject.Object), MARKER_KEY) != null;
 }
@@ -190,12 +513,20 @@ fn widgetNodeId(widget: *gtk.Widget) ?u32 {
     return @intCast(@intFromPtr(raw));
 }
 
+// ============================================================================
+// JSON helpers
+// ============================================================================
+
 fn objPutStr(obj: *std.json.ObjectMap, key: []const u8, val: []const u8) void {
-    obj.put(std.heap.page_allocator, key, .{ .string = val }) catch {};
+    obj.put(alloc, key, .{ .string = val }) catch {};
 }
 
 fn objPutBool(obj: *std.json.ObjectMap, key: []const u8, val: bool) void {
-    obj.put(std.heap.page_allocator, key, .{ .bool = val }) catch {};
+    obj.put(alloc, key, .{ .bool = val }) catch {};
+}
+
+fn objPutInt(obj: *std.json.ObjectMap, key: []const u8, val: i64) void {
+    obj.put(alloc, key, .{ .integer = val }) catch {};
 }
 
 fn argObject(arg: ?std.json.Value) ?std.json.ObjectMap {
@@ -212,14 +543,129 @@ fn objStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
-pub fn create(url: ?[*:0]const u8) *gtk.Widget {
+fn objBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
+    return switch (obj.get(key) orelse return null) {
+        .bool => |b| b,
+        else => null,
+    };
+}
+
+fn objInt(obj: std.json.ObjectMap, key: []const u8) ?i64 {
+    return switch (obj.get(key) orelse return null) {
+        .integer => |i| i,
+        .float => |f| @intFromFloat(f),
+        else => null,
+    };
+}
+
+fn objStrList(obj: std.json.ObjectMap, key: []const u8) ?std.json.Array {
+    return switch (obj.get(key) orelse return null) {
+        .array => |a| a,
+        else => null,
+    };
+}
+
+fn emitObject(node_id: u32, name: []const u8, payload: std.json.ObjectMap) void {
+    const f = emit orelse return;
+    f(node_id, name, .{ .data = .{ .object = payload } });
+}
+
+/// NULL-terminated `char**` for WebKit's allow/block lists. Returns null for a
+/// missing or empty list, which is what WebKit wants for "no filter".
+fn buildStrv(arr: ?std.json.Array) ?[]?[*:0]const u8 {
+    const a = arr orelse return null;
+    if (a.items.len == 0) return null;
+    const out = alloc.alloc(?[*:0]const u8, a.items.len + 1) catch return null;
+    var n: usize = 0;
+    for (a.items) |item| {
+        const s = switch (item) {
+            .string => |x| x,
+            else => continue,
+        };
+        out[n] = (alloc.dupeZ(u8, s) catch continue).ptr;
+        n += 1;
+    }
+    out[n] = null;
+    if (n == 0) {
+        alloc.free(out);
+        return null;
+    }
+    return out;
+}
+
+fn freeStrv(strv: ?[]?[*:0]const u8) void {
+    const s = strv orelse return;
+    for (s) |maybe| {
+        const p = maybe orelse break;
+        alloc.free(std.mem.span(p));
+    }
+    alloc.free(s);
+}
+
+// ============================================================================
+// Creation
+// ============================================================================
+
+/// Named persistent profiles share one WebKitNetworkSession across every view
+/// that asks for the same name (that IS what a profile means — one cookie jar,
+/// one cache). Ephemeral ("private…") profiles get a fresh session per view.
+var profile_sessions: std.StringHashMapUnmanaged(*anyopaque) = .empty;
+
+fn profileSession(profile: []const u8) ?*anyopaque {
+    if (std.mem.startsWith(u8, profile, "private")) {
+        const mk = ext.network_session_new_ephemeral orelse {
+            std.debug.print("ND_WARN WebView profile \"{s}\": ephemeral sessions unavailable, falling back to the default session\n", .{profile});
+            return null;
+        };
+        return mk();
+    }
+    if (profile_sessions.get(profile)) |s| return s;
+    const mk = ext.network_session_new orelse {
+        std.debug.print("ND_WARN WebView profile \"{s}\": named sessions unavailable, falling back to the default session\n", .{profile});
+        return null;
+    };
+    const base = glib.getUserDataDir();
+    const data_dir = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-profiles/{s}/data", .{ std.mem.span(base), profile }, 0) catch return null;
+    defer alloc.free(data_dir);
+    const cache_dir = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-profiles/{s}/cache", .{ std.mem.span(base), profile }, 0) catch return null;
+    defer alloc.free(cache_dir);
+    const session = mk(data_dir.ptr, cache_dir.ptr) orelse return null;
+    const key = alloc.dupe(u8, profile) catch return session;
+    profile_sessions.put(alloc, key, session) catch {};
+    return session;
+}
+
+/// A view bound to a non-default network session can't come from
+/// `webkit_web_view_new` — "network-session" is construct-only, so the view has
+/// to be built through g_object_new_with_properties.
+fn createWithSession(session: *anyopaque) ?*gtk.Widget {
+    const gtype_fn = ext.web_view_get_type orelse return null;
+    var value: gobject.Value = std.mem.zeroes(gobject.Value);
+    gobject.Value.initFromInstance(&value, @ptrCast(@alignCast(session)));
+    defer gobject.Value.unset(&value);
+    var names = [_][*:0]const u8{"network-session"};
+    const obj = gobject.Object.newWithProperties(gtype_fn(), 1, &names, @ptrCast(&value));
+    return @ptrCast(@alignCast(obj));
+}
+
+pub fn create(url: ?[*:0]const u8, profile: []const u8, suppress_context_menu: bool) *gtk.Widget {
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
         return label.as(gtk.Widget);
     };
-    const widget = a.web_view_new();
+    const widget = blk: {
+        if (profile.len == 0) break :blk a.web_view_new();
+        const session = profileSession(profile) orelse break :blk a.web_view_new();
+        break :blk createWithSession(session) orelse a.web_view_new();
+    };
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
+    const state = alloc.create(ViewState) catch {
+        std.debug.print("ND_WARN WebView state allocation failed; extension surface disabled for this view\n", .{});
+        return widget;
+    };
+    state.* = .{ .suppress_context_menu = suppress_context_menu };
+    gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
     // A webview is a content surface: expand into whatever the parent gives
     // it (a non-expanding WebKitWebView collapses to 0x0 inside a <box>).
     gtk.Widget.setHexpand(widget, 1);
@@ -242,6 +688,10 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     }
     a.web_view_load_uri(@ptrCast(widget), url.ptr);
 }
+
+// ============================================================================
+// Commands: base surface
+// ============================================================================
 
 fn cmdSetZoom(v: *anyopaque, arg: ?std.json.Value) void {
     const f = ext.set_zoom_level orelse return;
@@ -271,8 +721,8 @@ fn cmdSetUserAgent(v: *anyopaque, arg: ?std.json.Value) void {
         set_ua(settings, null); // empty string -> restore WebKit's default UA
         return;
     }
-    const z = std.heap.page_allocator.dupeZ(u8, s) catch return;
-    defer std.heap.page_allocator.free(z);
+    const z = alloc.dupeZ(u8, s) catch return;
+    defer alloc.free(z);
     set_ua(settings, z.ptr);
 }
 
@@ -311,26 +761,33 @@ fn cmdExecuteJavaScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value
         return;
     };
     const node_id = widgetNodeId(widget) orelse return;
-    const ctx = std.heap.page_allocator.create(JsEvalCtx) catch return;
-    ctx.id = std.heap.page_allocator.dupe(u8, id) catch {
-        std.heap.page_allocator.destroy(ctx);
+    const ctx = alloc.create(JsEvalCtx) catch return;
+    ctx.id = alloc.dupe(u8, id) catch {
+        alloc.destroy(ctx);
         return;
     };
     ctx.node_id = node_id;
-    const code_z = std.heap.page_allocator.dupeZ(u8, code) catch {
-        std.heap.page_allocator.free(ctx.id);
-        std.heap.page_allocator.destroy(ctx);
+    const code_z = alloc.dupeZ(u8, code) catch {
+        alloc.free(ctx.id);
+        alloc.destroy(ctx);
         return;
     };
-    defer std.heap.page_allocator.free(code_z); // WebKit copies the script synchronously before queuing the eval
-    eval(v, code_z.ptr, -1, null, null, null, &cbJsEvalReady, ctx);
+    defer alloc.free(code_z); // WebKit copies the script synchronously before queuing the eval
+    // Optional `world`: an empty/absent world means the page's own main world,
+    // which is what WebKit's NULL world_name selects.
+    var world_z: ?[:0]u8 = null;
+    defer if (world_z) |w| alloc.free(w);
+    if (objStr(obj, "world")) |w| {
+        if (w.len > 0) world_z = alloc.dupeZ(u8, w) catch null;
+    }
+    eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbJsEvalReady, ctx);
 }
 
 fn cbJsEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
     const ctx: *JsEvalCtx = @ptrCast(@alignCast(user_data orelse return));
     defer {
-        std.heap.page_allocator.free(ctx.id);
-        std.heap.page_allocator.destroy(ctx);
+        alloc.free(ctx.id);
+        alloc.destroy(ctx);
     }
     const finish = ext.evaluate_javascript_finish orelse return;
     const f = emit orelse return;
@@ -339,8 +796,13 @@ fn cbJsEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) 
     const value = finish(source orelse return, res, &err);
 
     var payload: std.json.ObjectMap = .empty;
-    defer payload.deinit(std.heap.page_allocator);
+    defer payload.deinit(alloc);
     objPutStr(&payload, "id", ctx.id);
+
+    // The stringified result has to outlive `glib.free` — the payload only
+    // borrows its strings, and they are read when `f` serializes the event.
+    var value_copy: ?[]u8 = null;
+    defer if (value_copy) |v| alloc.free(v);
 
     if (value) |jsc_value| {
         defer gobject.Object.unref(@ptrCast(@alignCast(jsc_value)));
@@ -348,9 +810,10 @@ fn cbJsEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) 
         if (ext.jsc_value_to_string) |to_str| {
             if (to_str(jsc_value)) |cstr| {
                 defer glib.free(cstr);
-                objPutStr(&payload, "value", std.mem.span(cstr));
+                value_copy = alloc.dupe(u8, std.mem.span(cstr)) catch null;
             }
         }
+        if (value_copy) |v| objPutStr(&payload, "value", v);
         f(ctx.node_id, "javaScriptResult", .{ .data = .{ .object = payload } });
         return;
     }
@@ -365,6 +828,808 @@ fn cbJsEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) 
     }
     f(ctx.node_id, "javaScriptResult", .{ .data = .{ .object = payload } });
 }
+
+// ============================================================================
+// User scripts
+// ============================================================================
+
+fn cmdAddUserScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const get_ucm = ext.get_user_content_manager orelse return;
+    const add = ext.ucm_add_script orelse return;
+    const state = stateOf(widget) orelse return;
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView addUserScript: malformed arg (expected an object)\n", .{});
+        return;
+    };
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView addUserScript: missing id\n", .{});
+        return;
+    };
+    const source = objStr(obj, "source") orelse {
+        std.debug.print("ND_WARN WebView addUserScript: missing source\n", .{});
+        return;
+    };
+    const world = objStr(obj, "world") orelse "";
+    const at_start = if (objStr(obj, "injectionTime")) |t| std.mem.eql(u8, t, "start") else false;
+    const all_frames = objBool(obj, "allFrames") orelse false;
+
+    const source_z = alloc.dupeZ(u8, source) catch return;
+    defer alloc.free(source_z);
+    var world_z: ?[:0]u8 = null;
+    defer if (world_z) |w| alloc.free(w);
+    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
+    const allow = buildStrv(objStrList(obj, "allowList"));
+    defer freeStrv(allow);
+    const block = buildStrv(objStrList(obj, "blockList"));
+    defer freeStrv(block);
+
+    const frames: c_int = if (all_frames) INJECT_ALL_FRAMES else INJECT_TOP_FRAME;
+    const when: c_int = if (at_start) INJECT_AT_DOCUMENT_START else INJECT_AT_DOCUMENT_END;
+    // `world_name` is NOT nullable on webkit_user_script_new_for_world — a
+    // NULL there yields a script that is silently never injected. The page's
+    // own world has its own constructor.
+    const script = blk: {
+        if (world_z) |w| {
+            const mk = ext.user_script_new_for_world orelse return;
+            break :blk mk(source_z.ptr, frames, when, w.ptr, if (allow) |l| l.ptr else null, if (block) |l| l.ptr else null) orelse return;
+        }
+        const mk = ext.user_script_new orelse return;
+        break :blk mk(source_z.ptr, frames, when, if (allow) |l| l.ptr else null, if (block) |l| l.ptr else null) orelse return;
+    };
+    const ucm = get_ucm(v) orelse {
+        if (ext.user_script_unref) |unref| unref(script);
+        return;
+    };
+    // Re-adding under a live id replaces it, matching how apps think about a
+    // keyed registry (and how the AppKit side has to behave anyway).
+    removeScriptById(v, state, id);
+    add(ucm, script);
+    const key = alloc.dupe(u8, id) catch return;
+    const world_copy = alloc.dupe(u8, world) catch "";
+    state.scripts.put(alloc, key, .{ .script = script, .world = world_copy }) catch {};
+}
+
+fn removeScriptById(v: *anyopaque, state: *ViewState, id: []const u8) void {
+    const entry = state.scripts.fetchRemove(id) orelse return;
+    defer alloc.free(entry.key);
+    defer if (entry.value.world.len > 0) alloc.free(entry.value.world);
+    if (ext.get_user_content_manager) |get_ucm| {
+        if (ext.ucm_remove_script) |remove| {
+            if (get_ucm(v)) |ucm| remove(ucm, entry.value.script);
+        }
+    }
+    if (ext.user_script_unref) |unref| unref(entry.value.script);
+}
+
+fn cmdRemoveUserScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const state = stateOf(widget) orelse return;
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView removeUserScript: missing id\n", .{});
+        return;
+    };
+    removeScriptById(v, state, id);
+}
+
+fn cmdClearUserScripts(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const state = stateOf(widget) orelse return;
+    const world: ?[]const u8 = if (argObject(arg)) |o| objStr(o, "world") else null;
+    if (world) |w| {
+        // World-scoped clear has no WebKit equivalent, so walk the registry
+        // and remove by identity. Collecting ids first keeps the iterator
+        // valid across the removals.
+        var ids: std.ArrayList([]const u8) = .empty;
+        defer ids.deinit(alloc);
+        var it = state.scripts.iterator();
+        while (it.next()) |e| {
+            if (std.mem.eql(u8, e.value_ptr.world, w)) ids.append(alloc, e.key_ptr.*) catch {};
+        }
+        for (ids.items) |id| removeScriptById(v, state, id);
+        return;
+    }
+    if (ext.get_user_content_manager) |get_ucm| {
+        if (ext.ucm_remove_all_scripts) |remove_all| {
+            if (get_ucm(v)) |ucm| remove_all(ucm);
+        }
+    }
+    var it = state.scripts.iterator();
+    while (it.next()) |e| {
+        if (ext.user_script_unref) |unref| unref(e.value_ptr.script);
+        alloc.free(e.key_ptr.*);
+        if (e.value_ptr.world.len > 0) alloc.free(e.value_ptr.world);
+    }
+    state.scripts.clearRetainingCapacity();
+}
+
+// ============================================================================
+// Script messages
+// ============================================================================
+
+/// One per registered (name, world) channel — the signal callback gets no
+/// node id of its own, and the detail-qualified signal carries only the
+/// posted JSCValue.
+const MessageCtx = struct {
+    node_id: u32,
+    name: []u8,
+    world: []u8,
+};
+
+fn cmdRegisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const get_ucm = ext.get_user_content_manager orelse return;
+    const register = ext.ucm_register_message_handler orelse return;
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse {
+        std.debug.print("ND_WARN WebView registerScriptMessage: missing name\n", .{});
+        return;
+    };
+    const world = objStr(obj, "world") orelse "";
+    const node_id = widgetNodeId(widget) orelse return;
+    const ucm = get_ucm(v) orelse return;
+
+    const ctx = alloc.create(MessageCtx) catch return;
+    ctx.* = .{
+        .node_id = node_id,
+        .name = alloc.dupe(u8, name) catch {
+            alloc.destroy(ctx);
+            return;
+        },
+        .world = alloc.dupe(u8, world) catch "",
+    };
+    // Connect BEFORE registering: WebKit's own docs call out the race where a
+    // message posted between the two calls would be dropped.
+    const detail = std.fmt.allocPrintSentinel(alloc, "script-message-received::{s}", .{name}, 0) catch return;
+    defer alloc.free(detail);
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(ucm)), detail, @ptrCast(&cbScriptMessage), ctx, null, .{});
+
+    const name_z = alloc.dupeZ(u8, name) catch return;
+    defer alloc.free(name_z);
+    var world_z: ?[:0]u8 = null;
+    defer if (world_z) |w| alloc.free(w);
+    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
+    _ = register(ucm, name_z.ptr, if (world_z) |w| w.ptr else null);
+}
+
+fn cmdUnregisterScriptMessage(v: *anyopaque, arg: ?std.json.Value) void {
+    const get_ucm = ext.get_user_content_manager orelse return;
+    const unregister = ext.ucm_unregister_message_handler orelse return;
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse return;
+    const world = objStr(obj, "world") orelse "";
+    const ucm = get_ucm(v) orelse return;
+    const name_z = alloc.dupeZ(u8, name) catch return;
+    defer alloc.free(name_z);
+    var world_z: ?[:0]u8 = null;
+    defer if (world_z) |w| alloc.free(w);
+    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
+    unregister(ucm, name_z.ptr, if (world_z) |w| w.ptr else null);
+}
+
+fn cbScriptMessage(_: *gobject.Object, value: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const ctx: *MessageCtx = @ptrCast(@alignCast(data orelse return));
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "name", ctx.name);
+    objPutStr(&payload, "world", ctx.world);
+
+    // `body` is the posted value itself, decoded: jsc_value_to_json gives the
+    // exact JSON the page sent, which is parsed back into a real JSON value so
+    // apps read `e.data.body.foo` instead of re-parsing a string. Values JSON
+    // can't express (functions, undefined) fall back to the string form.
+    var parsed: ?std.json.Parsed(std.json.Value) = null;
+    defer if (parsed) |p| p.deinit();
+    // Same rule as the executeJavaScript path: the payload borrows, so the
+    // string form must outlive `glib.free` and the emit below.
+    var body_copy: ?[]u8 = null;
+    defer if (body_copy) |b| alloc.free(b);
+    var body_set = false;
+    if (value) |jsc| {
+        if (ext.jsc_value_to_json) |to_json| {
+            if (to_json(jsc, 0)) |cstr| {
+                defer glib.free(cstr);
+                if (std.json.parseFromSlice(std.json.Value, alloc, std.mem.span(cstr), .{})) |p| {
+                    parsed = p;
+                    payload.put(alloc, "body", p.value) catch {};
+                    body_set = true;
+                } else |_| {}
+            }
+        }
+        if (!body_set) {
+            if (ext.jsc_value_to_string) |to_str| {
+                if (to_str(jsc)) |cstr| {
+                    defer glib.free(cstr);
+                    body_copy = alloc.dupe(u8, std.mem.span(cstr)) catch null;
+                }
+            }
+            if (body_copy) |b| {
+                objPutStr(&payload, "body", b);
+                body_set = true;
+            }
+        }
+    }
+    if (!body_set) payload.put(alloc, "body", .null) catch {};
+    emitObject(ctx.node_id, "scriptMessage", payload);
+}
+
+// ============================================================================
+// Custom URI schemes
+// ============================================================================
+
+var registered_schemes: std.StringHashMapUnmanaged(void) = .empty;
+var pending_scheme_requests: std.StringHashMapUnmanaged(*anyopaque) = .empty;
+var scheme_seq: u64 = 0;
+/// Set once a webview exists; scheme registration after that point is too late
+/// on AppKit (the handler must be on the configuration before view creation),
+/// so both backends report the same error rather than silently differing.
+var any_view_created = false;
+
+pub const RegisterSchemeError = error{
+    Unsupported,
+    TooLate,
+    AlreadyRegistered,
+    Invalid,
+};
+
+/// `webviewEngine.registerScheme` (systemRequest, ACL `core:webview`). GTK
+/// registers on the DEFAULT WebKitWebContext, which every `<webview>` shares,
+/// so this is process-wide rather than per-view.
+pub fn registerScheme(scheme: []const u8) RegisterSchemeError!void {
+    if (scheme.len == 0) return error.Invalid;
+    for (scheme) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '-' or c == '.';
+        if (!ok) return error.Invalid;
+    }
+    if (registered_schemes.contains(scheme)) return error.AlreadyRegistered;
+    if (any_view_created) return error.TooLate;
+    _ = loadApi() orelse return error.Unsupported;
+    const get_ctx = ext.web_context_get_default orelse return error.Unsupported;
+    const register = ext.web_context_register_uri_scheme orelse return error.Unsupported;
+    const ctx = get_ctx() orelse return error.Unsupported;
+    const scheme_z = alloc.dupeZ(u8, scheme) catch return error.Unsupported;
+    register(ctx, scheme_z.ptr, &cbSchemeRequest, null, null);
+    const key = alloc.dupe(u8, scheme) catch return;
+    registered_schemes.put(alloc, key, {}) catch {};
+}
+
+fn cbSchemeRequest(request: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    const req = request orelse return;
+    const get_uri = ext.scheme_request_get_uri orelse return;
+    const get_scheme = ext.scheme_request_get_scheme orelse return;
+    const get_view = ext.scheme_request_get_web_view orelse return;
+
+    const view = get_view(req) orelse return schemeFail(req, "no web view for request");
+    const node_id = widgetNodeId(@ptrCast(@alignCast(view))) orelse
+        return schemeFail(req, "web view is not connected to a node");
+
+    scheme_seq += 1;
+    const id = std.fmt.allocPrint(alloc, "sch{d}", .{scheme_seq}) catch return schemeFail(req, "oom");
+    _ = gobject.Object.ref(@ptrCast(@alignCast(req)));
+    pending_scheme_requests.put(alloc, id, req) catch {
+        gobject.Object.unref(@ptrCast(@alignCast(req)));
+        alloc.free(id);
+        return schemeFail(req, "oom");
+    };
+
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "id", id);
+    objPutStr(&payload, "url", if (get_uri(req)) |u| std.mem.span(u) else "");
+    objPutStr(&payload, "scheme", if (get_scheme(req)) |s| std.mem.span(s) else "");
+    emitObject(node_id, "schemeRequest", payload);
+}
+
+fn schemeFail(req: *anyopaque, message: [:0]const u8) void {
+    const finish_error = ext.scheme_request_finish_error orelse return;
+    const err = glib.Error.newLiteral(glib.quarkFromString("nd-webview"), 1, message);
+    defer err.free();
+    finish_error(req, err);
+}
+
+fn cmdRespondScheme(arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView respondScheme: missing id\n", .{});
+        return;
+    };
+    const entry = pending_scheme_requests.fetchRemove(id) orelse {
+        std.debug.print("ND_WARN WebView respondScheme: unknown request id {s}\n", .{id});
+        return;
+    };
+    defer alloc.free(entry.key);
+    const req = entry.value;
+    defer gobject.Object.unref(@ptrCast(@alignCast(req)));
+
+    if (objStr(obj, "error")) |msg| {
+        const z = alloc.dupeZ(u8, msg) catch "scheme request failed";
+        defer if (z.len > 0) alloc.free(@constCast(z));
+        schemeFail(req, z);
+        return;
+    }
+
+    const b64 = objStr(obj, "base64") orelse {
+        schemeFail(req, "respondScheme: missing base64 body");
+        return;
+    };
+    const decoder = std.base64.standard.Decoder;
+    const size = decoder.calcSizeForSlice(b64) catch {
+        schemeFail(req, "respondScheme: malformed base64 body");
+        return;
+    };
+    // Owned by the GMemoryInputStream (freed through g_free), so it must come
+    // from GLib's allocator, not Zig's.
+    const raw = glib.malloc(@max(size, 1)) orelse {
+        schemeFail(req, "respondScheme: out of memory");
+        return;
+    };
+    const buf: []u8 = @as([*]u8, @ptrCast(raw))[0..size];
+    decoder.decode(buf, b64) catch {
+        glib.free(raw);
+        schemeFail(req, "respondScheme: malformed base64 body");
+        return;
+    };
+    const stream = gio.MemoryInputStream.newFromData(@ptrCast(raw), @intCast(size), @ptrCast(&glib.free));
+    defer gobject.Object.unref(stream.as(gobject.Object));
+
+    const mime = objStr(obj, "mime") orelse "application/octet-stream";
+    const mime_z = alloc.dupeZ(u8, mime) catch {
+        schemeFail(req, "respondScheme: out of memory");
+        return;
+    };
+    defer alloc.free(mime_z);
+
+    // The response object carries the HTTP status; without it (older
+    // WebKitGTK) the plain finish still serves the bytes, just always as 200.
+    if (objInt(obj, "status")) |status| {
+        if (ext.scheme_response_new) |resp_new| {
+            if (ext.scheme_response_set_status) |set_status| {
+                if (ext.scheme_response_set_content_type) |set_type| {
+                    if (ext.scheme_request_finish_with_response) |finish_resp| {
+                        if (resp_new(@ptrCast(stream), @intCast(size))) |resp| {
+                            defer gobject.Object.unref(@ptrCast(@alignCast(resp)));
+                            set_status(resp, @intCast(status), null);
+                            set_type(resp, mime_z.ptr);
+                            finish_resp(req, resp);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    const finish = ext.scheme_request_finish orelse return;
+    finish(req, @ptrCast(stream), @intCast(size), mime_z.ptr);
+}
+
+// ============================================================================
+// Cookies
+// ============================================================================
+
+const CookieCtx = struct {
+    node_id: u32,
+    id: []u8,
+};
+
+fn cookieManager(v: *anyopaque) ?*anyopaque {
+    const get_cm = ext.network_session_get_cookie_manager orelse return null;
+    // The view's OWN session, so a `profile` view reads its own jar; falling
+    // back to the process default keeps pre-profile behaviour intact.
+    if (ext.get_network_session) |get_session| {
+        if (get_session(v)) |session| return get_cm(session);
+    }
+    const get_default = ext.network_session_get_default orelse return null;
+    const session = get_default() orelse return null;
+    return get_cm(session);
+}
+
+fn cmdGetCookies(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView getCookies: missing id\n", .{});
+        return;
+    };
+    const node_id = widgetNodeId(widget) orelse return;
+    const cm = cookieManager(v) orelse return cookiesError(node_id, id, "cookie manager unavailable");
+    if (loadSoup() == null) return cookiesError(node_id, id, "libsoup-3.0 unavailable");
+
+    const ctx = alloc.create(CookieCtx) catch return;
+    ctx.* = .{ .node_id = node_id, .id = alloc.dupe(u8, id) catch {
+        alloc.destroy(ctx);
+        return;
+    } };
+
+    if (objStr(obj, "url")) |url| {
+        const get = ext.cookie_manager_get_cookies orelse return cookiesError(node_id, id, "getCookies unavailable");
+        const url_z = alloc.dupeZ(u8, url) catch return;
+        defer alloc.free(url_z);
+        get(cm, url_z.ptr, null, &cbCookiesForUrl, ctx);
+        return;
+    }
+    const get_all = ext.cookie_manager_get_all_cookies orelse return cookiesError(node_id, id, "getCookies (no url) unavailable");
+    get_all(cm, null, &cbCookiesAll, ctx);
+}
+
+fn cookiesError(node_id: u32, id: []const u8, message: []const u8) void {
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "id", id);
+    objPutBool(&payload, "ok", false);
+    objPutStr(&payload, "error", message);
+    emitObject(node_id, "cookiesResult", payload);
+}
+
+fn cbCookiesForUrl(source: ?*anyopaque, res: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    finishCookies(ext.cookie_manager_get_cookies_finish, source, res, data);
+}
+
+fn cbCookiesAll(source: ?*anyopaque, res: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    finishCookies(ext.cookie_manager_get_all_cookies_finish, source, res, data);
+}
+
+fn finishCookies(finish_fn: ?FnCookieListFinish, source: ?*anyopaque, res: ?*anyopaque, data: ?*anyopaque) void {
+    const ctx: *CookieCtx = @ptrCast(@alignCast(data orelse return));
+    defer {
+        alloc.free(ctx.id);
+        alloc.destroy(ctx);
+    }
+    const finish = finish_fn orelse return cookiesError(ctx.node_id, ctx.id, "getCookies unavailable");
+    const s = loadSoup() orelse return cookiesError(ctx.node_id, ctx.id, "libsoup-3.0 unavailable");
+
+    var err: ?*glib.Error = null;
+    const list = finish(source orelse return, res, &err);
+    if (list == null) {
+        // A NULL list with no GError is an EMPTY jar, not a failure — WebKit
+        // returns NULL for both, and only the error tells them apart.
+        if (err) |e| {
+            defer e.free();
+            const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "getCookies failed";
+            cookiesError(ctx.node_id, ctx.id, msg);
+            return;
+        }
+        var empty: std.json.ObjectMap = .empty;
+        defer empty.deinit(alloc);
+        objPutStr(&empty, "id", ctx.id);
+        objPutBool(&empty, "ok", true);
+        var none: std.json.Array = .init(alloc);
+        defer none.deinit();
+        empty.put(alloc, "cookies", .{ .array = none }) catch {};
+        emitObject(ctx.node_id, "cookiesResult", empty);
+        return;
+    }
+
+    // Every string handed to the JSON payload is borrowed from the SoupCookie
+    // list, which stays alive until the free below — the emit is synchronous,
+    // so no copies are needed.
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "id", ctx.id);
+    objPutBool(&payload, "ok", true);
+    var cookies: std.json.Array = .init(alloc);
+    defer {
+        for (cookies.items) |item| {
+            switch (item) {
+                .object => |o| {
+                    var m = o;
+                    m.deinit(alloc);
+                },
+                else => {},
+            }
+        }
+        cookies.deinit();
+    }
+
+    var node = list;
+    while (node) |n| : (node = n.f_next) {
+        const raw = n.f_data orelse continue;
+        var c: std.json.ObjectMap = .empty;
+        objPutStr(&c, "name", if (s.cookie_get_name(raw)) |x| std.mem.span(x) else "");
+        objPutStr(&c, "value", if (s.cookie_get_value(raw)) |x| std.mem.span(x) else "");
+        objPutStr(&c, "domain", if (s.cookie_get_domain(raw)) |x| std.mem.span(x) else "");
+        objPutStr(&c, "path", if (s.cookie_get_path(raw)) |x| std.mem.span(x) else "");
+        objPutBool(&c, "secure", s.cookie_get_secure(raw) != 0);
+        objPutBool(&c, "httpOnly", s.cookie_get_http_only(raw) != 0);
+        if (s.cookie_get_expires(raw)) |dt| {
+            objPutInt(&c, "expires", glib.DateTime.toUnix(@ptrCast(@alignCast(dt))));
+        } else {
+            c.put(alloc, "expires", .null) catch {};
+        }
+        objPutStr(&c, "sameSite", switch (s.cookie_get_same_site_policy(raw)) {
+            1 => "Lax",
+            2 => "Strict",
+            else => "None",
+        });
+        cookies.append(.{ .object = c }) catch {};
+    }
+    payload.put(alloc, "cookies", .{ .array = cookies }) catch {};
+    emitObject(ctx.node_id, "cookiesResult", payload);
+
+    glib.List.freeFull(list.?, @ptrCast(s.cookie_free));
+}
+
+/// Builds a SoupCookie from the JSON shape both commands accept. Callers own
+/// the result and must free it with `soup_cookie_free`.
+fn buildCookie(s: *const SoupApi, obj: std.json.ObjectMap, default_value: []const u8) ?*anyopaque {
+    const name = objStr(obj, "name") orelse return null;
+    const value = objStr(obj, "value") orelse default_value;
+    const domain = objStr(obj, "domain") orelse return null;
+    const path = objStr(obj, "path") orelse "/";
+    const name_z = alloc.dupeZ(u8, name) catch return null;
+    defer alloc.free(name_z);
+    const value_z = alloc.dupeZ(u8, value) catch return null;
+    defer alloc.free(value_z);
+    const domain_z = alloc.dupeZ(u8, domain) catch return null;
+    defer alloc.free(domain_z);
+    const path_z = alloc.dupeZ(u8, path) catch return null;
+    defer alloc.free(path_z);
+    // SoupCookie takes a max-age, not an absolute time; -1 means a session
+    // cookie, which is the right default when the app gives no expiry.
+    const max_age: c_int = blk: {
+        const expires = objInt(obj, "expires") orelse break :blk -1;
+        const now = @divTrunc(glib.getRealTime(), std.time.us_per_s);
+        const delta = expires - now;
+        break :blk if (delta <= 0) 0 else @intCast(@min(delta, std.math.maxInt(c_int)));
+    };
+    const cookie = s.cookie_new(name_z.ptr, value_z.ptr, domain_z.ptr, path_z.ptr, max_age) orelse return null;
+    if (objBool(obj, "secure")) |b| s.cookie_set_secure(cookie, if (b) 1 else 0);
+    if (objBool(obj, "httpOnly")) |b| s.cookie_set_http_only(cookie, if (b) 1 else 0);
+    if (objStr(obj, "sameSite")) |policy| {
+        const p: c_uint = if (std.ascii.eqlIgnoreCase(policy, "lax"))
+            1
+        else if (std.ascii.eqlIgnoreCase(policy, "strict"))
+            2
+        else
+            0;
+        s.cookie_set_same_site_policy(cookie, p);
+    }
+    return cookie;
+}
+
+fn cookieArg(arg: ?std.json.Value) ?std.json.ObjectMap {
+    const obj = argObject(arg) orelse return null;
+    // Both `{cookie: {...}}` and the bare cookie object are accepted.
+    if (obj.get("cookie")) |nested| {
+        return switch (nested) {
+            .object => |o| o,
+            else => obj,
+        };
+    }
+    return obj;
+}
+
+fn cmdSetCookie(v: *anyopaque, arg: ?std.json.Value) void {
+    const s = loadSoup() orelse return;
+    const add = ext.cookie_manager_add_cookie orelse return;
+    const cm = cookieManager(v) orelse return;
+    const obj = cookieArg(arg) orelse return;
+    const cookie = buildCookie(s, obj, "") orelse {
+        std.debug.print("ND_WARN WebView setCookie: malformed cookie (name and domain are required)\n", .{});
+        return;
+    };
+    defer s.cookie_free(cookie);
+    add(cm, cookie, null, &cbCookieAdded, null);
+}
+
+/// libsoup's cookie jar deletes by full identity — name, VALUE and path all
+/// have to match — so a cookie synthesized from {name, domain, path} never
+/// matches the stored one. Read the jar first and delete the live cookies,
+/// which is also exactly what the AppKit peer does with WKHTTPCookieStore.
+const DeleteCookieCtx = struct {
+    name: []u8,
+    domain: ?[]u8,
+    path: ?[]u8,
+};
+
+fn cmdDeleteCookie(v: *anyopaque, arg: ?std.json.Value) void {
+    _ = loadSoup() orelse return;
+    _ = ext.cookie_manager_delete_cookie orelse return;
+    const get_all = ext.cookie_manager_get_all_cookies orelse return;
+    const cm = cookieManager(v) orelse return;
+    const obj = cookieArg(arg) orelse return;
+    const name = objStr(obj, "name") orelse {
+        std.debug.print("ND_WARN WebView deleteCookie: missing name\n", .{});
+        return;
+    };
+    const ctx = alloc.create(DeleteCookieCtx) catch return;
+    ctx.* = .{
+        .name = alloc.dupe(u8, name) catch {
+            alloc.destroy(ctx);
+            return;
+        },
+        .domain = if (objStr(obj, "domain")) |d| (alloc.dupe(u8, d) catch null) else null,
+        .path = if (objStr(obj, "path")) |p| (alloc.dupe(u8, p) catch null) else null,
+    };
+    get_all(cm, null, &cbDeleteMatchingCookies, ctx);
+}
+
+fn cbDeleteMatchingCookies(source: ?*anyopaque, res: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const ctx: *DeleteCookieCtx = @ptrCast(@alignCast(data orelse return));
+    defer {
+        alloc.free(ctx.name);
+        if (ctx.domain) |d| alloc.free(d);
+        if (ctx.path) |p| alloc.free(p);
+        alloc.destroy(ctx);
+    }
+    const cm = source orelse return;
+    const finish = ext.cookie_manager_get_all_cookies_finish orelse return;
+    const del = ext.cookie_manager_delete_cookie orelse return;
+    const s = loadSoup() orelse return;
+
+    var err: ?*glib.Error = null;
+    const list = finish(cm, res, &err) orelse {
+        if (err) |e| {
+            defer e.free();
+            const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "unknown error";
+            std.debug.print("ND_WARN WebView deleteCookie: could not read the cookie jar: {s}\n", .{msg});
+        }
+        return;
+    };
+    var node: ?*glib.List = list;
+    while (node) |n| : (node = n.f_next) {
+        const cookie = n.f_data orelse continue;
+        const name = if (s.cookie_get_name(cookie)) |x| std.mem.span(x) else continue;
+        if (!std.mem.eql(u8, name, ctx.name)) continue;
+        if (ctx.domain) |want| {
+            const have: []const u8 = if (s.cookie_get_domain(cookie)) |x| std.mem.span(x) else "";
+            // Stored host cookies keep a leading dot for domain cookies; the
+            // app names the host, so compare both spellings.
+            const have_bare = if (have.len > 0 and have[0] == '.') have[1..] else have;
+            if (!std.mem.eql(u8, have_bare, want)) continue;
+        }
+        if (ctx.path) |want| {
+            const have: []const u8 = if (s.cookie_get_path(cookie)) |x| std.mem.span(x) else "";
+            if (!std.mem.eql(u8, have, want)) continue;
+        }
+        del(cm, cookie, null, &cbCookieDeleted, null);
+    }
+    glib.List.freeFull(list, @ptrCast(s.cookie_free));
+}
+
+/// add/delete report through GAsyncResult; the finish call has to run or GIO
+/// leaks the result, and a failure is worth one warning line.
+fn cbCookieAdded(source: ?*anyopaque, res: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    reportCookieWrite(ext.cookie_manager_add_cookie_finish, source, res, "setCookie");
+}
+
+fn cbCookieDeleted(source: ?*anyopaque, res: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+    reportCookieWrite(ext.cookie_manager_delete_cookie_finish, source, res, "deleteCookie");
+}
+
+fn reportCookieWrite(finish_fn: ?FnCookieMutateFinish, source: ?*anyopaque, res: ?*anyopaque, what: []const u8) void {
+    const src = source orelse return;
+    const finish = finish_fn orelse return;
+    var err: ?*glib.Error = null;
+    _ = finish(src, res, &err);
+    if (err) |e| {
+        defer e.free();
+        const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "unknown error";
+        std.debug.print("ND_WARN WebView {s} failed: {s}\n", .{ what, msg });
+    }
+}
+
+// ============================================================================
+// Find in page
+// ============================================================================
+
+fn findOptions(obj: ?std.json.ObjectMap) u32 {
+    var options: u32 = 0;
+    const case_sensitive = if (obj) |o| (objBool(o, "caseSensitive") orelse false) else false;
+    if (!case_sensitive) options |= FIND_CASE_INSENSITIVE;
+    const wrap = if (obj) |o| (objBool(o, "wrap") orelse true) else true;
+    if (wrap) options |= FIND_WRAP_AROUND;
+    return options;
+}
+
+fn cmdFindStart(v: *anyopaque, arg: ?std.json.Value) void {
+    const get_fc = ext.get_find_controller orelse return;
+    const search = ext.find_search orelse return;
+    const obj = argObject(arg) orelse return;
+    const text = objStr(obj, "text") orelse {
+        std.debug.print("ND_WARN WebView findStart: missing text\n", .{});
+        return;
+    };
+    const fc = get_fc(v) orelse return;
+    const text_z = alloc.dupeZ(u8, text) catch return;
+    defer alloc.free(text_z);
+    const options = findOptions(obj);
+    search(fc, text_z.ptr, options, FIND_MAX_MATCHES);
+    // `search` reports found/not-found; the total only arrives through a
+    // separate count pass, so both run and the app gets two findResult events.
+    if (ext.find_count_matches) |count| count(fc, text_z.ptr, options, FIND_MAX_MATCHES);
+}
+
+fn cmdFindStep(v: *anyopaque, step: ?FnVoidOnPtr) void {
+    const get_fc = ext.get_find_controller orelse return;
+    const f = step orelse return;
+    const fc = get_fc(v) orelse return;
+    f(fc);
+}
+
+// ============================================================================
+// Session state
+// ============================================================================
+
+fn cmdSaveSession(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const get_state = ext.get_session_state orelse return;
+    const serialize = ext.session_state_serialize orelse return;
+    const node_id = widgetNodeId(widget) orelse return;
+    const id = if (argObject(arg)) |o| (objStr(o, "id") orelse "") else "";
+    const session_state = get_state(v) orelse return;
+    defer if (ext.session_state_unref) |unref| unref(session_state);
+    const bytes = serialize(session_state) orelse return;
+    defer bytes.unref();
+    var size: usize = 0;
+    const data = bytes.getData(&size) orelse return;
+
+    const encoder = std.base64.standard.Encoder;
+    const out = alloc.alloc(u8, encoder.calcSize(size)) catch return;
+    defer alloc.free(out);
+    const encoded = encoder.encode(out, data[0..size]);
+
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "id", id);
+    objPutStr(&payload, "state", encoded);
+    emitObject(node_id, "sessionSaved", payload);
+}
+
+fn cmdRestoreSession(v: *anyopaque, arg: ?std.json.Value) void {
+    const state_new = ext.session_state_new orelse return;
+    const restore = ext.restore_session_state orelse return;
+    const obj = argObject(arg) orelse return;
+    const b64 = objStr(obj, "state") orelse {
+        std.debug.print("ND_WARN WebView restoreSession: missing state\n", .{});
+        return;
+    };
+    const decoder = std.base64.standard.Decoder;
+    const size = decoder.calcSizeForSlice(b64) catch {
+        std.debug.print("ND_WARN WebView restoreSession: malformed base64 state\n", .{});
+        return;
+    };
+    const buf = alloc.alloc(u8, size) catch return;
+    defer alloc.free(buf);
+    decoder.decode(buf, b64) catch {
+        std.debug.print("ND_WARN WebView restoreSession: malformed base64 state\n", .{});
+        return;
+    };
+    const bytes = glib.Bytes.new(buf.ptr, size);
+    defer bytes.unref();
+    const session_state = state_new(bytes) orelse return;
+    defer if (ext.session_state_unref) |unref| unref(session_state);
+    restore(v, session_state);
+    // Restoring only rebuilds the back/forward list — navigating to its
+    // current item is what actually puts the page back on screen.
+    const get_bf = ext.get_back_forward_list orelse return;
+    const current = ext.bf_list_get_current_item orelse return;
+    const go_to = ext.go_to_bf_list_item orelse return;
+    const list = get_bf(v) orelse return;
+    const item = current(list) orelse return;
+    go_to(v, item);
+}
+
+// ============================================================================
+// Audio
+// ============================================================================
+
+fn emitAudioState(node_id: u32, v: *anyopaque) void {
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutBool(&payload, "playing", if (ext.is_playing_audio) |f| f(v) != 0 else false);
+    objPutBool(&payload, "muted", if (ext.get_is_muted) |f| f(v) != 0 else false);
+    emitObject(node_id, "audioStateChanged", payload);
+}
+
+fn cmdSetMuted(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
+    const set_muted = ext.set_is_muted orelse return;
+    const muted = switch (arg orelse return) {
+        .bool => |b| b,
+        .object => |o| objBool(o, "muted") orelse return,
+        else => return,
+    };
+    set_muted(v, if (muted) 1 else 0);
+    if (widgetNodeId(widget)) |node_id| emitAudioState(node_id, v);
+}
+
+// ============================================================================
+// Command dispatch
+// ============================================================================
 
 /// widgetCommand dispatch (generated widgets.zig WebView arm).
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
@@ -387,10 +1652,46 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdOpenDevTools(v);
     } else if (std.mem.eql(u8, cmd, "executeJavaScript")) {
         cmdExecuteJavaScript(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "addUserScript")) {
+        cmdAddUserScript(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "removeUserScript")) {
+        cmdRemoveUserScript(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "clearUserScripts")) {
+        cmdClearUserScripts(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "registerScriptMessage")) {
+        cmdRegisterScriptMessage(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) {
+        cmdUnregisterScriptMessage(v, arg);
+    } else if (std.mem.eql(u8, cmd, "respondScheme")) {
+        cmdRespondScheme(arg);
+    } else if (std.mem.eql(u8, cmd, "getCookies")) {
+        cmdGetCookies(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "setCookie")) {
+        cmdSetCookie(v, arg);
+    } else if (std.mem.eql(u8, cmd, "deleteCookie")) {
+        cmdDeleteCookie(v, arg);
+    } else if (std.mem.eql(u8, cmd, "findStart")) {
+        cmdFindStart(v, arg);
+    } else if (std.mem.eql(u8, cmd, "findNext")) {
+        cmdFindStep(v, ext.find_search_next);
+    } else if (std.mem.eql(u8, cmd, "findPrevious")) {
+        cmdFindStep(v, ext.find_search_previous);
+    } else if (std.mem.eql(u8, cmd, "findStop")) {
+        cmdFindStep(v, ext.find_search_finish);
+    } else if (std.mem.eql(u8, cmd, "saveSession")) {
+        cmdSaveSession(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "restoreSession")) {
+        cmdRestoreSession(v, arg);
+    } else if (std.mem.eql(u8, cmd, "setMuted")) {
+        cmdSetMuted(widget, v, arg);
     } else {
         std.debug.print("ND_WARN unknown WebView command {s}\n", .{cmd});
     }
 }
+
+// ============================================================================
+// Signal wiring
+// ============================================================================
 
 /// Generated connectEvents WebView arm: wires the WebKit signals that feed
 /// the schema events. `emit_fn` is the generated module's emit sink (same
@@ -398,9 +1699,11 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
 pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     if (api == null or !isReal(widget)) return;
     emit = emit_fn;
+    any_view_created = true;
     const obj = widget.as(gobject.Object);
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     gobject.Object.setData(obj, NODE_ID_KEY, data); // retrieved by widgetCommand, which gets no node_id of its own
+    if (stateOf(widget)) |state| state.node_id = node_id;
     _ = gobject.signalConnectData(obj, "load-changed", @ptrCast(&cbLoadChanged), data, null, .{});
     _ = gobject.signalConnectData(obj, "notify::uri", @ptrCast(&cbNotifyUri), data, null, .{});
     _ = gobject.signalConnectData(obj, "notify::title", @ptrCast(&cbNotifyTitle), data, null, .{});
@@ -416,6 +1719,39 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
             _ = gobject.signalConnectData(@ptrCast(@alignCast(session)), "download-started", @ptrCast(&cbDownloadStarted), data, null, .{});
         }
     }
+    if (ext.get_favicon != null) {
+        // The favicon database is off by default, and `notify::favicon` never
+        // fires without it — turning it on is part of wiring the event.
+        if (ext.get_network_session) |get_session| {
+            if (ext.network_session_get_website_data_manager) |get_manager| {
+                if (ext.website_data_manager_set_favicons_enabled) |enable| {
+                    if (get_session(@ptrCast(widget))) |session| {
+                        if (get_manager(session)) |manager| enable(manager, 1);
+                    }
+                }
+            }
+        }
+        _ = gobject.signalConnectData(obj, "notify::favicon", @ptrCast(&cbNotifyFavicon), data, null, .{});
+    }
+    _ = gobject.signalConnectData(obj, "insecure-content-detected", @ptrCast(&cbInsecureContent), data, null, .{});
+    _ = gobject.signalConnectData(obj, "load-failed-with-tls-errors", @ptrCast(&cbTlsErrors), data, null, .{});
+    if (ext.hit_test_get_link_uri != null) {
+        _ = gobject.signalConnectData(obj, "mouse-target-changed", @ptrCast(&cbMouseTarget), data, null, .{});
+    }
+    _ = gobject.signalConnectData(obj, "context-menu", @ptrCast(&cbContextMenu), data, null, .{});
+    if (ext.is_playing_audio != null) {
+        _ = gobject.signalConnectData(obj, "notify::is-playing-audio", @ptrCast(&cbNotifyAudio), data, null, .{});
+    }
+    if (ext.get_find_controller) |get_fc| {
+        if (get_fc(@ptrCast(widget))) |fc| {
+            _ = gobject.signalConnectData(@ptrCast(@alignCast(fc)), "found-text", @ptrCast(&cbFoundText), data, null, .{});
+            _ = gobject.signalConnectData(@ptrCast(@alignCast(fc)), "failed-to-find-text", @ptrCast(&cbFailedToFind), data, null, .{});
+            _ = gobject.signalConnectData(@ptrCast(@alignCast(fc)), "counted-matches", @ptrCast(&cbCountedMatches), data, null, .{});
+        }
+    }
+    if (cookieManager(@ptrCast(widget))) |cm| {
+        _ = gobject.signalConnectData(@ptrCast(@alignCast(cm)), "changed", @ptrCast(&cbCookiesChanged), data, null, .{});
+    }
 }
 
 fn cbLoadChanged(obj: *gobject.Object, load_event: c_int, data: ?*anyopaque) callconv(.c) void {
@@ -428,6 +1764,55 @@ fn cbLoadChanged(obj: *gobject.Object, load_event: c_int, data: ?*anyopaque) cal
         f(node_id, "backAvailable", .{ .checked = a.web_view_can_go_back(v) != 0 });
         f(node_id, "forwardAvailable", .{ .checked = a.web_view_can_go_forward(v) != 0 });
     }
+    // TLS state is only meaningful once the navigation has committed.
+    if (load_event == WEBKIT_LOAD_COMMITTED) emitSecurity(node_id, v);
+}
+
+/// `securityChanged` on commit: `secure` means the page came over TLS with no
+/// certificate errors. `get_tls_info` returning FALSE is the plain-http case.
+fn emitSecurity(node_id: u32, v: *anyopaque) void {
+    const get_tls = ext.get_tls_info orelse return;
+    var flags: c_uint = 0;
+    const has_tls = get_tls(v, null, &flags) != 0;
+    const secure = has_tls and flags == 0;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutBool(&payload, "secure", secure);
+    objPutBool(&payload, "insecureContent", false);
+    if (has_tls and flags != 0) {
+        var buf: [64]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "TLS certificate errors (flags 0x{x})", .{flags}) catch "TLS certificate errors";
+        objPutStr(&payload, "error", msg);
+        emitObject(node_id, "securityChanged", payload);
+        return;
+    }
+    emitObject(node_id, "securityChanged", payload);
+}
+
+fn cbInsecureContent(_: *gobject.Object, _: c_int, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutBool(&payload, "secure", false);
+    objPutBool(&payload, "insecureContent", true);
+    emitObject(node_id, "securityChanged", payload);
+}
+
+/// Returning FALSE keeps WebKit's refusal to load a page with TLS errors —
+/// the framework never silently downgrades a certificate failure. The app
+/// gets the event and decides what to show.
+fn cbTlsErrors(_: *gobject.Object, failing_uri: ?[*:0]const u8, _: ?*anyopaque, errors: c_uint, data: ?*anyopaque) callconv(.c) c_int {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutBool(&payload, "secure", false);
+    objPutBool(&payload, "insecureContent", false);
+    objPutStr(&payload, "url", if (failing_uri) |u| std.mem.span(u) else "");
+    var buf: [64]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "TLS certificate errors (flags 0x{x})", .{errors}) catch "TLS certificate errors";
+    objPutStr(&payload, "error", msg);
+    emitObject(node_id, "securityChanged", payload);
+    return 0;
 }
 
 // notify:: handlers get (object, pspec, user_data).
@@ -460,6 +1845,124 @@ fn cbNotifyProgress(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) cal
     if (emit) |f| f(node_id, "loadProgress", .{ .value = progress });
 }
 
+/// `notify::favicon`: WebKit hands over a GdkTexture, which GDK can encode to
+/// PNG without any extra dependency. Oversized icons are skipped rather than
+/// pushed through NDP — apps that want them can fetch `iconUrl` themselves.
+fn cbNotifyFavicon(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const get_favicon = ext.get_favicon orelse return;
+    const raw = get_favicon(@ptrCast(obj)) orelse return;
+    const texture: *gdk.Texture = @ptrCast(@alignCast(raw));
+    const bytes = gdk.Texture.saveToPngBytes(texture);
+    defer bytes.unref();
+    var size: usize = 0;
+    const png = bytes.getData(&size) orelse return;
+    if (size == 0 or size > FAVICON_MAX_PNG_BYTES) {
+        if (size > FAVICON_MAX_PNG_BYTES) {
+            std.debug.print("ND_WARN WebView faviconChanged: icon of {d} bytes exceeds the {d}-byte cap; skipped\n", .{ size, FAVICON_MAX_PNG_BYTES });
+        }
+        return;
+    }
+    const prefix = "data:image/png;base64,";
+    const encoder = std.base64.standard.Encoder;
+    const out = alloc.alloc(u8, prefix.len + encoder.calcSize(size)) catch return;
+    defer alloc.free(out);
+    @memcpy(out[0..prefix.len], prefix);
+    _ = encoder.encode(out[prefix.len..], png[0..size]);
+
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "dataUrl", out);
+    emitObject(node_id, "faviconChanged", payload);
+}
+
+fn cbMouseTarget(_: *gobject.Object, hit: ?*anyopaque, _: c_uint, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const get_link = ext.hit_test_get_link_uri orelse return;
+    const h = hit orelse return;
+    const url: []const u8 = if (get_link(h)) |u| std.mem.span(u) else "";
+    if (emit) |f| f(node_id, "linkHover", .{ .text = url });
+}
+
+/// `context-menu`: returning TRUE suppresses WebKit's own menu, which is what
+/// `suppressContextMenu` buys — the app then shows a native menu off this
+/// event's hit-test data. Returning FALSE leaves the engine menu in place.
+fn cbContextMenu(obj: *gobject.Object, menu: ?*anyopaque, hit: ?*anyopaque, data: ?*anyopaque) callconv(.c) c_int {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const widget: *gtk.Widget = @ptrCast(obj);
+    const suppress = if (stateOf(widget)) |s| s.suppress_context_menu else false;
+
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    var x: c_int = 0;
+    var y: c_int = 0;
+    if (ext.context_menu_get_position) |get_pos| {
+        if (menu) |m| _ = get_pos(m, &x, &y);
+    }
+    objPutInt(&payload, "x", x);
+    objPutInt(&payload, "y", y);
+    var editable = false;
+    var has_selection = false;
+    if (hit) |h| {
+        if (ext.hit_test_get_context) |get_ctx| {
+            const context = get_ctx(h);
+            editable = (context & HIT_EDITABLE) != 0;
+            has_selection = (context & HIT_SELECTION) != 0;
+        }
+        if (ext.hit_test_get_link_uri) |get_link| {
+            if (get_link(h)) |u| objPutStr(&payload, "link", std.mem.span(u));
+        }
+        if (ext.hit_test_get_image_uri) |get_image| {
+            if (get_image(h)) |u| objPutStr(&payload, "image", std.mem.span(u));
+        }
+    }
+    objPutBool(&payload, "editable", editable);
+    // WebKitGTK's hit test reports THAT there is a selection but never its
+    // text, so `selection` is AppKit-only; `hasSelection` is the portable flag.
+    objPutBool(&payload, "hasSelection", has_selection);
+    emitObject(node_id, "contextMenu", payload);
+    return if (suppress) 1 else 0;
+}
+
+fn cbNotifyAudio(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    emitAudioState(node_id, @ptrCast(obj));
+}
+
+/// `done` separates the outcome of a find operation (search/next/previous)
+/// from the asynchronous match-count update WebKitGTK delivers separately.
+/// `matchCount` is GTK-only: WKFindResult on AppKit reports match/no-match
+/// without a total, so apps must treat the field as optional.
+fn emitFindResult(node_id: u32, match_count: u32, match_found: bool, done: bool) void {
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutBool(&payload, "matchFound", match_found);
+    objPutInt(&payload, "matchCount", match_count);
+    objPutBool(&payload, "done", done);
+    emitObject(node_id, "findResult", payload);
+}
+
+fn cbFoundText(_: *gobject.Object, match_count: c_uint, data: ?*anyopaque) callconv(.c) void {
+    emitFindResult(@intCast(@intFromPtr(data)), @intCast(match_count), true, true);
+}
+
+fn cbFailedToFind(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    emitFindResult(@intCast(@intFromPtr(data)), 0, false, true);
+}
+
+fn cbCountedMatches(_: *gobject.Object, match_count: c_uint, data: ?*anyopaque) callconv(.c) void {
+    emitFindResult(@intCast(@intFromPtr(data)), @intCast(match_count), match_count > 0, false);
+}
+
+/// The cookie manager's `changed` signal carries no payload — it's a "re-read
+/// the jar" ping, so the event is a bare object.
+fn cbCookiesChanged(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    emitObject(node_id, "cookiesChanged", payload);
+}
+
 /// `load-failed`: returning FALSE keeps WebKit's built-in error page (apps
 /// get the event for their own handling — e.g. a toast — without losing the
 /// safety net of a page that isn't just blank).
@@ -476,7 +1979,7 @@ fn cbLoadFailed(_: *gobject.Object, _: c_int, failing_uri: ?[*:0]const u8, err: 
     const url: []const u8 = if (failing_uri) |u| std.mem.span(u) else "";
     const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "";
     var payload: std.json.ObjectMap = .empty;
-    defer payload.deinit(std.heap.page_allocator);
+    defer payload.deinit(alloc);
     objPutStr(&payload, "url", url);
     objPutStr(&payload, "error", msg);
     f(node_id, "loadFailed", .{ .data = .{ .object = payload } });
@@ -510,7 +2013,7 @@ fn cbDownloadStarted(_: *gobject.Object, download: ?*anyopaque, data: ?*anyopaqu
         if (get_uri(request)) |uri| {
             if (emit) |f| {
                 var payload: std.json.ObjectMap = .empty;
-                defer payload.deinit(std.heap.page_allocator);
+                defer payload.deinit(alloc);
                 objPutStr(&payload, "url", std.mem.span(uri));
                 f(node_id, "downloadRequested", .{ .data = .{ .object = payload } });
             }
