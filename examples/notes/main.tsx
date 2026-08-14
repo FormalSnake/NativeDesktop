@@ -7,7 +7,7 @@ import { render, useMemo, useState } from "@nativedesktop/react";
 // Apple-Notes-style layout: three <splitview> panes, each with its own
 // <toolbarview>+<headerbar> (own header, not one shared window titlebar):
 //   - sidebar (slot="sidebar", glass): folders (All Notes / Personal / Work
-//     / Trash) as navigation-sidebar flat buttons, counts in the label.
+//     / Trash) as navigation-sidebar rows, counts in the label.
 //   - list (slot="list"): search + a <sourcelist> of notes + a count caption.
 //   - content (slot="content", declared LAST so GTK homes the menu bar's
 //     primary button in ITS headerbar per GNOME convention): the floating
@@ -174,12 +174,7 @@ function App(): React.ReactNode {
           />
         </menu>
         <menu label="Note" testID="menu-note">
-          {/* MenuItem.label is create-only (docs/widgets.md) — key on the
-              pin state so the label flips between "Pin"/"Unpin" on toggle,
-              same create-only-prop workaround as headerbar/folder-row keys
-              below. */}
           <menuitem
-            key={selected != null && selected.pinned ? "pinned" : "unpinned"}
             testID="menu-toggle-pin"
             label={selected != null && selected.pinned ? "Unpin" : "Pin"}
             accelerator="primary+p"
@@ -204,57 +199,54 @@ function App(): React.ReactNode {
           <box
             testID="sidebar-content"
             orientation="vertical"
-            spacing={3}
+            spacing={0}
             cssClasses={["navigation-sidebar"]}
-            style={{ vexpand: true, padding: { top: 12, bottom: 12, left: 10, right: 10 } }}
+            style={{ vexpand: true }}
           >
-            {/* Button.label is create-only — the counts embedded in the
-                label text need a remount to update, so each row is keyed
-                on its own count. */}
+            {/* Row metrics (height, insets, 2px pitch, radius) and the
+                selected/hover fills come from the framework, so the rows
+                carry no geometry of their own. Two props still do real work:
+                suggested-action is the selection signal both backends read
+                (GTK's row fill, AppKit's .sourceList selection), and
+                labelAlign, because GTK4 CSS has no text-align and a
+                GtkButton label centres by default. */}
             <button
-              key={`all:${allCount}`}
               testID="folder-row-all"
               label={`All Notes  ${allCount}`}
               labelAlign="start"
               onClick={() => selectFolder("all")}
-              cssClasses={folder === "all" ? ["suggested-action"] : ["flat"]}
-              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+              cssClasses={folder === "all" ? ["suggested-action"] : []}
+              style={{ halign: "fill" }}
             />
             <button
-              key={`personal:${personalCount}`}
               testID="folder-row-personal"
               label={`Personal  ${personalCount}`}
               labelAlign="start"
               onClick={() => selectFolder("personal")}
-              cssClasses={folder === "personal" ? ["suggested-action"] : ["flat"]}
-              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+              cssClasses={folder === "personal" ? ["suggested-action"] : []}
+              style={{ halign: "fill" }}
             />
             <button
-              key={`work:${workCount}`}
               testID="folder-row-work"
               label={`Work  ${workCount}`}
               labelAlign="start"
               onClick={() => selectFolder("work")}
-              cssClasses={folder === "work" ? ["suggested-action"] : ["flat"]}
-              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+              cssClasses={folder === "work" ? ["suggested-action"] : []}
+              style={{ halign: "fill" }}
             />
             <button
-              key={`trash:${trashCount}`}
               testID="folder-row-trash"
               label={`Trash  ${trashCount}`}
               labelAlign="start"
               onClick={() => selectFolder("trash")}
-              cssClasses={folder === "trash" ? ["suggested-action"] : ["flat"]}
-              style={{ padding: { top: 8, bottom: 8, left: 10, right: 10 }, halign: "fill" }}
+              cssClasses={folder === "trash" ? ["suggested-action"] : []}
+              style={{ halign: "fill" }}
             />
           </box>
         </toolbarview>
 
         <toolbarview slot="list" testID="list-toolbar">
-          {/* HeaderBar.title is create-only; key on the folder so the
-              header relabels itself when the folder selection changes
-              (an infrequent switch, unlike per-keystroke title edits). */}
-          <headerbar key={folder} testID="list-header" title={folderLabel(folder)} />
+          <headerbar testID="list-header" title={folderLabel(folder)} />
           <box testID="list-content" orientation="vertical" spacing={8} style={{ vexpand: true, padding: { top: 8, bottom: 8, left: 10, right: 10 } }}>
             <searchinput
               testID="search-input"
@@ -293,11 +285,6 @@ function App(): React.ReactNode {
         </toolbarview>
 
         <toolbarview slot="content" testID="content-toolbar">
-          {/* This header never changes its own title, so it never needs a
-              remount — the note's own title lives in title-input below. It
-              only carries the floating editing buttons (end slot), which
-              stay live via cssClasses updates (createAndUpdate) with no
-              remount needed either. */}
           <headerbar testID="content-header" title="Editor">
             <button
               slot="end"
@@ -314,19 +301,7 @@ function App(): React.ReactNode {
           {/* hexpand+vexpand: the content pane claims all space the other panes don't. */}
           <box testID="content-body" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ hexpand: true, vexpand: true, padding: 20 }}>
             {selected != null ? (
-            // key={selected.id}: prop `update` ops only reach GTK for
-            // style/testID/label-text (src/tree.zig's update handler
-            // resolves the widget kind from the wire message, which is
-            // never populated for "update" ops — only "create" carries a
-            // widget kind, per packages/react/src/host-config.ts's
-            // commitUpdate). A same-widget-instance prop push (typing in
-            // THIS textinput) is invisible to that gap since the GTK widget
-            // already holds the value the user just typed; a cross-widget
-            // push (switching to a DIFFERENT note) is not, and silently
-            // no-ops without a remount. Keying on the note id forces create
-            // (not update) on note switch, which sidesteps the gap. The
-            // framework bug itself is not patched here.
-            <box key={selected.id} orientation="vertical" spacing={12} style={{ vexpand: true }}>
+            <box orientation="vertical" spacing={12} style={{ vexpand: true }}>
               <textinput
                 testID="title-input"
                 text={selected.title}

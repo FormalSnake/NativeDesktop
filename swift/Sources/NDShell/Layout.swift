@@ -67,6 +67,18 @@ final class NDButton: NSButton {
         }
     }
 
+    /// A sidebar row's visible text lives on the table cell, not on this
+    /// button: the button is an alpha-0 model object and the cell's textField
+    /// is only written inside tableView(_:viewFor:row:), which runs on reload.
+    /// Without this a label-only update (Button.label is createAndUpdate) sets
+    /// the title and the sidebar keeps showing the stale text for the session.
+    override var title: String {
+        didSet {
+            guard title != oldValue, ndSidebarRowButtons.contains(ObjectIdentifier(self)) else { return }
+            ndEnclosingSidebarTable(self)?.reload()
+        }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         ndIsSidebarRowModel ? nil : super.hitTest(point)
     }

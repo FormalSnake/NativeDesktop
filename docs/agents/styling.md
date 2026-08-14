@@ -50,9 +50,12 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable.
   `card`, `view` and `osd` are silently ignored on macOS; native chrome for those roles comes from
   the SplitView/HeaderBar widgets themselves, not from class strings.
 
-  `pill` on a label and `activatable` on a box are the two classes libadwaita scopes to other
-  widget types. GTK carries them in framework base CSS (`src/gtk/basecss.zig`) so both backends
-  read the class the same way.
+  `pill` on a label, `activatable` on a box, and `navigation-sidebar` on a box are the classes
+  libadwaita scopes to other widget types. GTK carries them in framework base CSS
+  (`src/gtk/basecss.zig`) so both backends read the class the same way. For the sidebar that means
+  `box.navigation-sidebar > button` gets libadwaita's own row metrics and states, and
+  `suggested-action` there paints the neutral selected-row fill rather than an accent CTA, matching
+  what the AppKit table does with the same prop.
 
 ## Adwaita runtime & dark mode
 

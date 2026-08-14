@@ -92,6 +92,13 @@ pub const Runtime = struct {
     threaded: std.Io.Threaded,
     io: std.Io,
     server: std.Io.net.Server,
+    // The connected child's socket. Read AND mutated only under
+    // `writer_mutex` (`publishStream`/`retireStream`), which is what makes the
+    // writer paths' `self.stream orelse return` a real guard: the descriptor
+    // is closed in the same critical section that nulls the field, so no
+    // writer can ever hold a closed or half-published fd. std maps EBADF on a
+    // socket write to a panic rather than an error, so a stale descriptor here
+    // takes the whole host down.
     stream: ?std.Io.net.Stream = null,
     tree: *Tree,
     child: std.process.Child,
@@ -135,18 +142,7 @@ pub const Runtime = struct {
         trace = parent_env.get("NDP_TRACE") != null;
 
         const self = try gpa.create(Runtime);
-        self.* = undefined;
-        self.gpa = gpa;
-        self.tree = tree;
-        self.backend_name = backend_name;
-        self.writer_mutex = .init;
-        self.seq = 0;
-        self.last_error_message = null;
-        self.last_error_stack = null;
-        self.overlay_shown = false;
-        self.parent_env = parent_env;
-        self.real_environ = real_environ;
-        self.dev = if (parent_env.get("ND_DEV")) |v| std.mem.eql(u8, v, "1") else false;
+        self.* = preConnect(gpa, tree, parent_env, real_environ, backend_name);
 
         if (!default_acl_ready) {
             default_acl = acl.Acl.initDefault(gpa);
@@ -173,6 +169,65 @@ pub const Runtime = struct {
 
         _ = try std.Thread.spawn(.{}, readerLoop, .{self});
         return self;
+    }
+
+    /// The Runtime's pre-connect state, built as ONE struct literal so every
+    /// defaulted field is actually initialized. `stream` above all: the old
+    /// `self.* = undefined` plus field-by-field assignment skipped it, and in a
+    /// safe build `undefined` is 0xaa bytes, which read back as a NON-null
+    /// Stream wrapping fd 0xaaaaaaaa. Any frame written before the child
+    /// connected (AppKit emits an `app.activate` systemEvent from
+    /// applicationDidFinishLaunching, which loses the race against bun's
+    /// startup whenever the machine is loaded) then wrote to that bogus fd, and
+    /// std turns EBADF into a panic rather than an error, so `catch {}` could
+    /// not save the host. Only the five fields `start` computes afterwards are
+    /// `undefined` here; a newly added field with a default can no longer be
+    /// missed, and one without a default is a compile error.
+    fn preConnect(
+        gpa: std.mem.Allocator,
+        tree: *Tree,
+        parent_env: *const std.process.Environ.Map,
+        real_environ: std.process.Environ,
+        backend_name: []const u8,
+    ) Runtime {
+        return .{
+            .gpa = gpa,
+            .threaded = undefined,
+            .io = undefined,
+            .server = undefined,
+            .tree = tree,
+            .child = undefined,
+            .sock_path = undefined,
+            .backend_name = backend_name,
+            .dev = if (parent_env.get("ND_DEV")) |v| std.mem.eql(u8, v, "1") else false,
+            .parent_env = parent_env,
+            .real_environ = real_environ,
+        };
+    }
+
+    /// Publishes the freshly accepted child socket under the writer mutex, so a
+    /// concurrent writer sees either no stream or the whole 36-byte Stream
+    /// value, never a half-written one.
+    fn publishStream(self: *Runtime, stream: std.Io.net.Stream) void {
+        self.writer_mutex.lockUncancelable(self.io);
+        defer self.writer_mutex.unlock(self.io);
+        self.stream = stream;
+    }
+
+    /// Retires the child socket: nulls the field AND closes the descriptor in
+    /// one critical section, so the fd number stops existing at the same
+    /// instant the writer paths stop being able to reach it. Called by the
+    /// reader loop that accepted `expected`; a different stream in the field
+    /// means a newer child already owns it (a respawn re-accepted while this
+    /// loop was unwinding), so this loop must not close it.
+    fn retireStream(self: *Runtime, expected: ?std.Io.net.Stream) void {
+        const want = expected orelse return;
+        self.writer_mutex.lockUncancelable(self.io);
+        defer self.writer_mutex.unlock(self.io);
+        const current = self.stream orelse return;
+        if (current.socket.handle != want.socket.handle) return;
+        self.stream = null;
+        current.close(self.io);
     }
 
     /// Spawns the bun child. `dev` selects `bun --hot <script>` over
@@ -253,10 +308,10 @@ pub const Runtime = struct {
 
     fn readerLoop(self: *Runtime) void {
         const stream = self.server.accept(self.io) catch {
-            self.onChildExit();
+            self.onChildExit(null);
             return;
         };
-        self.stream = stream;
+        self.publishStream(stream);
         std.debug.print("ND_CHILD_CONNECTED\n", .{});
 
         var read_buf: [64 * 1024]u8 = undefined;
@@ -264,13 +319,13 @@ pub const Runtime = struct {
 
         // Handshake.
         const first = readFrame(self, &r.interface) catch {
-            self.onChildExit();
+            self.onChildExit(stream);
             return;
         };
         defer self.gpa.free(first);
         {
             const parsed = std.json.parseFromSlice(protocol.Hello, self.gpa, first, .{ .ignore_unknown_fields = true }) catch {
-                self.onChildExit();
+                self.onChildExit(stream);
                 return;
             };
             defer parsed.deinit();
@@ -281,7 +336,7 @@ pub const Runtime = struct {
                     .got = parsed.value.ndpVersion,
                 });
                 self.child.kill(self.io);
-                self.onChildExit();
+                self.onChildExit(stream);
                 return;
             }
         }
@@ -301,7 +356,7 @@ pub const Runtime = struct {
         // Frame loop.
         while (true) {
             const bytes = readFrame(self, &r.interface) catch {
-                self.onChildExit();
+                self.onChildExit(stream);
                 return;
             };
 
@@ -382,20 +437,16 @@ pub const Runtime = struct {
     /// Called from the reader-loop thread on every disconnect path (a dead
     /// `bytes` read means the child actually exited: crash, kill -9, or
     /// process.exit — never a `--hot` edit, which keeps the same socket).
-    /// Prints the existing marker, then marshals the overlay paint onto the
-    /// UI thread with whatever error text was last reported (or a generic
-    /// fallback if the child died silently).
-    fn onChildExit(self: *Runtime) void {
+    /// Retires `stream` (the socket this loop accepted, null when accept
+    /// itself failed), prints the existing marker, then marshals the overlay
+    /// paint onto the UI thread with whatever error text was last reported (or
+    /// a generic fallback if the child died silently).
+    fn onChildExit(self: *Runtime, stream: ?std.Io.net.Stream) void {
+        // Retire before anything else, including the marker print: a late frame
+        // (a systemEvent from an app-activation event, say) racing the teardown
+        // must find a null stream, never the dead descriptor.
+        self.retireStream(stream);
         std.debug.print("ND_CHILD_EXITED\n", .{});
-        // Drop the dead descriptor before anything can write to it again. Both
-        // writer paths bail on a null stream, but neither can tell a live fd
-        // from a closed one: a late frame (a systemEvent from an app-activation
-        // event, say) would hit a closed fd, and std turns that EBADF into a
-        // panic rather than an error, so `catch {}` cannot save the host. The
-        // accept loop re-arms this when the next child connects.
-        self.writer_mutex.lockUncancelable(self.io);
-        self.stream = null;
-        self.writer_mutex.unlock(self.io);
         if (self.overlay_shown) return; // already painted for this child's exit
         const msg = self.last_error_message orelse "Runtime disconnected";
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
@@ -798,6 +849,27 @@ pub const Runtime = struct {
         self.gpa.destroy(job);
     }
 };
+
+test "a Runtime that has not accepted a child yet has no stream" {
+    // Regression for a host-killing panic: `start` used to write
+    // `self.* = undefined` and then assign fields one at a time, which skipped
+    // `stream` (the only defaulted field it never touched). A safe build fills
+    // `undefined` with 0xaa, and an optional Stream of 0xaa bytes reads back as
+    // NON-null wrapping fd 0xaaaaaaaa, so the writer guards waved it through.
+    // Any frame written before the child connected (AppKit emits an
+    // `app.activate` systemEvent from applicationDidFinishLaunching, which
+    // beats bun's socket connect whenever the machine is loaded) then wrote to
+    // that bogus descriptor, and std raises EBADF as a panic, not an error.
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const rt = Runtime.preConnect(std.testing.allocator, undefined, &env, undefined, "test");
+    try std.testing.expect(rt.stream == null);
+    try std.testing.expect(rt.seq == 0);
+    try std.testing.expect(!rt.overlay_shown);
+    try std.testing.expect(rt.last_error_message == null);
+    try std.testing.expect(rt.last_error_stack == null);
+    try std.testing.expect(!rt.dev); // no ND_DEV in the map
+}
 
 test "commitGate denies window.create without grant, allows core:commit" {
     var denied = acl.Acl.initDefault(std.testing.allocator); // grants both by default

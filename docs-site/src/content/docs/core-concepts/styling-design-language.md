@@ -37,16 +37,16 @@ onto real per-platform mechanisms rather than CSS you write yourself.
 
 On Linux the class list is reconciled as a set on every update: each allowlisted class is added when
 requested and removed when no longer requested, so classes don't accumulate across renders.
-Container-scoped classes (`navigation-sidebar`, `boxed-list`, `boxed-list-separate`, `menu`,
-`inline`) style nothing when applied to a widget type libadwaita doesn't target with them — the host
-prints a one-time `ND_WARN` naming the class and widget type instead of failing silently; reach for
-the structural widgets (`<sourcelist>`, `<sourcetree>`, `<settingsgroup>`) when you want that
-chrome.
+Container-scoped classes (`boxed-list`, `boxed-list-separate`, `menu`, `inline`) style nothing when
+applied to a widget type libadwaita doesn't target with them — the host prints a one-time `ND_WARN`
+naming the class and widget type instead of failing silently; reach for the structural widgets
+(`<sourcelist>`, `<sourcetree>`, `<settingsgroup>`) when you want that chrome.
 
-Two classes libadwaita scopes to other widget types are carried by framework base CSS so they mean
+Three classes libadwaita scopes to other widget types are carried by framework base CSS so they mean
 the same thing on both backends: `pill` on a `<label>` is a capsule count badge (libadwaita treats
-it as a button size class), and `activatable` on a `<box>` is row hover feedback (libadwaita scopes
-it to `row`).
+it as a button size class), `activatable` on a `<box>` is row hover feedback (libadwaita scopes it
+to `row`), and `navigation-sidebar` on a `<box>` gives its `<button>` children libadwaita's own
+sidebar-row metrics and states (libadwaita scopes those to `row`, which cannot exist inside a box).
 
 On macOS a semantic subset maps onto real AppKit control properties, using dynamic system colors
 throughout so dark mode keeps working:
@@ -71,9 +71,13 @@ real source-list table behind it, so accent-when-key selection, row metrics and 
 AppKit instead of from your styling. The takeover is gated on the children being row-shaped, because
 the table covers the whole box and a composite row (button plus caption plus badge) would lose
 everything that is not the button. `nd-native-sidebar` on the same box skips that gate and takes
-over unconditionally. This is a macOS-side mapping, not a portable one: on GTK the same class on a
-`<box>` is the mistargeting case above. Use `<sourcelist>` or `<sourcetree>` for a sidebar that is
-native on both.
+over unconditionally.
+
+The class is portable: on GTK the same box gets libadwaita's sidebar-row metrics and states through
+framework base CSS. Both backends read `suggested-action` on a row as the selection signal, and
+neither paints it as an accent call to action inside a sidebar, so one tree gives you a native
+sidebar on each platform without per-row padding. `<sourcelist>` and `<sourcetree>` remain the
+better choice when the rows are data rather than a fixed handful of destinations.
 
 The remaining structural classes (`card`, `osd`) are ignored on macOS. That chrome comes from the
 `<splitview>` and `<headerbar>` widgets themselves rather than from class strings.

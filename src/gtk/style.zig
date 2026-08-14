@@ -234,14 +234,16 @@ pub fn applyCssClasses(widget: *gtk.Widget, value: std.json.Value) void {
 var mistarget_warned: std.AutoHashMapUnmanaged(usize, void) = .empty;
 
 /// Container-scoped libadwaita classes silently style NOTHING on the wrong
-/// widget type (`.navigation-sidebar` on a GtkBox was the canonical trap:
-/// the class only targets GtkListBox/GtkListView/GtkFlowBox/GtkGridView).
-/// Warn once so the mistake fails loudly instead of shipping as a no-op.
+/// widget type (`.boxed-list` on a GtkBox is the canonical trap: the class
+/// only targets GtkListBox). Warn once so the mistake fails loudly instead
+/// of shipping as a no-op.
+///
+/// `navigation-sidebar` is deliberately NOT in this table. It used to be the
+/// headline case, but basecss.zig now gives `box.navigation-sidebar > button`
+/// libadwaita's own sidebar row chrome, so on a GtkBox the class carries real
+/// semantics (AppKit peer: ndInstallSidebarTable) and warning would be wrong.
 fn warnMistargetedClass(widget: *gtk.Widget, name: []const u8) void {
-    const ok = if (std.mem.eql(u8, name, "navigation-sidebar"))
-        gobject.ext.isA(widget, gtk.ListBox) or gobject.ext.isA(widget, gtk.ListView) or
-            gobject.ext.isA(widget, gtk.FlowBox) or gobject.ext.isA(widget, gtk.GridView)
-    else if (std.mem.eql(u8, name, "boxed-list") or std.mem.eql(u8, name, "boxed-list-separate"))
+    const ok = if (std.mem.eql(u8, name, "boxed-list") or std.mem.eql(u8, name, "boxed-list-separate"))
         gobject.ext.isA(widget, gtk.ListBox)
     else if (std.mem.eql(u8, name, "menu"))
         gobject.ext.isA(widget, gtk.Popover)

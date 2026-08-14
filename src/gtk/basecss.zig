@@ -25,6 +25,33 @@ const gdk = @import("gdk");
 // GtkBox gets :hover, but ACTIVE is set by the widget itself and a box never
 // sets it.
 //
+// `navigation-sidebar` is the third such class. libadwaita scopes its ROW
+// rules to the children list widgets produce (`row`, `child`,
+// `flowboxchild`), so on the GtkBox of `<button>` rows ND apps write, only
+// its bare-class rules land (transparent background, 6px/4px vertical
+// padding) and the rows stay generic push buttons. The rules below give
+// those buttons libadwaita's own row treatment, mirroring
+// `.navigation-sidebar > row` (36px min-height, 0 8px padding, 0 6px 2px
+// margin, 9px radius) and its state fills (currentColor at 7% hover, 16%
+// active, 10% selected, 13%/19% selected hover/active). AppKit peer:
+// ndInstallSidebarTable's `.sourceList` NSTableView.
+//
+// `suggested-action` is the app's selection signal on both backends, so
+// inside a sidebar it paints the selected ROW fill instead of the accent
+// bezel: a selected sidebar row is not a suggested-action button, which is
+// also why the AppKit takeover strips the bezel and the Return-key
+// keyEquivalent off its rows.
+//
+// Three constraints these rules encode:
+//  - `box.` prefix, so the real GtkListBox sidebars (<sourcelist>,
+//    <sourcetree>) keep libadwaita's own `> row` styling untouched.
+//  - no container background: libadwaita leaves `.navigation-sidebar`
+//    transparent on purpose, because the split view's sidebar pane is what
+//    paints --sidebar-bg-color. Painting it here would double it, and the
+//    bare-class padding already reaches a GtkBox, so it is not redeclared.
+//  - a row's background is framework-owned: these selectors outrank a node's
+//    own `.nd-<id>` block, the same way `button.compact` above already does.
+//
 // Installed once at display level; providers restyle retroactively, so a lazy
 // install is safe.
 var base_installed = false;
@@ -37,6 +64,13 @@ const nd_base_css =
     \\.nd-compact entry { min-height: 26px; }
     \\box.activatable { border-radius: 9px; }
     \\box.activatable:hover { background-image: image(alpha(currentColor, 0.04)); }
+    \\box.navigation-sidebar > button { min-height: 36px; padding: 0 8px; margin: 0 6px 2px; border-radius: 9px; font-weight: normal; background: transparent; }
+    \\box.navigation-sidebar > button:hover { background-color: color-mix(in srgb, currentColor 7%, transparent); }
+    \\box.navigation-sidebar > button:active { background-color: color-mix(in srgb, currentColor 16%, transparent); }
+    \\box.navigation-sidebar > button.suggested-action { background-color: color-mix(in srgb, currentColor 10%, transparent); color: inherit; }
+    \\box.navigation-sidebar > button.suggested-action:hover { background-color: color-mix(in srgb, currentColor 13%, transparent); }
+    \\box.navigation-sidebar > button.suggested-action:active { background-color: color-mix(in srgb, currentColor 19%, transparent); }
+    \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 
 /// Called from tabs.zig's createWindow (a live display is guaranteed there);
