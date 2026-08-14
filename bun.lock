@@ -208,13 +208,24 @@
         "@types/react": "19.2.17",
       },
     },
+    "examples/webview-probe": {
+      "name": "webview-probe-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
     "packages/babel-plugin-nativedesktop": {
       "name": "babel-plugin-nativedesktop",
-      "version": "0.1.0",
+      "version": "0.1.1",
     },
     "packages/data": {
       "name": "@nativedesktop/data",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "drizzle-orm": "0.45.2",
         "kysely": "0.29.2",
@@ -228,7 +239,7 @@
     },
     "packages/host": {
       "name": "@nativedesktop/host",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "optionalDependencies": {
         "@nativedesktop/host-darwin-arm64": "workspace:*",
         "@nativedesktop/host-linux-x64": "workspace:*",
@@ -236,11 +247,11 @@
     },
     "packages/host-darwin-arm64": {
       "name": "@nativedesktop/host-darwin-arm64",
-      "version": "0.1.0",
+      "version": "0.1.1",
     },
     "packages/host-linux-x64": {
       "name": "@nativedesktop/host-linux-x64",
-      "version": "0.1.0",
+      "version": "0.1.1",
     },
     "packages/mcp": {
       "name": "@nativedesktop/mcp",
@@ -256,11 +267,11 @@
     },
     "packages/native": {
       "name": "@nativedesktop/native",
-      "version": "0.1.0",
+      "version": "0.1.1",
     },
     "packages/nd": {
       "name": "@nativedesktop/cli",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "bin": {
         "nd": "src/index.ts",
       },
@@ -270,7 +281,7 @@
     },
     "packages/panes": {
       "name": "@nativedesktop/panes",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "@types/react": "19.2.17",
         "react": "19.2.7",
@@ -281,7 +292,7 @@
     },
     "packages/react": {
       "name": "@nativedesktop/react",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "react-reconciler": "0.33.0",
         "react-refresh": "0.17.0",
@@ -299,7 +310,7 @@
     },
     "packages/rpc": {
       "name": "@nativedesktop/rpc",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "peerDependencies": {
         "@nativedesktop/react": "workspace:^",
       },
@@ -309,7 +320,7 @@
     },
     "packages/test": {
       "name": "@nativedesktop/test",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@nativedesktop/host": "workspace:*",
         "@nativedesktop/react": "workspace:*",
@@ -636,6 +647,8 @@
     "unpipe": ["unpipe@1.0.0", "", {}, "sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ=="],
 
     "vary": ["vary@1.1.2", "", {}, "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg=="],
+
+    "webview-probe-example": ["webview-probe-example@workspace:examples/webview-probe"],
 
     "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
 
