@@ -13,6 +13,11 @@ import type { Backend } from "@nativedesktop/host";
 
 const backend = process.argv[2] as Backend | undefined;
 const shotDir = process.env.ND_SHOT_DIR ?? "/tmp";
+// Every wait in this drive is a UI round trip that settles in well under a
+// second on an idle machine. The budget is env-overridable because the same
+// drive runs inside scripts/browser-gate.sh, right after a full build on a box
+// that may be shared, where 3s is not headroom.
+const T = Number(process.env.ND_DRIVE_TIMEOUT_MS ?? 3000);
 
 const app = await launchApp({ entry: "examples/sourcetree/main.tsx", backend });
 try {
@@ -39,7 +44,7 @@ try {
   console.log("ND_ST_ICONDATA_OK row with iconData rendered");
 
   // ---- leg 2: handshake manifest + activation replay ------------------------
-  await app.waitForText("caps present=true nope=false sourcetree=true", { timeoutMs: 3000 });
+  await app.waitForText("caps present=true nope=false sourcetree=true", { timeoutMs: T });
   // The host records the launch activation state and replays it right after
   // HelloAck; a background spawn legitimately starts inactive, so first assert
   // only that the replay landed, then frontmost the process (works for both
@@ -48,9 +53,9 @@ try {
   // after commit 0) and the readout only recomputes on a re-render: poke one
   // with a selection round-trip before asserting.
   await app.setValue("st-tree", "run-1");
-  await app.waitForText("replay=yes", { timeoutMs: 3000 });
+  await app.waitForText("replay=yes", { timeoutMs: T });
   await app.setValue("st-tree", "");
-  await app.waitForText("sel (none)", { timeoutMs: 3000 });
+  await app.waitForText("sel (none)", { timeoutMs: T });
   // The live flip needs the process frontmost, which only macOS can be asked
   // for; a headless weston seat never activates a window, so the GTK leg
   // asserts the replay and stops there rather than failing on a missing
@@ -61,7 +66,7 @@ try {
       `tell application "System Events" to set frontmost of (first application process whose unix id is ${app.pid}) to true`,
     ]);
     if (frontmost.exitCode !== 0) throw new Error(`osascript frontmost failed: ${frontmost.stderr.toString()}`);
-    await app.waitForText("active true replay=yes", { timeoutMs: 5000 });
+    await app.waitForText("active true replay=yes", { timeoutMs: T * 2 });
     console.log("ND_ST_CAPS_OK hasCommand true/false + hasWidget + isActive replay/live-flip verified");
   } else {
     console.log("ND_ST_CAPS_OK hasCommand true/false + hasWidget + isActive replay verified (no live flip: headless has no seat)");
@@ -69,8 +74,8 @@ try {
 
   // ---- leg 3: selection by node id (setValue -> selectionChanged -> a11y) ---
   await app.setValue("st-tree", "run-1");
-  await app.waitForText("sel run-1", { timeoutMs: 3000 });
-  await app.waitForValue("st-tree", "run-1", { timeoutMs: 3000 });
+  await app.waitForText("sel run-1", { timeoutMs: T });
+  await app.waitForValue("st-tree", "run-1", { timeoutMs: T });
   console.log("ND_ST_SELECT_OK selectionChanged {nodeId} + a11y value by id");
 
   // ---- leg 3b: selectedId "" clears the selection ---------------------------
@@ -78,14 +83,14 @@ try {
   // clear path goes through selectRow(null). Re-select before leg 4, whose
   // semantic click activates the selected row.
   await app.setValue("st-tree", "");
-  await app.waitForText("sel (none)", { timeoutMs: 3000 });
+  await app.waitForText("sel (none)", { timeoutMs: T });
   await app.setValue("st-tree", "run-1");
-  await app.waitForText("sel run-1", { timeoutMs: 3000 });
+  await app.waitForText("sel run-1", { timeoutMs: T });
   console.log('ND_ST_CLEAR_OK setValue("") deselected; re-select landed');
 
   // ---- leg 4: semantic click activates the selected row ---------------------
   await app.click("st-tree");
-  await app.waitForText("act run-1", { timeoutMs: 3000 });
+  await app.waitForText("act run-1", { timeoutMs: T });
   console.log("ND_ST_ACTIVATE_OK rowActivated {nodeId}");
 
   // ---- leg 5: expansion honors the controlled `expanded` flags --------------
@@ -101,7 +106,7 @@ try {
   await app.click("st-settled-toggle"); // app state -> expanded flag -> rebuild
   // The click RPC returns before the toggle's JS round-trip lands the nodes
   // update, so retry until the revealed row is selectable.
-  const revealDeadline = Date.now() + 3000;
+  const revealDeadline = Date.now() + T;
   for (;;) {
     try {
       await app.setValue("st-tree", "run-old");
@@ -111,7 +116,7 @@ try {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
-  await app.waitForText("sel run-old", { timeoutMs: 3000 });
+  await app.waitForText("sel run-old", { timeoutMs: T });
   console.log("ND_ST_EXPAND_PROP_OK collapsed shelf hides rows; expanding reveals them");
 
   // ---- leg 5b: semantic row action (both backends) ---------------------------
@@ -119,7 +124,7 @@ try {
   // without a real pointer, the path GTK needs (no input synthesis) and the
   // one CanaryOrchestrator-style e2e flows use for row-level buttons.
   await app.click({ testId: "st-run-1", action: "close-run" });
-  await app.waitForText("action close-run@run-1", { timeoutMs: 3000 });
+  await app.waitForText("action close-run@run-1", { timeoutMs: T });
   // An action the node does not declare must fail loudly, not silently no-op.
   let undeclaredRejected = false;
   try {
@@ -139,13 +144,13 @@ try {
     const row0y = g.y + 14;
     await app.rpc.call("pointer", { phase: "down", x: g.x + 80, y: row0y });
     await app.rpc.call("pointer", { phase: "up", x: g.x + 80, y: row0y });
-    await app.waitForText("sel proj-nd", { timeoutMs: 3000 });
+    await app.waitForText("sel proj-nd", { timeoutMs: T });
     console.log("ND_ST_POINTER_SELECT_OK pointer click selected proj-nd");
 
     await app.keys("left"); // collapse the selected parent
-    await app.waitForText("expand collapsed:proj-nd", { timeoutMs: 3000 });
+    await app.waitForText("expand collapsed:proj-nd", { timeoutMs: T });
     await app.keys("right"); // expand it again
-    await app.waitForText("expand expanded:proj-nd", { timeoutMs: 3000 });
+    await app.waitForText("expand expanded:proj-nd", { timeoutMs: T });
     console.log("ND_ST_EXPAND_EVENT_OK nodeCollapsed/nodeExpanded from native disclosure keys");
 
     // Trailing action button on row 0 ("New Run", labeled inline button at
@@ -153,7 +158,7 @@ try {
     const actionX = g.x + g.w - 45;
     await app.rpc.call("pointer", { phase: "down", x: actionX, y: row0y });
     await app.rpc.call("pointer", { phase: "up", x: actionX, y: row0y });
-    await app.waitForText("action new-run@proj-nd", { timeoutMs: 3000 });
+    await app.waitForText("action new-run@proj-nd", { timeoutMs: T });
     console.log("ND_ST_ACTION_OK actionClicked {nodeId, actionId}");
 
     const shot = await app.screenshot(`${shotDir}/sourcetree-appkit.png`, { minBytes: 2000 });

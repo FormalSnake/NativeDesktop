@@ -6,6 +6,11 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}"
 export WAYLAND_DISPLAY=nd-headless-0
 export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
+# Own application id: GApplication is single-instance per id on the session bus,
+# so a gate sharing `dev.nativedesktop.hello` with anything else running on the
+# machine exits with ND_ALREADY_RUNNING instead of starting.
+export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headless-smoke}"
+. "$(dirname "$0")/headless-fonts.sh"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
