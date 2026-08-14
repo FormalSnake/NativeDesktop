@@ -44,6 +44,9 @@ const TreeData = struct {
     nodes: std.ArrayList(Node) = .empty,
     by_id: std.StringHashMapUnmanaged(u32) = .empty,
     roots: std.ArrayList(u32) = .empty,
+    /// indentationPerLevel: create-only, so it is carried across the
+    /// `nodes` rebuilds that replace the rest of this struct.
+    indent: i64 = 16,
 
     fn deinit(self: *TreeData) void {
         for (self.nodes.items) |*n| {
@@ -231,6 +234,10 @@ fn syncExpansion(selection: *gtk.SingleSelection, tree: *TreeData) void {
 
 fn tvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
     const expander = gtk.TreeExpander.new();
+    // GtkTreeExpander's own depth indent is theme-fixed; tvBind applies
+    // indentationPerLevel as the row's margin instead, so the two must not
+    // stack. indent-for-icon stays on so leaf titles line up with siblings.
+    gtk.TreeExpander.setIndentForDepth(expander, 0);
     const box = gtk.Box.new(.horizontal, 6);
     const icon = gtk.Image.new();
     gtk.Widget.setVisible(icon.as(gtk.Widget), 0);
@@ -269,6 +276,11 @@ fn tvBind(_: *gobject.Object, list_item: *gtk.ListItem, data: ?*anyopaque) callc
     const tree = views.get(lv_ptr) orelse return;
     const idx = tree.by_id.get(id) orelse return;
     const node = tree.nodes.items[idx];
+
+    // Depth indent, the AppKit peer being NSOutlineView.indentationPerLevel
+    // (same margin-start shape sourcetree.zig uses on its rows).
+    const depth: u32 = gtk.TreeListRow.getDepth(row);
+    gtk.Widget.setMarginStart(child, @intCast(@as(i64, depth) * tree.indent));
 
     const eobj: *gobject.Object = @ptrCast(@alignCast(expander));
     if (gobject.Object.getData(eobj, "nd-label")) |raw| {
@@ -309,11 +321,10 @@ fn tvBind(_: *gobject.Object, list_item: *gtk.ListItem, data: ?*anyopaque) callc
 pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) *gtk.Widget {
     _ = dupeZ; // node strings live in the page-heap TreeData, not the backend arena
     const tree = parseNodes(propArray(props, "nodes"));
+    tree.indent = propInt(props, "indentationPerLevel") orelse 16;
     const selection = buildSelection(tree);
     const factory = gtk.SignalListItemFactory.new();
     const lv = gtk.ListView.new(selection.as(gtk.SelectionModel), factory.as(gtk.ListItemFactory)); // transfer-full: list owns selection+factory
-    // `indentationPerLevel` has no GTK knob — GtkTreeExpander indentation is
-    // theme-fixed (accepted asymmetry; the prop drives AppKit only).
     _ = gobject.signalConnectData(@ptrCast(@alignCast(factory)), "setup", @ptrCast(&tvSetup), null, null, .{});
     _ = gobject.signalConnectData(@ptrCast(@alignCast(factory)), "bind", @ptrCast(&tvBind), @ptrFromInt(@intFromPtr(lv)), null, .{});
     views.put(alloc, @intFromPtr(lv), tree) catch {};
@@ -342,6 +353,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
         // Full rebuild: fresh TreeData + model chain; the OLD TreeData is
         // freed by the old model's DestroyNotify once setModel releases it.
         const tree = parseNodes(arr);
+        if (views.get(lv_ptr)) |old| tree.indent = old.indent;
         const selection = buildSelection(tree);
         views.put(alloc, lv_ptr, tree) catch {};
         sync_depth += 1;

@@ -246,7 +246,7 @@ function App(): React.ReactNode {
     <window
       ref={winRef}
       title="NativeDesktop Gallery"
-      defaultWidth={780}
+      defaultWidth={1000}
       defaultHeight={720}
       onAlertResult={(e) => onAlertResult(winRef.current!, e)}
       onOpenFileResult={(e) => onOpenFileResult(winRef.current!, e)}

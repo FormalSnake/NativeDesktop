@@ -417,6 +417,10 @@ fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
         }
     }
     const inner = adw.OverlaySplitView.new();
+    // Same empty-gutter guard as the create arm: show-sidebar defaults TRUE,
+    // and a NULL sidebar still allocates min-sidebar-width. The structural
+    // arm that fills the slot flips it back on.
+    adw.OverlaySplitView.setShowSidebar(inner, 0);
     if (split_list_widths.get(@intFromPtr(sv))) |lw| {
         if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
     }
@@ -448,6 +452,7 @@ fn ndSplitViewInspectorInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
         host = cur_sv;
     }
     const inner = adw.OverlaySplitView.new();
+    adw.OverlaySplitView.setShowSidebar(inner, 0); // see ndSplitViewInner
     adw.OverlaySplitView.setSidebarPosition(inner, .end);
     if (adw.OverlaySplitView.getContent(host)) |cur| {
         // Same detach-before-reattach ref bracket as ndSplitViewInner.
@@ -506,6 +511,28 @@ fn ndButtonApplyBadge(button: *gtk.Button, badge: []const u8, dupeZ: *const fn (
     gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
     gtk.Button.setChild(button, wrap.as(gtk.Widget));
     gobject.Object.setData(obj, ND_BUTTON_BADGE_LABEL, label);
+}
+
+/// Button.label update. The create arm leaves one of three child shapes — a
+/// plain GtkLabel, an AdwButtonContent (icon + label), or a bare GtkImage
+/// (icon-only) — and ndButtonApplyBadge may have wrapped any of them in a
+/// box, so walk to the real content and retarget it in place. Retargeting
+/// (rather than gtk_button_set_label) is what keeps the badge suffix,
+/// label alignment and size classes the create arm installed.
+///
+/// An icon-only button is left alone: \`iconName\` is create-only, so
+/// rebuilding it as an icon+label pair would need an icon name nothing
+/// retained, and set_label would drop the icon.
+fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    var content = gtk.Button.getChild(button) orelse return;
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) != null) {
+        content = gtk.Widget.getFirstChild(content) orelse return;
+    }
+    if (gobject.ext.isA(content, adw.ButtonContent)) {
+        adw.ButtonContent.setLabel(@ptrCast(@alignCast(content)), dupeZ(label));
+    } else if (gobject.ext.isA(content, gtk.Label)) {
+        gtk.Label.setText(@ptrCast(@alignCast(content)), dupeZ(label));
+    }
 }
 
 /// Builds a NULL-terminated strv (\`?[*]const [*:0]const u8\`) from a JSON
@@ -774,6 +801,30 @@ fn ndMenuItemSetEnabled(item_w: *gtk.Widget, enabled: bool) void {
     const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
     info.enabled = enabled;
     if (info.action) |sa| gio.SimpleAction.setEnabled(sa, @intFromBool(enabled));
+}
+
+/// MenuItem.label / Menu.label updates. A GMenuItem's label is baked into the
+/// GMenuModel at build time, so both setters update the registry the builders
+/// read and re-run every model that could contain the node (the menubar and
+/// any MenuButton/SplitButton owner).
+fn ndMenuItemSetLabel(item_w: *gtk.Widget, label: [:0]const u8) void {
+    const item: *gio.MenuItem = @ptrCast(@alignCast(item_w));
+    const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
+    if (std.mem.eql(u8, info.label, label)) return;
+    info.label = label;
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
+}
+
+fn ndMenuSetLabel(menu_w: *gtk.Widget, label: [:0]const u8) void {
+    const menu: *gio.Menu = @ptrCast(@alignCast(menu_w));
+    const key = @intFromPtr(menu);
+    if (menu_labels.get(key)) |cur| {
+        if (std.mem.eql(u8, cur, label)) return;
+    }
+    menu_labels.put(events_gpa, key, label) catch return;
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
 }
 
 fn ndBuildGMenuItem(info: MenuItemInfo) ?*gio.MenuItem {
@@ -1465,14 +1516,56 @@ fn ndHeaderBarSetSubtitle(hb: *adw.HeaderBar, subtitle: [:0]const u8) void {
     adw.HeaderBar.setShowTitle(hb, 1);
 }
 
-/// The AdwViewStack inside a TabView's wrapping box (switcher above, stack
-/// below — see the TabView create arm).
+/// Title update on a live header, the peer of ndHeaderBarSetSubtitle. A
+/// header whose title slot holds a SearchInput (headerBarAttach's address-bar
+/// shape) keeps it: only an AdwWindowTitle is ever retargeted, and a fresh one
+/// is built only when the slot is empty.
+fn ndHeaderBarSetTitle(hb: *adw.HeaderBar, title: [:0]const u8) void {
+    if (adw.HeaderBar.getTitleWidget(hb)) |tw| {
+        if (gobject.ext.isA(tw, adw.WindowTitle)) {
+            adw.WindowTitle.setTitle(@ptrCast(@alignCast(tw)), title);
+        }
+        return;
+    }
+    if (title.len == 0) return;
+    const wt = adw.WindowTitle.new(title, "");
+    adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+    adw.HeaderBar.setShowTitle(hb, 1);
+}
+
+/// The AdwViewStack inside a TabView's wrapping box (switcher scroller above,
+/// stack below — see the TabView create arm).
 fn ndTabViewStack(widget: *gtk.Widget) ?*adw.ViewStack {
     var child = gtk.Widget.getFirstChild(widget);
     while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
         if (gobject.ext.isA(c, adw.ViewStack)) return @ptrCast(@alignCast(c));
     }
     return null;
+}
+
+/// The GtkScrolledWindow holding a TabView's switcher. The switcher scrolls
+/// rather than ellipsizes, which is what keeps a sixteen-page TabView legible.
+fn ndTabViewSwitcherScroller(widget: *gtk.Widget) ?*gtk.ScrolledWindow {
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (gobject.ext.isA(c, gtk.ScrolledWindow)) return @ptrCast(@alignCast(c));
+    }
+    return null;
+}
+
+/// Upgrades a TabView's switcher to AdwViewSwitcher the first time one of its
+/// pages declares an icon. A TabView starts with an AdwInlineViewSwitcher in
+/// labels mode because AdwViewSwitcher renders the missing-image fallback in
+/// every icon-less button's icon slot, and pages attach after create so the
+/// choice cannot be made there.
+fn ndTabViewEnsureIconSwitcher(widget: *gtk.Widget, stack: *adw.ViewStack) void {
+    const scroller = ndTabViewSwitcherScroller(widget) orelse return;
+    const cur = gtk.ScrolledWindow.getChild(scroller) orelse return;
+    if (gobject.ext.isA(cur, adw.ViewSwitcher)) return;
+    const switcher = adw.ViewSwitcher.new();
+    adw.ViewSwitcher.setStack(switcher, stack);
+    adw.ViewSwitcher.setPolicy(switcher, .wide);
+    gtk.ScrolledWindow.setChild(scroller, switcher.as(gtk.Widget));
 }
 
 const ND_SPLIT_PENDING_BREAKPOINT = "nd-split-pending-breakpoint";
@@ -1819,8 +1912,17 @@ function genZigCreateBody(w: Widget): string {
     out += "        const view = gtk.TextView.new();\n";
     out += "        const buf = gtk.TextView.getBuffer(view);\n";
     out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }\n";
-    out += "        if (propInt(props, \"minContentHeight\")) |h| { if (h > 0) gtk.Widget.setSizeRequest(view.as(gtk.Widget), -1, @intCast(h)); }\n";
-    out += "        return view.as(gtk.Widget);\n";
+    out += "        gtk.TextView.setWrapMode(view, .word_char);\n";
+    out += "        // Scroller-as-handle (src/gtk/table.zig, src/gtk/sourcetree.zig): a\n";
+    out += "        // bare GtkTextView has no boundary and no scrolling, so the tracked\n";
+    out += "        // widget is the frame around it. Everything that reaches for the\n";
+    out += "        // GtkTextView goes through scrolledWindowInner.\n";
+    out += "        const sw = gtk.ScrolledWindow.new();\n";
+    out += "        gtk.ScrolledWindow.setChild(sw, view.as(gtk.Widget));\n";
+    out += "        gtk.ScrolledWindow.setHasFrame(sw, 1);\n";
+    out += `        const min_h = propInt(props, "minContentHeight") orelse ${dflt(w, "minContentHeight")};\n`;
+    out += "        if (min_h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(min_h));\n";
+    out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "Checkbox") {
     out += `        const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));\n`;
     out += "        if (propBool(props, \"checked\") orelse false) gtk.CheckButton.setActive(cb, 1);\n";
@@ -1901,18 +2003,26 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propBool(props, \"spinning\") orelse true) gtk.Spinner.setSpinning(sp, 1);\n";
     out += "        return sp.as(gtk.Widget);\n";
   } else if (w.name === "TabView") {
-    out += "        // In-window view switching, the libadwaita idiom: AdwViewSwitcher\n";
-    out += "        // (policy wide) over an AdwViewStack. Document-style tabs are the\n";
-    out += "        // <window tabGroup> path, not this widget. selectedIndex is ignored\n";
-    out += "        // at create: pages attach afterwards (M5b-D4).\n";
+    out += "        // In-window view switching, the libadwaita idiom: a switcher over an\n";
+    out += "        // AdwViewStack. Document-style tabs are the <window tabGroup> path,\n";
+    out += "        // not this widget. selectedIndex is ignored at create: pages attach\n";
+    out += "        // afterwards (M5b-D4), which is also why the switcher starts as an\n";
+    out += "        // AdwInlineViewSwitcher (labels only) and ndTabViewEnsureIconSwitcher\n";
+    out += "        // upgrades it to AdwViewSwitcher once a page declares an icon.\n";
     out += "        const stack = adw.ViewStack.new();\n";
     out += "        gtk.Widget.setVexpand(stack.as(gtk.Widget), 1);\n";
-    out += "        const switcher = adw.ViewSwitcher.new();\n";
-    out += "        adw.ViewSwitcher.setStack(switcher, stack);\n";
-    out += "        adw.ViewSwitcher.setPolicy(switcher, .wide);\n";
-    out += "        gtk.Widget.setHalign(switcher.as(gtk.Widget), .center);\n";
+    out += "        const switcher = adw.InlineViewSwitcher.new();\n";
+    out += "        adw.InlineViewSwitcher.setStack(switcher, stack);\n";
+    out += "        adw.InlineViewSwitcher.setDisplayMode(switcher, .labels);\n";
+    out += "        adw.InlineViewSwitcher.setCanShrink(switcher, 0); // scroll instead of ellipsizing\n";
+    out += "        // The switcher scrolls horizontally: a many-page switcher would\n";
+    out += "        // otherwise be squeezed to one ellipsis per page.\n";
+    out += "        const switcher_scroller = gtk.ScrolledWindow.new();\n";
+    out += "        gtk.ScrolledWindow.setPolicy(switcher_scroller, .automatic, .never);\n";
+    out += "        gtk.ScrolledWindow.setPropagateNaturalHeight(switcher_scroller, 1);\n";
+    out += "        gtk.ScrolledWindow.setChild(switcher_scroller, switcher.as(gtk.Widget));\n";
     out += "        const box = gtk.Box.new(.vertical, 6);\n";
-    out += "        gtk.Box.append(box, switcher.as(gtk.Widget));\n";
+    out += "        gtk.Box.append(box, switcher_scroller.as(gtk.Widget));\n";
     out += "        gtk.Box.append(box, stack.as(gtk.Widget));\n";
     out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Grid") {
@@ -1957,6 +2067,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        return ndweb_gtk.create(url);\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
+    out += "        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is\n";
+    out += "        // still allocated sidebar-width-fraction clamped up by\n";
+    out += "        // min-sidebar-width (an empty 180px gutter). The structural arms\n";
+    out += "        // flip it on when a sidebar child actually lands.\n";
+    out += "        adw.OverlaySplitView.setShowSidebar(sv, 0);\n";
     out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
     out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
     out += "        if (propFloat(props, \"listWidth\")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }\n";
@@ -2322,7 +2437,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"placeholder\")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "TextArea" && p.name === "text") {
       out += "        if (propStr(props, \"text\")) |t| {\n";
-      out += "            const view: *gtk.TextView = @ptrCast(@alignCast(widget));\n";
+      out += "            // The tracked handle is the GtkScrolledWindow frame (create arm).\n";
+      out += "            const view: *gtk.TextView = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));\n";
       out += "            const buf = gtk.TextView.getBuffer(view);\n";
       out += "            var s_it: gtk.TextIter = undefined;\n";
       out += "            var e_it: gtk.TextIter = undefined;\n";
@@ -2482,6 +2598,14 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += "        if (propBool(props, \"enabled\")) |en| ndMenuItemSetEnabled(widget, en);\n";
+    } else if (w.name === "Button" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| ndButtonSetLabel(@ptrCast(@alignCast(widget)), l, dupeZ);\n";
+    } else if (w.name === "Menu" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| ndMenuSetLabel(widget, dupeZ(l));\n";
+    } else if (w.name === "MenuItem" && p.name === "label") {
+      out += "        if (propStr(props, \"label\")) |l| ndMenuItemSetLabel(widget, dupeZ(l));\n";
+    } else if (w.name === "HeaderBar" && p.name === "title") {
+      out += "        if (propStr(props, \"title\")) |t| ndHeaderBarSetTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
     } else if (w.name === "HeaderBar" && p.name === "subtitle") {
       out += "        if (propStr(props, \"subtitle\")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));\n";
     } else if (w.name === "HeaderBar" && p.name === "canGoBack") {
@@ -2967,6 +3091,15 @@ fn cbPanedPositionChanged(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaqu
 // per-node event). Emitted unconditionally alongside the other callbacks.
 const LISTVIEW_CALLBACKS = `fn lvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
     const label = gtk.Label.new(null);
+    // A bare label leaves the row at its ~22px text height, flush at x=0.
+    // GNOME list rows are 34px minimum with a 12px text inset; the margins
+    // (rather than a fixed height) get there while still tracking the user's
+    // font size.
+    gtk.Label.setXalign(label, 0);
+    gtk.Widget.setMarginStart(label.as(gtk.Widget), 12);
+    gtk.Widget.setMarginEnd(label.as(gtk.Widget), 12);
+    gtk.Widget.setMarginTop(label.as(gtk.Widget), 8);
+    gtk.Widget.setMarginBottom(label.as(gtk.Widget), 8);
     gtk.ListItem.setChild(list_item, label.as(gtk.Widget));
 }
 fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
@@ -3140,7 +3273,7 @@ function genZigEvents(s: Schema): string {
         continue;
       }
       const objExpr = t.target === "buffer"
-        ? "asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(widget))))"
+        ? "asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?))))" // TextArea's tracked widget is the ScrolledWindow frame; the buffer hangs off the inner GtkTextView.
         : t.target === "listview-inner"
         ? "asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?)" // ListView/SourceList's tracked widget is the ScrolledWindow (M5c-D3); connect on the inner GtkListView/GtkListBox (unwraps the implicit GtkViewport SourceList's non-Scrollable GtkListBox gets, M11 SourceList Wave 1).
         : "asObject(widget)";
@@ -3327,7 +3460,10 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else \"\";\n";
       s += "        const page = adw.ViewStack.addTitled(stack, child, null, title);\n";
       s += "        if (attached.tab_icon) |ic| {\n";
-      s += "            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "            if (ic.len > 0) {\n";
+      s += "                adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "                ndTabViewEnsureIconSwitcher(parent, stack);\n";
+      s += "            }\n";
       s += "        }\n";
       return s;
     },
@@ -3342,7 +3478,10 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else \"\";\n";
       s += "        const page = adw.ViewStack.addTitled(stack, child, null, title);\n";
       s += "        if (attached.tab_icon) |ic| {\n";
-      s += "            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "            if (ic.len > 0) {\n";
+      s += "                adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
+      s += "                ndTabViewEnsureIconSwitcher(parent, stack);\n";
+      s += "            }\n";
       s += "        }\n";
       return s;
     },
@@ -3370,12 +3509,17 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        if (attached.slot) |sl| {\n";
       s += "            if (std.mem.eql(u8, sl, \"sidebar\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
-      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);\n";
+      s += "                const inner = ndSplitViewInner(sv);\n";
+      s += "                adw.OverlaySplitView.setSidebar(inner, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(inner, 1);\n";
       s += "            } else if (std.mem.eql(u8, sl, \"inspector\")) {\n";
       s += "                // Inspector pane: an end-positioned inner split's sidebar\n";
       s += "                // (AppKit peer: NSSplitViewItem inspector).\n";
-      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);\n";
+      s += "                const inspector = ndSplitViewInspectorInner(sv);\n";
+      s += "                adw.OverlaySplitView.setSidebar(inspector, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(inspector, 1);\n";
       s += "            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       s += "        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       return s;
@@ -3388,10 +3532,15 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        if (attached.slot) |sl| {\n";
       s += "            if (std.mem.eql(u8, sl, \"sidebar\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
-      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);\n";
+      s += "                const inner = ndSplitViewInner(sv);\n";
+      s += "                adw.OverlaySplitView.setSidebar(inner, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(inner, 1);\n";
       s += "            } else if (std.mem.eql(u8, sl, \"inspector\")) {\n";
-      s += "                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);\n";
+      s += "                const inspector = ndSplitViewInspectorInner(sv);\n";
+      s += "                adw.OverlaySplitView.setSidebar(inspector, child);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(inspector, 1);\n";
       s += "            } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       s += "        } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);\n";
       return s;
@@ -3403,6 +3552,7 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        while (true) {\n";
       s += "            if (adw.OverlaySplitView.getSidebar(host) == child) {\n";
       s += "                adw.OverlaySplitView.setSidebar(host, null);\n";
+      s += "                adw.OverlaySplitView.setShowSidebar(host, 0); // an empty slot still allocates min-sidebar-width\n";
       s += "                break;\n";
       s += "            }\n";
       s += "            const cur = adw.OverlaySplitView.getContent(host) orelse break;\n";
@@ -3640,6 +3790,60 @@ nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [
 // contentList NSSplitViewItem) — same stash-until-append mechanism as
 // \`splitViewSidebarFraction\`, keyed by the same outer splitView identity.
 nonisolated(unsafe) private var splitViewListFraction: [ObjectIdentifier: Double] = [:]
+
+// TabView is an NSTabViewController so AppKit sizes and centers the segmented
+// control and applies the standard content inset; the ABI handle stays an
+// NSView, so the controller is stashed against \`controller.view\` — the same
+// query-by-view pattern \`ndSplitControllers\` uses.
+nonisolated(unsafe) private var ndTabViewControllers: [ObjectIdentifier: NSTabViewController] = [:]
+
+func ndTabViewController(for view: NSView) -> NSTabViewController? {
+    ndTabViewControllers[ObjectIdentifier(view)]
+}
+
+/// One TabView page. NSTabViewController rejects an item without a view
+/// controller, so the child is hosted in a plain one; that wrapper's \`view\`
+/// is also how insertBefore/remove find the page again.
+func ndMakeTabViewItem(_ child: NSView, label: String, icon: String) -> NSTabViewItem {
+    let host = NSViewController()
+    host.view = child
+    let item = NSTabViewItem(viewController: host)
+    item.label = label
+    if !icon.isEmpty { item.image = ndResolveSymbolImage(icon) } // NDShell/Icons.swift (hand-written)
+    return item
+}
+
+// ToolbarView's \`topBarStyle\`/\`bottomBarStyle\`/\`extendContentToTopEdge\` are
+// create-time props whose targets (the bar views, the window) don't exist
+// until a child or the window attaches — stashed per pane, same shape as
+// \`splitViewSidebarFraction\`.
+nonisolated(unsafe) private var ndToolbarPaneTopBarStyles: [ObjectIdentifier: String] = [:]
+nonisolated(unsafe) private var ndToolbarPaneBottomBarStyles: [ObjectIdentifier: String] = [:]
+nonisolated(unsafe) private var ndToolbarPaneExtendsToTopEdge: Set<ObjectIdentifier> = []
+
+/// The standard macOS window content margin. Applied by the Window append arm
+/// to a plain root child, whose leading/trailing/bottom edges would otherwise
+/// sit flush against the window frame (button corners sliced by the edge).
+let ndWindowContentMargin: CGFloat = 20
+
+/// The inset the Window append arm gives its root child. Two opt-outs: a root
+/// built around something that scrolls goes edge to edge, and a root the app
+/// already padded keeps exactly the padding it asked for.
+///
+/// Both scroll shapes opt out, not just the edge-to-edge one
+/// (SplitController.swift's \`ndIsScrollShaped\`/\`ndIsListShaped\`). A window
+/// whose subject is a list runs that list to the window frame the way Finder
+/// and Mail do; margining it turns the list into an inset grey card floating
+/// in a white window. The scroll view insets its own content through the safe
+/// area, and the chrome above and below it carries its own padding.
+func ndWindowRootInset(_ child: NSView) -> CGFloat {
+    if ndIsScrollShaped(child) || ndIsListShaped(child) { return 0 }
+    if let stack = child as? NSStackView {
+        let e = stack.edgeInsets
+        if e.top != 0 || e.left != 0 || e.bottom != 0 || e.right != 0 { return 0 }
+    }
+    return ndWindowContentMargin
+}
 `;
 
 function swiftStrLit(v: string): string {
@@ -3741,6 +3945,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        let horizontal = (propStr(props, "orientation") ?? "horizontal") != "vertical"\n';
     out += "        let split = NSSplitView()\n";
     out += "        split.isVertical = horizontal\n";
+    out += "        // The .thick default paints the divider in the window background,\n";
+    out += "        // which reads as no divider at all between two content panes. .thin\n";
+    out += "        // is the 1pt separatorColor hairline Xcode and Mail use.\n";
+    out += "        split.dividerStyle = .thin\n";
     out += "        let controller = PanedController(split: split)\n";
     out += "        ndPanedControllers[ObjectIdentifier(split)] = controller\n";
     out += `        controller.setPositionFraction(propDouble(props, "position") ?? ${swiftDefaultDouble(w, "position")})\n`;
@@ -3801,7 +4009,15 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "TextArea") {
     out += "        let scroll = NSScrollView()\n";
     out += "        scroll.hasVerticalScroller = true\n";
+    // A programmatic NSScrollView draws no border, so a multi-line field on a
+    // white window was an invisible hole: correct height, nothing to see. The
+    // bezel is what makes it read as a native text field rather than a gap.
+    out += "        scroll.borderType = .bezelBorder\n";
+    out += "        scroll.drawsBackground = true\n";
     out += "        let textView = NSTextView()\n";
+    out += "        textView.drawsBackground = true\n";
+    out += "        textView.backgroundColor = .textBackgroundColor\n";
+    out += "        textView.textContainerInset = NSSize(width: 4, height: 6)\n";
     out += `        textView.string = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        scroll.documentView = textView\n";
     out += `        let minH = propInt(props, "minContentHeight") ?? ${swiftDefaultInt(w, "minContentHeight")}\n`;
@@ -3844,6 +4060,20 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        let value = propDouble(props, "value") ?? ${swiftDefaultDouble(w, "value")}\n`;
     out += "        let slider = NSSlider(value: value, minValue: min, maxValue: max, target: nil, action: nil)\n";
     out += '        slider.isVertical = (propStr(props, "orientation") ?? "horizontal") == "vertical"\n';
+    out += `        let step = propDouble(props, "step") ?? ${swiftDefaultDouble(w, "step")}\n`;
+    out += "        // Tick marks are AppKit's only stepping lever, and they are drawn:\n";
+    out += "        // allowsTickMarkValuesOnly has no effect without them. GtkScale\n";
+    out += "        // snaps to the step invisibly, so a plain step={5} produced\n";
+    out += "        // different VALUES per platform, not just a different look.\n";
+    out += "        // The schema default (1) over the default 0...100 range would mean\n";
+    out += "        // 101 marks, so only an explicit step with a drawable number of\n";
+    out += "        // stops snaps; anything else stays continuous.\n";
+    out += `        let stops = step > 0 ? (max - min) / step : 0\n`;
+    out += `        if step > 0, abs(step - ${swiftDefaultDouble(w, "step")}) > 1e-9, stops >= 1, stops <= 50 {\n`;
+    out += "            slider.numberOfTickMarks = Int(stops.rounded()) + 1\n";
+    out += "            slider.allowsTickMarkValuesOnly = true\n";
+    out += "            slider.tickMarkPosition = .below\n";
+    out += "        }\n";
     out += "        return slider\n";
   } else if (w.name === "ProgressBar") {
     out += "        let pb = NSProgressIndicator()\n";
@@ -3913,9 +4143,18 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        if propBool(props, "spinning") ?? ${swiftDefaultBool(w, "spinning")} { sp.startAnimation(nil) } else { sp.stopAnimation(nil) }\n`;
     out += "        return sp\n";
   } else if (w.name === "TabView") {
+    out += "        // NSTabViewController, not a bare NSTabView: it sizes and centers the\n";
+    out += "        // segmented control, gives the segments a common minimum width, and\n";
+    out += "        // applies the standard content inset. A bare NSTabView shredded a\n";
+    out += "        // sixteen-page gallery to one character per label.\n";
+    out += "        // The ABI handle must stay an NSView, so the controller is stashed\n";
+    out += "        // against controller.view (the ndSplitControllers pattern) and the\n";
+    out += "        // apply/structural arms resolve it back with ndTabViewController(for:).\n";
     out += "        // selectedIndex is ignored at create: pages attach afterwards (mirrors genZigCreateBody).\n";
-    out += "        let tabs = NSTabView()\n";
-    out += "        return tabs\n";
+    out += "        let tabController = NSTabViewController()\n";
+    out += "        tabController.tabStyle = .segmentedControlOnTop\n";
+    out += "        ndTabViewControllers[ObjectIdentifier(tabController.view)] = tabController\n";
+    out += "        return tabController.view\n";
   } else if (w.name === "Grid") {
     out += "        let grid = NSGridView(numberOfColumns: 1, rows: 0)\n";
     out += "        return grid\n";
@@ -3962,7 +4201,22 @@ function genSwiftCreateBody(w: Widget): string {
     // pane is appended to the SplitView, so item registration is deferred to
     // that point (see ndToolbarPaneAttachedToSplit). NDToolbarPaneView holds
     // the header/content refs and slot until then.
-    out += "        return NDToolbarPaneView()\n";
+    //
+    // The three appearance props are stashed for the same reason: the bar
+    // views arrive on later appends, and the window on the Window append.
+    // A <headerbar> top bar is the unified NSToolbar, which is already a
+    // material strip, so topBarStyle only reaches an explicit slot="top" bar.
+    // `raised` and `raised-border` share one treatment — ndApplyToolbarStrip
+    // draws the .headerView material plus a hairline, and AppKit has no
+    // second shape to distinguish them.
+    out += "        let pane = NDToolbarPaneView()\n";
+    out += "        let paneID = ObjectIdentifier(pane)\n";
+    out += `        ndToolbarPaneTopBarStyles[paneID] = propStr(props, "topBarStyle") ?? ${swiftDefaultStr(w, "topBarStyle")}\n`;
+    out += `        ndToolbarPaneBottomBarStyles[paneID] = propStr(props, "bottomBarStyle") ?? ${swiftDefaultStr(w, "bottomBarStyle")}\n`;
+    out += `        if propBool(props, "extendContentToTopEdge") ?? ${swiftDefaultBool(w, "extendContentToTopEdge")} {\n`;
+    out += "            ndToolbarPaneExtendsToTopEdge.insert(paneID)\n";
+    out += "        }\n";
+    out += "        return pane\n";
   } else if (w.name === "Menubar") {
     // M13: menu nodes are NSView host handles (NDMenuNodeView, like
     // NDToolbarPaneView) so the ABI's blind Unmanaged<NSView> cast stays safe;
@@ -4224,9 +4478,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            if sp { ind.startAnimation(nil) } else { ind.stopAnimation(nil) }\n";
       out += "        }\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
-      out += '        if let idx = propInt(props, "selectedIndex"), let tabs = view as? NSTabView,\n';
-      out += "           idx >= 0 && idx < tabs.numberOfTabViewItems {\n";
-      out += "            tabs.selectTabViewItem(at: idx)\n";
+      out += '        if let idx = propInt(props, "selectedIndex"), let tabs = ndTabViewController(for: view),\n';
+      out += "           idx >= 0 && idx < tabs.tabViewItems.count {\n";
+      out += "            tabs.selectedTabViewItemIndex = idx\n";
       out += "        }\n";
     } else if (w.name === "ListView" && p.name === "items") {
       out += '        if let items = propArray(props, "items") {\n';
@@ -4260,6 +4514,26 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += '        if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }\n';
+    } else if (w.name === "Button" && p.name === "label") {
+      out += '        if let l = propStr(props, "label"), let b = view as? NSButton {\n';
+      out += "            b.title = l\n";
+      out += "            // ndApplyButtonIcon picked imageOnly/imageLeading from the\n";
+      out += "            // create-time label; a button that gains or loses one follows.\n";
+      out += "            if b.image != nil { b.imagePosition = l.isEmpty ? .imageOnly : .imageLeading }\n";
+      out += "        }\n";
+    } else if ((w.name === "Menu" || w.name === "MenuItem") && p.name === "label") {
+      out += '        if let l = propStr(props, "label"), let node = ndMenuNode(view) {\n';
+      out += "            node.label = l\n";
+      out += "            ndMenuManager?.scheduleRebuild()  // the label is baked into NSMenu at build time\n";
+      out += "        }\n";
+    } else if (w.name === "HeaderBar" && p.name === "title") {
+      out += '        if let t = propStr(props, "title"), let bar = view as? NDHeaderBarView {\n';
+      out += "            bar.ndTitle = t\n";
+      out += "            if !t.isEmpty { bar.titleField.stringValue = t }\n";
+      out += "            // defaultItemIdentifiers gates the title item on a non-empty\n";
+      out += "            // ndTitle, so a title appearing or disappearing changes the set.\n";
+      out += "            (bar.pane?.manager ?? ndWindowToolbarManager)?.scheduleRebuild()\n";
+      out += "        }\n";
     } else if (w.name === "HeaderBar" && p.name === "subtitle") {
       out += '        if let s = propStr(props, "subtitle"), let bar = view as? NDHeaderBarView { ndHeaderBarApplySubtitle(bar, s) }\n';
     } else if (w.name === "HeaderBar" && (p.name === "canGoBack" || p.name === "canGoForward")) {
@@ -4708,6 +4982,13 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            let item = NSSplitViewItem(contentListWithViewController: vc)\n" +
   "            item.minimumThickness = 240\n" +
   "            item.canCollapse = true\n" +
+  // The list pane extends under the floating glass sidebar, so it wants the
+  // projected safe-area inset. The sidebar item itself must NOT (it IS the
+  // glass), and the inspector keeps its own edge-to-edge behavior.
+  "            item.automaticallyAdjustsSafeAreaInsets = true\n" +
+  // The scroll edge effect replaces the 1px titlebar rule, which was visible
+  // under the toolbar over list and content panes alike.
+  "            item.titlebarSeparatorStyle = .none\n" +
   "            if let fraction = splitViewListFraction[ObjectIdentifier(split)] {\n" +
   "                item.preferredThicknessFraction = fraction\n" +
   "            }\n" +
@@ -4727,10 +5008,28 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "        } else {\n" +
   "            let item = NSSplitViewItem(viewController: vc)\n" +
   "            item.automaticallyAdjustsSafeAreaInsets = true\n" +
+  "            item.titlebarSeparatorStyle = .none // the scroll edge effect replaces the rule\n" +
   "            if let last = controller.splitViewItems.last, last.behavior == .inspector {\n" +
   "                controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)\n" +
   "            } else {\n" +
   "                controller.addSplitViewItem(item)\n" +
+  "            }\n" +
+  "        }\n";
+
+// Shared between ToolbarView's append/insertBefore (slots are
+// position-independent, so `before` plays no part).
+const TOOLBARVIEW_STRUCTURAL_BODY =
+  "        let pane = parent as! NDToolbarPaneView\n" +
+  "        ndToolbarPanePack(pane, child, slot: attachedSlot)\n" +
+  // The create arm stashed the pane's bar styles; this is the first point a
+  // top/bottom bar view exists to carry one. ndApplyToolbarStrip (Backend
+  // .swift) no-ops for a non-NSStackView bar.
+  '        if attachedSlot == "top" || attachedSlot == "bottom" {\n' +
+  '            let styles = attachedSlot == "top" ? ndToolbarPaneTopBarStyles : ndToolbarPaneBottomBarStyles\n' +
+  // Enable only. "flat" is GTK's do-nothing default, and disabling here would
+  // strip a backing the `toolbar` cssClass installed on the same box.
+  '            if (styles[ObjectIdentifier(pane)] ?? "flat") != "flat" {\n' +
+  "                ndApplyToolbarStrip(child, enabled: true)\n" +
   "            }\n" +
   "        }\n";
 
@@ -4768,8 +5067,17 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       // the app's chrome row lives IN the titlebar with the traffic lights
       // inline — the AppKit peer of GTK's AdwToolbarView-as-window-content.
       // Its content box is what actually enters the hierarchy (the pane view
-      // is a logical holder, same as in the SplitView arm), pinned below the
-      // safe area so it clears the toolbar strip.
+      // is a logical holder, same as in the SplitView arm).
+      //
+      // The content pins to the safe area, so it sits clear of the titlebar.
+      // NSBackgroundExtensionView is deliberately NOT used here: it fills the
+      // unsafe region by MIRRORING the content edge, which is right for hero
+      // artwork and wrong for app content. On a <terminal> it painted a
+      // flipped copy of the top text row into the titlebar. Widgets that own
+      // an opaque surface tint the window instead (ndTintWindowForContent),
+      // which is what makes the titlebar band follow the app.
+      // `extendContentToTopEdge` opts out of the safe area entirely: the
+      // content is pinned to the real edge and renders under the titlebar.
       "        if let pane = child as? NDToolbarPaneView {\n" +
       "            if let win = window, win.contentViewController != nil {\n" +
       "                win.contentViewController = nil\n" +
@@ -4777,8 +5085,18 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            }\n" +
       "            ndToolbarPaneAttachedToWindow(pane)\n" +
       "            let content = pane.contentView ?? pane\n" +
-      "            parent.addSubview(content)\n" +
       "            content.translatesAutoresizingMaskIntoConstraints = false\n" +
+      "            if ndToolbarPaneExtendsToTopEdge.contains(ObjectIdentifier(pane)) {\n" +
+      "                parent.addSubview(content)\n" +
+      "                NSLayoutConstraint.activate([\n" +
+      "                    content.topAnchor.constraint(equalTo: parent.topAnchor),\n" +
+      "                    content.leadingAnchor.constraint(equalTo: parent.leadingAnchor),\n" +
+      "                    content.trailingAnchor.constraint(equalTo: parent.trailingAnchor),\n" +
+      "                    content.bottomAnchor.constraint(equalTo: parent.bottomAnchor),\n" +
+      "                ])\n" +
+      "                return\n" +
+      "            }\n" +
+      "            parent.addSubview(content)\n" +
       "            NSLayoutConstraint.activate([\n" +
       "                content.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),\n" +
       "                content.leadingAnchor.constraint(equalTo: parent.leadingAnchor),\n" +
@@ -4816,16 +5134,20 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       // a frame=bounds fill would put the app's first row of controls under
       // the floating traffic lights (observed: the browser example's back
       // button). SplitView panes get this pin from ndMakePaneViewController;
-      // this is the same safe-area top pin for the plain-subview path. Only
-      // the TOP goes through the guide — leading/trailing/bottom have no
-      // window chrome to clear.
+      // this is the same safe-area pin for the plain-subview path, on all
+      // four edges plus the standard window content margin — edge-pinned
+      // leading/trailing left button corners sliced by the window frame and
+      // a label's first glyph off-screen. ndWindowRootInset zeroes the margin
+      // for a root that scrolls and for one the app already padded.
       "            parent.addSubview(child)\n" +
       "            child.translatesAutoresizingMaskIntoConstraints = false\n" +
+      "            let inset = ndWindowRootInset(child)\n" +
+      "            let guide = parent.safeAreaLayoutGuide\n" +
       "            NSLayoutConstraint.activate([\n" +
-      "                child.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),\n" +
-      "                child.leadingAnchor.constraint(equalTo: parent.leadingAnchor),\n" +
-      "                child.trailingAnchor.constraint(equalTo: parent.trailingAnchor),\n" +
-      "                child.bottomAnchor.constraint(equalTo: parent.bottomAnchor),\n" +
+      "                child.topAnchor.constraint(equalTo: guide.topAnchor, constant: inset),\n" +
+      "                child.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),\n" +
+      "                child.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),\n" +
+      "                child.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -inset),\n" +
       "            ])\n" +
       "        }\n",
     // A registered split currently installed as contentViewController has no
@@ -4844,7 +5166,8 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        if ndIsMenuNode(child) { return } // M13: menubar detach is a no-op (mainMenu rebuilt on next change)\n" +
       "        if let pane = child as? NDToolbarPaneView {\n" +
       "            ndToolbarPaneDetachedFromSplit(pane) // same unregister path as the split arm\n" +
-      "            (pane.contentView ?? pane).removeFromSuperview()\n" +
+      "            let content = pane.contentView ?? pane\n" +
+      "            content.removeFromSuperview()\n" +
       "            return\n" +
       "        }\n" +
       "        if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),\n" +
@@ -4935,13 +5258,19 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        split.addSubview(child)\n" +
       "        ndPanedController(for: split)?.reapplyFraction()\n",
     // React commits deletions before placements, so a pane remount arrives as
-    // insertBefore against the surviving pane; landing the child at `before`'s
-    // index keeps the pane order (a plain addSubview appended it, swapping
-    // the panes left/right).
+    // insertBefore against the surviving pane; landing the child ahead of
+    // `before` in the subview order keeps the pane order (a plain addSubview
+    // appended it, swapping the panes left/right).
+    //
+    // Plain subview ordering, NOT insertArrangedSubview: the arranged-subview
+    // API switches NSSplitView to constraint-based arrangement for good,
+    // while panes that arrived through the append arm's addSubview stay
+    // unarranged. The split then sizes itself from the arranged set alone and
+    // leaves the rest unlaid-out. PanedController reads `subviews` for the
+    // same reason.
     insertBefore: () =>
       "        let split = parent as! NSSplitView\n" +
-      "        let idx = split.arrangedSubviews.firstIndex(of: before) ?? split.arrangedSubviews.count\n" +
-      "        split.insertArrangedSubview(child, at: idx)\n" +
+      "        split.addSubview(child, positioned: .below, relativeTo: before)\n" +
       "        ndPanedController(for: split)?.reapplyFraction()\n",
     remove: () =>
       "        let split = parent as! NSSplitView\n" +
@@ -4949,9 +5278,23 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        ndPanedController(for: split)?.reapplyFraction()\n",
   },
   TabView: {
-    append: () => "        let tabs = parent as! NSTabView\n        let item = NSTabViewItem()\n        item.view = child\n        item.label = attachedTabLabel\n        tabs.addTabViewItem(item)\n",
-    insertBefore: () => "        let tabs = parent as! NSTabView\n        let item = NSTabViewItem()\n        item.view = child\n        item.label = attachedTabLabel\n        let idx = tabs.tabViewItems.firstIndex { $0.view === before } ?? tabs.tabViewItems.count\n        tabs.insertTabViewItem(item, at: idx)\n",
-    remove: () => "        let tabs = parent as! NSTabView\n        if let item = tabs.tabViewItems.first(where: { $0.view === child }) {\n            tabs.removeTabViewItem(item)\n        }\n",
+    // NSTabViewController requires every item to carry a view controller (it
+    // will not accept a bare `item.view`), so each page is wrapped in a plain
+    // NSViewController whose view IS the child — that wrapper is also what
+    // identifies the page again on insertBefore/remove.
+    append: () =>
+      "        guard let tabs = ndTabViewController(for: parent) else { return }\n" +
+      "        tabs.addTabViewItem(ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon))\n",
+    insertBefore: () =>
+      "        guard let tabs = ndTabViewController(for: parent) else { return }\n" +
+      "        let item = ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon)\n" +
+      "        let idx = tabs.tabViewItems.firstIndex { $0.viewController?.view === before } ?? tabs.tabViewItems.count\n" +
+      "        tabs.insertTabViewItem(item, at: idx)\n",
+    remove: () =>
+      "        guard let tabs = ndTabViewController(for: parent) else { return }\n" +
+      "        if let item = tabs.tabViewItems.first(where: { $0.viewController?.view === child }) {\n" +
+      "            tabs.removeTabViewItem(item)\n" +
+      "        }\n",
   },
   Grid: {
     append: () => "        let grid = parent as! NSGridView\n        ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)\n",
@@ -4998,8 +5341,8 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     // split); a slot="top"/"bottom" child becomes an auxiliary bar stacked
     // around the content; any other child becomes the pane's content view.
     // `before` is irrelevant — slots are position-independent.
-    append: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)\n",
-    insertBefore: () => "        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)\n",
+    append: () => TOOLBARVIEW_STRUCTURAL_BODY,
+    insertBefore: () => TOOLBARVIEW_STRUCTURAL_BODY,
     remove: () => "        ndToolbarPaneUnpack(parent as! NDToolbarPaneView, child)\n",
   },
   // M13 menu containers: parent/child are NDMenuNodeView host handles. The
@@ -5089,6 +5432,7 @@ function genSwiftStructural(s: Schema): string {
   const attachedPrelude =
     "    let attached = parseProps(attachedJson)\n" +
     '    let attachedTabLabel = propStr(attached, "tabLabel") ?? ""\n' +
+    '    let attachedTabIcon = propStr(attached, "tabIcon") ?? ""\n' +
     '    let attachedGridRow = propInt(attached, "gridRow") ?? 0\n' +
     '    let attachedGridColumn = propInt(attached, "gridColumn") ?? 0\n' +
     '    let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1\n' +

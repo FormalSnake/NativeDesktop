@@ -176,11 +176,14 @@ func makeSourceList(_ props: [String: Any]) -> NSView {
     source.scrollView = scrollView
 
     sourceListDataSources[ObjectIdentifier(scrollView)] = source
+    // reloadData FIRST: before it the table still believes it has 0 rows, so
+    // selectRowIndexes is dropped, and ndSourceListSetSelectedIndex only runs
+    // on a CHANGED selectedIndex — the create-time selection never recovered.
+    tableView.reloadData()
     let selIdx = propInt(props, "selectedIndex") ?? -1
     if selIdx >= 0 && selIdx < source.rows.count {
         tableView.selectRowIndexes(IndexSet(integer: selIdx), byExtendingSelection: false)
     }
-    tableView.reloadData()
     ndEmptyStateApply(scrollView, props)
     ndEmptyStateUpdate(scrollView, isEmpty: source.rows.isEmpty)
     return scrollView

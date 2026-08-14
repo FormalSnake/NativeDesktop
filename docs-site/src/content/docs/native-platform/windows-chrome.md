@@ -23,13 +23,25 @@ prop table. Multiple `<window>` roots open [multiple OS windows](/native-platfor
 and windows sharing a `tabGroup` render as one tabbed window with
 [native system tabs](/native-platform/tabs/).
 
+The window's root child is inset by the platform's standard content margin (20pt on AppKit, 12px on
+GTK), so a button's corners aren't sliced by the window frame and a label's first glyph isn't half
+off-screen. Two opt-outs on both backends: a root built around something that scrolls runs edge to
+edge (GTK counts a `<terminal>` or `<webview>` root as edge-to-edge too), and a root you padded
+yourself keeps exactly the padding it asked for rather than getting both.
+
+On GTK, a `<window>` whose tree declares no `<headerbar>` gets a framework `AdwHeaderBar` bound to
+the window title. `AdwApplicationWindow` draws no titlebar of its own, so without one the window has
+nothing to drag by and no close button. A tree that declares its own `<toolbarview>` or
+`<headerbar>` is left alone and never gets a second bar.
+
 Three create-only props shape the window chrome further:
 
 - `toolbarStyle` (`unified` default, `unifiedCompact`, `expanded`, `preference`) picks the macOS
   `NSWindow.ToolbarStyle` once a `<headerbar>` attaches the unified toolbar — a settings window
   declares `preference` and gets labelled toolbar items with the window title visible; the
-  `unified` styles keep the transparent-titlebar sidebar treatment. GTK's native chrome is the one
-  `AdwHeaderBar` idiom, so the prop is deliberately inert there.
+  `unified` styles keep the transparent-titlebar sidebar treatment and draw their toolbar items
+  icon-only, with each item's label reaching the overflow menu and VoiceOver instead. GTK's native
+  chrome is the one `AdwHeaderBar` idiom, so the prop is deliberately inert there.
 - `frameAutosaveName` persists the window's frame across launches under that key
   (`NSWindow.setFrameAutosaveName`), and doubles as the toolbar-customization autosave key: with it
   set, the unified toolbar allows user customization and saves the configuration. GTK4 dropped
@@ -84,8 +96,10 @@ The two platforms render this identically-shaped tree differently, on purpose:
   achieved via `.fullSizeContentView` + `titlebarAppearsTransparent` so the sidebar's vibrancy
   reaches the very top, with the traffic-light window controls floating over it.
 
-`<headerbar title="…">` sets the pane's (or, on macOS, the toolbar's) title; on children, the `slot`
-attached prop (`start`/`end`) positions items on either side of the title.
+`<headerbar title="…">` sets the pane's title, and updates in place when it changes. On macOS every
+pane's header contributes its own title item to the shared toolbar, sidebar, list and inspector
+panes included, not just the content pane. On children, the `slot` attached prop (`start`/`end`)
+positions items on either side of the title.
 
 On macOS, header `<button>` children are promoted to **system-drawn toolbar items** (image/action,
 no embedded custom view): the Tahoe item glass is the only bezel, runs of adjacent buttons group
@@ -108,6 +122,14 @@ extend edge-to-edge under the floating glass chrome: the scroll view insets its 
 safe area, so content passes under the toolbar and AppKit draws the scroll edge effect, with the
 pane's background mirrored into the unsafe regions (`NSBackgroundExtensionView`). Non-scrolling
 panes keep the safe-area inset so controls never start under the titlebar.
+
+A `list` pane's frame extends under the floating glass sidebar (the pane background is what the
+glass blurs) while its layout stays inset past it. List and plain content panes also drop the hard
+1px titlebar separator, since the scroll edge effect draws that boundary instead. A
+`<toolbarview slot="top">` or `slot="bottom"` bar inside a pane is hosted as a real
+`NSSplitViewItemAccessoryViewController`, which is what puts the fade under it: AppKit applies the
+effect under toolbar items and split item accessories, and a bar stacked as a plain subview gets
+none.
 
 ## Where this is headed
 

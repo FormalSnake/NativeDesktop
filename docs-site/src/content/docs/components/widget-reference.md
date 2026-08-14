@@ -61,6 +61,14 @@ gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See
 [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`,
 the typed export built on the same platform-standard numbers.
 
+The two backends default the cross axis differently, on purpose. GTK stretches every child across
+the box's perpendicular axis. On AppKit a child with a natural cross-axis size keeps that size
+instead: buttons, switches, segmented controls, steppers, date pickers, color wells, non-editable
+labels, and sliders and progress bars on their thickness axis. A control stretched to the window
+width is not native there. Containers, scroll shapes, editable or bezeled text fields, and image
+views still fill, because filling is their native form. To stretch one of the others, set
+`style.halign` (or `valign`, in a horizontal box) to `"fill"`, or set the cross-axis expand flag.
+
 ## Label (`<label>`)
 
 Automation role: `label`. Text source: `text`. Children: none.
@@ -77,7 +85,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string | Button | create |
+| `label` | string | (empty) | createAndUpdate |
 | `testID` | string | none | meta |
 | `iconName` | string | none | create |
 | `labelAlign` | start \| center \| end | center | create |
@@ -126,8 +134,10 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|
 | `changed` | `onChanged` | text |
 
-An empty `TextArea` collapses to 0 logical height, which fails the automation actionability check
-until it has content or explicit sizing. See [Automation Socket](/automation-testing/automation-socket/).
+`minContentHeight` is a floor, not a fixed height. Both backends wrap the text view in a scroller
+and hold it at least that tall, so an empty `<textarea>` still occupies the 120 default instead of
+collapsing to nothing and failing the automation actionability check. Pass `0` to opt out. See
+[Automation Socket](/automation-testing/automation-socket/).
 
 ## Checkbox (`<checkbox>`)
 
@@ -186,6 +196,11 @@ Automation role: `slider`. Text source: none. Children: none.
 | `value` | float | 0 | createAndUpdate |
 | `orientation` | horizontal \| vertical | horizontal | create |
 | `testID` | string | none | meta |
+
+`step` snaps the value on both backends. GTK snaps to it without drawing anything; AppKit's only
+stepping lever is tick marks, so there an explicit `step` yielding 50 stops or fewer both snaps and
+draws marks below the track. Anything else stays continuous on AppKit, including the default `1`
+over the default 0 to 100 range, which would be 101 marks.
 
 | Event | Handler | Payload |
 |---|---|---|
@@ -263,9 +278,13 @@ Attached props (set on children):
 Attached props apply at attach time only. Changing one after mount is a no-op. `selectedIndex` takes
 effect on update; initial page is 0.
 
-On Linux this renders as an `AdwViewSwitcher` over an `AdwViewStack` (the modern in-window view
-switcher), on macOS as an `NSTabView`. One documented asymmetry: `AdwViewStack` cannot insert a page
-at an index, so inserting a page between existing siblings lands it at the END on Linux
+On Linux this renders as a switcher over an `AdwViewStack` (the modern in-window view switcher): an
+`AdwInlineViewSwitcher` in a horizontal scroller, upgraded to a full `AdwViewSwitcher` once a page
+declares a `tabIcon`. The switcher scrolls instead of shrinking, so a many-page tab view keeps
+readable labels rather than one ellipsis per page. On macOS it is an `NSTabViewController` with a
+segmented control on top, which sizes and centers the segments and gives them a common minimum
+width. One documented asymmetry: `AdwViewStack` cannot insert a page at an index, so inserting a
+page between existing siblings lands it at the END on Linux
 (insertBefore degenerates to append); macOS honors the position. `tabIcon` names the page icon shown
 in the switcher on Linux; document-style tabs remain the `<window tabGroup>` path.
 
@@ -384,7 +403,7 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `title` | string | (empty) | create |
+| `title` | string | (empty) | createAndUpdate |
 | `subtitle` | string | none | createAndUpdate |
 | `showTitleButtons` | bool | true | create |
 | `canGoBack` | bool | false | createAndUpdate |
@@ -406,9 +425,8 @@ Attached props (set on children):
 |---|---|---|
 | `slot` | enum (`start` \| `end`) | start |
 
-Attached props apply at attach time only. Changing one after mount is a no-op. `title` is
-create-only, so key the widget on the title if it needs to change (see
-[App Model](/core-concepts/app-model/)).
+Attached props apply at attach time only. Changing one after mount is a no-op. `title` and
+`subtitle` both update in place, so a header whose title tracks the selected item needs no `key`.
 
 ## ToolbarView (`<toolbarview>`)
 
@@ -427,7 +445,10 @@ Attached props (set on children):
 |---|---|---|
 | `slot` | enum | content |
 
-Attached props apply at attach time only. Changing one after mount is a no-op.
+Attached props apply at attach time only. Changing one after mount is a no-op. On macOS a
+`slot="top"` or `slot="bottom"` bar in a split pane becomes a real
+`NSSplitViewItemAccessoryViewController`, which is what earns the macOS 26 scroll edge effect under
+the bar.
 
 ## SearchInput (`<searchinput>`)
 
@@ -479,7 +500,7 @@ Automation role: `menu`. Text source: `label`. Children: multi (`<menuitem>` ele
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string | (empty) | create |
+| `label` | string | (empty) | createAndUpdate |
 | `testID` | string | none | meta |
 
 ## MenuItem (`<menuitem>`)
@@ -489,7 +510,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none. An item has e
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string | (empty) | create |
+| `label` | string | (empty) | createAndUpdate |
 | `iconName` | string | none | create |
 | `iconVisible` | bool | false | create |
 | `accelerator` | string | none | create |

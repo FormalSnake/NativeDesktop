@@ -61,7 +61,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string | Button | create |
+| `label` | string |  | createAndUpdate |
 | `testID` | string | none | meta |
 | `iconName` | string | none | create |
 | `labelAlign` | start \| center \| end | center | create |
@@ -338,7 +338,7 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `title` | string |  | create |
+| `title` | string |  | createAndUpdate |
 | `subtitle` | string | none | createAndUpdate |
 | `showTitleButtons` | bool | true | create |
 | `canGoBack` | bool | false | createAndUpdate |
@@ -449,7 +449,7 @@ Automation role: `menu`. Text source: `label`. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string |  | create |
+| `label` | string |  | createAndUpdate |
 | `testID` | string | none | meta |
 
 ## MenuItem (`<menuitem>`)
@@ -458,7 +458,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
-| `label` | string |  | create |
+| `label` | string |  | createAndUpdate |
 | `iconName` | string | none | create |
 | `iconVisible` | bool | false | create |
 | `accelerator` | string | none | create |

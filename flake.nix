@@ -33,6 +33,8 @@
               gobject-introspection
               libxslt      # provides xsltproc for zig-gobject codegen
               weston       # headless wayland compositor for CI/agent runs
+              adwaita-icon-theme # gtk4/libadwaita ship no icon data; without it the headless capture falls back to whatever partial theme the host has
+              dbus         # dbus-run-session: the docs capture needs a PRIVATE bus (no settings portal to leak, but real enough for WebKitGTK's dbus-proxy)
               squashfsTools    # M9: AppImage assembly (mksquashfs)
               flatpak-builder  # M9: Flatpak manifest lint (--show-manifest)
               webkitgtk_6_0    # <webview>: dlopen'd libwebkitgtk-6.0.so.4 (src/gtk/webview.zig)

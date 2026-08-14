@@ -302,7 +302,7 @@ function App(): React.ReactNode {
             <button
               slot="end"
               testID="pin-button"
-              iconName="pin"
+              iconName="view-pin"
               label=""
               tooltip="Pin"
               onClick={togglePinSelected}

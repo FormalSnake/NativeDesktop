@@ -56,7 +56,7 @@ function App(): React.ReactNode {
   const activeText = `active ${app.isActive()} replay=${globalThis.__nd_app_active !== undefined ? "yes" : "no"}`;
 
   return (
-    <window title="SourceTree Drive" defaultWidth={480} defaultHeight={640}>
+    <window title="SourceTree Drive" defaultWidth={480} defaultHeight={760}>
       <box orientation="vertical" spacing={8}>
         <box orientation="horizontal" spacing={6} cssClasses={["toolbar"]} testID="st-toolbar">
           <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]} />

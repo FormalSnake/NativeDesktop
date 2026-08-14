@@ -102,10 +102,13 @@ func makeListView(_ props: [String: Any]) -> NSView {
     tableView.sizeLastColumnToFit()
 
     listDataSources[ObjectIdentifier(scrollView)] = source
+    // reloadData FIRST: before it the table still believes it has 0 rows, so
+    // selectRowIndexes is dropped, and ndListViewSetSelectedIndex only runs on
+    // a CHANGED selectedIndex — the create-time selection never recovered.
+    tableView.reloadData()
     if source.selectedIndex >= 0 && source.selectedIndex < source.items.count {
         tableView.selectRowIndexes(IndexSet(integer: source.selectedIndex), byExtendingSelection: false)
     }
-    tableView.reloadData()
     ndEmptyStateApply(scrollView, props)
     ndEmptyStateUpdate(scrollView, isEmpty: source.items.isEmpty)
     return scrollView

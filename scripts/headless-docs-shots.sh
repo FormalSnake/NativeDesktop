@@ -15,6 +15,14 @@ export WAYLAND_DISPLAY=wl-docs-shots-0
 # the webview region (ND_SNAPSHOT_DEGRADED on host stderr) instead of
 # erroring. ND_SHOT_RENDERER=gl (llvmpipe software GL) remains the knob for
 # pixel-true web content when the page renders GL-compatibly.
+#
+# Known tradeoff, do not re-litigate without measuring: the private bus below
+# is what makes the theme deterministic, and it is also what stops a <webview>
+# rasterizing. Under it the browser/multiwindow captures degrade to the
+# placeholder plate under BOTH renderers, and WEBKIT_DISABLE_SANDBOX does not
+# help. The engine still loads and a live app renders fine, so this is a
+# capture limit, not a product defect. The committed gtk/browser.png therefore
+# comes from a session-bus host; recapture it there, not here.
 export GSK_RENDERER="${ND_SHOT_RENDERER:-cairo}"
 export GDK_BACKEND=wayland
 export ADW_DEBUG_COLOR_SCHEME=prefer-light
@@ -27,8 +35,8 @@ export ND_BACKEND=gtk
 # generic families to Noto Sans for anything that asks fontconfig directly.
 FONT_CONF_DIR="$(mktemp -d)"
 mkdir -p "$FONT_CONF_DIR/gtk-4.0" "$FONT_CONF_DIR/glib-2.0/settings" "$FONT_CONF_DIR/fontconfig"
-printf '[Settings]\ngtk-font-name = Noto Sans 10\n' > "$FONT_CONF_DIR/gtk-4.0/settings.ini"
-printf "[org/gnome/desktop/interface]\nfont-name='Noto Sans 10'\ndocument-font-name='Noto Sans 10'\nmonospace-font-name='Noto Sans Mono 10'\n" \
+printf '[Settings]\ngtk-font-name = Noto Sans 10\ngtk-icon-theme-name = Adwaita\n' > "$FONT_CONF_DIR/gtk-4.0/settings.ini"
+printf "[org/gnome/desktop/interface]\nfont-name='Noto Sans 10'\ndocument-font-name='Noto Sans 10'\nmonospace-font-name='Noto Sans Mono 10'\nicon-theme-name='Adwaita'\n" \
   > "$FONT_CONF_DIR/glib-2.0/settings/keyfile"
 cat > "$FONT_CONF_DIR/fontconfig/fonts.conf" <<'FCEOF'
 <?xml version="1.0"?>
@@ -38,7 +46,6 @@ cat > "$FONT_CONF_DIR/fontconfig/fonts.conf" <<'FCEOF'
   <match target="pattern"><test name="family"><string>sans</string></test><edit name="family" mode="prepend" binding="strong"><string>Noto Sans</string></edit></match>
   <match target="pattern"><test name="family"><string>sans-serif</string></test><edit name="family" mode="prepend" binding="strong"><string>Noto Sans</string></edit></match>
   <match target="pattern"><test name="family"><string>Cantarell</string></test><edit name="family" mode="prepend" binding="strong"><string>Noto Sans</string></edit></match>
-  <match target="pattern"><test name="family"><string>MEK Sans</string></test><edit name="family" mode="assign" binding="strong"><string>Noto Sans</string></edit></match>
   <match target="pattern"><test name="family"><string>monospace</string></test><edit name="family" mode="prepend" binding="strong"><string>Noto Sans Mono</string></edit></match>
 </fontconfig>
 FCEOF
@@ -46,9 +53,22 @@ export XDG_CONFIG_HOME="$FONT_CONF_DIR"
 export FONTCONFIG_FILE="$FONT_CONF_DIR/fontconfig/fonts.conf"
 export GSETTINGS_BACKEND=keyfile
 # Without this, GDK asks the LIVE desktop session's settings portal over the
-# user DBus for fonts/appearance, and the machine's theming (bitmap fonts,
-# dark scheme) leaks into the "headless" run. No bus -> keyfile backend wins.
-unset DBUS_SESSION_BUS_ADDRESS
+# user DBus for fonts/appearance/icon theme, and the machine's theming leaks
+# into the "headless" run, overriding both settings.ini and the keyfile above.
+# UNSETTING the variable is not enough: GDBus then falls back to
+# $XDG_RUNTIME_DIR/bus, which on a logged-in capture host IS the session bus
+# (observed: gtk-icon-theme-name came back Colloid-Dark, gtk-font-name MEK
+# Sans 11). Pointing it at a nonexistent socket does defeat the portal, but it
+# also breaks WebKitGTK: its network process launches a bwrap'd dbus-proxy
+# against this address and aborts the host when the path does not resolve, so
+# the browser and multiwindow captures die. A PRIVATE session bus satisfies
+# both: it is a real bus WebKit can proxy, and it carries no settings portal,
+# so the keyfile backend still wins. `exec` below re-enters this script under
+# dbus-run-session once.
+if [ -z "${ND_DOCS_SHOTS_BUS:-}" ]; then
+  export ND_DOCS_SHOTS_BUS=1
+  exec dbus-run-session -- "$0" "$OUT" "$@"
+fi
 
 # The <terminal> example spawns $SHELL; a plain sh with a bare prompt beats a
 # host rc file's escape-laden PS1 in a documentation screenshot.
@@ -67,5 +87,15 @@ done
 [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || { echo "FAIL: weston socket never appeared"; exit 1; }
 
 echo "docs-shots font: XDG_CONFIG_HOME=$XDG_CONFIG_HOME sans=$(fc-match sans 2>/dev/null)" >&2
+
+# Fail fast: wrong icons used to ship silently. Neither half of this is
+# answerable from the shell — there is no gtk4-query-settings binary, and a
+# .svg on XDG_DATA_DIRS says nothing about which theme GTK picked or whether
+# the glyph has any ink. Ask GTK, on the live display, once the compositor is
+# up. Adwaita itself reaches GTK through the XDG_DATA_DIRS `nix develop`
+# builds from flake.nix's devShell packages.
+ICON_PROBE="$(mktemp -d)/gtk-icon-probe"
+cc scripts/gtk-icon-probe.c -o "$ICON_PROBE" $(pkg-config --cflags --libs gtk4)
+"$ICON_PROBE" Adwaita pan-down-symbolic system-search-symbolic network-transmit-receive-symbolic >&2
 
 bun scripts/docs-shots.ts gtk "$OUT" "$@"

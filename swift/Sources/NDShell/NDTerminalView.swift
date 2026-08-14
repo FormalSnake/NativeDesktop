@@ -136,8 +136,8 @@ final class NDTerminalView: NSView {
         self.rt = nil
         self.term = nil
         super.init(frame: NSRect(x: 0, y: 0,
-                                 width: CGFloat(self.cols) * cellW,
-                                 height: CGFloat(self.rows) * cellH))
+                                 width: CGFloat(self.cols) * cellW + 2 * ndTerminalGridInset,
+                                 height: CGFloat(self.rows) * cellH + 2 * ndTerminalGridInset))
 
         // Open after super.init so `self` can be the effect userdata (title/bell/
         // child-exit). `command`/`cwd` are optional; a nil pointer tells the core
@@ -181,8 +181,8 @@ final class NDTerminalView: NSView {
         self.rt = nil
         self.term = nil
         super.init(frame: NSRect(x: 0, y: 0,
-                                 width: CGFloat(self.cols) * cellW,
-                                 height: CGFloat(self.rows) * cellH))
+                                 width: CGFloat(self.cols) * cellW + 2 * ndTerminalGridInset,
+                                 height: CGFloat(self.rows) * cellH + 2 * ndTerminalGridInset))
 
         let ud = Unmanaged.passUnretained(self).toOpaque()
         let c = UInt16(self.cols)
@@ -260,7 +260,8 @@ final class NDTerminalView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: CGFloat(cols) * cellW, height: CGFloat(rows) * cellH)
+        NSSize(width: CGFloat(cols) * cellW + 2 * ndTerminalGridInset,
+               height: CGFloat(rows) * cellH + 2 * ndTerminalGridInset)
     }
 
     override func viewDidMoveToWindow() {
@@ -275,6 +276,46 @@ final class NDTerminalView: NSView {
         if let win = window, win.firstResponder === win {
             win.makeFirstResponder(self)
         }
+        ndTintWindowForContent()
+    }
+
+    /// A terminal filling its window paints the titlebar band too, the way
+    /// Terminal.app and Ghostty do: without this the system draws that band in
+    /// the default window background and a light-appearance window shows a
+    /// white stripe hard against the dark grid. Skipped for a terminal sharing
+    /// the window (a split pane, a tab strip alongside other content), where
+    /// tinting the whole window from one pane would be wrong.
+    ///
+    /// Re-run from `layout()` as well as on window entry, because a window
+    /// acquires and loses its tab bar long after its terminal mounted; every
+    /// write below is guarded so the extra passes cost nothing.
+    private func ndTintWindowForContent() {
+        guard let win = window, let root = win.contentView else { return }
+        let spans = convert(bounds, to: root).width >= root.bounds.width - 1
+        guard spans else { return }
+        var defFg: [UInt8] = [0, 0, 0]
+        var defBg: [UInt8] = [0, 0, 0]
+        if let t = term {
+            ndterm_default_colors(t, &defFg, &defBg)
+        } else {
+            defBg = [ndTerminalDefaultBackground.0, ndTerminalDefaultBackground.1, ndTerminalDefaultBackground.2]
+        }
+        let tint = nsColor((defBg[0], defBg[1], defBg[2]))
+        if win.backgroundColor != tint { win.backgroundColor = tint }
+        // A native tab bar lives in the titlebar band, and a transparent
+        // titlebar puts the grid's top row underneath it: the bar's own
+        // translucency then blurs that row into a second, smeared copy of
+        // itself directly above the real one. The tint and the appearance
+        // still apply there — those are what removed the white band — and the
+        // tab bar draws its own material over an opaque titlebar.
+        let tabBar = win.tabGroup?.isTabBarVisible ?? false
+        if win.titlebarAppearsTransparent == tabBar { win.titlebarAppearsTransparent = !tabBar }
+        // The title text and traffic lights have to read against the tint, so
+        // the appearance follows the surface's luminance rather than the
+        // system setting. Rec. 601 weights, matching parseHexColor's sRGB.
+        let luma = (0.299 * Double(defBg[0]) + 0.587 * Double(defBg[1]) + 0.114 * Double(defBg[2])) / 255.0
+        let wanted: NSAppearance.Name = luma < 0.5 ? .darkAqua : .aqua
+        if win.appearance?.name != wanted { win.appearance = NSAppearance(named: wanted) }
     }
 
     // MARK: - tuple bridging
@@ -357,7 +398,9 @@ final class NDTerminalView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let t = term else {
-            NSColor.black.setFill()
+            // Same surface the grid would open with, so a terminal that
+            // failed to open doesn't flash a black rectangle.
+            nsColor(ndTerminalDefaultBackground).setFill()
             bounds.fill()
             return
         }
@@ -384,6 +427,14 @@ final class NDTerminalView: NSView {
 
         defaultBg.setFill()
         bounds.fill()
+
+        // Inset the grid so column 0 does not touch the window frame. The fill
+        // above covers the full bounds, so the gutter is terminal-coloured, not
+        // window-coloured. Must stay equal to GRID_INSET in src/gtk/terminal.zig.
+        NSGraphicsContext.current?.saveGraphicsState()
+        let gridOrigin = NSAffineTransform()
+        gridOrigin.translateX(by: ndTerminalGridInset, yBy: ndTerminalGridInset)
+        gridOrigin.concat()
 
         let ctx = NSGraphicsContext.current?.cgContext
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
@@ -517,6 +568,10 @@ final class NDTerminalView: NSView {
             }
         }
 
+        // Drop the grid inset before the thumb: it rides the widget edge, not
+        // the grid's.
+        NSGraphicsContext.current?.restoreGraphicsState()
+
         // Scrollback indicator: a thin right-edge thumb, shown only while
         // scrolled into history (pinned == 0). Height/position track the
         // viewport's share of the total scrollable area. (State queried above,
@@ -644,8 +699,8 @@ final class NDTerminalView: NSView {
     /// moment cols/rows change underneath it.
     private func syncGridToViewSize() {
         guard let t = term else { return }
-        let newCols = max(1, Int(bounds.width / cellW))
-        let newRows = max(1, Int(bounds.height / cellH))
+        let newCols = max(1, Int((bounds.width - 2 * ndTerminalGridInset) / cellW))
+        let newRows = max(1, Int((bounds.height - 2 * ndTerminalGridInset) / cellH))
         guard newCols != cols || newRows != rows else { return }
         cols = newCols
         rows = newRows
@@ -673,6 +728,7 @@ final class NDTerminalView: NSView {
     override func layout() {
         super.layout()
         syncGridToViewSize()
+        ndTintWindowForContent()
     }
 
     // MARK: - input
@@ -757,8 +813,8 @@ final class NDTerminalView: NSView {
     /// Cell coordinate under `event`, clamped to the grid.
     private func cellCoord(for event: NSEvent) -> (col: UInt16, row: UInt16) {
         let p = convert(event.locationInWindow, from: nil)
-        let col = max(0, min(cols - 1, Int(p.x / cellW)))
-        let row = max(0, min(rows - 1, Int(p.y / cellH)))
+        let col = max(0, min(cols - 1, Int((p.x - ndTerminalGridInset) / cellW)))
+        let row = max(0, min(rows - 1, Int((p.y - ndTerminalGridInset) / cellH)))
         return (UInt16(col), UInt16(row))
     }
 
@@ -1029,6 +1085,20 @@ final class NDTerminalView: NSView {
 
 // MARK: - WP polish-1 deliverable 7: palette/fg/bg open-time options
 
+/// Terminal colours for an app that left `foreground`/`background` at the
+/// schema's empty-string default. A terminal emulator is not a document view:
+/// it stays dark under a light system appearance, the way Terminal.app and
+/// GNOME Console do. Must stay byte-identical to DEFAULT_FG/DEFAULT_BG in
+/// src/gtk/terminal.zig, or the same app tree renders a different grid on each
+/// backend. An explicitly passed colour still wins; these are only the `??`
+/// fallback.
+/// Gutter between the window frame and column 0, so the first glyph's stem is
+/// not cut by the edge. Must stay equal to GRID_INSET in src/gtk/terminal.zig.
+let ndTerminalGridInset: CGFloat = 6
+
+private let ndTerminalDefaultForeground: (UInt8, UInt8, UInt8) = (0xcc, 0xcc, 0xcc)
+private let ndTerminalDefaultBackground: (UInt8, UInt8, UInt8) = (0x00, 0x00, 0x00)
+
 /// `#rrggbb` -> (r, g, b), nil on any malformed input.
 private func parseHexColor(_ s: String) -> (UInt8, UInt8, UInt8)? {
     guard s.count == 7, s.first == "#", let v = UInt32(s.dropFirst(), radix: 16) else { return nil }
@@ -1081,8 +1151,8 @@ private func parsePalette(_ s: String) -> [UInt8]? {
 /// ndterm_open_ex/ndrt_open_ex only read `opts` during the call, never
 /// retain it (include/ndterm.h `nd_term_open_opts`).
 private func withTerminalOpenOpts<R>(palette: String?, foreground: String, background: String, _ body: (UnsafePointer<nd_term_open_opts>?) -> R) -> R {
-    let fg = parseHexColor(foreground) ?? (0xcc, 0xcc, 0xcc)
-    let bg = parseHexColor(background) ?? (0x00, 0x00, 0x00)
+    let fg = parseHexColor(foreground) ?? ndTerminalDefaultForeground
+    let bg = parseHexColor(background) ?? ndTerminalDefaultBackground
     if let bytes = palette.flatMap(parsePalette) {
         return bytes.withUnsafeBufferPointer { buf in
             var opts = nd_term_open_opts(palette_rgb: buf.baseAddress, palette_len: buf.count, has_fg: 1, fg: fg, has_bg: 1, bg: bg)

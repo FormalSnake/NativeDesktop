@@ -43,6 +43,11 @@ prints a one-time `ND_WARN` naming the class and widget type instead of failing 
 the structural widgets (`<sourcelist>`, `<sourcetree>`, `<settingsgroup>`) when you want that
 chrome.
 
+Two classes libadwaita scopes to other widget types are carried by framework base CSS so they mean
+the same thing on both backends: `pill` on a `<label>` is a capsule count badge (libadwaita treats
+it as a button size class), and `activatable` on a `<box>` is row hover feedback (libadwaita scopes
+it to `row`).
+
 On macOS a semantic subset maps onto real AppKit control properties, using dynamic system colors
 throughout so dark mode keeps working:
 
@@ -59,10 +64,19 @@ throughout so dark mode keeps working:
 | `monospace`, `numeric` | monospaced and monospaced-digit system font |
 | `toolbar` (on a `<box>`) | `NSVisualEffectView` `.headerView` backing plus a 1 pt bottom hairline |
 | `boxed-list` (on a `<box>`) | native grouped `NSBox` card with inset hairline dividers |
+| `navigation-sidebar` (on a `<box>`) | a `.sourceList` `NSTableView` backing the box, when its children are row-shaped |
 
-The remaining structural classes (`navigation-sidebar`, `card`, `osd`) are ignored on macOS. That
-chrome comes from the `<splitview>` and `<headerbar>` widgets themselves rather than from class
-strings.
+`navigation-sidebar` on a box of flat `<button>` rows is no longer a no-op on macOS: the box gets a
+real source-list table behind it, so accent-when-key selection, row metrics and row insets come from
+AppKit instead of from your styling. The takeover is gated on the children being row-shaped, because
+the table covers the whole box and a composite row (button plus caption plus badge) would lose
+everything that is not the button. `nd-native-sidebar` on the same box skips that gate and takes
+over unconditionally. This is a macOS-side mapping, not a portable one: on GTK the same class on a
+`<box>` is the mistargeting case above. Use `<sourcelist>` or `<sourcetree>` for a sidebar that is
+native on both.
+
+The remaining structural classes (`card`, `osd`) are ignored on macOS. That chrome comes from the
+`<splitview>` and `<headerbar>` widgets themselves rather than from class strings.
 
 Beyond classes, three Button props carry state the platform renders natively: `prominent` maps to
 the accent treatment (`suggested-action` on GTK; an accent bezel, or a `.prominent` toolbar item

@@ -68,8 +68,8 @@ exactly like any other controlled-component callback.
 
 Not every prop can be changed after a widget mounts. The schema marks each prop's `appliesTo` as
 `create` (set once, at construction), `createAndUpdate` (can change on any re-render), or `meta`
-(framework bookkeeping, e.g. `testID`). `Button.label`, for example, is `create`-only: changing it
-on a live button is a no-op, which is why `examples/notes/main.tsx` keys its header on the note's
-`id`/`title` to force a remount instead of relying on a prop update. Check a widget's `Applied`
-column before assuming a prop is live-updatable; the full breakdown is in the
+(framework bookkeeping, e.g. `testID`). `Label.text`, for example, is `create`-only: changing it on
+a live label is a no-op, so a label whose text tracks state needs a `key` on that state to force a
+remount instead of relying on a prop update. Check a widget's `Applied` column before assuming a
+prop is live-updatable; the full breakdown is in the
 [Widget Reference](/components/widget-reference/).

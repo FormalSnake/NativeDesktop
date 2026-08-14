@@ -1,10 +1,18 @@
 import AppKit
 
-// A `nd-native-sidebar` box (`<box cssClasses={["nd-native-sidebar"]}>` of
-// flat `<button>` rows) renders on the Mac as a REAL source-list NSTableView
+// A sidebar box (`<box cssClasses={["navigation-sidebar"]}>` of flat
+// `<button>` rows) renders on the Mac as a REAL source-list NSTableView
 // (`.sourceList` style) — the native primitive that gives accent-when-key /
 // neutral-gray-when-unfocused selection, source-list row metrics/font, and row
 // insets for free, instead of the hand-rolled layer pill this replaces.
+//
+// `navigation-sidebar` is libadwaita's own class, so it is the portable
+// contract: the app tree that gets a native sidebar on GTK gets one here too,
+// with no second `nd-`prefixed name to opt into. It is gated on the box's
+// children actually being row-shaped (`ndIsSourceListShaped`), because the
+// table covers the whole box and a composite row (button + caption + badge)
+// would lose everything that is not the button. `nd-native-sidebar` stays for
+// exactly those boxes as an unconditional takeover that skips the gate.
 //
 // The box's `<button>` children stay in the tree (the reconciler keeps
 // appending/removing/reordering them) but become the table's ROW MODEL: each
@@ -25,24 +33,43 @@ nonisolated(unsafe) var ndSidebarTables: [ObjectIdentifier: NDSidebarTable] = [:
 /// them — the table owns selection.
 nonisolated(unsafe) var ndSidebarRowButtons: Set<ObjectIdentifier> = []
 
+/// Sidebar boxes whose takeover is unconditional, i.e. the ones carrying
+/// `nd-native-sidebar`. That class predates routing `navigation-sidebar` here
+/// and stays a gate bypass, because the boxes using it (examples/
+/// ndwidgets-probe) mix section labels in with the row buttons, a shape
+/// `ndIsSourceListShaped` declines. Set-replace, purged with the node.
+nonisolated(unsafe) var ndForcedSidebars: Set<ObjectIdentifier> = []
+
+/// Row buttons in a sidebar whose takeover was declined: they draw themselves
+/// (`ndApplySidebarRowStyle`) instead of backing a table row. Read from
+/// `ndApplyCssClasses`, which has to re-assert that rendering after its
+/// set-replace baseline resets the bezel.
+nonisolated(unsafe) var ndSidebarFallbackRows: Set<ObjectIdentifier> = []
+
 private let ndSidebarCellID = NSUserInterfaceItemIdentifier("nd-sidebar-cell")
 private let ndSidebarColumnID = NSUserInterfaceItemIdentifier("nd-sidebar-col")
 
-/// Walks up from `view` to the nearest ancestor (inclusive) carrying
-/// `nd-native-sidebar`, and returns its table controller. Row buttons in a
-/// real app's sidebar routinely sit several structural wrapper boxes below
-/// the classed box itself (a host/project section around each run row), so
-/// attach/detach hooks (`ndBoxChildAttached`/`ndBoxChildDetached`,
-/// Layout.swift) can't assume `view` IS the tracked box.
-func ndEnclosingSidebarTable(_ view: NSView) -> NDSidebarTable? {
+/// Walks up from `view` to the nearest ancestor (inclusive) carrying a sidebar
+/// class. Row buttons in a real app's sidebar routinely sit several structural
+/// wrapper boxes below the classed box itself (a host/project section around
+/// each run row), so attach/detach hooks (`ndBoxChildAttached`/
+/// `ndBoxChildDetached`, Layout.swift) can't assume `view` IS the tracked box.
+func ndEnclosingSidebar(_ view: NSView) -> NSStackView? {
     var v: NSView? = view
     while let cur = v {
-        if let stack = cur as? NSStackView, let table = ndSidebarTables[ObjectIdentifier(stack)] {
-            return table
+        if let stack = cur as? NSStackView, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
+            return stack
         }
         v = cur.superview
     }
     return nil
+}
+
+/// The source-list table backing `view`'s enclosing sidebar, if that sidebar
+/// got the takeover at all. A sidebar the gate declined has no table, and its
+/// rows must not fall through to an outer sidebar's.
+func ndEnclosingSidebarTable(_ view: NSView) -> NDSidebarTable? {
+    ndEnclosingSidebar(view).flatMap { ndSidebarTables[ObjectIdentifier($0)] }
 }
 
 final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate {
@@ -183,9 +210,10 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 }
 
-/// Installs the source-list table for a `nd-native-sidebar` box (idempotent):
-/// marks/hides the existing button children as rows and pins the table's scroll
-/// view to fill the box.
+/// Installs the source-list table for a sidebar box (idempotent): marks/hides
+/// the existing button children as rows and pins the table's scroll view to
+/// fill the box. Reached through `ndReconcileSidebarTable`, never directly,
+/// since that is where the row-shape gate lives.
 func ndInstallSidebarTable(_ box: NSStackView) {
     let id = ObjectIdentifier(box)
     if ndSidebarTables[id] != nil { return }
@@ -203,8 +231,9 @@ func ndInstallSidebarTable(_ box: NSStackView) {
     table.reload()
 }
 
-/// Reverses `ndInstallSidebarTable` when a box drops `nd-native-sidebar`
-/// (set-replace): removes the table and un-hides the button children.
+/// Reverses `ndInstallSidebarTable` when a box drops its sidebar class, or
+/// when its rows stop being row-shaped (set-replace): removes the table and
+/// un-hides the button children.
 func ndRemoveSidebarTable(_ box: NSStackView) {
     let id = ObjectIdentifier(box)
     guard let table = ndSidebarTables[id] else { return }
@@ -233,4 +262,92 @@ func ndMarkSidebarRowButton(_ btn: NDButton) {
     btn.alphaValue = 0
     btn.keyEquivalent = ""
     btn.bezelColor = nil
+}
+
+/// Whether a sidebar box's children are actually ROW-SHAPED: every arranged
+/// descendant is either a structural wrapper box or a titled button, and there
+/// is at least one button. The table is pinned over the whole box, so anything
+/// in there that is not a button (a caption, a badge, an icon, a separator:
+/// the composite libadwaita row) would be silently covered by it. Those boxes
+/// keep the per-row fallback rendering instead of losing content to the
+/// takeover.
+func ndIsSourceListShaped(_ box: NSStackView) -> Bool {
+    var buttons = 0
+    func walk(_ stack: NSStackView) -> Bool {
+        for child in stack.arrangedSubviews {
+            if let btn = child as? NDButton {
+                guard !btn.title.isEmpty else { return false }
+                buttons += 1
+            } else if let nested = child as? NSStackView {
+                // A nested sidebar owns its own rows (same stop as
+                // `collectRowButtons`), so it does not vote on this one.
+                if ndNavigationSidebars.contains(ObjectIdentifier(nested)) { continue }
+                guard walk(nested) else { return false }
+            } else {
+                return false
+            }
+        }
+        return true
+    }
+    return walk(box) && buttons > 0
+}
+
+/// Decides whether a sidebar-classed box is backed by the source-list table
+/// and keeps that decision current. Called from `ndApplyCssClasses` when the
+/// class lands and from `ndBoxChildAttached`/`ndBoxChildDetached` for every
+/// later shape change, so a box that only becomes row-shaped once React has
+/// appended its rows still gets the takeover, and one that stops being
+/// row-shaped gives it back.
+func ndReconcileSidebarTable(_ box: NSStackView) {
+    // An empty box is "not populated yet", not "not row-shaped": the class
+    // lands before React appends anything (src/tree.zig applies props before
+    // append), and replacing every row at once momentarily empties the box.
+    // Neither should install a table or tear a live one down.
+    if box.arrangedSubviews.isEmpty { return }
+    let id = ObjectIdentifier(box)
+    if ndForcedSidebars.contains(id) || ndIsSourceListShaped(box) {
+        ndClearSidebarRowFallback(box)
+        if let table = ndSidebarTables[id] {
+            table.reload()
+        } else {
+            ndInstallSidebarTable(box)
+        }
+    } else {
+        ndRemoveSidebarTable(box)
+        for btn in NDSidebarTable.collectRowButtons(box) {
+            ndSidebarFallbackRows.insert(ObjectIdentifier(btn))
+            ndApplySidebarRowStyle(btn, selected: ndCssClasses(of: btn).contains("suggested-action"))
+        }
+    }
+}
+
+/// Source-list row rendering for a sidebar the takeover declined. The rows
+/// stay ordinary buttons, but must stop reading as push buttons in a control
+/// strip:
+///  - no bezel on ANY row, selected or not. Selection used to come from
+///    `suggested-action`'s bordered accent bezel, and a bordered bezel
+///    reserves horizontal content insets a borderless one does not, so the
+///    selected row's title started ~15pt right of its neighbours': picking a
+///    row visibly shifted its own text.
+///  - selection is the accent tint instead, which is what a row with no table
+///    under it can honestly draw.
+///  - no keyEquivalent. A sidebar row is not the window's Return-key default
+///    button, which is what `suggested-action` otherwise makes it.
+func ndApplySidebarRowStyle(_ btn: NDButton, selected: Bool) {
+    btn.isBordered = false
+    btn.showsBorderOnlyWhileMouseInside = false
+    btn.bezelColor = nil
+    btn.keyEquivalent = ""
+    btn.contentTintColor = selected ? .controlAccentColor : .labelColor
+}
+
+/// Reverses `ndApplySidebarRowStyle` when the takeover arrives after all, or
+/// when the sidebar class drops: each row goes back to whatever its own
+/// cssClasses say, replayed from the set `ndApplyCssClasses` recorded.
+func ndClearSidebarRowFallback(_ box: NSStackView) {
+    for btn in NDSidebarTable.collectRowButtons(box) {
+        guard ndSidebarFallbackRows.remove(ObjectIdentifier(btn)) != nil else { continue }
+        btn.contentTintColor = nil
+        ndApplyCssClasses(btn, ndCssClasses(of: btn))
+    }
 }

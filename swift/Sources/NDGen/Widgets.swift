@@ -31,6 +31,60 @@ nonisolated(unsafe) private var splitViewCollapsed: [ObjectIdentifier: Bool] = [
 // `splitViewSidebarFraction`, keyed by the same outer splitView identity.
 nonisolated(unsafe) private var splitViewListFraction: [ObjectIdentifier: Double] = [:]
 
+// TabView is an NSTabViewController so AppKit sizes and centers the segmented
+// control and applies the standard content inset; the ABI handle stays an
+// NSView, so the controller is stashed against `controller.view` — the same
+// query-by-view pattern `ndSplitControllers` uses.
+nonisolated(unsafe) private var ndTabViewControllers: [ObjectIdentifier: NSTabViewController] = [:]
+
+func ndTabViewController(for view: NSView) -> NSTabViewController? {
+    ndTabViewControllers[ObjectIdentifier(view)]
+}
+
+/// One TabView page. NSTabViewController rejects an item without a view
+/// controller, so the child is hosted in a plain one; that wrapper's `view`
+/// is also how insertBefore/remove find the page again.
+func ndMakeTabViewItem(_ child: NSView, label: String, icon: String) -> NSTabViewItem {
+    let host = NSViewController()
+    host.view = child
+    let item = NSTabViewItem(viewController: host)
+    item.label = label
+    if !icon.isEmpty { item.image = ndResolveSymbolImage(icon) } // NDShell/Icons.swift (hand-written)
+    return item
+}
+
+// ToolbarView's `topBarStyle`/`bottomBarStyle`/`extendContentToTopEdge` are
+// create-time props whose targets (the bar views, the window) don't exist
+// until a child or the window attaches — stashed per pane, same shape as
+// `splitViewSidebarFraction`.
+nonisolated(unsafe) private var ndToolbarPaneTopBarStyles: [ObjectIdentifier: String] = [:]
+nonisolated(unsafe) private var ndToolbarPaneBottomBarStyles: [ObjectIdentifier: String] = [:]
+nonisolated(unsafe) private var ndToolbarPaneExtendsToTopEdge: Set<ObjectIdentifier> = []
+
+/// The standard macOS window content margin. Applied by the Window append arm
+/// to a plain root child, whose leading/trailing/bottom edges would otherwise
+/// sit flush against the window frame (button corners sliced by the edge).
+let ndWindowContentMargin: CGFloat = 20
+
+/// The inset the Window append arm gives its root child. Two opt-outs: a root
+/// built around something that scrolls goes edge to edge, and a root the app
+/// already padded keeps exactly the padding it asked for.
+///
+/// Both scroll shapes opt out, not just the edge-to-edge one
+/// (SplitController.swift's `ndIsScrollShaped`/`ndIsListShaped`). A window
+/// whose subject is a list runs that list to the window frame the way Finder
+/// and Mail do; margining it turns the list into an inset grey card floating
+/// in a white window. The scroll view insets its own content through the safe
+/// area, and the chrome above and below it carries its own padding.
+func ndWindowRootInset(_ child: NSView) -> CGFloat {
+    if ndIsScrollShaped(child) || ndIsListShaped(child) { return 0 }
+    if let stack = child as? NSStackView {
+        let e = stack.edgeInsets
+        if e.top != 0 || e.left != 0 || e.bottom != 0 || e.right != 0 { return 0 }
+    }
+    return ndWindowContentMargin
+}
+
 func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     let props = parseProps(propsJson)
     if kind == "Window" {
@@ -83,7 +137,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         }
         return label
     } else if kind == "Button" {
-        let lbl = propStr(props, "label") ?? "Button"
+        let lbl = propStr(props, "label") ?? ""
         let b = NDButton(title: lbl, target: nil, action: nil)
         b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded
         if let icon = propStr(props, "iconName") {
@@ -111,7 +165,12 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "TextArea" {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = true
         let textView = NSTextView()
+        textView.drawsBackground = true
+        textView.backgroundColor = .textBackgroundColor
+        textView.textContainerInset = NSSize(width: 4, height: 6)
         textView.string = propStr(props, "text") ?? ""
         scroll.documentView = textView
         let minH = propInt(props, "minContentHeight") ?? 120
@@ -147,6 +206,20 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let value = propDouble(props, "value") ?? 0
         let slider = NSSlider(value: value, minValue: min, maxValue: max, target: nil, action: nil)
         slider.isVertical = (propStr(props, "orientation") ?? "horizontal") == "vertical"
+        let step = propDouble(props, "step") ?? 1
+        // Tick marks are AppKit's only stepping lever, and they are drawn:
+        // allowsTickMarkValuesOnly has no effect without them. GtkScale
+        // snaps to the step invisibly, so a plain step={5} produced
+        // different VALUES per platform, not just a different look.
+        // The schema default (1) over the default 0...100 range would mean
+        // 101 marks, so only an explicit step with a drawable number of
+        // stops snaps; anything else stays continuous.
+        let stops = step > 0 ? (max - min) / step : 0
+        if step > 0, abs(step - 1) > 1e-9, stops >= 1, stops <= 50 {
+            slider.numberOfTickMarks = Int(stops.rounded()) + 1
+            slider.allowsTickMarkValuesOnly = true
+            slider.tickMarkPosition = .below
+        }
         return slider
     } else if kind == "ProgressBar" {
         let pb = NSProgressIndicator()
@@ -204,9 +277,18 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         if propBool(props, "spinning") ?? true { sp.startAnimation(nil) } else { sp.stopAnimation(nil) }
         return sp
     } else if kind == "TabView" {
+        // NSTabViewController, not a bare NSTabView: it sizes and centers the
+        // segmented control, gives the segments a common minimum width, and
+        // applies the standard content inset. A bare NSTabView shredded a
+        // sixteen-page gallery to one character per label.
+        // The ABI handle must stay an NSView, so the controller is stashed
+        // against controller.view (the ndSplitControllers pattern) and the
+        // apply/structural arms resolve it back with ndTabViewController(for:).
         // selectedIndex is ignored at create: pages attach afterwards (mirrors genZigCreateBody).
-        let tabs = NSTabView()
-        return tabs
+        let tabController = NSTabViewController()
+        tabController.tabStyle = .segmentedControlOnTop
+        ndTabViewControllers[ObjectIdentifier(tabController.view)] = tabController
+        return tabController.view
     } else if kind == "Grid" {
         let grid = NSGridView(numberOfColumns: 1, rows: 0)
         return grid
@@ -245,7 +327,14 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         return bar
     } else if kind == "ToolbarView" {
-        return NDToolbarPaneView()
+        let pane = NDToolbarPaneView()
+        let paneID = ObjectIdentifier(pane)
+        ndToolbarPaneTopBarStyles[paneID] = propStr(props, "topBarStyle") ?? "flat"
+        ndToolbarPaneBottomBarStyles[paneID] = propStr(props, "bottomBarStyle") ?? "flat"
+        if propBool(props, "extendContentToTopEdge") ?? false {
+            ndToolbarPaneExtendsToTopEdge.insert(paneID)
+        }
+        return pane
     } else if kind == "SearchInput" {
         let search = NDSearchField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { search.placeholderString = ph }
@@ -352,6 +441,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let horizontal = (propStr(props, "orientation") ?? "horizontal") != "vertical"
         let split = NSSplitView()
         split.isVertical = horizontal
+        // The .thick default paints the divider in the window background,
+        // which reads as no divider at all between two content panes. .thin
+        // is the 1pt separatorColor hairline Xcode and Mail use.
+        split.dividerStyle = .thin
         let controller = PanedController(split: split)
         ndPanedControllers[ObjectIdentifier(split)] = controller
         controller.setPositionFraction(propDouble(props, "position") ?? 0.5)
@@ -373,6 +466,12 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             stack.spacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
     } else if kind == "Button" {
+        if let l = propStr(props, "label"), let b = view as? NSButton {
+            b.title = l
+            // ndApplyButtonIcon picked imageOnly/imageLeading from the
+            // create-time label; a button that gains or loses one follows.
+            if b.image != nil { b.imagePosition = l.isEmpty ? .imageOnly : .imageLeading }
+        }
         if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }
         if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }
         if let bd = propStr(props, "badge"), let btn = view as? NSButton { ndButtonApplyBadge(btn, bd) }
@@ -436,9 +535,9 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             if sp { ind.startAnimation(nil) } else { ind.stopAnimation(nil) }
         }
     } else if kind == "TabView" {
-        if let idx = propInt(props, "selectedIndex"), let tabs = view as? NSTabView,
-           idx >= 0 && idx < tabs.numberOfTabViewItems {
-            tabs.selectTabViewItem(at: idx)
+        if let idx = propInt(props, "selectedIndex"), let tabs = ndTabViewController(for: view),
+           idx >= 0 && idx < tabs.tabViewItems.count {
+            tabs.selectedTabViewItemIndex = idx
         }
     } else if kind == "ListView" {
         if let items = propArray(props, "items") {
@@ -462,6 +561,13 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             sidebarItem.isCollapsed = c
         }
     } else if kind == "HeaderBar" {
+        if let t = propStr(props, "title"), let bar = view as? NDHeaderBarView {
+            bar.ndTitle = t
+            if !t.isEmpty { bar.titleField.stringValue = t }
+            // defaultItemIdentifiers gates the title item on a non-empty
+            // ndTitle, so a title appearing or disappearing changes the set.
+            (bar.pane?.manager ?? ndWindowToolbarManager)?.scheduleRebuild()
+        }
         if let s = propStr(props, "subtitle"), let bar = view as? NDHeaderBarView { ndHeaderBarApplySubtitle(bar, s) }
         if let bar = view as? NDHeaderBarView {
             ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
@@ -490,7 +596,16 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         ndEmptyStateApply(view, props)  // emptyIconName/emptyTitle/emptyDescription merged (NDShell/EmptyState.swift)
         // "emptyTitle" handled by ndEmptyStateApply above (merged).
         // "emptyDescription" handled by ndEmptyStateApply above (merged).
+    } else if kind == "Menu" {
+        if let l = propStr(props, "label"), let node = ndMenuNode(view) {
+            node.label = l
+            ndMenuManager?.scheduleRebuild()  // the label is baked into NSMenu at build time
+        }
     } else if kind == "MenuItem" {
+        if let l = propStr(props, "label"), let node = ndMenuNode(view) {
+            node.label = l
+            ndMenuManager?.scheduleRebuild()  // the label is baked into NSMenu at build time
+        }
         if let en = propBool(props, "enabled") { ndMenuItemSetEnabled(view, en) }
     } else if kind == "SettingsGroup" {
         ndSettingsGroupApply(view, props)  // title/description merged
@@ -707,6 +822,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     if ndTrayItemStructuralAttach(child) { return }
     let attached = parseProps(attachedJson)
     let attachedTabLabel = propStr(attached, "tabLabel") ?? ""
+    let attachedTabIcon = propStr(attached, "tabIcon") ?? ""
     let attachedGridRow = propInt(attached, "gridRow") ?? 0
     let attachedGridColumn = propInt(attached, "gridColumn") ?? 0
     let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1
@@ -723,8 +839,18 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             }
             ndToolbarPaneAttachedToWindow(pane)
             let content = pane.contentView ?? pane
-            parent.addSubview(content)
             content.translatesAutoresizingMaskIntoConstraints = false
+            if ndToolbarPaneExtendsToTopEdge.contains(ObjectIdentifier(pane)) {
+                parent.addSubview(content)
+                NSLayoutConstraint.activate([
+                    content.topAnchor.constraint(equalTo: parent.topAnchor),
+                    content.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
+                    content.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
+                    content.bottomAnchor.constraint(equalTo: parent.bottomAnchor),
+                ])
+                return
+            }
+            parent.addSubview(content)
             NSLayoutConstraint.activate([
                 content.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),
                 content.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
@@ -746,11 +872,13 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             }
             parent.addSubview(child)
             child.translatesAutoresizingMaskIntoConstraints = false
+            let inset = ndWindowRootInset(child)
+            let guide = parent.safeAreaLayoutGuide
             NSLayoutConstraint.activate([
-                child.topAnchor.constraint(equalTo: parent.safeAreaLayoutGuide.topAnchor),
-                child.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
-                child.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
-                child.bottomAnchor.constraint(equalTo: parent.bottomAnchor),
+                child.topAnchor.constraint(equalTo: guide.topAnchor, constant: inset),
+                child.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),
+                child.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),
+                child.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -inset),
             ])
         }
     } else if parentKind == "Box" {
@@ -770,11 +898,8 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
         ])
     } else if parentKind == "TabView" {
-        let tabs = parent as! NSTabView
-        let item = NSTabViewItem()
-        item.view = child
-        item.label = attachedTabLabel
-        tabs.addTabViewItem(item)
+        guard let tabs = ndTabViewController(for: parent) else { return }
+        tabs.addTabViewItem(ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon))
     } else if parentKind == "Grid" {
         let grid = parent as! NSGridView
         ndGridPlace(grid, child, row: attachedGridRow, column: attachedGridColumn, rowSpan: attachedGridRowSpan, columnSpan: attachedGridColumnSpan)
@@ -800,6 +925,8 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             let item = NSSplitViewItem(contentListWithViewController: vc)
             item.minimumThickness = 240
             item.canCollapse = true
+            item.automaticallyAdjustsSafeAreaInsets = true
+            item.titlebarSeparatorStyle = .none
             if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
             }
@@ -813,6 +940,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
+            item.titlebarSeparatorStyle = .none // the scroll edge effect replaces the rule
             if let last = controller.splitViewItems.last, last.behavior == .inspector {
                 controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)
             } else {
@@ -822,7 +950,14 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
-        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)
+        let pane = parent as! NDToolbarPaneView
+        ndToolbarPanePack(pane, child, slot: attachedSlot)
+        if attachedSlot == "top" || attachedSlot == "bottom" {
+            let styles = attachedSlot == "top" ? ndToolbarPaneTopBarStyles : ndToolbarPaneBottomBarStyles
+            if (styles[ObjectIdentifier(pane)] ?? "flat") != "flat" {
+                ndApplyToolbarStrip(child, enabled: true)
+            }
+        }
     } else if parentKind == "Menubar" {
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
@@ -865,6 +1000,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     if ndTrayItemStructuralAttach(child) { return }
     let attached = parseProps(attachedJson)
     let attachedTabLabel = propStr(attached, "tabLabel") ?? ""
+    let attachedTabIcon = propStr(attached, "tabIcon") ?? ""
     let attachedGridRow = propInt(attached, "gridRow") ?? 0
     let attachedGridColumn = propInt(attached, "gridColumn") ?? 0
     let attachedGridRowSpan = propInt(attached, "gridRowSpan") ?? 1
@@ -877,11 +1013,9 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         stack.insertArrangedSubview(child, at: idx)
         ndBoxChildAttached(stack, child)
     } else if parentKind == "TabView" {
-        let tabs = parent as! NSTabView
-        let item = NSTabViewItem()
-        item.view = child
-        item.label = attachedTabLabel
-        let idx = tabs.tabViewItems.firstIndex { $0.view === before } ?? tabs.tabViewItems.count
+        guard let tabs = ndTabViewController(for: parent) else { return }
+        let item = ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon)
+        let idx = tabs.tabViewItems.firstIndex { $0.viewController?.view === before } ?? tabs.tabViewItems.count
         tabs.insertTabViewItem(item, at: idx)
     } else if parentKind == "Grid" {
         // Grid children are position-addressed; sibling order is irrelevant.
@@ -909,6 +1043,8 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             let item = NSSplitViewItem(contentListWithViewController: vc)
             item.minimumThickness = 240
             item.canCollapse = true
+            item.automaticallyAdjustsSafeAreaInsets = true
+            item.titlebarSeparatorStyle = .none
             if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
             }
@@ -922,6 +1058,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         } else {
             let item = NSSplitViewItem(viewController: vc)
             item.automaticallyAdjustsSafeAreaInsets = true
+            item.titlebarSeparatorStyle = .none // the scroll edge effect replaces the rule
             if let last = controller.splitViewItems.last, last.behavior == .inspector {
                 controller.insertSplitViewItem(item, at: controller.splitViewItems.count - 1)
             } else {
@@ -931,7 +1068,14 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
-        ndToolbarPanePack(parent as! NDToolbarPaneView, child, slot: attachedSlot)
+        let pane = parent as! NDToolbarPaneView
+        ndToolbarPanePack(pane, child, slot: attachedSlot)
+        if attachedSlot == "top" || attachedSlot == "bottom" {
+            let styles = attachedSlot == "top" ? ndToolbarPaneTopBarStyles : ndToolbarPaneBottomBarStyles
+            if (styles[ObjectIdentifier(pane)] ?? "flat") != "flat" {
+                ndApplyToolbarStrip(child, enabled: true)
+            }
+        }
     } else if parentKind == "Menubar" {
         ndMenuAppendChild(parent, child)
     } else if parentKind == "Menu" {
@@ -951,8 +1095,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "Paned" {
         let split = parent as! NSSplitView
-        let idx = split.arrangedSubviews.firstIndex(of: before) ?? split.arrangedSubviews.count
-        split.insertArrangedSubview(child, at: idx)
+        split.addSubview(child, positioned: .below, relativeTo: before)
         ndPanedController(for: split)?.reapplyFraction()
     } else {
         // single-child containers: insertBefore degenerates to appendChild.
@@ -974,7 +1117,8 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         if ndIsMenuNode(child) { return } // M13: menubar detach is a no-op (mainMenu rebuilt on next change)
         if let pane = child as? NDToolbarPaneView {
             ndToolbarPaneDetachedFromSplit(pane) // same unregister path as the split arm
-            (pane.contentView ?? pane).removeFromSuperview()
+            let content = pane.contentView ?? pane
+            content.removeFromSuperview()
             return
         }
         if let split = child as? NSSplitView, let controller = ndSplitViewController(for: split),
@@ -999,8 +1143,8 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         let sv = parent as! NSScrollView
         if child.superview === sv.documentView { child.removeFromSuperview() }
     } else if parentKind == "TabView" {
-        let tabs = parent as! NSTabView
-        if let item = tabs.tabViewItems.first(where: { $0.view === child }) {
+        guard let tabs = ndTabViewController(for: parent) else { return }
+        if let item = tabs.tabViewItems.first(where: { $0.viewController?.view === child }) {
             tabs.removeTabViewItem(item)
         }
     } else if parentKind == "Grid" {

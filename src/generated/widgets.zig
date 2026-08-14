@@ -118,6 +118,10 @@ fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
         }
     }
     const inner = adw.OverlaySplitView.new();
+    // Same empty-gutter guard as the create arm: show-sidebar defaults TRUE,
+    // and a NULL sidebar still allocates min-sidebar-width. The structural
+    // arm that fills the slot flips it back on.
+    adw.OverlaySplitView.setShowSidebar(inner, 0);
     if (split_list_widths.get(@intFromPtr(sv))) |lw| {
         if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
     }
@@ -149,6 +153,7 @@ fn ndSplitViewInspectorInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
         host = cur_sv;
     }
     const inner = adw.OverlaySplitView.new();
+    adw.OverlaySplitView.setShowSidebar(inner, 0); // see ndSplitViewInner
     adw.OverlaySplitView.setSidebarPosition(inner, .end);
     if (adw.OverlaySplitView.getContent(host)) |cur| {
         // Same detach-before-reattach ref bracket as ndSplitViewInner.
@@ -207,6 +212,28 @@ fn ndButtonApplyBadge(button: *gtk.Button, badge: []const u8, dupeZ: *const fn (
     gtk.Widget.setVisible(label.as(gtk.Widget), @intFromBool(badge.len > 0));
     gtk.Button.setChild(button, wrap.as(gtk.Widget));
     gobject.Object.setData(obj, ND_BUTTON_BADGE_LABEL, label);
+}
+
+/// Button.label update. The create arm leaves one of three child shapes — a
+/// plain GtkLabel, an AdwButtonContent (icon + label), or a bare GtkImage
+/// (icon-only) — and ndButtonApplyBadge may have wrapped any of them in a
+/// box, so walk to the real content and retarget it in place. Retargeting
+/// (rather than gtk_button_set_label) is what keeps the badge suffix,
+/// label alignment and size classes the create arm installed.
+///
+/// An icon-only button is left alone: `iconName` is create-only, so
+/// rebuilding it as an icon+label pair would need an icon name nothing
+/// retained, and set_label would drop the icon.
+fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    var content = gtk.Button.getChild(button) orelse return;
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) != null) {
+        content = gtk.Widget.getFirstChild(content) orelse return;
+    }
+    if (gobject.ext.isA(content, adw.ButtonContent)) {
+        adw.ButtonContent.setLabel(@ptrCast(@alignCast(content)), dupeZ(label));
+    } else if (gobject.ext.isA(content, gtk.Label)) {
+        gtk.Label.setText(@ptrCast(@alignCast(content)), dupeZ(label));
+    }
 }
 
 /// Builds a NULL-terminated strv (`?[*]const [*:0]const u8`) from a JSON
@@ -462,6 +489,30 @@ fn ndMenuItemSetEnabled(item_w: *gtk.Widget, enabled: bool) void {
     const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
     info.enabled = enabled;
     if (info.action) |sa| gio.SimpleAction.setEnabled(sa, @intFromBool(enabled));
+}
+
+/// MenuItem.label / Menu.label updates. A GMenuItem's label is baked into the
+/// GMenuModel at build time, so both setters update the registry the builders
+/// read and re-run every model that could contain the node (the menubar and
+/// any MenuButton/SplitButton owner).
+fn ndMenuItemSetLabel(item_w: *gtk.Widget, label: [:0]const u8) void {
+    const item: *gio.MenuItem = @ptrCast(@alignCast(item_w));
+    const info = menu_item_info.getPtr(@intFromPtr(item)) orelse return;
+    if (std.mem.eql(u8, info.label, label)) return;
+    info.label = label;
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
+}
+
+fn ndMenuSetLabel(menu_w: *gtk.Widget, label: [:0]const u8) void {
+    const menu: *gio.Menu = @ptrCast(@alignCast(menu_w));
+    const key = @intFromPtr(menu);
+    if (menu_labels.get(key)) |cur| {
+        if (std.mem.eql(u8, cur, label)) return;
+    }
+    menu_labels.put(events_gpa, key, label) catch return;
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
 }
 
 fn ndBuildGMenuItem(info: MenuItemInfo) ?*gio.MenuItem {
@@ -1150,14 +1201,56 @@ fn ndHeaderBarSetSubtitle(hb: *adw.HeaderBar, subtitle: [:0]const u8) void {
     adw.HeaderBar.setShowTitle(hb, 1);
 }
 
-/// The AdwViewStack inside a TabView's wrapping box (switcher above, stack
-/// below — see the TabView create arm).
+/// Title update on a live header, the peer of ndHeaderBarSetSubtitle. A
+/// header whose title slot holds a SearchInput (headerBarAttach's address-bar
+/// shape) keeps it: only an AdwWindowTitle is ever retargeted, and a fresh one
+/// is built only when the slot is empty.
+fn ndHeaderBarSetTitle(hb: *adw.HeaderBar, title: [:0]const u8) void {
+    if (adw.HeaderBar.getTitleWidget(hb)) |tw| {
+        if (gobject.ext.isA(tw, adw.WindowTitle)) {
+            adw.WindowTitle.setTitle(@ptrCast(@alignCast(tw)), title);
+        }
+        return;
+    }
+    if (title.len == 0) return;
+    const wt = adw.WindowTitle.new(title, "");
+    adw.HeaderBar.setTitleWidget(hb, wt.as(gtk.Widget));
+    adw.HeaderBar.setShowTitle(hb, 1);
+}
+
+/// The AdwViewStack inside a TabView's wrapping box (switcher scroller above,
+/// stack below — see the TabView create arm).
 fn ndTabViewStack(widget: *gtk.Widget) ?*adw.ViewStack {
     var child = gtk.Widget.getFirstChild(widget);
     while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
         if (gobject.ext.isA(c, adw.ViewStack)) return @ptrCast(@alignCast(c));
     }
     return null;
+}
+
+/// The GtkScrolledWindow holding a TabView's switcher. The switcher scrolls
+/// rather than ellipsizes, which is what keeps a sixteen-page TabView legible.
+fn ndTabViewSwitcherScroller(widget: *gtk.Widget) ?*gtk.ScrolledWindow {
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (gobject.ext.isA(c, gtk.ScrolledWindow)) return @ptrCast(@alignCast(c));
+    }
+    return null;
+}
+
+/// Upgrades a TabView's switcher to AdwViewSwitcher the first time one of its
+/// pages declares an icon. A TabView starts with an AdwInlineViewSwitcher in
+/// labels mode because AdwViewSwitcher renders the missing-image fallback in
+/// every icon-less button's icon slot, and pages attach after create so the
+/// choice cannot be made there.
+fn ndTabViewEnsureIconSwitcher(widget: *gtk.Widget, stack: *adw.ViewStack) void {
+    const scroller = ndTabViewSwitcherScroller(widget) orelse return;
+    const cur = gtk.ScrolledWindow.getChild(scroller) orelse return;
+    if (gobject.ext.isA(cur, adw.ViewSwitcher)) return;
+    const switcher = adw.ViewSwitcher.new();
+    adw.ViewSwitcher.setStack(switcher, stack);
+    adw.ViewSwitcher.setPolicy(switcher, .wide);
+    gtk.ScrolledWindow.setChild(scroller, switcher.as(gtk.Widget));
 }
 
 const ND_SPLIT_PENDING_BREAKPOINT = "nd-split-pending-breakpoint";
@@ -1236,7 +1329,7 @@ pub fn create(
         }
         return label.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Button")) {
-        const lbl = propStr(props, "label") orelse "Button";
+        const lbl = propStr(props, "label") orelse "";
         var button: *gtk.Button = undefined;
         if (propStr(props, "iconName")) |icon| {
             if (lbl.len == 0) {
@@ -1293,8 +1386,17 @@ pub fn create(
         const view = gtk.TextView.new();
         const buf = gtk.TextView.getBuffer(view);
         if (propStr(props, "text")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }
-        if (propInt(props, "minContentHeight")) |h| { if (h > 0) gtk.Widget.setSizeRequest(view.as(gtk.Widget), -1, @intCast(h)); }
-        return view.as(gtk.Widget);
+        gtk.TextView.setWrapMode(view, .word_char);
+        // Scroller-as-handle (src/gtk/table.zig, src/gtk/sourcetree.zig): a
+        // bare GtkTextView has no boundary and no scrolling, so the tracked
+        // widget is the frame around it. Everything that reaches for the
+        // GtkTextView goes through scrolledWindowInner.
+        const sw = gtk.ScrolledWindow.new();
+        gtk.ScrolledWindow.setChild(sw, view.as(gtk.Widget));
+        gtk.ScrolledWindow.setHasFrame(sw, 1);
+        const min_h = propInt(props, "minContentHeight") orelse 120;
+        if (min_h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(min_h));
+        return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Checkbox")) {
         const cb = gtk.CheckButton.newWithLabel(dupeZ(propStr(props, "label") orelse ""));
         if (propBool(props, "checked") orelse false) gtk.CheckButton.setActive(cb, 1);
@@ -1371,18 +1473,26 @@ pub fn create(
         if (propBool(props, "spinning") orelse true) gtk.Spinner.setSpinning(sp, 1);
         return sp.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TabView")) {
-        // In-window view switching, the libadwaita idiom: AdwViewSwitcher
-        // (policy wide) over an AdwViewStack. Document-style tabs are the
-        // <window tabGroup> path, not this widget. selectedIndex is ignored
-        // at create: pages attach afterwards (M5b-D4).
+        // In-window view switching, the libadwaita idiom: a switcher over an
+        // AdwViewStack. Document-style tabs are the <window tabGroup> path,
+        // not this widget. selectedIndex is ignored at create: pages attach
+        // afterwards (M5b-D4), which is also why the switcher starts as an
+        // AdwInlineViewSwitcher (labels only) and ndTabViewEnsureIconSwitcher
+        // upgrades it to AdwViewSwitcher once a page declares an icon.
         const stack = adw.ViewStack.new();
         gtk.Widget.setVexpand(stack.as(gtk.Widget), 1);
-        const switcher = adw.ViewSwitcher.new();
-        adw.ViewSwitcher.setStack(switcher, stack);
-        adw.ViewSwitcher.setPolicy(switcher, .wide);
-        gtk.Widget.setHalign(switcher.as(gtk.Widget), .center);
+        const switcher = adw.InlineViewSwitcher.new();
+        adw.InlineViewSwitcher.setStack(switcher, stack);
+        adw.InlineViewSwitcher.setDisplayMode(switcher, .labels);
+        adw.InlineViewSwitcher.setCanShrink(switcher, 0); // scroll instead of ellipsizing
+        // The switcher scrolls horizontally: a many-page switcher would
+        // otherwise be squeezed to one ellipsis per page.
+        const switcher_scroller = gtk.ScrolledWindow.new();
+        gtk.ScrolledWindow.setPolicy(switcher_scroller, .automatic, .never);
+        gtk.ScrolledWindow.setPropagateNaturalHeight(switcher_scroller, 1);
+        gtk.ScrolledWindow.setChild(switcher_scroller, switcher.as(gtk.Widget));
         const box = gtk.Box.new(.vertical, 6);
-        gtk.Box.append(box, switcher.as(gtk.Widget));
+        gtk.Box.append(box, switcher_scroller.as(gtk.Widget));
         gtk.Box.append(box, stack.as(gtk.Widget));
         return box.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Grid")) {
@@ -1422,6 +1532,11 @@ pub fn create(
         return gtk.Box.new(.vertical, 0).as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         const sv = adw.OverlaySplitView.new();
+        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is
+        // still allocated sidebar-width-fraction clamped up by
+        // min-sidebar-width (an empty 180px gutter). The structural arms
+        // flip it on when a sidebar child actually lands.
+        adw.OverlaySplitView.setShowSidebar(sv, 0);
         if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
         if (propFloat(props, "listWidth")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }
@@ -1779,6 +1894,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));
         }
     } else if (std.mem.eql(u8, kind, "Button")) {
+        if (propStr(props, "label")) |l| ndButtonSetLabel(@ptrCast(@alignCast(widget)), l, dupeZ);
         if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));
         if (propBool(props, "prominent")) |pr| {
             if (pr) gtk.Widget.addCssClass(widget, "suggested-action")
@@ -1805,7 +1921,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(@as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable), @intFromBool(e));
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (propStr(props, "text")) |t| {
-            const view: *gtk.TextView = @ptrCast(@alignCast(widget));
+            // The tracked handle is the GtkScrolledWindow frame (create arm).
+            const view: *gtk.TextView = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
             const buf = gtk.TextView.getBuffer(view);
             var s_it: gtk.TextIter = undefined;
             var e_it: gtk.TextIter = undefined;
@@ -1914,6 +2031,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
+        if (propStr(props, "title")) |t| ndHeaderBarSetTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
         if (propStr(props, "subtitle")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, "canGoBack"), null);
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, "canGoForward"));
@@ -1962,7 +2080,10 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         // "emptyDescription" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
     } else if (std.mem.eql(u8, kind, "SourceTree")) {
         ndsourcetree_gtk.applyProps(widget, props, dupeZ);
+    } else if (std.mem.eql(u8, kind, "Menu")) {
+        if (propStr(props, "label")) |l| ndMenuSetLabel(widget, dupeZ(l));
     } else if (std.mem.eql(u8, kind, "MenuItem")) {
+        if (propStr(props, "label")) |l| ndMenuItemSetLabel(widget, dupeZ(l));
         if (propBool(props, "enabled")) |en| ndMenuItemSetEnabled(widget, en);
     } else if (std.mem.eql(u8, kind, "SettingsGroup")) {
         if (propStr(props, "title")) |t| adw.PreferencesGroup.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
@@ -2140,6 +2261,15 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
 
 fn lvSetup(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
     const label = gtk.Label.new(null);
+    // A bare label leaves the row at its ~22px text height, flush at x=0.
+    // GNOME list rows are 34px minimum with a 12px text inset; the margins
+    // (rather than a fixed height) get there while still tracking the user's
+    // font size.
+    gtk.Label.setXalign(label, 0);
+    gtk.Widget.setMarginStart(label.as(gtk.Widget), 12);
+    gtk.Widget.setMarginEnd(label.as(gtk.Widget), 12);
+    gtk.Widget.setMarginTop(label.as(gtk.Widget), 8);
+    gtk.Widget.setMarginBottom(label.as(gtk.Widget), 8);
     gtk.ListItem.setChild(list_item, label.as(gtk.Widget));
 }
 fn lvBind(_: *gobject.Object, list_item: *gtk.ListItem, _: ?*anyopaque) callconv(.c) void {
@@ -2384,7 +2514,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const hid_TextInput_activate = gobject.signalConnectData(obj_TextInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});
         _ = hid_TextInput_activate;
     } else if (std.mem.eql(u8, kind, "TextArea")) {
-        const obj_TextArea_changed = asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(widget))));
+        const obj_TextArea_changed = asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?))));
         const hid_TextArea_changed = gobject.signalConnectData(obj_TextArea_changed, "changed", @ptrCast(&cbBufferChanged), data, null, .{});
         noteSuppressible(obj_TextArea_changed, hid_TextArea_changed);
     } else if (std.mem.eql(u8, kind, "Checkbox")) {
@@ -2546,7 +2676,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else "";
         const page = adw.ViewStack.addTitled(stack, child, null, title);
         if (attached.tab_icon) |ic| {
-            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+            if (ic.len > 0) {
+                adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+                ndTabViewEnsureIconSwitcher(parent, stack);
+            }
         }
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         gtk.Grid.attach(@ptrCast(@alignCast(parent)), child, @intCast(attached.grid_column), @intCast(attached.grid_row), @intCast(attached.grid_column_span), @intCast(attached.grid_row_span));
@@ -2555,12 +2688,17 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
+                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot
             } else if (std.mem.eql(u8, sl, "list")) {
-                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
+                const inner = ndSplitViewInner(sv);
+                adw.OverlaySplitView.setSidebar(inner, child);
+                adw.OverlaySplitView.setShowSidebar(inner, 1);
             } else if (std.mem.eql(u8, sl, "inspector")) {
                 // Inspector pane: an end-positioned inner split's sidebar
                 // (AppKit peer: NSSplitViewItem inspector).
-                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);
+                const inspector = ndSplitViewInspectorInner(sv);
+                adw.OverlaySplitView.setSidebar(inspector, child);
+                adw.OverlaySplitView.setShowSidebar(inspector, 1);
             } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
@@ -2663,7 +2801,10 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         const title: [*:0]const u8 = if (attached.tab_label) |tl| dupeZ(tl).ptr else "";
         const page = adw.ViewStack.addTitled(stack, child, null, title);
         if (attached.tab_icon) |ic| {
-            if (ic.len > 0) adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+            if (ic.len > 0) {
+                adw.ViewStackPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
+                ndTabViewEnsureIconSwitcher(parent, stack);
+            }
         }
     } else if (std.mem.eql(u8, parent_kind, "Grid")) {
         // Grid children are position-addressed; sibling order is irrelevant.
@@ -2673,10 +2814,15 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
+                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot
             } else if (std.mem.eql(u8, sl, "list")) {
-                adw.OverlaySplitView.setSidebar(ndSplitViewInner(sv), child);
+                const inner = ndSplitViewInner(sv);
+                adw.OverlaySplitView.setSidebar(inner, child);
+                adw.OverlaySplitView.setShowSidebar(inner, 1);
             } else if (std.mem.eql(u8, sl, "inspector")) {
-                adw.OverlaySplitView.setSidebar(ndSplitViewInspectorInner(sv), child);
+                const inspector = ndSplitViewInspectorInner(sv);
+                adw.OverlaySplitView.setSidebar(inspector, child);
+                adw.OverlaySplitView.setShowSidebar(inspector, 1);
             } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
@@ -2753,6 +2899,7 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         while (true) {
             if (adw.OverlaySplitView.getSidebar(host) == child) {
                 adw.OverlaySplitView.setSidebar(host, null);
+                adw.OverlaySplitView.setShowSidebar(host, 0); // an empty slot still allocates min-sidebar-width
                 break;
             }
             const cur = adw.OverlaySplitView.getContent(host) orelse break;

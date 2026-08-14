@@ -1,10 +1,11 @@
 import AppKit
 
-/// CommandPalette: a centered, dimmed, modal Cmd-K overlay (peer of
+/// CommandPalette: a centered, modal Cmd-K overlay (peer of
 /// src/gtk/commandpalette.zig's AdwDialog). The tracked handle is a host-only
 /// NSView (the Popover idiom) that lives in the tree only so `self.window`
-/// resolves the window to paint over; `open` toggles a full-window dimmed
-/// scrim plus a centered card (NSSearchField over an NSTableView of results).
+/// resolves the window to paint over; `open` toggles a transparent full-window
+/// backdrop plus a centered Liquid Glass card (a borderless search field over
+/// an NSTableView of results) whose height follows its row count.
 ///
 /// CONTROLLED: the app owns `query` and `items`; the widget never filters or
 /// reorders. Every keystroke fires queryChanged; the app feeds back the next
@@ -16,6 +17,7 @@ import AppKit
 /// React-driven close (open=false) is flagged so it does not echo.
 private let paletteColumnID = NSUserInterfaceItemIdentifier("nd-command-palette-column")
 private let paletteCellID = NSUserInterfaceItemIdentifier("nd-command-palette-cell")
+private let paletteRowID = NSUserInterfaceItemIdentifier("nd-command-palette-row")
 
 /// One result row (peer of the GTK backend's CommandPaletteItem decode).
 /// Sendable so the nonisolated dispatch bridges can decode the objectList and
@@ -37,17 +39,15 @@ private func paletteRow(from obj: [String: Any]) -> PaletteRow {
     )
 }
 
-/// Full-window dim behind the card; a click on the bare scrim cancels.
-private final class NDPaletteScrim: NSView {
+/// Full-window hit target behind the card; a click on the bare backdrop
+/// cancels. Transparent: macOS does not dim behind an overlay panel, so this
+/// view exists for the outside-click contract, not as a scrim. Owns the
+/// Cmd/Ctrl+Return "submit as-is" key equivalent (a modifier-Return never
+/// reaches the field editor's doCommandBySelector).
+private final class NDPaletteBackdrop: NSView {
     weak var handle: NDCommandPaletteHandleView?
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { handle?.userCancel() }
-}
-
-/// The floating card. Owns the Cmd/Ctrl+Return "submit as-is" key equivalent
-/// (a modifier-Return never reaches the field editor's doCommandBySelector).
-private final class NDPaletteCard: NSVisualEffectView {
-    weak var handle: NDCommandPaletteHandleView?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.type == .keyDown,
            event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control),
@@ -59,7 +59,35 @@ private final class NDPaletteCard: NSVisualEffectView {
     }
 }
 
-final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+/// Shadow host for the glass card. NSGlassEffectView clips to its own corner
+/// radius, so the drop shadow has to live one level out; the path is rebuilt
+/// every layout pass because the card's height follows its row count. Also
+/// stops a click on the card's own chrome from reaching the backdrop's cancel.
+private final class NDPaletteCard: NSView {
+    override func layout() {
+        super.layout()
+        layer?.shadowPath = CGPath(
+            roundedRect: bounds,
+            cornerWidth: NDRadius.palette,
+            cornerHeight: NDRadius.palette,
+            transform: nil)
+    }
+    override func mouseDown(with event: NSEvent) {}
+}
+
+/// Keyboard focus legitimately stays in the search field, which leaves the
+/// table unemphasized and its selection grey. The highlighted row is the
+/// palette's primary affordance, so force the emphasized rendering rather than
+/// hand-painting a fill: AppKit keeps its own accent colour, inset and
+/// curvature for the table's style.
+private final class NDPaletteRowView: NSTableRowView {
+    override var isEmphasized: Bool {
+        get { true }
+        set {}
+    }
+}
+
+final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var nodeID: UInt32 = 0
     fileprivate var placeholder: String?
     fileprivate var rows: [PaletteRow] = []
@@ -74,9 +102,11 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
     private var programmaticClose = false
     private var suppressQueryEmit = false
 
-    private var scrim: NDPaletteScrim?
-    private var searchField: NSSearchField?
+    private var backdrop: NDPaletteBackdrop?
+    private var searchField: NSTextField?
     private var tableView: NSTableView?
+    private var separator: NSBox?
+    private var listHeight: NSLayoutConstraint?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -88,9 +118,9 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
     }
     override var intrinsicContentSize: NSSize { .zero }
 
-    // The scrim/card are subviews of the window's contentView, not of this
-    // handle, so an unmount-while-open would strand them — tear down when the
-    // handle leaves its window.
+    // The backdrop and card are subviews of the window's contentView, not of
+    // this handle, so an unmount-while-open would strand them: tear down when
+    // the handle leaves its window.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil && presented { dismiss(programmatic: true) }
@@ -117,6 +147,7 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         rowsSig = sig
         rows = newRows
         tableView?.reloadData()
+        updateListHeight()
         // Fresh results: the top row is the highlighted default (Return drills in).
         if presented {
             highlight(rows.isEmpty ? -1 : 0)
@@ -185,39 +216,68 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         pendingOpen = false
         guard presented else { return }
         presented = false
-        scrim?.removeFromSuperview()
-        scrim = nil
+        backdrop?.removeFromSuperview()
+        backdrop = nil
         searchField = nil
         tableView = nil
+        separator = nil
+        listHeight = nil
         if !programmatic { ndEmitEvent(nodeID, "cancel", "{}") }
     }
 
     private func buildUI(in content: NSView) {
-        let scrim = NDPaletteScrim(frame: content.bounds)
-        scrim.handle = self
-        scrim.autoresizingMask = [.width, .height]
-        scrim.wantsLayer = true
-        scrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
-        scrim.setAccessibilityIdentifier("nd-command-palette-scrim")
+        let backdrop = NDPaletteBackdrop(frame: content.bounds)
+        backdrop.handle = self
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.setAccessibilityIdentifier("nd-command-palette-backdrop")
 
         let card = NDPaletteCard()
-        card.handle = self
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.material = .popover
-        card.blendingMode = .withinWindow
-        card.state = .active
         card.wantsLayer = true
-        card.layer?.cornerRadius = ndConcentricRadius(in: card, fallback: NDRadius.palette)
-        card.layer?.masksToBounds = true
-        scrim.addSubview(card)
+        card.layer?.shadowColor = NSColor.black.cgColor
+        card.layer?.shadowOpacity = 0.32
+        card.layer?.shadowRadius = 28
+        // Undirected: a layer's y axis follows its view's flippedness, so an
+        // offset shadow would fall the wrong way in one of the two geometries.
+        card.layer?.shadowOffset = .zero
+        backdrop.addSubview(card)
 
-        let field = NSSearchField()
+        let glass = NSGlassEffectView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        glass.cornerRadius = NDRadius.palette
+        card.addSubview(glass)
+
+        // The chrome hangs off `body` but is constrained against `card`, whose
+        // height therefore falls out of this content. `body` is pinned rather
+        // than left to NSGlassEffectView's own contentView layout so the glass
+        // has a content rect the moment the card is measured.
+        let body = NSView()
+        body.translatesAutoresizingMaskIntoConstraints = false
+        glass.contentView = body
+
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+        icon.contentTintColor = .secondaryLabelColor
+        body.addSubview(icon)
+
+        let field = NSTextField()
         field.translatesAutoresizingMaskIntoConstraints = false
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 20)
         field.placeholderString = placeholder
         field.stringValue = pendingQuery
-        field.sendsWholeSearchString = false
         field.delegate = self
-        card.addSubview(field)
+        body.addSubview(field)
+
+        let separator = NSBox()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.boxType = .separator
+        body.addSubview(separator)
 
         let table = NSTableView()
         let column = NSTableColumn(identifier: paletteColumnID)
@@ -225,7 +285,7 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         table.addTableColumn(column)
         table.headerView = nil
         table.style = .inset
-        table.rowHeight = 40
+        table.rowHeight = NDPaletteMetrics.rowHeight
         table.backgroundColor = .clear
         table.dataSource = self
         table.delegate = self
@@ -237,32 +297,75 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.documentView = table
-        card.addSubview(scroll)
+        body.addSubview(scroll)
 
-        let cardWidth = card.widthAnchor.constraint(equalToConstant: 600)
+        let cardWidth = card.widthAnchor.constraint(equalToConstant: NDPaletteMetrics.width)
         cardWidth.priority = .defaultHigh
+        // Content-driven list height, broken by the required cap below it once
+        // there are more rows than the card may show.
+        let listHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
+        listHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            card.centerXAnchor.constraint(equalTo: scrim.centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: scrim.centerYAnchor),
+            card.centerXAnchor.constraint(equalTo: backdrop.centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: backdrop.centerYAnchor),
             cardWidth,
-            card.widthAnchor.constraint(lessThanOrEqualTo: scrim.widthAnchor, constant: -40),
-            card.heightAnchor.constraint(equalToConstant: 420),
+            card.widthAnchor.constraint(lessThanOrEqualTo: backdrop.widthAnchor, constant: -40),
+            card.heightAnchor.constraint(lessThanOrEqualTo: backdrop.heightAnchor, constant: -80),
 
-            field.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            field.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            field.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            glass.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: card.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: card.bottomAnchor),
 
-            scroll.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+            body.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            body.topAnchor.constraint(equalTo: card.topAnchor),
+            body.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+
+            icon.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            icon.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 20),
+            icon.heightAnchor.constraint(equalToConstant: 20),
+
+            field.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            field.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            field.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+
+            separator.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 14),
+            separator.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+
+            scroll.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+            scroll.heightAnchor.constraint(lessThanOrEqualToConstant: NDPaletteMetrics.maxListHeight),
+            listHeight,
         ])
 
-        content.addSubview(scrim)
+        content.addSubview(backdrop)
         table.reloadData()
-        self.scrim = scrim
+        self.backdrop = backdrop
         self.searchField = field
         self.tableView = table
+        self.separator = separator
+        self.listHeight = listHeight
+        updateListHeight()
+    }
+
+    /// Height of the rendered rows, read back from the table so the row
+    /// metrics the style applies (intercell spacing, inset margins) are the
+    /// ones the card is sized against. An empty result set collapses the list
+    /// and its separator, leaving the search field alone on the card.
+    private func updateListHeight() {
+        separator?.isHidden = rows.isEmpty
+        guard let listHeight else { return }
+        guard let table = tableView, !rows.isEmpty else {
+            listHeight.constant = 0
+            return
+        }
+        listHeight.constant = table.rect(ofRow: rows.count - 1).maxY
     }
 
     // ---- highlight ----
@@ -297,7 +400,7 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
 
     // ---- automation ----
     // The tracked node is the host handle; the real field/table live in the
-    // presented scrim. Automation routes setValue/type/click here (Automation
+    // presented backdrop. Automation routes setValue/type/click here (Automation
     // .swift) so a headless test drives the same paths a user would.
 
     var automationPresented: Bool { presented }
@@ -347,10 +450,10 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
         emitActivate(r)
     }
 
-    // ---- NSSearchFieldDelegate ----
+    // ---- NSTextFieldDelegate ----
 
     func controlTextDidChange(_ obj: Notification) {
-        guard !suppressQueryEmit, let field = obj.object as? NSSearchField else { return }
+        guard !suppressQueryEmit, let field = obj.object as? NSTextField else { return }
         pendingQuery = field.stringValue
         ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(field.stringValue))}")
     }
@@ -375,6 +478,13 @@ final class NDCommandPaletteHandleView: NSView, NSSearchFieldDelegate, NSTableVi
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let rowView = tableView.makeView(withIdentifier: paletteRowID, owner: self) as? NDPaletteRowView ?? NDPaletteRowView()
+        rowView.identifier = paletteRowID
+        rowView.backgroundColor = .clear // the card is glass: no opaque row plate over it
+        return rowView
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: paletteCellID, owner: self) as? NDPaletteCell ?? NDPaletteCell()
         cell.identifier = paletteCellID
@@ -390,6 +500,19 @@ final class NDPaletteCell: NSTableCellView {
     private let titleField = NSTextField(labelWithString: "")
     private let subtitleField = NSTextField(labelWithString: "")
     private var iconWidthConstraint: NSLayoutConstraint!
+
+    // NSTableCellView recolours `textField` over an emphasized selection fill
+    // but knows nothing about the subtitle or the symbol, which would keep
+    // their unselected colours against the accent.
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            let onFill = backgroundStyle == .emphasized
+            subtitleField.textColor = onFill
+                ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+                : .secondaryLabelColor
+            iconView.contentTintColor = onFill ? .alternateSelectedControlTextColor : nil
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

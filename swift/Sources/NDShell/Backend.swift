@@ -358,6 +358,8 @@ func buildVTable() -> nd_backend {
     ndImageSymbolConfigs[id] = nil
     ndSidebarTables[id] = nil
     ndSidebarRowButtons.remove(id)
+    ndForcedSidebars.remove(id)
+    ndSidebarFallbackRows.remove(id)
     ndSplitControllers[id] = nil
     ndContentToWindow[id] = nil
     radioGroupIdentifier[id] = nil
@@ -414,15 +416,16 @@ private struct NDTypography {
 }
 nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypography] = [:]
 
-/// Box views (`NSStackView`) carrying the `nd-native-sidebar` structural
-/// class. On the Mac each is backed by a real source-list `NSTableView`
-/// (SidebarTable.swift) — its child buttons become the table's row model —
-/// giving native accent/focus selection, row metrics, and font for free
-/// instead of a stack of generic push buttons. Set-replace like
-/// `ndNodeTypography`: inserted when the class is present, removed when it
-/// drops. NOT private — read from `ndBoxChildAttached` (Layout.swift) at
-/// child-attach time. Same accepted leak profile as `ndLayoutFlags` (bounded
-/// by live widget count).
+/// Box views (`NSStackView`) carrying a sidebar structural class, either
+/// `navigation-sidebar` (the portable contract) or `nd-native-sidebar` (the
+/// unconditional opt-in). On the Mac each is backed by a real source-list
+/// `NSTableView` (SidebarTable.swift), whose row model is the box's own child
+/// buttons, giving native accent/focus selection, row metrics, and font for
+/// free instead of a stack of generic push buttons. Set-replace like
+/// `ndNodeTypography`: inserted when a sidebar class is present, removed when
+/// both drop. NOT private, since `ndBoxChildAttached` (Layout.swift) reads it
+/// at child-attach time. Same accepted leak profile as `ndLayoutFlags`
+/// (bounded by live widget count).
 nonisolated(unsafe) var ndNavigationSidebars: Set<ObjectIdentifier> = []
 
 /// Box views (`NSStackView`) carrying the `boxed-list` structural class. They
@@ -444,10 +447,82 @@ nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] =
 /// `ndApplyToolbarStrip`. Set-replace like `ndBoxedLists`.
 nonisolated(unsafe) private var ndToolbarStrips: Set<ObjectIdentifier> = []
 
-/// The `NSVisualEffectView` backing each `toolbar` strip (the hairline NSBox
-/// lives inside it, so removing the backing removes both). Reused on
-/// re-apply, removed when the class drops. See `ndApplyToolbarStrip`.
-nonisolated(unsafe) private var ndToolbarBackings: [ObjectIdentifier: NSVisualEffectView] = [:]
+/// The backing view behind each `toolbar` strip (the hairline NSBox lives
+/// inside it, so removing the backing removes both). Reused on re-apply,
+/// removed when the class drops. See `ndApplyToolbarStrip`.
+nonisolated(unsafe) private var ndToolbarBackings: [ObjectIdentifier: NDToolbarStripBacking] = [:]
+
+/// A `toolbar` strip's own content inset. The backing spans the pane edge to
+/// edge; the controls inside it do not, or the first icon sits against the
+/// window frame. An app-declared `padding` overrides it (`applyPadding`).
+/// Belongs in Metrics.swift once that file settles.
+private let ndToolbarStripInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+
+private func ndEdgeInsetsEqual(_ a: NSEdgeInsets, _ b: NSEdgeInsets) -> Bool {
+    a.top == b.top && a.left == b.left && a.bottom == b.bottom && a.right == b.right
+}
+
+/// The behavior of the split item whose pane contains `view`, or nil when it
+/// is not inside one. Resolves the item the way the generated SplitView remove
+/// arm does: walk up to the subview the split view itself hosts, then match
+/// that against the controller's items.
+func ndEnclosingSplitItemBehavior(_ view: NSView) -> NSSplitViewItem.Behavior? {
+    var v: NSView? = view
+    while let cur = v {
+        if let split = cur.superview as? NSSplitView,
+           let controller = ndSplitViewController(for: split),
+           let item = controller.splitViewItems.first(where: { $0.viewController.view === cur }) {
+            return item.behavior
+        }
+        v = cur.superview
+    }
+    return nil
+}
+
+/// The backing view behind a `toolbar` strip: a plain `NSView` that hosts the
+/// hairline, and hosts the `.headerView` material only when the strip is NOT
+/// inside a sidebar pane. macOS 26 draws the sidebar on glass, and a visual
+/// effect view inside one prevents that glass from showing through (WWDC25
+/// 310, "Build an AppKit app with the new design": "you should remove these
+/// visual effect views"). SplitController.swift makes the pane host itself a
+/// plain NSView for the same reason; this is that fix one level in.
+///
+/// The decision can't be made when the class lands: the strip's box is
+/// normally still unparented then (src/tree.zig applies props before append),
+/// so there is no split item to ask. It is made, and re-made, whenever the
+/// backing reaches a window.
+final class NDToolbarStripBacking: NSView {
+    private var material: NSVisualEffectView?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncMaterial()
+    }
+
+    private func syncMaterial() {
+        let wanted = window != nil && ndEnclosingSplitItemBehavior(self) != .sidebar
+        if wanted, material == nil {
+            let effect = NSVisualEffectView()
+            // `.headerView` is the interior header material; `.titlebar` is
+            // the window's own and over-blurs an interior pane strip.
+            effect.material = .headerView
+            effect.blendingMode = .withinWindow
+            effect.state = .followsWindowActiveState
+            effect.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(effect, positioned: .below, relativeTo: nil)
+            NSLayoutConstraint.activate([
+                effect.leadingAnchor.constraint(equalTo: leadingAnchor),
+                effect.trailingAnchor.constraint(equalTo: trailingAnchor),
+                effect.topAnchor.constraint(equalTo: topAnchor),
+                effect.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            material = effect
+        } else if !wanted, let effect = material {
+            effect.removeFromSuperview()
+            material = nil
+        }
+    }
+}
 
 /// `ndApplyCssClasses` is a real semantic mapping: it maps
 /// the Adwaita/GTK classes AppKit has a natural equivalent for onto control
@@ -529,21 +604,31 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
-    // Record the `nd-native-sidebar` structural class (set-replace) and back
-    // the box with a source-list NSTableView (SidebarTable.swift). Install
-    // captures whatever button children already attached before the class
-    // landed (either create order — see Layout.swift's header comment).
-    // Deliberately NOT keyed on `navigation-sidebar`: that is libadwaita's
-    // styling class and apps use it for GTK list styling on trees whose rows
-    // are composite (button + caption + badge), which this table model can't
-    // represent — the structural takeover must be an explicit opt-in.
+    // Record the sidebar structural class (set-replace) and back the box with
+    // a source-list NSTableView (SidebarTable.swift).
+    //
+    // `navigation-sidebar` is libadwaita's own class and therefore the
+    // portable contract: the unchanged app tree that gets a native sidebar on
+    // GTK gets one here. It is gated on the box's rows actually being
+    // row-shaped, because the table covers the whole box and the composite
+    // libadwaita row (button + caption + badge) would lose everything that is
+    // not the button. `nd-native-sidebar` stays for exactly those boxes as an
+    // unconditional takeover that skips the gate.
+    //
+    // The gate is evaluated on child attach, not here: the box is normally
+    // still empty when its classes land (src/tree.zig applies props before
+    // append), so `ndBoxChildAttached` re-runs the reconcile as rows arrive.
     if let stack = view as? NSStackView {
         let id = ObjectIdentifier(stack)
-        if classes.contains("nd-native-sidebar") {
+        let forced = classes.contains("nd-native-sidebar")
+        if forced || classes.contains("navigation-sidebar") {
             ndNavigationSidebars.insert(id)
-            ndInstallSidebarTable(stack)
+            if forced { ndForcedSidebars.insert(id) } else { ndForcedSidebars.remove(id) }
+            ndReconcileSidebarTable(stack)
         } else if ndNavigationSidebars.remove(id) != nil {
+            ndForcedSidebars.remove(id)
             ndRemoveSidebarTable(stack)
+            ndClearSidebarRowFallback(stack)
         }
     }
 
@@ -555,6 +640,14 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     if let btn = view as? NDButton, ndSidebarRowButtons.contains(ObjectIdentifier(btn)),
        let table = ndEnclosingSidebarTable(btn) {
         table.syncSelection()
+    }
+
+    // Same event in a sidebar the takeover declined: re-assert the source-list
+    // row rendering that the set-replace baseline at the top of this function
+    // just reset. Selection comes from `classes`, the incoming set, because
+    // the recorded one is only written at the end of this function.
+    if let btn = view as? NDButton, ndSidebarFallbackRows.contains(ObjectIdentifier(btn)) {
+        ndApplySidebarRowStyle(btn, selected: classes.contains("suggested-action"))
     }
 
     // Record `boxed-list` (set-replace) and apply the grouped-card treatment,
@@ -667,13 +760,13 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
     backing.fillColor = .underPageBackgroundColor
 }
 
-/// Native header-strip treatment for a `toolbar` box: an `NSVisualEffectView`
-/// drawn behind the stack's controls (`.headerView` — the interior header
-/// material; `.titlebar` is the window's own titlebar material and over-blurs
-/// an interior pane strip) plus a 1 pt `.separatorColor` bottom hairline.
-/// The hairline `NSBox` lives inside the effect view, so `enabled: false`
-/// removes both in one `removeFromSuperview` (set-replace when the class
-/// drops). Modeled line-for-line on `ndApplyBoxedListCard` above.
+/// Native header-strip treatment for a `toolbar` box: an `NDToolbarStripBacking`
+/// drawn behind the stack's controls (which supplies the header material where
+/// it is allowed to, see that class), a 1 pt `.separatorColor` bottom hairline,
+/// and the strip's own content inset. The hairline `NSBox` lives inside the
+/// backing, so `enabled: false` removes both in one `removeFromSuperview`
+/// (set-replace when the class drops). Modeled line-for-line on
+/// `ndApplyBoxedListCard` above.
 func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
     guard let stack = box as? NSStackView else { return }
     let id = ObjectIdentifier(stack)
@@ -682,13 +775,23 @@ func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
             backing.removeFromSuperview()
             ndToolbarBackings[id] = nil
         }
+        if ndEdgeInsetsEqual(stack.edgeInsets, ndToolbarStripInsets) {
+            stack.edgeInsets = NSEdgeInsets()
+            ndBoxReconcileChildren(stack)
+        }
         return
     }
+    // The strip inset, unless the app declared a `padding` of its own.
+    // `applyPadding` owns that case, and re-asserts this default whenever the
+    // padding is absent (every styled node sends an all-zero baseline).
+    if ndEdgeInsetsEqual(stack.edgeInsets, NSEdgeInsets()) {
+        stack.edgeInsets = ndToolbarStripInsets
+        // The cross-axis constraints bake the stack's insets into their
+        // constant, so they have to be replayed (Layout.swift).
+        ndBoxReconcileChildren(stack)
+    }
     if ndToolbarBackings[id] != nil { return }
-    let backing = NSVisualEffectView()
-    backing.material = .headerView
-    backing.blendingMode = .withinWindow
-    backing.state = .followsWindowActiveState
+    let backing = NDToolbarStripBacking()
     backing.translatesAutoresizingMaskIntoConstraints = false
     stack.addSubview(backing, positioned: .below, relativeTo: nil)
 
@@ -1017,9 +1120,26 @@ private func parseEdgeInsets(_ value: Any) -> NSEdgeInsets? {
 ///  - NDButton/NDTextField -> `ndPadding` (Layout.swift; inflates
 ///    intrinsicContentSize instead of touching the frame directly).
 ///  - NSScrollView wrapping an NSTextView (TextArea) -> `textContainerInset`.
-///  - any other NSScrollView (ScrollView) -> `contentInsets`.
-///  - anything else -> silently ignored (no AppKit equivalent for this
-///    widget shape in v1).
+///  - any other NSScrollView (ScrollView) -> `contentInsets`. This is also
+///    what Table/TreeView/SourceTree/SourceList/ListView land on: all five
+///    return the scroll view, not the table inside it.
+///  - anything else -> dropped, with one `ND_WARN` per widget shape.
+///
+/// The remainder (Image, Separator, Slider, ProgressBar, Spinner, DatePicker,
+/// ColorPicker, LevelIndicator, Grid, TabView, Clamp, Banner, StatusPage, the
+/// plain-NSButton controls Checkbox/Radio/Select/Switch/SegmentedControl, and
+/// SearchInput) has no native inset API, and the obvious fix (wrapping the
+/// view in a padding container) is not available here: the tracked handle IS
+/// this view, and every generated attach arm requires it to be the direct
+/// child of its parent (`stack.removeArrangedSubview(child)`, the
+/// `arrangedSubviews` index lookup in the insert arm, `cell.contentView =
+/// child` in ndGridPlace, `has_parent`). A wrapper spliced in here would leave
+/// the container behind on removal. Style also arrives BEFORE the child is
+/// appended (src/tree.zig), so at this point there is usually no parent to
+/// splice into at all. Giving these shapes real padding means either an
+/// NDButton-style intrinsicContentSize subclass per shape in the create arms,
+/// or per-arranged-subview spacing in `ndBoxChildAttached`; both are codegen
+/// changes, not changes to this dispatch.
 private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
     if ndUsesNativeSettingsInsets(view) {
         if let stack = view as? NSStackView {
@@ -1027,7 +1147,14 @@ private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
             ndBoxReconcileChildren(stack)
         }
     } else if let stack = view as? NSStackView {
-        stack.edgeInsets = insets
+        // A `toolbar` strip carries its own content inset (`ndApplyToolbarStrip`).
+        // An app-declared `padding` still wins; the all-zero baseline every
+        // styled node sends does not, or the strip would lose its inset on the
+        // first style apply after the class landed.
+        let declared = !ndEdgeInsetsEqual(insets, NSEdgeInsets())
+        stack.edgeInsets = (declared || !ndToolbarStrips.contains(ObjectIdentifier(stack)))
+            ? insets
+            : ndToolbarStripInsets
         ndBoxReconcileChildren(stack)
     } else if let button = view as? NDButton {
         button.ndPadding = insets
@@ -1045,8 +1172,23 @@ private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
         if zero && scrollView.automaticallyAdjustsContentInsets { return }
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = insets
+    } else if !ndEdgeInsetsEqual(insets, NSEdgeInsets()) {
+        // Dropped, but not silently: GTK emits `padding` as CSS for any
+        // widget, so the same app tree keeps its spacing there and loses it
+        // here. Reported per shape rather than per node, so a widget updating
+        // its style every frame produces one line, not a stream.
+        let shape = String(describing: type(of: view))
+        if ndPaddingUnsupported.insert(shape).inserted {
+            FileHandle.standardError.write(
+                "ND_WARN style.padding has no AppKit mapping for \(shape); use the parent box's padding instead\n".data(using: .utf8)!)
+        }
     }
 }
+
+/// Widget shapes already reported by `applyPadding`'s final arm. Keyed by
+/// class name, not by view, so the warning is one line per shape per process
+/// and needs no `ndPurgeNodeRegistries` entry.
+nonisolated(unsafe) private var ndPaddingUnsupported: Set<String> = []
 
 private func applyTextColor(_ view: NSView, _ color: NSColor) {
     if let field = view as? NSTextField {

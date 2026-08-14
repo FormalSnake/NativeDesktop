@@ -387,6 +387,15 @@ pub const Runtime = struct {
     /// fallback if the child died silently).
     fn onChildExit(self: *Runtime) void {
         std.debug.print("ND_CHILD_EXITED\n", .{});
+        // Drop the dead descriptor before anything can write to it again. Both
+        // writer paths bail on a null stream, but neither can tell a live fd
+        // from a closed one: a late frame (a systemEvent from an app-activation
+        // event, say) would hit a closed fd, and std turns that EBADF into a
+        // panic rather than an error, so `catch {}` cannot save the host. The
+        // accept loop re-arms this when the next child connects.
+        self.writer_mutex.lockUncancelable(self.io);
+        self.stream = null;
+        self.writer_mutex.unlock(self.io);
         if (self.overlay_shown) return; // already painted for this child's exit
         const msg = self.last_error_message orelse "Runtime disconnected";
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };

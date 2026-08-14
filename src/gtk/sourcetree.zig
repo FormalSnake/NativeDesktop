@@ -14,6 +14,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ndempty = @import("emptystate.zig");
+const ndicons = @import("icons.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -63,7 +64,9 @@ const Store = struct {
     action_by_id: std.StringHashMapUnmanaged(u32) = .empty,
     // create-only knobs, carried across rebuilds
     hover_actions: bool = true,
-    indent: i64 = 14,
+    // Per-level step, matched to the disclosure gutter so a child's title
+    // clears its parent's by exactly one gutter.
+    indent: i64 = gutter_px,
 
     fn deinitNodes(self: *Store) void {
         for (self.nodes.items) |*n| {
@@ -248,20 +251,86 @@ fn getIdx(obj: *gobject.Object, key: [*:0]const u8) ?u32 {
     return @intCast(@intFromPtr(raw) - 1);
 }
 
+/// Width every row reserves for its disclosure, branch or leaf. A branch's
+/// inline arrow is wider than one indent step, so without a matching gutter on
+/// the leaves a parent's title lands RIGHT of the children it indents.
+const gutter_px: c_int = 24;
+
+/// The arrow GtkTreeExpander draws, sized for the gutter. It is an image and
+/// not a GtkButton because a themed button cannot reach 24px: libadwaita gives
+/// `button.image-button` a 24px min-width PLUS 5px of side padding, and
+/// set_size_request only ever raises a minimum.
 fn makeDisclosure(box: *gtk.ListBox, node_idx: u32, expanded: bool) *gtk.Widget {
-    const btn = gtk.Button.new();
-    gtk.Button.setIconName(btn, if (expanded) "pan-down-symbolic" else "pan-end-symbolic");
-    gtk.Widget.addCssClass(btn.as(gtk.Widget), "flat");
-    gtk.Widget.setValign(btn.as(gtk.Widget), .center);
-    setIdx(asObject(btn), "nd-node-idx", node_idx);
-    _ = gobject.signalConnectData(asObject(btn), "clicked", @ptrCast(&cbDisclosureClicked), box, null, .{});
-    return btn.as(gtk.Widget);
+    const img = gtk.Image.newFromIconName(disclosureIconName(expanded));
+    gtk.Widget.setValign(img.as(gtk.Widget), .center);
+    gtk.Widget.setSizeRequest(img.as(gtk.Widget), gutter_px, -1);
+    const click = gtk.GestureClick.new();
+    gtk.GestureSingle.setButton(click.as(gtk.GestureSingle), 1);
+    setIdx(asObject(click), "nd-node-idx", node_idx);
+    _ = gtk.GestureClick.signals.pressed.connect(click, *gtk.ListBox, &cbDisclosurePressed, box, .{});
+    _ = gtk.GestureClick.signals.released.connect(click, *gtk.ListBox, &cbDisclosureReleased, box, .{});
+    gtk.Widget.addController(img.as(gtk.Widget), click.as(gtk.EventController));
+    return img.as(gtk.Widget);
+}
+
+/// `pan-*` ships inside libgtk's own resource icon theme, which GTK falls back
+/// to when the active theme carries no entry, so the name resolves with no
+/// icon theme installed at all. A `gtk_icon_theme_has_icon` gate in front of a
+/// `go-*` fallback bought nothing and hid the real failure: hasIcon answers 1
+/// for a theme whose symbolic SVG rasterizes to zero pixels, which is the only
+/// way this arrow has ever gone missing.
+fn disclosureIconName(expanded: bool) [:0]const u8 {
+    return if (expanded) "pan-down-symbolic" else "pan-end-symbolic";
+}
+
+fn makeGutterSpacer() *gtk.Widget {
+    const img = gtk.Image.new();
+    gtk.Widget.setSizeRequest(img.as(gtk.Widget), gutter_px, -1);
+    return img.as(gtk.Widget);
+}
+
+/// `adw_action_row_add_prefix` PREPENDS, so a row wanting several prefixes has
+/// to hand over ONE box or they land in reverse.
+fn makePrefixBox(box: *gtk.ListBox, node: *const Node, node_idx: u32) *gtk.Widget {
+    const prefix = gtk.Box.new(.horizontal, 6);
+    gtk.Widget.setValign(prefix.as(gtk.Widget), .center);
+    gtk.Box.append(prefix, if (node.has_children)
+        makeDisclosure(box, node_idx, node.expanded)
+    else
+        makeGutterSpacer());
+    if (node.icon) |ic| {
+        const img = gtk.Image.newFromIconName(ndicons.symbolic(ic));
+        gtk.Box.append(prefix, img.as(gtk.Widget));
+    }
+    if (node.caption_icon) |ic| {
+        // No AdwActionRow slot exists on the subtitle line, so the caption icon
+        // rides the same prefix run (documented asymmetry; AppKit inlines it).
+        const img = gtk.Image.newFromIconName(ndicons.symbolic(ic));
+        gtk.Box.append(prefix, img.as(gtk.Widget));
+    }
+    return prefix.as(gtk.Widget);
 }
 
 fn makeActionButton(box: *gtk.ListBox, node_idx: u32, action_idx: u32, action: Action) *gtk.Button {
-    const btn = if (action.label) |l| gtk.Button.newWithLabel(l) else gtk.Button.new();
-    if (action.label == null) gtk.Button.setIconName(btn, action.icon);
-    gtk.Widget.addCssClass(btn.as(gtk.Widget), "flat");
+    const btn = gtk.Button.new();
+    const has_icon = action.icon.len > 0;
+    if (action.label) |l| {
+        if (has_icon) {
+            const content = adw.ButtonContent.new();
+            adw.ButtonContent.setIconName(content, ndicons.symbolic(action.icon));
+            adw.ButtonContent.setLabel(content, l);
+            gtk.Button.setChild(btn, content.as(gtk.Widget));
+        } else {
+            gtk.Button.setLabel(btn, l);
+        }
+    } else if (has_icon) {
+        gtk.Button.setIconName(btn, ndicons.symbolic(action.icon));
+        // Round chip, the GNOME shape for an icon-only row button.
+        gtk.Widget.addCssClass(btn.as(gtk.Widget), "circular");
+    }
+    // Both shapes keep the button's own chrome: `.flat` leaves a labelled
+    // action reading as bare text and an icon-only one as a bare glyph painted
+    // straight onto the row fill, with no hit area next to its chromed sibling.
     if (action.destructive) gtk.Widget.addCssClass(btn.as(gtk.Widget), "destructive-action");
     if (action.tooltip) |t| gtk.Widget.setTooltipText(btn.as(gtk.Widget), t);
     gtk.Widget.setValign(btn.as(gtk.Widget), .center);
@@ -278,21 +347,24 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
     const indent: c_int = @intCast(@as(i64, depth) * store.indent);
 
     if (node.section) {
-        // Group header: plain non-selectable row, caption-heading + dimmed
-        // label (libadwaita sidebar-section look), disclosure when the
-        // section itself is a collapsible shelf.
+        // Group header: a plain non-interactive caption, the GNOME sidebar
+        // shape. libadwaita styles `.navigation-sidebar > .header > .heading`
+        // with a 12px margin, which is exactly the AdwActionRow header inset
+        // below it, so the label sits on the data rows' gutter origin. The
+        // label must be the row's DIRECT child for that selector to match.
+        // A collapsible section shelf is driven by the app (the `expanded`
+        // flag), never by chrome inside the header.
         const row = gtk.ListBoxRow.new();
         gtk.ListBoxRow.setActivatable(row, 0);
         gtk.ListBoxRow.setSelectable(row, 0);
-        const hbox = gtk.Box.new(.horizontal, 6);
-        if (node.has_children) gtk.Box.append(hbox, makeDisclosure(box, node_idx, node.expanded));
+        gtk.Widget.addCssClass(row.as(gtk.Widget), "header");
+        if (gtk.ListBox.getRowAtIndex(box, 0) == null) gtk.Widget.addCssClass(row.as(gtk.Widget), "first");
         const label = gtk.Label.new(node.title);
         gtk.Label.setXalign(label, 0.0);
         gtk.Widget.setHexpand(label.as(gtk.Widget), 1);
-        gtk.Widget.addCssClass(label.as(gtk.Widget), "caption-heading");
+        gtk.Widget.addCssClass(label.as(gtk.Widget), "heading");
         gtk.Widget.addCssClass(label.as(gtk.Widget), "dimmed");
-        gtk.Box.append(hbox, label.as(gtk.Widget));
-        gtk.ListBoxRow.setChild(row, hbox.as(gtk.Widget));
+        gtk.ListBoxRow.setChild(row, label.as(gtk.Widget));
         gtk.Widget.setMarginStart(row.as(gtk.Widget), indent);
         setIdx(asObject(row), "nd-node-idx", node_idx);
         gtk.ListBox.append(box, row.as(gtk.Widget));
@@ -304,19 +376,7 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
             gtk.ListBoxRow.setActivatable(row.as(gtk.ListBoxRow), 0);
             gtk.ListBoxRow.setSelectable(row.as(gtk.ListBoxRow), 0);
         }
-        if (node.has_children) adw.ActionRow.addPrefix(row, makeDisclosure(box, node_idx, node.expanded));
-        if (node.icon) |ic| {
-            const img = gtk.Image.newFromIconName(ic);
-            adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
-        }
-        if (node.caption_icon) |ic| {
-            // No AdwActionRow slot exists on the subtitle line — a second
-            // prefix aligned to the row's end (subtitle side) is the closest
-            // native shape (documented asymmetry; AppKit inlines it).
-            const img = gtk.Image.newFromIconName(ic);
-            gtk.Widget.setValign(img.as(gtk.Widget), .end);
-            adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
-        }
+        adw.ActionRow.addPrefix(row, makePrefixBox(box, node, node_idx));
         if (node.badge) |b| {
             const lbl = gtk.Label.new(b);
             gtk.Widget.addCssClass(lbl.as(gtk.Widget), "dimmed");
@@ -424,7 +484,39 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     ndempty.register(sw, box.as(gtk.Widget));
     ndempty.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     ndempty.update(sw, store.nodes.items.len == 0);
+    _ = gtk.Widget.signals.map.connect(sw.as(gtk.Widget), ?*anyopaque, &cbSidebarMapped, null, .{});
     return sw.as(gtk.Widget);
+}
+
+/// `.navigation-sidebar` is background-less by design: libadwaita expects the
+/// PANE around it to supply the fill, so a standalone <sourcetree> paints its
+/// rows onto the bare window. `.sidebar-pane` is that fill (defined in the
+/// 1.7 through 1.9 stylesheets, though absent from the public style-class
+/// list), and a split view already shades its own sidebar slot, so skip it
+/// there. Deferred to `map` because at create() the widget has no parent yet.
+fn cbSidebarMapped(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
+    if (inSidebarSlot(w)) {
+        gtk.Widget.removeCssClass(w, "sidebar-pane");
+    } else {
+        gtk.Widget.addCssClass(w, "sidebar-pane");
+    }
+}
+
+/// True when `w` sits inside the sidebar slot of any AdwOverlaySplitView
+/// ancestor (a nested list-pane split counts too). Slot membership is checked
+/// against the split view's LOGICAL sidebar child, because adw keeps internal
+/// widgets between slot children and the split view itself. Private twin of
+/// tabs.zig's identical check; neither module owns the other's file.
+fn inSidebarSlot(w: *gtk.Widget) bool {
+    var anc: ?*gtk.Widget = gtk.Widget.getAncestor(w, adw.OverlaySplitView.getGObjectType());
+    while (anc) |a| {
+        const sv: *adw.OverlaySplitView = @ptrCast(@alignCast(a));
+        if (adw.OverlaySplitView.getSidebar(sv)) |sb| {
+            if (w == sb or gtk.Widget.isAncestor(w, sb) != 0) return true;
+        }
+        anc = if (gtk.Widget.getParent(a)) |p| gtk.Widget.getAncestor(p, adw.OverlaySplitView.getGObjectType()) else null;
+    }
+    return false;
 }
 
 pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
@@ -526,14 +618,20 @@ fn cbRowActivated(obj: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyopaque)
     emitNode(node_id, "rowActivated", store.nodes.items[idx].id);
 }
 
-fn cbDisclosureClicked(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
-    const box: *gtk.ListBox = @ptrCast(@alignCast(data orelse return));
+// The row's own click gesture selects and activates under the arrow; claiming
+// the sequence on press keeps a disclosure click to expansion alone, which is
+// what the GtkButton this replaced used to do for free.
+fn cbDisclosurePressed(gesture: *gtk.GestureClick, _: c_int, _: f64, _: f64, _: *gtk.ListBox) callconv(.c) void {
+    _ = gtk.Gesture.setState(gesture.as(gtk.Gesture), .claimed);
+}
+
+fn cbDisclosureReleased(gesture: *gtk.GestureClick, _: c_int, _: f64, _: f64, box: *gtk.ListBox) callconv(.c) void {
     const store = stores.get(@intFromPtr(box)) orelse return;
     const nd_id = node_ids.get(@intFromPtr(box)) orelse return;
-    const idx = getIdx(obj, "nd-node-idx") orelse return;
+    const idx = getIdx(asObject(gesture), "nd-node-idx") orelse return;
     const node = store.nodes.items[idx];
-    // Expansion is app-controlled: emit only, never flip rows locally — the
-    // app re-renders with the flipped `expanded` flag and the rebuild lands it.
+    // Expansion is app-controlled: emit only, never flip rows locally. The app
+    // re-renders with the flipped `expanded` flag and the rebuild lands it.
     emitNode(nd_id, if (node.expanded) "nodeCollapsed" else "nodeExpanded", node.id);
 }
 

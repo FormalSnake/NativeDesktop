@@ -11,6 +11,11 @@ import AppKit
 /// controlled selection prop, "" meaning no selection. `section` nodes are
 /// native group rows (isGroupItem, unselectable, no outline cell).
 private let ndSourceTreeCellID = NSUserInterfaceItemIdentifier("nd-sourcetree-cell")
+/// Section rows recycle in their own pool: they are the only rows that set an
+/// explicit title colour, and sharing a pool with selectable rows means a
+/// recycled cell would have to un-set it, and that write is what stops
+/// AppKit's `backgroundStyle` cascade from colouring a selected row's title.
+private let ndSourceTreeSectionCellID = NSUserInterfaceItemIdentifier("nd-sourcetree-section-cell")
 
 /// `@unchecked Sendable` for the same reason as NDTreeItem: items cross into
 /// MainActor AppKit calls from the nominally nonisolated apply funcs, and the
@@ -134,8 +139,9 @@ final class NDSourceTreeDataSource: NSObject, NSOutlineViewDataSource, NSOutline
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let item = item as? NDSourceTreeItem else { return nil }
-        let cell = outlineView.makeView(withIdentifier: ndSourceTreeCellID, owner: self) as? NDSourceTreeCell ?? NDSourceTreeCell()
-        cell.identifier = ndSourceTreeCellID
+        let cellID = item.section ? ndSourceTreeSectionCellID : ndSourceTreeCellID
+        let cell = outlineView.makeView(withIdentifier: cellID, owner: self) as? NDSourceTreeCell ?? NDSourceTreeCell()
+        cell.identifier = cellID
         let rowActions = item.actionIds.compactMap { actions[$0] }
         cell.configure(with: item, actions: rowActions, target: self, hidden: hoverActions)
         return cell
@@ -145,6 +151,16 @@ final class NDSourceTreeDataSource: NSObject, NSOutlineViewDataSource, NSOutline
         guard let outlineView = notification.object as? NSOutlineView,
               let scrollView = outlineView.enclosingScrollView,
               !ndIsEchoSuppressed(scrollView) else { return }
+        // A source list only draws its emphasized selection (accent capsule,
+        // white title) while it is first responder. A click already makes it
+        // one; a selection driven through the automation seam does not, and
+        // left the row in the greyed inactive state. Echo-suppressed
+        // selections (the `selectedId` prop, the post-reload restore) never
+        // reach here, so this can't steal focus from a search field the user
+        // is typing in.
+        if let window = outlineView.window, window.firstResponder !== outlineView {
+            window.makeFirstResponder(outlineView)
+        }
         let selected = outlineView.item(atRow: outlineView.selectedRow) as? NDSourceTreeItem
         emitNode("selectionChanged", selected?.nodeId)
     }
@@ -282,8 +298,11 @@ final class NDSourceTreeCell: NSTableCellView {
             titleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
             titleField.textColor = .secondaryLabelColor
         } else {
+            // No textColor write: `textField = titleField` (commonInit) puts
+            // the title under AppKit's backgroundStyle cascade, which is what
+            // turns it white on an emphasized selection capsule. Section rows
+            // recycle separately, so nothing has to un-set their colour here.
             titleField.font = .systemFont(ofSize: NSFont.systemFontSize)
-            titleField.textColor = .labelColor
         }
         if let iconName = item.iconName {
             let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName  // NDShell/Icons.swift

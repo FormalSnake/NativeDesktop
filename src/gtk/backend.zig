@@ -143,6 +143,9 @@ pub fn initStyle(sink_err: style.StyleErrorFn) void {
 
 pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style_value: std.json.Value) void {
     if (!isRealWidget(widget)) return; // menu node: no GtkWidget CSS surface
+    // `padding` lands as CSS, which the Window content path cannot read back
+    // off the widget when it decides whether the app already inset its root.
+    if (style_value == .object and style_value.object.get("padding") != null) ndtabs_gtk.markAppPadding(widget);
     style.applyStyle(widget, node_id, style_value);
 }
 
@@ -870,7 +873,10 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (value != .string) return invalidValue(err_json_out, node_id);
         const z = arena.dupeZ(u8, value.string) catch return -32602;
-        const view: *gtk.TextView = @ptrCast(@alignCast(widget));
+        // TextArea is tracked by its GtkScrolledWindow wrapper, not the view.
+        const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
+        const inner = generated.scrolledWindowInner(sw) orelse return invalidValue(err_json_out, node_id);
+        const view: *gtk.TextView = @ptrCast(@alignCast(inner));
         gtk.TextBuffer.setText(gtk.TextView.getBuffer(view), z, -1);
     } else if (std.mem.eql(u8, kind, "Checkbox") or std.mem.eql(u8, kind, "Radio")) {
         if (value != .bool) return invalidValue(err_json_out, node_id);
@@ -975,6 +981,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
                 return "SourceList";
             }
             if (std.mem.eql(u8, child_type_name, "GtkColumnView")) return "Table"; // TreeView's GtkListView stays "" like ListView's
+            if (std.mem.eql(u8, child_type_name, "GtkTextView")) return "TextArea";
         }
         return "ScrollView";
     }

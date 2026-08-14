@@ -15,7 +15,6 @@ const gobject = @import("gobject");
 const cairo = @import("cairo");
 const pango = @import("pango");
 const pangocairo = @import("pangocairo");
-const adw = @import("adw");
 const ndt = @import("../core/terminal.zig");
 const ndremote = @import("../core/remote_terminal.zig");
 const protocol = @import("../protocol.zig");
@@ -121,14 +120,6 @@ const State = struct {
     // dropped by the node_id gate. connectEvents re-emits this so the app's
     // onConnectionState always observes the current state once subscribed.
     last_conn_state: std.atomic.Value(i32) = std.atomic.Value(i32).init(-1),
-    // Theme-derived defaults, set only when the app left `foreground`/
-    // `background` empty (the schema default). Holds the CURRENT theme value;
-    // drawCb remaps any cell color equal to the open-time default, because
-    // ndterm has no post-open color setter. cbThemeDark refreshes these on
-    // AdwStyleManager notify::dark and queues a redraw.
-    theme_fg: ?[3]u8 = null,
-    theme_bg: ?[3]u8 = null,
-    dark_handler: c_ulong = 0,
 };
 
 fn stateFrom(widget: *gtk.Widget) ?*State {
@@ -203,46 +194,20 @@ const OpenOpts = struct {
     opts: ndt.nd_term_open_opts = undefined,
 };
 
-/// Adwaita view colors resolved from the dark flag. GTK4 has no supported
-/// API to read a CSS variable (--view-fg-color/--view-bg-color) from code,
-/// so these are libadwaita's documented view palette values, selected by the
-/// same AdwStyleManager dark state the rest of the app themes against.
-fn themeTermColors() struct { fg: [3]u8, bg: [3]u8 } {
-    const sm = adw.StyleManager.getDefault();
-    if (adw.StyleManager.getDark(sm) != 0) {
-        return .{ .fg = .{ 0xff, 0xff, 0xff }, .bg = .{ 0x1d, 0x1d, 0x20 } };
-    }
-    return .{ .fg = .{ 0x33, 0x33, 0x38 }, .bg = .{ 0xff, 0xff, 0xff } };
-}
-
-/// AdwStyleManager notify::dark: refresh the theme-derived defaults and
-/// repaint. Only connected for terminals that opted into theme colors.
-fn cbThemeDark(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
-    const state: *State = @ptrCast(@alignCast(data.?));
-    const theme = themeTermColors();
-    if (state.theme_fg != null) state.theme_fg = theme.fg;
-    if (state.theme_bg != null) state.theme_bg = theme.bg;
-    gtk.Widget.queueDraw(state.widget);
-}
+/// Defaults for an app that left `foreground`/`background` empty (the schema
+/// default). A terminal emulator is dark whatever the system theme is (GNOME
+/// Console, Ghostty), so these do NOT follow AdwStyleManager; they are the
+/// AppKit surface's own defaults (NDTerminalView.swift withTerminalOpenOpts)
+/// so one app tree renders the same grid on both backends.
+const DEFAULT_FG: [3]u8 = .{ 0xcc, 0xcc, 0xcc };
+const DEFAULT_BG: [3]u8 = .{ 0x00, 0x00, 0x00 };
 
 /// Builds the palette-carrying open options (WP polish-1 deliverable 7) from
-/// the create-time fg/bg/palette props. An empty/malformed color resolves
-/// from the theme (recorded on `state` so drawCb can re-map on dark change).
-fn buildOpenOpts(out: *OpenOpts, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8, state: *State) *const ndt.nd_term_open_opts {
+/// the create-time fg/bg/palette props.
+fn buildOpenOpts(out: *OpenOpts, palette: ?[*:0]const u8, foreground: [*:0]const u8, background: [*:0]const u8) *const ndt.nd_term_open_opts {
     const has_palette = if (palette) |p| parsePalette(std.mem.span(p), &out.palette_buf) else false;
-    const theme = themeTermColors();
-    const fg = parseHexColor(std.mem.span(foreground)) orelse blk: {
-        state.theme_fg = theme.fg;
-        break :blk theme.fg;
-    };
-    const bg = parseHexColor(std.mem.span(background)) orelse blk: {
-        state.theme_bg = theme.bg;
-        break :blk theme.bg;
-    };
-    if (state.theme_fg != null or state.theme_bg != null) {
-        const sm = adw.StyleManager.getDefault();
-        state.dark_handler = gobject.signalConnectData(@ptrCast(@alignCast(sm)), "notify::dark", @ptrCast(&cbThemeDark), state, null, .{});
-    }
+    const fg = parseHexColor(std.mem.span(foreground)) orelse DEFAULT_FG;
+    const bg = parseHexColor(std.mem.span(background)) orelse DEFAULT_BG;
     out.opts = .{
         .palette_rgb = if (has_palette) &out.palette_buf else null,
         .palette_len = if (has_palette) out.palette_buf.len else 0,
@@ -260,7 +225,7 @@ pub fn create(command: ?[*:0]const u8, cwd: ?[*:0]const u8, font_size: c_int, fo
     const state = newState(widget, area, font_size, font_family, cols, rows);
 
     var open_opts: OpenOpts = .{};
-    const opts_ptr = buildOpenOpts(&open_opts, palette, foreground, background, state);
+    const opts_ptr = buildOpenOpts(&open_opts, palette, foreground, background);
 
     const term = ndt.ndterm_open_ex(cols, rows, command, cwd, opts_ptr, &effectTramp, state) orelse {
         // Core failed to spawn the PTY: return the bare DrawingArea (blank).
@@ -284,7 +249,7 @@ pub fn createRemote(host: [*:0]const u8, port: u16, session_id: [*:0]const u8, t
     state.is_remote = true;
 
     var open_opts: OpenOpts = .{};
-    const opts_ptr = buildOpenOpts(&open_opts, palette, foreground, background, state);
+    const opts_ptr = buildOpenOpts(&open_opts, palette, foreground, background);
 
     const open = if (restore_scrollback) &ndremote.ndrt_open_history else &ndremote.ndrt_open_ex;
     const rt = open(host, port, session_id, ticket, cols, rows, opts_ptr, &effectTramp, &stateTramp, state) orelse {
@@ -315,8 +280,8 @@ fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, font_
 
     const m = measureCell(font_regular, fs);
 
-    gtk.DrawingArea.setContentWidth(area, @intFromFloat(m.cell_w * @as(f64, @floatFromInt(cols))));
-    gtk.DrawingArea.setContentHeight(area, @intFromFloat(m.cell_h * @as(f64, @floatFromInt(rows))));
+    gtk.DrawingArea.setContentWidth(area, @intFromFloat(m.cell_w * @as(f64, @floatFromInt(cols)) + 2 * GRID_INSET));
+    gtk.DrawingArea.setContentHeight(area, @intFromFloat(m.cell_h * @as(f64, @floatFromInt(rows)) + 2 * GRID_INSET));
 
     // Light line weight for box/block/Powerline sprites, from the cell height
     // (Ghostty derives box_thickness from the font's underline thickness; we
@@ -339,6 +304,13 @@ fn newState(widget: *gtk.Widget, area: *gtk.DrawingArea, font_size: c_int, font_
     };
     return state;
 }
+
+/// Gap between the widget frame and cell (0, 0), on all four sides. A terminal
+/// is mounted edge to edge (it owns its own surface, so no wrapper supplies a
+/// window margin) and column 0 otherwise touches the frame, slicing the first
+/// glyph's left stem. One GTK spacing step, the same unit Spacing.xs feeds the
+/// rest of the GTK backend.
+const GRID_INSET: f64 = 6.0;
 
 const CellMetrics = struct { cell_w: f64, cell_h: f64, cell_baseline: f64 };
 
@@ -401,10 +373,6 @@ fn makeFontDesc(family: [*:0]const u8, size_px: f64, weight: pango.Weight) *pang
 }
 
 fn freeState(state: *State) void {
-    if (state.dark_handler != 0) {
-        const sm = adw.StyleManager.getDefault();
-        gobject.signalHandlerDisconnect(@ptrCast(@alignCast(sm)), state.dark_handler);
-    }
     pango.FontDescription.free(state.font_regular);
     pango.FontDescription.free(state.font_bold);
     std.heap.c_allocator.destroy(state);
@@ -711,8 +679,8 @@ fn onScroll(_: *gtk.EventControllerScroll, _: f64, dy: f64, state: *State) callc
 /// the ndterm mutex, so this is safe against the reader's feed.
 fn onResize(_: *gtk.DrawingArea, width: c_int, height: c_int, state: *State) callconv(.c) void {
     if (width <= 0 or height <= 0) return;
-    const cols_i: i64 = @intFromFloat(@as(f64, @floatFromInt(width)) / state.cell_w);
-    const rows_i: i64 = @intFromFloat(@as(f64, @floatFromInt(height)) / state.cell_h);
+    const cols_i: i64 = @intFromFloat((@as(f64, @floatFromInt(width)) - 2 * GRID_INSET) / state.cell_w);
+    const rows_i: i64 = @intFromFloat((@as(f64, @floatFromInt(height)) - 2 * GRID_INSET) / state.cell_h);
     const cols: u16 = @intCast(std.math.clamp(cols_i, 1, 65535));
     const rows: u16 = @intCast(std.math.clamp(rows_i, 1, 65535));
     if (cols == state.cols and rows == state.rows) return;
@@ -809,15 +777,6 @@ fn drawGlyph(cr: *cairo.Context, layout: *pango.Layout, desc: *pango.FontDescrip
     cairo.Context.restore(cr);
 }
 
-/// Theme remap (#10): substitute the current theme value for a cell color
-/// equal to the open-time default. Identity when theme colors are off
-/// (draw_* == def_* then).
-fn mapCellColor(c: [3]u8, def_fg: [3]u8, def_bg: [3]u8, draw_fg: [3]u8, draw_bg: [3]u8) [3]u8 {
-    if (std.mem.eql(u8, &c, &def_fg)) return draw_fg;
-    if (std.mem.eql(u8, &c, &def_bg)) return draw_bg;
-    return c;
-}
-
 /// Fill one coalesced background run of `w` px at (px, row*ch). No-op for an
 /// empty run (w == 0), which is how the caller skips default-bg gaps.
 fn flushBgRun(cr: *cairo.Context, px: f64, row: u16, w: f64, ch: f64, rgb: [3]u8) void {
@@ -851,17 +810,16 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
     var def_bg: [3]u8 = .{ 0, 0, 0 };
     ndt.ndterm_default_colors(@ptrCast(term), @ptrCast(&def_fg), @ptrCast(&def_bg));
 
-    // Theme remap (#10): ndterm's defaults are frozen at open, so a live
-    // dark/light switch retints by substituting the CURRENT theme value for
-    // any cell color equal to the open-time default. Identity for terminals
-    // with explicit app-set colors (theme_* stays null).
-    const draw_fg = state.theme_fg orelse def_fg;
-    const draw_bg = state.theme_bg orelse def_bg;
-
-    // Whole-widget background in the default bg.
-    setRgb(cr, draw_bg);
+    // Whole-widget background in the default bg, inset included, so the gap
+    // around the grid reads as part of the terminal surface.
+    setRgb(cr, def_bg);
     cairo.Context.rectangle(cr, 0, 0, @floatFromInt(width), @floatFromInt(height));
     cairo.Context.fill(cr);
+
+    // Everything below draws in grid space: cell (x, y) at (x*cw, y*ch).
+    // Restored before the scrollback thumb, which tracks the widget edge.
+    cairo.Context.save(cr);
+    cairo.Context.translate(cr, GRID_INSET, GRID_INSET);
 
     // One PangoLayout for the whole frame (not one per cell — the addendum's
     // flagged bug was cairo_select_font_face called PER CELL; the analogous
@@ -887,7 +845,7 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
         // whole-widget fill above already covers it.
         var run_start_px: f64 = 0;
         var run_w: f64 = 0;
-        var run_bg: [3]u8 = draw_bg;
+        var run_bg: [3]u8 = def_bg;
         var x: u16 = 0;
         while (x < cols) : (x += 1) {
             var cell: Cell = undefined;
@@ -897,11 +855,11 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
             // A selected cell swaps fg/bg like INVERSE does; the two compose by
             // XOR (selection over inverse text stays legible).
             const inverse = ((cell.flags & FLAG_INVERSE) != 0) != ((cell.flags & FLAG_SELECTED) != 0);
-            const bg = mapCellColor(if (inverse) cell.fg else cell.bg, def_fg, def_bg, draw_fg, draw_bg);
+            const bg = if (inverse) cell.fg else cell.bg;
             const px = @as(f64, @floatFromInt(x)) * cw;
             const own_w = if (wide) cw * 2 else cw;
 
-            if (std.mem.eql(u8, &bg, &draw_bg)) {
+            if (std.mem.eql(u8, &bg, &def_bg)) {
                 flushBgRun(cr, run_start_px, y, run_w, ch, run_bg);
                 run_w = 0;
             } else if (run_w != 0 and std.mem.eql(u8, &bg, &run_bg)) {
@@ -926,7 +884,7 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
             if ((cell.flags & FLAG_WIDE_TAIL) != 0) continue;
             const wide = (cell.flags & FLAG_WIDE) != 0;
             const inverse = ((cell.flags & FLAG_INVERSE) != 0) != ((cell.flags & FLAG_SELECTED) != 0);
-            const fg = mapCellColor(if (inverse) cell.bg else cell.fg, def_fg, def_bg, draw_fg, draw_bg);
+            const fg = if (inverse) cell.bg else cell.fg;
             const px = @as(f64, @floatFromInt(x)) * cw;
             const py = @as(f64, @floatFromInt(y)) * ch;
             const own_w = if (wide) cw * 2 else cw;
@@ -962,19 +920,21 @@ fn drawCb(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_in
         const px = @as(f64, @floatFromInt(cur.x)) * cw;
         const py = @as(f64, @floatFromInt(cur.y)) * ch;
         const own_w = if (cursor_wide) cw * 2 else cw;
-        setRgb(cr, mapCellColor(cell.fg, def_fg, def_bg, draw_fg, draw_bg));
+        setRgb(cr, cell.fg);
         cairo.Context.rectangle(cr, px, py, own_w, ch);
         cairo.Context.fill(cr);
         if (cell.utf8[0] != 0) {
             if (spriteCodepoint(&cell.utf8)) |cp| {
-                _ = sprite.draw(cr, cp, px, py, own_w, ch, state.box_thickness, mapCellColor(cell.bg, def_fg, def_bg, draw_fg, draw_bg));
+                _ = sprite.draw(cr, cp, px, py, own_w, ch, state.box_thickness, cell.bg);
             } else {
                 const desc = if ((cell.flags & FLAG_BOLD) != 0) state.font_bold else state.font_regular;
                 const txt: [*:0]const u8 = @ptrCast(&cell.utf8);
-                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, mapCellColor(cell.bg, def_fg, def_bg, draw_fg, draw_bg));
+                drawGlyph(cr, layout, desc, txt, px, py, own_w, ch, state.cell_baseline, cell.bg);
             }
         }
     }
+
+    cairo.Context.restore(cr);
 
     // Scrollback indicator: a thin right-edge thumb, shown only while scrolled
     // into history (pinned == 0). Height/position track the viewport's share of
@@ -1171,12 +1131,12 @@ fn sgrBaseButton(gdk_button: c_uint) u8 {
 }
 
 fn cellCol(state: *State, x: f64) u16 {
-    const c: i64 = @intFromFloat(x / state.cell_w);
+    const c: i64 = @intFromFloat((x - GRID_INSET) / state.cell_w);
     return @intCast(std.math.clamp(c, 0, @as(i64, state.cols) - 1));
 }
 
 fn cellRow(state: *State, y: f64) u16 {
-    const r: i64 = @intFromFloat(y / state.cell_h);
+    const r: i64 = @intFromFloat((y - GRID_INSET) / state.cell_h);
     return @intCast(std.math.clamp(r, 0, @as(i64, state.rows) - 1));
 }
 

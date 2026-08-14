@@ -20,9 +20,13 @@ import CNd
 /// coalesced toolbar rebuild.
 final class NDHeaderBarView: NSView {
     var ndTitle: String = ""
-    /// GTK's AdwWindowTitle subtitle maps to NSWindow.subtitle here — the
-    /// small line under the window title. Propagated by the toolbar manager
-    /// once the owning window resolves (see `applySubtitles`).
+    /// GTK's AdwWindowTitle subtitle. On a unified sidebar window it renders
+    /// as the second line of this header's own `titleField` toolbar item, NOT
+    /// as NSWindow.subtitle: re-showing the window title area pushes the
+    /// title to the content pane's leading edge and every toolbar item to the
+    /// trailing edge (the exact state `attachForSidebar` hides). The
+    /// title-bearing styles still route it to NSWindow.subtitle (see
+    /// `applySubtitles`).
     var ndSubtitle: String = ""
     var startViews: [NSView] = []
     var endViews: [NSView] = []
@@ -36,12 +40,13 @@ final class NDHeaderBarView: NSView {
     /// This header's node id, recorded by `ndHeaderBarConnectNav` so the
     /// segmented control's action can emit `back`/`forward` back to the runtime.
     var ndNodeID: UInt32 = 0
-    /// The header's `title` rendered as a small toolbar label (System Settings'
-    /// page title), positioned right of `navControl` (see
-    /// `NDToolbarManager.defaultItemIdentifiers`). Lazily built from `ndTitle`,
-    /// which is set once at create; an empty title is never shown. To change a
-    /// create-only title an app remounts the header (`key=`), so a fresh header
-    /// carries the new title.
+    /// The header's `title`, with `subtitle` as a second line under it,
+    /// rendered as a small toolbar label (System Settings' page title) right
+    /// of `navControl` (see `NDToolbarManager.defaultItemIdentifiers`).
+    /// Lazily built from `ndTitle`, which is set once at create; a header
+    /// with neither title nor subtitle never contributes an item. To change a
+    /// create-only title an app remounts the header (`key=`), so a fresh
+    /// header carries the new title.
     lazy var titleField: NSTextField = {
         let tf = NSTextField(labelWithString: ndTitle)
         tf.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
@@ -49,6 +54,38 @@ final class NDHeaderBarView: NSView {
         tf.lineBreakMode = .byTruncatingTail
         return tf
     }()
+
+    var hasTitleContent: Bool { !ndTitle.isEmpty || !ndSubtitle.isEmpty }
+
+    /// Re-renders `titleField` from the current title/subtitle pair. Two
+    /// lines only when there IS a subtitle: a single-line title must keep
+    /// `maximumNumberOfLines == 1` or a long one wraps instead of
+    /// truncating, which halves the width `updateSearchFieldWidths` measures.
+    func refreshTitleField() {
+        let tf = titleField
+        tf.lineBreakMode = .byTruncatingTail
+        guard !ndSubtitle.isEmpty else {
+            tf.usesSingleLineMode = true
+            tf.maximumNumberOfLines = 1
+            tf.stringValue = ndTitle
+            return
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let text = NSMutableAttributedString(string: ndTitle, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph,
+        ])
+        text.append(NSAttributedString(string: ndTitle.isEmpty ? ndSubtitle : "\n\(ndSubtitle)", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: paragraph,
+        ]))
+        tf.usesSingleLineMode = false
+        tf.maximumNumberOfLines = 2
+        tf.attributedStringValue = text
+    }
 
     @objc func ndNavSegmentClicked(_ sender: NSSegmentedControl) {
         let seg = sender.selectedSegment
@@ -75,17 +112,27 @@ final class NDToolbarPaneView: NSView {
     var slot: String = "content"
     weak var manager: NDToolbarManager?
     // slot="top"/"bottom" auxiliary bars (GTK: extra AdwToolbarView bars).
-    // When any exist, `contentView` becomes an NDPaneAssemblyView stacking
-    // topViews / mainContent / bottomViews; otherwise it stays mainContent
-    // directly, byte-identical to the pre-slot behavior.
+    // In a SplitView pane they become real NSSplitViewItem accessories
+    // (`usesSplitAccessories`), which is the only shape AppKit fades pane
+    // content under. Only a pane mounted directly under <window>, which has
+    // no split item to attach to, falls back to stacking them: `contentView`
+    // becomes an NDPaneAssemblyView over topViews / mainContent /
+    // bottomViews, otherwise it stays mainContent directly.
     var topViews: [NSView] = []
     var bottomViews: [NSView] = []
     var mainContent: NSView?
+    /// Set by `ndToolbarPaneAttachedToSplit`, cleared by
+    /// `ndToolbarPaneAttachedToWindow`. Deliberately NOT cleared on detach:
+    /// the generated SplitView remove arm reads `contentView` right after
+    /// detaching and finds the owning split item by descendant match, so the
+    /// logical root must not change under it.
+    var usesSplitAccessories = false
+    weak var paneController: NDPaneViewController?
     private var assembly: NDPaneAssemblyView?
 
     func refreshAssembly() {
         let newContent: NSView?
-        if topViews.isEmpty && bottomViews.isEmpty {
+        if usesSplitAccessories || (topViews.isEmpty && bottomViews.isEmpty) {
             newContent = mainContent
         } else {
             newContent = assembly ?? {
@@ -108,9 +155,23 @@ final class NDToolbarPaneView: NSView {
         if let host = newContent as? NDPaneAssemblyView {
             host.setParts(top: topViews, content: mainContent, bottom: bottomViews)
         }
+        if let old = contentView, old !== newContent { ndPaneByContentView[ObjectIdentifier(old)] = nil }
         contentView = newContent
+        // Keyed by whatever the generated arm will actually hand to
+        // ndMakePaneViewController (`contentView ?? pane`), so a bars-only
+        // pane (no content child) registers under its own identity and its
+        // accessories still attach.
+        ndPaneByContentView[ObjectIdentifier(newContent ?? self)] = self
+        paneController?.syncAccessories()
     }
 }
+
+/// Content-view identity -> owning `<toolbarview>` pane. The generated
+/// SplitView append arm hands `pane.contentView` to `ndMakePaneViewController`
+/// with the pane itself out of reach (it never joins the view hierarchy), and
+/// the pane is what knows its `slot="top"`/`slot="bottom"` bars. Same
+/// bounded-by-live-widgets profile as Layout.swift's `ndLayoutFlags`.
+nonisolated(unsafe) var ndPaneByContentView: [ObjectIdentifier: NDToolbarPaneView] = [:]
 
 /// Replaces `old` with `new` in the pane slot `old` is installed in: same
 /// superview, same constraints re-targeted onto `new`, and the same
@@ -345,9 +406,12 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     // attached — all panes share one split.
     private weak var split: NSSplitView?
     // Divider 0 sits between sidebar and list-or-content; divider 1 (only
-    // emitted when a `list` pane exists) sits between list and content.
+    // emitted when a `list` pane exists) sits between list and content. The
+    // inspector's own divider is whichever is last, resolved at item-build
+    // time (see `toolbar(_:itemForItemIdentifier:willBeInsertedIntoToolbar:)`).
     private let trackingSeparatorID0 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator")
     private let trackingSeparatorID1 = NSToolbarItem.Identifier("nd-toolbar-tracking-separator-1")
+    private let trackingSeparatorIDInspector = NSToolbarItem.Identifier("nd-toolbar-tracking-separator-inspector")
     private var rebuildScheduled = false
     private var resizeObserver: NSObjectProtocol?
     /// Last computed search-field run (updateSearchFieldWidths) — the seed
@@ -371,9 +435,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             toolbar.allowsUserCustomization = false
         }
         toolbar.delegate = self
-        // .default (not .iconOnly): unified styles show icons regardless, and
-        // the expanded/preference styles (#8) are the ones that NEED labels
-        // under their items.
+        // Refined per Window.toolbarStyle once the toolbar attaches
+        // (attachForSidebar); .default is the pre-attach state.
         toolbar.displayMode = .default
         // Hidden until a pane registers items (rebuild() flips it): a VISIBLE
         // empty unified toolbar reserves full toolbar height in the window's
@@ -458,6 +521,12 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         case "preference": win.toolbarStyle = .preference
         default: win.toolbarStyle = .unified
         }
+        // Unified chrome is icon-only (Notes/Mail/Finder). A promoted header
+        // button is an icon with no author-supplied label, so .default drew
+        // a caption row under every item; expanded/preference are the
+        // labelled styles (#8) and they need it.
+        let drawsTitle = windowDrawsTitle(win)
+        toolbar.displayMode = drawsTitle ? .default : .iconOnly
         // Hide the redundant window-title text — but only for the unified
         // styles: with a sidebar + unified toolbar the title would otherwise
         // sit at the content pane's LEADING edge and push toolbar items (the
@@ -466,9 +535,16 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // expanded/preference windows are title-bearing document/settings
         // chrome and keep it. Purely visual; `win.title` is retained for
         // Mission Control / a11y either way.
-        if styleName == "unified" || styleName == "unifiedCompact" {
-            win.titleVisibility = .hidden
-        }
+        if !drawsTitle { win.titleVisibility = .hidden }
+    }
+
+    /// Whether `win` draws its own title text: true for the expanded and
+    /// preference styles, false for the unified ones, which hide it (see
+    /// `attachForSidebar`) and let the pane headers carry title + subtitle
+    /// as toolbar items instead.
+    private func windowDrawsTitle(_ win: NSWindow) -> Bool {
+        let styleName = ndWindowToolbarStyles[ObjectIdentifier(win)] ?? "unified"
+        return !(styleName == "unified" || styleName == "unifiedCompact")
     }
 
     /// Drops a pane's header when its pane leaves the split.
@@ -523,7 +599,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // would remove + re-insert the item and drop focus mid-word).
         if let search = view as? NDSearchField { return search.placeholderString ?? "search" }
         if view is NSSegmentedControl { return "nav" }
-        if let field = view as? NSTextField, !field.stringValue.isEmpty { return field.stringValue }
+        // A title field carrying a subtitle is two lines; flatten it so the
+        // autosaved identifier stays one.
+        if let field = view as? NSTextField, !field.stringValue.isEmpty {
+            return field.stringValue.replacingOccurrences(of: "\n", with: " ")
+        }
         return String(describing: type(of: view))
     }
 
@@ -593,6 +673,13 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         assignedIDs.removeAll()
         groupIDByLead.removeAll()
         groupMembers.removeAll()
+        // Before the identifiers are computed: a title item's identifier is
+        // derived from the field's text (stableItemKey), and the toolbar
+        // sizes a custom-view item at insertion, so the field has to carry
+        // its final title/subtitle before either happens.
+        for header in [sidebarHeader, listHeader, contentHeader, inspectorHeader] {
+            header?.refreshTitleField()
+        }
         let desired = defaultItemIdentifiers()
         let desiredSet = Set(desired)
         rebuilding = true
@@ -636,29 +723,26 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         userRemovedItemIDs.remove(item.itemIdentifier)
     }
 
-    /// HeaderBar.subtitle -> NSWindow.subtitle. The content header wins
-    /// (GNOME homes the meaningful title there); side panes fall back in
-    /// list/sidebar order. A non-empty subtitle re-shows the title area,
-    /// which `attachForSidebar` hides by default — the app asked for text in
-    /// the titlebar, so the sidebar-app default yields. Clearing the
-    /// subtitle mirrors the attach-time decision again: without that, a
-    /// once-shown subtitle left the title text visible for good, pushing
-    /// toolbar items to the trailing edge (the exact state attach hides).
+    /// Renders each pane header's title + subtitle into its own toolbar title
+    /// item, and routes the subtitle to NSWindow.subtitle ONLY for the
+    /// title-bearing styles. A unified sidebar window keeps
+    /// `titleVisibility = .hidden` unconditionally: re-showing it for a
+    /// subtitle sat the window title at the content pane's leading edge and
+    /// shoved the page title and back/forward nav to the trailing edge.
+    /// `win.title` stays intact for Mission Control and VoiceOver.
     func applySubtitles() {
         guard let win = resolveOwnerWindow() else { return }
+        let drawsTitle = windowDrawsTitle(win)
+        // The content header wins (GNOME homes the meaningful title there);
+        // side panes fall back in list/sidebar order.
         let subtitle = [contentHeader, listHeader, sidebarHeader]
             .compactMap { $0?.ndSubtitle }
             .first { !$0.isEmpty } ?? ""
-        win.subtitle = subtitle
+        win.subtitle = drawsTitle ? subtitle : ""
         // Only once this manager's toolbar is attached — before that the
         // window keeps its standard titlebar untouched.
         guard win.toolbar === toolbar else { return }
-        if !subtitle.isEmpty {
-            win.titleVisibility = .visible
-        } else {
-            let styleName = ndWindowToolbarStyles[ObjectIdentifier(win)] ?? "unified"
-            win.titleVisibility = (styleName == "unified" || styleName == "unifiedCompact") ? .hidden : .visible
-        }
+        win.titleVisibility = drawsTitle ? .visible : .hidden
     }
 
     /// Stretches every header search field across the toolbar's free run
@@ -761,10 +845,22 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         return out
     }
 
+    /// Whether `h` contributes a title item. Every pane's `<headerbar title>`
+    /// gets one (GTK shows all three; the Mac used to draw only the content
+    /// pane's), positioned after that pane's nav control and before its start
+    /// views. The sidebar's is suppressed on a title-bearing window, where
+    /// NSWindow already draws a title at that spot.
+    private func showsTitleItem(_ h: NDHeaderBarView) -> Bool {
+        guard h.hasTitleContent else { return false }
+        guard h === sidebarHeader else { return true }
+        return !(resolveOwnerWindow().map { windowDrawsTitle($0) } ?? false)
+    }
+
     private func defaultItemIdentifiers() -> [NSToolbarItem.Identifier] {
         var ids: [NSToolbarItem.Identifier] = []
         if let h = sidebarHeader {
             if let nav = h.navControl { ids.append(identifier(for: nav)) }
+            if showsTitleItem(h) { ids.append(identifier(for: h.titleField)) }
             ids += identifiers(for: h.startViews)
             ids += identifiers(for: h.endViews)
         }
@@ -777,6 +873,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
         if let h = listHeader {
             if let nav = h.navControl { ids.append(identifier(for: nav)) }
+            if showsTitleItem(h) { ids.append(identifier(for: h.titleField)) }
             ids += identifiers(for: h.startViews)
             ids += identifiers(for: h.endViews)
             if split != nil {
@@ -787,15 +884,21 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             if let nav = h.navControl { ids.append(identifier(for: nav)) }
             // The content pane's page title sits right of the back/forward nav
             // (System Settings' small leading title), before any app start items.
-            if !h.ndTitle.isEmpty { ids.append(identifier(for: h.titleField)) }
+            if showsTitleItem(h) { ids.append(identifier(for: h.titleField)) }
             ids += identifiers(for: h.startViews)
             ids.append(.flexibleSpace)
             ids += identifiers(for: h.endViews)
         }
-        // Inspector items trail everything (#9) and get NO tracking separator:
-        // the inspector's glass stays continuous with the content region.
+        // Inspector items trail everything (#9), behind a tracking separator
+        // on their own divider. Without one they share the content pane's
+        // trailing run: the content header's flexible space pushes its end
+        // buttons all the way to the window edge and the inspector's title
+        // lands to the RIGHT of them, jammed against the frame, instead of
+        // leading-aligned in its own pane like every other pane's title.
         if let h = inspectorHeader {
+            if split != nil { ids.append(trackingSeparatorIDInspector) }
             if let nav = h.navControl { ids.append(identifier(for: nav)) }
+            if showsTitleItem(h) { ids.append(identifier(for: h.titleField)) }
             ids += identifiers(for: h.startViews)
             ids += identifiers(for: h.endViews)
         }
@@ -823,6 +926,15 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             // constructed when a `list` pane is registered.
             return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split, dividerIndex: 1)
         }
+        if itemIdentifier == trackingSeparatorIDInspector {
+            // The inspector is always the LAST split view item (the generated
+            // SplitView append arm keeps it there whatever the mount order),
+            // so the divider on its leading edge is the last one.
+            guard let split = split, let controller = ndSplitViewController(for: split),
+                  controller.splitViewItems.count >= 2 else { return nil }
+            return NSTrackingSeparatorToolbarItem(identifier: itemIdentifier, splitView: split,
+                                                  dividerIndex: controller.splitViewItems.count - 2)
+        }
         // Configuration restore at attach time asks for saved identifiers
         // before any rebuild has assigned ids — populate the id tables from
         // whatever headers have registered so a saved item can resolve.
@@ -838,14 +950,16 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             }
             return group
         }
-        // Built as separate statements, not one chained `+`/`??` expression —
-        // three optional-map terms combined that way pushed the type checker
-        // over its time budget ("unable to type-check in reasonable time").
+        // Accumulated in a loop with separate statements, not one chained
+        // `+`/`??` expression: combining the optional-map terms that way
+        // pushed the type checker over its time budget ("unable to
+        // type-check in reasonable time").
         var allViews: [NSView] = []
-        if let h = sidebarHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
-        if let h = listHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
-        if let h = contentHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) }; if !h.ndTitle.isEmpty { allViews.append(h.titleField) } }
-        if let h = inspectorHeader { allViews += h.startViews + h.endViews; if let n = h.navControl { allViews.append(n) } }
+        for h in [sidebarHeader, listHeader, contentHeader, inspectorHeader].compactMap({ $0 }) {
+            allViews += h.startViews + h.endViews
+            if let n = h.navControl { allViews.append(n) }
+            if showsTitleItem(h) { allViews.append(h.titleField) }
+        }
         guard let view = allViews.first(where: { idsByView[ObjectIdentifier($0)] == itemIdentifier }) else {
             return nil
         }
@@ -896,7 +1010,16 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// only its rendering moves to the item.
     private func promotedItem(for b: NDButton, identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
-        let label = !b.title.isEmpty ? b.title : (b.toolTip ?? b.image?.accessibilityDescription ?? "")
+        // The VISIBLE label only ever comes from text a human wrote. An
+        // icon-only button's accessibilityDescription is a humanized
+        // freedesktop slug (Icons.swift), which is right for VoiceOver but
+        // promoting it drew "list add" / "document save" under toolbar items.
+        // An empty label makes AppKit draw an icon-only item, which is what
+        // Notes/Mail/Finder do.
+        let label = !b.title.isEmpty ? b.title : (b.toolTip ?? "")
+        // The slug survives where an unnamed item is unusable: the Customize
+        // Toolbar palette and the overflow menu.
+        let spokenName = b.image?.accessibilityDescription ?? ""
         if let image = b.image {
             item.image = image
         } else {
@@ -904,8 +1027,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             item.title = b.title
         }
         item.label = label
-        item.paletteLabel = label
-        item.toolTip = b.toolTip
+        item.paletteLabel = label.isEmpty ? spokenName : label
+        item.toolTip = b.toolTip ?? (spokenName.isEmpty ? nil : spokenName)
         item.isBordered = true
         let adapter: NDToolbarItemTarget
         if let existing = ndToolbarItemTargets[ObjectIdentifier(b)] {
@@ -987,12 +1110,16 @@ func ndHeaderBarConnectNav(_ view: NSView, nodeID: UInt32) {
     bar.ndNodeID = nodeID
 }
 
-/// Generated HeaderBar applyProps subtitle arm: record + propagate to the
-/// owning window (through the manager when this header is registered; via
-/// the global manager otherwise, which covers the pre-registration window).
+/// Generated HeaderBar applyProps subtitle arm: record + propagate (through
+/// the manager when this header is registered; via the global manager
+/// otherwise, which covers the pre-registration window). The rebuild matters
+/// because a subtitle arriving on a title-less header adds a title item the
+/// toolbar didn't have.
 func ndHeaderBarApplySubtitle(_ bar: NDHeaderBarView, _ subtitle: String) {
     bar.ndSubtitle = subtitle
-    (bar.pane?.manager ?? ndWindowToolbarManager)?.applySubtitles()
+    let manager = bar.pane?.manager ?? ndWindowToolbarManager
+    manager?.applySubtitles()
+    manager?.scheduleRebuild()
 }
 
 /// Removes `child` from whichever slot array holds it (generated HeaderBar
@@ -1060,8 +1187,13 @@ func ndToolbarPaneUnpack(_ pane: NDToolbarPaneView, _ child: NSView) {
 /// be registered into the window toolbar on the correct side of the tracking
 /// separator, and the split is handed to the manager for that separator.
 func ndToolbarPaneAttachedToSplit(_ pane: NDToolbarPaneView, split: NSSplitView, slot: String) {
-    guard let manager = ndWindowToolbarManager else { return }
     pane.slot = slot
+    // Flip to accessory mode BEFORE the generated arm reads `contentView`:
+    // the auxiliary bars leave the assembly and the pane's logical root
+    // becomes its main content, which is what the split item then hosts.
+    pane.usesSplitAccessories = true
+    pane.refreshAssembly()
+    guard let manager = ndWindowToolbarManager else { return }
     pane.manager = manager
     guard let header = pane.header else { return }
     manager.register(header: header, slot: slot, split: split)
@@ -1080,8 +1212,12 @@ func ndToolbarPaneDetachedFromSplit(_ pane: NDToolbarPaneView) {
 /// GTK. No split ⇒ no tracking separators; the header registers under the
 /// content slot.
 func ndToolbarPaneAttachedToWindow(_ pane: NDToolbarPaneView) {
-    guard let manager = ndWindowToolbarManager else { return }
     pane.slot = "content"
+    // No split item to hang accessories on, so the assembly keeps stacking
+    // the bars. Called before the arm reads `contentView`.
+    pane.usesSplitAccessories = false
+    pane.refreshAssembly()
+    guard let manager = ndWindowToolbarManager else { return }
     pane.manager = manager
     guard let header = pane.header else { return }
     manager.register(header: header, slot: "content", split: nil)

@@ -10,7 +10,9 @@ on:
 # next push (no GitHub push access from the authoring session).
 jobs:
   macos-appkit:
-    runs-on: macos-latest
+    # Pinned, not macos-latest: swift/Package.swift declares .macOS(.v26), so an
+    # older runner image cannot build the shell at all. release.yml uses the same pin.
+    runs-on: macos-26
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

@@ -16,9 +16,18 @@ enum NDRadius {
     /// boxed-list grouped card (Backend.swift's ndApplyBoxedListCard).
     static let card: CGFloat = 10
     /// command palette card (CommandPalette.swift).
-    static let palette: CGFloat = 12
+    static let palette: CGFloat = 16
     /// floating overlays: toasts, HUD panels (Toasts.swift).
     static let overlay: CGFloat = 14
+}
+
+/// Command palette card geometry (CommandPalette.swift). `maxListHeight` is a
+/// ceiling rather than a size: the card's height follows its row count up to
+/// it, so four results produce a four-row card.
+enum NDPaletteMetrics {
+    static let width: CGFloat = 640
+    static let rowHeight: CGFloat = 40
+    static let maxListHeight: CGFloat = 320
 }
 
 /// Radius for a shape nested `inset` points inside a container whose corner

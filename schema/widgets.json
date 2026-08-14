@@ -170,7 +170,7 @@
       "intrinsic": "button",
       "container": null,
       "props": [
-        { "name": "label", "type": "string", "default": "Button", "appliesTo": "create" },
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
         { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" },
@@ -455,7 +455,7 @@
         ]
       },
       "props": [
-        { "name": "title", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "subtitle", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "showTitleButtons", "type": "bool", "default": true, "appliesTo": "create" },
         { "name": "canGoBack", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -559,7 +559,7 @@
       "intrinsic": "menu",
       "container": { "childModel": "multi" },
       "props": [
-        { "name": "label", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [],
@@ -570,7 +570,7 @@
       "intrinsic": "menuitem",
       "container": null,
       "props": [
-        { "name": "label", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
         { "name": "iconVisible", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "accelerator", "type": "string", "appliesTo": "create" },

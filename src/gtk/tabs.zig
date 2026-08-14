@@ -16,6 +16,12 @@
 // headerbar — the GNOME tab-overview affordance. Apps without a <toolbarview>
 // root get a framework AdwToolbarView wrapper carrying the tab bar.
 //
+// Plain (ungrouped) windows go through this module too, and get the same
+// treatment for the chrome they don't declare: a tree with no <toolbarview>
+// is wrapped in a framework AdwToolbarView with a default AdwHeaderBar,
+// because an AdwApplicationWindow draws no titlebar of its own and a CSD
+// window without one can be neither moved nor closed with the mouse.
+//
 // Close protocol is deferred BY DESIGN (AdwTabView's async close-page
 // contract): user close -> hold the page pending, emit the node's `closed`
 // event -> JS unmounts the <window> -> the remove op's `window.close`
@@ -31,6 +37,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ndbasecss = @import("basecss.zig");
+const ndwebview = @import("webview.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -44,8 +51,9 @@ pub var onTabSelected: ?*const fn () void = null;
 const alloc = std.heap.page_allocator;
 
 // g_object data keys. On page bins: node id, chrome pointers, close-protocol
-// flags. On scaffold windows: overview/view/group backrefs. Keys are distinct
-// from dialogs.zig's "nd-window-node-id" so the two modules stay uncoupled.
+// flags. On scaffold windows: overview/view/group backrefs. On plain windows:
+// node id plus the chrome wrapper. Keys are distinct from dialogs.zig's
+// "nd-window-node-id" so the two modules stay uncoupled.
 const K_TAB_BIN = "nd-tab-bin";
 const K_NODE_ID = "nd-tabs-node-id";
 const K_TAB_BAR = "nd-tab-bar";
@@ -240,7 +248,8 @@ fn createScaffold(app: *gtk.Application, group: *Group, width: c_int, height: c_
 
 // ---- structural attach (generated Window arm delegates here) ---------------
 
-/// Window-node content attach. Plain window: AdwApplicationWindow.setContent.
+/// Window-node content attach. Plain window: AdwApplicationWindow.setContent,
+/// through windowContent so a chrome-less tree gains a header bar.
 /// Page bin: mount the child and inject tab chrome — into the app's own
 /// AdwToolbarView when it has one (tab bar lands BELOW its headerbar, the
 /// Epiphany layout). An AdwOverlaySplitView child gets the chrome in its
@@ -260,9 +269,103 @@ fn effectiveWindowChild(child: *gtk.Widget) *gtk.Widget {
     return cur;
 }
 
+/// Whether the app's own tree carries the window's header bar: a root
+/// <toolbarview> (whose <headerbar> may still be attaching, hence the
+/// structural test rather than a search for the header itself), or a split
+/// layout whose panes carry theirs (notes, settings, inspector). Wrapping
+/// either would stack two titlebars.
+fn declaresOwnChrome(child: *gtk.Widget) bool {
+    const effective = effectiveWindowChild(child);
+    if (gobject.ext.isA(effective, adw.ToolbarView)) return true;
+    if (gobject.ext.isA(effective, adw.OverlaySplitView)) return containsToolbarView(effective);
+    return false;
+}
+
+fn containsToolbarView(w: *gtk.Widget) bool {
+    if (gobject.ext.isA(w, adw.ToolbarView)) return true;
+    var it = gtk.Widget.getFirstChild(w);
+    while (it) |c| : (it = gtk.Widget.getNextSibling(c)) {
+        if (containsToolbarView(c)) return true;
+    }
+    return false;
+}
+
+/// GNOME's window content margin. Given to a root the framework had to wrap
+/// in chrome, whose leading edge would otherwise sit in the window's first
+/// pixel column (full-bleed buttons, a label's first glyph on the frame).
+/// Peer of the AppKit Window arm's `ndWindowContentMargin`, in this
+/// platform's own unit — 12px is the GNOME step, 20pt is the macOS one.
+const window_content_margin: c_int = 12;
+
+/// A root that paints its own surface edge to edge: a scroller (it insets its
+/// own content and draws the scroll edge effect), a webview, or a drawing
+/// surface like <terminal> (which owns an internal grid inset). A box holding
+/// nothing but one of those IS one of those, the shape AppKit's
+/// `ndWindowRootInset` treats the same way.
+fn isEdgeToEdgeRoot(w: *gtk.Widget) bool {
+    if (gobject.ext.isA(w, gtk.ScrolledWindow)) return true;
+    if (gobject.ext.isA(w, gtk.DrawingArea)) return true;
+    if (ndwebview.isRealWebView(w)) return true;
+    if (gobject.ext.isA(w, gtk.Box)) {
+        const only = gtk.Widget.getFirstChild(w) orelse return false;
+        if (gtk.Widget.getNextSibling(only) == null) return isEdgeToEdgeRoot(only);
+    }
+    return false;
+}
+
+/// Set on a widget whose app-supplied style names `padding`. Padding is CSS,
+/// invisible to the widget API, so applyContentMargin cannot read it back off
+/// the widget; backend.zig marks it on the way into style.zig. The key lives
+/// here rather than in style.zig because style.zig is the root of its own test
+/// module and cannot share a file with this one (see build.zig's
+/// style_tests_mod); backend.zig already imports both.
+const K_APP_PADDING: [*:0]const u8 = "nd-app-padding";
+
+pub fn markAppPadding(w: *gtk.Widget) void {
+    setFlag(w, K_APP_PADDING, true);
+}
+
+/// Insets the app's root inside the framework chrome. Two opt-outs, the same
+/// pair the AppKit arm applies: an edge-to-edge root stays full bleed, and a
+/// root the app already inset (`style.padding`, `style.margin`) keeps exactly
+/// what it asked for instead of getting a doubled gap. Measured on the tree's
+/// real root, so an app-level AdwToastOverlay still floats its toasts over the
+/// whole window.
+fn applyContentMargin(child: *gtk.Widget) void {
+    const root = effectiveWindowChild(child);
+    if (isEdgeToEdgeRoot(root)) return;
+    if (hasFlag(root, K_APP_PADDING)) return;
+    if (gtk.Widget.getMarginStart(root) != 0 or gtk.Widget.getMarginTop(root) != 0) return;
+    gtk.Widget.setMarginStart(root, window_content_margin);
+    gtk.Widget.setMarginEnd(root, window_content_margin);
+    gtk.Widget.setMarginTop(root, window_content_margin);
+    gtk.Widget.setMarginBottom(root, window_content_margin);
+}
+
+/// A plain window's content widget: the app's child untouched when its tree
+/// carries the chrome, otherwise that child inside a framework AdwToolbarView
+/// with a default AdwHeaderBar on top. AdwApplicationWindow draws no titlebar
+/// of its own, so a chrome-less tree would open with no title, no window
+/// controls and no drag area, its content running into the rounded top
+/// corners. The header keeps its default title widget, which follows the
+/// window title, so `<window title>` shows and setTitle keeps it current.
+fn windowContent(win: *gtk.Widget, child: *gtk.Widget) *gtk.Widget {
+    if (declaresOwnChrome(child)) {
+        setData(win, K_WRAPPER, null);
+        return child;
+    }
+    const wrapper = adw.ToolbarView.new();
+    const header = adw.HeaderBar.new();
+    adw.ToolbarView.addTopBar(wrapper, header.as(gtk.Widget));
+    applyContentMargin(child);
+    adw.ToolbarView.setContent(wrapper, child);
+    setData(win, K_WRAPPER, wrapper);
+    return wrapper.as(gtk.Widget);
+}
+
 pub fn appendToWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
     if (!isTabBin(parent)) {
-        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), child);
+        adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), windowContent(parent, child));
         return;
     }
     const bin: *adw.Bin = @ptrCast(@alignCast(parent));
@@ -312,6 +415,7 @@ pub fn appendToWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
 fn wrapWholeChild(parent: *gtk.Widget, bin: *adw.Bin, child: *gtk.Widget) void {
     const wrapper = adw.ToolbarView.new();
     setData(parent, K_WRAPPER, wrapper);
+    applyContentMargin(child);
     adw.ToolbarView.setContent(wrapper, child);
     adw.Bin.setChild(bin, wrapper.as(gtk.Widget));
     injectTabBar(parent, wrapper);
@@ -319,6 +423,14 @@ fn wrapWholeChild(parent: *gtk.Widget, bin: *adw.Bin, child: *gtk.Widget) void {
 
 pub fn removeFromWindow(parent: *gtk.Widget, child: *gtk.Widget) void {
     if (!isTabBin(parent)) {
+        // Unwrap before dropping the content, symmetrically with
+        // windowContent: the app's child leaves through the framework
+        // AdwToolbarView it entered, so the node handle is never the wrapper
+        // and the wrapper's teardown can't take the child with it.
+        if (getData(parent, K_WRAPPER)) |w| {
+            adw.ToolbarView.setContent(@ptrCast(@alignCast(w)), null);
+            setData(parent, K_WRAPPER, null);
+        }
         adw.ApplicationWindow.setContent(@ptrCast(@alignCast(parent)), null);
         return;
     }

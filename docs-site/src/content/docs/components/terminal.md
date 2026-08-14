@@ -32,13 +32,21 @@ prompt, run `vim`, and see colors and the cursor.
 
 ## Props
 
-| Prop       | Type     | Default   | Notes                                                        |
-| ---------- | -------- | --------- | ------------------------------------------------------------ |
-| `command`  | string   | `$SHELL`  | Program to run in the PTY. Falls back to `/bin/sh`.          |
-| `cwd`      | string   | inherited | Working directory for the spawned program.                  |
-| `fontSize` | number   | `13`      | Point size of the monospace cell font.                      |
-| `cols`     | number   | `80`      | Initial columns.                                             |
-| `rows`     | number   | `24`      | Initial rows.                                                |
+| Prop         | Type     | Default   | Notes                                                        |
+| ------------ | -------- | --------- | ------------------------------------------------------------ |
+| `command`    | string   | `$SHELL`  | Program to run in the PTY. Falls back to `/bin/sh`.          |
+| `cwd`        | string   | inherited | Working directory for the spawned program.                  |
+| `fontSize`   | number   | `13`      | Point size of the monospace cell font.                      |
+| `foreground` | string   | `#cccccc` | Default text color, `#rrggbb`.                               |
+| `background` | string   | `#000000` | Default grid color, `#rrggbb`.                               |
+| `cols`       | number   | `80`      | Initial columns.                                             |
+| `rows`       | number   | `24`      | Initial rows.                                                |
+
+The two color defaults are byte-identical on both backends and do not follow the system theme: a
+terminal emulator stays dark under a light appearance, the way Terminal.app and GNOME Console do. A
+color you pass yourself always wins. On macOS, a terminal that spans its window also tints the
+window background to its own background color and picks the titlebar appearance from that color's
+luminance, so a dark grid gets no white band above it.
 
 All props are `create`-time. The terminal owns its PTY for the life of the widget, so changing them
 means remounting, which you do by giving the widget a different `key`. Keystrokes are handled host-side in the
@@ -58,8 +66,9 @@ which maps cleanly onto NativeDesktop's two backends:
   `ndterm_open`/`close`/`resize`, `ndterm_write_input(bytes)`, and a lock-snapshot render
   model (`ndterm_render_lock` → `ndterm_cell(x, y)` / `ndterm_cursor` → `ndterm_render_unlock`).
 - **The surface** is the only per-backend piece: a `GtkDrawingArea` painting cells with cairo on
-  Linux, an `NSView` painting with CoreText on macOS. Both call only the `ndterm` C ABI; neither
-  touches `libghostty-vt` directly.
+  Linux, an `NSView` painting with CoreText on macOS. Both inset the grid 6 points from the widget
+  edge so column 0 is not cut by the frame, and both call only the `ndterm` C ABI; neither touches
+  `libghostty-vt` directly.
 
 This is the same native escape-hatch pattern the widget system describes as its last rung: a
 widget that owns a custom-drawn native subtree instead of composing from primitives. The terminal is

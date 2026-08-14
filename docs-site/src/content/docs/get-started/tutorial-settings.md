@@ -41,7 +41,7 @@ function App() {
           />
         </toolbarview>
         <toolbarview slot="content">
-          <headerbar key={page.id} title={page.label} subtitle={page.blurb} />
+          <headerbar title={page.label} subtitle={page.blurb} />
           <label text={`The ${page.label} page`} style={{ vexpand: true }} />
         </toolbarview>
       </splitview>
@@ -58,8 +58,8 @@ Three things to notice:
   `selectedIndex` in, `onSelectionChanged` out.
 - `breakpoint={480}` collapses the sidebar automatically when the window gets narrower than 480
   points.
-- `key={page.id}` on the content header: a headerbar's `title` is set at creation, so keying on the
-  page remounts it with the new title when the selection changes.
+- `<headerbar title subtitle>` on the content pane: both update in place, so the header follows the
+  selected page with no `key` and no remount.
 
 Run `bun run dev` and click between the pages.
 
@@ -357,7 +357,7 @@ function App() {
         </toolbarview>
 
         <toolbarview slot="content">
-          <headerbar key={page.id} title={page.label} subtitle={page.blurb} />
+          <headerbar title={page.label} subtitle={page.blurb} />
           <scrollview minContentHeight={380} style={{ vexpand: true }}>
             <clamp maximumSize={560}>
               <box

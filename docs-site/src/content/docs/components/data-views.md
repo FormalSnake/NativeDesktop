@@ -163,7 +163,7 @@ const nodes: SourceTreeNode[] = [
 | `actions` | `SourceTreeAction[]` | createAndUpdate | The action catalog rows reference by `actionIds`: `{ id, iconName, label?, tooltip?, destructive? }`. |
 | `selectedId` | string | createAndUpdate | Controlled selection by node id; `""` means none. There is no `selectedIndex`. |
 | `actionVisibility` | `"hover"` \| `"always"` | create | Default `"hover"`: action buttons show only while the pointer is over the row. |
-| `indentationPerLevel` | int | create | Pixels per depth level, default `14`. |
+| `indentationPerLevel` | int | create | Pixels per depth level. Left unset, each backend uses its own native step: 24 on GTK (matching the disclosure gutter), 14 on macOS. |
 
 | Event | Handler | Payload |
 | --- | --- | --- |
@@ -182,10 +182,12 @@ a header. Hover is the widget's own native affordance; there is deliberately no 
 event, so apps stop hand-rolling per-row hover state.
 
 Per-node `testID` surfaces in the automation tree's `rows` (see the getTree docs), so tests target
-rows without depending on row order. Platform asymmetries: GTK draws a manual disclosure button per
-parent row (GtkListBox has no native outline affordance) and renders `captionIconName` as a small
-second prefix icon; macOS sections have no disclosure triangle (native source-list group look) and
-inline the caption icon on the caption line.
+rows without depending on row order. Platform asymmetries: GTK draws a manual disclosure arrow per
+parent row (GtkListBox has no native outline affordance), reserves that 24px gutter on every row so
+a parent's title stays left of its children's, paints the `sidebar-pane` fill when the tree is not
+already in a split view's sidebar slot, and renders `captionIconName` as a small second prefix icon;
+macOS sections have no disclosure triangle (native source-list group look) and inline the caption
+icon on the caption line.
 
 ## Native empty states
 
