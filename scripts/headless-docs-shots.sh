@@ -10,19 +10,19 @@ shift || true
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}"
 export WAYLAND_DISPLAY=wl-docs-shots-0
-# cairo is the known-good headless renderer. A <webview>'s texture may not
-# rasterize under it; the snapshot then degrades to a flat placeholder over
-# the webview region (ND_SNAPSHOT_DEGRADED on host stderr) instead of
-# erroring. ND_SHOT_RENDERER=gl (llvmpipe software GL) remains the knob for
-# pixel-true web content when the page renders GL-compatibly.
+# cairo is the known-good headless renderer, and it does rasterize live
+# <webview> content: browser and multiwindow come out pixel-true here.
+# ND_SHOT_RENDERER=gl swaps in llvmpipe software GL if a shot ever needs it.
 #
-# Known tradeoff, do not re-litigate without measuring: the private bus below
-# is what makes the theme deterministic, and it is also what stops a <webview>
-# rasterizing. Under it the browser/multiwindow captures degrade to the
-# placeholder plate under BOTH renderers, and WEBKIT_DISABLE_SANDBOX does not
-# help. The engine still loads and a live app renders fine, so this is a
-# capture limit, not a product defect. The committed gtk/browser.png therefore
-# comes from a session-bus host; recapture it there, not here.
+# An earlier note in this spot blamed the private bus below for the flat
+# "WebView" placeholder plate (ND_SNAPSHOT_DEGRADED on host stderr) and sent
+# the reader off to a session-bus host. That was wrong on both counts. The
+# page loads under the private bus, and the plate came from vtSnapshot taking
+# its WidgetPaintable pass while the window still owed a layout pass, which
+# frees to a null render node whatever is in the window. src/gtk/backend.zig
+# now retries that pass behind a frame-clock pump; webview windows here have
+# needed up to five ticks. WEBKIT_DISABLE_DMABUF_RENDERER and
+# WEBKIT_DISABLE_COMPOSITING_MODE only shifted the odds and are not needed.
 export GSK_RENDERER="${ND_SHOT_RENDERER:-cairo}"
 export GDK_BACKEND=wayland
 export ADW_DEBUG_COLOR_SCHEME=prefer-light

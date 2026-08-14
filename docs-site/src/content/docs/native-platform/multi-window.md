@@ -11,6 +11,8 @@ everything on this page. Windows sharing a `tabGroup` prop render as one tabbed 
 
 ![One of the multiwindow example's two windows hosting a live webview on macOS (AppKit)](../../../assets/screens/appkit/multiwindow.png)
 
+![One of the multiwindow example's two windows hosting a live webview on GNOME (GTK)](../../../assets/screens/gtk/multiwindow.png)
+
 ## Rendering more than one window
 
 ```tsx

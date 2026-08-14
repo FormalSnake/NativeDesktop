@@ -478,13 +478,11 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
 }
 
 /// `vtable.snapshot`: the GTK-native WidgetPaintable render path. Live
-/// WebKit content is the one thing the renderers cannot rasterize (headless
-/// cairo fails outright, GL only for a webview sitting directly in the
-/// window, DMABUF on a real GPU neither). Full WebKit rasterization is out
-/// of scope, so when the pixel-true pass fails and webviews are in the
-/// window, the snapshot DEGRADES instead of erroring: each webview is hidden
-/// for the pass (child_visible keeps its allocation, nothing reflows) and a
-/// flat placeholder plate is painted over its rect, with
+/// WebKit content rasterizes fine, headless cairo included. When the
+/// pixel-true pass still fails after the retries below and webviews are in
+/// the window, the snapshot DEGRADES instead of erroring: each webview is
+/// hidden for the pass (child_visible keeps its allocation, nothing reflows)
+/// and a flat placeholder plate is painted over its rect, with
 /// `ND_SNAPSHOT_DEGRADED webviews=N` on stderr as the machine-readable
 /// marker (the frozen ABI's `snapshot` returns only a bool).
 fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
@@ -509,7 +507,18 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
         r.as(gsk.Renderer).unref();
     };
 
+    // A WidgetPaintable renders NOTHING while its widget still owes a layout
+    // pass, so a snapshot landing between a resize request and the next frame
+    // frees to a null node even though the window is realized, mapped and
+    // fully sized. Retry behind a frame-clock pump before concluding the
+    // window cannot be rendered pixel-true. Headless webview windows have
+    // needed as many as five ticks, so the budget is deliberately generous;
+    // nothing pays for it unless the first pass already failed.
     if (renderWindowPng(win_widget, renderer, png_path, &.{})) return true;
+    for (0..8) |_| {
+        settleFrames(win_widget, 250_000);
+        if (renderWindowPng(win_widget, renderer, png_path, &.{})) return true;
+    }
 
     var views: std.ArrayList(WebViewRect) = .empty;
     defer views.deinit(std.heap.page_allocator);
@@ -520,23 +529,25 @@ fn vtSnapshot(_: *abi.NdContext, png_path: [*:0]const u8) callconv(.c) bool {
     // window's chrome too.
     for (views.items) |v| gtk.Widget.setChildVisible(v.widget, 0);
     defer for (views.items) |v| gtk.Widget.setChildVisible(v.widget, 1);
-    // A window whose every frame failed on the webview node has no painted
-    // state for WidgetPaintable to reproduce, so the base pass would come out
-    // empty (measured: freeToNode answers null). Iterate the main context,
-    // BLOCKING, for up to ~250ms so the now-webview-less window gets a real
-    // compositor frame tick and paints once (the snapshot job already runs
-    // on the UI thread; automation serves one RPC at a time).
+    settleFrames(win_widget, 250_000);
+    const ok = renderWindowPng(win_widget, renderer, png_path, views.items);
+    if (ok) std.debug.print("ND_SNAPSHOT_DEGRADED webviews={d}\n", .{views.items.len});
+    return ok;
+}
+
+/// Iterate the main context, BLOCKING, for up to `budget_us` so a window with
+/// a pending layout or an unpainted frame gets a real compositor frame tick.
+/// The snapshot job already runs on the UI thread and automation serves one
+/// RPC at a time, so blocking here cannot reorder anything.
+fn settleFrames(win_widget: *gtk.Widget, budget_us: i64) void {
     gtk.Widget.queueDraw(win_widget);
-    const deadline = glib.getMonotonicTime() + 250_000;
+    const deadline = glib.getMonotonicTime() + budget_us;
     while (glib.getMonotonicTime() < deadline) {
         // Non-blocking iteration + sleep, never a may_block wait: an idle
         // context would otherwise park past the deadline.
         while (glib.MainContext.iteration(null, 0) != 0) {}
         glib.usleep(10_000);
     }
-    const ok = renderWindowPng(win_widget, renderer, png_path, views.items);
-    if (ok) std.debug.print("ND_SNAPSHOT_DEGRADED webviews={d}\n", .{views.items.len});
-    return ok;
 }
 
 const WebViewRect = struct { widget: *gtk.Widget, rect: graphene.Rect };
