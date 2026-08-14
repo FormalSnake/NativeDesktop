@@ -3,9 +3,9 @@ title: App Data & Storage
 description: Where an app's persistent data lives on disk, and the worker-backed SQLite layer for querying it without blocking React's commit loop.
 ---
 
-Every NativeDesktop app gets a per-platform, per-app directory for persistent data (the same idea
-as Electron's `app.getPath('userData')`), plus a small SQLite layer that keeps disk I/O off the
-thread driving React's commit loop.
+Every app gets a per-platform, per-app directory for persistent data, the same idea as Electron's
+`app.getPath('userData')`, plus a SQLite layer that keeps disk I/O off the thread driving React's
+commit loop.
 
 ## `getAppDataDir()` / `ensureAppDataDir()`
 
@@ -60,10 +60,10 @@ await settings.load(); // top-level await, right before render()
 await render(<App />);
 ```
 
-The load-before-render idiom is the whole design: the app entry is already `await render(<App />)`,
-so `await store.load()` on the line above costs nothing and makes `store.get()` synchronous inside
-every component. There is no loading flash, no restore effect, no Suspense boundary; a `get()`
-before `load()` resolves throws a named error rather than returning a silent default.
+Load before render. The app entry is already `await render(<App />)`, so `await store.load()` on the
+line above makes `store.get()` synchronous inside every component: no loading flash, no restore
+effect, no Suspense boundary. A `get()` before `load()` resolves throws a named error rather than
+returning a silent default.
 
 Inside components, subscribe with `useStoreValue(store)` (optionally `useStoreValue(store, select)`),
 and write with `store.set(next)` or `store.update(fn)`. The API:
@@ -94,18 +94,16 @@ Persistence semantics:
   overwritten), the store starts from `defaults`, and `loadError` records why: the app keeps
   launching, and the bad file stays rescuable.
 
-Bring your own validator (zod and friends) inside `migrate` if you want one; the store deliberately
-does not depend on any, matching `@nativedesktop/data`'s ORM-agnostic stance.
+Bring your own validator (zod and friends) inside `migrate`. The store depends on none.
 
 ## `@nativedesktop/data`: worker-backed SQLite
 
 The Bun child is a full runtime rather than a sandboxed renderer (see
-[Architecture](/core-concepts/architecture/)), so `bun:sqlite` is right there. But it's still the
-same thread that drives React's commit loop, and a slow query would stall UI updates.
-`@nativedesktop/data` (`packages/data/`) solves this by running the actual `bun:sqlite` connection
-inside a Bun `Worker` (`packages/data/src/sqlite.worker.ts`) and exposing a Promise-based client on
-the main thread. Every call is a `postMessage` round-trip, so a slow `SELECT` blocks the worker
-instead of your app.
+[Architecture](/core-concepts/architecture/)), so `bun:sqlite` is right there. It is also the same
+thread that drives React's commit loop, where a slow query stalls UI updates.
+`@nativedesktop/data` (`packages/data/`) runs the `bun:sqlite` connection inside a Bun `Worker`
+(`packages/data/src/sqlite.worker.ts`) and exposes a Promise-based client on the main thread. Every
+call is a `postMessage` round-trip, so a slow `SELECT` blocks the worker instead of your app.
 
 ```tsx
 import { ensureAppDataDir } from "@nativedesktop/react";
@@ -170,13 +168,13 @@ without querying.
 
 ### Bringing your own ORM
 
-`@nativedesktop/data` depends on zero ORMs: `packages/data/package.json`'s `dependencies` and
-`optionalDependencies` are both null, and `drizzle-orm`/`kysely` show up only under
-`devDependencies`, where they're exercised by the package's own adapter tests. Raw SQL through
-`query`/`mutate`/`transaction` stays first-class; reach for an ORM only when you actually want one.
+`@nativedesktop/data` depends on zero ORMs. `packages/data/package.json` has null `dependencies` and
+`optionalDependencies`; `drizzle-orm` and `kysely` appear only under `devDependencies`, where the
+package's adapter tests exercise them. Raw SQL through `query`/`mutate`/`transaction` stays
+first-class.
 
-The seam that makes that possible is `SqliteExecutor` (`packages/data/src/client.ts`, re-exported
-from `index.ts`), which is the three async methods above minus `close`:
+The seam is `SqliteExecutor` (`packages/data/src/client.ts`, re-exported from `index.ts`), which is
+the three async methods above minus `close`:
 
 ```ts
 export interface SqliteExecutor {
@@ -187,16 +185,16 @@ export interface SqliteExecutor {
 ```
 
 `SqliteDatabase` implements it, so anything written against `SqliteExecutor` works against a real
-`openDatabase()` connection. An ORM adapter is a small userland function that drives its own
-query builder's async driver hooks through these three methods. The app installs the ORM as its
-own dependency and owns its version; the framework never depends on one. Two adapters are proven
-end-to-end in `packages/data/src/adapters.test.ts` (`bun test packages/data/src/adapters.test.ts`),
-including a test that a heavy query through the ORM doesn't block the main thread.
+`openDatabase()` connection. An ORM adapter is a small userland function driving its query builder's
+async driver hooks through these three methods. The app installs the ORM and owns its version. Two
+adapters are proven end to end in `packages/data/src/adapters.test.ts`
+(`bun test packages/data/src/adapters.test.ts`), including a test that a heavy query through the ORM
+does not block the main thread.
 
-**Drizzle** adapts via `drizzle-orm/sqlite-proxy`, Drizzle's official async *remote* driver. You
-hand it a callback and the whole query builder returns Promises, even though Drizzle's own bun-sqlite
-dialect is synchronous; that's what makes an async, worker-backed connection possible without
-forking Drizzle:
+**Drizzle** adapts via `drizzle-orm/sqlite-proxy`, its official async remote driver. Hand it a
+callback and the whole query builder returns Promises, even though Drizzle's own bun-sqlite dialect
+is synchronous. That is what makes an async worker-backed connection possible without forking
+Drizzle:
 
 ```ts
 function drizzleOverWorker<TSchema extends Record<string, unknown>>(exec: SqliteExecutor, schema: TSchema) {
@@ -214,17 +212,15 @@ function drizzleOverWorker<TSchema extends Record<string, unknown>>(exec: Sqlite
 }
 ```
 
-sqlite-proxy reconstructs each row from a *positional* value array, so the adapter re-keys
-`query()`'s named-column rows via `Object.values()` in projected-column order, which is correct
-for ordinary selects. One caveat: a join that selects two same-named columns collapses under
-`Object.values()` (a plain object can't hold two keys with the same name), so alias one of them in
-the SQL.
+sqlite-proxy reconstructs each row from a positional value array, so the adapter re-keys `query()`'s
+named-column rows via `Object.values()` in projected-column order. Caveat: a join selecting two
+same-named columns collapses under `Object.values()`, since a plain object cannot hold two keys with
+the same name. Alias one of them in the SQL.
 
-**Kysely** adapts via a custom `Dialect`/`Driver`. Kysely's driver model is async from the start
-(`DatabaseConnection.executeQuery` already returns `Promise<{ rows }>`), so it maps onto
-`SqliteExecutor` with no row-shape conversion at all: Kysely keys rows by column name, exactly what
-`query()` returns. Reuse Kysely's own SQLite compiler/adapter/introspector and supply only the
-driver:
+**Kysely** adapts via a custom `Dialect` and `Driver`. Its driver model is async from the start
+(`DatabaseConnection.executeQuery` returns `Promise<{ rows }>`), so it maps onto `SqliteExecutor`
+with no row-shape conversion: Kysely keys rows by column name, exactly what `query()` returns. Reuse
+Kysely's own SQLite compiler, adapter, and introspector and supply only the driver:
 
 ```ts
 class WorkerConnection implements DatabaseConnection {
@@ -269,8 +265,3 @@ await migrate(
 
 `queries` arrives as `string[]`. Mapping each one to `{ sql }` turns it into a `TxStep`, so the whole
 migration runs as one `transaction()` call, atomic through the same worker every other query uses.
-
-The framework owns exactly one seam: `query`, `mutate`, and `transaction`, running off the thread
-that drives React's commit loop. Which ORM sits on top, if any, is the app's call and the app's
-dependency. `@nativedesktop/data` carries no ORM version liability, and an ORM this page never
-mentions adapts the same way in about the same number of lines.

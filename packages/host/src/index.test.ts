@@ -85,6 +85,26 @@ test("hostPlatformKey rejects unsupported platforms", () => {
 
 // --- resolveHostBinary error path: gtk on macOS, installed (not a checkout) ---
 
+test("ND_HOST_BINARY wins over resolution, and a missing path errors", async () => {
+  const self = resolve(import.meta.dir, "index.test.ts");
+  const prev = process.env.ND_HOST_BINARY;
+  try {
+    process.env.ND_HOST_BINARY = self;
+    // gtk+darwin has no prebuilt and this packageDir is no checkout, so every
+    // other arm of the resolver would throw.
+    expect(
+      await resolveHostBinary({ backend: "gtk", platform: "darwin", arch: "arm64", packageDir: "/tmp/not-a-checkout/node_modules/@nativedesktop/host" }),
+    ).toBe(self);
+
+    process.env.ND_HOST_BINARY = "/tmp/no-such-nd-host-binary";
+    const err = await resolveHostBinary({ backend: "gtk", platform: "linux", arch: "x64" }).catch((e: Error) => e);
+    expect((err as Error).message).toContain("ND_HOST_BINARY");
+  } finally {
+    if (prev === undefined) delete process.env.ND_HOST_BINARY;
+    else process.env.ND_HOST_BINARY = prev;
+  }
+});
+
 test("gtk on darwin outside a source checkout states the three real options", async () => {
   // packageDir has no build.zig/swift two levels up, so isSourceCheckout is
   // false -- the shape of an installed copy inside some other project's

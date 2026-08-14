@@ -3,10 +3,9 @@ title: Packaging
 description: nd package and nd doctor, the packaging config reference, icons, the packaged-launch contract, and opt-in signed updates.
 ---
 
-`nd package` turns an app directory (a `nativedesktop.config.ts` + `package.json`) into a
-distributable native bundle: a deep-signed `.app` on macOS, an AppImage/AppDir on Linux.
-`nd doctor` checks the toolchain and config before you try. Both are real subcommands of the `nd`
-CLI (`packages/nd`, see [Project Layout](/get-started/project-layout/)).
+`nd package` turns an app directory (a `nativedesktop.config.ts` plus a `package.json`) into a
+distributable native bundle: a deep-signed `.app` on macOS, an AppImage or AppDir on Linux.
+`nd doctor` checks the toolchain and config before you try.
 
 ## Commands
 
@@ -34,7 +33,7 @@ export default defineConfig({
     name: "MyApp",                  // <Name>.app, usr/bin/<slug>. Default: package.json name
     displayName: "My App",          // CFBundleDisplayName / .desktop Name
     version: "1.0.0",               // default: package.json version, then "0.0.0"
-    icon: { source: "assets/icon.png" },   // or a string, or { macos, linux }
+    icon: { source: "assets/icon.png" },   // or a string, or { macos, linux, layered }
     categories: ["Utility"],        // .desktop Categories=
     fileAssociations: [{ ext: "md", name: "Markdown", mimeType: "text/markdown" }],
     urlSchemes: [{ scheme: "myapp" }],
@@ -53,10 +52,10 @@ export default defineConfig({
 });
 ```
 
-`workspaceRoot` is the one knob for monorepos: the bundle's app root mirrors the workspace, so the
-app's own files land at their workspace-relative path and relative imports/spawns keep resolving
-inside the bundle. `include` copies extra workspace-relative directories (a sibling daemon package,
-shared assets) into the same tree.
+`workspaceRoot` is the knob for monorepos. The bundle's app root mirrors the workspace, so the app's
+own files land at their workspace-relative path and relative imports and spawns keep resolving
+inside the bundle. `include` copies extra workspace-relative directories, such as a sibling daemon
+package or shared assets, into the same tree.
 
 ## What a bundle contains
 
@@ -90,14 +89,11 @@ icon and window grouping bind.
 
 ## Icons
 
-- macOS: `.icns` and `.iconset` sources pass through; a PNG is resized with `sips` into an iconset
-  and compiled with `iconutil`. An SVG-only source is a hard error; supply a 1024px PNG or a
-  prebuilt `.icns`.
-- Linux: an SVG installs under `usr/share/icons/hicolor/scalable/apps/`; a PNG is resized into the
-  hicolor sizes with whichever of `sips`/`magick`/`convert`/`rsvg-convert` exists, plus
-  `<slug>.png` at the AppDir root (appimagetool requires it). With no resizer the source installs
-  at its native size only and `ND_PACKAGE_ICON_SKIPPED reason=no-resizer` is printed.
-- No icon configured: the AppDir keeps a 1x1 placeholder and a one-time warning is printed.
+`app.icon` takes a PNG, SVG, `.icns`, `.iconset`, or an Icon Composer `.icon` bundle, and
+`app.icon.layered` describes a macOS 26 layered icon in config. Every size each platform needs is
+generated at package time, and a layered composition flattens to the Linux icon so one definition
+covers both. See [App Icons](/packaging/app-icons/) for the source matrix, the layered format, and
+the converter degrade paths.
 
 ## File associations and URL schemes
 
@@ -117,8 +113,8 @@ that needs allow-jit for JSC on Apple Silicon).
 
 Identity resolution: `--sign <identity>` wins, then `package.mac.signIdentity`, then
 `APPLE_SIGN_IDENTITY`, else ad-hoc (`-`). An ad-hoc-signed `.app` launches locally and passes
-`codesign --verify`; treat that as "runs here", not "safe to distribute". `--no-sign` skips
-codesign entirely.
+`codesign --verify`, which means it runs on this machine, not that it is safe to distribute.
+`--no-sign` skips codesign entirely.
 
 Notarization (`xcrun notarytool submit` + `stapler staple`) runs when `APPLE_ID`,
 `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` are all set, or when forced with `--notarize` (which

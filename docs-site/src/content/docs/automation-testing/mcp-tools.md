@@ -25,15 +25,15 @@ the raw RPC method of the same name:
 
 The macOS-only tools post real `NSEvent`s through the app's event queue; on GTK they answer
 `-32003` (`input synthesis unsupported on this backend`). See the
-[platform support notes](/automation-testing/automation-socket/#input-synthesis--platform-support).
+[platform support notes](/automation-testing/automation-socket/#input-synthesis-by-platform).
 
 ## Talking to the socket directly
 
-`@nativedesktop/test`'s `AutomationClient` (`packages/test/src/socket.ts`) is the client-side pattern every
-`scripts/*-drive.ts` script in this repo uses, and is a reasonable template for a custom driver.
+`@nativedesktop/test`'s `AutomationClient` (`packages/test/src/socket.ts`) is the client-side pattern
+every `scripts/*-drive.ts` in this repo uses, and a reasonable template for a custom driver.
 `AutomationClient.call` is generic over the method names generated from `schema/rpc.json`, so the
-method name, its params, and its result type are all checked at compile time; a typo or a stale
-param shape is a `tsc` error, not a runtime surprise:
+method name, its params, and its result type are checked at compile time. A typo or a stale param
+shape is a `tsc` error rather than a runtime surprise:
 
 ```ts
 import { AutomationClient } from "@nativedesktop/test";

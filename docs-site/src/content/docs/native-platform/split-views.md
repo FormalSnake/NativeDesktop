@@ -4,9 +4,8 @@ description: <splitview> grows a third `list` slot for a folders/list/content th
 ---
 
 The two-pane sidebar/content `<splitview>` (see [Windows & Chrome](/native-platform/windows-chrome/))
-extends to a third pane, `list`, for the folders/list/content shape apps like Notes, Mail,
-and Files all share: a source list on the left, a filtered list of items in the middle, and a detail
-view on the right.
+extends to a third pane, `list`, for the folders/list/content shape Notes, Mail, and Files share:
+a source list on the left, a filtered list of items in the middle, a detail view on the right.
 
 ![The notes example's three-pane splitview on macOS (AppKit)](../../../assets/screens/appkit/notes.png)
 
@@ -35,9 +34,8 @@ Panes are still distinguished by the `slot` attached prop, now with a third valu
 </splitview>
 ```
 
-(Adapted from `examples/notes/threepane-probe.tsx`, the headless acceptance fixture for this
-machinery.) A `<splitview>` with only `sidebar`/`content` children keeps behaving exactly as
-before; the `list` slot is additive.
+(Adapted from `examples/notes/threepane-probe.tsx`, the headless acceptance fixture.) The `list`
+slot is additive: a `<splitview>` with only `sidebar` and `content` children behaves as before.
 
 `sidebarWidth` and the new `listWidth` are both create-only fractions setting each split's initial
 proportion; `collapsed` remains live-updatable. See the [Widget Reference](/components/widget-reference/)
@@ -61,28 +59,25 @@ own section of the one toolbar spanning the window's top edge, the same idiom as
 
 ### GNOME: nested AdwOverlaySplitViews
 
-GTK builds this as two nested `AdwOverlaySplitView`s: the outer split's sidebar is the
-`sidebar` pane, and its content is an inner split whose own sidebar is the `list` pane and whose
-content is the `content` pane. This is the same nesting pattern GNOME Files uses. Each pane keeps
-its own `<toolbarview>` + `<headerbar>`, so you still get three independent per-pane headers rather
-than one shared bar.
+GTK builds this as two nested `AdwOverlaySplitView`s: the outer split's sidebar is the `sidebar`
+pane, and its content is an inner split whose sidebar is the `list` pane and whose content is the
+`content` pane. Same nesting GNOME Files uses. Each pane keeps its own `<toolbarview>` and
+`<headerbar>`, so you get three independent per-pane headers rather than one shared bar.
 
 ## Caveat: initial sizing is floor-dominated on macOS
 
-`sidebarWidth`/`listWidth` set the initial split proportion, but on macOS each pane also carries a
+`sidebarWidth` and `listWidth` set the initial split proportion, but on macOS each pane carries a
 hard `minimumThickness`: 180pt for the sidebar item, 240pt for the list (contentList) item. Those
-floors win over the fraction whenever the window is narrow enough that the fraction would
-otherwise ask for less. Don't assume a small `listWidth` (e.g. `0.15`) will
-render a genuinely narrow list column at typical window widths; measure against the 240pt floor
-before relying on an exact initial pixel width.
+floors win over the fraction whenever the window is narrow enough that the fraction asks for less.
+A small `listWidth` such as `0.15` will not render a genuinely narrow list column at typical window
+widths. Measure against the 240pt floor before relying on an exact initial pixel width.
 
 ## Tiling panes: `PaneTree` / `usePaneTree`
 
-`<splitview>` is the app-frame shape (sidebar/list/content). For user-driven tiling, terminal
-splits, editor panes, and anything else where the user splits and closes at will, use
-`@nativedesktop/panes` (`packages/panes/`): a pure model plus a component over the existing
-`<paned>` widget. No new widget, no schema or ABI change; each split renders as a real native
-`GtkPaned` / `NSSplitView` with a draggable divider.
+`<splitview>` is the app-frame shape. For user-driven tiling (terminal splits, editor panes,
+anything the user splits and closes at will), use `@nativedesktop/panes` (`packages/panes/`): a pure
+model plus a component over the existing `<paned>` widget. No new widget, no schema or ABI change.
+Each split renders as a real native `GtkPaned` or `NSSplitView` with a draggable divider.
 
 ```tsx
 import { PaneTree, seedPanes, usePaneTree } from "@nativedesktop/panes";
@@ -106,21 +101,21 @@ function Editor(): React.ReactNode {
 ```
 
 The model is a strictly binary tree (`PaneLeaf | PaneSplit`) with pure ops: `splitPane`,
-`closePane`, `focusPane`/`focusPaneAt`/`focusNeighbor`, `setPaneRatio`, `updatePane`,
-`paneLeaves`, `samePaneShape`, and `migratePanes` for reviving persisted state (garbage in,
-empty model out). Every op returns the same reference when nothing changed, which is what keeps
-the native `positionChanged` echo after a programmatic ratio write from looping through a
-render+persist cycle. Ratios are clamped to `[0.05, 0.95]` (`clampPaneRatio`); non-finite input
-becomes `0.5`, and echoes at or beyond the clamp bounds are dropped as mid-layout noise (a
-settled drag can't reach them past the backends' native minimum pane extents).
+`closePane`, `focusPane`/`focusPaneAt`/`focusNeighbor`, `setPaneRatio`, `updatePane`, `paneLeaves`,
+`samePaneShape`, and `migratePanes` for reviving persisted state (garbage in, empty model out).
+Every op returns the same reference when nothing changed, which stops the native `positionChanged`
+echo after a programmatic ratio write from looping a render and persist cycle. Ratios are clamped to
+`[0.05, 0.95]` (`clampPaneRatio`), non-finite input becomes `0.5`, and echoes at or beyond the clamp
+bounds are dropped as mid-layout noise, since a settled drag cannot reach them past the backends'
+native minimum pane extents.
 
 `usePaneTree` holds the model in state and applies every op against a ref rather than the
-render-time model, so an `await`-resuming split can't revert a divider drag that happened in
-between; `latest()` exposes that ref for persistence. `renderLeaf` owns all per-pane chrome
-(focus ring, toolbar); `PaneTree` supplies `focused`/`solo` and one expanding `<box>` wrapper per
-leaf. Splits are keyed on the split node's id because `orientation` is create-only on both
-backends: a structural collapse landing a different split at the same position remounts instead
-of mutating.
+render-time model, so an `await`-resuming split cannot revert a divider drag that happened in
+between. `latest()` exposes that ref for persistence. `renderLeaf` owns all per-pane chrome (focus
+ring, toolbar); `PaneTree` supplies `focused` and `solo` plus one expanding `<box>` wrapper per
+leaf. Splits are keyed on the split node's id because `orientation` is create-only on both backends,
+so a structural collapse landing a different split at the same position remounts instead of
+mutating.
 
 Persist the model with [`createStore`](/core-concepts/app-data-storage/): `store.set(panes.latest())`
 on change, `flush()` when `samePaneShape` says the change was structural. `examples/panes/` is the

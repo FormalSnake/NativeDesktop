@@ -32,11 +32,45 @@ export interface UrlScheme {
   name?: string;
 }
 
+/**
+ * A solid color, or a two-stop gradient running top to bottom. Colors are hex
+ * (`#0a84ff`, `#0a84ffcc`) or an Icon Composer color string
+ * (`display-p3:0.04,0.52,1,1`).
+ */
+export type AppIconFill = string | { gradient: [string, string] };
+
+export interface AppIconLayer {
+  /** App-relative .svg or .png, drawn full-bleed on the 1024x1024 icon grid. */
+  image: string;
+  /** Layer name shown in Icon Composer. Default: the file's basename. */
+  name?: string;
+  /** Liquid Glass specular highlight. Default true. */
+  specular?: boolean;
+  /** Glass translucency 0..1, or false to turn it off. Default 0.5. */
+  translucency?: number | false;
+  /** Drop shadow opacity 0..1, or false to turn it off. Default 0.5. */
+  shadow?: number | false;
+}
+
+/** A macOS 26 layered icon, built into a .icon bundle at package time. */
+export interface AppIconLayered {
+  /** Fill behind the layers. Omitted leaves the icon body transparent. */
+  background?: AppIconFill;
+  /** 1 to 4 layers, back to front. A bare string is shorthand for `{ image }`. */
+  layers: Array<string | AppIconLayer>;
+}
+
 export interface AppIcon {
-  /** Shared icon source (.png/.svg/.icns path, app-relative). */
+  /** Shared icon source (.png/.svg/.icns/.iconset/.icon path, app-relative). */
   source?: string;
+  /** macOS override: .icon, .icns, .iconset, .png, or .svg. */
   macos?: string;
+  /** Linux override: .png, .svg, or .icon. */
   linux?: string;
+  /** Layered macOS 26 icon composed from separate art files. Used on macOS
+   * unless `macos` overrides it, and flattens to the Linux icon when neither
+   * `linux` nor `source` is set. */
+  layered?: AppIconLayered;
 }
 
 export interface AppIdentity {

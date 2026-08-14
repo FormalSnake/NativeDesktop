@@ -6,6 +6,10 @@
 // ND_BACKEND env var.
 //
 // How binaries get resolved:
+//   - ND_HOST_BINARY: an explicit path, ahead of everything else. For hosts
+//     where no prebuilt can run (NixOS rejects generic dynamically linked
+//     executables) or none ships (gtk on macOS), pointing at a source-built
+//     binary is the only way through `nd dev`, which resolves its own host.
 //   - published install: the binary ships in a per-platform package
 //     (@nativedesktop/host-darwin-arm64, @nativedesktop/host-linux-x64) listed
 //     as optionalDependencies of this package, the Electron/esbuild model. npm
@@ -133,6 +137,7 @@ function isSourceCheckout(repoRoot: string): boolean {
 /**
  * Absolute path to the host binary for the requested backend, building it on
  * first run when inside a source checkout. Resolution order per backend:
+ *   0. ND_HOST_BINARY, an explicit path that wins outright
  *   1. prebuilt binary from the installed @nativedesktop/host-<os>-<arch> package
  *   2. (source checkout only) freshly built zig-out / swift .build artifacts
  *   3. (source checkout only) build the backend, then return the built artifact
@@ -142,6 +147,13 @@ function isSourceCheckout(repoRoot: string): boolean {
 export async function resolveHostBinary(
   opts: { backend?: Backend; platform?: string; arch?: string; packageDir?: string } = {},
 ): Promise<string> {
+  const explicit = process.env.ND_HOST_BINARY;
+  if (explicit) {
+    if (!existsSync(explicit)) {
+      throw new Error(`@nativedesktop/host: ND_HOST_BINARY points at "${explicit}", which does not exist`);
+    }
+    return resolve(explicit);
+  }
   const backend = resolveBackend(opts);
   const { packageName, binaryName, repoRoot, fresh } = hostBinaryCandidates(backend, opts);
   const prebuilt = prebuiltHostBinary(backend);
@@ -175,14 +187,15 @@ export async function resolveHostBinary(
       `@nativedesktop/host: no gtk host binary for "${key}". The gtk backend ships no macOS prebuilt ` +
         `by design (it links Homebrew paths). Either build one from a NativeDesktop source checkout ` +
         `(${backendBuildHint(backend)}), or pass an explicit binary path instead of resolving one ` +
-        `(e.g. launchApp({ hostBinary }) in @nativedesktop/test).`,
+        `(ND_HOST_BINARY=<path>, or launchApp({ hostBinary }) in @nativedesktop/test).`,
     );
   }
   const hint = packageName
     ? `Expected ${packageName}/bin/${binaryName} (an optionalDependency of @nativedesktop/host); ` +
       `reinstall without --no-optional, or build in a NativeDesktop checkout (${backendBuildHint(backend)}).`
     : `No prebuilt package exists for this target; supported targets are darwin-arm64 (appkit) and ` +
-      `linux-x64 (gtk). Build in a NativeDesktop checkout (${backendBuildHint(backend)}).`;
+      `linux-x64 (gtk). Build in a NativeDesktop checkout (${backendBuildHint(backend)}) and point ` +
+      `ND_HOST_BINARY at it.`;
   throw new Error(`@nativedesktop/host: no ${backend} host binary for "${key}". ${hint}`);
 }
 

@@ -1,12 +1,12 @@
 ---
 title: Command Palette
-description: "<commandpalette> is a Cmd-K style modal overlay: the app owns query and items and does all filtering/ranking, the widget only renders rows and reports interaction."
+description: "<commandpalette> is a Cmd-K style modal overlay. The app owns the query and the items and does all filtering and ranking; the widget renders rows and reports interaction."
 ---
 
-`<commandpalette>` is a modal overlay for search-driven command/file/navigation pickers, the
-Cmd-K pattern. It follows the same controlled contract as `<table>` and `<treeview>`: the widget
-never filters, ranks, or reorders anything itself. Every keystroke fires `queryChanged`, the app
-recomputes the result set (locally or over an RPC), and hands the new `items` array back down.
+`<commandpalette>` is a modal overlay for search-driven command, file, and navigation pickers: the
+Cmd-K pattern. The widget never filters, ranks, or reorders anything. Every keystroke fires
+`queryChanged`, the app recomputes the result set (locally or over an RPC), and hands the new
+`items` array back down.
 
 ![The command palette open over the demo app on macOS (AppKit)](../../../assets/screens/appkit/commandpalette-open.png)
 
@@ -90,28 +90,23 @@ to be a visible label. It is the value echoed back by `activate`.
 | `submit` | `onSubmit` | `{ text }` | `text` is the raw, currently-typed query. Fires on Enter with no row highlighted, or Cmd/Ctrl+Enter regardless of highlight. |
 | `cancel` | `onCancel` | none | User-initiated dismissal only: Escape, or a click outside the card. See below. |
 
-## The controlled-query + app-side-ranking pattern
+## Ranking
 
-`<commandpalette>` does no matching of its own. That work (substring match, fuzzy score, recency,
-an RPC round-trip to a server-side index) is entirely the app's, in `onQueryChanged`. This mirrors
-`<table>`'s sort contract: the native widget is a dumb renderer for whatever ordered array you hand
-it, so ranking logic lives in one place you can unit-test outside the UI, and swapping local
-filtering for a real search backend never touches the widget.
+The palette does no matching. Substring match, fuzzy score, recency, an RPC round-trip to a
+server-side index: all of it happens in your `onQueryChanged`, and the widget renders whatever
+ordered array you hand back.
 
-Highlight (which row Up/Down/Enter act on) is the one piece of state the widget keeps internally,
-not the app: it clamps within the current `items` on Up/Down/Home/End and resets to the top row
-whenever a fresh `items` array lands. An app that re-renders on a timer or a poll (a live client
-re-fetching results) can safely hand back a new `items` array on every render: both backends
-diff the row content and skip the rebuild when nothing actually changed, so keyboard focus and the
-current highlight survive unrelated re-renders.
+Highlight (the row Up/Down/Enter act on) is the one piece of state the widget keeps internally. It
+clamps within the current `items` on Up/Down/Home/End and resets to the top row whenever a fresh
+`items` array lands. Both backends diff row content and skip the rebuild when nothing changed, so
+an app re-rendering on a timer or a poll can hand back a new `items` array every render without
+losing keyboard focus or the current highlight.
 
 ## Cancel vs. programmatic close
 
-Setting `open={false}` from your own code (for example after `onActivate` picks a row) closes the
-overlay silently. It does not fire `cancel`. `cancel` fires only when the *user* dismisses the
-palette without picking anything: Escape, or a click on the dimmed backdrop outside the card. Treat
-`cancel` as "the user backed out," and treat your own `setOpen(false)` calls (after `activate` or
-`submit`) as the app's own decision to close, with no separate event needed.
+Setting `open={false}` yourself, for example after `onActivate` picks a row, closes the overlay
+without firing `cancel`. `cancel` fires only on user dismissal: Escape, or a click on the dimmed
+backdrop outside the card.
 
 ## Platform presentation
 
@@ -122,15 +117,15 @@ palette without picking anything: Escape, or a click on the dimmed backdrop outs
 | Results | `GtkListBox` of `AdwActionRow`s (`boxed-list` style) | `NSTableView`, 40pt rows |
 | Submit shortcut | Ctrl+Return | Cmd+Return or Ctrl+Return |
 
-Both backends present the overlay over the application's currently-active window, not merely
-whatever window the `<commandpalette>` node happens to be mounted under, so one palette, mounted
-once near the root, works correctly regardless of which window has focus.
+Both backends present the overlay over the application's currently-active window rather than the
+window the `<commandpalette>` node is mounted under, so one palette mounted near the root works
+whichever window has focus.
 
-## Automation notes
+## Automation
 
-The palette's tracked node is a host-only handle; the real search field and row list live in a
-separately presented dialog/scrim, so automation routes actions to them explicitly rather than
-through the generic click/type dispatch:
+The palette's tracked node is a host-only handle. The real search field and row list live in a
+separately presented dialog or scrim, so automation routes actions to them explicitly instead of
+going through the generic click/type dispatch:
 
 - `click` (no `ref` beyond the palette's own) activates the currently highlighted row.
 - `type` inserts text into the search field (fires `queryChanged`), appending at the cursor.
@@ -139,12 +134,7 @@ through the generic click/type dispatch:
 - The palette is only actionable while presented (`open` is effectively `true`); `getTree` and the
   action dispatchers report it as not-actionable while closed.
 
-`scripts/command-palette-drive.ts` exercises all of this against `examples/command-palette`
-under background re-render churn: open via a real button click, `type` to filter, `click` to
-activate the highlighted directory, `setValue` with a string/integer/boolean to replace the query,
-drill in by index, and submit a typed path that matches no row. See
-[Automation Socket](/automation-testing/automation-socket/) for the full RPC surface.
-
-See `examples/command-palette/main.tsx` for the complete example (a directory picker with live
-background re-renders), and the [Widget Reference](/components/widget-reference/) for every
-widget's generated prop table.
+`scripts/command-palette-drive.ts` exercises all of this against `examples/command-palette` under
+background re-render churn. See [Automation Socket](/automation-testing/automation-socket/) for the
+full RPC surface, `examples/command-palette/main.tsx` for the complete example, and the
+[Widget Reference](/components/widget-reference/) for the generated prop table.

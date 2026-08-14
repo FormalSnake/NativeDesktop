@@ -3,8 +3,8 @@ title: Styling & Design Language
 description: style is theme-neutral geometry; cssClasses reaches each platform's named design-language classes. Dark mode is automatic.
 ---
 
-GTK styling is not web CSS, and NativeDesktop's `style` prop is deliberately not a CSS
-reimplementation. There are two separate props, with two separate jobs.
+GTK styling is not web CSS, and the `style` prop is not a CSS reimplementation. Two props, two
+jobs: `style` covers geometry, `cssClasses` reaches each platform's design language.
 
 ## `style`: theme-neutral geometry
 
@@ -28,19 +28,19 @@ The schema encodes that distinction so codegen emits the right call on each back
 web-only keys like `display` and `justifyContent` are rejected at the React renderer with a
 Levenshtein fix-it message, and rejected again host-side, so a bad key fails loudly at commit time.
 
-The always-current key list is the generated `docs/styling.md`. This page summarizes it.
+The generated `docs/styling.md` carries the always-current key list. This page summarizes it.
 
 ## `cssClasses`: reaching each platform's design language
 
-`cssClasses?: string[]` is a set of named classes, borrowed from libadwaita's vocabulary, that map
+`cssClasses?: string[]` is a set of named classes borrowed from libadwaita's vocabulary. They map
 onto real per-platform mechanisms rather than CSS you write yourself.
 
 On Linux the class list is reconciled as a set on every update: each allowlisted class is added when
-requested and removed when no longer requested, so classes don't accumulate across renders.
+requested and removed when no longer requested, so classes never accumulate across renders.
 Container-scoped classes (`boxed-list`, `boxed-list-separate`, `menu`, `inline`) style nothing when
-applied to a widget type libadwaita doesn't target with them — the host prints a one-time `ND_WARN`
-naming the class and widget type instead of failing silently; reach for the structural widgets
-(`<sourcelist>`, `<sourcetree>`, `<settingsgroup>`) when you want that chrome.
+applied to a widget type libadwaita does not target with them. The host prints a one-time `ND_WARN`
+naming the class and widget type; reach for the structural widgets (`<sourcelist>`, `<sourcetree>`,
+`<settingsgroup>`) when you want that chrome.
 
 Three classes libadwaita scopes to other widget types are carried by framework base CSS so they mean
 the same thing on both backends: `pill` on a `<label>` is a capsule count badge (libadwaita treats
@@ -66,21 +66,20 @@ throughout so dark mode keeps working:
 | `boxed-list` (on a `<box>`) | native grouped `NSBox` card with inset hairline dividers |
 | `navigation-sidebar` (on a `<box>`) | a `.sourceList` `NSTableView` backing the box, when its children are row-shaped |
 
-`navigation-sidebar` on a box of flat `<button>` rows is no longer a no-op on macOS: the box gets a
-real source-list table behind it, so accent-when-key selection, row metrics and row insets come from
-AppKit instead of from your styling. The takeover is gated on the children being row-shaped, because
-the table covers the whole box and a composite row (button plus caption plus badge) would lose
-everything that is not the button. `nd-native-sidebar` on the same box skips that gate and takes
-over unconditionally.
+`navigation-sidebar` on a box of flat `<button>` rows puts a real source-list table behind the box
+on macOS, so accent-when-key selection, row metrics, and row insets come from AppKit instead of
+your styling. The takeover is gated on the children being row-shaped: the table covers the whole
+box, and a composite row (button plus caption plus badge) would lose everything that is not the
+button. `nd-native-sidebar` on the same box skips that gate and takes over unconditionally.
 
-The class is portable: on GTK the same box gets libadwaita's sidebar-row metrics and states through
-framework base CSS. Both backends read `suggested-action` on a row as the selection signal, and
+The class is portable. On GTK the same box gets libadwaita's sidebar-row metrics and states through
+framework base CSS. Both backends read `suggested-action` on a row as the selection signal and
 neither paints it as an accent call to action inside a sidebar, so one tree gives you a native
-sidebar on each platform without per-row padding. `<sourcelist>` and `<sourcetree>` remain the
+sidebar on each platform with no per-row padding. `<sourcelist>` and `<sourcetree>` are still the
 better choice when the rows are data rather than a fixed handful of destinations.
 
-The remaining structural classes (`card`, `osd`) are ignored on macOS. That chrome comes from the
-`<splitview>` and `<headerbar>` widgets themselves rather than from class strings.
+The remaining structural classes (`card`, `osd`) are ignored on macOS, where that chrome comes from
+the `<splitview>` and `<headerbar>` widgets themselves.
 
 Beyond classes, three Button props carry state the platform renders natively: `prominent` maps to
 the accent treatment (`suggested-action` on GTK; an accent bezel, or a `.prominent` toolbar item
@@ -93,19 +92,17 @@ the control metrics (`NSControl.controlSize`; compact/large CSS metrics on GTK).
 ## Dark mode is automatic
 
 The Linux host runs as an `AdwApplication`, so `AdwStyleManager` tracks the system light and dark
-preference from the first frame. Unstyled widgets and `cssClasses` follow it with no app code. On
-macOS the AppKit mappings above use dynamic system colors for the same reason. A hardcoded
-`style.color` or `style.background` is an explicit override and does not adapt. Prefer `cssClasses`
-plus the platform defaults for a theme-correct app.
+preference from the first frame. Unstyled widgets and `cssClasses` follow it with no app code. The
+macOS mappings above use dynamic system colors for the same reason. A hardcoded `style.color` or
+`style.background` is an explicit override and does not adapt.
 
-`examples/notes/main.tsx` holds itself to this as a hard rule in its header comment: no color
-literals anywhere except one deliberate exception, a pinned-row accent border chosen to read on both
-themes. Everything else is `cssClasses` plus the system's own styling.
+`examples/notes/main.tsx` holds to this as a hard rule: no color literals anywhere except one
+pinned-row accent border chosen to read on both themes.
 
-An app that needs the live accent color (a status dot, a chart series) reads it from
-`system.getAppearance()` / `system.onAppearanceChange()`, which return
-`{ appearance: "light" | "dark", accentColor: "#rrggbb" }` — the AdwStyleManager accent on Linux,
-`NSColor.controlAccentColor` on macOS — instead of hardcoding a hex.
+For a live accent color (a status dot, a chart series), read `system.getAppearance()` or
+`system.onAppearanceChange()`, which return
+`{ appearance: "light" | "dark", accentColor: "#rrggbb" }`: the AdwStyleManager accent on Linux,
+`NSColor.controlAccentColor` on macOS.
 
 ## Spacing scale
 
@@ -118,12 +115,11 @@ import { Spacing, ContentMargin } from "@nativedesktop/react";
 <box spacing={Spacing.sm} style={{ padding: ContentMargin }} />;
 ```
 
-`Spacing` is `{ xs, sm, md, lg, xl }` — `3/6/12/18/24` on the GTK backend (GNOME's multiples of 6),
-`4/8/12/20/24` on the AppKit backend — and `ContentMargin` is the standard window-edge margin (`12`
-on GTK, `20` on AppKit). Both are keyed on `Platform.backend`, not `Platform.os`: the GTK backend
-running on macOS via Quartz still lays out GNOME's numbers, matching [Which backend is
+`Spacing` is `{ xs, sm, md, lg, xl }`: `3/6/12/18/24` on the GTK backend (GNOME's multiples of 6),
+`4/8/12/20/24` on AppKit. `ContentMargin` is the standard window-edge margin, `12` on GTK and `20`
+on AppKit. Both are keyed on `Platform.backend`, not `Platform.os`, so the GTK backend running on
+macOS via Quartz still lays out GNOME's numbers. See [Which backend is
 drawing](/core-concepts/architecture/#which-backend-is-drawing). Both resolve after `render()`'s
-handshake (`Spacing`'s fields are live getters; `ContentMargin` is a plain binding re-assigned once
-the backend is known), and fall back to the OS's convention before that. The structural widgets
-(`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics themselves and need
-none of this.
+handshake (`Spacing`'s fields are live getters, `ContentMargin` a plain binding re-assigned once the
+backend is known) and fall back to the OS convention before that. The structural widgets
+(`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics themselves.

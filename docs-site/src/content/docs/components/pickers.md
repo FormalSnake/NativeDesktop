@@ -3,15 +3,15 @@ title: Pickers
 description: ColorPicker, DatePicker, and FontPicker, three widgets that open a native OS picker surface and report back a portable string value.
 ---
 
-Three widgets each wrap a native OS picker (a color well, a calendar, the system font panel) and
-converge on one design: the wire value is always a plain, portable string, so the picker's own
-native representation (`NSColor`, `NSFont`, ...) never crosses the NDP protocol.
+Three widgets wrap a native OS picker: a color well, a calendar, and the system font panel. Each
+one's wire value is a plain portable string, so `NSColor`, `NSFont`, and their GTK equivalents
+never cross NDP.
 
 ## ColorPicker (`<colorpicker>`)
 
-Wraps `NSColorWell` (`.minimal` style, opens the shared `NSColorPanel`) on macOS and a GTK color
-button on Linux. The wire value is a hex string (`#rrggbb`, or `#rrggbbaa` when the color isn't
-fully opaque), the same convention `style.background` and friends already use.
+`NSColorWell` in `.minimal` style (opening the shared `NSColorPanel`) on macOS, a GTK color button
+on Linux. The value is a hex string, `#rrggbb` or `#rrggbbaa` when the color is not fully opaque,
+the same convention `style.background` uses.
 
 ```tsx
 const [color, setColor] = useState("#3366cc");
@@ -28,8 +28,7 @@ const [color, setColor] = useState("#3366cc");
 
 ## DatePicker (`<datepicker>`)
 
-Date-only: there's no time component. The wire value is a date-only ISO string
-(`YYYY-MM-DD`), never a full timestamp.
+Date only, no time component. The value is an ISO `YYYY-MM-DD` string, never a full timestamp.
 
 ```tsx
 const [pickedDate, setPickedDate] = useState("");
@@ -47,16 +46,14 @@ const [pickedDate, setPickedDate] = useState("");
 
 `displayStyle="field"` (a compact text field with a dropdown calendar) is honored on macOS only,
 where `NSDatePicker` in `.textFieldAndStepper` style is the closest fit. GTK always renders the
-inline calendar regardless of `displayStyle`. Pick `calendar` if you want identical layout on both
-backends.
+inline calendar. Use `calendar` for identical layout on both backends.
 
 ## FontPicker (`<fontpicker>`)
 
-Wraps a button that opens the OS's system font picker (`NSFontPanel` on macOS, `GtkFontDialogButton`
-on GTK) and reports the chosen font back. Rather than invent a third font-description format, the
-wire value is canonical Pango font description syntax (`"Family [Bold] [Italic] size"`, e.g.
-`"Sans Bold 14"`), the same string GTK already speaks natively. The macOS side does the
-Pango↔`NSFont` conversion so your app code never has to.
+A button that opens the system font picker (`NSFontPanel` on macOS, `GtkFontDialogButton` on GTK)
+and reports the chosen font back. The value is Pango font description syntax
+(`"Family [Bold] [Italic] size"`, for example `"Sans Bold 14"`), which GTK already speaks natively.
+The macOS side converts between Pango and `NSFont` so app code never has to.
 
 ```tsx
 const [fontDesc, setFontDesc] = useState("Sans 12");
@@ -70,10 +67,10 @@ const [fontDesc, setFontDesc] = useState("Sans 12");
 
 `fontChanged` → `onFontChanged` fires `{ text }` with the new Pango string.
 
-Generic Pango family aliases resolve to a real font on both backends without you naming a specific
-installed typeface: `Sans`/`Sans-Serif`/`System` → the system UI font, `Monospace`/`Mono` → the system
-monospace font, `Serif` → the system serif design. An unrecognized family name falls back to the
-system font rather than failing.
+Generic Pango family aliases resolve to a real font on both backends without naming an installed
+typeface: `Sans`/`Sans-Serif`/`System` gives the system UI font, `Monospace`/`Mono` the system
+monospace font, `Serif` the system serif design. An unrecognized family falls back to the system
+font.
 
-See `examples/gallery/main.tsx`'s "Pickers" tab for all three wired to live readouts, and the
+See `examples/gallery/main.tsx`'s Pickers tab for all three wired to live readouts, and the
 [Widget Reference](/components/widget-reference/) for the generated prop tables.

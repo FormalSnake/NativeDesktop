@@ -130,7 +130,7 @@ From an npm install this only matters inside the framework's source checkout, wh
 cross-check the GTK host through its Quartz backend. Prebuilt binaries ship one host per platform,
 so `--backend gtk` on a macOS npm install fails with a resolution error.
 
-## Where to go next
+## Next
 
 - [Build a Counter](/get-started/tutorial-counter/): components, state, and native styling classes.
 - [Build a Settings Window](/get-started/tutorial-settings/): sidebar navigation, settings rows, persistence, dialogs.

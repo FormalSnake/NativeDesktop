@@ -3,12 +3,12 @@ title: "Native Tabs"
 description: "Group <window> roots into real system tabs from one unchanged app tree: NSWindow tab groups on macOS, AdwTabView with the tab overview on GNOME."
 ---
 
-Give several `<window>` roots the same `tabGroup` and they render as one tabbed window, using each
+Give several `<window>` roots the same `tabGroup` and they render as one tabbed window using each
 platform's real tab system. On macOS every tab is a genuine `NSWindow` joined into a native tab
 group, so you get the Safari and Finder tab bar, dragging a tab out to its own window, dragging it
 back in, and Show All Tabs. On GNOME the group renders as an `AdwTabView` with an autohiding
 `AdwTabBar` under your header bar plus the `AdwTabButton` overview toggle, the same setup Ghostty
-uses. All tab chrome comes from the framework. Your app owns only the list of open tabs.
+uses. The framework owns the tab chrome; your app owns the list of open tabs.
 
 ![Two native NSWindow tabs and the new-tab button in the terminal example on macOS (AppKit)](../../../assets/screens/appkit/tabs.png)
 
@@ -77,10 +77,10 @@ Every `<window>` fires `onFocused({ checked })` when it gains or loses key statu
 window that is a normal focus change. For a `tabGroup` member it also fires when the user switches
 native tabs: the outgoing tab gets `checked: false`, the incoming one `checked: true`.
 
-Keep this signal for app-level state that acts on whichever tab is frontmost right now rather than
-on whatever tab last rendered: menu items, keyboard shortcuts, a command palette. Without it, an app
-tracking its own selected value has no way to learn the user switched tabs natively, because that
-switch never touches React.
+Use this for app-level state that acts on whichever tab is frontmost right now rather than whichever
+rendered last: menu items, keyboard shortcuts, a command palette. Without it an app tracking its own
+selected value has no way to learn the user switched tabs natively, because that switch never
+touches React.
 
 ```tsx
 <window
@@ -110,7 +110,7 @@ import { showTabOverview } from "@nativedesktop/react";
 showTabOverview(winRef.current); // AdwTabOverview open on GTK, toggleTabOverview on macOS
 ```
 
-## Drag and drop, Chrome-style
+## Drag and drop
 
 Dragging tabs out to the desktop, into another window of the same group, and reordering are native
 on both backends, and none of it touches your React tree. The `<window>` node's identity is stable
@@ -119,7 +119,7 @@ On GTK the framework spawns a fresh scaffold window on `create-window` and `AdwT
 the page widget intact. A `<webview>` tab keeps its session and a `<terminal>` tab keeps its running
 shell through any drag. Empty windows left behind by a drag close themselves.
 
-Where a new tab opens follows the platform convention: the group's most recently focused window.
+New tabs open in the group's most recently focused window, following the platform convention.
 
 ## Platform notes
 

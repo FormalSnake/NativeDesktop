@@ -87,7 +87,10 @@ export default defineConfig({
 				},
 				{
 					label: 'Packaging',
-					items: [{ label: 'Packaging', slug: 'packaging' }],
+					items: [
+						{ label: 'Packaging', slug: 'packaging' },
+						{ label: 'App Icons', slug: 'packaging/app-icons' },
+					],
 				},
 			],
 		}),

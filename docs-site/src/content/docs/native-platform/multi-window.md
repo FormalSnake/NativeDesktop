@@ -3,11 +3,10 @@ title: Multi-Window
 description: Render more than one <window> root from a single React tree, and move a live widget between windows without reloading it.
 ---
 
-A NativeDesktop app isn't limited to one `<window>`. Render multiple `<window>` roots (a sibling
-list, typically inside a fragment) and each becomes an independent OS window on both backends, all
-driven by the same Bun/React process. `examples/multiwindow/main.tsx` is the reference app for
-everything on this page. Windows sharing a `tabGroup` prop render as one tabbed window instead. See
-[Native Tabs](/native-platform/tabs/).
+Render multiple `<window>` roots, typically as siblings inside a fragment, and each becomes an
+independent OS window on both backends, all driven by the same Bun/React process. Windows sharing a
+`tabGroup` prop render as one tabbed window instead; see [Native Tabs](/native-platform/tabs/).
+`examples/multiwindow/main.tsx` is the reference app for this page.
 
 ![One of the multiwindow example's two windows hosting a live webview on macOS (AppKit)](../../../assets/screens/appkit/multiwindow.png)
 
@@ -36,21 +35,24 @@ await render(<App />);
 
 The core reconciler (`src/tree.zig`) pools window handles by node id, so a `--hot` edit rebinds
 existing windows instead of reopening them, and a genuinely new `<window>` node opens a fresh OS
-window. Because every window is rendered by the same tree in one process, sharing state between them
-is ordinary React state and closures. There's no IPC to wire up, unlike a multi-window
-Electron app where each window is its own renderer process.
+window. Every window is rendered by the same tree in one process, so sharing state between them is
+ordinary React state and closures. No IPC, unlike a multi-window Electron app where each window is
+its own renderer process.
 
-Automation, the crash overlay, window chrome, and the ACL are all per-window correct. A node's
-geometry and visibility (and therefore the bounds `getTree` reports, plus `click`, `setValue`,
-`type`, `scroll`, and `waitFor`'s `refVisible` check) resolve against that widget's own window,
-never a single global: GTK uses `gtk_widget_get_root()`, and AppKit resolves the live content
-view of `view.window` instead of a cached global. `screenshot` renders whichever window
-`params.window` names. A JS crash brings down every window's UI at once, so the crash overlay
-paints on every open window and clears on every window on restart. Each `<toolbarview>`/headerbar
-attaches to its own owning `NSWindow`/`GtkWindow`, not whichever window happened to be created last.
-And `core:window.create` is ACL-gated per target window id, so a grants manifest can scope window
-creation to a specific window (a window-0 grant still applies everywhere, matching the default
-policy).
+Automation, the crash overlay, window chrome, and the ACL are all per-window correct:
+
+- A node's geometry and visibility, and therefore the bounds `getTree` reports plus `click`,
+  `setValue`, `type`, `scroll`, and `waitFor`'s `refVisible` check, resolve against that widget's
+  own window rather than a global. GTK uses `gtk_widget_get_root()`; AppKit resolves the live
+  content view of `view.window`.
+- `screenshot` renders whichever window `params.window` names.
+- A JS crash brings down every window's UI at once, so the crash overlay paints on every open
+  window and clears on every window on restart.
+- Each `<toolbarview>` and headerbar attaches to its own owning `NSWindow`/`GtkWindow`, not
+  whichever window was created last.
+- `core:window.create` is ACL-gated per target window id, so a grants manifest can scope window
+  creation to a specific window. A window-0 grant still applies everywhere, matching the default
+  policy.
 
 `getTree` scopes per window too: pass `window` (a Window node ref) and the snapshot covers that
 window's subtree. Without it, the RPC returns the root/first window's tree, with every other
@@ -59,19 +61,12 @@ correct, resolved against its own window as above.
 
 ## Moving a widget between windows without reloading it
 
-Cross-window reparenting is the harder problem multi-window raises: how do you move a live widget,
-say a browser tab, from Window A to Window B without losing its state?
+Plain React cannot express this move safely. A node under a new parent is a different position in
+the fiber tree, so React unmounts the old instance and mounts a fresh one, which the host turns into
+a native destroy and create. For a `<webview>` that throws away the WKWebView/WebKitGTK instance and
+rebuilds it: the page reloads and scroll position, form input, and JS state go with it.
 
-Plain React can't express this move safely. Moving a node to a new parent is a different position in
-the fiber tree, and React's model is to unmount the old instance and mount a fresh one at the new
-position. The host turns that unmount+mount into a native destroy+create. For a `<webview>` that
-means the WKWebView/WebKitGTK instance is thrown away and rebuilt, so the page reloads and every bit
-of in-page state (scroll position, form input, JS state) is lost. That's what
-`UI = f(state)` means: a plain re-render can't know to preserve a widget's identity across a
-parent change.
-
-The fix works around it with two functions from `@nativedesktop/react`
-(`packages/react/src/renderer.ts`):
+Two functions from `@nativedesktop/react` (`packages/react/src/renderer.ts`) work around it:
 
 ```ts
 function createPool(): Pool
@@ -90,8 +85,8 @@ function moveNode(node: NdNodeRef, toParent: NdNodeRef, before?: NdNodeRef | nul
   `toParent` are what a host-element `ref` resolves to (`NdNodeRef`, the same handle
   [Imperative Commands & Refs](/core-concepts/imperative-commands/) uses).
 
-A node rendered via `createPortal` is a live, real native widget the moment it mounts. It's just
-attached to no window (the pool) until the first `moveNode` call places it somewhere visible.
+A node rendered via `createPortal` is a live native widget the moment it mounts. It is attached to
+no window until the first `moveNode` call places it somewhere visible.
 
 ```tsx
 import { render, createPortal, moveNode, useEffect, useRef, useState } from "@nativedesktop/react";
@@ -141,13 +136,12 @@ await render(<App />);
 Render the portal at a stable position (one per movable item, keyed by its own id, at or near the
 app root) so it outlives any single window it might currently be showing in.
 
-### Why this is imperative, on purpose
+### Why it is imperative
 
-`moveNode` deliberately breaks from the declarative "set a prop, let the reconciler figure it out"
-model the rest of the toolkit follows, because the thing being preserved (a widget's live native
-state) is exactly what React's own model would otherwise destroy. `moveNode` rides the same
-`widgetCommand` channel as [`sendCommand`](/core-concepts/imperative-commands/), under a reserved
-command name, into an appended `reparent_child` op on the host ABI vtable. It reaches the native
-widget through the same C-ABI seam as every other host operation, with no protocol or schema change.
-On GTK the move is bracketed in a `g_object_ref`/`unref` pair; on AppKit the core takes a
-retain across the move. Both exist so the widget is never transiently deallocated mid-reparent.
+`moveNode` breaks from the declarative model the rest of the toolkit follows because the thing being
+preserved, a widget's live native state, is exactly what React's model would destroy. It rides the
+same `widgetCommand` channel as [`sendCommand`](/core-concepts/imperative-commands/) under a
+reserved command name, into a `reparent_child` op on the host ABI vtable, so it reaches the native
+widget through the same C-ABI seam as every other host operation with no protocol or schema change.
+GTK brackets the move in a `g_object_ref`/`unref` pair; AppKit takes a retain across it. Either way
+the widget is never transiently deallocated mid-reparent.

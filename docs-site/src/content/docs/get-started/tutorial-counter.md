@@ -146,7 +146,7 @@ The same file renders in each platform's own design language:
 Leave it running and edit the parity strings. The window updates in place and the count survives
 the edit.
 
-## Where to go next
+## Next
 
 - [Build a Settings Window](/get-started/tutorial-settings/): sidebar navigation, settings rows, persistence, and dialogs.
 - [Styling & Design Language](/core-concepts/styling-design-language/): the full `cssClasses` vocabulary and what `style` covers.
