@@ -1,6 +1,6 @@
 {
   "name": "babel-plugin-nativedesktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Babel plugin rewriting react hook imports to @nativedesktop/react for shared-logic packages",
   "license": "MIT",
   "repository": {

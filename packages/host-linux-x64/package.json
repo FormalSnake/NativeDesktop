@@ -1,6 +1,6 @@
 {
   "name": "@nativedesktop/host-linux-x64",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prebuilt NativeDesktop GTK host binary (nd-hello) for x86_64 Linux",
   "license": "MIT",
   "repository": {
