@@ -85,6 +85,7 @@ check_sourcetree() {
   # after a full build, and the box may be shared.
   export ND_DRIVE_TIMEOUT_MS="${ND_DRIVE_TIMEOUT_MS:-15000}"
   . "$(dirname "$0")/headless-fonts.sh"
+  . "$(dirname "$0")/headless-theme.sh"
   weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 >"$XDG_RUNTIME_DIR/weston-sourcetree.log" 2>&1 &
   # Not a RETURN trap: it fires again when the calling `step` returns, by which
   # point the local it names is gone and `set -u` aborts the whole gate.

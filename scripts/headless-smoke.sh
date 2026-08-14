@@ -11,6 +11,7 @@ export GDK_BACKEND=wayland
 # machine exits with ND_ALREADY_RUNNING instead of starting.
 export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessSmoke}"
 . "$(dirname "$0")/headless-fonts.sh"
+. "$(dirname "$0")/headless-theme.sh"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!

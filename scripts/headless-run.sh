@@ -31,6 +31,18 @@ export ND_APP_ID="dev.nativedesktop.headless${ND_ID_TAG}"
 # Real fonts, so a capture from this rig looks like a GNOME session instead of
 # the bitmap fallback fontconfig picks when it finds no font at all.
 . "$(dirname "$0")/headless-fonts.sh"
+# Stock Adwaita chrome, so a capture shows the framework's own rendering and
+# not the capture host's GTK theme.
+. "$(dirname "$0")/headless-theme.sh"
+# The half of that leak XDG_CONFIG_HOME cannot close: the settings portal
+# answers over the user DBus and outranks settings.ini and GSettings alike. A
+# PRIVATE session bus is a real bus (WebKitGTK's network process proxies one,
+# so a nonexistent address aborts a webview gate) carrying no portal. Re-enter
+# under one, once.
+if [ -z "${ND_HEADLESS_BUS:-}" ] && command -v dbus-run-session >/dev/null 2>&1; then
+  export ND_HEADLESS_BUS=1
+  exec dbus-run-session -- "$0" "$EXAMPLE" "$DRIVE" "$MARKER" "$TAG"
+fi
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 >"$XDG_RUNTIME_DIR/weston-$TAG.log" 2>&1 &
 WESTON_PID=$!
