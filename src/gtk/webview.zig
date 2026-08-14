@@ -237,6 +237,7 @@ const ExtApi = struct {
     get_back_forward_list: ?FnGetPtr = null,
     bf_list_get_current_item: ?FnGetPtr = null,
     go_to_bf_list_item: ?FnPtrPtr = null,
+    is_loading: ?FnBoolOnPtr = null,
     is_playing_audio: ?FnBoolOnPtr = null,
     set_is_muted: ?FnSetBool = null,
     get_is_muted: ?FnBoolOnPtr = null,
@@ -454,6 +455,7 @@ fn loadExt(lib: *std.DynLib) void {
     ext.get_back_forward_list = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_back_forward_list", "restoreSession navigation");
     ext.bf_list_get_current_item = lookupWarn(FnGetPtr, lib, "webkit_back_forward_list_get_current_item", "restoreSession navigation");
     ext.go_to_bf_list_item = lookupWarn(FnPtrPtr, lib, "webkit_web_view_go_to_back_forward_list_item", "restoreSession navigation");
+    ext.is_loading = lookupWarn(FnBoolOnPtr, lib, "webkit_web_view_is_loading", "webviewInfo loading");
     ext.is_playing_audio = lookupWarn(FnBoolOnPtr, lib, "webkit_web_view_is_playing_audio", "audioStateChanged");
     ext.set_is_muted = lookupWarn(FnSetBool, lib, "webkit_web_view_set_is_muted", "setMuted");
     ext.get_is_muted = lookupWarn(FnBoolOnPtr, lib, "webkit_web_view_get_is_muted", "setMuted");
@@ -2091,4 +2093,197 @@ fn downloadSuggestedFilename(dl: *anyopaque, suggested: ?[*:0]const u8) ?[]const
     const name = get_name(response) orelse return null;
     const span = std.mem.span(name);
     return if (span.len > 0) span else null;
+}
+
+// ============================================================================
+// Automation surface (webviewInfo / webviewEval / waitFor page predicates)
+//
+// These answer the automation socket directly and never route through the Bun
+// child: a drive must be able to read page state from an app that forwards no
+// events. Everything here runs on the UI thread inside one marshaled
+// semantic_action call, so no locking is needed — but WebKit's evaluation is
+// asynchronous, hence the start/poll pair rather than a blocking call.
+// ============================================================================
+
+/// Live page state. Strings are borrowed from the engine and are only valid
+/// for the duration of the call.
+pub const Info = struct {
+    url: ?[]const u8,
+    title: ?[]const u8,
+    loading: bool,
+    can_go_back: bool,
+    can_go_forward: bool,
+};
+
+pub fn info(widget: *gtk.Widget) ?Info {
+    const a = api orelse return null;
+    if (!isReal(widget)) return null;
+    const v: *anyopaque = @ptrCast(widget);
+    const uri = a.web_view_get_uri(v);
+    const title = a.web_view_get_title(v);
+    return .{
+        .url = if (uri) |u| std.mem.span(u) else null,
+        .title = if (title) |t| std.mem.span(t) else null,
+        .loading = if (ext.is_loading) |f| f(v) != 0 else false,
+        .can_go_back = a.web_view_can_go_back(v) != 0,
+        .can_go_forward = a.web_view_can_go_forward(v) != 0,
+    };
+}
+
+/// One in-flight or settled automation eval. Kept in a global map keyed by id
+/// rather than hung off the view, so a view destroyed mid-eval cannot leave
+/// the completion callback writing through a dangling handle.
+const PendingEval = struct {
+    done: bool = false,
+    ok: bool = false,
+    value: ?[]u8 = null,
+    err: ?[]u8 = null,
+};
+
+var pending_evals: std.AutoHashMapUnmanaged(u64, *PendingEval) = .empty;
+var next_eval_id: u64 = 1;
+
+const AutoEvalCtx = struct { id: u64 };
+
+/// Starts an evaluation and returns its id, or null when the engine cannot
+/// evaluate (no webkitgtk, or the symbol is missing). `world` empty/null means
+/// the page's own world, matching `executeJavaScript`.
+pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64 {
+    const eval = ext.evaluate_javascript orelse return null;
+    if (!isReal(widget)) return null;
+    const v: *anyopaque = @ptrCast(widget);
+
+    const entry = alloc.create(PendingEval) catch return null;
+    entry.* = .{};
+    const id = next_eval_id;
+    pending_evals.put(alloc, id, entry) catch {
+        alloc.destroy(entry);
+        return null;
+    };
+    next_eval_id += 1;
+
+    const ctx = alloc.create(AutoEvalCtx) catch return null;
+    ctx.* = .{ .id = id };
+    const code_z = alloc.dupeZ(u8, code) catch {
+        alloc.destroy(ctx);
+        return null;
+    };
+    defer alloc.free(code_z); // WebKit copies the script synchronously before queuing
+    var world_z: ?[:0]u8 = null;
+    defer if (world_z) |w| alloc.free(w);
+    if (world) |w| {
+        if (w.len > 0) world_z = alloc.dupeZ(u8, w) catch null;
+    }
+    eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbAutoEvalReady, ctx);
+    return id;
+}
+
+fn cbAutoEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const ctx: *AutoEvalCtx = @ptrCast(@alignCast(user_data orelse return));
+    defer alloc.destroy(ctx);
+    const entry = pending_evals.get(ctx.id) orelse return;
+    entry.done = true;
+
+    const finish = ext.evaluate_javascript_finish orelse {
+        entry.err = alloc.dupe(u8, "webkit_web_view_evaluate_javascript_finish unavailable") catch null;
+        return;
+    };
+    var err: ?*glib.Error = null;
+    const value = finish(source orelse return, res, &err);
+    if (value) |jsc_value| {
+        defer gobject.Object.unref(@ptrCast(@alignCast(jsc_value)));
+        entry.ok = true;
+        if (ext.jsc_value_to_string) |to_str| {
+            if (to_str(jsc_value)) |cstr| {
+                defer glib.free(cstr);
+                entry.value = alloc.dupe(u8, std.mem.span(cstr)) catch null;
+            }
+        }
+        return;
+    }
+    if (err) |e| {
+        defer e.free();
+        const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "unknown error";
+        entry.err = alloc.dupe(u8, msg) catch null;
+    } else {
+        entry.err = alloc.dupe(u8, "unknown error") catch null;
+    }
+}
+
+/// Snapshot of an eval by id. Null for an id that was never issued (or has
+/// already been taken); `done` false means it is still running.
+pub const EvalState = struct { done: bool, ok: bool, value: ?[]const u8, err: ?[]const u8 };
+
+pub fn evalPoll(id: u64) ?EvalState {
+    const entry = pending_evals.get(id) orelse return null;
+    return .{ .done = entry.done, .ok = entry.ok, .value = entry.value, .err = entry.err };
+}
+
+/// Drops a settled eval. A still-running eval is NOT released — its completion
+/// callback would then write through a freed entry — it is simply orphaned and
+/// reaped by its own callback path on the next `evalRelease` after it settles.
+pub fn evalRelease(id: u64) void {
+    const entry = pending_evals.get(id) orelse return;
+    if (!entry.done) return;
+    _ = pending_evals.remove(id);
+    if (entry.value) |v| alloc.free(v);
+    if (entry.err) |e| alloc.free(e);
+    alloc.destroy(entry);
+}
+
+/// The `pageTextContains` waitFor predicate's backing cache: one entry per
+/// webview NODE (not widget pointer, so a destroyed view cannot be
+/// dereferenced from the completion callback). Reading it kicks a refresh at
+/// most once per `page_text_interval_us`, which is what keeps a ~50ms waitFor
+/// tick from injecting JavaScript fifty times a second.
+const page_text_interval_us: i64 = 250_000;
+const PageText = struct { text: ?[]u8 = null, stamp_us: i64 = 0, in_flight: bool = false };
+var page_texts: std.AutoHashMapUnmanaged(u32, PageText) = .empty;
+
+const PageTextCtx = struct { node_id: u32 };
+
+/// Last known `document.body.innerText`, and a refresh if the cache is stale.
+/// Null until the first probe answers, so a predicate simply does not match
+/// yet — the waitFor tick keeps calling.
+pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
+    const node_id = widgetNodeId(widget) orelse return null;
+    const gop = page_texts.getOrPut(alloc, node_id) catch return null;
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+    const entry = gop.value_ptr;
+    const now = glib.getMonotonicTime();
+    if (!entry.in_flight and now - entry.stamp_us >= page_text_interval_us) {
+        if (startPageTextProbe(widget, node_id)) entry.in_flight = true;
+    }
+    return entry.text;
+}
+
+fn startPageTextProbe(widget: *gtk.Widget, node_id: u32) bool {
+    const eval = ext.evaluate_javascript orelse return false;
+    if (!isReal(widget)) return false;
+    const ctx = alloc.create(PageTextCtx) catch return false;
+    ctx.* = .{ .node_id = node_id };
+    const code = "document.body ? document.body.innerText : \"\"";
+    eval(@ptrCast(widget), code, -1, null, null, null, &cbPageTextReady, ctx);
+    return true;
+}
+
+fn cbPageTextReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const ctx: *PageTextCtx = @ptrCast(@alignCast(user_data orelse return));
+    defer alloc.destroy(ctx);
+    const entry = page_texts.getPtr(ctx.node_id) orelse return;
+    entry.in_flight = false;
+    entry.stamp_us = glib.getMonotonicTime();
+
+    const finish = ext.evaluate_javascript_finish orelse return;
+    var err: ?*glib.Error = null;
+    const value = finish(source orelse return, res, &err);
+    if (err) |e| e.free();
+    const jsc_value = value orelse return;
+    defer gobject.Object.unref(@ptrCast(@alignCast(jsc_value)));
+    const to_str = ext.jsc_value_to_string orelse return;
+    const cstr = to_str(jsc_value) orelse return;
+    defer glib.free(cstr);
+    const next = alloc.dupe(u8, std.mem.span(cstr)) catch return;
+    if (entry.text) |old| alloc.free(old);
+    entry.text = next;
 }

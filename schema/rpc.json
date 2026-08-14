@@ -98,7 +98,7 @@
     },
     {
       "name": "WaitCondition",
-      "doc": "Exactly one selector: textContains | refVisible | testId. With testId, `state` (default \"present\", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools \"true\"/\"false\") so one predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round trip.",
+      "doc": "Exactly one selector: textContains | refVisible | testId. With testId, `state` (default \"present\", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools \"true\"/\"false\") so one predicate works for TextInput and Slider alike. urlContains/pageTitleContains/pageTextContains are PAGE predicates and refine a testId selector the same way; the node they name must be a WebView. url and title come from the engine directly, but pageTextContains INJECTS JAVASCRIPT (document.body.innerText) into the page world, re-probed at most once per 250ms and matched against the last answer — so a match can lag the page by one probe. Every predicate is evaluated host-side on the retained tree plus the live probes, once per ~50ms tick — never a getTree round trip.",
       "fields": [
         { "name": "textContains", "type": "string", "optional": true },
         { "name": "refVisible", "type": "u32", "optional": true },
@@ -106,7 +106,10 @@
         { "name": "state", "type": "string", "optional": true },
         { "name": "countAtLeast", "type": "u32", "optional": true },
         { "name": "valueEquals", "type": "string", "optional": true },
-        { "name": "valueContains", "type": "string", "optional": true }
+        { "name": "valueContains", "type": "string", "optional": true },
+        { "name": "urlContains", "type": "string", "optional": true },
+        { "name": "pageTitleContains", "type": "string", "optional": true },
+        { "name": "pageTextContains", "type": "string", "optional": true }
       ]
     },
     {
@@ -152,6 +155,28 @@
     {
       "name": "KeysResult",
       "fields": [{ "name": "dispatched", "type": "bool" }]
+    },
+    {
+      "name": "WebViewInfo",
+      "doc": "Live page state read off the engine on the UI thread (WebKitGTK's uri/title/is-loading/can-go-back/can-go-forward, WKWebView's url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation. url/title are null before the first commit.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "url", "type": "string", "nullable": true },
+        { "name": "title", "type": "string", "nullable": true },
+        { "name": "loading", "type": "bool" },
+        { "name": "canGoBack", "type": "bool" },
+        { "name": "canGoForward", "type": "bool" }
+      ]
+    },
+    {
+      "name": "WebViewEvalResult",
+      "doc": "`value` is the result's STRING rendering (the engine's own JSValue-to-string), the same shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception `ok` is false and `error` carries the engine's message.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "ok", "type": "bool" },
+        { "name": "value", "type": "string", "nullable": true },
+        { "name": "error", "type": "string", "nullable": true }
+      ]
     }
   ],
   "methods": [
@@ -283,6 +308,29 @@
         { "name": "window", "type": "u32", "optional": true }
       ],
       "result": "PointerResult"
+    },
+    {
+      "name": "webviewInfo",
+      "doc": "Live page state for a WebView node: {url, title, loading, canGoBack, canGoForward}. Read straight off the engine, so a drive can assert what a page did without the app forwarding its navigate/titleChanged events. Target by exactly one of ref / testId (window optionally scopes testId resolution); a target that is not a WebView answers -32602.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "WebViewInfo"
+    },
+    {
+      "name": "webviewEval",
+      "doc": "Evaluates `code` in a WebView node's page and answers the result's string rendering. `world` picks an isolated content world by name (absent/empty = the page's own world), matching the executeJavaScript command. The engine's evaluation is asynchronous: the host starts it, then polls its own UI thread until it settles or timeoutMs elapses (-32002). A thrown exception is a RESULT with ok:false, not an RPC error. Target by exactly one of ref / testId; a target that is not a WebView answers -32602.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true },
+        { "name": "code", "type": "string" },
+        { "name": "world", "type": "string", "optional": true },
+        { "name": "timeoutMs", "type": "i64", "default": 5000 }
+      ],
+      "result": "WebViewEvalResult"
     },
     {
       "name": "drag",

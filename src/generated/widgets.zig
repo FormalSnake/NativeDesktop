@@ -332,6 +332,17 @@ pub fn initEvents(gpa: std.mem.Allocator, emit_fn: EmitFn) void {
 
 fn noteSuppressible(obj: *gobject.Object, handler_id: c_ulong) void {
     suppress_map.put(events_gpa, @intFromPtr(obj), handler_id) catch {};
+    // Evict on death: the map is keyed by ADDRESS, and GLib recycles those.
+    // A stale id belonging to a dead object makes signalHandlerBlock raise a
+    // critical and silently fail to block, so a long-lived app that mounts and
+    // unmounts controlled text widgets would eventually stop suppressing
+    // echoes. Same discipline as cbRadioGroupDestroyed; a weak ref rather than
+    // "destroy" because the target can be a GtkTextBuffer, which has none.
+    gobject.Object.weakRef(obj, &cbSuppressibleDied, null);
+}
+
+fn cbSuppressibleDied(_: ?*anyopaque, dead: *gobject.Object) callconv(.c) void {
+    _ = suppress_map.remove(@intFromPtr(dead));
 }
 
 fn blockEcho(obj: *gobject.Object) void {
@@ -2545,7 +2556,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         ndHeaderBarConnectNav(widget, node_id);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         const obj_SearchInput_changed = asObject(widget);
-        const hid_SearchInput_changed = gobject.signalConnectData(obj_SearchInput_changed, "search-changed", @ptrCast(&cbEditableChanged), data, null, .{});
+        const hid_SearchInput_changed = gobject.signalConnectData(obj_SearchInput_changed, "changed", @ptrCast(&cbEditableChanged), data, null, .{});
         noteSuppressible(obj_SearchInput_changed, hid_SearchInput_changed);
         const obj_SearchInput_activate = asObject(widget);
         const hid_SearchInput_activate = gobject.signalConnectData(obj_SearchInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});

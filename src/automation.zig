@@ -40,7 +40,7 @@ fn parseParams(comptime T: type, gpa: std.mem.Allocator, params: ?std.json.Value
 /// reads one widget's bounds + owning window on the UI thread so the
 /// automation thread can resolve drag endpoints; `resolve_ref` ranks a
 /// testID's instances; `list_windows` snapshots every Window node's state.
-const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows };
+const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows, webview_info, webview_eval_start, webview_eval_poll };
 
 /// A request/response handoff between the automation thread and the
 /// embedder's UI thread. The tree is read exclusively on the UI thread (see
@@ -59,6 +59,12 @@ const UiJob = struct {
     count_at_least: ?u32 = null, // wait_poll: condition.countAtLeast
     value_equals: ?[]const u8 = null, // wait_poll: condition.valueEquals
     value_contains: ?[]const u8 = null, // wait_poll: condition.valueContains
+    url_contains: ?[]const u8 = null, // wait_poll: condition.urlContains
+    page_title_contains: ?[]const u8 = null, // wait_poll: condition.pageTitleContains
+    page_text_contains: ?[]const u8 = null, // wait_poll: condition.pageTextContains
+    code: ?[]const u8 = null, // webview_eval_start: params.code
+    world: ?[]const u8 = null, // webview_eval_start: params.world
+    eval_id: u64 = 0, // webview_eval_poll: the id webview_eval_start answered
     actionable: bool = true, // resolve_ref: params.actionable
     value: ?std.json.Value = null, // set_value: params.value (string|bool|number per widget kind)
     text: ?[]const u8 = null, // type_text: params.text
@@ -154,6 +160,9 @@ fn handleOnUi(job: *UiJob) void {
         .probe_rect => handleProbeRect(job),
         .resolve_ref => handleResolve(job),
         .list_windows => handleWindows(job),
+        .webview_info => handleSemanticAction(job, "webviewInfo"),
+        .webview_eval_start => handleSemanticAction(job, "webviewEvalStart"),
+        .webview_eval_poll => handleSemanticAction(job, "webviewEvalPoll"),
     }
 }
 
@@ -358,6 +367,26 @@ fn probeA11y(arena: std.mem.Allocator, widget: *Widget, id: u32) A11yProbe {
     return out;
 }
 
+/// One node's live webview probe (`semantic_action` op #17, "webviewInfo" /
+/// "webviewPageText" — no new ABI op) behind waitFor's urlContains /
+/// pageTitleContains / pageTextContains. Null when the node is not a WebView
+/// (or the backend lacks the arm), which reads as "does not match yet" rather
+/// than an error: a predicate naming a testId that has not mounted its webview
+/// yet must keep polling, not fail.
+fn probeWebViewString(arena: std.mem.Allocator, widget: *Widget, id: u32, action: [*:0]const u8, key: []const u8) ?[]const u8 {
+    var res: ?[*:0]u8 = null;
+    var err: ?[*:0]u8 = null;
+    const code = abi_backend.vtable.semantic_action(abi_backend.ctx, widget, id, action, "{}", &res, &err);
+    if (err) |e| abi.nd_free(e);
+    const r = res orelse return null;
+    defer abi.nd_free(r);
+    if (code != 0) return null;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, std.mem.span(r), .{ .allocate = .alloc_always }) catch return null;
+    if (parsed != .object) return null;
+    const v = parsed.object.get(key) orelse return null;
+    return if (v == .string) v.string else null;
+}
+
 /// A value's string rendering for valueEquals/valueContains: strings raw,
 /// numbers stringified, bools "true"/"false" — one predicate works for
 /// TextInput and Slider alike.
@@ -422,6 +451,26 @@ fn handleWaitPoll(job: *UiJob) void {
             // Every state but "present" filters by the same actionability
             // rule `resolve` uses; "visible" is exactly that rule.
             if (!is_present and actionability(job.tree, id) != .ok) continue;
+            // Page predicates: url/title come off the engine, page text off
+            // the throttled innerText cache. All three read as "not yet" while
+            // the node is not a live webview, so a waitFor started before the
+            // view mounts keeps polling instead of erroring out.
+            const need_page = job.url_contains != null or job.page_title_contains != null or job.page_text_contains != null;
+            if (need_page) {
+                const widget = job.tree.get(id) orelse continue;
+                if (job.url_contains) |want| {
+                    const url = probeWebViewString(arena, widget, id, "webviewInfo", "url") orelse continue;
+                    if (std.mem.indexOf(u8, url, want) == null) continue;
+                }
+                if (job.page_title_contains) |want| {
+                    const title = probeWebViewString(arena, widget, id, "webviewInfo", "title") orelse continue;
+                    if (std.mem.indexOf(u8, title, want) == null) continue;
+                }
+                if (job.page_text_contains) |want| {
+                    const text = probeWebViewString(arena, widget, id, "webviewPageText", "text") orelse continue;
+                    if (std.mem.indexOf(u8, text, want) == null) continue;
+                }
+            }
             const need_probe = job.value_equals != null or job.value_contains != null or
                 std.mem.eql(u8, state, "enabled") or std.mem.eql(u8, state, "disabled") or std.mem.eql(u8, state, "focused");
             if (need_probe) {
@@ -508,6 +557,8 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
                 allocZFromValue(job.gpa, .{ .actionId = a }))
         else
             job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
+        .webview_eval_start => allocZFromValue(job.gpa, .{ .code = job.code orelse "", .world = job.world }),
+        .webview_eval_poll => allocZFromValue(job.gpa, .{ .evalId = job.eval_id }),
         else => job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
     };
 }
@@ -1026,8 +1077,83 @@ pub const Server = struct {
                 var job = UiJob{ .tree = self.tree, .kind = .window_action, .gpa = self.gpa, .io = self.io, .window = p.value.window, .action = "keys", .args_json = args };
                 return self.runJobAndEnvelope(&job, id);
             },
+            .webviewInfo => {
+                const p = parseParams(rpc.WebviewInfoParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                var job = UiJob{ .tree = self.tree, .kind = .webview_info, .gpa = self.gpa, .io = self.io };
+                if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .webviewEval => return self.dispatchWebviewEval(id, parsed.value.params),
             .drag => return self.dispatchDrag(id, parsed.value.params),
         }
+    }
+
+    /// webviewEval — the engine evaluates asynchronously and the vtable call
+    /// runs ON the UI thread, so it cannot block waiting for the answer.
+    /// Start the evaluation, then poll the settled flag from here (the
+    /// automation thread, which may sleep) exactly like `dispatchWaitFor`.
+    fn dispatchWebviewEval(self: *Server, id: std.json.Value, params: ?std.json.Value) ![]u8 {
+        const p = parseParams(rpc.WebviewEvalParams, self.gpa, params) catch {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+        };
+        defer p.deinit();
+        const code = p.value.code orelse return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "missing params.code", null);
+
+        var begin = UiJob{ .tree = self.tree, .kind = .webview_eval_start, .gpa = self.gpa, .io = self.io, .code = code, .world = p.value.world };
+        if (self.targetError(id, &begin, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+        runOnUi(&begin);
+        defer if (begin.result_json) |r| self.gpa.free(r);
+        defer if (begin.err_data_json) |d| self.gpa.free(d);
+        const start_json = begin.result_json orelse
+            return errorEnvelope(self.gpa, id, begin.err_code, begin.err_msg orelse rpc.msg_internal_error, begin.err_data_json);
+        const eval_id = readEvalId(self.gpa, start_json) orelse
+            return errorEnvelope(self.gpa, id, rpc.code_internal_error, "webviewEvalStart returned no evalId", null);
+        // The resolved ref, not the caller's testId: the answer names the node
+        // the evaluation actually ran in.
+        const ref = begin.ref;
+
+        const poll_interval_ms = 25;
+        const max_polls = @max(1, @divTrunc(p.value.timeoutMs, poll_interval_ms) + 1);
+        var polls: i64 = 0;
+        while (true) {
+            var poll = UiJob{ .tree = self.tree, .kind = .webview_eval_poll, .gpa = self.gpa, .io = self.io, .ref = ref, .eval_id = eval_id };
+            runOnUi(&poll);
+            defer if (poll.result_json) |r| self.gpa.free(r);
+            defer if (poll.err_data_json) |d| self.gpa.free(d);
+            const poll_json = poll.result_json orelse
+                return errorEnvelope(self.gpa, id, poll.err_code, poll.err_msg orelse rpc.msg_internal_error, poll.err_data_json);
+            if (try self.evalEnvelopeIfSettled(id, ref, poll_json)) |env| return env;
+            polls += 1;
+            if (polls >= max_polls) {
+                const data = try std.fmt.allocPrint(self.gpa, "{{\"timeoutMs\":{d}}}", .{p.value.timeoutMs});
+                defer self.gpa.free(data);
+                return errorEnvelope(self.gpa, id, rpc.code_wait_for_timeout, rpc.msg_wait_for_timeout, data);
+            }
+            std.Io.sleep(self.io, .fromMilliseconds(poll_interval_ms), .awake) catch {};
+        }
+    }
+
+    /// Turns one `webviewEvalPoll` answer into the RPC envelope, or null while
+    /// the evaluation is still running. A page exception is a RESULT
+    /// (`ok:false` + `error`), never an RPC error — the caller asked whether
+    /// the code ran, and it did.
+    fn evalEnvelopeIfSettled(self: *Server, id: std.json.Value, ref: u32, poll_json: []const u8) !?[]u8 {
+        const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, poll_json, .{}) catch return null;
+        defer parsed.deinit();
+        if (parsed.value != .object) return null;
+        const obj = parsed.value.object;
+        const done = obj.get("done") orelse return null;
+        if (done != .bool or !done.bool) return null;
+        const ok = if (obj.get("ok")) |v| (v == .bool and v.bool) else false;
+        const value: ?[]const u8 = if (obj.get("value")) |v| (if (v == .string) v.string else null) else null;
+        const err: ?[]const u8 = if (obj.get("error")) |v| (if (v == .string) v.string else null) else null;
+        const result = rpc.WebViewEvalResult{ .ref = ref, .ok = ok, .value = value, .@"error" = err };
+        const result_json = try std.json.Stringify.valueAlloc(self.gpa, result, .{});
+        defer self.gpa.free(result_json);
+        return try resultEnvelope(self.gpa, id, result_json);
     }
 
     /// Normalizes an action's target params onto `job`: exactly one of
@@ -1133,8 +1259,10 @@ pub const Server = struct {
         if (selectors != 1) {
             return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "condition needs exactly one of textContains / refVisible / testId", null);
         }
-        if (condition.testId == null and (condition.state != null or condition.countAtLeast != null or condition.valueEquals != null or condition.valueContains != null)) {
-            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "state/countAtLeast/valueEquals/valueContains require condition.testId", null);
+        if (condition.testId == null and (condition.state != null or condition.countAtLeast != null or condition.valueEquals != null or condition.valueContains != null or
+            condition.urlContains != null or condition.pageTitleContains != null or condition.pageTextContains != null))
+        {
+            return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "state/countAtLeast/valueEquals/valueContains/urlContains/pageTitleContains/pageTextContains require condition.testId", null);
         }
         if (condition.state) |s| {
             if (!isWaitState(s)) {
@@ -1158,6 +1286,9 @@ pub const Server = struct {
                 .count_at_least = condition.countAtLeast,
                 .value_equals = condition.valueEquals,
                 .value_contains = condition.valueContains,
+                .url_contains = condition.urlContains,
+                .page_title_contains = condition.pageTitleContains,
+                .page_text_contains = condition.pageTextContains,
                 .window = p.value.window,
             };
             runOnUi(&job);
@@ -1194,6 +1325,17 @@ pub const Server = struct {
         return errorEnvelope(self.gpa, id, job.err_code, job.err_msg orelse rpc.msg_internal_error, job.err_data_json);
     }
 };
+
+/// The `evalId` out of a `webviewEvalStart` answer. The backends serialize it
+/// as a plain integer; anything else means the arm is missing or lied.
+fn readEvalId(gpa: std.mem.Allocator, json: []const u8) ?u64 {
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, json, .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const v = parsed.value.object.get("evalId") orelse return null;
+    if (v != .integer or v.integer <= 0) return null;
+    return @intCast(v.integer);
+}
 
 /// Reads one u32 LE length prefix + payload (the NDP outer frame). Caller frees.
 fn readFrame(gpa: std.mem.Allocator, r: *std.Io.Reader) ![]u8 {

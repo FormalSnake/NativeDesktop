@@ -78,7 +78,7 @@ export interface ScrollResult {
   y: number;
 }
 
-/** Exactly one selector: textContains | refVisible | testId. With testId, `state` (default "present", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools "true"/"false") so one predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round trip. */
+/** Exactly one selector: textContains | refVisible | testId. With testId, `state` (default "present", one of present|gone|visible|enabled|disabled|focused) picks the predicate and countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against the node's a11y value STRING RENDERING (numbers stringified, bools "true"/"false") so one predicate works for TextInput and Slider alike. urlContains/pageTitleContains/pageTextContains are PAGE predicates and refine a testId selector the same way; the node they name must be a WebView. url and title come from the engine directly, but pageTextContains INJECTS JAVASCRIPT (document.body.innerText) into the page world, re-probed at most once per 250ms and matched against the last answer — so a match can lag the page by one probe. Every predicate is evaluated host-side on the retained tree plus the live probes, once per ~50ms tick — never a getTree round trip. */
 export interface WaitCondition {
   textContains?: string;
   refVisible?: number;
@@ -87,6 +87,9 @@ export interface WaitCondition {
   countAtLeast?: number;
   valueEquals?: string;
   valueContains?: string;
+  urlContains?: string;
+  pageTitleContains?: string;
+  pageTextContains?: string;
 }
 
 export interface ResolveResult {
@@ -125,6 +128,24 @@ export interface DragResult {
 
 export interface KeysResult {
   dispatched: boolean;
+}
+
+/** Live page state read off the engine on the UI thread (WebKitGTK's uri/title/is-loading/can-go-back/can-go-forward, WKWebView's url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation. url/title are null before the first commit. */
+export interface WebViewInfo {
+  ref: number;
+  url: string | null;
+  title: string | null;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+/** `value` is the result's STRING rendering (the engine's own JSValue-to-string), the same shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception `ok` is false and `error` carries the engine's message. */
+export interface WebViewEvalResult {
+  ref: number;
+  ok: boolean;
+  value: string | null;
+  error: string | null;
 }
 
 /** Full tree snapshot with stable refs, testIDs, text, logical geometry, and accessibility state (role/enabled/focused/value). window (if given) must be a Window node ref and scopes the snapshot to that window's subtree; absent, the root/first window is used and other windows' nodes attach as orphans. */
@@ -216,6 +237,23 @@ export interface PointerParams {
   window?: number;
 }
 
+/** Live page state for a WebView node: {url, title, loading, canGoBack, canGoForward}. Read straight off the engine, so a drive can assert what a page did without the app forwarding its navigate/titleChanged events. Target by exactly one of ref / testId (window optionally scopes testId resolution); a target that is not a WebView answers -32602. */
+export interface WebviewInfoParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
+/** Evaluates `code` in a WebView node's page and answers the result's string rendering. `world` picks an isolated content world by name (absent/empty = the page's own world), matching the executeJavaScript command. The engine's evaluation is asynchronous: the host starts it, then polls its own UI thread until it settles or timeoutMs elapses (-32002). A thrown exception is a RESULT with ok:false, not an RPC error. Target by exactly one of ref / testId; a target that is not a WebView answers -32602. */
+export interface WebviewEvalParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+  code: string;
+  world?: string;
+  timeoutMs?: number;
+}
+
 /** Press-move-release gesture. Endpoints are widget refs (their centers; fromRef/toRef must share a window) or explicit coordinates (fromX/fromY/toX/toY in the target window, default root). The full down/dragged.../up sequence is posted as one batch so native mouse-tracking loops (slider thumbs, split dividers) consume it like a real drag. Unsupported on GTK (-32003). */
 export interface DragParams {
   fromRef?: number;
@@ -250,6 +288,8 @@ export interface RpcMethods {
   resolve: { params: ResolveParams; result: ResolveResult };
   windows: { params: undefined; result: WindowsResult };
   pointer: { params: PointerParams; result: PointerResult };
+  webviewInfo: { params: WebviewInfoParams; result: WebViewInfo };
+  webviewEval: { params: WebviewEvalParams; result: WebViewEvalResult };
   drag: { params: DragParams; result: DragResult };
   keys: { params: KeysParams; result: KeysResult };
 }

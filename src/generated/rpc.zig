@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, resolve, windows, pointer, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -21,6 +21,8 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "resolve", .method = .resolve },
     .{ .name = "windows", .method = .windows },
     .{ .name = "pointer", .method = .pointer },
+    .{ .name = "webviewInfo", .method = .webviewInfo },
+    .{ .name = "webviewEval", .method = .webviewEval },
     .{ .name = "drag", .method = .drag },
     .{ .name = "keys", .method = .keys },
 };
@@ -77,7 +79,7 @@ pub const RowJson = struct {
 /// on backends without the probe.
 pub const JsonNode = struct {
     ref: u32,
-    type: []const u8,
+    @"type": []const u8,
     testID: ?[]const u8 = null,
     text: ?[]const u8 = null,
     visible: bool,
@@ -138,9 +140,13 @@ pub const ScrollResult = struct {
 /// "present", one of present|gone|visible|enabled|disabled|focused) picks the predicate and
 /// countAtLeast/valueEquals/valueContains refine it. valueEquals/valueContains compare against
 /// the node's a11y value STRING RENDERING (numbers stringified, bools "true"/"false") so one
-/// predicate works for TextInput and Slider alike. Every predicate is evaluated host-side on
-/// the retained tree plus the live a11y probe, once per ~50ms tick — never a getTree round
-/// trip.
+/// predicate works for TextInput and Slider alike.
+/// urlContains/pageTitleContains/pageTextContains are PAGE predicates and refine a testId
+/// selector the same way; the node they name must be a WebView. url and title come from the
+/// engine directly, but pageTextContains INJECTS JAVASCRIPT (document.body.innerText) into the
+/// page world, re-probed at most once per 250ms and matched against the last answer — so a
+/// match can lag the page by one probe. Every predicate is evaluated host-side on the retained
+/// tree plus the live probes, once per ~50ms tick — never a getTree round trip.
 pub const WaitCondition = struct {
     textContains: ?[]const u8 = null,
     refVisible: ?u32 = null,
@@ -149,6 +155,9 @@ pub const WaitCondition = struct {
     countAtLeast: ?u32 = null,
     valueEquals: ?[]const u8 = null,
     valueContains: ?[]const u8 = null,
+    urlContains: ?[]const u8 = null,
+    pageTitleContains: ?[]const u8 = null,
+    pageTextContains: ?[]const u8 = null,
 };
 
 pub const ResolveResult = struct {
@@ -188,6 +197,29 @@ pub const DragResult = struct {
 
 pub const KeysResult = struct {
     dispatched: bool,
+};
+
+/// Live page state read off the engine on the UI thread (WebKitGTK's
+/// uri/title/is-loading/can-go-back/can-go-forward, WKWebView's
+/// url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation.
+/// url/title are null before the first commit.
+pub const WebViewInfo = struct {
+    ref: u32,
+    url: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    loading: bool,
+    canGoBack: bool,
+    canGoForward: bool,
+};
+
+/// `value` is the result's STRING rendering (the engine's own JSValue-to-string), the same
+/// shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception
+/// `ok` is false and `error` carries the engine's message.
+pub const WebViewEvalResult = struct {
+    ref: u32,
+    ok: bool,
+    value: ?[]const u8 = null,
+    @"error": ?[]const u8 = null,
 };
 
 /// getTree: Full tree snapshot with stable refs, testIDs, text, logical geometry, and
@@ -306,6 +338,31 @@ pub const PointerParams = struct {
     button: ?[]const u8 = null,
     clickCount: ?u32 = null,
     window: ?u32 = null,
+};
+
+/// webviewInfo: Live page state for a WebView node: {url, title, loading, canGoBack,
+/// canGoForward}. Read straight off the engine, so a drive can assert what a page did without
+/// the app forwarding its navigate/titleChanged events. Target by exactly one of ref / testId
+/// (window optionally scopes testId resolution); a target that is not a WebView answers -32602.
+pub const WebviewInfoParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// webviewEval: Evaluates `code` in a WebView node's page and answers the result's string
+/// rendering. `world` picks an isolated content world by name (absent/empty = the page's own
+/// world), matching the executeJavaScript command. The engine's evaluation is asynchronous: the
+/// host starts it, then polls its own UI thread until it settles or timeoutMs elapses (-32002).
+/// A thrown exception is a RESULT with ok:false, not an RPC error. Target by exactly one of ref
+/// / testId; a target that is not a WebView answers -32602.
+pub const WebviewEvalParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+    code: ?[]const u8 = null,
+    world: ?[]const u8 = null,
+    timeoutMs: i64 = 5000,
 };
 
 /// drag: Press-move-release gesture. Endpoints are widget refs (their centers; fromRef/toRef

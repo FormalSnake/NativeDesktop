@@ -317,13 +317,17 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     const state = stateOf(widget) orelse return;
     state.node_id = node_id;
 
-    state.search_changed_hid = gobject.signalConnectData(asObj(state.entry), "search-changed", @ptrCast(&cbSearchChanged), state, null, .{});
+    // "changed", not "search-changed": the latter is debounced ~150ms except on
+    // an empty value, which splits gtk_editable_set_text's delete and insert
+    // across two turns and collapses a controlled query. Peer of the
+    // SearchInput.changed entry in tools/codegen.ts.
+    state.search_changed_hid = gobject.signalConnectData(asObj(state.entry), "changed", @ptrCast(&cbSearchChanged), state, null, .{});
     _ = gobject.signalConnectData(asObj(state.list), "row-activated", @ptrCast(&cbRowActivated), state, null, .{});
     _ = gobject.signalConnectData(asObj(state.dialog), "closed", @ptrCast(&cbDialogClosed), state, null, .{});
 
     // Capture-phase key controller on the entry: intercept navigation/commit
     // keys before GtkSearchEntry consumes them (its own Esc clears the text),
-    // let plain typing fall through to drive search-changed.
+    // let plain typing fall through to drive the entry's changed signal.
     const key_ctrl = gtk.EventControllerKey.new();
     gtk.EventController.setPropagationPhase(key_ctrl.as(gtk.EventController), .capture);
     _ = gtk.EventControllerKey.signals.key_pressed.connect(key_ctrl, *State, &onKeyPressed, state, .{});
@@ -402,7 +406,7 @@ pub fn automationAction(handle: *gtk.Widget, node_id: u32, action: []const u8, a
             .string => |s| {
                 const z = std.heap.page_allocator.dupeZ(u8, s) catch return cpSetErr(err_out, node_id);
                 defer std.heap.page_allocator.free(z);
-                gtk.Editable.setText(state.entry.as(gtk.Editable), z); // fires search-changed -> queryChanged
+                gtk.Editable.setText(state.entry.as(gtk.Editable), z); // fires changed -> queryChanged
             },
             .integer => |i| {
                 if (i < 0 or i >= @as(i64, @intCast(state.ids.items.len))) return cpSetErr(err_out, node_id);
@@ -424,7 +428,7 @@ pub fn automationAction(handle: *gtk.Widget, node_id: u32, action: []const u8, a
         var pos: c_int = @intCast(std.unicode.utf8CountCodepoints(cur) catch cur.len);
         const z = std.heap.page_allocator.dupeZ(u8, t.string) catch return cpSetErr(err_out, node_id);
         defer std.heap.page_allocator.free(z);
-        gtk.Editable.insertText(editable, z, -1, &pos); // fires search-changed -> queryChanged
+        gtk.Editable.insertText(editable, z, -1, &pos); // fires changed -> queryChanged
         cpSetResult(result_out, .{ .ref = node_id, .text = std.mem.span(gtk.Editable.getText(editable)) });
         return 0;
     } else if (std.mem.eql(u8, action, "click")) {
@@ -497,7 +501,7 @@ fn onKeyPressed(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk
             }
             return 1;
         },
-        else => return 0, // typing drives search-changed
+        else => return 0, // typing drives the entry's changed signal
     }
 }
 

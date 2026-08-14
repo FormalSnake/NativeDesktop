@@ -2,6 +2,7 @@ import AppKit
 import CNd
 import Foundation
 import QuartzCore
+import WebKit
 
 // The AppKit peer of src/gtk/backend.zig's vtNodeVisible/vtNodeBounds/
 // vtSnapshot/vtSemanticAction. node_visible/node_bounds/snapshot/
@@ -1017,8 +1018,135 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
         guard ndPostHoverAtCenter(view) else { return invalidValue(errOut, nodeID) }
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
+    case "webviewInfo":
+        return semanticWebViewInfo(view, nodeID, resultOut, errOut)
+    case "webviewEvalStart":
+        return semanticWebViewEvalStart(view, nodeID, args, resultOut, errOut)
+    case "webviewEvalPoll":
+        return semanticWebViewEvalPoll(nodeID, args, resultOut, errOut)
+    case "webviewPageText":
+        return semanticWebViewPageText(view, nodeID, resultOut, errOut)
     default:
         setErrRaw(errOut, nodeID)
         return -32601
     }
+}
+
+// MARK: - WebView automation (webviewInfo / webviewEval / waitFor page predicates)
+//
+// Peer of src/gtk/backend.zig's semanticWebView* arms. These answer the
+// automation socket directly and never route through the Bun child: a drive
+// must be able to read page state from an app that forwards no events.
+// WebKit's evaluation is asynchronous while the vtable call runs ON the main
+// thread, hence the start/poll pair rather than a blocking call.
+
+/// One in-flight or settled automation eval, keyed by id in a main-actor
+/// store rather than hung off the view, so a view torn down mid-eval cannot
+/// leave the completion writing through a dead reference.
+@MainActor private final class NDPendingEval {
+    var done = false
+    var ok = false
+    var value: String?
+    var error: String?
+}
+
+@MainActor private var ndPendingEvals: [UInt64: NDPendingEval] = [:]
+@MainActor private var ndNextEvalID: UInt64 = 1
+
+/// `pageTextContains`'s backing cache: last known `document.body.innerText`
+/// per webview NODE, refreshed at most once per interval so a ~50ms waitFor
+/// tick does not inject JavaScript fifty times a second.
+@MainActor private struct NDPageText {
+    var text: String?
+    var stamp = Date.distantPast
+    var inFlight = false
+}
+
+@MainActor private var ndPageTexts: [UInt32: NDPageText] = [:]
+private let ndPageTextInterval: TimeInterval = 0.25
+
+@MainActor private func semanticWebViewInfo(_ view: NSView, _ nodeID: UInt32,
+                                            _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                            _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard let web = view as? NDWebView else { return invalidValue(errOut, nodeID) }
+    let url = web.url.map { "\"\(escapeJSONString($0.absoluteString))\"" } ?? "null"
+    let title = (web.title?.isEmpty == false) ? "\"\(escapeJSONString(web.title!))\"" : "null"
+    setResultRaw(resultOut, "{\"ref\":\(nodeID),\"url\":\(url),\"title\":\(title),"
+        + "\"loading\":\(web.isLoading),\"canGoBack\":\(web.canGoBack),\"canGoForward\":\(web.canGoForward)}")
+    return 0
+}
+
+@MainActor private func semanticWebViewEvalStart(_ view: NSView, _ nodeID: UInt32, _ args: [String: Any],
+                                                 _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                                 _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard let web = view as? NDWebView, let code = args["code"] as? String else {
+        return invalidValue(errOut, nodeID)
+    }
+    let world = NDWebView.contentWorld(named: args["world"] as? String ?? "")
+    let id = ndNextEvalID
+    ndNextEvalID += 1
+    let entry = NDPendingEval()
+    ndPendingEvals[id] = entry
+    web.evaluateJavaScript(code, in: nil, in: world) { result in
+        entry.done = true
+        switch result {
+        case .success(let value):
+            entry.ok = true
+            entry.value = ndStringifyEvalResult(value)
+        case .failure(let error):
+            let info = (error as NSError).userInfo
+            entry.error = (info["WKJavaScriptExceptionMessage"] as? String) ?? error.localizedDescription
+        }
+    }
+    setResultRaw(resultOut, "{\"evalId\":\(id)}")
+    return 0
+}
+
+@MainActor private func semanticWebViewEvalPoll(_ nodeID: UInt32, _ args: [String: Any],
+                                                _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                                _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard let raw = args["evalId"] as? NSNumber else { return invalidValue(errOut, nodeID) }
+    let id = raw.uint64Value
+    guard let entry = ndPendingEvals[id] else { return invalidValue(errOut, nodeID) }
+    let value = entry.value.map { "\"\(escapeJSONString($0))\"" } ?? "null"
+    let error = entry.error.map { "\"\(escapeJSONString($0))\"" } ?? "null"
+    setResultRaw(resultOut, "{\"done\":\(entry.done),\"ok\":\(entry.ok),\"value\":\(value),\"error\":\(error)}")
+    // Read exactly once: the outcome is now the caller's.
+    if entry.done { ndPendingEvals.removeValue(forKey: id) }
+    return 0
+}
+
+@MainActor private func semanticWebViewPageText(_ view: NSView, _ nodeID: UInt32,
+                                                _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                                _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard let web = view as? NDWebView else { return invalidValue(errOut, nodeID) }
+    var entry = ndPageTexts[nodeID] ?? NDPageText()
+    if !entry.inFlight, Date().timeIntervalSince(entry.stamp) >= ndPageTextInterval {
+        entry.inFlight = true
+        web.evaluateJavaScript("document.body ? document.body.innerText : \"\"", in: nil, in: .page) { result in
+            var slot = ndPageTexts[nodeID] ?? NDPageText()
+            slot.inFlight = false
+            slot.stamp = Date()
+            if case .success(let value) = result, let text = ndStringifyEvalResult(value) { slot.text = text }
+            ndPageTexts[nodeID] = slot
+        }
+    }
+    ndPageTexts[nodeID] = entry
+    let text = entry.text.map { "\"\(escapeJSONString($0))\"" } ?? "null"
+    setResultRaw(resultOut, "{\"text\":\(text)}")
+    return 0
+}
+
+/// The result's STRING rendering, matching the javaScriptResult event's
+/// `value` (and WebKitGTK's `jsc_value_to_string`): objects and arrays as
+/// JSON, everything else as its description. `null`/`undefined` answer nil.
+private func ndStringifyEvalResult(_ result: Any?) -> String? {
+    guard let result, !(result is NSNull) else { return nil }
+    if result is [String: Any] || result is [Any],
+       JSONSerialization.isValidJSONObject(result),
+       let data = try? JSONSerialization.data(withJSONObject: result),
+       let s = String(data: data, encoding: .utf8) {
+        return s
+    }
+    return String(describing: result)
 }

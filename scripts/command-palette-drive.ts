@@ -60,6 +60,19 @@ await waitText("Folder: /Users/kyan/Developer");
 await client.call("setValue", { ref: paletteRef, value: "NativeDesktop" });
 await waitText("Query: NativeDesktop");
 
+// 4b. setValue OVER A NON-EMPTY query — the controlled round trip. Regression
+//     guard: GtkEditable.setText is a delete plus an insert, and while the
+//     entry's change signal was GtkSearchEntry's debounced "search-changed",
+//     the delete's synchronous empty reached the app, came back as the `query`
+//     prop, and that programmatic set killed the pending timer carrying the
+//     real value — the field collapsed. Every other setValue here runs against
+//     an empty query (the app clears it on activation), which is exactly why
+//     the collapse went unnoticed.
+await client.call("setValue", { ref: paletteRef, value: "NativeDeskto" });
+await waitText("Query: NativeDeskto");
+await client.call("setValue", { ref: paletteRef, value: "NativeDesktop" });
+await waitText("Query: NativeDesktop");
+
 // 5. setValue integer -> activate the row at that index (drills again).
 await client.call("setValue", { ref: paletteRef, value: 0 });
 await waitText("Folder: /Users/kyan/Developer/NativeDesktop");

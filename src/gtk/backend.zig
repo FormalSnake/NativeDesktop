@@ -658,6 +658,14 @@ fn vtSemanticAction(
         return semanticScroll(w, node_id, args, result_json_out);
     } else if (std.mem.eql(u8, action_s, "rowAction")) {
         return semanticRowAction(w, node_id, args, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "webviewInfo")) {
+        return semanticWebViewInfo(w, node_id, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "webviewEvalStart")) {
+        return semanticWebViewEvalStart(w, node_id, args, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "webviewEvalPoll")) {
+        return semanticWebViewEvalPoll(node_id, args, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "webviewPageText")) {
+        return semanticWebViewPageText(w, node_id, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "a11y")) {
         return semanticA11y(w, node_id, result_json_out);
     } else if (std.mem.eql(u8, action_s, "windowState")) {
@@ -954,6 +962,67 @@ fn semanticRowAction(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, r
     if (!ndsourcetree_gtk.semanticRowAction(widget, action_id, test_id)) return invalidValue(err_json_out, node_id);
     setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
     return 0;
+}
+
+/// "webviewInfo" — the live {url, title, loading, canGoBack, canGoForward}
+/// behind the automation `webviewInfo` RPC and waitFor's
+/// urlContains/pageTitleContains predicates. Read off the engine, so a drive
+/// never needs the app to forward navigate/titleChanged.
+fn semanticWebViewInfo(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const i = ndwebview_gtk.info(widget) orelse return invalidValue(err_json_out, node_id);
+    setResult(result_json_out, .{
+        .ref = node_id,
+        .url = i.url,
+        .title = i.title,
+        .loading = i.loading,
+        .canGoBack = i.can_go_back,
+        .canGoForward = i.can_go_forward,
+    });
+    return 0;
+}
+
+/// "webviewEvalStart" {code, world?} — kicks the engine's asynchronous
+/// evaluation and answers its id. The automation thread polls
+/// "webviewEvalPoll" until it settles; the vtable call itself cannot block,
+/// since it runs ON the UI thread that has to drive the evaluation.
+fn semanticWebViewEvalStart(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const o = objectArg(args) orelse return invalidValue(err_json_out, node_id);
+    const code = switch (o.get("code") orelse return invalidValue(err_json_out, node_id)) {
+        .string => |s| s,
+        else => return invalidValue(err_json_out, node_id),
+    };
+    const world: ?[]const u8 = if (o.get("world")) |w| (if (w == .string) w.string else null) else null;
+    const id = ndwebview_gtk.evalStart(widget, code, world) orelse return invalidValue(err_json_out, node_id);
+    setResult(result_json_out, .{ .evalId = id });
+    return 0;
+}
+
+/// "webviewEvalPoll" {evalId} — one non-blocking look at an eval, releasing it
+/// once it has settled so the caller must read the outcome exactly once.
+fn semanticWebViewEvalPoll(node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const o = objectArg(args) orelse return invalidValue(err_json_out, node_id);
+    const id: u64 = switch (o.get("evalId") orelse return invalidValue(err_json_out, node_id)) {
+        .integer => |n| if (n > 0) @intCast(n) else return invalidValue(err_json_out, node_id),
+        else => return invalidValue(err_json_out, node_id),
+    };
+    const state = ndwebview_gtk.evalPoll(id) orelse return invalidValue(err_json_out, node_id);
+    setResult(result_json_out, .{ .done = state.done, .ok = state.ok, .value = state.value, .@"error" = state.err });
+    if (state.done) ndwebview_gtk.evalRelease(id);
+    return 0;
+}
+
+/// "webviewPageText" — the throttled `document.body.innerText` cache behind
+/// waitFor's pageTextContains. Null text means "no probe has answered yet",
+/// which the predicate treats as not-matching-yet rather than an error.
+fn semanticWebViewPageText(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    if (!ndwebview_gtk.isRealWebView(widget)) return invalidValue(err_json_out, node_id);
+    setResult(result_json_out, .{ .text = ndwebview_gtk.pageText(widget) });
+    return 0;
+}
+
+fn objectArg(args: ?std.json.Value) ?std.json.ObjectMap {
+    const a = args orelse return null;
+    return if (a == .object) a.object else null;
 }
 
 /// Best-effort widget-kind sniff for the semantic-action dispatch: the

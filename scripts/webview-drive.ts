@@ -70,6 +70,62 @@ if (failures.length > 0) {
 
 await client.call("screenshot", { path: process.env.ND_SHOT_PATH ?? "/tmp/nd-webview-probe.png" });
 
+// ---------------------------------------------------------------------------
+// Automation-side page vocabulary. Unlike the checks above, none of this asks
+// the app for anything: webviewInfo / webviewEval / the page waitFor
+// predicates read the engine directly, which is the whole point — a drive must
+// work against an app that forwards no events.
+const base = (mustFind(tree.root, "probe-base").text ?? "").slice("base=".length);
+if (!base.startsWith("http://")) throw new Error(`probe-base label was ${JSON.stringify(base)}`);
+
+const info = (await client.call("webviewInfo", { testId: "wv-main" })) as {
+  ref: number;
+  url: string | null;
+  title: string | null;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+};
+if (!info.url?.startsWith(base)) throw new Error(`webviewInfo.url was ${JSON.stringify(info.url)}, expected ${base}`);
+if (info.title !== "ND Probe Fixture") throw new Error(`webviewInfo.title was ${JSON.stringify(info.title)}`);
+if (!info.canGoBack) throw new Error("webviewInfo.canGoBack was false after several navigations");
+console.log(`ND_WEBVIEW_CHECK webviewInfo: ok (${info.title} @ ${info.url})`);
+
+const evaluated = (await client.call("webviewEval", {
+  testId: "wv-main",
+  code: "document.getElementById('p').textContent",
+})) as { ok: boolean; value: string | null; error: string | null };
+if (!evaluated.ok || !evaluated.value?.includes("needle one")) {
+  throw new Error(`webviewEval returned ${JSON.stringify(evaluated)}`);
+}
+console.log("ND_WEBVIEW_CHECK webviewEval: ok");
+
+// A world-scoped eval reaches the isolated world the probe injected into.
+const inWorld = (await client.call("webviewEval", {
+  testId: "wv-main",
+  code: "window.__ndWorld",
+  world: "probe",
+})) as { ok: boolean; value: string | null };
+if (!inWorld.ok || inWorld.value !== "world-ok") throw new Error(`world eval returned ${JSON.stringify(inWorld)}`);
+console.log("ND_WEBVIEW_CHECK webviewEvalWorld: ok");
+
+// A thrown exception is a RESULT, not an RPC error.
+const threw = (await client.call("webviewEval", {
+  testId: "wv-main",
+  code: "throw new Error('probe-boom')",
+})) as { ok: boolean; error: string | null };
+if (threw.ok || !threw.error?.includes("probe-boom")) throw new Error(`throwing eval returned ${JSON.stringify(threw)}`);
+console.log("ND_WEBVIEW_CHECK webviewEvalThrow: ok");
+
+for (const [name, condition] of [
+  ["urlContains", { testId: "wv-main", urlContains: new URL(base).port }],
+  ["pageTitleContains", { testId: "wv-main", pageTitleContains: "Probe Fixture" }],
+  ["pageTextContains", { testId: "wv-main", pageTextContains: "needle two" }],
+] as const) {
+  await client.call("waitFor", { condition, timeoutMs: 10000 });
+  console.log(`ND_WEBVIEW_CHECK ${name}: ok`);
+}
+
 const ran = CHECKS.length - skips.length;
-console.log(`ND_WEBVIEW2_OK ${ran}/${CHECKS.length} webview checks passed (${skips.length} skipped)`);
+console.log(`ND_WEBVIEW2_OK ${ran}/${CHECKS.length} webview checks passed (${skips.length} skipped), page vocabulary verified`);
 client.close();

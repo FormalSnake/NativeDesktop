@@ -632,6 +632,17 @@ pub fn initEvents(gpa: std.mem.Allocator, emit_fn: EmitFn) void {
 
 fn noteSuppressible(obj: *gobject.Object, handler_id: c_ulong) void {
     suppress_map.put(events_gpa, @intFromPtr(obj), handler_id) catch {};
+    // Evict on death: the map is keyed by ADDRESS, and GLib recycles those.
+    // A stale id belonging to a dead object makes signalHandlerBlock raise a
+    // critical and silently fail to block, so a long-lived app that mounts and
+    // unmounts controlled text widgets would eventually stop suppressing
+    // echoes. Same discipline as cbRadioGroupDestroyed; a weak ref rather than
+    // "destroy" because the target can be a GtkTextBuffer, which has none.
+    gobject.Object.weakRef(obj, &cbSuppressibleDied, null);
+}
+
+fn cbSuppressibleDied(_: ?*anyopaque, dead: *gobject.Object) callconv(.c) void {
+    _ = suppress_map.remove(@intFromPtr(dead));
 }
 
 fn blockEcho(obj: *gobject.Object) void {
@@ -2787,7 +2798,14 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "Box.hoverChanged":        { signal: "",                 target: "hover",  cb: "",                   suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "TextInput.activate":      { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
-  "SearchInput.changed":     { signal: "search-changed",   target: "widget", cb: "cbEditableChanged",  suppress: true },
+  // GtkSearchEntry's own "search-changed" is debounced ~150ms, EXCEPT when the
+  // text goes empty, which it emits synchronously. gtk_editable_set_text is a
+  // delete + an insert, so a controlled widget saw the synchronous empty, echoed
+  // it back as the new `text` prop, and that programmatic set killed the pending
+  // timer carrying the real value — the field collapsed. Plain "changed" fires
+  // both halves in one tick, inside blockEcho, exactly like TextInput. Debouncing
+  // is the app's job, and this is what AppKit already did.
+  "SearchInput.changed":     { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "SearchInput.activate":    { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
   "TextArea.changed":        { signal: "changed",          target: "buffer", cb: "cbBufferChanged",    suppress: true },
   "Checkbox.toggled":        { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
@@ -5738,14 +5756,18 @@ function tsWireField(f: WireField, declared: WireStruct[]): string {
 function zigWireField(f: WireField, declared: WireStruct[]): string {
   let base = zigWireType(f.type, declared);
   if (f.list) base = `[]${base}`;
-  if (f.optional || f.nullable) return `${f.name}: ?${base} = null`;
+  // The wire name is the JSON key, so it can legally be a Zig keyword
+  // ("error", "type"): quote it rather than emitting a field that does not
+  // compile. std.json matches on the unquoted name either way.
+  const name = zigIdent(f.name);
+  if (f.optional || f.nullable) return `${name}: ?${base} = null`;
   if (f.default !== undefined) {
-    if (typeof f.default === "object") return `${f.name}: ${base} = .{}`;
-    if (typeof f.default === "string") return `${f.name}: ${base} = ${JSON.stringify(f.default)}`;
-    return `${f.name}: ${base} = ${String(f.default)}`;
+    if (typeof f.default === "object") return `${name}: ${base} = .{}`;
+    if (typeof f.default === "string") return `${name}: ${base} = ${JSON.stringify(f.default)}`;
+    return `${name}: ${base} = ${String(f.default)}`;
   }
-  if (base === "std.json.Value") return `${f.name}: std.json.Value = .null`;
-  return `${f.name}: ${base}`;
+  if (base === "std.json.Value") return `${name}: std.json.Value = .null`;
+  return `${name}: ${base}`;
 }
 
 function zigDocLines(doc: string | undefined): string {
@@ -5914,7 +5936,7 @@ function genRpcZig(s: RpcSchema): string {
       } else {
         let base = zigWireType(f.type, s.types);
         if (f.list) base = `[]${base}`;
-        out += `    ${f.name}: ?${base} = null,\n`;
+        out += `    ${zigIdent(f.name)}: ?${base} = null,\n`;
       }
     }
     out += "};\n\n";
