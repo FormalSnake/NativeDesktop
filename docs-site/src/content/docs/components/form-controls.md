@@ -137,10 +137,14 @@ natively.
   native heading and footer. Row children join the rounded list; any other child lands below it.
   Reordering an already-mounted child settles in append order on Linux, since
   `AdwPreferencesGroup` has no insert-at-index.
-- **`<row>`**: `title`, `subtitle` (createAndUpdate), `iconName` (create), `activatable` (create,
-  fires `onActivate` on click). Children mount into slots: `slot="prefix"` leads the row, the
-  default `suffix` trails it. Suffix controls are vertically centered and keep their natural size;
-  give a `<slider>` `style={{ hexpand: true }}` for a usable track.
+- **`<row>`**: `title`, `subtitle`, `iconData` (createAndUpdate), `iconName` (create),
+  `activatable` (create, fires `onActivate` on click). `iconData` is raw image bytes — a
+  `data:<mime>;base64,<payload>` URL or a bare base64 payload, the shape `faviconChanged` hands
+  you — for an icon no theme has, and it wins over `iconName` when both are set; a payload the
+  platform cannot decode draws no icon and logs one `ND_WARN`. Children mount into slots:
+  `slot="prefix"` leads the row, the default `suffix` trails it. Suffix controls are vertically
+  centered and keep their natural size; give a `<slider>` `style={{ hexpand: true }}` for a usable
+  track.
 - **`<switchrow>`**: `title` and `subtitle` plus a controlled `checked` and `onToggled`. The
   boxed-list form of `<switch>`.
 - **`<clamp>`**: single child, `maximumSize` (default 600) and `tighteningThreshold` (default 400,

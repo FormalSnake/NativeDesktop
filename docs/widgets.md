@@ -64,6 +64,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string |  | createAndUpdate |
 | `testID` | string | none | meta |
 | `iconName` | string | none | create |
+| `iconData` | string | none | createAndUpdate |
 | `labelAlign` | start \| center \| end | center | create |
 | `ellipsize` | bool | false | create |
 | `tooltip` | string | none | createAndUpdate |
@@ -191,6 +192,7 @@ Automation role: `image`. Text source: none. Children: none.
 |---|---|---|---|
 | `path` | string | none | createAndUpdate |
 | `iconName` | string | none | createAndUpdate |
+| `pixelSize` | int | 0 | createAndUpdate |
 | `symbolScale` | small \| medium \| large | medium | create |
 | `symbolWeight` | regular \| medium \| semibold \| bold | regular | create |
 | `symbolRenderingMode` | monochrome \| hierarchical \| multicolor | monochrome | create |
@@ -510,6 +512,7 @@ Automation role: `listitem`. Text source: `title`. Children: multi.
 | `title` | string |  | createAndUpdate |
 | `subtitle` | string | none | createAndUpdate |
 | `iconName` | string | none | create |
+| `iconData` | string | none | createAndUpdate |
 | `activatable` | bool | false | create |
 | `testID` | string | none | meta |
 

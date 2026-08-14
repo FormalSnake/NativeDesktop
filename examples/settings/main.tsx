@@ -29,6 +29,12 @@ const categories: { id: Category; label: string; blurb: string }[] = [
 const folderOptions = ["Documents", "Downloads", "Desktop"];
 const themeOptions: Theme[] = ["system", "light", "dark"];
 
+// A 16x16 solid magenta PNG. `iconData` takes raw image bytes where no theme
+// icon exists (a favicon, a per-workspace image), and wins over `iconName`
+// when a row sets both. Loud on purpose so a capture shows the bytes landed.
+const FOLDER_ICON_DATA =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGklEQVR42mP4z/D/PyWYYdSAUQNGDRguBgAAx4/9H5ua3FcAAAAASUVORK5CYII=";
+
 const defaults = {
   launchAtLogin: true,
   showStatusIcon: true,
@@ -146,7 +152,8 @@ function App(): React.ReactNode {
                       checked={showStatusIcon}
                       onToggled={(e) => setShowStatusIcon(e.checked)}
                     />
-                    <row title="Default folder" subtitle="Where new documents land" testID="setting-folder-row">
+                    <row title="Default folder" subtitle="Where new documents land" iconData={FOLDER_ICON_DATA}
+                      testID="setting-folder-row">
                       <select
                         testID="setting-folder"
                         options={folderOptions}

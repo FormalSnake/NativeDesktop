@@ -11,6 +11,7 @@ class NDRowView: NSStackView {
     let titleLabel = NSTextField(labelWithString: "")
     let subtitleLabel = NSTextField(labelWithString: "")
     private let textColumn = NSStackView()
+    private var iconView: NSImageView?
     var ndNodeID: UInt32 = 0
     var ndActivatable = false
 
@@ -51,6 +52,21 @@ class NDRowView: NSStackView {
             subtitleLabel.stringValue = s
             subtitleLabel.isHidden = s.isEmpty
         }
+    }
+
+    /// The row's leading icon, created on first use and retargeted after
+    /// that so an `iconData` update never stacks a second prefix icon.
+    /// Raw image bytes carry their own colour, so only a symbol takes the
+    /// secondary-label tint.
+    func applyIcon(_ image: NSImage, tinted: Bool) {
+        let iv = iconView ?? {
+            let created = NSImageView()
+            iconView = created
+            packPrefix(created)
+            return created
+        }()
+        iv.image = image
+        iv.contentTintColor = tinted ? .secondaryLabelColor : nil
     }
 
     func packPrefix(_ child: NSView) {
@@ -99,12 +115,22 @@ func makeRow(_ props: [String: Any]) -> NSView {
     row.applyTitle(propStr(props, "title") ?? "")
     row.applySubtitle(propStr(props, "subtitle"))
     if let icon = propStr(props, "iconName"), let image = ndResolveSymbolImage(icon) {
-        let iv = NSImageView(image: image)
-        iv.contentTintColor = .secondaryLabelColor
-        row.packPrefix(iv)
+        row.applyIcon(image, tinted: true)
     }
+    // Image bytes beat a symbol name: a favicon has no SF Symbol, and this is
+    // the only way a browser sidebar row can show one.
+    ndRowApplyIconData(row, props)
     row.ndActivatable = propBool(props, "activatable") ?? false
     return row
+}
+
+/// Row.iconData, shared by the create and update arms. 16pt matches the
+/// symbol the `iconName` path renders (and SourceTrees' own icon column).
+private func ndRowApplyIconData(_ row: NDRowView, _ props: [String: Any]) {
+    guard let data = propStr(props, "iconData"),
+          let image = ndIconImageFromData(data, side: 16, what: "Row")
+    else { return }
+    row.applyIcon(image, tinted: false)
 }
 
 func makeSwitchRow(_ props: [String: Any]) -> NSView {
@@ -115,11 +141,12 @@ func makeSwitchRow(_ props: [String: Any]) -> NSView {
     return row
 }
 
-/// Generated Row applyProps arm: title/subtitle merged.
+/// Generated Row applyProps arm: title/subtitle/iconData merged.
 func ndRowApply(_ view: NSView, _ props: [String: Any]) {
     guard let row = view as? NDRowView else { return }
     row.applyTitle(propStr(props, "title"))
     row.applySubtitle(propStr(props, "subtitle"))
+    ndRowApplyIconData(row, props)
 }
 
 /// Generated SwitchRow applyProps arm: title/subtitle/checked merged; the

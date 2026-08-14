@@ -150,7 +150,11 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         let lbl = propStr(props, "label") ?? ""
         let b = NDButton(title: lbl, target: nil, action: nil)
         b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded
-        if let icon = propStr(props, "iconName") {
+        // Image bytes beat a symbol name: a favicon has no SF Symbol, and this
+        // is the only way a browser toolbar can show one.
+        if let data = propStr(props, "iconData") {
+            ndApplyButtonIconData(b, iconData: data, label: lbl)  // NDShell/Icons.swift (hand-written)
+        } else if let icon = propStr(props, "iconName") {
             ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)
         }
         switch propStr(props, "labelAlign") ?? "center" {
@@ -251,6 +255,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         } else if let n = propStr(props, "iconName") {
             iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)
         }
+        ndImageApplyPixelSize(iv, propInt(props, "pixelSize"))  // NDShell/Icons.swift (hand-written)
         return iv
     } else if kind == "ScrollView" {
         let sv = NSScrollView()
@@ -482,6 +487,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             // create-time label; a button that gains or loses one follows.
             if b.image != nil { b.imagePosition = l.isEmpty ? .imageOnly : .imageLeading }
         }
+        if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }
         if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }
         if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }
         if let bd = propStr(props, "badge"), let btn = view as? NSButton { ndButtonApplyBadge(btn, bd) }
@@ -539,6 +545,9 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         }
         if let n = propStr(props, "iconName"), let iv = view as? NSImageView {
             iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)
+        }
+        if let iv = view as? NSImageView {
+            ndImageApplyPixelSize(iv, propInt(props, "pixelSize"))  // NDShell/Icons.swift (hand-written)
         }
     } else if kind == "Spinner" {
         if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {
@@ -621,8 +630,9 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         ndSettingsGroupApply(view, props)  // title/description merged
         // "description" handled by ndSettingsGroupApply above (merged).
     } else if kind == "Row" {
-        ndRowApply(view, props)  // title/subtitle merged
+        ndRowApply(view, props)  // title/subtitle/iconData merged
         // "subtitle" handled by ndRowApply above (merged).
+        // "iconData" handled by ndRowApply above (merged).
     } else if kind == "SwitchRow" {
         ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)
         // "subtitle" handled by ndSwitchRowApply above (merged).

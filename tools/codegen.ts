@@ -524,26 +524,119 @@ fn ndButtonApplyBadge(button: *gtk.Button, badge: []const u8, dupeZ: *const fn (
     gobject.Object.setData(obj, ND_BUTTON_BADGE_LABEL, label);
 }
 
-/// Button.label update. The create arm leaves one of three child shapes — a
-/// plain GtkLabel, an AdwButtonContent (icon + label), or a bare GtkImage
-/// (icon-only) — and ndButtonApplyBadge may have wrapped any of them in a
-/// box, so walk to the real content and retarget it in place. Retargeting
-/// (rather than gtk_button_set_label) is what keeps the badge suffix,
-/// label alignment and size classes the create arm installed.
+/// The button's own content, looked up through the box ndButtonApplyBadge
+/// wraps it in.
+fn ndButtonContent(button: *gtk.Button) ?*gtk.Widget {
+    const child = gtk.Button.getChild(button) orelse return null;
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) != null) {
+        return gtk.Widget.getFirstChild(child);
+    }
+    return child;
+}
+
+/// Swaps the button's own content, keeping any badge suffix in place.
+fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) == null) {
+        gtk.Button.setChild(button, content);
+        return;
+    }
+    const wrap: *gtk.Box = @ptrCast(@alignCast(gtk.Button.getChild(button).?));
+    if (gtk.Widget.getFirstChild(wrap.as(gtk.Widget))) |old| gtk.Box.remove(wrap, old);
+    gtk.Box.prepend(wrap, content);
+}
+
+/// Button.label update. The create arm leaves one of four child shapes — a
+/// plain GtkLabel, an AdwButtonContent (icon + label), a bare GtkImage
+/// (icon-only), or ndButtonApplyIconData's image+label box — and
+/// ndButtonApplyBadge may have wrapped any of them in a box, so walk to the
+/// real content and retarget it in place. Retargeting (rather than
+/// gtk_button_set_label) is what keeps the badge suffix, label alignment and
+/// size classes the create arm installed.
 ///
 /// An icon-only button is left alone: \`iconName\` is create-only, so
 /// rebuilding it as an icon+label pair would need an icon name nothing
 /// retained, and set_label would drop the icon.
 fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
-    var content = gtk.Button.getChild(button) orelse return;
-    if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) != null) {
-        content = gtk.Widget.getFirstChild(content) orelse return;
-    }
+    const content = ndButtonContent(button) orelse return;
     if (gobject.ext.isA(content, adw.ButtonContent)) {
         adw.ButtonContent.setLabel(@ptrCast(@alignCast(content)), dupeZ(label));
     } else if (gobject.ext.isA(content, gtk.Label)) {
         gtk.Label.setText(@ptrCast(@alignCast(content)), dupeZ(label));
+    } else if (gobject.ext.isA(content, gtk.Box)) {
+        if (gtk.Widget.getLastChild(content)) |last| {
+            if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setText(@ptrCast(@alignCast(last)), dupeZ(label));
+        }
     }
+}
+
+/// The text the button currently renders, whichever child shape holds it
+/// ("" for an icon-only button). Borrowed from the widget, so copy it before
+/// replacing the content it lives in.
+fn ndButtonLabelText(button: *gtk.Button) []const u8 {
+    const content = ndButtonContent(button) orelse return "";
+    if (gobject.ext.isA(content, adw.ButtonContent)) {
+        return std.mem.span(adw.ButtonContent.getLabel(@ptrCast(@alignCast(content))));
+    }
+    if (gobject.ext.isA(content, gtk.Label)) {
+        return std.mem.span(gtk.Label.getText(@ptrCast(@alignCast(content))));
+    }
+    return "";
+}
+
+// The GtkImage a Button's iconData renders into (qdata key), so an update
+// retargets that image instead of rebuilding the child on every frame.
+const ND_BUTTON_ICON_IMAGE = "nd-button-icon-image";
+
+/// Button.iconData: an icon from raw image bytes (a \`data:\` URL or bare
+/// base64) where no theme name reaches, e.g. a favicon. Runs after the
+/// iconName arm, so image bytes win. Unlike iconName this updates: the first
+/// call rebuilds the content around the decoded image, keeping whatever label
+/// the button already shows, and later calls retarget that image's paintable.
+/// An undecodable payload leaves the button as it was (ndicons warns).
+fn ndButtonApplyIconData(button: *gtk.Button, data: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE)) |ptr| {
+        const texture = ndicons.textureFromData(data, "Button") orelse return;
+        defer gobject.Object.unref(texture.as(gobject.Object));
+        gtk.Image.setFromPaintable(@ptrCast(@alignCast(ptr)), texture.as(gdk.Paintable));
+        return;
+    }
+    const img = ndicons.imageFromData(data, "Button") orelse return;
+    const label = ndButtonLabelText(button);
+    const content: *gtk.Widget = if (label.len == 0) blk: {
+        // The square metrics of an icon-only button come from this class,
+        // which only gtk_button_set_icon_name/set_label would maintain.
+        gtk.Widget.addCssClass(button.as(gtk.Widget), "image-button");
+        gtk.Widget.removeCssClass(button.as(gtk.Widget), "text-button");
+        break :blk img.as(gtk.Widget);
+    } else blk: {
+        const box = gtk.Box.new(.horizontal, 6);
+        gtk.Box.append(box, img.as(gtk.Widget));
+        gtk.Box.append(box, gtk.Label.new(dupeZ(label)).as(gtk.Widget));
+        break :blk box.as(gtk.Widget);
+    };
+    ndButtonReplaceContent(button, content);
+    gobject.Object.setData(asObject(button), ND_BUTTON_ICON_IMAGE, img);
+}
+
+// The GtkImage in a Row's prefix slot (qdata key), whichever of iconName /
+// iconData put it there — an iconData update retargets it rather than
+// stacking a second prefix icon.
+const ND_ROW_ICON_IMAGE = "nd-row-icon-image";
+
+/// Row.iconData: the AdwActionRow peer of ndButtonApplyIconData. Runs after
+/// the iconName arm and retargets that prefix image when there is one, so
+/// image bytes win over a theme name on create and on update alike.
+fn ndRowApplyIconData(row: *adw.ActionRow, data: []const u8) void {
+    const texture = ndicons.textureFromData(data, "Row") orelse return;
+    defer gobject.Object.unref(texture.as(gobject.Object));
+    if (gobject.Object.getData(asObject(row), ND_ROW_ICON_IMAGE)) |ptr| {
+        gtk.Image.setFromPaintable(@ptrCast(@alignCast(ptr)), texture.as(gdk.Paintable));
+        return;
+    }
+    const img = gtk.Image.newFromPaintable(texture.as(gdk.Paintable));
+    gtk.Image.setPixelSize(img, ndicons.data_pixel_size);
+    adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
+    gobject.Object.setData(asObject(row), ND_ROW_ICON_IMAGE, img);
 }
 
 /// Builds a NULL-terminated strv (\`?[*]const [*:0]const u8\`) from a JSON
@@ -1857,7 +1950,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propStr(props, \"iconName\")) |ic| {\n";
     out += "            const img = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic)));\n";
     out += "            adw.ActionRow.addPrefix(row, img.as(gtk.Widget));\n";
+    out += "            gobject.Object.setData(asObject(row), ND_ROW_ICON_IMAGE, img);\n";
     out += "        }\n";
+    out += "        // Image bytes beat a theme name: a favicon has no freedesktop name,\n";
+    out += "        // and this is the only way a browser sidebar row can show one.\n";
+    out += "        if (propStr(props, \"iconData\")) |d| ndRowApplyIconData(row, d);\n";
     out += "        // GtkListBoxRow defaults to activatable — a plain data row must opt in.\n";
     out += `        gtk.ListBoxRow.setActivatable(row.as(gtk.ListBoxRow), @intFromBool(propBool(props, "activatable") orelse ${dflt(w, "activatable")}));\n`;
     out += "        return row.as(gtk.Widget);\n";
@@ -1904,6 +2001,9 @@ function genZigCreateBody(w: Widget): string {
     out += "        } else {\n";
     out += "            button = gtk.Button.newWithLabel(dupeZ(lbl));\n";
     out += "        }\n";
+    out += "        // Image bytes beat a theme name: a favicon has no freedesktop name,\n";
+    out += "        // and this is the only way a browser toolbar can show one.\n";
+    out += "        if (propStr(props, \"iconData\")) |data| ndButtonApplyIconData(button, data, dupeZ);\n";
     out += `        const label_align = propStr(props, "labelAlign") orelse ${zigDefaultStr(w, "labelAlign")};\n`;
     out += "        if (!std.mem.eql(u8, label_align, \"center\")) {\n";
     out += "            if (gtk.Button.getChild(button)) |child| {\n";
@@ -2023,6 +2123,10 @@ function genZigCreateBody(w: Widget): string {
     out += "            const px: c_int = if (std.mem.eql(u8, sc, \"small\")) 16 else if (std.mem.eql(u8, sc, \"large\")) 24 else 20;\n";
     out += "            gtk.Image.setPixelSize(img, px);\n";
     out += "        }\n";
+    out += "        // pixelSize is the explicit override, so it is applied last and wins\n";
+    out += "        // over the scale axis whatever order the props arrive in. It also\n";
+    out += "        // reaches a path-backed image, which symbolScale is not really about.\n";
+    out += "        if (propInt(props, \"pixelSize\")) |px| { if (px > 0) gtk.Image.setPixelSize(img, @intCast(px)); }\n";
     out += "        return img.as(gtk.Widget);\n";
   } else if (w.name === "ScrollView") {
     out += "        const sw = gtk.ScrolledWindow.new();\n";
@@ -2432,6 +2536,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"title\")) |t| adw.PreferencesRow.setTitle(@as(*adw.ActionRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));\n";
     } else if (w.name === "Row" && p.name === "subtitle") {
       out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(@ptrCast(@alignCast(widget)), dupeZ(s));\n";
+    } else if (w.name === "Row" && p.name === "iconData") {
+      out += "        if (propStr(props, \"iconData\")) |d| ndRowApplyIconData(@ptrCast(@alignCast(widget)), d);\n";
     } else if (w.name === "SwitchRow" && p.name === "title") {
       out += "        if (propStr(props, \"title\")) |t| adw.PreferencesRow.setTitle(@as(*adw.SwitchRow, @ptrCast(@alignCast(widget))).as(adw.PreferencesRow), dupeZ(t));\n";
     } else if (w.name === "SwitchRow" && p.name === "subtitle") {
@@ -2512,6 +2618,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if ((w.name === "Checkbox" || w.name === "Radio") && p.name === "label") {
       out += "        if (propStr(props, \"label\")) |l| gtk.CheckButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
+    } else if (w.name === "Button" && p.name === "iconData") {
+      out += "        if (propStr(props, \"iconData\")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "tooltip") {
       out += "        if (propStr(props, \"tooltip\")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));\n";
     } else if (w.name === "Button" && p.name === "prominent") {
@@ -2556,6 +2664,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"path\")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "Image" && p.name === "iconName") {
       out += "        if (propStr(props, \"iconName\")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));\n";
+    } else if (w.name === "Image" && p.name === "pixelSize") {
+      out += "        if (propInt(props, \"pixelSize\")) |px| { if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px)); }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
@@ -4045,7 +4155,11 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        let lbl = propStr(props, "label") ?? ${swiftDefaultStr(w, "label")}\n`;
     out += "        let b = NDButton(title: lbl, target: nil, action: nil)\n";
     out += "        b.setButtonType(.momentaryPushIn); b.bezelStyle = .rounded\n";
-    out += '        if let icon = propStr(props, "iconName") {\n';
+    out += "        // Image bytes beat a symbol name: a favicon has no SF Symbol, and this\n";
+    out += "        // is the only way a browser toolbar can show one.\n";
+    out += '        if let data = propStr(props, "iconData") {\n';
+    out += "            ndApplyButtonIconData(b, iconData: data, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
+    out += '        } else if let icon = propStr(props, "iconName") {\n';
     out += "            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
     out += "        }\n";
     out += `        switch propStr(props, "labelAlign") ?? ${swiftDefaultStr(w, "labelAlign")} {\n`;
@@ -4163,6 +4277,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        } else if let n = propStr(props, "iconName") {\n';
     out += "            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)\n";
     out += "        }\n";
+    out += '        ndImageApplyPixelSize(iv, propInt(props, "pixelSize"))  // NDShell/Icons.swift (hand-written)\n';
     out += "        return iv\n";
   } else if (w.name === "ScrollView") {
     out += "        let sv = NSScrollView()\n";
@@ -4470,7 +4585,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "SettingsGroup") {
       out += `        // "${p.name}" handled by ndSettingsGroupApply above (merged).\n`;
     } else if (w.name === "Row" && p.name === "title") {
-      out += "        ndRowApply(view, props)  // title/subtitle merged\n";
+      out += "        ndRowApply(view, props)  // title/subtitle/iconData merged\n";
     } else if (w.name === "Row") {
       out += `        // "${p.name}" handled by ndRowApply above (merged).\n`;
     } else if (w.name === "SwitchRow" && p.name === "title") {
@@ -4513,6 +4628,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let l = propStr(props, "label"), let btn = view as? NSButton {\n';
       out += "            btn.title = l\n";
       out += "        }\n";
+    } else if (w.name === "Button" && p.name === "iconData") {
+      out += '        if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }\n';
     } else if (w.name === "Button" && p.name === "tooltip") {
       out += '        if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }\n';
     } else if (w.name === "Button" && p.name === "prominent") {
@@ -4540,6 +4657,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Image" && p.name === "iconName") {
       out += '        if let n = propStr(props, "iconName"), let iv = view as? NSImageView {\n';
       out += "            iv.image = ndResolveSymbolImage(n, config: ndImageSymbolConfigs[ObjectIdentifier(iv)])  // NDShell/Icons.swift (hand-written)\n";
+      out += "        }\n";
+    } else if (w.name === "Image" && p.name === "pixelSize") {
+      out += '        if let iv = view as? NSImageView {\n';
+      out += '            ndImageApplyPixelSize(iv, propInt(props, "pixelSize"))  // NDShell/Icons.swift (hand-written)\n';
       out += "        }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += '        if let sp = propBool(props, "spinning"), let ind = view as? NSProgressIndicator {\n';

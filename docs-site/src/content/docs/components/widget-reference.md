@@ -88,12 +88,19 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string | (empty) | createAndUpdate |
 | `testID` | string | none | meta |
 | `iconName` | string | none | create |
+| `iconData` | string | none | createAndUpdate |
 | `labelAlign` | start \| center \| end | center | create |
 | `ellipsize` | bool | false | create |
 | `tooltip` | string | none | createAndUpdate |
 | `prominent` | bool | false | createAndUpdate |
 | `badge` | string | none | createAndUpdate |
 | `size` | small \| regular \| large | regular | createAndUpdate |
+
+`iconData` is raw image bytes — a `data:<mime>;base64,<payload>` URL or a bare base64 payload, the
+shape `faviconChanged` hands you — for an icon no theme has, such as a favicon. It wins over
+`iconName` when both are set, and renders at the size a themed icon would, so the two mix in one
+toolbar. A payload the platform cannot decode draws no icon and logs one `ND_WARN`; the button keeps
+working.
 
 `prominent`, `badge`, and `size` render natively on both backends; see
 [Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each

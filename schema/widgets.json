@@ -175,6 +175,7 @@
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "iconData", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" },
         { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
@@ -298,6 +299,7 @@
       "props": [
         { "name": "path", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "pixelSize", "type": "int", "default": 0, "appliesTo": "createAndUpdate" },
         { "name": "symbolScale", "type": "enum", "values": ["small", "medium", "large"], "default": "medium", "appliesTo": "create" },
         { "name": "symbolWeight", "type": "enum", "values": ["regular", "medium", "semibold", "bold"], "default": "regular", "appliesTo": "create" },
         { "name": "symbolRenderingMode", "type": "enum", "values": ["monochrome", "hierarchical", "multicolor"], "default": "monochrome", "appliesTo": "create" },
@@ -635,6 +637,7 @@
         { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "subtitle", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "iconData", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "activatable", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],

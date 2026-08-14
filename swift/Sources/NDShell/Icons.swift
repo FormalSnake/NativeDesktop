@@ -95,6 +95,19 @@ private let ndSFSymbolMap: [String: String] = [
     "drive-harddisk": "internaldrive",
     "media-eject": "eject",
     "input-keyboard": "keyboard",
+    // Browser chrome: tabs, downloads, the TLS padlock, private browsing and
+    // the extension vocabulary. `tab-new` is the one the Stage-1 review caught
+    // as a missing `+` on the AppKit New Tab row.
+    "tab-new": "plus",
+    "folder-download": "arrow.down.circle",
+    "channel-secure": "lock.fill",
+    "channel-insecure": "lock.slash",
+    "view-private": "eyeglasses",
+    "network-error": "wifi.exclamationmark",
+    "document-open-recent": "clock.arrow.circlepath",
+    "application-x-addon": "puzzlepiece.extension",
+    "package-x-generic": "shippingbox",
+    "system-software-install": "arrow.down.app",
 ]
 
 func ndSFSymbol(forFreedesktop name: String) -> String? {
@@ -190,3 +203,64 @@ func ndApplyButtonIcon(_ b: NSButton, iconName: String, label: String) {
     b.image = img
     b.imagePosition = label.isEmpty ? .imageOnly : .imageLeading
 }
+
+/// An icon from raw image bytes — a `data:<mime>;base64,<payload>` URL or a
+/// bare base64 payload, which is the shape `faviconChanged` hands the app —
+/// squared off at `side` (`ndImageFromDataURL` decodes; NDShell/SourceTrees.swift).
+/// A payload nothing decodes warns once (tagged with `what`) and returns nil,
+/// so the widget renders without an icon rather than failing.
+func ndIconImageFromData(_ value: String, side: CGFloat, what: String) -> NSImage? {
+    guard let img = ndImageFromDataURL(value) else {
+        FileHandle.standardError.write("ND_WARN \(what) iconData: undecodable image\n".data(using: .utf8)!)
+        return nil
+    }
+    img.size = NSSize(width: side, height: side)
+    return img
+}
+
+/// `ndCreate`'s Button arm (generated) calls this when `iconData` is set, in
+/// place of `ndApplyButtonIcon` — image bytes win over a symbol name. Sized
+/// to the box the symbol path would draw in on the same button, so a data
+/// icon and a themed one match in one row of buttons. Unlike `iconName` this
+/// also runs on update, and rewriting `image` is the whole swap.
+func ndApplyButtonIconData(_ b: NSButton, iconData: String, label: String) {
+    let config = NSImage.SymbolConfiguration(
+        pointSize: b.font?.pointSize ?? NSFont.systemFontSize,
+        weight: .regular,
+        scale: label.isEmpty ? .large : .medium
+    )
+    // No symbol configuration reaches raw bytes, so measure what one would
+    // have produced and match its height.
+    let side = NSImage(systemSymbolName: "square", accessibilityDescription: nil)?
+        .withSymbolConfiguration(config)?.size.height ?? NSFont.systemFontSize
+    guard let img = ndIconImageFromData(iconData, side: side, what: "Button") else { return }
+    if !label.isEmpty { img.accessibilityDescription = label }
+    b.image = img
+    b.imagePosition = label.isEmpty ? .imageOnly : .imageLeading
+}
+
+/// `<image pixelSize>`. NSImageView has no pixel-size axis, so the size is
+/// pinned with constraints and the image is told to scale into them; a symbol
+/// image also gets a point-size configuration so it re-renders at the new size
+/// rather than being resampled. 0 (or absent) leaves the view alone, which is
+/// what keeps `symbolScale` behaving exactly as before.
+func ndImageApplyPixelSize(_ iv: NSImageView, _ pixelSize: Int?) {
+    guard let side = pixelSize, side > 0 else { return }
+    iv.imageScaling = .scaleProportionallyUpOrDown
+    if let existing = ndImagePixelSizeConstraints[ObjectIdentifier(iv)] {
+        NSLayoutConstraint.deactivate(existing)
+    }
+    let constraints = [
+        iv.widthAnchor.constraint(equalToConstant: CGFloat(side)),
+        iv.heightAnchor.constraint(equalToConstant: CGFloat(side)),
+    ]
+    NSLayoutConstraint.activate(constraints)
+    ndImagePixelSizeConstraints[ObjectIdentifier(iv)] = constraints
+    if let symbol = iv.image, symbol.isTemplate || symbol.symbolConfiguration != nil {
+        iv.image = symbol.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: CGFloat(side), weight: .regular))
+    }
+}
+
+/// Replaced rather than stacked: a pixelSize update must not leave the old
+/// pair of constraints fighting the new one.
+nonisolated(unsafe) private var ndImagePixelSizeConstraints: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
