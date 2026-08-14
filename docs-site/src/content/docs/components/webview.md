@@ -219,6 +219,14 @@ sendCommand(page.current!, "registerScriptMessage", { name: "bridge", world: "da
 
 `body` is the posted value itself, already decoded — an object arrives as an object, not a string.
 
+A channel name is per view, not per world. WebKitGTK routes `script-message-received` by the name
+and refuses a name already registered on that view whatever world is asked for; WKUserContentController
+keys on name *and* world but still exposes one `window.webkit.messageHandlers.<name>` to the page. Two
+isolated worlds in one view therefore need two names (`bridge_a`, `bridge_b`), and the app should read
+the sender off `name` rather than off the reported `world`, because the name is what both engines route
+on. A repeat registration of the same name and world is a no-op; a second world asking for a taken name
+is refused with an `ND_WARN` rather than silently mis-delivering.
+
 ## Custom URI schemes
 
 Register a scheme with `webviewEngine.registerScheme` and the app serves it. Both engines bind
