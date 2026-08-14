@@ -151,7 +151,7 @@ const nodes: SourceTreeNode[] = [
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `nodes` | `SourceTreeNode[]` | createAndUpdate | Flat `{ id, parentId?, title, caption?, iconName?, captionIconName?, badge?, section?, hasChildren?, expanded?, selectable?, actionIds?, testID? }`. |
+| `nodes` | `SourceTreeNode[]` | createAndUpdate | Flat `{ id, parentId?, title, caption?, iconName?, iconData?, captionIconName?, badge?, section?, hasChildren?, expanded?, selectable?, actionIds?, testID? }`. `iconName` is a freedesktop icon name; `iconData` is raw image bytes (a `data:` URL or bare base64) for icons no theme has, such as a favicon, and wins when both are set. |
 | `actions` | `SourceTreeAction[]` | createAndUpdate | The action catalog rows reference by `actionIds`: `{ id, iconName, label?, tooltip?, destructive? }`. |
 | `selectedId` | string | createAndUpdate | Controlled selection by node id; `""` means none. There is no `selectedIndex`. |
 | `actionVisibility` | `"hover"` \| `"always"` | create | Default `"hover"`: action buttons show only while the pointer is over the row. |

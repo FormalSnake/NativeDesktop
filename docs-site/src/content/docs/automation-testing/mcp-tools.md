@@ -12,13 +12,15 @@ the raw RPC method of the same name:
 | `nd_get_tree({window?})` | `getTree` | accessibility-tree snapshot (refs, `testID`s, text, geometry, role, enabled, focused, value); `window` scopes to one window |
 | `nd_screenshot({path})` | `screenshot` | render the window to a PNG at an absolute path |
 | `nd_click({ref})` | `click` | semantic click on a widget by ref |
-| `nd_wait_for({textContains?, refVisible?, timeoutMs?})` | `waitFor` | poll a tree condition until it holds or times out |
+| `nd_wait_for({textContains?, refVisible?, testId?, state?, urlContains?, pageTitleContains?, pageTextContains?, timeoutMs?})` | `waitFor` | poll a tree condition until it holds or times out; the page keys need `testId` to name a `WebView` |
 | `nd_set_value({ref, value})` | `setValue` | set a widget's value semantically; fires the native change event |
 | `nd_type({ref, text})` | `type` | semantic text append into a `TextInput` |
 | `nd_scroll({ref, dx?, dy?})` | `scroll` | scroll a `ScrollView` by logical units |
 | `nd_double_click({ref})` | `doubleClick` | real double-click at the widget's center (macOS only) |
 | `nd_right_click({ref})` | `rightClick` | real right-click, auto-dismissing any opened context menu (macOS only) |
 | `nd_hover({ref})` | `hover` | best-effort pointer hover at the widget's center (macOS only) |
+| `nd_webview_info({ref?\|testId?})` | `webviewInfo` | a `<webview>`'s live `{url, title, loading, canGoBack, canGoForward}`, read off the engine |
+| `nd_webview_eval({ref?\|testId?, code, world?, timeoutMs?})` | `webviewEval` | evaluate JavaScript in the page; a thrown exception comes back as `ok: false` |
 | `nd_pointer({phase, x, y, button?, clickCount?, window?})` | `pointer` | low-level pointer phase at window coordinates (macOS only) |
 | `nd_drag({fromRef?/toRef? or coordinates, steps?, durationMs?, window?})` | `drag` | press-move-release gesture for slider thumbs, dividers, and selections (macOS only) |
 | `nd_keys({keys, window?})` | `keys` | chord like `"cmd+n"` (drives menu key equivalents) or plain text typed into the focused widget (macOS only) |

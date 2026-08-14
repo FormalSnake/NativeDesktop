@@ -101,6 +101,12 @@ download is cancelled and the app performs it. The Bun process has full network
 and filesystem access, so `fetch` with `node:fs` and `getAppDataDir()` is the
 intended path. `data:` URLs report `suggestedFilename: "Unknown"`.
 
+The event fires ONCE per download, on the view that asked for it, however many
+views are alive. That is worth stating because the signal it rides on GTK
+(`download-started`) lives on the network session, which every view without a
+`profile` shares — the report is routed by the download's own originating view,
+not by which views happen to exist.
+
 `javaScriptResult` carries `{ data: { id, ok, value?, error? } }` when
 `executeJavaScript` completes. Apps normally never touch it: pass the exported
 `onJavaScriptResult` handler and use the promise helper. `cookiesResult` and
@@ -158,6 +164,11 @@ and an empty string restores the engine default.
 `openDevTools` opens the WebKit inspector window on GTK. macOS has no
 programmatic open, so it sets `isInspectable` and the inspector attaches through
 Safari's Develop menu.
+
+`focus` puts the keyboard focus in the view. It is the cross-cutting widget
+command — `<button>`, `<textinput>`, `<textarea>` and `<searchinput>` take it
+too — and it is the only way to move focus programmatically, since neither
+backend synthesises input for automation on Linux.
 
 Adding a new webview *event* needs one-line routing entries in `tools/codegen.ts`
 (`SIGNALS` and `SWIFT_SIGNALS`) plus the schema. New *commands* are schema-only:

@@ -99,10 +99,40 @@ Each of these is a single `waitFor` RPC call with no client-side polling:
 | `waitForFocused(testId, opts?)` | `{testId, state: "focused"}` |
 | `waitForCount(testId, count, opts?)` | `{testId, countAtLeast: count}` |
 | `waitForValue(testId, value, opts?)` | `{testId, valueEquals: render(value)}`, or `valueContains` when `opts.contains` is `true` |
+| `waitForUrl(testId, substring, opts?)` | `{testId, urlContains: substring}` |
+| `waitForPageTitle(testId, substring, opts?)` | `{testId, pageTitleContains: substring}` |
+| `waitForPageText(testId, substring, opts?)` | `{testId, pageTextContains: substring}` |
 
 `opts` is `{timeoutMs?, window?}` (`waitForValue` also takes `contains?: boolean`). See
 [waitFor conditions](/automation-testing/automation-socket/#waitfor-conditions) for exactly what
 each `state` checks and how values are rendered to a string.
+
+A `timeoutMs` larger than the client's own `rpcTimeoutMs` is honoured: the harness raises the
+client deadline for any call that declares one, so a 30s `waitFor` is not cut short at the 8s
+default.
+
+### Browser helpers
+
+The last three above name a `<webview>` testID. `waitForPageText` injects
+`document.body.innerText` into the page — see
+[page predicates](/automation-testing/automation-socket/#page-predicates).
+
+| Method | Does |
+|---|---|
+| `webviewInfo(target, opts?)` | `{ref, url, title, loading, canGoBack, canGoForward}`, read off the engine |
+| `evalInPage(target, code, opts?)` | evaluates in the page; `opts.world` picks a named isolated world. A thrown exception is `{ok: false, error}`, not a rejection |
+| `openAndAwaitLoad(testId, url, opts?)` | navigates the view and waits for the page to commit that URL |
+| `screenshotPage(path, opts?)` | `screenshot` with a byte floor that rejects a blank frame |
+
+```ts
+await app.openAndAwaitLoad("tab-webview", "https://example.com/");
+const { value } = await app.evalInPage({ testId: "tab-webview" }, "document.title");
+await app.waitForPageText("tab-webview", "Example Domain");
+```
+
+`openAndAwaitLoad` drives the engine (`location.href = …`) rather than the widget's `url` prop,
+so it works without the app wiring anything up; it then matches the URL minus its scheme, because
+engines normalise trailing slashes, percent-encoding and http/https upgrades.
 
 ### `screenshot(path, opts?)`
 

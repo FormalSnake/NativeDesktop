@@ -42,9 +42,11 @@ calls on this page into a `launchApp`/`AppHandle` API for Bun tests and drive sc
 | `pointer` | `{phase: "down"\|"move"\|"up", x, y, button?, clickCount?, window?}` | `{dispatched: true}` | low-level single pointer phase at window-topleft coordinates; `clickCount: 2` on a down/up pair makes a double-click; macOS only |
 | `drag` | `{fromRef?\|fromX?,fromY?, toRef?\|toX?,toY?, steps?, durationMs?, button?, window?}` | `{dispatched, fromX, fromY, toX, toY, steps}` | press-move-release; ref endpoints resolve to widget centers and must share a window; macOS only |
 | `keys` | `{keys, window?}` | `{dispatched: true}` | `"cmd+shift+n"` presses one chord (drives menu key equivalents); `"escape"`/`"tab"` a named key; any other string types its characters into the focused widget; macOS only |
+| `webviewInfo` | `{ref?, testId?, window?}` | `{ref, url, title, loading, canGoBack, canGoForward}` | live page state read off the engine; the target must be a `WebView` (`invalidParams` otherwise) |
+| `webviewEval` | `{ref?, testId?, window?, code, world?, timeoutMs?}` | `{ref, ok, value, error}` | evaluates `code` in the page, optionally in a named isolated world; default `timeoutMs` 5000 |
 
-`click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, and `hover` all target by exactly
-one of `ref` or `testId` (`invalidParams` otherwise). `window` optionally scopes `testId` resolution
+`click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, `hover`, `webviewInfo`, and
+`webviewEval` all target by exactly one of `ref` or `testId` (`invalidParams` otherwise). `window` optionally scopes `testId` resolution
 to one window, using the same actionable-first ranking as `resolve`. Targeting by `testId` is one
 round trip with host-side resolution, so no `getTree` walk is needed first.
 
@@ -67,13 +69,17 @@ In `@nativedesktop/test`: `app.click({ testId: "row-testid", action: "action-id"
 `{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount, rows, role,
 enabled, focused, value}`. `itemCount` is non-null only for data-driven widgets (currently
 `ListView`): it's the row count, never a walk of recycled row widgets. `rows` is non-null only for
-row-driven widgets (currently `SourceList`) and carries each row's
-`{title, badge: string | null, iconName: string | null}`.
+row-driven widgets (`SourceList` `items`, `SourceTree` `nodes`, `CommandPalette` `items`) and
+carries each row's `{title, badge, iconName, testID, id, subtitle}` (every field but `title`
+nullable). `id` and `subtitle` are the row's own identity and secondary line where the widget's item
+type has them — that is what lets a drive name a palette row instead of counting to it.
 
 The last four fields are the accessibility-tree state: `role` is the widget's schema-declared
 automation role from `schema/widgets.json` (`"button"`, `"slider"`, `"window"`, …; null when the
 type declares none); `enabled`/`focused`/`value` come from a live per-node backend probe on every
-snapshot. `value` is kind-shaped exactly like `setValue`'s input: string for `TextInput`/`TextArea`,
+snapshot. `focused` means "this is its window's focus widget", not "this window is frontmost" —
+so it still reads true under a headless compositor that never activates a window. Menu nodes report
+their declared `enabled`, which is how a drive tells a greyed-out menu item from a live one. `value` is kind-shaped exactly like `setValue`'s input: string for `TextInput`/`TextArea`,
 boolean for `Checkbox`/`Radio`/`Switch`, number for `Slider`, selected index for `Select` and
 row-selection widgets (`SourceList`/`Table`/`TreeView`), null for widgets without a value. Backends
 without the probe degrade to the defaults (`enabled: true`, `focused: false`, `value: null`) rather
@@ -95,6 +101,9 @@ interface WaitCondition {
   countAtLeast?: number;
   valueEquals?: string;
   valueContains?: string;
+  urlContains?: string;        // WebView only
+  pageTitleContains?: string;  // WebView only
+  pageTextContains?: string;   // WebView only, injects JavaScript
 }
 ```
 
@@ -116,6 +125,26 @@ all):
   (numbers stringified, booleans `"true"`/`"false"`), so one predicate works for a `TextInput` and a
   `Slider` alike. For `TextInput` and `TextArea`, `value` mirrors `text`, making `valueContains` a
   testID-scoped alternative to a global `textContains` search.
+
+### Page predicates
+
+`urlContains`, `pageTitleContains` and `pageTextContains` refine a `testId` selector the same way
+`valueContains` does — they are not selectors of their own, so the exactly-one-selector rule is
+unchanged. The node the testID names must be a `WebView`; a testID that has not mounted its view yet
+simply does not match, so a `waitFor` started before the view exists keeps polling rather than
+erroring.
+
+- `urlContains` and `pageTitleContains` read the engine directly (WebKitGTK's `uri`/`title`,
+  WKWebView's `url`/`title`). No page JavaScript, no app cooperation.
+- `pageTextContains` **injects JavaScript**: `document.body.innerText`, evaluated in the page's own
+  world. The result is cached per view and re-probed at most once per 250ms, so a ~50ms tick does
+  not run the page fifty times a second — and a match can therefore lag the page by one probe. Do
+  not use it against a page where running script is itself the thing under test.
+
+```ts
+await client.call("waitFor", { condition: { testId: "tab-webview", urlContains: "wikipedia.org" } });
+await client.call("waitFor", { condition: { testId: "tab-webview", pageTextContains: "Result 1" }, timeoutMs: 10000 });
+```
 
 `WaitForResult` is `{matched, ref, count}`. `ref` is the winning match, ranked like `resolve`
 (actionable first, key window first, then tree order), so the caller needs no follow-up `getTree`.

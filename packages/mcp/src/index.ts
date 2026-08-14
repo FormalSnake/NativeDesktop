@@ -51,19 +51,55 @@ server.registerTool(
 server.registerTool(
   "nd_wait_for",
   {
-    description: "Wait until a tree condition holds (textContains or refVisible) or timeout.",
+    description:
+      "Wait until a tree condition holds, or timeout. Exactly one selector: textContains, refVisible, or testId. With testId, `state` picks the predicate and the page keys refine it — urlContains/pageTitleContains read the engine, pageTextContains injects document.body.innerText (re-probed at most once per 250ms). A testId page key requires the node to be a WebView.",
     inputSchema: {
       textContains: z.string().optional(),
       refVisible: z.number().optional(),
+      testId: z.string().optional(),
+      state: z.enum(["present", "gone", "visible", "enabled", "disabled", "focused"]).optional(),
+      urlContains: z.string().optional(),
+      pageTitleContains: z.string().optional(),
+      pageTextContains: z.string().optional(),
       timeoutMs: z.number().default(2000),
     },
   },
-  async ({ textContains, refVisible, timeoutMs }) => {
-    const condition = textContains !== undefined ? { textContains } : { refVisible };
+  async ({ timeoutMs, ...keys }) => {
+    const condition = Object.fromEntries(Object.entries(keys).filter(([, v]) => v !== undefined));
     return {
       content: [{ type: "text" as const, text: JSON.stringify(await client.call("waitFor", { condition, timeoutMs })) }],
     };
   },
+);
+
+server.registerTool(
+  "nd_webview_info",
+  {
+    description:
+      "Live page state for a WebView node: url, title, loading, canGoBack, canGoForward. Read off the engine, so it works against an app that forwards no navigation events. Target by exactly one of ref / testId.",
+    inputSchema: { ref: z.number().optional(), testId: z.string().optional() },
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(await client.call("webviewInfo", params)) }],
+  }),
+);
+
+server.registerTool(
+  "nd_webview_eval",
+  {
+    description:
+      "Evaluate JavaScript in a WebView node's page and return the result's string rendering. `world` picks a named isolated content world (absent = the page's own). A thrown exception comes back as ok:false with the message, not an error. Target by exactly one of ref / testId.",
+    inputSchema: {
+      ref: z.number().optional(),
+      testId: z.string().optional(),
+      code: z.string(),
+      world: z.string().optional(),
+      timeoutMs: z.number().optional(),
+    },
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(await client.call("webviewEval", params)) }],
+  }),
 );
 
 server.registerTool(
