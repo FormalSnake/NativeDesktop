@@ -11,10 +11,10 @@ import AppKit
 /// controlled selection prop, "" meaning no selection. `section` nodes are
 /// native group rows (isGroupItem, unselectable, no outline cell).
 private let ndSourceTreeCellID = NSUserInterfaceItemIdentifier("nd-sourcetree-cell")
-/// Section rows recycle in their own pool: they are the only rows that set an
-/// explicit title colour, and sharing a pool with selectable rows means a
-/// recycled cell would have to un-set it, and that write is what stops
-/// AppKit's `backgroundStyle` cascade from colouring a selected row's title.
+/// Section rows recycle in their own pool: they are unselectable and carry
+/// their own smaller semibold type, so keeping them out of the selectable
+/// rows' pool means a recycled cell never has to unwind a section's styling
+/// onto a row that can be selected.
 private let ndSourceTreeSectionCellID = NSUserInterfaceItemIdentifier("nd-sourcetree-section-cell")
 
 /// `@unchecked Sendable` for the same reason as NDTreeItem: items cross into
@@ -221,6 +221,40 @@ final class NDSourceTreeCell: NSTableCellView {
     private var captionHeightConstraint: NSLayoutConstraint!
     private var titleTopConstraint: NSLayoutConstraint!
     private var titleCenterConstraint: NSLayoutConstraint!
+    private var isSection = false
+    private var tintedIcon = false
+
+    // HIG *Focus and selection* documents exactly two source-list states:
+    // focused rows get white text on the accent fill, unfocused rows "the
+    // standard text color and a gray background highlight". Bind the title to
+    // `NSTableCellView.textField` and macOS 26 draws a THIRD state nothing
+    // documents — the accent colour on the neutral fill (measured rgb(51,111,
+    // 223) on 26.5.1, where Finder's own sidebar draws that row in plain
+    // white). AppKit only recolours the bound field, and knows nothing about
+    // the caption, badge or symbol either, so leave `textField` unset and
+    // drive every element from `backgroundStyle` here. `.textColor` (not
+    // `.labelColor`) is the unfocused title: it is the one AppKit itself
+    // used, and it renders opaque in the sidebar's vibrant appearance where
+    // labelColor's 85% alpha washes out to ~70% grey.
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applySelectionColors() }
+    }
+
+    private func applySelectionColors() {
+        let onFill = backgroundStyle == .emphasized
+        if isSection {
+            titleField.textColor = .secondaryLabelColor
+        } else {
+            titleField.textColor = onFill ? .alternateSelectedControlTextColor : .textColor
+        }
+        let secondary: NSColor = onFill
+            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+            : .secondaryLabelColor
+        captionField.textColor = secondary
+        badgeField.textColor = secondary
+        captionIconView.contentTintColor = secondary
+        iconView.contentTintColor = (onFill && !tintedIcon) ? .alternateSelectedControlTextColor : nil
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -256,7 +290,6 @@ final class NDSourceTreeCell: NSTableCellView {
         addSubview(captionField)
         addSubview(badgeField)
         addSubview(actionsStack)
-        textField = titleField
 
         iconWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: 16)
         captionHeightConstraint = captionField.heightAnchor.constraint(equalToConstant: 0)
@@ -295,21 +328,19 @@ final class NDSourceTreeCell: NSTableCellView {
 
     func configure(with item: NDSourceTreeItem, actions: [NDSourceTreeAction], target: NDSourceTreeDataSource, hidden: Bool) {
         titleField.stringValue = item.title
-        if item.section {
-            titleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
-            titleField.textColor = .secondaryLabelColor
-        } else {
-            // No textColor write: `textField = titleField` (commonInit) puts
-            // the title under AppKit's backgroundStyle cascade, which is what
-            // turns it white on an emphasized selection capsule. Section rows
-            // recycle separately, so nothing has to un-set their colour here.
-            titleField.font = .systemFont(ofSize: NSFont.systemFontSize)
-        }
+        isSection = item.section
+        titleField.font = item.section
+            ? .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            : .systemFont(ofSize: NSFont.systemFontSize)
         // Image bytes beat a theme name: a favicon has no freedesktop name (or
         // SF Symbol), and this is the only way a browser sidebar can show one.
+        // Raw bytes carry their own colour, so the selection tint must not
+        // touch them (`tintedIcon`).
+        tintedIcon = false
         if let data = item.iconData, let image = ndImageFromDataURL(data) {
             image.size = NSSize(width: 16, height: 16)
             iconView.image = image
+            tintedIcon = true
         } else if let iconName = item.iconName {
             let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName  // NDShell/Icons.swift
             iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.title)
@@ -337,6 +368,9 @@ final class NDSourceTreeCell: NSTableCellView {
 
         badgeField.stringValue = item.badge ?? ""
         badgeField.isHidden = item.badge == nil
+        // Recycled cells keep whatever colours their previous row had, and
+        // `backgroundStyle` does not re-fire on reuse.
+        applySelectionColors()
 
         for sub in actionsStack.arrangedSubviews {
             actionsStack.removeArrangedSubview(sub)
@@ -401,8 +435,9 @@ func makeSourceTree(_ props: [String: Any]) -> NSView {
     outlineView.outlineTableColumn = column
     outlineView.headerView = nil
     outlineView.autoresizesOutlineColumn = false
+    // `style = .sourceList` alone: `selectionHighlightStyle = .sourceList` is
+    // deprecated in favour of exactly this property.
     outlineView.style = .sourceList
-    outlineView.selectionHighlightStyle = .sourceList
     outlineView.floatsGroupRows = false
     outlineView.indentationPerLevel = CGFloat(propInt(props, "indentationPerLevel") ?? 14)
     outlineView.autoresizingMask = [.width]

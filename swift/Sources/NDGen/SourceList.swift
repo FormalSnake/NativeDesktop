@@ -73,6 +73,24 @@ final class NDSourceCell: NSTableCellView {
     private let badgeField = NSTextField(labelWithString: "")
     private var iconWidthConstraint: NSLayoutConstraint!
 
+    /// Selection colours are driven here rather than through
+    /// `NSTableCellView.textField` — see NDSourceTreeCell for why that binding
+    /// is deliberately absent (AppKit accent-tints a bound textField on a
+    /// selected-but-unemphasized source-list row, a state the HIG does not
+    /// define).
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applySelectionColors() }
+    }
+
+    private func applySelectionColors() {
+        let onFill = backgroundStyle == .emphasized
+        titleField.textColor = onFill ? .alternateSelectedControlTextColor : .textColor
+        badgeField.textColor = onFill
+            ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
+            : .secondaryLabelColor
+        iconView.contentTintColor = onFill ? .alternateSelectedControlTextColor : nil
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         commonInit()
@@ -95,7 +113,6 @@ final class NDSourceCell: NSTableCellView {
         addSubview(iconView)
         addSubview(titleField)
         addSubview(badgeField)
-        textField = titleField
 
         iconWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: 16)
         NSLayoutConstraint.activate([
@@ -125,6 +142,9 @@ final class NDSourceCell: NSTableCellView {
         iconWidthConstraint.constant = iconView.isHidden ? 0 : 16
         badgeField.stringValue = row.badge ?? ""
         badgeField.isHidden = row.badge == nil
+        // Recycled cells keep their previous row's colours; `backgroundStyle`
+        // does not re-fire on reuse.
+        applySelectionColors()
     }
 }
 
@@ -155,8 +175,9 @@ func makeSourceList(_ props: [String: Any]) -> NSView {
     column.resizingMask = .autoresizingMask
     tableView.addTableColumn(column)
     tableView.headerView = nil
+    // `style = .sourceList` alone: `selectionHighlightStyle = .sourceList` is
+    // deprecated in favour of exactly this property.
     tableView.style = .sourceList
-    tableView.selectionHighlightStyle = .sourceList
     tableView.backgroundColor = .clear // glass sidebar shows through, paired with scrollView.drawsBackground below
     tableView.autoresizingMask = [.width]
 

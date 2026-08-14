@@ -72,6 +72,48 @@ func ndEnclosingSidebarTable(_ view: NSView) -> NDSidebarTable? {
     ndEnclosingSidebar(view).flatMap { ndSidebarTables[ObjectIdentifier($0)] }
 }
 
+/// One source-list row. Selection colours are driven from `backgroundStyle`
+/// rather than through `NSTableCellView.textField` — see NDSourceTreeCell for
+/// why that binding is deliberately absent (AppKit accent-tints a bound
+/// textField on a selected-but-unemphasized source-list row, a state the HIG
+/// does not define).
+final class NDSidebarCell: NSTableCellView {
+    private let titleField = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        commonInit()
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit()
+    }
+
+    private func commonInit() {
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        titleField.lineBreakMode = .byTruncatingTail
+        addSubview(titleField)
+        NSLayoutConstraint.activate([
+            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applySelectionColors() }
+    }
+
+    private func applySelectionColors() {
+        titleField.textColor = backgroundStyle == .emphasized ? .alternateSelectedControlTextColor : .textColor
+    }
+
+    func setTitle(_ title: String) {
+        titleField.stringValue = title
+        applySelectionColors()
+    }
+}
+
 final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     weak var box: NSStackView?
     let scrollView: NSScrollView
@@ -89,8 +131,9 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
+        // `style = .sourceList` alone: `selectionHighlightStyle = .sourceList`
+        // is deprecated in favour of exactly this property.
         tableView.style = .sourceList
-        tableView.selectionHighlightStyle = .sourceList
         tableView.backgroundColor = .clear      // vibrancy sidebar shows through
         tableView.autoresizingMask = [.width]
         tableView.dataSource = self
@@ -133,23 +176,13 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     func numberOfRows(in tableView: NSTableView) -> Int { rowButtons.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = (tableView.makeView(withIdentifier: ndSidebarCellID, owner: self) as? NSTableCellView) ?? {
-            let c = NSTableCellView()
+        let cell = (tableView.makeView(withIdentifier: ndSidebarCellID, owner: self) as? NDSidebarCell) ?? {
+            let c = NDSidebarCell()
             c.identifier = ndSidebarCellID
-            let tf = NSTextField(labelWithString: "")
-            tf.translatesAutoresizingMaskIntoConstraints = false
-            tf.lineBreakMode = .byTruncatingTail
-            c.addSubview(tf)
-            c.textField = tf     // lets the source-list cell own the selected-row text color
-            NSLayoutConstraint.activate([
-                tf.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 4),
-                tf.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -4),
-                tf.centerYAnchor.constraint(equalTo: c.centerYAnchor),
-            ])
             return c
         }()
         let buttons = rowButtons
-        cell.textField?.stringValue = row < buttons.count ? buttons[row].title : ""
+        cell.setTitle(row < buttons.count ? buttons[row].title : "")
         return cell
     }
 
