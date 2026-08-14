@@ -117,13 +117,36 @@ not by which views happen to exist.
 value already decoded, so an object arrives as an object.
 
 `schemeRequest` carries `{ data: { id, url, scheme } }` on the view that made
-the request. Answer it with `respondScheme` (`{ id, base64, mime, status? }`, or
-`{ id, error }` to fail it); an unanswered id leaves the page waiting.
+the request. Answer it with `respondScheme` (`{ id, base64, mime, status?,
+headers? }`, or `{ id, error }` to fail it); an unanswered id leaves the page
+waiting.
+
+`headers` is a flat `{ name: value }` map applied to the response, which is how
+an app serves `Content-Security-Policy`, `Cache-Control` or
+`Access-Control-Allow-Origin` for its own scheme. GTK builds a
+`SoupMessageHeaders` and hands it to
+`webkit_uri_scheme_response_set_http_headers`; AppKit merges the map into the
+`HTTPURLResponse`'s `headerFields` after the `Content-Type` and `Content-Length`
+it derives from `mime`, so an app header wins over the default. Sending any
+header (or a `status`) puts GTK on the
+`webkit_uri_scheme_request_finish_with_response` path; a WebKitGTK too old for
+that drops the headers with one `ND_WARN` and still serves the bytes.
+
+`webviewEngine.registerScheme(scheme, { corsEnabled, secure })` honours both
+flags on GTK, through the context's `WebKitSecurityManager`. Without
+`corsEnabled` a page cannot read the scheme cross-origin at all, and without
+`secure` its origins are not secure contexts, so `crypto.subtle`, IndexedDB and
+service workers are unavailable to them. **AppKit accepts the flags and ignores
+them**: WebKit's Cocoa API keeps that registry as SPI. Cross-origin reads still
+work there through a scheme handler's own `Access-Control-Allow-Origin` header,
+but a secure context cannot be granted at all.
 
 `faviconChanged` carries `{ dataUrl }` on GTK (WebKit keeps a favicon database
 and the icon is encoded to a PNG data URL, capped at 48 KB of PNG) and
 `{ pageUrl, iconUrl }` on macOS, where WKWebView has no favicon API and the
-app fetches the bytes itself. Handle both.
+app fetches the bytes itself. Handle both. The `dataUrl` goes straight into
+`<button iconData>`, `<row iconData>` or a `SourceTreeNode.iconData` — all three
+take a `data:` URL or a bare base64 payload and prefer it over `iconName`.
 
 `findResult` carries `{ matchFound, matchCount?, done }`. `done: false` is a
 match-count update, which only WebKitGTK produces; `WKFindResult` reports

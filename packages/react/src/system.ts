@@ -274,6 +274,22 @@ export const system = {
 
 // --- webview engine -----------------------------------------------------------------
 
+export interface RegisterSchemeOptions {
+  /**
+   * Lets pages read the scheme cross-origin. GTK marks the scheme CORS-enabled
+   * on the WebKitSecurityManager; without it a `fetch()` from another origin is
+   * refused before any response header is consulted. **AppKit ignores this**
+   * (see the asymmetry note on `registerScheme`).
+   */
+  corsEnabled?: boolean;
+  /**
+   * Makes the scheme's origins secure contexts, which is what `crypto.subtle`,
+   * IndexedDB and service workers require. **GTK only** — WebKit's Cocoa API
+   * has no public equivalent.
+   */
+  secure?: boolean;
+}
+
 /** Engine-level `<webview>` configuration. `core:webview` is default-granted. */
 export const webviewEngine = {
   /**
@@ -285,9 +301,20 @@ export const webviewEngine = {
    * handlers to a configuration/context that is frozen once a view exists.
    * Calling it later rejects with "registerScheme must be called before the
    * first <webview> mounts".
+   *
+   * Backend asymmetry: `corsEnabled` and `secure` take effect on GTK only.
+   * WebKitGTK exposes a WebKitSecurityManager for both; WebKit's Cocoa API
+   * keeps that registry as SPI, so on AppKit the options are accepted and
+   * ignored. Cross-origin reads still work there through `respondScheme`'s
+   * `Access-Control-Allow-Origin` header — a secure context cannot be granted
+   * at all.
    */
-  async registerScheme(scheme: string): Promise<void> {
-    await call("webviewEngine.registerScheme", { scheme });
+  async registerScheme(scheme: string, options: RegisterSchemeOptions = {}): Promise<void> {
+    await call("webviewEngine.registerScheme", {
+      scheme,
+      corsEnabled: options.corsEnabled ?? false,
+      secure: options.secure ?? false,
+    });
   },
 };
 

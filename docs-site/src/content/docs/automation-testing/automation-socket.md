@@ -50,6 +50,13 @@ calls on this page into a `launchApp`/`AppHandle` API for Bun tests and drive sc
 to one window, using the same actionable-first ranking as `resolve`. Targeting by `testId` is one
 round trip with host-side resolution, so no `getTree` walk is needed first.
 
+`webviewInfo` and `webviewEval` are the two exceptions to the actionability
+check. They ask a page a question rather than act on a widget, so they resolve a
+node the user could not reach: only visibility and bounds are waived, and a node
+that does not exist still answers `-32001`. That is what lets a drive inspect an
+extension's background page or a non-active tab, both of which live in hidden
+`Activity` subtrees. Every other action still refuses a node it cannot see.
+
 ### SourceTree row actions
 
 `click` with `action` invokes a `<sourcetree>` row's trailing action semantically, dispatching

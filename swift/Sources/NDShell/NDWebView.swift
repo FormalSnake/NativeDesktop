@@ -798,7 +798,19 @@ enum NDWebViewSchemes {
         case invalid
     }
 
-    static func register(_ scheme: String) throws {
+    /// `corsEnabled` / `secure` are accepted for source compatibility with the
+    /// GTK peer and have no effect here. WebKitGTK exposes a
+    /// WebKitSecurityManager that marks a scheme CORS-enabled or a secure
+    /// context; WebKit's Cocoa API has no public equivalent — the registry
+    /// behind `_WKProcessPoolConfiguration`/`WKWebViewConfiguration` is SPI.
+    /// What DOES carry over is the response side: WKWebView honours
+    /// `Access-Control-Allow-Origin` from a scheme handler's HTTPURLResponse,
+    /// so cross-origin reads work through `respondScheme`'s `headers`. A
+    /// secure context (crypto.subtle, IndexedDB, service workers) genuinely
+    /// cannot be granted to a custom scheme on this backend.
+    static func register(_ scheme: String, corsEnabled: Bool = false, secure: Bool = false) throws {
+        _ = corsEnabled
+        _ = secure
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789+-.")
         guard !scheme.isEmpty, scheme.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { throw RegisterError.invalid }
         if schemes.contains(scheme) { throw RegisterError.alreadyRegistered }
@@ -842,11 +854,18 @@ enum NDWebViewSchemes {
         let mime = obj["mime"] as? String ?? "application/octet-stream"
         let status = (obj["status"] as? NSNumber)?.intValue ?? 200
         let url = task.request.url ?? URL(string: "about:blank")!
+        // App headers last: Content-Type/Content-Length are defaults it may
+        // legitimately override (a charset on the type, a ranged length).
+        var fields = ["Content-Type": mime, "Content-Length": String(data.count)]
+        for (name, value) in obj["headers"] as? [String: Any] ?? [:] {
+            guard let text = value as? String else { continue }
+            fields[name] = text
+        }
         let response = HTTPURLResponse(
             url: url,
             statusCode: status,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": mime, "Content-Length": String(data.count)]
+            headerFields: fields
         )!
         task.didReceive(response)
         task.didReceive(data)
@@ -893,9 +912,9 @@ func ndWebViewCommand(_ view: NSView, _ command: String, _ argJson: String) {
 }
 
 /// `webviewEngine.registerScheme` bridge for System.swift.
-func ndWebViewRegisterScheme(_ scheme: String) -> String? {
+func ndWebViewRegisterScheme(_ scheme: String, corsEnabled: Bool, secure: Bool) -> String? {
     do {
-        try NDWebViewSchemes.register(scheme)
+        try NDWebViewSchemes.register(scheme, corsEnabled: corsEnabled, secure: secure)
         return nil
     } catch NDWebViewSchemes.RegisterError.tooLate {
         return "registerScheme must be called before the first <webview> mounts"

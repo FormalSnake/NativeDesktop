@@ -137,6 +137,7 @@ const FnSchemeFinishError = *const fn (*anyopaque, *glib.Error) callconv(.c) voi
 const FnSchemeResponseNew = *const fn (*anyopaque, i64) callconv(.c) ?*anyopaque;
 const FnSchemeResponseSetStatus = *const fn (*anyopaque, c_uint, ?[*:0]const u8) callconv(.c) void;
 const FnSchemeResponseSetContentType = *const fn (*anyopaque, [*:0]const u8) callconv(.c) void;
+const FnRegisterSchemeAs = *const fn (*anyopaque, [*:0]const u8) callconv(.c) void;
 const FnAsyncReady = *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void;
 const FnCookieGet = *const fn (*anyopaque, ?[*:0]const u8, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
 const FnCookieGetAll = *const fn (*anyopaque, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
@@ -196,6 +197,10 @@ const ExtApi = struct {
     scheme_response_new: ?FnSchemeResponseNew = null,
     scheme_response_set_status: ?FnSchemeResponseSetStatus = null,
     scheme_response_set_content_type: ?FnSchemeResponseSetContentType = null,
+    scheme_response_set_http_headers: ?FnPtrPtr = null,
+    web_context_get_security_manager: ?FnGetPtr = null,
+    security_register_scheme_as_cors_enabled: ?FnRegisterSchemeAs = null,
+    security_register_scheme_as_secure: ?FnRegisterSchemeAs = null,
 
     // cookies
     network_session_get_default: ?FnGetPtrNoArg = null,
@@ -265,7 +270,17 @@ const SoupApi = struct {
     cookie_set_secure: FnSetBool,
     cookie_set_http_only: FnSetBool,
     cookie_set_same_site_policy: *const fn (*anyopaque, c_uint) callconv(.c) void,
+    /// respondScheme's `headers`. Optional on their own: an older libsoup that
+    /// still has the cookie API keeps cookies working and only loses headers.
+    message_headers_new: ?FnSoupHeadersNew = null,
+    message_headers_append: ?FnSoupHeadersAppend = null,
 };
+
+const FnSoupHeadersNew = *const fn (c_uint) callconv(.c) ?*anyopaque;
+const FnSoupHeadersAppend = *const fn (*anyopaque, [*:0]const u8, [*:0]const u8) callconv(.c) void;
+
+/// `SOUP_MESSAGE_HEADERS_RESPONSE` (soup-message-headers.h).
+const soup_headers_response: c_uint = 1;
 
 var soup: ?SoupApi = null;
 var soup_attempted = false;
@@ -366,6 +381,8 @@ fn loadSoup() ?*const SoupApi {
         };
         soup_lib = lib;
         soup = a;
+        soup.?.message_headers_new = lib.lookup(FnSoupHeadersNew, "soup_message_headers_new");
+        soup.?.message_headers_append = lib.lookup(FnSoupHeadersAppend, "soup_message_headers_append");
         return &soup.?;
     }
     std.debug.print("ND_WARN WebView cookies unavailable (libsoup-3.0 not found)\n", .{});
@@ -417,6 +434,10 @@ fn loadExt(lib: *std.DynLib) void {
     ext.scheme_response_new = lookupWarn(FnSchemeResponseNew, lib, "webkit_uri_scheme_response_new", "respondScheme status codes");
     ext.scheme_response_set_status = lookupWarn(FnSchemeResponseSetStatus, lib, "webkit_uri_scheme_response_set_status", "respondScheme status codes");
     ext.scheme_response_set_content_type = lookupWarn(FnSchemeResponseSetContentType, lib, "webkit_uri_scheme_response_set_content_type", "respondScheme status codes");
+    ext.scheme_response_set_http_headers = lookupWarn(FnPtrPtr, lib, "webkit_uri_scheme_response_set_http_headers", "respondScheme headers");
+    ext.web_context_get_security_manager = lookupWarn(FnGetPtr, lib, "webkit_web_context_get_security_manager", "registerScheme flags");
+    ext.security_register_scheme_as_cors_enabled = lookupWarn(FnRegisterSchemeAs, lib, "webkit_security_manager_register_uri_scheme_as_cors_enabled", "registerScheme corsEnabled");
+    ext.security_register_scheme_as_secure = lookupWarn(FnRegisterSchemeAs, lib, "webkit_security_manager_register_uri_scheme_as_secure", "registerScheme secure");
 
     ext.network_session_get_default = lookupWarn(FnGetPtrNoArg, lib, "webkit_network_session_get_default", "cookies");
     ext.network_session_get_cookie_manager = lookupWarn(FnGetPtr, lib, "webkit_network_session_get_cookie_manager", "cookies");
@@ -1080,7 +1101,13 @@ pub const RegisterSchemeError = error{
 /// `webviewEngine.registerScheme` (systemRequest, ACL `core:webview`). GTK
 /// registers on the DEFAULT WebKitWebContext, which every `<webview>` shares,
 /// so this is process-wide rather than per-view.
-pub fn registerScheme(scheme: []const u8) RegisterSchemeError!void {
+///
+/// `cors_enabled` and `secure` go through the context's WebKitSecurityManager:
+/// without the first, a page cannot `fetch()` the scheme cross-origin at all
+/// (no response header can grant what the security origin refuses); without
+/// the second the origin is not a secure context, so `crypto.subtle`,
+/// IndexedDB and service workers are unavailable to it.
+pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) RegisterSchemeError!void {
     if (scheme.len == 0) return error.Invalid;
     for (scheme) |c| {
         const ok = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '+' or c == '-' or c == '.';
@@ -1094,6 +1121,18 @@ pub fn registerScheme(scheme: []const u8) RegisterSchemeError!void {
     const ctx = get_ctx() orelse return error.Unsupported;
     const scheme_z = alloc.dupeZ(u8, scheme) catch return error.Unsupported;
     register(ctx, scheme_z.ptr, &cbSchemeRequest, null, null);
+    if (cors_enabled or secure) {
+        if (ext.web_context_get_security_manager) |get_sm| {
+            if (get_sm(ctx)) |sm| {
+                if (cors_enabled) {
+                    if (ext.security_register_scheme_as_cors_enabled) |f| f(sm, scheme_z.ptr);
+                }
+                if (secure) {
+                    if (ext.security_register_scheme_as_secure) |f| f(sm, scheme_z.ptr);
+                }
+            }
+        }
+    }
     const key = alloc.dupe(u8, scheme) catch return;
     registered_schemes.put(alloc, key, {}) catch {};
 }
@@ -1184,17 +1223,21 @@ fn cmdRespondScheme(arg: ?std.json.Value) void {
     };
     defer alloc.free(mime_z);
 
-    // The response object carries the HTTP status; without it (older
-    // WebKitGTK) the plain finish still serves the bytes, just always as 200.
-    if (objInt(obj, "status")) |status| {
+    // The response object carries the HTTP status and any response headers;
+    // without it (older WebKitGTK) the plain finish still serves the bytes,
+    // just always as 200 and headerless.
+    const status = objInt(obj, "status");
+    const headers: ?std.json.ObjectMap = if (obj.get("headers")) |h| (if (h == .object) h.object else null) else null;
+    if (status != null or headers != null) {
         if (ext.scheme_response_new) |resp_new| {
             if (ext.scheme_response_set_status) |set_status| {
                 if (ext.scheme_response_set_content_type) |set_type| {
                     if (ext.scheme_request_finish_with_response) |finish_resp| {
                         if (resp_new(@ptrCast(stream), @intCast(size))) |resp| {
                             defer gobject.Object.unref(@ptrCast(@alignCast(resp)));
-                            set_status(resp, @intCast(status), null);
+                            set_status(resp, @intCast(status orelse 200), null);
                             set_type(resp, mime_z.ptr);
+                            if (headers) |h| applySchemeHeaders(resp, h);
                             finish_resp(req, resp);
                             return;
                         }
@@ -1202,9 +1245,36 @@ fn cmdRespondScheme(arg: ?std.json.Value) void {
                 }
             }
         }
+        if (headers != null) {
+            std.debug.print("ND_WARN WebView respondScheme: response headers dropped (webkitgtk too old)\n", .{});
+        }
     }
     const finish = ext.scheme_request_finish orelse return;
     finish(req, @ptrCast(stream), @intCast(size), mime_z.ptr);
+}
+
+/// `{"Content-Security-Policy": "…", …}` onto the response. The SoupMessageHeaders
+/// is transfer-full into `webkit_uri_scheme_response_set_http_headers`, so it is
+/// deliberately not freed here.
+fn applySchemeHeaders(resp: *anyopaque, headers: std.json.ObjectMap) void {
+    const set_headers = ext.scheme_response_set_http_headers orelse {
+        std.debug.print("ND_WARN WebView respondScheme: response headers dropped (webkitgtk too old)\n", .{});
+        return;
+    };
+    const s = loadSoup() orelse return;
+    const new_headers = s.message_headers_new orelse return;
+    const append = s.message_headers_append orelse return;
+    const hdrs = new_headers(soup_headers_response) orelse return;
+    var it = headers.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.* != .string) continue;
+        const name = alloc.dupeZ(u8, entry.key_ptr.*) catch continue;
+        defer alloc.free(name);
+        const value = alloc.dupeZ(u8, entry.value_ptr.string) catch continue;
+        defer alloc.free(value);
+        append(hdrs, name.ptr, value.ptr);
+    }
+    set_headers(resp, hdrs);
 }
 
 // ============================================================================

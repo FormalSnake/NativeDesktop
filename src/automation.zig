@@ -563,6 +563,30 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
     };
 }
 
+/// The two webview READ RPCs (`webviewInfo`, `webviewEval`) ask a page a
+/// question rather than acting on a widget, so they resolve a node the user
+/// could not reach. Extension background pages and non-active tabs live in
+/// hidden `Activity` subtrees — exactly where a browser's bugs are — and an
+/// actionability refusal there means a drive can never inspect them. The node
+/// must still EXIST; only visibility and bounds are waived.
+fn isReadOnlyProbe(kind: JobKind) bool {
+    return switch (kind) {
+        .webview_info, .webview_eval_start, .webview_eval_poll => true,
+        else => false,
+    };
+}
+
+/// `job.tree.get(job.ref)` with `checkActionable`'s error shape for the miss,
+/// so a read-only probe of a node that does not exist still answers -32001
+/// with a reason rather than an internal error.
+fn resolveReadable(job: *UiJob) ?*Widget {
+    if (job.tree.get(job.ref)) |widget| return widget;
+    job.err_code = rpc.code_not_actionable;
+    job.err_msg = rpc.msg_not_actionable;
+    job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{job.ref}) catch null;
+    return null;
+}
+
 /// Dispatches click/setValue/type/scroll through `vtable.semantic_action`.
 /// Never suppresses the resulting native event — automation actions must
 /// flow to React exactly like real user input. A testId target is resolved
@@ -571,7 +595,7 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
 fn handleSemanticAction(job: *UiJob, action: []const u8) void {
     if (!validateWindowRef(job)) return;
     if (!resolveJobTarget(job)) return;
-    const widget = checkActionable(job) orelse return;
+    const widget = (if (isReadOnlyProbe(job.kind)) resolveReadable(job) else checkActionable(job)) orelse return;
     const action_z = job.gpa.dupeZ(u8, action) catch return;
     defer job.gpa.free(action_z);
     const args_z = buildActionArgs(job);

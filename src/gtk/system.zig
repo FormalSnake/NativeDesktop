@@ -76,10 +76,14 @@ pub fn handleRequest(ctx: *abi.NdContext, id: u32, method: [*:0]const u8, params
 /// call rather than a `<webview>` command. Requests then arrive as the
 /// `schemeRequest` event on the view that made them.
 fn registerScheme(ctx: *abi.NdContext, id: u32, p: []const u8) void {
-    const parsed = parseParams(struct { scheme: []const u8 }, p) orelse
+    const parsed = parseParams(struct {
+        scheme: []const u8,
+        corsEnabled: bool = false,
+        secure: bool = false,
+    }, p) orelse
         return respond(ctx, id, false, "registerScheme needs {scheme}");
     defer parsed.deinit();
-    webview.registerScheme(parsed.value.scheme) catch |err| return respond(ctx, id, false, switch (err) {
+    webview.registerScheme(parsed.value.scheme, parsed.value.corsEnabled, parsed.value.secure) catch |err| return respond(ctx, id, false, switch (err) {
         error.Unsupported => "custom URI schemes unavailable (webkitgtk missing or too old)",
         error.TooLate => "registerScheme must be called before the first <webview> mounts",
         error.AlreadyRegistered => "scheme already registered",

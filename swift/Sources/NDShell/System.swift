@@ -60,7 +60,11 @@ enum NDSystem {
                 respondError(id, "registerScheme needs {scheme}")
                 return
             }
-            if let failure = ndWebViewRegisterScheme(scheme) {
+            if let failure = ndWebViewRegisterScheme(
+                scheme,
+                corsEnabled: propBool(params, "corsEnabled") ?? false,
+                secure: propBool(params, "secure") ?? false
+            ) {
                 respondError(id, failure)
             } else {
                 respondResult(id, "null")
