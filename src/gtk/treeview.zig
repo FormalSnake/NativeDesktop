@@ -47,6 +47,11 @@ const TreeData = struct {
     /// indentationPerLevel: create-only, so it is carried across the
     /// `nodes` rebuilds that replace the rest of this struct.
     indent: i64 = 16,
+    /// Whether ANY node can expand. GtkTreeExpander's indent-for-icon is a
+    /// per-TREE decision: one branch anywhere and every leaf owes the icon
+    /// gutter so their titles share an origin; a list with no branch at all
+    /// owes nothing and must not push its rows right.
+    expandable: bool = false,
 
     fn deinit(self: *TreeData) void {
         for (self.nodes.items) |*n| {
@@ -166,6 +171,12 @@ fn parseNodes(arr: ?std.json.Array) *TreeData {
         }
         tree.roots.append(alloc, idx) catch {};
     }
+    for (tree.nodes.items) |n| {
+        if (n.has_children or n.children.items.len > 0) {
+            tree.expandable = true;
+            break;
+        }
+    }
     return tree;
 }
 
@@ -281,6 +292,7 @@ fn tvBind(_: *gobject.Object, list_item: *gtk.ListItem, data: ?*anyopaque) callc
     // (same margin-start shape sourcetree.zig uses on its rows).
     const depth: u32 = gtk.TreeListRow.getDepth(row);
     gtk.Widget.setMarginStart(child, @intCast(@as(i64, depth) * tree.indent));
+    gtk.TreeExpander.setIndentForIcon(expander, @intFromBool(tree.expandable));
 
     const eobj: *gobject.Object = @ptrCast(@alignCast(expander));
     if (gobject.Object.getData(eobj, "nd-label")) |raw| {

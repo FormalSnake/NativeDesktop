@@ -16,7 +16,8 @@ const actions: SourceTreeAction[] = [
 
 // A 16x16 solid magenta PNG: `iconData` takes raw image bytes rather than a
 // freedesktop icon name, which is the only shape a favicon comes in. Loud on
-// purpose — a capture makes it obvious whether the bytes reached the row.
+// purpose — a capture makes it obvious whether the bytes reached the row, and
+// the third toolbar button below takes the same prop.
 const ICON_DATA =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGklEQVR42mP4z/D/PyWYYdSAUQNGDRguBgAAx4/9H5ua3FcAAAAASUVORK5CYII=";
 
@@ -33,6 +34,49 @@ const nodeMeta: Omit<SourceTreeNode, "expanded">[] = [
   { id: "sec-settled", title: "Settled", section: true, hasChildren: true, testID: "st-sec-settled" },
   { id: "run-old", parentId: "sec-settled", title: "old run", caption: "settled yesterday", testID: "st-run-old" },
 ];
+
+// ---- row-geometry probe (ND_ST_GEOMETRY=flat|deep|hover|always) ------------
+// One tree, alone in a window whose layout does not change between variants,
+// so two captures of two variants are directly comparable pixel for pixel.
+// The variants differ in exactly ONE property each: flat vs deep answers "does
+// a list with nothing expandable still reserve the disclosure gutter?", hover
+// vs always answers "does an appearing action button change the allocation?".
+// Probe rows carry no icon and no caption, so the leftmost ink in a row's band
+// IS its title; the row count fills the viewport so the widget's centre (all
+// the hover RPC can aim at) lands on a row.
+const PROBE_ROWS = 20;
+const probeRow = (i: number): SourceTreeNode => ({ id: `g-${i}`, title: `Alpha ${i}`, expanded: false });
+const probeNodes = (variant: string): SourceTreeNode[] => {
+  const rows = Array.from({ length: PROBE_ROWS }, (_, i) => probeRow(i));
+  if (variant === "deep") {
+    // The one expandable node sits LAST: the rule under test is about the
+    // whole tree, so row 0 must keep the gutter for a branch it cannot see.
+    rows.push({ id: "g-parent", title: "Parent", hasChildren: true, expanded: false });
+  }
+  if (variant === "hover" || variant === "always") {
+    // A badge plus a trailing action: the badge is the row content a
+    // collapsing action slot drags rightwards, and it stays left of the slot
+    // in both states, which is what makes the shift measurable off a capture.
+    return rows.map((n) => ({ ...n, badge: "12", actionIds: ["close-run"] }));
+  }
+  return rows;
+};
+
+function GeometryProbe({ variant }: { variant: string }): React.ReactNode {
+  return (
+    <window title="SourceTree Geometry" defaultWidth={480} defaultHeight={520}>
+      <box orientation="vertical" spacing={0}>
+        <sourcetree
+          testID="st-geo"
+          nodes={probeNodes(variant)}
+          actions={actions}
+          actionVisibility={variant === "hover" ? "hover" : "always"}
+          style={{ vexpand: true }}
+        />
+      </box>
+    </window>
+  );
+}
 
 function App(): React.ReactNode {
   const [expanded, setExpanded] = useState<Set<string>>(
@@ -67,6 +111,8 @@ function App(): React.ReactNode {
         <box orientation="horizontal" spacing={6} cssClasses={["toolbar"]} testID="st-toolbar">
           <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]} />
           <button testID="st-toolbar-add" iconName="list-add-symbolic" cssClasses={["flat"]} />
+          <button testID="st-toolbar-site" iconData={ICON_DATA} tooltip="Current site" cssClasses={["flat"]} />
+          <button testID="st-toolbar-labelled" label="Site" iconData={ICON_DATA} cssClasses={["flat"]} />
         </box>
         <sourcetree
           testID="st-tree"
@@ -114,4 +160,5 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+const geometryVariant = process.env.ND_ST_GEOMETRY;
+await render(geometryVariant ? <GeometryProbe variant={geometryVariant} /> : <App />);

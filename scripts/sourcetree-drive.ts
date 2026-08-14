@@ -6,8 +6,12 @@
 // actionClicked {nodeId, actionId} + native disclosure events (AppKit
 // pointer/keys leg; GTK cannot synthesize input, -32003), hasCommand/
 // hasWidget from the handshake manifest, app.isActive() with host replay,
-// and the AppKit `toolbar` structural class (screenshot). Prints
-// ND_SOURCETREE_OK on success.
+// and the AppKit `toolbar` structural class (screenshot). Leg 7 drives the
+// ND_ST_GEOMETRY probe windows and measures row geometry off captures: the
+// disclosure gutter a flat list must not reserve, and the row content a
+// hover-visibility action button must not move. Prints ND_SOURCETREE_OK on
+// success.
+import { inflateSync } from "node:zlib";
 import { launchApp } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
 
@@ -18,6 +22,123 @@ const shotDir = process.env.ND_SHOT_DIR ?? "/tmp";
 // drive runs inside scripts/browser-gate.sh, right after a full build on a box
 // that may be shared, where 3s is not headroom.
 const T = Number(process.env.ND_DRIVE_TIMEOUT_MS ?? 3000);
+
+// ---- row geometry off a capture -------------------------------------------
+// getTree carries geometry per WIDGET and never per row, so a capture is the
+// only channel that can answer where a row's title actually sits. What
+// follows is a minimal reader for the 8-bit non-interlaced PNGs both backends
+// write, plus an ink profiler: for one row's scanline band it returns the
+// contiguous column runs that contrast with the row fill, in logical units
+// relative to the widget's left edge. Every piece of row content — each glyph
+// of the title, the badge, the action button — is one run, so two states of
+// the same rows can be compared column for column instead of by eye.
+interface Png {
+  w: number;
+  h: number;
+  channels: number;
+  data: Uint8Array;
+}
+type Run = [number, number];
+
+function decodePng(bytes: Uint8Array): Png {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let off = 8, w = 0, h = 0, depth = 0, color = 0, interlace = 0;
+  const idat: Uint8Array[] = [];
+  while (off + 8 <= bytes.length) {
+    const len = view.getUint32(off);
+    const type = String.fromCharCode(bytes[off + 4]!, bytes[off + 5]!, bytes[off + 6]!, bytes[off + 7]!);
+    if (type === "IHDR") {
+      w = view.getUint32(off + 8);
+      h = view.getUint32(off + 12);
+      depth = bytes[off + 16]!;
+      color = bytes[off + 17]!;
+      interlace = bytes[off + 20]!;
+    } else if (type === "IDAT") {
+      idat.push(bytes.subarray(off + 8, off + 8 + len));
+    } else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[color];
+  if (depth !== 8 || interlace !== 0 || !channels) {
+    throw new Error(`unsupported PNG (depth=${depth} colorType=${color} interlace=${interlace})`);
+  }
+  const packed = new Uint8Array(idat.reduce((a, b) => a + b.length, 0));
+  let at = 0;
+  for (const chunk of idat) { packed.set(chunk, at); at += chunk.length; }
+  const raw = inflateSync(packed);
+  const stride = w * channels;
+  const out = new Uint8Array(h * stride);
+  let ri = 0;
+  for (let y = 0; y < h; y++) {
+    const filter = raw[ri++]!;
+    const cur = out.subarray(y * stride, (y + 1) * stride);
+    const prev = y > 0 ? out.subarray((y - 1) * stride, y * stride) : null;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= channels ? cur[i - channels]! : 0;
+      const b = prev ? prev[i]! : 0;
+      const c = prev && i >= channels ? prev[i - channels]! : 0;
+      let v = raw[ri + i]!;
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      } else if (filter !== 0) throw new Error(`bad PNG filter ${filter}`);
+      cur[i] = v & 0xff;
+    }
+    ri += stride;
+  }
+  return { w, h, channels, data: out };
+}
+
+function luminance(img: Png, x: number, y: number): number {
+  const i = (y * img.w + x) * img.channels;
+  if (img.channels <= 2) return img.data[i]!;
+  return (img.data[i]! * 299 + img.data[i + 1]! * 587 + img.data[i + 2]! * 114) / 1000;
+}
+
+/// Column runs per row band inside `rect` (logical, window top-left space).
+/// The row fill is taken as the rect's modal luminance rather than a fixed
+/// threshold, so the profile reads the same in dark appearance and under a
+/// hover highlight.
+function profileRows(img: Png, rect: { x: number; y: number; w: number; h: number }, scale: number): Run[][] {
+  const x0 = Math.round(rect.x * scale), x1 = Math.min(img.w, Math.round((rect.x + rect.w) * scale));
+  const y0 = Math.round(rect.y * scale), y1 = Math.min(img.h, Math.round((rect.y + rect.h) * scale));
+  const hist = new Map<number, number>();
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const l = luminance(img, x, y) & ~3;
+      hist.set(l, (hist.get(l) ?? 0) + 1);
+    }
+  }
+  let fill = 0, best = -1;
+  for (const [l, count] of hist) if (count > best) { best = count; fill = l; }
+  const isInk = (x: number, y: number): boolean => Math.abs(luminance(img, x, y) - fill) > 60;
+  const bands: { y0: number; y1: number }[] = [];
+  for (let y = y0; y < y1; y++) {
+    let ink = false;
+    for (let x = x0; x < x1; x++) if (isInk(x, y)) { ink = true; break; }
+    if (!ink) continue;
+    const last = bands[bands.length - 1];
+    if (last && last.y1 === y - 1) last.y1 = y;
+    else bands.push({ y0: y, y1: y });
+  }
+  return bands.map((band) => {
+    const runs: Run[] = [];
+    let start = -1;
+    for (let x = x0; x < x1; x++) {
+      let ink = false;
+      for (let y = band.y0; y <= band.y1; y++) if (isInk(x, y)) { ink = true; break; }
+      if (ink && start < 0) start = x;
+      if (!ink && start >= 0) { runs.push([(start - x0) / scale, (x - 1 - x0) / scale]); start = -1; }
+    }
+    if (start >= 0) runs.push([(start - x0) / scale, (x1 - 1 - x0) / scale]);
+    return runs;
+  });
+}
+
+const fmtRun = (r: Run): string => `${r[0].toFixed(1)}-${r[1].toFixed(1)}`;
 
 const app = await launchApp({ entry: "examples/sourcetree/main.tsx", backend });
 try {
@@ -172,8 +293,95 @@ try {
   // Notification click needs a real user click on an OS banner; the data
   // correlation map is covered by packages/react/src/system.test.ts instead.
   console.log("ND_ST_NOTIFICATION_SKIP data echo covered by unit tests (OS banner click is not synthesizable)");
-
-  console.log(`ND_SOURCETREE_OK backend=${app.backend}`);
 } finally {
   await app.close();
 }
+
+// ---- leg 7: row geometry, measured ----------------------------------------
+// Each variant is the SAME window with one property changed, so two captures
+// are directly comparable. The probe hosts run one at a time, after the main
+// host is closed: a GApplication is single-instance per id, so two live GTK
+// hosts sharing the gate's ND_APP_ID would collide.
+const rowProfile = async (variant: string, hoverFirst = false): Promise<Run[][]> => {
+  const label = hoverFirst ? `${variant}+hover` : variant;
+  const probe = await launchApp({
+    entry: "examples/sourcetree/main.tsx",
+    backend,
+    env: { ND_ST_GEOMETRY: variant, ND_APP_ID: `dev.nativedesktop.stGeo${process.pid}${variant}` },
+  });
+  try {
+    const widget = await probe.mustFind("st-geo");
+    const win = (await probe.tree()).root.geometry;
+    if (!widget.geometry || !win) throw new Error(`st-geo (${label}) has no geometry`);
+    if (hoverFirst) {
+      await probe.rpc.call("hover", { testId: "st-geo" });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const shot = await probe.screenshot(`${shotDir}/sourcetree-geo-${label}.png`, { minBytes: 2000 });
+    const img = decodePng(new Uint8Array(await Bun.file(shot.path).arrayBuffer()));
+    const rows = profileRows(img, widget.geometry, img.w / win.w);
+    if (rows.length < 2) throw new Error(`st-geo (${label}) profiled ${rows.length} row bands, want at least 2`);
+    return rows;
+  } finally {
+    await probe.close();
+  }
+};
+
+const flat = await rowProfile("flat");
+const deep = await rowProfile("deep");
+const flatX = flat[0]![0]![0], deepX = deep[0]![0]![0];
+// Row 0 is a leaf at depth 0 in BOTH trees and differs only in whether the
+// tree holds an expandable node at all (deep's sits last, off screen). A tree
+// with no branch anywhere owes its rows no disclosure gutter; one with a
+// branch keeps it on every row so branch and leaf titles share an origin.
+if (!(flatX < deepX - 4)) {
+  throw new Error(`flat-list title x=${flatX} did not clear the disclosure gutter (branching tree x=${deepX})`);
+}
+if (Math.abs(deepX - deep[1]![0]![0]) > 0.5) {
+  throw new Error(`branching tree rows 0/1 disagree on title x (${deepX} vs ${deep[1]![0]![0]})`);
+}
+console.log(`ND_ST_INDENT_OK flat-list title x=${flatX}, same rows under a branching tree x=${deepX} (gutter ${deepX - flatX})`);
+
+// Appearing actions must not change the allocation. Neither backend can
+// synthesize a real pointer crossing — GTK4 has no app-constructible input at
+// all (-32003), and AppKit's `hover` posts an NSEvent, which never produces
+// the NSTrackingArea crossing an NSTableRowView reveals its actions from — so
+// the two allocation states are reached through the prop instead:
+// actionVisibility "hover" un-hovered (actions hidden) against "always"
+// (actions drawn). The fix makes the hidden state keep the slot, so every run
+// of row content has to land on the same columns in both, and the drawn
+// button is the only run the "always" profile adds.
+const hidden = await rowProfile("hover");
+const shown = await rowProfile("always");
+const hiddenRow = hidden[0]!, shownRow = shown[0]!;
+for (let i = 0; i < hiddenRow.length; i++) {
+  const a = hiddenRow[i]!, b = shownRow[i];
+  if (!b || Math.abs(a[0] - b[0]) > 0.5 || Math.abs(a[1] - b[1]) > 0.5) {
+    throw new Error(
+      `hover-visibility actions shifted the row at run ${i}: hidden ${fmtRun(a)} vs shown ${b ? fmtRun(b) : "(missing)"}` +
+        ` — hidden row [${hiddenRow.map(fmtRun).join(" ")}], shown row [${shownRow.map(fmtRun).join(" ")}]`,
+    );
+  }
+}
+if (shownRow.length <= hiddenRow.length) throw new Error("actionVisibility=always drew no extra run: the action button is missing");
+console.log(
+  `ND_ST_ACTIONSLOT_OK ${hiddenRow.length} content runs identical with actions hidden and drawn` +
+    ` (title x=${hiddenRow[0]![0]}, last run ends ${hiddenRow[hiddenRow.length - 1]![1]});` +
+    ` the drawn action adds ${fmtRun(shownRow[shownRow.length - 1]!)}`,
+);
+
+// The hover RPC cannot reach the reveal (see above), so this only proves the
+// row does not move under it; the pair above carries the real proof.
+if (app.backend === "appkit") {
+  const hoveredRow = (await rowProfile("hover", true))[0]!;
+  for (let i = 0; i < hiddenRow.length; i++) {
+    if (Math.abs(hiddenRow[i]![0] - (hoveredRow[i]?.[0] ?? NaN)) > 0.5) {
+      throw new Error(`row content moved under hover at run ${i}: ${fmtRun(hiddenRow[i]!)} vs ${hoveredRow[i] ? fmtRun(hoveredRow[i]!) : "(missing)"}`);
+    }
+  }
+  console.log(`ND_ST_HOVER_OK title x=${hoveredRow[0]![0]} unchanged across the hover RPC`);
+} else {
+  console.log("ND_ST_HOVER_SKIP gtk: no synthetic pointer, so the hidden/drawn pair above is the whole proof");
+}
+
+console.log(`ND_SOURCETREE_OK backend=${app.backend}`);

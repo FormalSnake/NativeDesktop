@@ -9,8 +9,6 @@
 // `selectedId` is the controlled selection prop; "" means no selection.
 const std = @import("std");
 const gtk = @import("gtk");
-const gdk = @import("gdk");
-const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
@@ -69,6 +67,11 @@ const Store = struct {
     // Per-level step, matched to the disclosure gutter so a child's title
     // clears its parent's by exactly one gutter.
     indent: i64 = gutter_px,
+    /// Whether ANY row in this tree draws a disclosure. The gutter is a
+    /// per-TREE decision: a flat list reserves nothing, and one branch
+    /// anywhere puts the gutter back on every row so branch and leaf titles
+    /// stay on one origin. Recomputed with the nodes.
+    expandable: bool = false,
 
     fn deinitNodes(self: *Store) void {
         for (self.nodes.items) |*n| {
@@ -222,6 +225,17 @@ fn parseNodes(store: *Store, arr: std.json.Array) void {
         }
         store.roots.append(alloc, idx) catch {};
     }
+    // Section rows are excluded: they draw no disclosure (the app's `expanded`
+    // flag is the only thing that opens a shelf), so a list of sections over
+    // flat rows still owes its rows no gutter.
+    store.expandable = false;
+    for (store.nodes.items) |n| {
+        if (n.section) continue;
+        if (n.has_children or n.children.items.len > 0) {
+            store.expandable = true;
+            break;
+        }
+    }
 }
 
 fn parseActions(store: *Store, arr: std.json.Array) void {
@@ -294,18 +308,21 @@ fn makeGutterSpacer() *gtk.Widget {
 }
 
 /// `adw_action_row_add_prefix` PREPENDS, so a row wanting several prefixes has
-/// to hand over ONE box or they land in reverse.
-fn makePrefixBox(box: *gtk.ListBox, node: *const Node, node_idx: u32) *gtk.Widget {
+/// to hand over ONE box or they land in reverse. Answers null when the row
+/// owes no prefix at all: an empty box still costs the header its 6px spacing.
+fn makePrefixBox(box: *gtk.ListBox, store: *const Store, node: *const Node, node_idx: u32) ?*gtk.Widget {
+    if (!store.expandable and node.icon_data == null and node.icon == null and node.caption_icon == null) return null;
     const prefix = gtk.Box.new(.horizontal, 6);
     gtk.Widget.setValign(prefix.as(gtk.Widget), .center);
-    gtk.Box.append(prefix, if (node.has_children)
-        makeDisclosure(box, node_idx, node.expanded)
-    else
-        makeGutterSpacer());
+    if (node.has_children) {
+        gtk.Box.append(prefix, makeDisclosure(box, node_idx, node.expanded));
+    } else if (store.expandable) {
+        gtk.Box.append(prefix, makeGutterSpacer());
+    }
     // Image bytes beat a theme name: a favicon has no freedesktop name, and
     // this is the only way a browser sidebar can show one.
     if (node.icon_data) |data| {
-        if (imageFromData(data)) |img| gtk.Box.append(prefix, img.as(gtk.Widget));
+        if (ndicons.imageFromData(data, "SourceTree")) |img| gtk.Box.append(prefix, img.as(gtk.Widget));
     } else if (node.icon) |ic| {
         const img = gtk.Image.newFromIconName(ndicons.symbolic(ic));
         gtk.Box.append(prefix, img.as(gtk.Widget));
@@ -317,35 +334,6 @@ fn makePrefixBox(box: *gtk.ListBox, node: *const Node, node_idx: u32) *gtk.Widge
         gtk.Box.append(prefix, img.as(gtk.Widget));
     }
     return prefix.as(gtk.Widget);
-}
-
-/// A row icon from raw image bytes — a `data:<mime>;base64,<payload>` URL or a
-/// bare base64 payload, which is the shape `faviconChanged` hands the app on
-/// GTK. Decoded into a GdkTexture and set as the image's paintable; a payload
-/// GDK cannot decode renders nothing rather than failing the row.
-fn imageFromData(data: []const u8) ?*gtk.Image {
-    const comma = std.mem.indexOfScalar(u8, data, ',');
-    const b64 = if (std.mem.startsWith(u8, data, "data:") and comma != null) data[comma.? + 1 ..] else data;
-    const decoder = std.base64.standard.Decoder;
-    const size = decoder.calcSizeForSlice(b64) catch return null;
-    const buf = alloc.alloc(u8, @max(size, 1)) catch return null;
-    defer alloc.free(buf);
-    decoder.decode(buf[0..size], b64) catch return null;
-
-    const bytes = glib.Bytes.new(buf.ptr, size);
-    defer bytes.unref();
-    var err: ?*glib.Error = null;
-    const texture = gdk.Texture.newFromBytes(bytes, &err) orelse {
-        if (err) |e| {
-            std.debug.print("ND_WARN SourceTree iconData: {s}\n", .{if (e.f_message) |m| std.mem.span(m) else "undecodable image"});
-            e.free();
-        }
-        return null;
-    };
-    defer gobject.Object.unref(texture.as(gobject.Object));
-    const img = gtk.Image.newFromPaintable(texture.as(gdk.Paintable));
-    gtk.Image.setPixelSize(img, 16);
-    return img;
 }
 
 fn makeActionButton(box: *gtk.ListBox, node_idx: u32, action_idx: u32, action: Action) *gtk.Button {
@@ -413,7 +401,7 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
             gtk.ListBoxRow.setActivatable(row.as(gtk.ListBoxRow), 0);
             gtk.ListBoxRow.setSelectable(row.as(gtk.ListBoxRow), 0);
         }
-        adw.ActionRow.addPrefix(row, makePrefixBox(box, node, node_idx));
+        if (makePrefixBox(box, store, node, node_idx)) |prefix| adw.ActionRow.addPrefix(row, prefix);
         if (node.badge) |b| {
             const lbl = gtk.Label.new(b);
             gtk.Widget.addCssClass(lbl.as(gtk.Widget), "dimmed");
@@ -453,11 +441,17 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
     }
 }
 
+/// Opacity, never visibility: an unmapped suffix hands its width back to the
+/// row, so the title and badge slide right the moment the pointer arrives.
+/// Sensitivity is what keeps a transparent button out of the pointer and
+/// focus paths — a zero-opacity button that still takes clicks is worse than
+/// the shift it was hiding.
 fn setActionsVisible(row_widget: *gtk.Widget, visible: bool) void {
     var cursor = gobject.Object.getData(asObject(row_widget), "nd-first-action");
     while (cursor) |raw| {
         const btn: *gtk.Button = @ptrCast(@alignCast(raw));
-        gtk.Widget.setVisible(btn.as(gtk.Widget), @intFromBool(visible));
+        gtk.Widget.setOpacity(btn.as(gtk.Widget), if (visible) 1.0 else 0.0);
+        gtk.Widget.setSensitive(btn.as(gtk.Widget), @intFromBool(visible));
         cursor = gobject.Object.getData(asObject(btn), "nd-next-action");
     }
 }

@@ -394,13 +394,21 @@ final class NDSourceTreeCell: NSTableCellView {
             if let tooltip = action.tooltip { btn.toolTip = tooltip }
             btn.target = target
             btn.action = #selector(NDSourceTreeDataSource.actionClicked(_:))
-            btn.isHidden = hidden
             actionsStack.addArrangedSubview(btn)
         }
+        setActionsVisible(!hidden)
     }
 
+    /// Alpha, never `isHidden`: a hidden arranged subview leaves the stack, so
+    /// the badge and the title take its width the moment the pointer leaves —
+    /// the row's content shifts under the cursor. `isEnabled` is what keeps a
+    /// transparent button out of the click path; alpha alone does not make an
+    /// NSView non-interactive.
     func setActionsVisible(_ visible: Bool) {
-        for sub in actionsStack.arrangedSubviews { sub.isHidden = !visible }
+        for sub in actionsStack.arrangedSubviews {
+            sub.alphaValue = visible ? 1 : 0
+            (sub as? NSControl)?.isEnabled = visible
+        }
     }
 }
 
