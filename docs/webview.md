@@ -81,6 +81,16 @@ Create-only props: `profile` (`""` = shared default, `private…` = ephemeral, a
 own persistent partition) and `suppressContextMenu` (the engine menu is suppressed and the app
 shows a native one off the `contextMenu` event).
 
+**A script-message handler name is per view, not per world.** WebKitGTK routes
+`script-message-received` by the handler name and refuses a name already
+registered on that view, whatever world is asked for; WKUserContentController
+keys on name *and* world. An app running two isolated worlds in one view must
+therefore give each world its own name (`bridge_a`, `bridge_b`), and should
+identify the sender by `name` rather than by the reported `world`, since the
+name is what both engines actually route on. Registering the same name twice on
+GTK is refused with an `ND_WARN` and no handler is connected, so the collision
+cannot silently mis-deliver.
+
 ## Event semantics
 
 `loadProgress` carries `{ value }`, an estimated 0..1 load progress, emitted on

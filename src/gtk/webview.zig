@@ -517,6 +517,9 @@ const ViewState = struct {
     node_id: u32 = 0,
     suppress_context_menu: bool = false,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
+    /// Registered script-message channels, keyed by handler name — which is
+    /// the whole key on this backend (see `cmdRegisterScriptMessage`).
+    channels: std.StringHashMapUnmanaged(*MessageCtx) = .empty,
     last_secure: ?bool = null,
     last_playing_audio: bool = false,
 };
@@ -755,6 +758,15 @@ fn cmdSetUserAgent(v: *anyopaque, arg: ?std.json.Value) void {
     set_ua(settings, z.ptr);
 }
 
+/// An optional world name as WebKit wants one. Absent or empty means the
+/// page's own main world, which is what a NULL world_name selects, so the
+/// caller frees this only when it got something back.
+fn dupWorldZ(world: ?[]const u8) ?[:0]u8 {
+    const name = world orelse return null;
+    if (name.len == 0) return null;
+    return alloc.dupeZ(u8, name) catch null;
+}
+
 fn cmdOpenDevTools(v: *anyopaque) void {
     const set_extras = ext.settings_set_enable_developer_extras orelse return;
     const get_settings = ext.get_settings orelse return;
@@ -802,13 +814,8 @@ fn cmdExecuteJavaScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value
         return;
     };
     defer alloc.free(code_z); // WebKit copies the script synchronously before queuing the eval
-    // Optional `world`: an empty/absent world means the page's own main world,
-    // which is what WebKit's NULL world_name selects.
-    var world_z: ?[:0]u8 = null;
+    const world_z = dupWorldZ(objStr(obj, "world"));
     defer if (world_z) |w| alloc.free(w);
-    if (objStr(obj, "world")) |w| {
-        if (w.len > 0) world_z = alloc.dupeZ(u8, w) catch null;
-    }
     eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbJsEvalReady, ctx);
 }
 
@@ -884,9 +891,8 @@ fn cmdAddUserScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) vo
 
     const source_z = alloc.dupeZ(u8, source) catch return;
     defer alloc.free(source_z);
-    var world_z: ?[:0]u8 = null;
+    const world_z = dupWorldZ(world);
     defer if (world_z) |w| alloc.free(w);
-    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
     const allow = buildStrv(objStrList(obj, "allowList"));
     defer freeStrv(allow);
     const block = buildStrv(objStrList(obj, "blockList"));
@@ -974,15 +980,32 @@ fn cmdClearUserScripts(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value)
 // Script messages
 // ============================================================================
 
-/// One per registered (name, world) channel — the signal callback gets no
-/// node id of its own, and the detail-qualified signal carries only the
-/// posted JSCValue.
+/// One per registered channel — the signal callback gets no node id of its
+/// own, and the detail-qualified signal carries only the posted JSCValue.
 const MessageCtx = struct {
     node_id: u32,
     name: []u8,
     world: []u8,
+    handler_id: c_ulong = 0,
 };
 
+fn destroyMessageCtx(ctx: *MessageCtx) void {
+    alloc.free(ctx.name);
+    if (ctx.world.len > 0) alloc.free(ctx.world);
+    alloc.destroy(ctx);
+}
+
+/// A handler NAME is the whole key on this backend, in both directions: the
+/// signal detail is the name, and WebKitGTK refuses a name already registered
+/// on the manager whatever world is asked for. So a repeat is one of two
+/// things, and neither may connect a second callback to the same detail —
+/// that would deliver every message twice:
+///
+///   * the same channel re-armed (the app rebuilding a view's script set),
+///     which is a no-op;
+///   * a second world asking for a name it cannot have, which is a caller bug
+///     and is named as one, because the messages it silently mis-delivers are
+///     the other world's.
 fn cmdRegisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
     const get_ucm = ext.get_user_content_manager orelse return;
     const register = ext.ucm_register_message_handler orelse return;
@@ -993,7 +1016,25 @@ fn cmdRegisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.V
     };
     const world = objStr(obj, "world") orelse "";
     const node_id = widgetNodeId(widget) orelse return;
+    const state = stateOf(widget) orelse return;
     const ucm = get_ucm(v) orelse return;
+
+    if (state.channels.get(name)) |existing| {
+        if (!std.mem.eql(u8, existing.world, world)) {
+            std.debug.print(
+                "ND_WARN WebView registerScriptMessage: '{s}' is already registered on this view in world '{s}'; a handler name is per view, not per world — give world '{s}' a name of its own\n",
+                .{ name, existing.world, world },
+            );
+        }
+        return;
+    }
+
+    const name_z = alloc.dupeZ(u8, name) catch return;
+    defer alloc.free(name_z);
+    const world_z = dupWorldZ(world);
+    defer if (world_z) |w| alloc.free(w);
+    const detail = std.fmt.allocPrintSentinel(alloc, "script-message-received::{s}", .{name}, 0) catch return;
+    defer alloc.free(detail);
 
     const ctx = alloc.create(MessageCtx) catch return;
     ctx.* = .{
@@ -1006,31 +1047,38 @@ fn cmdRegisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.V
     };
     // Connect BEFORE registering: WebKit's own docs call out the race where a
     // message posted between the two calls would be dropped.
-    const detail = std.fmt.allocPrintSentinel(alloc, "script-message-received::{s}", .{name}, 0) catch return;
-    defer alloc.free(detail);
-    _ = gobject.signalConnectData(@ptrCast(@alignCast(ucm)), detail, @ptrCast(&cbScriptMessage), ctx, null, .{});
-
-    const name_z = alloc.dupeZ(u8, name) catch return;
-    defer alloc.free(name_z);
-    var world_z: ?[:0]u8 = null;
-    defer if (world_z) |w| alloc.free(w);
-    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
-    _ = register(ucm, name_z.ptr, if (world_z) |w| w.ptr else null);
+    ctx.handler_id = gobject.signalConnectData(@ptrCast(@alignCast(ucm)), detail, @ptrCast(&cbScriptMessage), ctx, null, .{});
+    if (register(ucm, name_z.ptr, if (world_z) |w| w.ptr else null) == 0) {
+        gobject.signalHandlerDisconnect(@ptrCast(@alignCast(ucm)), ctx.handler_id);
+        destroyMessageCtx(ctx);
+        std.debug.print("ND_WARN WebView registerScriptMessage: WebKitGTK refused the name '{s}'\n", .{name});
+        return;
+    }
+    state.channels.put(alloc, ctx.name, ctx) catch {};
 }
 
-fn cmdUnregisterScriptMessage(v: *anyopaque, arg: ?std.json.Value) void {
+fn cmdUnregisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
     const get_ucm = ext.get_user_content_manager orelse return;
     const unregister = ext.ucm_unregister_message_handler orelse return;
     const obj = argObject(arg) orelse return;
     const name = objStr(obj, "name") orelse return;
-    const world = objStr(obj, "world") orelse "";
+    const state = stateOf(widget) orelse return;
     const ucm = get_ucm(v) orelse return;
-    const name_z = alloc.dupeZ(u8, name) catch return;
-    defer alloc.free(name_z);
-    var world_z: ?[:0]u8 = null;
-    defer if (world_z) |w| alloc.free(w);
-    if (world.len > 0) world_z = alloc.dupeZ(u8, world) catch null;
-    unregister(ucm, name_z.ptr, if (world_z) |w| w.ptr else null);
+    const entry = state.channels.fetchRemove(name) orelse return;
+    const ctx = entry.value;
+    // The world comes off the registration rather than the argument: this
+    // backend keys on the name, so the pair that went in is the pair that has
+    // to come out.
+    if (alloc.dupeZ(u8, ctx.name)) |name_z| {
+        defer alloc.free(name_z);
+        const world_z = dupWorldZ(ctx.world);
+        defer if (world_z) |w| alloc.free(w);
+        unregister(ucm, name_z.ptr, if (world_z) |w| w.ptr else null);
+    } else |_| {}
+    // Unregistering leaves the signal connected (WebKit's docs are explicit),
+    // so a stale callback would fire again the moment the name is re-used.
+    gobject.signalHandlerDisconnect(@ptrCast(@alignCast(ucm)), ctx.handler_id);
+    destroyMessageCtx(ctx);
 }
 
 fn cbScriptMessage(_: *gobject.Object, value: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
@@ -1739,7 +1787,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     } else if (std.mem.eql(u8, cmd, "registerScriptMessage")) {
         cmdRegisterScriptMessage(widget, v, arg);
     } else if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) {
-        cmdUnregisterScriptMessage(v, arg);
+        cmdUnregisterScriptMessage(widget, v, arg);
     } else if (std.mem.eql(u8, cmd, "respondScheme")) {
         cmdRespondScheme(arg);
     } else if (std.mem.eql(u8, cmd, "getCookies")) {
@@ -2239,11 +2287,8 @@ pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64
         return null;
     };
     defer alloc.free(code_z); // WebKit copies the script synchronously before queuing
-    var world_z: ?[:0]u8 = null;
+    const world_z = dupWorldZ(world);
     defer if (world_z) |w| alloc.free(w);
-    if (world) |w| {
-        if (w.len > 0) world_z = alloc.dupeZ(u8, w) catch null;
-    }
     eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbAutoEvalReady, ctx);
     return id;
 }

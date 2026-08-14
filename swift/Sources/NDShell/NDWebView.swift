@@ -50,7 +50,10 @@ final class NDWebView: WKWebView {
     /// can only remove ALL scripts, so every add/remove rebuilds the whole set
     /// (internal bootstrap first, then the app's) from this registry.
     private var userScripts: [(id: String, script: WKUserScript, world: String)] = []
-    private var messageHandlers: [String: WKContentWorld] = [:]
+    /// Registered script-message channels, keyed by name AND world: that pair is
+    /// what WKUserContentController itself keys on, so the same name may live in
+    /// two worlds at once and removing one must not take the other with it.
+    private var messageHandlers: [NDMessageChannel: WKContentWorld] = [:]
     private var cookieObserver: NDCookieObserver?
     private var lastSecure: Bool?
 
@@ -249,15 +252,18 @@ final class NDWebView: WKWebView {
         }
         let worldName = obj["world"] as? String ?? ""
         let world = Self.contentWorld(named: worldName)
-        if messageHandlers[name] != nil {
-            configuration.userContentController.removeScriptMessageHandler(forName: name, contentWorld: messageHandlers[name]!)
+        let channel = NDMessageChannel(name: name, world: worldName)
+        if let existing = messageHandlers[channel] {
+            configuration.userContentController.removeScriptMessageHandler(forName: name, contentWorld: existing)
         }
-        messageHandlers[name] = world
+        messageHandlers[channel] = world
         configuration.userContentController.add(NDScriptMessageProxy(owner: self, world: worldName), contentWorld: world, name: name)
     }
 
     private func ndUnregisterScriptMessage(_ obj: [String: Any]) {
-        guard let name = obj["name"] as? String, let world = messageHandlers.removeValue(forKey: name) else { return }
+        guard let name = obj["name"] as? String else { return }
+        let channel = NDMessageChannel(name: name, world: obj["world"] as? String ?? "")
+        guard let world = messageHandlers.removeValue(forKey: channel) else { return }
         configuration.userContentController.removeScriptMessageHandler(forName: name, contentWorld: world)
     }
 
@@ -706,6 +712,15 @@ final class NDWebView: WKWebView {
         cookieObserver = observer
         cookieStore.add(observer)
     }
+}
+
+/// The identity of a script-message channel. WebKitGTK keys one by name alone,
+/// so an app that wants two worlds on one view has to give each its own name
+/// regardless; this keeps the Cocoa side from being the looser of the two and
+/// silently dropping a handler a second world registered under the same name.
+private struct NDMessageChannel: Hashable {
+    let name: String
+    let world: String
 }
 
 // MARK: - Message-handler proxies
