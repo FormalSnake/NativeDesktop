@@ -10,10 +10,17 @@ export WAYLAND_DISPLAY=nd-headless-webview
 export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
 export NATIVE_AUTOMATION=1
+# Own application id: GApplication is single-instance per id on the session
+# bus, so a gate sharing `dev.nativedesktop.hello` with anything else running
+# on the machine exits with ND_ALREADY_RUNNING instead of starting.
+export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headless-webview}"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
-trap 'kill "$WESTON_PID" 2>/dev/null || true; kill "${HOST_PID:-0}" 2>/dev/null || true' EXIT
+# Never `kill "${HOST_PID:-0}"`: the success path clears HOST_PID, and `kill 0`
+# signals the whole process group — which on a remote shell takes the session
+# down with it.
+trap 'kill "$WESTON_PID" 2>/dev/null || true; [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; true' EXIT
 
 for _ in $(seq 1 50); do
   [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break
@@ -24,7 +31,9 @@ LOG=$(mktemp)
 ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
-for _ in $(seq 1 200); do
+# 60s, not 20: the probe's first commit waits on the engine's own scheme
+# registration, and a loaded machine has needed past 25s.
+for _ in $(seq 1 600); do
   grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
   sleep 0.1
 done

@@ -58,6 +58,14 @@ const fixture = Bun.serve({
     if (path === "/favicon.png") {
       return new Response(FAVICON_PNG, { headers: { "content-type": "image/png" } });
     }
+    if (path === "/download") {
+      return new Response("probe payload", {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": 'attachment; filename="probe-download.bin"',
+        },
+      });
+    }
     return new Response(FIXTURE_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
   },
 });
@@ -114,6 +122,7 @@ const CHECKS = [
   "security",
   "audio",
   "session",
+  "download",
   "linkHover",
   "contextMenu",
 ] as const;
@@ -175,6 +184,7 @@ function App(): React.ReactNode {
               onLinkHover={(e) => record("linkHover", e.text)}
               onContextMenu={(e) => record("contextMenu", e.data)}
               onCookiesChanged={() => record("cookiesChanged", true)}
+              onDownloadRequested={(e) => record("downloadRequested", { view: "main", ...(e.data as object) })}
             />
             <webview
               ref={priv}
@@ -189,6 +199,10 @@ function App(): React.ReactNode {
               testID="wv-scheme"
               url="ndprobe://probe/index.html"
               onJavaScriptResult={onJavaScriptResult}
+              // The download check needs a SECOND view on the same (default)
+              // network session as wv-main: the signal lives on the session,
+              // so a per-view connection would report this view's copy too.
+              onDownloadRequested={(e) => record("downloadRequested", { view: "scheme", ...(e.data as object) })}
               onSchemeRequest={(e) => {
                 const request = e.data as { id: string; url: string; scheme: string };
                 record("schemeRequest", request);
@@ -396,6 +410,36 @@ async function runProbe({ main, priv, scheme, setResult, setPhase }: ProbeArgs):
     if (!state) return "fail: saveSession returned an empty state";
     sendCommand(wv!, "restoreSession", { state });
     return `ok (${state.length} base64 chars)`;
+  });
+
+  // Regression guard for the multi-view download crash: `download-started`
+  // lives on the NETWORK SESSION, and wv-main and wv-scheme share the default
+  // one. Connecting per view made a single download emit once per live view
+  // and cancel the same WebKitDownload once per handler, which segfaulted the
+  // host in DownloadProxy::cancel. Exactly one event, from the view that
+  // asked, is the assertion.
+  await step("download", async () => {
+    const before = (received.downloadRequested ?? []).length;
+    await executeJavaScript(wv!, `location.href = ${JSON.stringify(`${BASE}/download`)}`).catch(() => "");
+    await waitForEvent<unknown>("downloadRequested", () => true);
+    // Let every other live view's handler run before counting; a per-view
+    // connection would have delivered its duplicate well inside this window.
+    await new Promise((r) => setTimeout(r, 1500));
+    const events = (received.downloadRequested ?? []).slice(before) as {
+      view?: string;
+      url?: string;
+      suggestedFilename?: string;
+    }[];
+    if (events.length !== 1) {
+      return `fail: ${events.length} downloadRequested events for one download (${JSON.stringify(events.map((e) => e.view))})`;
+    }
+    const [event] = events;
+    if (event.view !== "main") return `fail: event routed to the ${event.view} view`;
+    if (!event.url?.endsWith("/download")) return `fail: url was ${JSON.stringify(event.url)}`;
+    if (event.suggestedFilename !== "probe-download.bin") {
+      return `fail: suggestedFilename was ${JSON.stringify(event.suggestedFilename)}`;
+    }
+    return "ok (1 event, named, from the requesting view)";
   });
 
   // Hover and context menu are engine-native on GTK (mouse-target-changed /

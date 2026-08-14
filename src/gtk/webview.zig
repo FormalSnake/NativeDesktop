@@ -156,6 +156,9 @@ const ExtApi = struct {
     uri_request_get_uri: ?FnGetCStr = null,
     get_network_session: ?FnGetPtr = null,
     download_get_request: ?FnGetPtr = null,
+    download_get_web_view: ?FnGetPtr = null,
+    download_get_response: ?FnGetPtr = null,
+    uri_response_get_suggested_filename: ?FnGetCStr = null,
     download_cancel: ?FnVoidOnPtr = null,
     network_error_quark: ?FnQuark = null,
     policy_error_quark: ?FnQuark = null,
@@ -376,6 +379,9 @@ fn loadExt(lib: *std.DynLib) void {
     ext.uri_request_get_uri = lookupWarn(FnGetCStr, lib, "webkit_uri_request_get_uri", "newWindow/downloadRequested");
     ext.get_network_session = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_network_session", "downloadRequested/cookies");
     ext.download_get_request = lookupWarn(FnGetPtr, lib, "webkit_download_get_request", "downloadRequested");
+    ext.download_get_web_view = lookupWarn(FnGetPtr, lib, "webkit_download_get_web_view", "downloadRequested (per-view routing)");
+    ext.download_get_response = lookupWarn(FnGetPtr, lib, "webkit_download_get_response", "downloadRequested suggestedFilename");
+    ext.uri_response_get_suggested_filename = lookupWarn(FnGetCStr, lib, "webkit_uri_response_get_suggested_filename", "downloadRequested suggestedFilename");
     ext.download_cancel = lookupWarn(FnVoidOnPtr, lib, "webkit_download_cancel", "downloadRequested");
     ext.network_error_quark = lookupWarn(FnQuark, lib, "webkit_network_error_quark", "loadFailed cancellation filter");
     ext.policy_error_quark = lookupWarn(FnQuark, lib, "webkit_policy_error_quark", "loadFailed policy-interruption filter");
@@ -1715,9 +1721,7 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
         _ = gobject.signalConnectData(obj, "create", @ptrCast(&cbCreate), data, null, .{});
     }
     if (ext.get_network_session != null and ext.download_get_request != null and ext.uri_request_get_uri != null and ext.download_cancel != null) {
-        if (ext.get_network_session.?(@ptrCast(widget))) |session| {
-            _ = gobject.signalConnectData(@ptrCast(@alignCast(session)), "download-started", @ptrCast(&cbDownloadStarted), data, null, .{});
-        }
+        if (ext.get_network_session.?(@ptrCast(widget))) |session| connectDownloads(session);
     }
     if (ext.get_favicon != null) {
         // The favicon database is off by default, and `notify::favicon` never
@@ -2000,24 +2004,91 @@ fn cbCreate(_: *gobject.Object, navigation_action: ?*anyopaque, data: ?*anyopaqu
     return null;
 }
 
+/// Sessions already carrying a `download-started` handler, keyed by pointer.
+/// The signal lives on the SESSION, and every view without a `profile` shares
+/// the default one, so connecting per view meant one download ran the handler
+/// once per live webview: N `downloadRequested` events for one download, and N
+/// `webkit_download_cancel` calls on the same proxy — the second completion
+/// lands in `DownloadProxy::cancel` on freed memory and takes the host down.
+var download_sessions: std.AutoHashMapUnmanaged(usize, void) = .empty;
+
+fn connectDownloads(session: *anyopaque) void {
+    const key = @intFromPtr(session);
+    if (download_sessions.contains(key)) return;
+    download_sessions.put(alloc, key, {}) catch return;
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(session)), "download-started", @ptrCast(&cbDownloadStarted), null, null, .{});
+}
+
 /// `download-started` on the WebKitNetworkSession (WebKitGTK 6 moved
-/// downloads off WebKitWebContext): the engine-side download is always
-/// cancelled — the Bun app process performs the actual download itself.
-fn cbDownloadStarted(_: *gobject.Object, download: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
-    const node_id: u32 = @intCast(@intFromPtr(data));
+/// downloads off WebKitWebContext). Connected once per session (see
+/// `download_sessions`), so the download names its own view rather than the
+/// closure carrying a node id.
+///
+/// The report is deferred to `decide-destination` rather than made here: the
+/// response headers have not landed yet at download-started, so
+/// `suggestedFilename` would always be null. `decide-destination` fires with
+/// the engine's own suggested name and BEFORE any byte reaches disk, so
+/// cancelling from there still costs nothing.
+fn cbDownloadStarted(_: *gobject.Object, download: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
     const dl = download orelse return;
-    const get_request = ext.download_get_request orelse return;
-    const get_uri = ext.uri_request_get_uri orelse return;
-    const cancel = ext.download_cancel orelse return;
-    if (get_request(dl)) |request| {
-        if (get_uri(request)) |uri| {
-            if (emit) |f| {
-                var payload: std.json.ObjectMap = .empty;
-                defer payload.deinit(alloc);
-                objPutStr(&payload, "url", std.mem.span(uri));
-                f(node_id, "downloadRequested", .{ .data = .{ .object = payload } });
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(dl)), "decide-destination", @ptrCast(&cbDecideDestination), null, null, .{});
+}
+
+/// `WebKitDownload::decide-destination`. The engine-side download is always
+/// cancelled — the Bun app process performs the actual download itself.
+/// Returns TRUE (handled) so WebKit does not fall back to its own destination
+/// policy for a download that is about to die anyway.
+fn cbDecideDestination(obj: *gobject.Object, suggested: ?[*:0]const u8, _: ?*anyopaque) callconv(.c) c_int {
+    const dl: *anyopaque = @ptrCast(obj);
+    const cancel = ext.download_cancel orelse return 0;
+    // The signal only lends the download. Cancelling drops WebKit's own
+    // reference from inside the completion, so hold one across both the emit
+    // and the cancel rather than racing the teardown.
+    _ = gobject.Object.ref(obj);
+    defer gobject.Object.unref(obj);
+
+    if (downloadNodeId(dl)) |node_id| {
+        if (ext.download_get_request) |get_request| {
+            if (ext.uri_request_get_uri) |get_uri| {
+                if (get_request(dl)) |request| {
+                    if (get_uri(request)) |uri| {
+                        var payload: std.json.ObjectMap = .empty;
+                        defer payload.deinit(alloc);
+                        objPutStr(&payload, "url", std.mem.span(uri));
+                        if (downloadSuggestedFilename(dl, suggested)) |name| objPutStr(&payload, "suggestedFilename", name);
+                        emitObject(node_id, "downloadRequested", payload);
+                    }
+                }
             }
         }
     }
     cancel(dl);
+    return 1;
+}
+
+/// The node id of the view that started `dl`. Null for a download with no
+/// originating view (`webkit_download_get_web_view` answers NULL for
+/// context-level downloads) — those are still cancelled, just not reported.
+fn downloadNodeId(dl: *anyopaque) ?u32 {
+    const get_view = ext.download_get_web_view orelse return null;
+    const view = get_view(dl) orelse return null;
+    return widgetNodeId(@ptrCast(@alignCast(view)));
+}
+
+/// `suggestedFilename` per docs/webview.md: the engine's own suggestion (the
+/// `decide-destination` argument), falling back to the Content-Disposition
+/// name off the download's response. Never
+/// `webkit_download_get_destination` — that is the local path WebKit would
+/// write to, which is unset for a download we cancel.
+fn downloadSuggestedFilename(dl: *anyopaque, suggested: ?[*:0]const u8) ?[]const u8 {
+    if (suggested) |s| {
+        const span = std.mem.span(s);
+        if (span.len > 0) return span;
+    }
+    const get_response = ext.download_get_response orelse return null;
+    const get_name = ext.uri_response_get_suggested_filename orelse return null;
+    const response = get_response(dl) orelse return null;
+    const name = get_name(response) orelse return null;
+    const span = std.mem.span(name);
+    return if (span.len > 0) span else null;
 }

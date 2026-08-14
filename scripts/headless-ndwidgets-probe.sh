@@ -10,7 +10,9 @@ export NATIVE_AUTOMATION=1
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
-trap 'kill "$WESTON_PID" 2>/dev/null || true; kill "${HOST_PID:-0}" 2>/dev/null || true' EXIT
+# `kill "${PID:-0}"` signals the whole process group when the variable is
+# cleared on the success path — guard on non-empty instead.
+trap 'kill "$WESTON_PID" 2>/dev/null || true; [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; true' EXIT
 
 for _ in $(seq 1 50); do
   [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break

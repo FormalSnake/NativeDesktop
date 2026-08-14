@@ -28,6 +28,7 @@ const CHECKS = [
   "security",
   "audio",
   "session",
+  "download",
   "linkHover",
   "contextMenu",
 ] as const;

@@ -22,7 +22,9 @@ PUB=$(grep -m1 ND_PACKAGE_MANIFEST "$XDG_RUNTIME_DIR/pkg.log" | sed 's/.*pub=//'
 #    CI sandboxes; the assembled AppDir is the equivalent runnable tree).
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
-trap 'kill "$WESTON_PID" 2>/dev/null || true; kill "${HOST_PID:-0}" 2>/dev/null || true; kill "${SRV_PID:-0}" 2>/dev/null || true' EXIT
+# `kill "${PID:-0}"` signals the whole process group when the variable is
+# cleared on the success path — guard on non-empty instead.
+trap 'kill "$WESTON_PID" 2>/dev/null || true; [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; [ -n "${SRV_PID:-}" ] && kill "$SRV_PID" 2>/dev/null; true' EXIT
 for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break; sleep 0.1; done
 
 LOG=$(mktemp)
