@@ -32,7 +32,17 @@ pub fn main(init: std.process.Init) void {
     }
     global_environ_map = init.environ_map;
     if (init.environ_map.get("ND_APP_ID")) |id| {
-        if (std.heap.page_allocator.dupeZ(u8, id)) |id_z| app_id = id_z else |_| {}
+        if (std.heap.page_allocator.dupeZ(u8, id)) |id_z| {
+            // A GApplication id is a D-Bus name: dot-separated elements of
+            // [A-Za-z0-9_] only. GTK accepts an invalid one and then degrades
+            // in ways that look like unrelated bugs (a hyphen cost an
+            // afternoon), so say so loudly and keep the working default.
+            if (gio.Application.idIsValid(id_z) != 0) {
+                app_id = id_z;
+            } else {
+                std.debug.print("ND_WARN ND_APP_ID={s} is not a valid application id (dot-separated [A-Za-z0-9_] elements) — keeping {s}\n", .{ id_z, app_id });
+            }
+        } else |_| {}
     }
 
     // AdwApplication's default startup handler runs adw_init() for us, which

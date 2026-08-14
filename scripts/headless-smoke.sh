@@ -9,7 +9,7 @@ export GDK_BACKEND=wayland
 # Own application id: GApplication is single-instance per id on the session bus,
 # so a gate sharing `dev.nativedesktop.hello` with anything else running on the
 # machine exits with ND_ALREADY_RUNNING instead of starting.
-export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headless-smoke}"
+export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessSmoke}"
 . "$(dirname "$0")/headless-fonts.sh"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &

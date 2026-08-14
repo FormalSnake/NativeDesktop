@@ -24,7 +24,10 @@ export WAYLAND_DISPLAY="nd-headless-$TAG"
 export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
 export NATIVE_AUTOMATION=1
-export ND_APP_ID="dev.nativedesktop.headless-$TAG"
+# A GApplication id is a D-Bus name: dot-separated [A-Za-z0-9_] elements, so
+# the tag has to lose its punctuation or GTK degrades silently.
+ND_ID_TAG=$(printf %s "$TAG" | tr -cd '[:alnum:]')
+export ND_APP_ID="dev.nativedesktop.headless${ND_ID_TAG}"
 # Real fonts, so a capture from this rig looks like a GNOME session instead of
 # the bitmap fallback fontconfig picks when it finds no font at all.
 . "$(dirname "$0")/headless-fonts.sh"

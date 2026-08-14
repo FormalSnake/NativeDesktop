@@ -13,7 +13,7 @@ export NATIVE_AUTOMATION=1
 # Own application id: GApplication is single-instance per id on the session
 # bus, so a gate sharing `dev.nativedesktop.hello` with anything else running
 # on the machine exits with ND_ALREADY_RUNNING instead of starting.
-export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headless-webview}"
+export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessWebview}"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!

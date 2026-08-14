@@ -79,7 +79,7 @@ check_sourcetree() {
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$(mktemp -d)}"
   export WAYLAND_DISPLAY=nd-headless-sourcetree
   export GSK_RENDERER=cairo GDK_BACKEND=wayland
-  export ND_APP_ID=dev.nativedesktop.headless-sourcetree
+  export ND_APP_ID=dev.nativedesktop.headlessSourcetree
   export ND_SHOT_DIR="${ND_SHOT_DIR:-$XDG_RUNTIME_DIR}"
   # The drive's own 3s waits are tuned for an idle machine; this runs right
   # after a full build, and the box may be shared.
