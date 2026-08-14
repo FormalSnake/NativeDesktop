@@ -10,9 +10,14 @@ interface QueueEntry {
   spec: string;
   /** Directory the spec resolves from (the requiring package's real root). */
   anchor: string;
+  /** Second anchor to try, used for peers whose consumer does not supply one. */
+  fallbackAnchor?: string;
   /** Dest-relative dir of the requiring package, for version-conflict nesting. */
   requirer?: string;
   optional: boolean;
+  /** A peerDependency: the CONSUMER's copy is the correct one, so an existing
+   * flat claim wins outright instead of nesting a second copy. */
+  peer?: boolean;
 }
 
 const skipNodeModules = (src: string) => basename(src) !== "node_modules";
@@ -63,12 +68,24 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
 
   while (queue.length) {
     const entry = queue.shift()!;
+    // A peer the app already provides is settled: taking the dependency's own
+    // copy instead is what puts two reacts in one bundle.
+    if (entry.peer && claimed.has(entry.spec)) continue;
     let root: string;
     try {
       root = packageRoot(entry.spec, entry.anchor);
     } catch (err) {
-      if (entry.optional) continue;
-      throw new Error(`nd: cannot resolve runtime dependency "${entry.spec}" from ${entry.anchor}: ${err}`);
+      if (entry.fallbackAnchor) {
+        try {
+          root = packageRoot(entry.spec, entry.fallbackAnchor);
+        } catch {
+          if (entry.optional) continue;
+          throw new Error(`nd: cannot resolve runtime dependency "${entry.spec}" from ${entry.anchor}: ${err}`);
+        }
+      } else {
+        if (entry.optional) continue;
+        throw new Error(`nd: cannot resolve runtime dependency "${entry.spec}" from ${entry.anchor}: ${err}`);
+      }
     }
 
     const existing = claimed.get(entry.spec);
@@ -94,12 +111,33 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
     for (const spec of Object.keys(pkg.dependencies ?? {})) {
       queue.push({ spec, anchor: root, requirer: destDir, optional: false });
     }
-    for (const spec of [...Object.keys(pkg.optionalDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})]) {
+    for (const spec of Object.keys(pkg.optionalDependencies ?? {})) {
       queue.push({ spec, anchor: root, requirer: destDir, optional: true });
+    }
+    // Peers resolve from the APP, not from the package that declares them. A
+    // `file:` linked dependency living outside the app tree resolves its own
+    // peer to its own copy, and a second react in the bundle is the classic
+    // "Invalid hook call" at launch. The package's root is only the fallback,
+    // for a peer the app does not provide at all.
+    for (const spec of Object.keys(pkg.peerDependencies ?? {})) {
+      queue.push({ spec, anchor, fallbackAnchor: root, requirer: destDir, optional: true, peer: true });
     }
   }
 
   return [...claimed.keys()];
+}
+
+/**
+ * Whether `exports` offers the package's ROOT specifier. A string is one; an
+ * object is one only through a `"."` key or the conditions shorthand (keys that
+ * are not subpaths). A subpath-only map (`{"./include/nd.h": …}`, which is what
+ * `@nativedesktop/native` publishes) declares no root entry, so failing to
+ * resolve the bare name is correct rather than a missing build.
+ */
+function declaresRootEntry(exports: unknown): boolean {
+  if (typeof exports === "string") return true;
+  if (exports === null || typeof exports !== "object") return false;
+  return Object.keys(exports).some((key) => key === "." || !key.startsWith("."));
 }
 
 /**
@@ -119,7 +157,7 @@ export function assertResolvableEntries(appRoot: string, names: string[]): void 
         module?: string;
         exports?: unknown;
       };
-      if (pkg.main === undefined && pkg.module === undefined && pkg.exports === undefined) continue;
+      if (pkg.main === undefined && pkg.module === undefined && !declaresRootEntry(pkg.exports)) continue;
       throw new Error(
         `nd: bundled package "${name}" has no resolvable entry (its build output is missing). ` +
         `Run \`bun run build\` in ${name} and package again.`,

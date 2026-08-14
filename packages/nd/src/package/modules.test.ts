@@ -142,4 +142,26 @@ describe("assertResolvableEntries", () => {
     writeFileSync(join(carrier, "package.json"), JSON.stringify({ name: "host-binary", files: ["bin"] }));
     expect(() => assertResolvableEntries(root, ["host-binary"])).not.toThrow();
   });
+
+  test("tolerates subpath-only exports (@nativedesktop/native's shape)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
+    const headers = join(root, "node_modules", "header-carrier");
+    mkdirSync(headers, { recursive: true });
+    writeFileSync(
+      join(headers, "package.json"),
+      JSON.stringify({ name: "header-carrier", exports: { "./include/nd.h": "./include/nd.h" } }),
+    );
+    expect(() => assertResolvableEntries(root, ["header-carrier"])).not.toThrow();
+  });
+
+  test("still throws when exports declares a root entry that is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
+    const broken = join(root, "node_modules", "needs-build-exports");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(
+      join(broken, "package.json"),
+      JSON.stringify({ name: "needs-build-exports", exports: { ".": "./dist/index.js" } }),
+    );
+    expect(() => assertResolvableEntries(root, ["needs-build-exports"])).toThrow("bun run build");
+  });
 });
