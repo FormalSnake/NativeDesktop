@@ -1,6 +1,6 @@
 {
   "name": "@nativedesktop/native",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
@@ -10,8 +10,14 @@
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
     "directory": "packages/native"
   },
-  "publishConfig": { "access": "public" },
-  "files": ["include", "macos", "linux"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "include",
+    "macos",
+    "linux"
+  ],
   "exports": {
     "./include/nd.h": "./include/nd.h",
     "./include/nd_plugin.h": "./include/nd_plugin.h",

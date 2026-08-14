@@ -1,6 +1,6 @@
 {
   "name": "@nativedesktop/rpc",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
@@ -10,8 +10,12 @@
     "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
     "directory": "packages/rpc"
   },
-  "publishConfig": { "access": "public" },
-  "files": ["src"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src"
+  ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -22,6 +26,8 @@
     "@nativedesktop/react": "workspace:^"
   },
   "peerDependenciesMeta": {
-    "@nativedesktop/react": { "optional": true }
+    "@nativedesktop/react": {
+      "optional": true
+    }
   }
 }
