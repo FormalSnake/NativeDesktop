@@ -86,8 +86,8 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     // A header button promoted into the window toolbar (HeaderBar.swift's
     // system-drawn items) leaves the view hierarchy but stays the tracked
     // model — visible while the current rebuild promoted it.
-    if let btn = view as? NDButton, ndToolbarPromotedItems[ObjectIdentifier(btn)] != nil {
-        return ndWindowToolbarManager?.ownerWindow()?.isVisible ?? false
+    if let btn = view as? NDButton, let owner = ndToolbarOwner(of: btn) {
+        return owner.ownerWindow()?.isVisible ?? false
     }
     return !view.isHidden && view.window != nil
 }
@@ -100,7 +100,7 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
 /// nil while the item sits in the overflow menu.
 @MainActor private func ndPromotedControlRect(for button: NDButton) -> NSRect? {
     guard let adapter = ndToolbarItemTargets[ObjectIdentifier(button)],
-          let win = ndWindowToolbarManager?.ownerWindow(),
+          let win = ndToolbarOwner(of: button)?.ownerWindow(),
           let theme = win.contentView?.superview,
           let content = ndLiveContentView(ofWindow: win),
           let control = ndFindControl(in: theme, target: adapter) else { return nil }

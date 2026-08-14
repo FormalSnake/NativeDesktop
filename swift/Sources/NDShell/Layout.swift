@@ -61,9 +61,8 @@ final class NDButton: NSButton {
     /// toolbar keeps showing and speaking the stale text for the session.
     override var toolTip: String? {
         didSet {
-            guard toolTip != oldValue,
-                  ndToolbarPromotedItems[ObjectIdentifier(self)] != nil else { return }
-            ndWindowToolbarManager?.reseedItem(for: self)
+            guard toolTip != oldValue else { return }
+            ndToolbarOwner(of: self)?.reseedItem(for: self)
         }
     }
 

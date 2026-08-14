@@ -308,6 +308,25 @@ nonisolated(unsafe) var ndToolbarBadges: [ObjectIdentifier: String] = [:]
 /// rather than the detached view (Automation.swift).
 nonisolated(unsafe) var ndToolbarPromotedItems: [ObjectIdentifier: NSToolbarItem] = [:]
 
+/// The manager whose toolbar promoted each button. There is one manager per
+/// window, so a button's owning toolbar cannot be read off the process-global
+/// `ndWindowToolbarManager`: that names whichever window was created LAST,
+/// which is the wrong toolbar for every window opened before it.
+nonisolated(unsafe) var ndToolbarPromotedOwners: [ObjectIdentifier: NDToolbarManager] = [:]
+
+/// Managers with a rebuild pending on the next main-queue turn (see
+/// `scheduleRebuild`). A global, so the dispatch closure carries no
+/// non-Sendable capture.
+nonisolated(unsafe) var ndToolbarRebuildQueue: [NDToolbarManager] = []
+
+/// The manager currently drawing `view` as a system-drawn toolbar item, or nil
+/// when it is not promoted.
+func ndToolbarOwner(of view: NSView) -> NDToolbarManager? {
+    let key = ObjectIdentifier(view)
+    guard ndToolbarPromotedItems[key] != nil else { return nil }
+    return ndToolbarPromotedOwners[key]
+}
+
 /// Per-promoted-button click target, keyed by BUTTON identity and kept for
 /// the button's lifetime. Distinct object identity per button so (a) the
 /// internal NSToolbarButton AppKit builds for a system-drawn item copies
@@ -336,14 +355,14 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
         ndToolbarProminent.remove(ObjectIdentifier(b))
     }
     b.bezelColor = prominent ? .controlAccentColor : nil
-    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.reseedItem(for: b) }
+    ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
 
 /// `Button.badge` (generated Button create + applyProps arms). Empty string
 /// clears the badge.
 func ndButtonApplyBadge(_ b: NSButton, _ badge: String) {
     ndToolbarBadges[ObjectIdentifier(b)] = badge.isEmpty ? nil : badge
-    if ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { ndWindowToolbarManager?.reseedItem(for: b) }
+    ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
 
 /// `Button.size` -> `NSControl.controlSize` (generated Button arms).
@@ -566,14 +585,22 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         if rebuildScheduled { return }
         rebuildScheduled = true
         // Same dispatch idiom as Backend.swift's marshal_async: capture nothing
-        // non-Sendable — the sole manager is reachable via the nonisolated(unsafe)
-        // `ndWindowToolbarManager` global, so no `self` crosses the isolation
-        // boundary (which the Swift 6 concurrency checker rejects). By the next
-        // main-queue turn both panes and their headers have settled.
+        // non-Sendable, so no `self` crosses the isolation boundary (which the
+        // Swift 6 concurrency checker rejects). The manager to rebuild rides a
+        // global QUEUE rather than `ndWindowToolbarManager`: that global names
+        // the LAST window created, so once a second window existed this
+        // rebuilt the wrong toolbar and left the first window's
+        // `rebuildScheduled` stuck true — every later header change on it was
+        // then dropped for the session. By the next main-queue turn both panes
+        // and their headers have settled.
+        ndToolbarRebuildQueue.append(self)
         DispatchQueue.main.async {
-            guard let mgr = ndWindowToolbarManager else { return }
-            mgr.rebuildScheduled = false
-            mgr.rebuild()
+            let due = ndToolbarRebuildQueue
+            ndToolbarRebuildQueue.removeAll()
+            for mgr in due {
+                mgr.rebuildScheduled = false
+                mgr.rebuild()
+            }
         }
     }
 
@@ -657,6 +684,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         for d in doomed {
             if let key = ndToolbarPromotedItems.first(where: { $0.value === d })?.key {
                 ndToolbarPromotedItems.removeValue(forKey: key)
+                ndToolbarPromotedOwners.removeValue(forKey: key)
             }
         }
     }
@@ -1051,6 +1079,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             item.badge = Int(badge).map { NSItemBadge.count($0) } ?? .text(badge)
         }
         ndToolbarPromotedItems[ObjectIdentifier(b)] = item
+        ndToolbarPromotedOwners[ObjectIdentifier(b)] = self
         return item
     }
 
