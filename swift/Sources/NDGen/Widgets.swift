@@ -17,6 +17,16 @@ func propBool(_ p: [String: Any], _ k: String) -> Bool? { (p[k] as? NSNumber)?.b
 func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?.compactMap { $0 as? String } }
 func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
+// `focus` — the cross-cutting widget command. The tracked handle is an
+// NSScrollView for the text/list kinds, and making that first responder does
+// nothing useful, so unwrap to the document view first. ndWindow(for:) rather
+// than view.window: a native-chrome window orphans the create-time handle.
+func ndFocusView(_ view: NSView, _ kind: String) {
+    var target = view
+    if let scroll = view as? NSScrollView, let doc = scroll.documentView { target = doc }
+    (view.window ?? ndWindow(for: view))?.makeFirstResponder(target)
+}
+
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
@@ -801,6 +811,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
 
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {
+    // Cross-cutting first: `focus` means the same thing on every kind.
+    if command == "focus" { ndFocusView(view, kind); return }
     if kind == "Window" {
         if command == "showTabOverview" || command == "present" { ndWindowTabsCommand(view, command, argJson); return }
         ndWindowCommand(view, command, argJson)

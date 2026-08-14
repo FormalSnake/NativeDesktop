@@ -42,7 +42,16 @@ export type {
 export { showToast, dismissToast, onToastButtonClicked, onToastDismissed } from "./toast.ts";
 export type { ToastPriority, ShowToastOptions, ToastResult } from "./toast.ts";
 export type { Instance } from "./host-config.ts";
-export type { NdNodeRef, WidgetType, TableColumn, TableRow, TreeNode, SourceTreeAction, SourceTreeNode } from "./generated/intrinsics.ts";
+export type {
+  NdNodeRef,
+  WidgetType,
+  TableColumn,
+  TableRow,
+  TreeNode,
+  SourceTreeAction,
+  SourceTreeNode,
+  CommandPaletteItem,
+} from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {
   useState,
@@ -64,6 +73,7 @@ export {
   createContext,
   Suspense,
   Fragment,
+  Activity,
 } from "./dev-react.ts";
 export { dialog, clipboard, notifications, recentDocuments, credentials, app, system, audio, webviewEngine } from "./system.ts";
 export type {

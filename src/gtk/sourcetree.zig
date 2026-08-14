@@ -9,6 +9,7 @@
 // `selectedId` is the controlled selection prop; "" means no selection.
 const std = @import("std");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
@@ -37,6 +38,7 @@ const Node = struct {
     title: [:0]u8,
     caption: ?[:0]u8 = null,
     icon: ?[:0]u8 = null,
+    icon_data: ?[]u8 = null,
     caption_icon: ?[:0]u8 = null,
     badge: ?[:0]u8 = null,
     section: bool = false,
@@ -75,6 +77,7 @@ const Store = struct {
             alloc.free(n.title);
             if (n.caption) |c| alloc.free(c);
             if (n.icon) |i| alloc.free(i);
+            if (n.icon_data) |d| alloc.free(d);
             if (n.caption_icon) |i| alloc.free(i);
             if (n.badge) |b| alloc.free(b);
             if (n.test_id) |t| alloc.free(t);
@@ -189,6 +192,7 @@ fn parseNodes(store: *Store, arr: std.json.Array) void {
         if (objStr(it.object, "parentId")) |p| node.parent_id = alloc.dupe(u8, p) catch null;
         if (objStr(it.object, "caption")) |c| node.caption = alloc.dupeZ(u8, c) catch null;
         if (objStr(it.object, "iconName")) |i| node.icon = alloc.dupeZ(u8, i) catch null;
+        if (objStr(it.object, "iconData")) |d| node.icon_data = alloc.dupe(u8, d) catch null;
         if (objStr(it.object, "captionIconName")) |i| node.caption_icon = alloc.dupeZ(u8, i) catch null;
         if (objStr(it.object, "badge")) |b| node.badge = alloc.dupeZ(u8, b) catch null;
         node.section = objBool(it.object, "section") orelse false;
@@ -298,7 +302,11 @@ fn makePrefixBox(box: *gtk.ListBox, node: *const Node, node_idx: u32) *gtk.Widge
         makeDisclosure(box, node_idx, node.expanded)
     else
         makeGutterSpacer());
-    if (node.icon) |ic| {
+    // Image bytes beat a theme name: a favicon has no freedesktop name, and
+    // this is the only way a browser sidebar can show one.
+    if (node.icon_data) |data| {
+        if (imageFromData(data)) |img| gtk.Box.append(prefix, img.as(gtk.Widget));
+    } else if (node.icon) |ic| {
         const img = gtk.Image.newFromIconName(ndicons.symbolic(ic));
         gtk.Box.append(prefix, img.as(gtk.Widget));
     }
@@ -309,6 +317,35 @@ fn makePrefixBox(box: *gtk.ListBox, node: *const Node, node_idx: u32) *gtk.Widge
         gtk.Box.append(prefix, img.as(gtk.Widget));
     }
     return prefix.as(gtk.Widget);
+}
+
+/// A row icon from raw image bytes — a `data:<mime>;base64,<payload>` URL or a
+/// bare base64 payload, which is the shape `faviconChanged` hands the app on
+/// GTK. Decoded into a GdkTexture and set as the image's paintable; a payload
+/// GDK cannot decode renders nothing rather than failing the row.
+fn imageFromData(data: []const u8) ?*gtk.Image {
+    const comma = std.mem.indexOfScalar(u8, data, ',');
+    const b64 = if (std.mem.startsWith(u8, data, "data:") and comma != null) data[comma.? + 1 ..] else data;
+    const decoder = std.base64.standard.Decoder;
+    const size = decoder.calcSizeForSlice(b64) catch return null;
+    const buf = alloc.alloc(u8, @max(size, 1)) catch return null;
+    defer alloc.free(buf);
+    decoder.decode(buf[0..size], b64) catch return null;
+
+    const bytes = glib.Bytes.new(buf.ptr, size);
+    defer bytes.unref();
+    var err: ?*glib.Error = null;
+    const texture = gdk.Texture.newFromBytes(bytes, &err) orelse {
+        if (err) |e| {
+            std.debug.print("ND_WARN SourceTree iconData: {s}\n", .{if (e.f_message) |m| std.mem.span(m) else "undecodable image"});
+            e.free();
+        }
+        return null;
+    };
+    defer gobject.Object.unref(texture.as(gobject.Object));
+    const img = gtk.Image.newFromPaintable(texture.as(gdk.Paintable));
+    gtk.Image.setPixelSize(img, 16);
+    return img;
 }
 
 fn makeActionButton(box: *gtk.ListBox, node_idx: u32, action_idx: u32, action: Action) *gtk.Button {

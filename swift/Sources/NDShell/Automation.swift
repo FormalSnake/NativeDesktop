@@ -865,13 +865,16 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
 /// `a11y` — the live per-node accessibility probe behind getTree's
 /// enabled/focused/value fields. Value reads mirror
 /// `semanticSetValue`'s kind dispatch so both sides of a round-trip agree
-/// on what a widget's value is. Menu nodes answer -32601 (defaults).
+/// on what a widget's value is. A menu node answers its DECLARED enabled state:
+/// it is not an NSControl, so the branch below would leave every menu item
+/// reporting the `true` default and a disabled Back item would look enabled.
 @MainActor private func semanticA11y(_ view: NSView, _ nodeID: UInt32,
                            _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
                            _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     if ndIsMenuNode(view) {
-        setErrRaw(errOut, nodeID)
-        return -32601
+        let enabled = ndMenuNode(view)?.enabled ?? true
+        setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":false,\"value\":null}")
+        return 0
     }
     var enabled = true
     if let control = view as? NSControl { enabled = control.isEnabled }

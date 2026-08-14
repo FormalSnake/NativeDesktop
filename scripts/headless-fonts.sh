@@ -32,14 +32,18 @@ nd_conf="${XDG_RUNTIME_DIR:-/tmp}/nd-headless-fonts.conf"
   echo '<fontconfig>'
   for d in "${nd_font_dirs[@]}"; do echo "  <dir>$d</dir>"; done
   echo "  <cachedir>${XDG_RUNTIME_DIR:-/tmp}/nd-fontconfig-cache</cachedir>"
-  # GNOME's UI font first, then a face with broad coverage. Without an explicit
+  # GNOME 48's UI font first, then a face with broad coverage. Without an explicit
   # alias, fontconfig with no system config answers whatever sorts first.
   for family in sans-serif sans; do
     echo "  <alias><family>$family</family><prefer>"
-    echo '    <family>Cantarell</family><family>DejaVu Sans</family>'
+    echo '    <family>Adwaita Sans</family><family>DejaVu Sans</family>'
     echo '  </prefer></alias>'
   done
-  echo '  <alias><family>monospace</family><prefer><family>DejaVu Sans Mono</family></prefer></alias>'
+  echo '  <alias><family>monospace</family><prefer><family>Adwaita Mono</family><family>DejaVu Sans Mono</family></prefer></alias>'
+  # libadwaita may still ask for "Cantarell" by name; unaliased, fontconfig
+  # answers whatever sorts first, which is usually the mono face.
+  echo '  <alias><family>Cantarell</family><prefer><family>Adwaita Sans</family></prefer></alias>'
+  echo '  <match target="pattern"><edit name="family" mode="append_last"><string>Adwaita Sans</string></edit></match>'
   echo '  <match target="font"><edit name="antialias" mode="assign"><bool>true</bool></edit></match>'
   echo '  <match target="font"><edit name="hinting" mode="assign"><bool>true</bool></edit></match>'
   echo '</fontconfig>'

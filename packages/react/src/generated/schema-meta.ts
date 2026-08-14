@@ -256,9 +256,9 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "window": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
   "box": [],
   "label": [],
-  "button": [],
-  "textinput": [],
-  "textarea": [],
+  "button": ["focus"],
+  "textinput": ["focus"],
+  "textarea": ["focus"],
   "checkbox": [],
   "radio": [],
   "select": [],
@@ -271,12 +271,12 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "tabview": [],
   "grid": [],
   "listview": [],
-  "webview": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools", "addUserScript", "removeUserScript", "clearUserScripts", "registerScriptMessage", "unregisterScriptMessage", "respondScheme", "getCookies", "setCookie", "deleteCookie", "findStart", "findNext", "findPrevious", "findStop", "saveSession", "restoreSession", "setMuted"],
+  "webview": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools", "addUserScript", "removeUserScript", "clearUserScripts", "registerScriptMessage", "unregisterScriptMessage", "respondScheme", "getCookies", "setCookie", "deleteCookie", "findStart", "findNext", "findPrevious", "findStop", "saveSession", "restoreSession", "setMuted", "focus"],
   "nativeview": [],
   "splitview": [],
   "headerbar": [],
   "toolbarview": [],
-  "searchinput": [],
+  "searchinput": ["focus"],
   "sourcelist": [],
   "sourcetree": [],
   "menubar": [],
@@ -315,7 +315,11 @@ export const widgetCommands: Record<string, readonly string[]> = {
 /** Compile-time command-name map (only widgets with commands appear). */
 export type WidgetCommandNames = {
   "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview" | "present";
-  "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted";
+  "button": "focus";
+  "textinput": "focus";
+  "textarea": "focus";
+  "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "focus";
+  "searchinput": "focus";
   "toastoverlay": "showToast" | "dismissToast";
   "terminal": "copy" | "paste" | "selectAll" | "clearSelection" | "focus";
 };

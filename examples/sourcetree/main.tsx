@@ -14,11 +14,17 @@ const actions: SourceTreeAction[] = [
   { id: "close-run", iconName: "window-close-symbolic", tooltip: "Close run", destructive: true },
 ];
 
+// A 16x16 solid magenta PNG: `iconData` takes raw image bytes rather than a
+// freedesktop icon name, which is the only shape a favicon comes in. Loud on
+// purpose — a capture makes it obvious whether the bytes reached the row.
+const ICON_DATA =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGklEQVR42mP4z/D/PyWYYdSAUQNGDRguBgAAx4/9H5ua3FcAAAAASUVORK5CYII=";
+
 const nodeMeta: Omit<SourceTreeNode, "expanded">[] = [
   { id: "proj-nd", title: "NativeDesktop", hasChildren: true, actionIds: ["new-run"], testID: "st-proj-nd" },
   { id: "run-1", parentId: "proj-nd", title: "fix sidebar", caption: "running · 2m", badge: "3",
     actionIds: ["close-run"], testID: "st-run-1" },
-  { id: "run-2", parentId: "proj-nd", title: "docs pass", caption: "idle", testID: "st-run-2" },
+  { id: "run-2", parentId: "proj-nd", title: "docs pass", caption: "idle", iconData: ICON_DATA, testID: "st-run-2" },
   { id: "sec-hosts", title: "Hosts", section: true, hasChildren: true, testID: "st-sec-hosts" },
   { id: "host-mac", parentId: "sec-hosts", title: "macbook", caption: "connected", iconName: "computer-symbolic",
     captionIconName: "network-transmit-receive-symbolic", hasChildren: true, testID: "st-host-mac" },

@@ -96,6 +96,17 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
     return child;
 }
 
+/// `focus` — the cross-cutting widget command. The tracked handle is a
+/// scroller FRAME for the text/list kinds, and focusing that lands on the
+/// viewport rather than the editable child, so unwrap first.
+pub fn ndFocusWidget(widget: *gtk.Widget, kind: []const u8) void {
+    const target = if (std.mem.eql(u8, kind, "TextArea") or std.mem.eql(u8, kind, "SourceList") or std.mem.eql(u8, kind, "ListView") or std.mem.eql(u8, kind, "Table") or std.mem.eql(u8, kind, "TreeView"))
+        (scrolledWindowInner(@ptrCast(@alignCast(widget))) orelse widget)
+    else
+        widget;
+    _ = gtk.Widget.grabFocus(target);
+}
+
 /// Returns the lazily-created inner `AdwOverlaySplitView` that hosts a
 /// three-pane SplitView's `list`/`content` panes (M13). `AdwOverlaySplitView`
 /// is strictly two-pane, so the third pane nests a second instance inside the
@@ -885,6 +896,15 @@ pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
 }
 
 /// backend.zig routes a non-widget node handle's semantic click here.
+/// A menu node's declared enabled state, for the automation a11y probe.
+/// Null when the node id names no menu item. Menu handles are GMenuItems, not
+/// GtkWidgets, so backend.zig cannot answer this with gtk_widget_is_sensitive.
+pub fn menuItemEnabled(node_id: u32) ?bool {
+    const item_ptr = menu_node_ids.get(node_id) orelse return null;
+    const info = menu_item_info.get(item_ptr) orelse return null;
+    return info.enabled;
+}
+
 pub fn menuSemanticClick(node_id: u32) bool {
     const item_ptr = menu_node_ids.get(node_id) orelse return false;
     const info = menu_item_info.get(item_ptr) orelse return true;
@@ -2647,6 +2667,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
 
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
+    // Cross-cutting first: `focus` means the same thing on every kind.
+    if (std.mem.eql(u8, command, "focus")) return ndFocusWidget(widget, kind);
     if (std.mem.eql(u8, kind, "Window")) {
         if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);

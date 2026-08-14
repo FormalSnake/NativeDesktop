@@ -84,13 +84,14 @@
     },
     {
       "name": "SourceTreeNode",
-      "doc": "Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state.",
+      "doc": "Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state. `iconName` is a freedesktop icon name; `iconData` is raw image bytes as a data URL or bare base64 (what faviconChanged hands you) and WINS over iconName when both are set.",
       "fields": [
         { "name": "id", "type": "string" },
         { "name": "parentId", "type": "string", "optional": true },
         { "name": "title", "type": "string" },
         { "name": "caption", "type": "string", "optional": true },
         { "name": "iconName", "type": "string", "optional": true },
+        { "name": "iconData", "type": "string", "optional": true },
         { "name": "captionIconName", "type": "string", "optional": true },
         { "name": "badge", "type": "string", "optional": true },
         { "name": "section", "type": "bool", "optional": true },
@@ -167,6 +168,7 @@
     },
     {
       "name": "Button",
+      "commands": ["focus"],
       "intrinsic": "button",
       "container": null,
       "props": [
@@ -188,6 +190,7 @@
     },
     {
       "name": "TextInput",
+      "commands": ["focus"],
       "intrinsic": "textinput",
       "container": null,
       "props": [
@@ -204,6 +207,7 @@
     },
     {
       "name": "TextArea",
+      "commands": ["focus"],
       "intrinsic": "textarea",
       "container": null,
       "props": [
@@ -428,7 +432,8 @@
         "respondScheme",
         "getCookies", "setCookie", "deleteCookie",
         "findStart", "findNext", "findPrevious", "findStop",
-        "saveSession", "restoreSession", "setMuted"
+        "saveSession", "restoreSession", "setMuted",
+        "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }
     },
@@ -509,6 +514,7 @@
     },
     {
       "name": "SearchInput",
+      "commands": ["focus"],
       "intrinsic": "searchinput",
       "container": null,
       "props": [

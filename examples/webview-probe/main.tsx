@@ -123,6 +123,7 @@ const CHECKS = [
   "audio",
   "session",
   "download",
+  "focus",
   "linkHover",
   "contextMenu",
 ] as const;
@@ -440,6 +441,15 @@ async function runProbe({ main, priv, scheme, setResult, setPhase }: ProbeArgs):
       return `fail: suggestedFilename was ${JSON.stringify(event.suggestedFilename)}`;
     }
     return "ok (1 event, named, from the requesting view)";
+  });
+
+  // `focus` is the cross-cutting widget command: no synthetic input on either
+  // backend, so this is the only way a drive can put the keyboard somewhere.
+  // The app sends it; the automation socket's a11y probe reports the result,
+  // which scripts/webview-drive.ts asserts independently.
+  await step("focus", async () => {
+    sendCommand(wv!, "focus");
+    return "ok (sent; the drive asserts the a11y focused flag)";
   });
 
   // Hover and context menu are engine-native on GTK (mouse-target-changed /

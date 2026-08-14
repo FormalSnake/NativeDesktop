@@ -76,6 +76,8 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `clicked` | `onClick` | none |
 | `hoverChanged` | `onHoverChanged` | checked |
 
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
 ## TextInput (`<textinput>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -92,6 +94,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
 
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
 ## TextArea (`<textarea>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -105,6 +109,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | Event | Handler | Payload |
 |---|---|---|
 | `changed` | `onChanged` | text |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## Checkbox (`<checkbox>`)
 
@@ -309,7 +315,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `sessionSaved` | `onSessionSaved` | data |
 | `audioStateChanged` | `onAudioStateChanged` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `focus`.
 
 ## NativeView (`<nativeview>`)
 
@@ -404,6 +410,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## SourceList (`<sourcelist>`)
 

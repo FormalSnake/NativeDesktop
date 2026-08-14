@@ -395,6 +395,17 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
     return child;
 }
 
+/// \`focus\` — the cross-cutting widget command. The tracked handle is a
+/// scroller FRAME for the text/list kinds, and focusing that lands on the
+/// viewport rather than the editable child, so unwrap first.
+pub fn ndFocusWidget(widget: *gtk.Widget, kind: []const u8) void {
+    const target = if (std.mem.eql(u8, kind, "TextArea") or std.mem.eql(u8, kind, "SourceList") or std.mem.eql(u8, kind, "ListView") or std.mem.eql(u8, kind, "Table") or std.mem.eql(u8, kind, "TreeView"))
+        (scrolledWindowInner(@ptrCast(@alignCast(widget))) orelse widget)
+    else
+        widget;
+    _ = gtk.Widget.grabFocus(target);
+}
+
 /// Returns the lazily-created inner \`AdwOverlaySplitView\` that hosts a
 /// three-pane SplitView's \`list\`/\`content\` panes (M13). \`AdwOverlaySplitView\`
 /// is strictly two-pane, so the third pane nests a second instance inside the
@@ -1197,6 +1208,15 @@ pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
 }
 
 /// backend.zig routes a non-widget node handle's semantic click here.
+/// A menu node's declared enabled state, for the automation a11y probe.
+/// Null when the node id names no menu item. Menu handles are GMenuItems, not
+/// GtkWidgets, so backend.zig cannot answer this with gtk_widget_is_sensitive.
+pub fn menuItemEnabled(node_id: u32) ?bool {
+    const item_ptr = menu_node_ids.get(node_id) orelse return null;
+    const info = menu_item_info.get(item_ptr) orelse return null;
+    return info.enabled;
+}
+
 pub fn menuSemanticClick(node_id: u32) bool {
     const item_ptr = menu_node_ids.get(node_id) orelse return false;
     const info = menu_item_info.get(item_ptr) orelse return true;
@@ -1676,10 +1696,16 @@ function genZig(s: Schema): string {
   return out;
 }
 
+/** Commands EVERY widget with a native handle can answer, dispatched once
+ *  ahead of the per-kind arms rather than needing a body in each. A widget
+ *  still has to declare them in its schema `commands` array to get them on the
+ *  TS surface — declaring only these needs no per-widget template. */
+const CROSS_CUTTING_COMMANDS = new Set(["focus"]);
+
 /** Per-widget bodies for the imperative widgetCommand dispatcher (M14). Keyed
- *  by widget name; every schema entry with a non-empty `commands` array needs
- *  one — genZigCommands throws otherwise (same fail-loud contract as the
- *  create/apply templates). Bodies see `widget`, `command`, and `arg`. */
+ *  by widget name; every schema entry with a non-cross-cutting `commands`
+ *  entry needs one — genZigCommands throws otherwise (same fail-loud contract
+ *  as the create/apply templates). Bodies see `widget`, `command`, and `arg`. */
 const ZIG_COMMANDS: Record<string, string> = {
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
   Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
@@ -1692,7 +1718,9 @@ const ZIG_COMMANDS: Record<string, string> = {
 function genZigCommands(s: Schema): string {
   let out = "/// App -> widget imperative commands (widgetCommand NDP frame, M14).\n";
   out += "pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {\n";
-  const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
+  out += "    // Cross-cutting first: `focus` means the same thing on every kind.\n";
+  out += "    if (std.mem.eql(u8, command, \"focus\")) return ndFocusWidget(widget, kind);\n";
+  const withCommands = s.widgets.filter((w) => (w.commands ?? []).some((c) => !CROSS_CUTTING_COMMANDS.has(c)));
   if (withCommands.length === 0) {
     out += "    _ = widget;\n    _ = command;\n    _ = arg;\n";
     out += "    std.debug.print(\"ND_WARN widgetCommand on kind={s} with no commands\\n\", .{kind});\n";
@@ -3807,6 +3835,16 @@ func propBool(_ p: [String: Any], _ k: String) -> Bool? { (p[k] as? NSNumber)?.b
 func propArray(_ p: [String: Any], _ k: String) -> [String]? { (p[k] as? [Any])?.compactMap { $0 as? String } }
 func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
+// \`focus\` — the cross-cutting widget command. The tracked handle is an
+// NSScrollView for the text/list kinds, and making that first responder does
+// nothing useful, so unwrap to the document view first. ndWindow(for:) rather
+// than view.window: a native-chrome window orphans the create-time handle.
+func ndFocusView(_ view: NSView, _ kind: String) {
+    var target = view
+    if let scroll = view as? NSScrollView, let doc = scroll.documentView { target = doc }
+    (view.window ?? ndWindow(for: view))?.makeFirstResponder(target)
+}
+
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
@@ -4930,7 +4968,9 @@ const SWIFT_COMMANDS: Record<string, string> = {
 function genSwiftCommands(s: Schema): string {
   let out = "/// App -> widget imperative commands (widgetCommand NDP frame, M14).\n";
   out += "func ndWidgetCommand(_ view: NSView, _ kind: String, _ command: String, _ argJson: String) {\n";
-  const withCommands = s.widgets.filter((w) => (w.commands ?? []).length > 0);
+  out += "    // Cross-cutting first: `focus` means the same thing on every kind.\n";
+  out += "    if command == \"focus\" { ndFocusView(view, kind); return }\n";
+  const withCommands = s.widgets.filter((w) => (w.commands ?? []).some((c) => !CROSS_CUTTING_COMMANDS.has(c)));
   let first = true;
   for (const w of withCommands) {
     let body = SWIFT_COMMANDS[w.name];

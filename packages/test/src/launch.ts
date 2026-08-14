@@ -22,6 +22,8 @@ import type {
   TypeResult,
   WaitCondition,
   WaitForResult,
+  WebViewEvalResult,
+  WebViewInfo,
   WindowsResult,
 } from "@nativedesktop/react/rpc";
 import { TimedClient } from "./client.ts";
@@ -143,8 +145,12 @@ interface ResolvedConfig {
   onStderr?: (line: string) => void;
 }
 
+/// The slice of Bun's FileSink the log pump uses. `write` is typed
+/// `number | Promise<number>` upstream (it buffers, and only awaits on flush),
+/// so narrowing it to `number` here made `bunx tsc --noEmit` fail for every
+/// consumer of this package.
 interface LineSink {
-  write(chunk: Uint8Array): number;
+  write(chunk: Uint8Array): number | Promise<number>;
   end(): void;
 }
 
@@ -442,6 +448,59 @@ export class AppHandle {
     const { contains, ...rest } = opts;
     const rendered = renderWaitValue(value);
     return this.waitFor(contains ? { testId, valueContains: rendered } : { testId, valueEquals: rendered }, rest);
+  }
+
+  // --- webview / page ------------------------------------------------------
+  // The page half of the vocabulary. None of it needs the app to forward
+  // events: url and title come off the engine, page text and eval run in the
+  // page itself.
+
+  waitForUrl(testId: string, urlContains: string, opts?: WaitOpts): Promise<WaitForResult> {
+    return this.waitFor({ testId, urlContains }, opts);
+  }
+
+  waitForPageTitle(testId: string, pageTitleContains: string, opts?: WaitOpts): Promise<WaitForResult> {
+    return this.waitFor({ testId, pageTitleContains }, opts);
+  }
+
+  /** Injects `document.body.innerText` into the page, re-probed at most once
+   * per 250ms — so a match can lag the page by one probe. */
+  waitForPageText(testId: string, pageTextContains: string, opts?: WaitOpts): Promise<WaitForResult> {
+    return this.waitFor({ testId, pageTextContains }, opts);
+  }
+
+  webviewInfo(target: Target, opts: { window?: number } = {}): Promise<WebViewInfo> {
+    return this.rpc.call("webviewInfo", { ...resolveTarget(target), ...opts });
+  }
+
+  /** Evaluates `code` in the page (optionally in a named isolated world) and
+   * answers the result's string rendering. A thrown exception comes back as
+   * `{ok: false, error}`, not a rejection — the code ran. */
+  evalInPage(
+    target: Target,
+    code: string,
+    opts: { world?: string; window?: number; timeoutMs?: number } = {},
+  ): Promise<WebViewEvalResult> {
+    return this.rpc.call("webviewEval", { ...resolveTarget(target), code, ...opts });
+  }
+
+  /** Navigates a webview and waits for the page to commit that URL. The
+   * navigate rides the widget's own `url` prop on the app side, so this drives
+   * the engine directly instead: `location.href = ...` in the page, then the
+   * host-side url predicate. */
+  async openAndAwaitLoad(testId: string, url: string, opts: WaitOpts = {}): Promise<WaitForResult> {
+    await this.evalInPage({ testId }, `location.href = ${JSON.stringify(url)}`, { window: opts.window });
+    // Match on the URL minus its scheme: engines normalise (trailing slash,
+    // percent-encoding, http/https upgrades), so the full string rarely
+    // survives verbatim.
+    return this.waitForUrl(testId, url.replace(/^[a-z]+:\/\//i, ""), opts);
+  }
+
+  /** Screenshot of the window holding a webview. On GTK the in-process
+   * snapshot already rasterizes live WebKit content, so this is the ordinary
+   * capture with a floor that rejects a blank frame. */
+  screenshotPage(path: string, opts: ScreenshotOptions = {}): Promise<ScreenshotResult> {
+    return this.screenshot(path, { minBytes: 2048, ...opts });
   }
 
   async waitForMarker(marker: string, timeoutMs = 5000): Promise<void> {

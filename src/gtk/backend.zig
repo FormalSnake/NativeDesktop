@@ -630,11 +630,15 @@ fn vtSemanticAction(
     const parsed = parseJson(arg_json);
     const args: ?std.json.Value = if (parsed) |p| p.value else null;
 
-    // Menu nodes only support "click" (→ menu dispatch); setValue/type/scroll
-    // would cast the GMenu handle to a GtkWidget, so reject them here.
-    if (!isRealWidget(w) and !std.mem.eql(u8, action_s, "click")) {
-        setErr(err_json_out, node_id);
-        return -32602;
+    // Menu nodes support "click" (→ menu dispatch) and "a11y" (which reads the
+    // GMenuItem's declared state, below); setValue/type/scroll would cast the
+    // GMenu handle to a GtkWidget, so reject them here.
+    if (!isRealWidget(w)) {
+        if (std.mem.eql(u8, action_s, "a11y")) return semanticMenuA11y(node_id, result_json_out);
+        if (!std.mem.eql(u8, action_s, "click")) {
+            setErr(err_json_out, node_id);
+            return -32602;
+        }
     }
 
     if (std.mem.eql(u8, action_s, "window.close")) {
@@ -685,13 +689,30 @@ fn vtSemanticAction(
     return -32601;
 }
 
+/// "a11y" for a MENU node. The handle is a GMenuItem, not a GtkWidget, so the
+/// widget probe below cannot run on it — and without this every menu item
+/// reported the probe's `enabled: true` default, making a disabled Back or
+/// Forward item indistinguishable from an enabled one in getTree.
+fn semanticMenuA11y(node_id: u32, result_json_out: *?[*:0]u8) i32 {
+    const enabled = generated.menuItemEnabled(node_id) orelse true;
+    const json = std.fmt.allocPrint(arena, "{{\"enabled\":{},\"focused\":false,\"value\":null}}", .{enabled}) catch return -32603;
+    defer arena.free(json);
+    result_json_out.* = mallocZ(json);
+    return 0;
+}
+
 /// "a11y" — the live per-node accessibility probe behind getTree's
 /// enabled/focused/value fields. Value reads mirror
 /// `semanticSetValue`'s kind dispatch so both sides of the round-trip agree
 /// on what a widget's value is.
 fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i32 {
     const enabled = gtk.Widget.isSensitive(widget) != 0;
-    const focused = gtk.Widget.hasFocus(widget) != 0;
+    // is-focus as well as has-focus: has-focus additionally requires the
+    // toplevel to be ACTIVE, which it never is under a headless compositor
+    // with no seat. A drive means "this is the window's focus widget", which
+    // is what is-focus answers — and it matches what AppKit reports, where the
+    // probe compares against the window's own firstResponder.
+    const focused = gtk.Widget.hasFocus(widget) != 0 or gtk.Widget.isFocus(widget) != 0;
     const kind = widgetKind(widget);
 
     var value_json: []const u8 = "null";

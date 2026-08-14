@@ -25,6 +25,7 @@ final class NDSourceTreeItem: NSObject, @unchecked Sendable {
     var title: String = ""
     var caption: String?
     var iconName: String?
+    var iconData: String?
     var captionIconName: String?
     var badge: String?
     var section = false
@@ -304,7 +305,12 @@ final class NDSourceTreeCell: NSTableCellView {
             // recycle separately, so nothing has to un-set their colour here.
             titleField.font = .systemFont(ofSize: NSFont.systemFontSize)
         }
-        if let iconName = item.iconName {
+        // Image bytes beat a theme name: a favicon has no freedesktop name (or
+        // SF Symbol), and this is the only way a browser sidebar can show one.
+        if let data = item.iconData, let image = ndImageFromDataURL(data) {
+            image.size = NSSize(width: 16, height: 16)
+            iconView.image = image
+        } else if let iconName = item.iconName {
             let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName  // NDShell/Icons.swift
             iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.title)
         } else {
@@ -448,6 +454,7 @@ func ndSourceTreeSetNodes(_ view: NSView, _ raw: [[String: Any]]) {
         item.title = obj["title"] as? String ?? ""
         item.caption = obj["caption"] as? String
         item.iconName = obj["iconName"] as? String
+        item.iconData = obj["iconData"] as? String
         item.captionIconName = obj["captionIconName"] as? String
         item.badge = obj["badge"] as? String
         item.section = (obj["section"] as? NSNumber)?.boolValue ?? false
@@ -586,4 +593,18 @@ func ndSourceTreeSelectedId(_ view: NSView) -> String? {
           let item = outlineView.item(atRow: outlineView.selectedRow) as? NDSourceTreeItem else { return false }
     source.emitNode("rowActivated", item.nodeId)
     return true
+}
+
+/// A row icon from raw image bytes — a `data:<mime>;base64,<payload>` URL or a
+/// bare base64 payload. Peer of src/gtk/sourcetree.zig's imageFromData; a
+/// payload AppKit cannot decode answers nil rather than failing the row.
+func ndImageFromDataURL(_ value: String) -> NSImage? {
+    let payload: Substring
+    if value.hasPrefix("data:"), let comma = value.firstIndex(of: ",") {
+        payload = value[value.index(after: comma)...]
+    } else {
+        payload = value[...]
+    }
+    guard let data = Data(base64Encoded: String(payload), options: .ignoreUnknownCharacters) else { return nil }
+    return NSImage(data: data)
 }

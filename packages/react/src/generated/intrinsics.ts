@@ -68,13 +68,14 @@ export interface SourceTreeAction {
   tooltip?: string;
   destructive?: boolean;
 }
-/** Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state. */
+/** Flat id/parentId sidebar row (root rows omit parentId). `section` marks a non-selectable group header; expansion is app-controlled state, never native state. `iconName` is a freedesktop icon name; `iconData` is raw image bytes as a data URL or bare base64 (what faviconChanged hands you) and WINS over iconName when both are set. */
 export interface SourceTreeNode {
   id: string;
   parentId?: string;
   title: string;
   caption?: string;
   iconName?: string;
+  iconData?: string;
   captionIconName?: string;
   badge?: string;
   section?: boolean;

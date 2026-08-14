@@ -28,7 +28,15 @@ try {
   if (byTestId.get("st-run-1")!.title !== "fix sidebar") throw new Error("st-run-1 row title mismatch");
   if (byTestId.get("st-run-1")!.badge !== "3") throw new Error("st-run-1 row badge mismatch");
   if (byTestId.get("st-host-mac")!.iconName !== "computer-symbolic") throw new Error("st-host-mac row iconName mismatch");
-  console.log(`ND_ST_TREE_OK role=tree rows=${rows.length} testIDs present`);
+  // Rows carry their own identity, not just an index: a drive names a row.
+  if (byTestId.get("st-run-1")!.id !== "run-1") throw new Error(`st-run-1 row id=${byTestId.get("st-run-1")!.id}, want run-1`);
+  console.log(`ND_ST_TREE_OK role=tree rows=${rows.length} testIDs and ids present`);
+
+  // iconData: raw image bytes where a freedesktop icon name cannot reach (a
+  // favicon). Only the capture can prove the pixels, so this asserts the row
+  // survived the decode and leaves the pixels to the screenshot legs below.
+  if (!byTestId.has("st-run-2")) throw new Error("st-run-2 (the iconData row) missing from getTree rows");
+  console.log("ND_ST_ICONDATA_OK row with iconData rendered");
 
   // ---- leg 2: handshake manifest + activation replay ------------------------
   await app.waitForText("caps present=true nope=false sourcetree=true", { timeoutMs: 3000 });
@@ -43,13 +51,21 @@ try {
   await app.waitForText("replay=yes", { timeoutMs: 3000 });
   await app.setValue("st-tree", "");
   await app.waitForText("sel (none)", { timeoutMs: 3000 });
-  const frontmost = Bun.spawnSync([
-    "osascript", "-e",
-    `tell application "System Events" to set frontmost of (first application process whose unix id is ${app.pid}) to true`,
-  ]);
-  if (frontmost.exitCode !== 0) throw new Error(`osascript frontmost failed: ${frontmost.stderr.toString()}`);
-  await app.waitForText("active true replay=yes", { timeoutMs: 5000 });
-  console.log("ND_ST_CAPS_OK hasCommand true/false + hasWidget + isActive replay/live-flip verified");
+  // The live flip needs the process frontmost, which only macOS can be asked
+  // for; a headless weston seat never activates a window, so the GTK leg
+  // asserts the replay and stops there rather than failing on a missing
+  // osascript.
+  if (app.backend === "appkit") {
+    const frontmost = Bun.spawnSync([
+      "osascript", "-e",
+      `tell application "System Events" to set frontmost of (first application process whose unix id is ${app.pid}) to true`,
+    ]);
+    if (frontmost.exitCode !== 0) throw new Error(`osascript frontmost failed: ${frontmost.stderr.toString()}`);
+    await app.waitForText("active true replay=yes", { timeoutMs: 5000 });
+    console.log("ND_ST_CAPS_OK hasCommand true/false + hasWidget + isActive replay/live-flip verified");
+  } else {
+    console.log("ND_ST_CAPS_OK hasCommand true/false + hasWidget + isActive replay verified (no live flip: headless has no seat)");
+  }
 
   // ---- leg 3: selection by node id (setValue -> selectionChanged -> a11y) ---
   await app.setValue("st-tree", "run-1");

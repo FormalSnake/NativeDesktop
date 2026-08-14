@@ -83,3 +83,9 @@ export const forwardRef: typeof ReactFirstEval.forwardRef = (...a) => pinnedReac
 export const createContext: typeof ReactFirstEval.createContext = (...a) => pinnedReact().createContext(...a);
 export const Suspense: typeof ReactFirstEval.Suspense = ReactFirstEval.Suspense;
 export const Fragment: typeof ReactFirstEval.Fragment = ReactFirstEval.Fragment;
+// Activity is how you keep a subtree MOUNTED but hidden — the sanctioned way to
+// hold a live <webview> for a background tab, since unmounting it would destroy
+// the widget and reload the page. It drives the reconciler's
+// hideInstance/unhideInstance hooks, which this host turns into the hide/unhide
+// protocol ops.
+export const Activity: typeof ReactFirstEval.Activity = ReactFirstEval.Activity;

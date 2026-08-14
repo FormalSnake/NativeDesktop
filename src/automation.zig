@@ -839,7 +839,7 @@ fn buildNode(
         const r = m.rows orelse break :blk null;
         const out = try arena.alloc(rpc.RowJson, r.len);
         for (r, 0..) |row, i| {
-            out[i] = .{ .title = row.title, .badge = row.badge, .iconName = row.icon_name, .testID = row.test_id };
+            out[i] = .{ .title = row.title, .badge = row.badge, .iconName = row.icon_name, .testID = row.test_id, .id = row.id, .subtitle = row.subtitle };
         }
         break :blk out;
     } else null;

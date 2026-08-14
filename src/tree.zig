@@ -28,7 +28,10 @@ pub const NodeMeta = struct {
     /// `windows` RPC. Null for plain windows and every non-Window widget.
     tab_group: ?[]u8 = null,
 
-    pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8, test_id: ?[]u8 = null };
+    /// `id` and `subtitle` carry CommandPaletteItem/SourceTreeNode's own
+    /// identity and secondary line: without them a palette row is
+    /// addressable only by index, so a drive cannot say which row it means.
+    pub const Row = struct { title: []u8, badge: ?[]u8, icon_name: ?[]u8, test_id: ?[]u8 = null, id: ?[]u8 = null, subtitle: ?[]u8 = null };
 };
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -86,11 +89,21 @@ fn parseRows(gpa: std.mem.Allocator, props: ?std.json.Value) ?[]NodeMeta.Row {
         if (it.object.get("testID")) |t| {
             if (t == .string) test_id = gpa.dupe(u8, t.string) catch null;
         }
-        out.append(gpa, .{ .title = title, .badge = badge, .icon_name = icon_name, .test_id = test_id }) catch {
+        var row_id: ?[]u8 = null;
+        if (it.object.get("id")) |i| {
+            if (i == .string) row_id = gpa.dupe(u8, i.string) catch null;
+        }
+        var subtitle: ?[]u8 = null;
+        if (it.object.get("subtitle")) |sub| {
+            if (sub == .string) subtitle = gpa.dupe(u8, sub.string) catch null;
+        }
+        out.append(gpa, .{ .title = title, .badge = badge, .icon_name = icon_name, .test_id = test_id, .id = row_id, .subtitle = subtitle }) catch {
             gpa.free(title);
             if (badge) |b| gpa.free(b);
             if (icon_name) |i| gpa.free(i);
             if (test_id) |t| gpa.free(t);
+            if (row_id) |i| gpa.free(i);
+            if (subtitle) |sub| gpa.free(sub);
         };
     }
     return out.toOwnedSlice(gpa) catch null;
@@ -106,6 +119,8 @@ fn freeRows(gpa: std.mem.Allocator, rows: ?[]NodeMeta.Row) void {
         if (row.badge) |b| gpa.free(b);
         if (row.icon_name) |i| gpa.free(i);
         if (row.test_id) |t| gpa.free(t);
+        if (row.id) |i| gpa.free(i);
+        if (row.subtitle) |sub| gpa.free(sub);
     }
     gpa.free(r);
 }

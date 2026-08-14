@@ -29,6 +29,7 @@ const CHECKS = [
   "audio",
   "session",
   "download",
+  "focus",
   "linkHover",
   "contextMenu",
 ] as const;
@@ -125,6 +126,11 @@ for (const [name, condition] of [
   await client.call("waitFor", { condition, timeoutMs: 10000 });
   console.log(`ND_WEBVIEW_CHECK ${name}: ok`);
 }
+
+// The focus command's real assertion: the a11y probe, read over the socket
+// rather than from anything the app told us.
+await client.call("waitFor", { condition: { testId: "wv-main", state: "focused" }, timeoutMs: 5000 });
+console.log("ND_WEBVIEW_CHECK focusCommand: ok");
 
 const ran = CHECKS.length - skips.length;
 console.log(`ND_WEBVIEW2_OK ${ran}/${CHECKS.length} webview checks passed (${skips.length} skipped), page vocabulary verified`);

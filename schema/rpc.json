@@ -14,12 +14,14 @@
     },
     {
       "name": "RowJson",
-      "doc": "SourceList's per-row shape on the wire (M11 SourceList Wave 1) — camelCase iconName, matching the schema prop shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have none).",
+      "doc": "The per-row shape on the wire, shared by every row-driven widget (SourceList `items`, SourceTree `nodes`, CommandPalette `items`) — camelCase iconName, matching the schema prop shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have none); id and subtitle carry the row's own identity and secondary line where the widget's item type has them (CommandPaletteItem, SourceTreeNode), so a drive can name a row instead of counting to it.",
       "fields": [
         { "name": "title", "type": "string" },
         { "name": "badge", "type": "string", "nullable": true },
         { "name": "iconName", "type": "string", "nullable": true },
-        { "name": "testID", "type": "string", "nullable": true }
+        { "name": "testID", "type": "string", "nullable": true },
+        { "name": "id", "type": "string", "nullable": true },
+        { "name": "subtitle", "type": "string", "nullable": true }
       ]
     },
     {
