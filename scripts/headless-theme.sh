@@ -26,9 +26,16 @@ nd_theme_dir="${XDG_RUNTIME_DIR:-/tmp}/nd-headless-theme"
 mkdir -p "$nd_theme_dir/gtk-4.0" "$nd_theme_dir/glib-2.0/settings"
 # GNOME 48 replaced Cantarell and Source Code Pro as the system fonts; the
 # families here have to match the ones headless-fonts.sh makes resolvable.
-printf '[Settings]\ngtk-font-name = Adwaita Sans 11\ngtk-icon-theme-name = Adwaita\n' \
+#
+# gtk-enable-animations=0 is a capture requirement, not a preference. A
+# surface that presents with a fade is captured on whichever frame the
+# snapshot happened to catch: the Stage-5 palette shot came out mid-present at
+# roughly 20% opacity (card fill rgb(249) over a scrimmed page of rgb(248)),
+# and every colour read off it was wrong. With animations off, a presented
+# surface is at its final opacity on the frame it first appears.
+printf '[Settings]\ngtk-font-name = Adwaita Sans 11\ngtk-icon-theme-name = Adwaita\ngtk-enable-animations = 0\n' \
   >"$nd_theme_dir/gtk-4.0/settings.ini"
-printf "[org/gnome/desktop/interface]\nfont-name='Adwaita Sans 11'\ndocument-font-name='Adwaita Sans 11'\nmonospace-font-name='Adwaita Mono 11'\nicon-theme-name='Adwaita'\n" \
+printf "[org/gnome/desktop/interface]\nfont-name='Adwaita Sans 11'\ndocument-font-name='Adwaita Sans 11'\nmonospace-font-name='Adwaita Mono 11'\nicon-theme-name='Adwaita'\nenable-animations=false\n" \
   >"$nd_theme_dir/glib-2.0/settings/keyfile"
 export XDG_CONFIG_HOME="$nd_theme_dir"
 export GSETTINGS_BACKEND=keyfile
