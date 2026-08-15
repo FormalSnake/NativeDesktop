@@ -395,6 +395,14 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
         gtk.ListBox.append(box, row.as(gtk.Widget));
     } else {
         const row = adw.ActionRow.new();
+        // One line each, end-ellipsized, matching what NDShell's source-list
+        // cells already do (`.byTruncatingTail`). AdwActionRow wraps by
+        // default, which in a sidebar makes row height a function of title
+        // length — a two-line row next to one-line neighbours reads as a
+        // different KIND of row rather than a longer one, and a wrapped URL
+        // breaks mid-token. A navigation row is a fixed-height row.
+        adw.ActionRow.setTitleLines(row, 1);
+        adw.ActionRow.setSubtitleLines(row, 1);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), node.title);
         if (node.caption) |c| adw.ActionRow.setSubtitle(row, c);
         if (!node.selectable) {
