@@ -17,6 +17,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `toolbarStyle` | unified \| unifiedCompact \| expanded \| preference | unified | create |
 | `frameAutosaveName` | string | none | create |
 | `density` | standard \| compact | standard | create |
+| `presentation` | window \| sheet | window | create |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -63,7 +64,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 |---|---|---|---|
 | `label` | string |  | createAndUpdate |
 | `testID` | string | none | meta |
-| `iconName` | string | none | create |
+| `iconName` | string | none | createAndUpdate |
 | `iconData` | string | none | createAndUpdate |
 | `labelAlign` | start \| center \| end | center | create |
 | `ellipsize` | bool | false | create |

@@ -126,6 +126,7 @@
         { "name": "toolbarStyle", "type": "enum", "values": ["unified", "unifiedCompact", "expanded", "preference"], "default": "unified", "appliesTo": "create" },
         { "name": "frameAutosaveName", "type": "string", "appliesTo": "create" },
         { "name": "density", "type": "enum", "values": ["standard", "compact"], "default": "standard", "appliesTo": "create" },
+        { "name": "presentation", "type": "enum", "values": ["window", "sheet"], "default": "window", "appliesTo": "create" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -174,7 +175,7 @@
       "props": [
         { "name": "label", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" },
-        { "name": "iconName", "type": "string", "appliesTo": "create" },
+        { "name": "iconName", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "iconData", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "labelAlign", "type": "enum", "values": ["start", "center", "end"], "default": "center", "appliesTo": "create" },
         { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },

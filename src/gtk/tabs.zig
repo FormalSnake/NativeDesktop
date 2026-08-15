@@ -150,9 +150,21 @@ fn emitFocused(node_id: u32, checked: bool) void {
 /// Generated create-arm entry. Plain window (no tabGroup) keeps the previous
 /// AdwApplicationWindow behavior verbatim; a group member becomes a page bin
 /// in the group's most recently active scaffold (created on demand).
+///
+/// `presentation="sheet"` has no GTK peer — GNOME has no sheets — so it maps
+/// to the half of a sheet GTK does have: a window transient for the one that
+/// asked, which is what keeps it above its parent, centred on it, and off the
+/// taskbar as a window of its own.
+///
+/// Deliberately NOT modal. `gtk_window_set_modal` puts a grab on the whole
+/// application, and this framework does not own a modal loop to match it: the
+/// window it would block is the app's, closed by the app's own React state,
+/// so the grab buys the app nothing it asked for and costs it every event on
+/// every other window while the dialog is up.
 pub fn createWindow(
     app: *gtk.Application,
     tab_group: ?[]const u8,
+    presentation: ?[]const u8,
     title: ?[]const u8,
     width: c_int,
     height: c_int,
@@ -160,12 +172,18 @@ pub fn createWindow(
     dupeZ: *const fn ([]const u8) [:0]const u8,
 ) !*gtk.Widget {
     ndbasecss.ensureBaseCss(); // display is live here; badge/size/density classes need it
+    const as_sheet = if (presentation) |p| std.mem.eql(u8, p, "sheet") else false;
     const group_name = tab_group orelse {
         const window = adw.ApplicationWindow.new(app);
         const win = window.as(gtk.Window);
         the_window.* = win;
         if (title) |t| gtk.Window.setTitle(win, dupeZ(t));
         gtk.Window.setDefaultSize(win, width, height);
+        if (as_sheet) {
+            if (gtk.Application.getActiveWindow(app)) |parent| {
+                if (parent != win) gtk.Window.setTransientFor(win, parent);
+            }
+        }
         gtk.Window.present(win);
         return window.as(gtk.Widget);
     };

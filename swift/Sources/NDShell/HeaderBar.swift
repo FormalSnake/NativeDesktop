@@ -358,6 +358,29 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
     ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
 
+/// The symbol name each button last resolved. React re-sends a node's whole
+/// prop set whenever anything about it changes, and reseeding a promoted item
+/// removes and re-inserts it in the live NSToolbar — repeating that for an
+/// icon that did not actually change is churn nothing benefits from.
+nonisolated(unsafe) private var ndButtonIconNames: [ObjectIdentifier: String] = [:]
+
+/// `Button.iconName` on update (generated Button applyProps arm). An
+/// NSToolbarItem snapshots the control it was seeded with, so a promoted
+/// button's new symbol reaches the button and not the toolbar unless the item
+/// is reseeded — the same reason `prominent` and `badge` do it.
+///
+/// The label passed through is what the button is currently drawing: an
+/// icon-only button (`.imageOnly`) keeps its large scale, an icon+label
+/// button keeps its leading image, and neither shape changes underneath the
+/// app on a symbol swap.
+func ndButtonApplyIconName(_ b: NSButton, _ iconName: String) {
+    let key = ObjectIdentifier(b)
+    guard ndButtonIconNames[key] != iconName else { return }
+    ndButtonIconNames[key] = iconName
+    ndApplyButtonIcon(b, iconName: iconName, label: b.imagePosition == .imageOnly ? "" : b.title)
+    ndToolbarOwner(of: b)?.reseedItem(for: b)
+}
+
 /// `Button.badge` (generated Button create + applyProps arms). Empty string
 /// clears the badge.
 func ndButtonApplyBadge(_ b: NSButton, _ badge: String) {

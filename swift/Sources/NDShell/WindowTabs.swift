@@ -38,8 +38,11 @@ private func ndIsTabWindow(_ win: NSWindow) -> Bool {
 /// Generated create arm (Widgets.swift): present the new window. A tabGroup
 /// member joins its group's most recent window — key window first, so a new
 /// tab lands where the user is working (Chrome behavior) — appended at the
-/// trailing edge of that window's tab group, Safari-style.
-func ndWindowTabsPresent(_ win: NSWindow, tabGroup: String?) {
+/// trailing edge of that window's tab group, Safari-style. A
+/// `presentation="sheet"` window is attached to the window that asked for it
+/// instead of standing on its own.
+func ndWindowTabsPresent(_ win: NSWindow, tabGroup: String?, presentation: String? = nil) {
+    if presentation == "sheet", ndBeginSheet(win) { return }
     guard let group = tabGroup else {
         win.center()
         win.makeKeyAndOrderFront(nil)
@@ -63,6 +66,39 @@ func ndWindowTabsPresent(_ win: NSWindow, tabGroup: String?) {
         win.center()
     }
     win.makeKeyAndOrderFront(nil)
+}
+
+/// Windows presented as sheets, mapped to the window they hang off. Kept so
+/// the unmount path can `endSheet` on the right parent — a sheet closed with
+/// plain `close()` leaves its parent stuck behind an invisible modal session.
+nonisolated(unsafe) private var ndSheetParents: [ObjectIdentifier: NSWindow] = [:]
+
+/// Attach `win` to the window that asked for it. Apple's framing (HIG,
+/// *Sheets*) is that a sheet is "a dialog attached to a specific window,
+/// ensuring that a user never loses track of which window the dialog belongs
+/// to", which is exactly what a consent prompt needs; a free-floating panel
+/// with live traffic lights can be minimised away from the decision it is
+/// asking about.
+///
+/// The host window is the key window, falling back to the main window: the
+/// sheet is created in response to something the user did there. Returns
+/// false when there is nothing to attach to, so the caller presents a plain
+/// window rather than dropping the UI on the floor.
+private func ndBeginSheet(_ win: NSWindow) -> Bool {
+    let hosts = NSApp.windows.filter { $0 !== win && $0.isVisible && $0.attachedSheet == nil }
+    guard let host = hosts.first(where: { $0.isKeyWindow }) ?? hosts.first(where: { $0.isMainWindow }) ?? hosts.first
+    else {
+        FileHandle.standardError.write(
+            "ND_WARN presentation=\"sheet\" has no window to attach to; presenting a plain window\n".data(using: .utf8)!)
+        return false
+    }
+    // A sheet draws no titlebar of its own, so the window controls that made
+    // the prompt separable from its window simply stop existing.
+    win.styleMask.remove(.miniaturizable)
+    win.styleMask.remove(.resizable)
+    ndSheetParents[ObjectIdentifier(win)] = host
+    host.beginSheet(win, completionHandler: nil)
+    return true
 }
 
 /// Generated ndConnectEvents Window arm: record the node id and install the
@@ -103,6 +139,12 @@ func ndWindowTabsClose(_ view: NSView) {
     guard let win = ndWindow(for: view) else { return }
     let key = ObjectIdentifier(win)
     if ndClosedWindows.contains(key) { return }
+    // A sheet has to be ended on its parent; close() alone dismisses the
+    // sheet's own window and leaves the parent in a modal session with
+    // nothing on it.
+    if let host = ndSheetParents.removeValue(forKey: key) {
+        host.endSheet(win)
+    }
     win.close()
 }
 

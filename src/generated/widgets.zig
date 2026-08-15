@@ -254,9 +254,9 @@ fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
 /// gtk_button_set_label) is what keeps the badge suffix, label alignment and
 /// size classes the create arm installed.
 ///
-/// An icon-only button is left alone: `iconName` is create-only, so
-/// rebuilding it as an icon+label pair would need an icon name nothing
-/// retained, and set_label would drop the icon.
+/// An icon-only button is left alone: rebuilding it as an icon+label pair
+/// would need the icon name, which nothing retains, and set_label would drop
+/// the icon.
 fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const content = ndButtonContent(button) orelse return;
     if (gobject.ext.isA(content, adw.ButtonContent)) {
@@ -267,6 +267,24 @@ fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]
         if (gtk.Widget.getLastChild(content)) |last| {
             if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setText(@ptrCast(@alignCast(last)), dupeZ(label));
         }
+    }
+}
+
+/// Button.iconName update. The create arm leaves the icon in one of two
+/// shapes — a bare GtkImage (icon-only) or an AdwButtonContent (icon+label) —
+/// so retarget whichever is there rather than rebuilding the child, which
+/// would drop the badge suffix and the size classes.
+///
+/// A button already carrying `iconData` is left alone: image bytes beat a
+/// theme name at create, and that precedence has to hold on every later frame
+/// too.
+fn ndButtonSetIconName(button: *gtk.Button, icon: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE) != null) return;
+    const content = ndButtonContent(button) orelse return;
+    if (gobject.ext.isA(content, adw.ButtonContent)) {
+        adw.ButtonContent.setIconName(@ptrCast(@alignCast(content)), ndicons.symbolic(dupeZ(icon)));
+    } else if (gobject.ext.isA(content, gtk.Image)) {
+        gtk.Image.setFromIconName(@ptrCast(@alignCast(content)), ndicons.symbolic(dupeZ(icon)));
     }
 }
 
@@ -1414,7 +1432,7 @@ pub fn create(
     if (std.mem.eql(u8, kind, "Window")) {
         const w: c_int = @intCast(propInt(props, "defaultWidth") orelse 480);
         const h: c_int = @intCast(propInt(props, "defaultHeight") orelse 320);
-        const handle = try ndtabs_gtk.createWindow(app, propStr(props, "tabGroup"), propStr(props, "title"), w, h, the_window, dupeZ);
+        const handle = try ndtabs_gtk.createWindow(app, propStr(props, "tabGroup"), propStr(props, "presentation"), propStr(props, "title"), w, h, the_window, dupeZ);
         // toolbarStyle is macOS window-chrome vocabulary (unified/expanded/
         // preference NSToolbar shapes); GTK's native chrome is the one
         // AdwHeaderBar idiom, so the prop is deliberately inert here.
@@ -2031,6 +2049,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "Button")) {
         if (propStr(props, "label")) |l| ndButtonSetLabel(@ptrCast(@alignCast(widget)), l, dupeZ);
+        if (propStr(props, "iconName")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);
         if (propStr(props, "iconData")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);
         if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));
         if (propBool(props, "prominent")) |pr| {

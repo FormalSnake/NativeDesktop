@@ -553,9 +553,9 @@ fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
 /// gtk_button_set_label) is what keeps the badge suffix, label alignment and
 /// size classes the create arm installed.
 ///
-/// An icon-only button is left alone: \`iconName\` is create-only, so
-/// rebuilding it as an icon+label pair would need an icon name nothing
-/// retained, and set_label would drop the icon.
+/// An icon-only button is left alone: rebuilding it as an icon+label pair
+/// would need the icon name, which nothing retains, and set_label would drop
+/// the icon.
 fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const content = ndButtonContent(button) orelse return;
     if (gobject.ext.isA(content, adw.ButtonContent)) {
@@ -566,6 +566,24 @@ fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]
         if (gtk.Widget.getLastChild(content)) |last| {
             if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setText(@ptrCast(@alignCast(last)), dupeZ(label));
         }
+    }
+}
+
+/// Button.iconName update. The create arm leaves the icon in one of two
+/// shapes — a bare GtkImage (icon-only) or an AdwButtonContent (icon+label) —
+/// so retarget whichever is there rather than rebuilding the child, which
+/// would drop the badge suffix and the size classes.
+///
+/// A button already carrying \`iconData\` is left alone: image bytes beat a
+/// theme name at create, and that precedence has to hold on every later frame
+/// too.
+fn ndButtonSetIconName(button: *gtk.Button, icon: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE) != null) return;
+    const content = ndButtonContent(button) orelse return;
+    if (gobject.ext.isA(content, adw.ButtonContent)) {
+        adw.ButtonContent.setIconName(@ptrCast(@alignCast(content)), ndicons.symbolic(dupeZ(icon)));
+    } else if (gobject.ext.isA(content, gtk.Image)) {
+        gtk.Image.setFromIconName(@ptrCast(@alignCast(content)), ndicons.symbolic(dupeZ(icon)));
     }
 }
 
@@ -1892,7 +1910,7 @@ function genZigCreateBody(w: Widget): string {
     // owning gtk.Window.
     out += `        const w: c_int = @intCast(propInt(props, "defaultWidth") orelse ${dflt(w, "defaultWidth")});\n`;
     out += `        const h: c_int = @intCast(propInt(props, "defaultHeight") orelse ${dflt(w, "defaultHeight")});\n`;
-    out += "        const handle = try ndtabs_gtk.createWindow(app, propStr(props, \"tabGroup\"), propStr(props, \"title\"), w, h, the_window, dupeZ);\n";
+    out += "        const handle = try ndtabs_gtk.createWindow(app, propStr(props, \"tabGroup\"), propStr(props, \"presentation\"), propStr(props, \"title\"), w, h, the_window, dupeZ);\n";
     out += "        // toolbarStyle is macOS window-chrome vocabulary (unified/expanded/\n";
     out += "        // preference NSToolbar shapes); GTK's native chrome is the one\n";
     out += "        // AdwHeaderBar idiom, so the prop is deliberately inert here.\n";
@@ -2618,6 +2636,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if ((w.name === "Checkbox" || w.name === "Radio") && p.name === "label") {
       out += "        if (propStr(props, \"label\")) |l| gtk.CheckButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));\n";
+    } else if (w.name === "Button" && p.name === "iconName") {
+      out += "        if (propStr(props, \"iconName\")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "iconData") {
       out += "        if (propStr(props, \"iconData\")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "tooltip") {
@@ -4097,9 +4117,11 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        ndWindowToolbarManager = manager\n";
     out += "        ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)\n";
     out += "        // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window\n";
-    out += "        // joins its group's native tab bar via addTabbedWindow; a plain\n";
-    out += "        // window centers and orders front as before.\n";
-    out += '        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))\n';
+    out += "        // joins its group's native tab bar via addTabbedWindow; a\n";
+    out += "        // `presentation=\"sheet\"` window becomes a window-modal sheet on\n";
+    out += "        // whichever window asked for it; a plain window centers and orders\n";
+    out += "        // front as before.\n";
+    out += '        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"), presentation: propStr(props, "presentation"))\n';
     out += "        // After present: a session frame saved under this name must win\n";
     out += "        // over the default center()+defaultWidth/Height placement.\n";
     out += '        if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }\n';
@@ -4160,7 +4182,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        if let data = propStr(props, "iconData") {\n';
     out += "            ndApplyButtonIconData(b, iconData: data, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
     out += '        } else if let icon = propStr(props, "iconName") {\n';
-    out += "            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)\n";
+    out += "            // Through the update helper, so the name it remembers is seeded\n";
+    out += "            // here and the first applyProps carrying the same icon is a no-op\n";
+    out += "            // (NDShell/HeaderBar.swift; the toolbar owner is still nil).\n";
+    out += "            ndButtonApplyIconName(b, icon)\n";
     out += "        }\n";
     out += `        switch propStr(props, "labelAlign") ?? ${swiftDefaultStr(w, "labelAlign")} {\n`;
     out += '        case "start": b.alignment = .left\n';
@@ -4628,6 +4653,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let l = propStr(props, "label"), let btn = view as? NSButton {\n';
       out += "            btn.title = l\n";
       out += "        }\n";
+    } else if (w.name === "Button" && p.name === "iconName") {
+      out += '        if let icon = propStr(props, "iconName"), let btn = view as? NSButton { ndButtonApplyIconName(btn, icon) }\n';
     } else if (w.name === "Button" && p.name === "iconData") {
       out += '        if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }\n';
     } else if (w.name === "Button" && p.name === "tooltip") {

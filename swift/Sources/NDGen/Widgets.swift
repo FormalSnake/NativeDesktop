@@ -119,9 +119,11 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         ndWindowToolbarManager = manager
         ndEnsureMenuManager() // M13: install the default NSApp.mainMenu (App/File/Edit/View/Window/Help)
         // Tab-aware presentation (WindowTabs.swift): a `tabGroup` window
-        // joins its group's native tab bar via addTabbedWindow; a plain
-        // window centers and orders front as before.
-        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"))
+        // joins its group's native tab bar via addTabbedWindow; a
+        // `presentation="sheet"` window becomes a window-modal sheet on
+        // whichever window asked for it; a plain window centers and orders
+        // front as before.
+        ndWindowTabsPresent(win, tabGroup: propStr(props, "tabGroup"), presentation: propStr(props, "presentation"))
         // After present: a session frame saved under this name must win
         // over the default center()+defaultWidth/Height placement.
         if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }
@@ -155,7 +157,10 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
         if let data = propStr(props, "iconData") {
             ndApplyButtonIconData(b, iconData: data, label: lbl)  // NDShell/Icons.swift (hand-written)
         } else if let icon = propStr(props, "iconName") {
-            ndApplyButtonIcon(b, iconName: icon, label: lbl)  // NDShell/Icons.swift (hand-written)
+            // Through the update helper, so the name it remembers is seeded
+            // here and the first applyProps carrying the same icon is a no-op
+            // (NDShell/HeaderBar.swift; the toolbar owner is still nil).
+            ndButtonApplyIconName(b, icon)
         }
         switch propStr(props, "labelAlign") ?? "center" {
         case "start": b.alignment = .left
@@ -487,6 +492,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
             // create-time label; a button that gains or loses one follows.
             if b.image != nil { b.imagePosition = l.isEmpty ? .imageOnly : .imageLeading }
         }
+        if let icon = propStr(props, "iconName"), let btn = view as? NSButton { ndButtonApplyIconName(btn, icon) }
         if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }
         if let tt = propStr(props, "tooltip"), let btn = view as? NSButton { btn.toolTip = tt }
         if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }
