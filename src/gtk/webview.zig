@@ -545,6 +545,25 @@ fn widgetNodeId(widget: *gtk.Widget) ?u32 {
     return @intCast(@intFromPtr(raw));
 }
 
+var trace_on: ?bool = null;
+var trace_origin: i64 = 0;
+
+/// ND_WEBVIEW_TRACE=1 narrates the order this view sees its own commands and
+/// load transitions in. The extension surface is entirely order-dependent (a
+/// user script registered after a load has begun misses document_start), and
+/// this is the only place that ordering is observable.
+fn tr(comptime fmt: []const u8, args: anytype) void {
+    const on = trace_on orelse blk: {
+        const on = std.c.getenv("ND_WEBVIEW_TRACE") != null;
+        trace_on = on;
+        if (on) trace_origin = glib.getMonotonicTime();
+        break :blk on;
+    };
+    if (!on) return;
+    const ms = @divTrunc(glib.getMonotonicTime() - trace_origin, 1000);
+    std.debug.print("ND_WV t={d} " ++ fmt ++ "\n", .{ms} ++ args);
+}
+
 // ============================================================================
 // JSON helpers
 // ============================================================================
@@ -703,7 +722,10 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, suppress_context_menu: b
     gtk.Widget.setHexpand(widget, 1);
     gtk.Widget.setVexpand(widget, 1);
     if (url) |u| {
-        if (u[0] != 0) a.web_view_load_uri(@ptrCast(widget), u);
+        if (u[0] != 0) {
+            tr("create+load url={s}", .{std.mem.span(u)});
+            a.web_view_load_uri(@ptrCast(widget), u);
+        }
     }
     return widget;
 }
@@ -718,6 +740,7 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     if (a.web_view_get_uri(@ptrCast(widget))) |cur| {
         if (std.mem.eql(u8, std.mem.span(cur), url)) return;
     }
+    tr("setUrl node={?d} url={s}", .{ widgetNodeId(widget), url });
     a.web_view_load_uri(@ptrCast(widget), url.ptr);
 }
 
@@ -918,6 +941,7 @@ fn cmdAddUserScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) vo
     // Re-adding under a live id replaces it, matching how apps think about a
     // keyed registry (and how the AppKit side has to behave anyway).
     removeScriptById(v, state, id);
+    tr("addUserScript node={?d} id={s} world={s} at={s}", .{ widgetNodeId(widget), id, world, if (at_start) "start" else "end" });
     add(ucm, script);
     const key = alloc.dupe(u8, id) catch return;
     const world_copy = alloc.dupe(u8, world) catch "";
@@ -948,6 +972,7 @@ fn cmdRemoveUserScript(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value)
 
 fn cmdClearUserScripts(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
     const state = stateOf(widget) orelse return;
+    tr("clearUserScripts node={?d}", .{widgetNodeId(widget)});
     const world: ?[]const u8 = if (argObject(arg)) |o| objStr(o, "world") else null;
     if (world) |w| {
         // World-scoped clear has no WebKit equivalent, so walk the registry
@@ -1036,6 +1061,7 @@ fn cmdRegisterScriptMessage(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.V
     const detail = std.fmt.allocPrintSentinel(alloc, "script-message-received::{s}", .{name}, 0) catch return;
     defer alloc.free(detail);
 
+    tr("registerScriptMessage node={d} name={s} world={s}", .{ node_id, name, world });
     const ctx = alloc.create(MessageCtx) catch return;
     ctx.* = .{
         .node_id = node_id,
@@ -1882,6 +1908,7 @@ fn cbLoadChanged(obj: *gobject.Object, load_event: c_int, data: ?*anyopaque) cal
     const node_id: u32 = @intCast(@intFromPtr(data));
     const a = api orelse return;
     const v: *anyopaque = @ptrCast(obj);
+    tr("load node={d} event={d} uri={s}", .{ node_id, load_event, if (a.web_view_get_uri(v)) |u| std.mem.span(u) else "" });
     if (emit) |f| {
         f(node_id, "loadingChanged", .{ .checked = load_event != WEBKIT_LOAD_FINISHED });
         // History availability changes exactly on load transitions.
