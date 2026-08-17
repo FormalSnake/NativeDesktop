@@ -390,6 +390,7 @@ fn ndBuildSourceRows(box: *gtk.ListBox, arr: ?std.json.Array, dupeZ: *const fn (
         if (it != .object) continue;
         const title = if (it.object.get("title")) |t| (if (t == .string) t.string else "") else "";
         const row = adw.ActionRow.new();
+        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
         if (it.object.get("iconName")) |ic| {
             if (ic == .string) {
@@ -1769,6 +1770,10 @@ pub fn create(
         return group.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Row")) {
         const row = adw.ActionRow.new();
+        // Title and subtitle are app data, not markup. AdwPreferencesRow
+        // parses both as Pango by default, so an & or < in either fails the
+        // parse and the label renders EMPTY instead of escaped.
+        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ""));
         if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(row, dupeZ(s));
         if (propStr(props, "iconName")) |ic| {
@@ -1784,6 +1789,7 @@ pub fn create(
         return row.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SwitchRow")) {
         const row = adw.SwitchRow.new();
+        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ""));
         if (propStr(props, "subtitle")) |s| adw.ActionRow.setSubtitle(row.as(adw.ActionRow), dupeZ(s));
         adw.SwitchRow.setActive(row, @intFromBool(propBool(props, "checked") orelse false));

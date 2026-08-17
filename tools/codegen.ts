@@ -689,6 +689,7 @@ fn ndBuildSourceRows(box: *gtk.ListBox, arr: ?std.json.Array, dupeZ: *const fn (
         if (it != .object) continue;
         const title = if (it.object.get("title")) |t| (if (t == .string) t.string else "") else "";
         const row = adw.ActionRow.new();
+        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
         if (it.object.get("iconName")) |ic| {
             if (ic == .string) {
@@ -1963,6 +1964,10 @@ function genZigCreateBody(w: Widget): string {
     out += "        return group.as(gtk.Widget);\n";
   } else if (w.name === "Row") {
     out += "        const row = adw.ActionRow.new();\n";
+    out += "        // Title and subtitle are app data, not markup. AdwPreferencesRow\n";
+    out += "        // parses both as Pango by default, so an & or < in either fails the\n";
+    out += "        // parse and the label renders EMPTY instead of escaped.\n";
+    out += "        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);\n";
     out += `        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
     out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(row, dupeZ(s));\n";
     out += "        if (propStr(props, \"iconName\")) |ic| {\n";
@@ -1978,6 +1983,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        return row.as(gtk.Widget);\n";
   } else if (w.name === "SwitchRow") {
     out += "        const row = adw.SwitchRow.new();\n";
+    out += "        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);\n";
     out += `        adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
     out += "        if (propStr(props, \"subtitle\")) |s| adw.ActionRow.setSubtitle(row.as(adw.ActionRow), dupeZ(s));\n";
     out += `        adw.SwitchRow.setActive(row, @intFromBool(propBool(props, "checked") orelse ${dflt(w, "checked")}));\n`;

@@ -158,6 +158,11 @@ fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8
             const title = objStr(it.object, "title") orelse "";
             const row = adw.ActionRow.new();
             gtk.Widget.setFocusable(row.as(gtk.Widget), 0); // keyboard stays on the entry; see the ListBox setup in create()
+            // A row's title and subtitle are data the app passed down, not
+            // markup. AdwPreferencesRow parses both as Pango by default, so
+            // any & or < in them fails the parse and the label renders EMPTY —
+            // a URL with a query string loses its whole line.
+            adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
             adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
             if (objStr(it.object, "subtitle")) |sub| adw.ActionRow.setSubtitle(row, dupeZ(sub));
             if (objStr(it.object, "iconName")) |ic| {

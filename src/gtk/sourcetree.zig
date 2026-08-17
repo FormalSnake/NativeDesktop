@@ -403,6 +403,10 @@ fn appendRow(box: *gtk.ListBox, store: *Store, node_idx: u32, depth: u32) void {
         // breaks mid-token. A navigation row is a fixed-height row.
         adw.ActionRow.setTitleLines(row, 1);
         adw.ActionRow.setSubtitleLines(row, 1);
+        // Title and caption are data, not markup. AdwPreferencesRow parses
+        // both as Pango by default, so an & or < in either fails the parse and
+        // leaves that label EMPTY rather than escaped.
+        adw.PreferencesRow.setUseMarkup(row.as(adw.PreferencesRow), 0);
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), node.title);
         if (node.caption) |c| adw.ActionRow.setSubtitle(row, c);
         if (!node.selectable) {
