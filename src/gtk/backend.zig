@@ -450,15 +450,19 @@ fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callco
         return true;
     }
     // Per-window (multi-window): convert relative to the widget's OWN root
-    // window, not a single global — a widget living in window B must report
-    // its bounds in window B's coordinate space. `getRoot` is the widget's
-    // GtkWindow ancestor (the same object the pre-multi-window code assumed was
-    // the only window); an unrooted widget falls back to the primary window,
-    // where its bounds are degenerate anyway.
-    const root_widget: *gtk.Widget = if (gtk.Widget.getRoot(w)) |r|
-        r.as(gtk.Widget)
-    else
-        (getWindow() orelse return false).as(gtk.Widget);
+    // window, not a single global. A widget living in window B must report its
+    // bounds in window B's coordinate space, and `getRoot` is its GtkWindow
+    // ancestor.
+    //
+    // An UNROOTED widget has no bounds in anyone's coordinate space, and
+    // substituting the primary window is not a harmless degenerate answer:
+    // `gtk_widget_compute_bounds` requires the target to be an ancestor, and
+    // GTK 4.22 faults rather than returning FALSE when it is not. A collapsed
+    // GtkExpander's child is unrooted, so any getTree over a window holding one
+    // took the process down as soon as a second window made the primary the
+    // wrong guess.
+    const root = gtk.Widget.getRoot(w) orelse return false;
+    const root_widget: *gtk.Widget = root.as(gtk.Widget);
     var rect: graphene.Rect = undefined;
     const has_bounds = gtk.Widget.computeBounds(w, root_widget, &rect) != 0;
     if (has_bounds) {
