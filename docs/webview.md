@@ -77,9 +77,88 @@ sendCommand(wv.current!, "setCookie", { name: "a", value: "1", domain: "example.
 sendCommand(wv.current!, "deleteCookie", { name: "a", domain: "example.com", path: "/" });
 ```
 
-Create-only props: `profile` (`""` = shared default, `private…` = ephemeral, any other name = its
-own persistent partition) and `suppressContextMenu` (the engine menu is suppressed and the app
-shows a native one off the `contextMenu` event).
+Create-only prop: `profile` (`""` = shared default, `private…` = ephemeral, any other name = its
+own persistent partition).
+
+## Context menus
+
+`contextMenuMode` (create-and-update) decides who owns the menu:
+
+- `"native"` (default): the engine's own menu opens, with everything a browser
+  is expected to have: Back/Forward/Reload, Open Link, Copy Image, spell-check
+  and the system text services on macOS, Inspect Element wherever developer
+  extras are on. The app's items are appended to it after a separator.
+- `"suppress"`: no engine menu opens at all; the `contextMenu` event fires and
+  the app builds whatever it likes.
+
+The `contextMenu` event fires in **both** modes: the hit test is read either
+way, so knowing about the click costs nothing.
+
+App items are declared per view and stored by the host until they are replaced:
+
+```tsx
+import { setContextMenuItems } from "@nativedesktop/react";
+
+setContextMenuItems(wv.current!, [
+  { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
+  { id: "save-image", label: "Save Image", contexts: ["image"] },
+  { type: "separator" },
+  {
+    id: "tools",
+    label: "Tools",
+    contexts: ["all"],
+    children: [
+      { id: "tools-a", label: "Alpha" },
+      { id: "tools-dark", label: "Dark Mode", type: "checkbox", checked: true },
+    ],
+  },
+]);
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | echoed back on `contextMenuItemClicked`; omit for a separator |
+| `label` | the item's text; omit for a separator |
+| `type` | `normal` (default), `checkbox`, `radio`, `separator` |
+| `checked` | drawn state for `checkbox`/`radio` |
+| `enabled` | `false` renders the item insensitive |
+| `contexts` | subset of `page`, `link`, `image`, `selection`, `editable`, or `all`; defaults to `["page"]` |
+| `targetUrlGlobs` | `*`-wildcard globs matched against the link or image URL under the pointer |
+| `children` | a submenu; not depth-limited |
+
+Which items a click earns is decided per invocation against that click's hit
+test. `page` means the click landed on nothing more specific: a link, image,
+selection or editable field wins over it, the way a browser's own menu behaves.
+A submenu whose every child was filtered out is dropped rather than shown empty,
+and a separator is only drawn when something survived on both sides of it.
+
+`targetUrlGlobs` is deliberately NOT Chrome's match-pattern grammar: the
+framework has no business knowing what an extension is. A caller holding
+`targetUrlPatterns` passes them through as globs (the strings are shaped the
+same, `*://*.example.com/*`) and re-checks the click against its own pattern
+engine when it needs exactness, since a plain glob can also match a URL that
+merely contains the pattern's text.
+
+Contiguous `radio` siblings form one group, which is what makes GTK draw radios
+rather than checkmarks.
+
+`contextMenuItemClicked` carries
+`{ id, pageUrl, linkUrl?, imageUrl?, selectionText?, editable, checked?, wasChecked? }`.
+`checked`/`wasChecked` are present for `checkbox` and `radio` items only and
+report the state the click *implies*: the framework never mutates its copy of
+the tree, so the app stays the source of truth and answers with the next
+`setContextMenuItems`.
+
+**Accuracy, per backend.** WebKitGTK hands the `context-menu` signal a real
+`WebKitHitTestResult`, so GTK's contexts and URLs are the engine's own. WKWebView
+gives `willOpenMenu` no hit test at all, so macOS reads the click through this
+file's page-side agent (the same private world `linkHover` uses), which posts
+the hit as the DOM `contextmenu` event fires, ahead of WebKit's own menu
+proposal on the same connection. If that report is missing or older than two
+seconds, the contexts fall back to what WebKit's own menu item identifiers imply
+(`WKMenuItemIdentifierCopyImage` means an image was clicked, and so on) and the
+link URL falls back to the last hovered link; the image URL and selected text
+are unavailable on that path.
 
 **A script-message handler name is per view, not per world.** WebKitGTK routes
 `script-message-received` by the handler name and refuses a name already
@@ -246,6 +325,13 @@ synthesize a pointer move or a right-click: `linkHover` and `contextMenu` report
 `skip` on GTK and are runtime-verified on AppKit, where they ride the page-side
 agent and a JS-dispatched event exercises the whole path. Everything else is
 runtime-verified on both backends.
+
+Nothing can open a real context menu from a script on either backend, so
+`setContextMenuItems` is proven in three separate places instead: the parse and
+hit-test matching are unit-tested (`src/gtk/context_menu.zig`, run by `zig build
+test`), the command round trip is asserted from the host's own
+`ND_WEBVIEW_TRACE` output by `scripts/headless-webview.sh`, and the menu the
+user actually sees is verified by hand.
 
 Status: the extended `<webview>` API above is implemented and runtime-verified
 on both backends. CEF integration exists as a macOS proof-of-concept via the

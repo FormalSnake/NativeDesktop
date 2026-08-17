@@ -20,6 +20,7 @@ const gio = @import("gio");
 const gobject = @import("gobject");
 const glib = @import("glib");
 const protocol = @import("../protocol.zig");
+const ctxmenu = @import("context_menu.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents WebView arm.
@@ -147,6 +148,8 @@ const FnCookieMutateFinish = *const fn (*anyopaque, ?*anyopaque, ?*?*glib.Error)
 const FnFindSearch = *const fn (*anyopaque, [*:0]const u8, u32, c_uint) callconv(.c) void;
 const FnGetTlsInfo = *const fn (*anyopaque, ?*?*anyopaque, ?*c_uint) callconv(.c) c_int;
 const FnContextMenuPosition = *const fn (*anyopaque, *c_int, *c_int) callconv(.c) c_int;
+const FnContextMenuItemFromAction = *const fn (*gio.Action, [*:0]const u8, ?*glib.Variant) callconv(.c) ?*anyopaque;
+const FnContextMenuItemWithSubmenu = *const fn ([*:0]const u8, *anyopaque) callconv(.c) ?*anyopaque;
 const FnNetworkSessionNew = *const fn (?[*:0]const u8, ?[*:0]const u8) callconv(.c) ?*anyopaque;
 const FnSessionStateNew = *const fn (*glib.Bytes) callconv(.c) ?*anyopaque;
 const FnSessionStateSerialize = *const fn (*anyopaque) callconv(.c) ?*glib.Bytes;
@@ -229,6 +232,11 @@ const ExtApi = struct {
     hit_test_get_link_uri: ?FnGetCStr = null,
     hit_test_get_image_uri: ?FnGetCStr = null,
     context_menu_get_position: ?FnContextMenuPosition = null,
+    context_menu_new: ?FnGetPtrNoArg = null,
+    context_menu_append: ?FnPtrPtr = null,
+    context_menu_item_new_from_gaction: ?FnContextMenuItemFromAction = null,
+    context_menu_item_new_with_submenu: ?FnContextMenuItemWithSubmenu = null,
+    context_menu_item_new_separator: ?FnGetPtrNoArg = null,
 
     // profiles / session state / audio
     web_view_get_type: ?FnGType = null,
@@ -464,6 +472,11 @@ fn loadExt(lib: *std.DynLib) void {
     ext.hit_test_get_link_uri = lookupWarn(FnGetCStr, lib, "webkit_hit_test_result_get_link_uri", "linkHover");
     ext.hit_test_get_image_uri = lookupWarn(FnGetCStr, lib, "webkit_hit_test_result_get_image_uri", "contextMenu");
     ext.context_menu_get_position = lookupWarn(FnContextMenuPosition, lib, "webkit_context_menu_get_position", "contextMenu coordinates");
+    ext.context_menu_new = lookupWarn(FnGetPtrNoArg, lib, "webkit_context_menu_new", "setContextMenuItems submenus");
+    ext.context_menu_append = lookupWarn(FnPtrPtr, lib, "webkit_context_menu_append", "setContextMenuItems");
+    ext.context_menu_item_new_from_gaction = lookupWarn(FnContextMenuItemFromAction, lib, "webkit_context_menu_item_new_from_gaction", "setContextMenuItems");
+    ext.context_menu_item_new_with_submenu = lookupWarn(FnContextMenuItemWithSubmenu, lib, "webkit_context_menu_item_new_with_submenu", "setContextMenuItems submenus");
+    ext.context_menu_item_new_separator = lookupWarn(FnGetPtrNoArg, lib, "webkit_context_menu_item_new_separator", "setContextMenuItems separators");
 
     ext.web_view_get_type = lookupWarn(FnGType, lib, "webkit_web_view_get_type", "profile");
     ext.network_session_new = lookupWarn(FnNetworkSessionNew, lib, "webkit_network_session_new", "profile");
@@ -513,9 +526,20 @@ const ScriptEntry = struct { script: *anyopaque, world: []const u8 };
 /// once per view at `create` and hung off the GObject under STATE_KEY (the
 /// same idiom MARKER_KEY uses) so the command dispatch — which only ever
 /// receives the widget — can reach it.
+/// What the `contextMenuMode` prop selects. `native` keeps WebKit's own menu
+/// and merges the app's items into it; `suppress` shows no engine menu at all
+/// and leaves the whole decision to the app's `contextMenu` event.
+const Mode = enum { native, suppress };
+
+fn modeOf(name: []const u8) Mode {
+    return if (std.mem.eql(u8, name, "suppress")) .suppress else .native;
+}
+
 const ViewState = struct {
     node_id: u32 = 0,
-    suppress_context_menu: bool = false,
+    mode: Mode = .native,
+    /// The app's `setContextMenuItems` tree, owned by this view.
+    menu_items: []ctxmenu.Item = &.{},
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     /// Registered script-message channels, keyed by handler name — which is
     /// the whole key on this backend (see `cmdRegisterScriptMessage`).
@@ -699,7 +723,7 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
     return @ptrCast(@alignCast(obj));
 }
 
-pub fn create(url: ?[*:0]const u8, profile: []const u8, suppress_context_menu: bool) *gtk.Widget {
+pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) *gtk.Widget {
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
@@ -715,7 +739,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, suppress_context_menu: b
         std.debug.print("ND_WARN WebView state allocation failed; extension surface disabled for this view\n", .{});
         return widget;
     };
-    state.* = .{ .suppress_context_menu = suppress_context_menu };
+    state.* = .{ .mode = modeOf(context_menu_mode) };
     gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
     // A webview is a content surface: expand into whatever the parent gives
     // it (a non-expanding WebKitWebView collapses to 0x0 inside a <box>).
@@ -742,6 +766,12 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     }
     tr("setUrl node={?d} url={s}", .{ widgetNodeId(widget), url });
     a.web_view_load_uri(@ptrCast(widget), url.ptr);
+}
+
+/// createAndUpdate `contextMenuMode` prop (generated applyProps arm).
+pub fn setContextMenuMode(widget: *gtk.Widget, mode: []const u8) void {
+    const state = stateOf(widget) orelse return;
+    state.mode = modeOf(mode);
 }
 
 // ============================================================================
@@ -1780,6 +1810,251 @@ fn cmdSetMuted(widget: *gtk.Widget, v: *anyopaque, arg: ?std.json.Value) void {
 }
 
 // ============================================================================
+// Context menu
+// ============================================================================
+
+/// The app's item tree for this view, replacing whatever it held before. The
+/// tree is stored, not rendered: which of these items a right-click earns is
+/// decided per invocation against that click's hit test.
+fn cmdSetContextMenuItems(widget: *gtk.Widget, arg: ?std.json.Value) void {
+    const state = stateOf(widget) orelse return;
+    const items = ctxmenu.parse(alloc, arg orelse .null) catch {
+        std.debug.print("ND_WARN WebView setContextMenuItems: out of memory, items unchanged\n", .{});
+        return;
+    };
+    ctxmenu.freeItems(alloc, state.menu_items);
+    state.menu_items = items;
+    tr("setContextMenuItems node={?d} items={d}", .{ widgetNodeId(widget), items.len });
+}
+
+/// Everything an activated item needs to describe the click it came from.
+/// Allocated per item per menu invocation; freed by the closure's destroy
+/// notify, which runs when WebKit drops the menu and with it the GAction.
+const MenuClick = struct {
+    node_id: u32,
+    /// The item's id, or for a radio run the id that was checked when the
+    /// menu opened. The clicked id then arrives as the action's target.
+    id: []const u8,
+    kind: ctxmenu.Kind,
+    checked: bool,
+    page_url: []const u8,
+    link: []const u8,
+    image: []const u8,
+    selection: []const u8,
+    editable: bool,
+};
+
+fn dupeForClick(s: []const u8) []const u8 {
+    if (s.len == 0) return "";
+    return alloc.dupe(u8, s) catch "";
+}
+
+fn freeForClick(s: []const u8) void {
+    if (s.len > 0) alloc.free(s);
+}
+
+fn freeMenuClick(data: ?*anyopaque, _: *anyopaque) callconv(.c) void {
+    const click: *MenuClick = @ptrCast(@alignCast(data orelse return));
+    freeForClick(click.id);
+    freeForClick(click.page_url);
+    freeForClick(click.link);
+    freeForClick(click.image);
+    freeForClick(click.selection);
+    alloc.destroy(click);
+}
+
+fn emitMenuClick(click: *const MenuClick, id: []const u8, checked: ?bool, was_checked: ?bool) void {
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    objPutStr(&payload, "id", id);
+    objPutStr(&payload, "pageUrl", click.page_url);
+    if (click.link.len > 0) objPutStr(&payload, "linkUrl", click.link);
+    if (click.image.len > 0) objPutStr(&payload, "imageUrl", click.image);
+    if (click.selection.len > 0) objPutStr(&payload, "selectionText", click.selection);
+    objPutBool(&payload, "editable", click.editable);
+    if (checked) |v| objPutBool(&payload, "checked", v);
+    if (was_checked) |v| objPutBool(&payload, "wasChecked", v);
+    emitObject(click.node_id, "contextMenuItemClicked", payload);
+}
+
+/// GSimpleAction::activate for one of the app's items. The framework reports
+/// the new state a checkbox or radio click implies and does NOT mutate its own
+/// copy of the tree: the app owns the model and answers with the next
+/// `setContextMenuItems`.
+fn cbMenuAction(_: *gio.SimpleAction, param: ?*glib.Variant, data: ?*anyopaque) callconv(.c) void {
+    const click: *MenuClick = @ptrCast(@alignCast(data orelse return));
+    switch (click.kind) {
+        .checkbox => emitMenuClick(click, click.id, !click.checked, click.checked),
+        .radio => {
+            const target = param orelse return emitMenuClick(click, click.id, true, click.checked);
+            const clicked = std.mem.span(glib.Variant.getString(target, null));
+            emitMenuClick(click, clicked, true, std.mem.eql(u8, clicked, click.id));
+        },
+        else => emitMenuClick(click, click.id, null, null),
+    }
+}
+
+const MenuBuild = struct {
+    node_id: u32,
+    hit: ctxmenu.Hit,
+    page_url: []const u8,
+    /// GSimpleAction names have a grammar the app's ids do not, so items get
+    /// generated names and carry their real id in the click context.
+    counter: u32 = 0,
+};
+
+fn newClick(b: *const MenuBuild, item: ctxmenu.Item, id: []const u8) ?*MenuClick {
+    const click = alloc.create(MenuClick) catch return null;
+    click.* = .{
+        .node_id = b.node_id,
+        .id = dupeForClick(id),
+        .kind = item.kind,
+        .checked = item.checked,
+        .page_url = dupeForClick(b.page_url),
+        .link = dupeForClick(b.hit.link),
+        .image = dupeForClick(b.hit.image),
+        .selection = dupeForClick(b.hit.selection),
+        .editable = b.hit.editable,
+    };
+    return click;
+}
+
+fn newAction(b: *MenuBuild, item: ctxmenu.Item, id: []const u8, param_type: ?*glib.VariantType, state: ?*glib.Variant) ?*gio.SimpleAction {
+    var name_buf: [32]u8 = undefined;
+    const name = std.fmt.bufPrintZ(&name_buf, "nd-ctx-{d}", .{b.counter}) catch return null;
+    b.counter += 1;
+    const action = if (state) |s|
+        gio.SimpleAction.newStateful(name.ptr, param_type, s)
+    else
+        gio.SimpleAction.new(name.ptr, param_type);
+    if (!item.enabled) gio.SimpleAction.setEnabled(action, 0);
+    const click = newClick(b, item, id) orelse {
+        gobject.Object.unref(@ptrCast(@alignCast(action)));
+        return null;
+    };
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(action)), "activate", @ptrCast(&cbMenuAction), click, freeMenuClick, .{});
+    return action;
+}
+
+fn appendSeparator(menu: *anyopaque) void {
+    const append = ext.context_menu_append orelse return;
+    const mk = ext.context_menu_item_new_separator orelse return;
+    const item = mk() orelse return;
+    append(menu, item);
+}
+
+/// A run of contiguous radio siblings is ONE stateful action: that is what
+/// makes GTK draw radios rather than checkmarks, and it is also Chrome's
+/// grouping rule for `type: "radio"`.
+fn appendRadioRun(b: *MenuBuild, menu: *anyopaque, items: []const ctxmenu.Item, start: usize) usize {
+    var end = start;
+    while (end < items.len and items[end].kind == .radio) end += 1;
+    const append = ext.context_menu_append orelse return end;
+    const from_action = ext.context_menu_item_new_from_gaction orelse return end;
+
+    var checked_id: []const u8 = "";
+    for (items[start..end]) |item| {
+        if (item.checked) {
+            checked_id = item.id;
+            break;
+        }
+    }
+    const type_s = glib.VariantType.new("s");
+    defer glib.VariantType.free(type_s);
+    const checked_z = alloc.dupeZ(u8, checked_id) catch return end;
+    defer alloc.free(checked_z);
+    const action = newAction(b, items[start], checked_id, type_s, glib.Variant.newString(checked_z.ptr)) orelse return end;
+    defer gobject.Object.unref(@ptrCast(@alignCast(action)));
+
+    for (items[start..end]) |item| {
+        if (!ctxmenu.matches(item, b.hit)) continue;
+        const target_z = alloc.dupeZ(u8, item.id) catch continue;
+        defer alloc.free(target_z);
+        const mi = from_action(@ptrCast(action), item.label.ptr, glib.Variant.newString(target_z.ptr)) orelse continue;
+        append(menu, mi);
+    }
+    return end;
+}
+
+fn appendOne(b: *MenuBuild, menu: *anyopaque, item: ctxmenu.Item) void {
+    const append = ext.context_menu_append orelse return;
+    if (item.children.len > 0) {
+        const new_menu = ext.context_menu_new orelse return;
+        const with_submenu = ext.context_menu_item_new_with_submenu orelse return;
+        const sub = new_menu() orelse return;
+        // Both the submenu and the action below are `transfer none` arguments
+        // (WebKit-6.0.gir): WebKit takes its own reference, so the one this
+        // call owns has to be dropped here.
+        defer gobject.Object.unref(@ptrCast(@alignCast(sub)));
+        _ = appendItems(b, sub, item.children);
+        const mi = with_submenu(item.label.ptr, sub) orelse return;
+        append(menu, mi);
+        return;
+    }
+    const from_action = ext.context_menu_item_new_from_gaction orelse return;
+    const state: ?*glib.Variant = if (item.kind == .checkbox)
+        glib.Variant.newBoolean(if (item.checked) 1 else 0)
+    else
+        null;
+    const action = newAction(b, item, item.id, null, state) orelse return;
+    defer gobject.Object.unref(@ptrCast(@alignCast(action)));
+    const mi = from_action(@ptrCast(action), item.label.ptr, null) orelse return;
+    append(menu, mi);
+}
+
+/// Appends the items this hit earned, and returns how many landed. Separators
+/// are held back until something follows them, so a filtered-out neighbour can
+/// never leave a menu opening or ending on a rule.
+fn appendItems(b: *MenuBuild, menu: *anyopaque, items: []const ctxmenu.Item) usize {
+    var appended: usize = 0;
+    var pending_separator = false;
+    var i: usize = 0;
+    while (i < items.len) {
+        const item = items[i];
+        if (item.kind == .separator) {
+            if (appended > 0) pending_separator = true;
+            i += 1;
+            continue;
+        }
+        if (!ctxmenu.survives(item, b.hit)) {
+            i += 1;
+            continue;
+        }
+        if (pending_separator) {
+            appendSeparator(menu);
+            pending_separator = false;
+        }
+        if (item.kind == .radio) {
+            i = appendRadioRun(b, menu, items, i);
+        } else {
+            appendOne(b, menu, item);
+            i += 1;
+        }
+        appended += 1;
+    }
+    return appended;
+}
+
+/// Merges the app's items into WebKit's own menu: one separator after the
+/// stock items, then whatever this click earned.
+fn mergeCustomItems(state: *ViewState, node_id: u32, menu: *anyopaque, hit: ctxmenu.Hit, page_url: []const u8) void {
+    // A separator with nothing after it is worse than no items at all, so the
+    // hit test decides before anything is built.
+    var any = false;
+    for (state.menu_items) |item| {
+        if (item.kind == .separator) continue;
+        if (ctxmenu.survives(item, hit)) {
+            any = true;
+            break;
+        }
+    }
+    if (!any) return;
+    var b = MenuBuild{ .node_id = node_id, .hit = hit, .page_url = page_url };
+    appendSeparator(menu);
+    _ = appendItems(&b, menu, state.menu_items);
+}
+
+// ============================================================================
 // Command dispatch
 // ============================================================================
 
@@ -1836,6 +2111,8 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdRestoreSession(v, arg);
     } else if (std.mem.eql(u8, cmd, "setMuted")) {
         cmdSetMuted(widget, v, arg);
+    } else if (std.mem.eql(u8, cmd, "setContextMenuItems")) {
+        cmdSetContextMenuItems(widget, arg);
     } else {
         std.debug.print("ND_WARN unknown WebView command {s}\n", .{cmd});
     }
@@ -2036,12 +2313,18 @@ fn cbMouseTarget(_: *gobject.Object, hit: ?*anyopaque, _: c_uint, data: ?*anyopa
 }
 
 /// `context-menu`: returning TRUE suppresses WebKit's own menu, which is what
-/// `suppressContextMenu` buys — the app then shows a native menu off this
-/// event's hit-test data. Returning FALSE leaves the engine menu in place.
+/// `contextMenuMode="suppress"` buys: the app then shows a native menu off
+/// this event's hit-test data. In `native` mode the engine menu stays (stock
+/// items, spell-check, Inspect Element when developer extras are on) and the
+/// app's `setContextMenuItems` are appended to it in place.
+///
+/// The informational `contextMenu` event fires in BOTH modes: the hit test is
+/// already read here, so an app that wants to know costs nothing.
 fn cbContextMenu(obj: *gobject.Object, menu: ?*anyopaque, hit: ?*anyopaque, data: ?*anyopaque) callconv(.c) c_int {
     const node_id: u32 = @intCast(@intFromPtr(data));
     const widget: *gtk.Widget = @ptrCast(obj);
-    const suppress = if (stateOf(widget)) |s| s.suppress_context_menu else false;
+    const state = stateOf(widget);
+    const mode = if (state) |s| s.mode else .native;
 
     var payload: std.json.ObjectMap = .empty;
     defer payload.deinit(alloc);
@@ -2052,27 +2335,39 @@ fn cbContextMenu(obj: *gobject.Object, menu: ?*anyopaque, hit: ?*anyopaque, data
     }
     objPutInt(&payload, "x", x);
     objPutInt(&payload, "y", y);
-    var editable = false;
-    var has_selection = false;
+    var found = ctxmenu.Hit{};
     if (hit) |h| {
         if (ext.hit_test_get_context) |get_ctx| {
             const context = get_ctx(h);
-            editable = (context & HIT_EDITABLE) != 0;
-            has_selection = (context & HIT_SELECTION) != 0;
+            found.editable = (context & HIT_EDITABLE) != 0;
+            found.has_selection = (context & HIT_SELECTION) != 0;
         }
         if (ext.hit_test_get_link_uri) |get_link| {
-            if (get_link(h)) |u| objPutStr(&payload, "link", std.mem.span(u));
+            if (get_link(h)) |u| found.link = std.mem.span(u);
         }
         if (ext.hit_test_get_image_uri) |get_image| {
-            if (get_image(h)) |u| objPutStr(&payload, "image", std.mem.span(u));
+            if (get_image(h)) |u| found.image = std.mem.span(u);
         }
     }
-    objPutBool(&payload, "editable", editable);
+    if (found.link.len > 0) objPutStr(&payload, "link", found.link);
+    if (found.image.len > 0) objPutStr(&payload, "image", found.image);
+    objPutBool(&payload, "editable", found.editable);
     // WebKitGTK's hit test reports THAT there is a selection but never its
     // text, so `selection` is AppKit-only; `hasSelection` is the portable flag.
-    objPutBool(&payload, "hasSelection", has_selection);
+    objPutBool(&payload, "hasSelection", found.has_selection);
     emitObject(node_id, "contextMenu", payload);
-    return if (suppress) 1 else 0;
+
+    if (mode == .suppress) return 1;
+    if (state) |s| {
+        if (menu) |m| {
+            const page_url: []const u8 = blk: {
+                const a = api orelse break :blk "";
+                break :blk if (a.web_view_get_uri(@ptrCast(widget))) |u| std.mem.span(u) else "";
+            };
+            mergeCustomItems(s, node_id, m, found, page_url);
+        }
+    }
+    return 0;
 }
 
 fn cbNotifyAudio(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {

@@ -97,3 +97,51 @@ export function onSessionSaved(e: { data: unknown }): void {
   pendingSessions.delete(result.id);
   call.resolve(result.state ?? "");
 }
+
+/// Where an item may appear. `page` means the click landed on nothing more
+/// specific: a link, image, selection or editable field wins over it, which is
+/// what a browser's own menu does.
+export type ContextMenuContext = "all" | "page" | "link" | "image" | "selection" | "editable";
+
+export interface ContextMenuItem {
+  /// Echoed back as `id` on `contextMenuItemClicked`. Omitted for a separator.
+  id?: string;
+  label?: string;
+  type?: "normal" | "checkbox" | "radio" | "separator";
+  /// Drawn as the item's state. The framework never mutates it: a click reports
+  /// the state it implies and the app answers with the next
+  /// `setContextMenuItems`.
+  checked?: boolean;
+  enabled?: boolean;
+  /// Defaults to `["page"]`.
+  contexts?: ContextMenuContext[];
+  /// `*`-wildcard globs matched against the link or image URL under the
+  /// pointer. An item with globs and no matching target is not shown.
+  targetUrlGlobs?: string[];
+  /// A submenu. Not depth-limited, but two levels is what menus stay readable
+  /// at.
+  children?: ContextMenuItem[];
+}
+
+export interface ContextMenuItemClick {
+  id: string;
+  pageUrl: string;
+  linkUrl?: string;
+  imageUrl?: string;
+  /// macOS only: WebKitGTK's hit test reports THAT there is a selection
+  /// without its text.
+  selectionText?: string;
+  editable: boolean;
+  /// Checkbox and radio items only: the state the click implies, and the one it
+  /// replaced.
+  checked?: boolean;
+  wasChecked?: boolean;
+}
+
+/// Replaces the items this <webview> merges into the engine's own context menu.
+/// Only meaningful with `contextMenuMode="native"` (the default): in
+/// `"suppress"` mode no engine menu opens, so there is nothing to merge into.
+/// Clicks arrive on the `onContextMenuItemClicked` prop.
+export function setContextMenuItems(node: NdNodeRef<"webview">, items: ContextMenuItem[]): void {
+  sendCommand(node, "setContextMenuItems", { items });
+}

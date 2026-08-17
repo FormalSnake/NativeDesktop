@@ -54,7 +54,7 @@ The full version of this example lives at `examples/browser/main.tsx`.
 | --------------------- | ------- | ------- | --------------- | --------------------------------------------------------- |
 | `url`                 | string  | `""`    | createAndUpdate | The page to load. Setting it navigates; empty is ignored. |
 | `profile`             | string  | `""`    | create          | Storage partition: `""` shares the default one, a name starting with `private` is ephemeral, any other name is a persistent partition of its own. |
-| `suppressContextMenu` | bool    | `false` | create          | Suppresses the engine's own context menu so the app can show a native one off the `contextMenu` event. |
+| `contextMenuMode`     | `"native"` \| `"suppress"` | `"native"` | createAndUpdate | `"native"` shows the engine's own context menu with the app's `setContextMenuItems` merged into it; `"suppress"` shows no engine menu at all and leaves the whole menu to the app, off the `contextMenu` event. |
 | `testID`              | string  | none    | meta            | Automation handle, not rendered.                          |
 
 `url` is controlled: the widget navigates whenever it changes. The host holds an echo guard and
@@ -89,7 +89,8 @@ widget-specific object nested under `data` instead.
 | `findResult`         | `onFindResult`         | `{ data: { matchFound, matchCount?, done } }` | A find operation finished, or a match count arrived. |
 | `securityChanged`    | `onSecurityChanged`    | `{ data: { secure, insecureContent, url?, error? } }` | The page's transport security state changed. |
 | `linkHover`          | `onLinkHover`          | `{ text }` (URL, `""` on clear)        | The pointer entered or left a link. |
-| `contextMenu`        | `onContextMenu`        | `{ data: { x, y, link?, image?, selection?, hasSelection, editable } }` | The user asked for a context menu. |
+| `contextMenu`        | `onContextMenu`        | `{ data: { x, y, link?, image?, selection?, hasSelection, editable } }` | The user asked for a context menu. Fires in both modes. |
+| `contextMenuItemClicked` | `onContextMenuItemClicked` | `{ data: { id, pageUrl, linkUrl?, imageUrl?, selectionText?, editable, checked?, wasChecked? } }` | One of the app's own context-menu items was chosen. |
 | `sessionSaved`       | `onSessionSaved`       | `{ data: { id, state } }`              | A `saveSession` command completes. |
 | `audioStateChanged`  | `onAudioStateChanged`  | `{ data: { playing, muted } }`         | The page started/stopped playing audio, or was muted. |
 
@@ -152,6 +153,7 @@ sendCommand(page.current, "setZoom", 1.5);
 | `saveSession`        | `{ id }`                 | Captures navigation history, replying with `sessionSaved`.   |
 | `restoreSession`     | `{ state }`              | Restores a previously saved history blob.                    |
 | `setMuted`           | bool                     | Mutes or unmutes the page's audio.                           |
+| `setContextMenuItems` | `{ items: ContextMenuItem[] }` | Replaces the items merged into the engine's context menu (see below). |
 
 `executeJavaScript` has no synchronous return path. Use the `executeJavaScript(node, code)` helper
 from `@nativedesktop/react` rather than the raw command: it generates the `id`, sends the command,
@@ -170,6 +172,55 @@ const hidden = await executeJavaScript(page.current!, "window.secret", "my-exten
 
 `getCookies` and `saveSession` follow the same pattern with the `onCookiesResult` and
 `onSessionSaved` exports.
+
+## Context menus
+
+With the default `contextMenuMode="native"` the engine's own menu opens (Back/Forward/Reload,
+Open Link, Copy Image, spell-check and the system text services on macOS, Inspect Element wherever
+developer extras are on) and the app's items are appended to it after a separator. Declare them
+per view with the `setContextMenuItems` helper; the host stores the tree until it is replaced.
+
+```tsx
+import { setContextMenuItems } from "@nativedesktop/react";
+
+setContextMenuItems(page.current!, [
+  { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
+  { id: "save-image", label: "Save Image", contexts: ["image"] },
+  { type: "separator" },
+  {
+    id: "tools",
+    label: "Tools",
+    contexts: ["all"],
+    children: [
+      { id: "tools-a", label: "Alpha" },
+      { id: "tools-dark", label: "Dark Mode", type: "checkbox", checked: true },
+    ],
+  },
+]);
+
+<webview ref={page} url={url} onContextMenuItemClicked={(e) => run(e.data as ContextMenuItemClick)} />;
+```
+
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `id` | string | Echoed back on `contextMenuItemClicked`. Omit for a separator. |
+| `label` | string | The item's text. Omit for a separator. |
+| `type` | `"normal"` \| `"checkbox"` \| `"radio"` \| `"separator"` | Defaults to `"normal"`. |
+| `checked` | bool | Drawn state for `checkbox` and `radio`. |
+| `enabled` | bool | `false` renders the item insensitive. |
+| `contexts` | `("page" \| "link" \| "image" \| "selection" \| "editable" \| "all")[]` | Where the item appears. Defaults to `["page"]`. |
+| `targetUrlGlobs` | string[] | `*`-wildcard globs matched against the link or image URL under the pointer. |
+| `children` | `ContextMenuItem[]` | A submenu. |
+
+Which items a click earns is decided per invocation against that click's hit test. `page` means
+the click landed on nothing more specific: a link, image, selection or editable field wins over
+it, the way a browser's own menu behaves. A submenu whose every child was filtered out is dropped
+rather than shown empty, a separator is only drawn when something survived on both sides of it,
+and contiguous `radio` siblings form one group.
+
+`checked` and `wasChecked` on the event report the state a click *implies*. The framework never
+mutates its copy of the tree: the app owns the model and answers with the next
+`setContextMenuItems`.
 
 `openDevTools` opens the real WebKit inspector on GTK (`webkit_web_inspector_show`). WKWebView has
 no programmatic "open the inspector" API on macOS: the command instead makes the view inspectable
@@ -293,6 +344,10 @@ additionally `dlopen` `libsoup-3.0` for `SoupCookie`, under the same rule.
   no favicon API, so macOS reports `{ pageUrl, iconUrl }` and the app fetches the bytes itself.
 - `contextMenu` carries the selected text as `selection` on macOS. WebKitGTK's hit test reports
   only that a selection exists, so GTK sends `hasSelection` and no `selection`.
+- Context-menu hit tests are the engine's own on GTK (`WebKitHitTestResult`). WKWebView hands
+  `willOpenMenu` no hit test, so macOS reads the click through the page-side agent below; if that
+  report is missing, contexts fall back to what WebKit's own menu item identifiers imply and the
+  link URL to the last hovered link, with no image URL or selected text on that path.
 - `linkHover`, `contextMenu` and the audio state are native signals on GTK. WKWebView exposes none
   of them, so on macOS the framework installs its own user script in a private world
   (`nd-internal`, handler `__ndInternal`) and observes them in the page. That world is reserved:

@@ -1669,7 +1669,7 @@ pub fn create(
         // runtime; placeholder label otherwise (M5b-D7: no hard link dep).
         const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
         const profile: []const u8 = propStr(props, "profile") orelse "";
-        return ndweb_gtk.create(url, profile, propBool(props, "suppressContextMenu") orelse false);
+        return ndweb_gtk.create(url, profile, propStr(props, "contextMenuMode") orelse "native");
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         const view_kind = propStr(props, "viewKind") orelse "";
         const props_json = propStr(props, "props") orelse "{}";
@@ -2179,6 +2179,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         // "emptyDescription" handled together with emptyIconName above (ndempty_gtk.configure merges all three).
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (propStr(props, "url")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));
+        if (propStr(props, "contextMenuMode")) |m| ndweb_gtk.setContextMenuMode(widget, m);
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         if (propStr(props, "props")) |pj| {
             if (gobject.Object.getData(asObject(widget), "nd-view-kind")) |raw| {

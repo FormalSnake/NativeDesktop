@@ -2226,7 +2226,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        // runtime; placeholder label otherwise (M5b-D7: no hard link dep).\n";
     out += "        const url: ?[*:0]const u8 = if (propStr(props, \"url\")) |u| dupeZ(u).ptr else null;\n";
     out += "        const profile: []const u8 = propStr(props, \"profile\") orelse \"\";\n";
-    out += "        return ndweb_gtk.create(url, profile, propBool(props, \"suppressContextMenu\") orelse false);\n";
+    out += "        return ndweb_gtk.create(url, profile, propStr(props, \"contextMenuMode\") orelse \"native\");\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
     out += "        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is\n";
@@ -2784,6 +2784,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, \"canGoForward\"));\n";
     } else if (w.name === "WebView" && p.name === "url") {
       out += "        if (propStr(props, \"url\")) |u| ndweb_gtk.setUrl(widget, dupeZ(u));\n";
+    } else if (w.name === "WebView" && p.name === "contextMenuMode") {
+      out += "        if (propStr(props, \"contextMenuMode\")) |m| ndweb_gtk.setContextMenuMode(widget, m);\n";
     } else if (w.name === "NativeView" && p.name === "props") {
       out += "        if (propStr(props, \"props\")) |pj| {\n";
       out += "            if (gobject.Object.getData(asObject(widget), \"nd-view-kind\")) |raw| {\n";
@@ -3002,6 +3004,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.securityChanged":     { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.linkHover":           { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.contextMenu":         { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.contextMenuItemClicked": { signal: "",           target: "webview", cb: "", suppress: false },
   "WebView.sessionSaved":        { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.audioStateChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
@@ -4371,7 +4374,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "SourceList") {
     out += "        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)\n";
   } else if (w.name === "WebView") {
-    out += '        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", suppressContextMenu: propBool(props, "suppressContextMenu") ?? false)  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
+    out += '        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", contextMenuMode: propStr(props, "contextMenuMode") ?? "native")  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
   } else if (w.name === "SplitView") {
     // NSSplitViewController (not a bare NSSplitView) is what earns the
     // automatic Liquid Glass sidebar treatment on macOS 26 — see
@@ -4762,6 +4765,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       }
     } else if (w.name === "WebView" && p.name === "url") {
       out += '        if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }\n';
+    } else if (w.name === "WebView" && p.name === "contextMenuMode") {
+      out += '        if let m = propStr(props, "contextMenuMode"), let wv = view as? NDWebView { wv.ndSetContextMenuMode(m) }\n';
     } else if (w.name === "NativeView" && p.name === "props") {
       // GTK-first: on AppKit the view is an empty placeholder (a GTK-only
       // module registers nothing here), so this is a no-op unless a module
@@ -4930,6 +4935,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.securityChanged":     { selector: "webview", payload: "data" },
   "WebView.linkHover":           { selector: "webview", payload: "text" },
   "WebView.contextMenu":         { selector: "webview", payload: "data" },
+  "WebView.contextMenuItemClicked": { selector: "webview", payload: "data" },
   "WebView.sessionSaved":        { selector: "webview", payload: "data" },
   "WebView.audioStateChanged":   { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader

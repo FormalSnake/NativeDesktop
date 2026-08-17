@@ -149,7 +149,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "tabview": [],
   "grid": [],
   "listview": [{ name: "rowActivated", handler: "onRowActivated", payload: "index" }],
-  "webview": [{ name: "navigate", handler: "onNavigate", payload: "text" }, { name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "loadingChanged", handler: "onLoadingChanged", payload: "checked" }, { name: "backAvailable", handler: "onBackAvailable", payload: "checked" }, { name: "forwardAvailable", handler: "onForwardAvailable", payload: "checked" }, { name: "loadProgress", handler: "onLoadProgress", payload: "value" }, { name: "loadFailed", handler: "onLoadFailed", payload: "data" }, { name: "newWindow", handler: "onNewWindow", payload: "text" }, { name: "downloadRequested", handler: "onDownloadRequested", payload: "data" }, { name: "javaScriptResult", handler: "onJavaScriptResult", payload: "data" }, { name: "scriptMessage", handler: "onScriptMessage", payload: "data" }, { name: "schemeRequest", handler: "onSchemeRequest", payload: "data" }, { name: "cookiesResult", handler: "onCookiesResult", payload: "data" }, { name: "cookiesChanged", handler: "onCookiesChanged", payload: "data" }, { name: "faviconChanged", handler: "onFaviconChanged", payload: "data" }, { name: "findResult", handler: "onFindResult", payload: "data" }, { name: "securityChanged", handler: "onSecurityChanged", payload: "data" }, { name: "linkHover", handler: "onLinkHover", payload: "text" }, { name: "contextMenu", handler: "onContextMenu", payload: "data" }, { name: "sessionSaved", handler: "onSessionSaved", payload: "data" }, { name: "audioStateChanged", handler: "onAudioStateChanged", payload: "data" }],
+  "webview": [{ name: "navigate", handler: "onNavigate", payload: "text" }, { name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "loadingChanged", handler: "onLoadingChanged", payload: "checked" }, { name: "backAvailable", handler: "onBackAvailable", payload: "checked" }, { name: "forwardAvailable", handler: "onForwardAvailable", payload: "checked" }, { name: "loadProgress", handler: "onLoadProgress", payload: "value" }, { name: "loadFailed", handler: "onLoadFailed", payload: "data" }, { name: "newWindow", handler: "onNewWindow", payload: "text" }, { name: "downloadRequested", handler: "onDownloadRequested", payload: "data" }, { name: "javaScriptResult", handler: "onJavaScriptResult", payload: "data" }, { name: "scriptMessage", handler: "onScriptMessage", payload: "data" }, { name: "schemeRequest", handler: "onSchemeRequest", payload: "data" }, { name: "cookiesResult", handler: "onCookiesResult", payload: "data" }, { name: "cookiesChanged", handler: "onCookiesChanged", payload: "data" }, { name: "faviconChanged", handler: "onFaviconChanged", payload: "data" }, { name: "findResult", handler: "onFindResult", payload: "data" }, { name: "securityChanged", handler: "onSecurityChanged", payload: "data" }, { name: "linkHover", handler: "onLinkHover", payload: "text" }, { name: "contextMenu", handler: "onContextMenu", payload: "data" }, { name: "contextMenuItemClicked", handler: "onContextMenuItemClicked", payload: "data" }, { name: "sessionSaved", handler: "onSessionSaved", payload: "data" }, { name: "audioStateChanged", handler: "onAudioStateChanged", payload: "data" }],
   "nativeview": [{ name: "nativeEvent", handler: "onNativeEvent", payload: "data" }],
   "splitview": [],
   "headerbar": [{ name: "back", handler: "onBack", payload: "none" }, { name: "forward", handler: "onForward", payload: "none" }],
@@ -209,7 +209,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "tabview": [],
   "grid": [],
   "listview": ["onRowActivated"],
-  "webview": ["onNavigate", "onTitleChanged", "onLoadingChanged", "onBackAvailable", "onForwardAvailable", "onLoadProgress", "onLoadFailed", "onNewWindow", "onDownloadRequested", "onJavaScriptResult", "onScriptMessage", "onSchemeRequest", "onCookiesResult", "onCookiesChanged", "onFaviconChanged", "onFindResult", "onSecurityChanged", "onLinkHover", "onContextMenu", "onSessionSaved", "onAudioStateChanged"],
+  "webview": ["onNavigate", "onTitleChanged", "onLoadingChanged", "onBackAvailable", "onForwardAvailable", "onLoadProgress", "onLoadFailed", "onNewWindow", "onDownloadRequested", "onJavaScriptResult", "onScriptMessage", "onSchemeRequest", "onCookiesResult", "onCookiesChanged", "onFaviconChanged", "onFindResult", "onSecurityChanged", "onLinkHover", "onContextMenu", "onContextMenuItemClicked", "onSessionSaved", "onAudioStateChanged"],
   "nativeview": ["onNativeEvent"],
   "splitview": [],
   "headerbar": ["onBack", "onForward"],
@@ -271,7 +271,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "tabview": [],
   "grid": [],
   "listview": [],
-  "webview": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools", "addUserScript", "removeUserScript", "clearUserScripts", "registerScriptMessage", "unregisterScriptMessage", "respondScheme", "getCookies", "setCookie", "deleteCookie", "findStart", "findNext", "findPrevious", "findStop", "saveSession", "restoreSession", "setMuted", "focus"],
+  "webview": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools", "addUserScript", "removeUserScript", "clearUserScripts", "registerScriptMessage", "unregisterScriptMessage", "respondScheme", "getCookies", "setCookie", "deleteCookie", "findStart", "findNext", "findPrevious", "findStop", "saveSession", "restoreSession", "setMuted", "setContextMenuItems", "focus"],
   "nativeview": [],
   "splitview": [],
   "headerbar": [],
@@ -318,7 +318,7 @@ export type WidgetCommandNames = {
   "button": "focus";
   "textinput": "focus";
   "textarea": "focus";
-  "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "focus";
+  "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "setContextMenuItems" | "focus";
   "searchinput": "focus";
   "toastoverlay": "showToast" | "dismissToast";
   "terminal": "copy" | "paste" | "selectAll" | "clearSelection" | "focus";

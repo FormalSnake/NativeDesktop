@@ -174,8 +174,13 @@ React would otherwise destroy is outside `UI = f(state)`.
 `downloadRequested` (engine download cancelled, app downloads via Bun),
 `javaScriptResult`; commands `goBack`, `goForward`, `reload`, `stop`,
 `executeJavaScript` (promise helper in `@nativedesktop/react`), `setZoom`,
-`setUserAgent`, `openDevTools`. Adding a WebView *event* needs one-line entries
-in codegen's `SIGNALS` + `SWIFT_SIGNALS` tables; commands need schema only.
+`setUserAgent`, `openDevTools`. Context menus are the engine's own by default
+(`contextMenuMode="native"`, the alternative being `"suppress"`): the app's
+`setContextMenuItems` tree (types, checkboxes, radio groups, submenus,
+per-context and per-target-URL filters) is merged into WebKit's menu in place,
+and a chosen item arrives as `contextMenuItemClicked`. Adding a WebView *event*
+needs one-line entries in codegen's `SIGNALS` + `SWIFT_SIGNALS` tables; commands
+need schema only.
 Request interception/user scripts are not exposed yet. CEF is a planned opt-in
 engine (per project, per platform) — never linked into the host, loaded at
 runtime, and packaging must ship zero Chromium bytes unless the app's config

@@ -45,7 +45,20 @@ final class NDWebView: WKWebView {
     // ports, some malformed URLs) — those never fire a didFail* callback.
     private var pendingProvisionalURL = ""
 
-    private let suppressContextMenu: Bool
+    /// `contextMenuMode`: "native" keeps WebKit's own menu and merges the app's
+    /// items into it, "suppress" shows no menu at all and leaves the decision
+    /// to the app's `contextMenu` event.
+    private var suppressContextMenu: Bool
+    /// The app's `setContextMenuItems` tree, and the last hit the page-side
+    /// agent reported. WKWebView hands `willOpenMenu` no hit test of its own.
+    private var contextMenuItems: [NDContextMenuItem] = []
+    private var lastMenuHit = NDContextMenuHit()
+    /// Last link the page-side agent reported under the pointer, which is the
+    /// only link URL available when a menu opens without a fresh hit report.
+    private var lastHoveredLink = ""
+    /// Kept alive for as long as the menu is up: NSMenuItem holds its target
+    /// weakly, so nothing else owns these.
+    private var menuActions: [NDContextMenuAction] = []
     /// App-registered user scripts, in insertion order. WKUserContentController
     /// can only remove ALL scripts, so every add/remove rebuilds the whole set
     /// (internal bootstrap first, then the app's) from this registry.
@@ -60,8 +73,8 @@ final class NDWebView: WKWebView {
     static let internalWorldName = "nd-internal"
     static let internalHandlerName = "__ndInternal"
 
-    init(url: String?, profile: String, suppressContextMenu: Bool) {
-        self.suppressContextMenu = suppressContextMenu
+    init(url: String?, profile: String, contextMenuMode: String) {
+        self.suppressContextMenu = contextMenuMode == "suppress"
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = NDWebViewProfiles.dataStore(for: profile)
         NDWebViewSchemes.install(into: configuration)
@@ -167,6 +180,7 @@ final class NDWebView: WKWebView {
         case "setMuted":
             let muted = (arg as? NSNumber)?.boolValue ?? (obj["muted"] as? NSNumber)?.boolValue ?? false
             ndSetMuted(muted)
+        case "setContextMenuItems": ndSetContextMenuItems(arg)
         default:
             ndWarn("unknown WebView command \(command)")
         }
@@ -307,13 +321,15 @@ final class NDWebView: WKWebView {
           document.addEventListener("mouseout", function (e) {
             if (!e.relatedTarget && lastHover !== "") { lastHover = ""; post({ k: "hover", url: "" }); }
           }, true);
+          var suppress = \(suppressContextMenu ? "true" : "false");
+          window.__ndSetSuppressMenu = function (v) { suppress = !!v; };
           document.addEventListener("contextmenu", function (e) {
             var el = e.target;
             var editable = !!(el && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA"));
             var image = (el && el.tagName === "IMG" && el.src) ? el.src : "";
             var sel = String(window.getSelection ? window.getSelection() : "");
             post({ k: "menu", x: e.clientX, y: e.clientY, link: linkOf(el), image: image, selection: sel, editable: editable });
-            if (\(suppressContextMenu ? "true" : "false")) e.preventDefault();
+            if (suppress) e.preventDefault();
           }, true);
           var muted = false;
           var report = function () {
@@ -343,16 +359,24 @@ final class NDWebView: WKWebView {
         guard let msg = body as? [String: Any], let kind = msg["k"] as? String else { return }
         switch kind {
         case "hover":
-            emitEvent("linkHover", json: ndWebViewTextJson(msg["url"] as? String ?? ""))
+            lastHoveredLink = msg["url"] as? String ?? ""
+            emitEvent("linkHover", json: ndWebViewTextJson(lastHoveredLink))
         case "menu":
+            lastMenuHit = NDContextMenuHit(
+                link: msg["link"] as? String ?? "",
+                image: msg["image"] as? String ?? "",
+                selection: msg["selection"] as? String ?? "",
+                editable: (msg["editable"] as? NSNumber)?.boolValue ?? false,
+                at: Date()
+            )
             emitData("contextMenu", [
                 "x": (msg["x"] as? NSNumber)?.intValue ?? 0,
                 "y": (msg["y"] as? NSNumber)?.intValue ?? 0,
-                "link": msg["link"] as? String ?? "",
-                "image": msg["image"] as? String ?? "",
-                "selection": msg["selection"] as? String ?? "",
-                "hasSelection": !((msg["selection"] as? String) ?? "").isEmpty,
-                "editable": (msg["editable"] as? NSNumber)?.boolValue ?? false,
+                "link": lastMenuHit.link,
+                "image": lastMenuHit.image,
+                "selection": lastMenuHit.selection,
+                "hasSelection": !lastMenuHit.selection.isEmpty,
+                "editable": lastMenuHit.editable,
             ])
         case "audio":
             emitData("audioStateChanged", [
@@ -364,15 +388,141 @@ final class NDWebView: WKWebView {
         }
     }
 
-    /// Native backstop for `suppressContextMenu`: the page-side
+    /// The engine's own menu, plus the app's items.
+    ///
+    /// In `suppress` mode this is the native backstop: the page-side
     /// `preventDefault()` covers pages that don't stop propagation first, and
     /// emptying the menu here covers the rest.
+    ///
+    /// In `native` mode WebKit's items are left exactly as they are (services,
+    /// spell-check, Look Up, Inspect Element when the view is inspectable) and
+    /// the app's matching items are appended after a separator.
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         if suppressContextMenu {
             menu.removeAllItems()
             return
         }
         super.willOpenMenu(menu, with: event)
+        appendContextMenuItems(to: menu)
+    }
+
+    /// createAndUpdate `contextMenuMode` prop (generated applyProps arm). The
+    /// page-side agent decides whether to `preventDefault()`, so the live page
+    /// is told directly and the script is rebuilt for the next load.
+    func ndSetContextMenuMode(_ mode: String) {
+        let suppress = mode == "suppress"
+        if suppress == suppressContextMenu { return }
+        suppressContextMenu = suppress
+        rebuildUserScripts()
+        evaluateJavaScript(
+            "window.__ndSetSuppressMenu && window.__ndSetSuppressMenu(\(suppress))",
+            in: nil,
+            in: WKContentWorld.world(name: Self.internalWorldName)
+        ) { _ in }
+    }
+
+    // MARK: - Context menu
+
+    /// How stale a page-side hit report may be and still describe the menu
+    /// about to open. The report travels the same web-process connection as the
+    /// menu proposal and is sent first (the DOM event runs before WebKit builds
+    /// the menu), so in practice it is milliseconds old; this only guards the
+    /// case where it never arrived at all.
+    private static let hitFreshness: TimeInterval = 2
+
+    private func appendContextMenuItems(to menu: NSMenu) {
+        menuActions.removeAll()
+        if contextMenuItems.isEmpty { return }
+        var hit = lastMenuHit
+        if Date().timeIntervalSince(hit.at) > Self.hitFreshness {
+            // No fresh page-side report: WebKit's own item identifiers still say
+            // WHAT was clicked, so contexts survive even though the URLs do not.
+            hit = NDContextMenuHit()
+            let stock = NDStockMenuContexts.contexts(of: menu)
+            if stock.contains(.link) { hit.link = lastHoveredLink }
+            if stock.contains(.selection) { hit.selection = " " }
+            hit.editable = stock.contains(.editable)
+            hit.at = Date()
+        }
+        let survivors = contextMenuItems.filter { $0.kind != .separator && $0.survives(hit) }
+        if survivors.isEmpty { return }
+        menu.addItem(.separator())
+        append(contextMenuItems, to: menu, hit: hit)
+    }
+
+    /// Separators are held back until something follows them, so a filtered-out
+    /// neighbour can never leave the menu ending on a rule.
+    private func append(_ items: [NDContextMenuItem], to menu: NSMenu, hit: NDContextMenuHit) {
+        var appended = 0
+        var pendingSeparator = false
+        for item in items {
+            if item.kind == .separator {
+                if appended > 0 { pendingSeparator = true }
+                continue
+            }
+            guard item.survives(hit) else { continue }
+            if pendingSeparator {
+                menu.addItem(.separator())
+                pendingSeparator = false
+            }
+            menu.addItem(menuItem(for: item, hit: hit))
+            appended += 1
+        }
+    }
+
+    private func menuItem(for item: NDContextMenuItem, hit: NDContextMenuHit) -> NSMenuItem {
+        let entry = NSMenuItem(title: item.label, action: nil, keyEquivalent: "")
+        entry.isEnabled = item.enabled
+        if item.kind == .checkbox || item.kind == .radio {
+            entry.state = item.checked ? .on : .off
+        }
+        if !item.children.isEmpty {
+            let submenu = NSMenu(title: item.label)
+            submenu.autoenablesItems = false
+            append(item.children, to: submenu, hit: hit)
+            entry.submenu = submenu
+            return entry
+        }
+        let action = NDContextMenuAction(
+            id: item.id,
+            kind: item.kind,
+            checked: item.checked,
+            enabled: item.enabled,
+            view: self
+        )
+        menuActions.append(action)
+        entry.target = action
+        entry.action = #selector(NDContextMenuAction.run(_:))
+        return entry
+    }
+
+    /// The framework reports the new state a checkbox or radio click implies and
+    /// does NOT mutate its own copy of the tree: the app owns the model and
+    /// answers with the next `setContextMenuItems`.
+    func ndContextMenuItemActivated(id: String, kind: NDContextMenuItem.Kind, checked: Bool) {
+        var payload: [String: Any] = [
+            "id": id,
+            "pageUrl": url?.absoluteString ?? "",
+            "editable": lastMenuHit.editable,
+        ]
+        if !lastMenuHit.link.isEmpty { payload["linkUrl"] = lastMenuHit.link }
+        if !lastMenuHit.image.isEmpty { payload["imageUrl"] = lastMenuHit.image }
+        if !lastMenuHit.selection.isEmpty { payload["selectionText"] = lastMenuHit.selection }
+        switch kind {
+        case .checkbox:
+            payload["checked"] = !checked
+            payload["wasChecked"] = checked
+        case .radio:
+            payload["checked"] = true
+            payload["wasChecked"] = checked
+        default:
+            break
+        }
+        emitData("contextMenuItemClicked", payload)
+    }
+
+    private func ndSetContextMenuItems(_ arg: Any?) {
+        contextMenuItems = NDContextMenuItem.parse(arg)
     }
 
     private func ndSetMuted(_ muted: Bool) {

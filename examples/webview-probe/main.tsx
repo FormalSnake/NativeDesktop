@@ -8,6 +8,7 @@ import {
   render,
   saveSession,
   sendCommand,
+  setContextMenuItems,
   useEffect,
   useRef,
   useState,
@@ -126,6 +127,7 @@ const CHECKS = [
   "focus",
   "linkHover",
   "contextMenu",
+  "contextMenuItems",
 ] as const;
 type CheckName = (typeof CHECKS)[number];
 
@@ -173,7 +175,7 @@ function App(): React.ReactNode {
               ref={main}
               testID="wv-main"
               url=""
-              suppressContextMenu
+              contextMenuMode="suppress"
               onJavaScriptResult={onJavaScriptResult}
               onCookiesResult={onCookiesResult}
               onSessionSaved={onSessionSaved}
@@ -184,6 +186,7 @@ function App(): React.ReactNode {
               onAudioStateChanged={(e) => record("audioStateChanged", e.data)}
               onLinkHover={(e) => record("linkHover", e.text)}
               onContextMenu={(e) => record("contextMenu", e.data)}
+              onContextMenuItemClicked={(e) => record("contextMenuItemClicked", e.data)}
               onCookiesChanged={() => record("cookiesChanged", true)}
               onDownloadRequested={(e) => record("downloadRequested", { view: "main", ...(e.data as object) })}
             />
@@ -478,6 +481,32 @@ async function runProbe({ main, priv, scheme, setResult, setPhase }: ProbeArgs):
       (e) => Boolean(e.link),
     );
     return menu.link?.includes("example.invalid") ? "ok" : `fail: context menu link was ${menu.link}`;
+  });
+
+  // Neither backend can be made to OPEN a menu from a script: GTK4 synthesises
+  // no pointer input, and WKWebView's menu comes from a real right-click, so
+  // what is provable here is the command round trip: the host takes the tree,
+  // parses it, and stores it against this view. `ND_WEBVIEW_TRACE` prints the
+  // stored count and scripts/headless-webview.sh asserts that line.
+  await step("contextMenuItems", async () => {
+    setContextMenuItems(wv!, [
+      { id: "probe-link", label: "Open link in new tab", contexts: ["link"] },
+      { id: "probe-image", label: "Save image", contexts: ["image"], targetUrlGlobs: ["*.png"] },
+      { type: "separator" },
+      {
+        id: "probe-group",
+        label: "Probe",
+        contexts: ["all"],
+        children: [
+          { id: "probe-a", label: "Alpha" },
+          { id: "probe-b", label: "Beta", type: "checkbox", checked: true },
+        ],
+      },
+    ]);
+    // The command is one-way; give the host a beat to apply it before the probe
+    // declares itself done and the drive tears the run down.
+    await new Promise((r) => setTimeout(r, 200));
+    return "ok: 4 items sent (the host-side trace asserts they were stored)";
   });
 
   setPhase("done");

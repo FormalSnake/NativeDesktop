@@ -28,7 +28,10 @@ for _ in $(seq 1 50); do
 done
 
 LOG=$(mktemp)
-ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+# The webview trace is what makes setContextMenuItems assertable: no automation
+# can open a real context menu (GTK4 synthesises no pointer input), so the proof
+# is the host reporting the tree it parsed and stored.
+ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 # 60s, not 20: the probe's first commit waits on the engine's own scheme
@@ -53,6 +56,12 @@ ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="$XDG_RUNTIME_DIR/webview-probe.png" \
   || { echo "FAIL: driver"; cat "$XDG_RUNTIME_DIR/drive.log"; tail -80 "$LOG"; exit 1; }
 cat "$XDG_RUNTIME_DIR/drive.log"
 grep -q "ND_WEBVIEW2_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: driver did not report success"; exit 1; }
+grep -qE "setContextMenuItems node=[0-9]+ items=4" "$LOG" || {
+  echo "FAIL: the host never stored the probe's context-menu items"
+  grep -E "ND_WV .*(setContextMenuItems|ND_WARN)" "$LOG" | tail -20
+  exit 1
+}
+echo "ND_WEBVIEW_CTXMENU_OK $(grep -m1 -oE "setContextMenuItems node=[0-9]+ items=4" "$LOG")"
 [ -s "$XDG_RUNTIME_DIR/webview-probe.png" ] || { echo "FAIL: empty png"; exit 1; }
 file "$XDG_RUNTIME_DIR/webview-probe.png" | grep -q "PNG image" || { echo "FAIL: not a png"; exit 1; }
 

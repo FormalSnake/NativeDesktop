@@ -14,8 +14,9 @@ export {
   onCookiesResult,
   saveSession,
   onSessionSaved,
+  setContextMenuItems,
 } from "./webview.ts";
-export type { Cookie } from "./webview.ts";
+export type { Cookie, ContextMenuContext, ContextMenuItem, ContextMenuItemClick } from "./webview.ts";
 export {
   showAlert,
   openFile,

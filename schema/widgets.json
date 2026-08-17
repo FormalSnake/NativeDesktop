@@ -402,7 +402,7 @@
       "props": [
         { "name": "url", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "profile", "type": "string", "default": "", "appliesTo": "create" },
-        { "name": "suppressContextMenu", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "contextMenuMode", "type": "enum", "values": ["native", "suppress"], "default": "native", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -425,6 +425,7 @@
         { "name": "securityChanged", "ndpName": "onSecurityChanged", "payload": "data" },
         { "name": "linkHover", "ndpName": "onLinkHover", "payload": "text" },
         { "name": "contextMenu", "ndpName": "onContextMenu", "payload": "data" },
+        { "name": "contextMenuItemClicked", "ndpName": "onContextMenuItemClicked", "payload": "data" },
         { "name": "sessionSaved", "ndpName": "onSessionSaved", "payload": "data" },
         { "name": "audioStateChanged", "ndpName": "onAudioStateChanged", "payload": "data" }
       ],
@@ -436,6 +437,7 @@
         "getCookies", "setCookie", "deleteCookie",
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
+        "setContextMenuItems",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

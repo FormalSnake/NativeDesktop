@@ -32,6 +32,7 @@ const CHECKS = [
   "focus",
   "linkHover",
   "contextMenu",
+  "contextMenuItems",
 ] as const;
 
 function mustFind(tree: JsonNode, testID: string): JsonNode {

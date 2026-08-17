@@ -315,7 +315,7 @@ func ndCreate(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ListView" {
         return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)
     } else if kind == "WebView" {
-        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", suppressContextMenu: propBool(props, "suppressContextMenu") ?? false)  // WKWebView subclass (M14, NDShell/NDWebView.swift)
+        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", contextMenuMode: propStr(props, "contextMenuMode") ?? "native")  // WKWebView subclass (M14, NDShell/NDWebView.swift)
     } else if kind == "NativeView" {
         let viewKind = propStr(props, "viewKind") ?? ""
         let propsJson = propStr(props, "props") ?? "{}"
@@ -576,6 +576,7 @@ func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
         // "emptyDescription" handled by ndEmptyStateApply above (merged).
     } else if kind == "WebView" {
         if let u = propStr(props, "url"), let wv = view as? NDWebView { wv.ndSetURL(u) }
+        if let m = propStr(props, "contextMenuMode"), let wv = view as? NDWebView { wv.ndSetContextMenuMode(m) }
     } else if kind == "NativeView" {
         if let pj = propStr(props, "props"), let vk = propStr(props, "viewKind") {
             nd_plugin_view_apply_props(vk, Unmanaged.passUnretained(view).toOpaque(), pj)

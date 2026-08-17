@@ -291,7 +291,7 @@ Automation role: `webview`. Text source: none. Children: none.
 |---|---|---|---|
 | `url` | string |  | createAndUpdate |
 | `profile` | string |  | create |
-| `suppressContextMenu` | bool | false | create |
+| `contextMenuMode` | native \| suppress | native | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -315,10 +315,11 @@ Automation role: `webview`. Text source: none. Children: none.
 | `securityChanged` | `onSecurityChanged` | data |
 | `linkHover` | `onLinkHover` | text |
 | `contextMenu` | `onContextMenu` | data |
+| `contextMenuItemClicked` | `onContextMenuItemClicked` | data |
 | `sessionSaved` | `onSessionSaved` | data |
 | `audioStateChanged` | `onAudioStateChanged` | data |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `focus`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `focus`.
 
 ## NativeView (`<nativeview>`)
 
