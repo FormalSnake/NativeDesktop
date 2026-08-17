@@ -33,6 +33,9 @@ const CHECKS = [
   "linkHover",
   "contextMenu",
   "contextMenuItems",
+  "redirectEcho",
+  "cookiePersistence",
+  "scriptDialog",
 ] as const;
 
 function mustFind(tree: JsonNode, testID: string): JsonNode {

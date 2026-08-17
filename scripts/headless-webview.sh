@@ -14,6 +14,14 @@ export NATIVE_AUTOMATION=1
 # bus, so a gate sharing `dev.nativedesktop.hello` with anything else running
 # on the machine exits with ND_ALREADY_RUNNING instead of starting.
 export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessWebview}"
+# The cookie-persistence check asserts a file under the user data dir, and the
+# jar it writes must not be the dev box's own. Own data dir, cleared per run.
+XDG_DATA_HOME="$(mktemp -d)"
+export XDG_DATA_HOME
+# Scripted answers for the page dialogs the probe raises, consumed in call
+# order (alert, confirm, prompt). Without this the host asks a real question
+# nobody is there to answer, which is correct behaviour and a hung gate.
+export ND_AUTOMATION_DIALOG_SCRIPT='{"webview.scriptDialog":[{"accepted":true},{"accepted":true},{"accepted":true,"text":"nd-typed"}]}'
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
@@ -62,6 +70,18 @@ grep -qE "setContextMenuItems node=[0-9]+ items=4" "$LOG" || {
   exit 1
 }
 echo "ND_WEBVIEW_CTXMENU_OK $(grep -m1 -oE "setContextMenuItems node=[0-9]+ items=4" "$LOG")"
+# The redirect-echo invariant, from the host's own side. `setUrl` is traced
+# only when a load was actually issued, and nothing but the echo check ever
+# names /echo-committed, so a second line here IS the load storm: the app asked
+# for the page the view was already on while a redirect was in flight, and the
+# host obliged.
+ECHO_LOADS=$(grep -cE "setUrl node=[0-9]+ url=.*/echo-committed" "$LOG" || true)
+[ "$ECHO_LOADS" = "1" ] || {
+  echo "FAIL: the committed page was loaded $ECHO_LOADS times, want 1"
+  grep -E "ND_WV .*(setUrl|load node)" "$LOG" | tail -30
+  exit 1
+}
+echo "ND_WEBVIEW_ECHO_OK 1 load for the committed page"
 [ -s "$XDG_RUNTIME_DIR/webview-probe.png" ] || { echo "FAIL: empty png"; exit 1; }
 file "$XDG_RUNTIME_DIR/webview-probe.png" | grep -q "PNG image" || { echo "FAIL: not a png"; exit 1; }
 

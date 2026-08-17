@@ -51,13 +51,32 @@ const SCHEME_HTML = `<!doctype html>
 <html><head><meta charset="utf-8" /><title>ND Probe Scheme</title></head>
 <body><div id="marker">scheme-ok</div></body></html>`;
 
+/// Requests the fixture has served, by path. The redirect-echo check asserts
+/// on these: a load storm is only visible from the server's side.
+const hits: Record<string, number> = {};
+
 const fixture = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   fetch(request) {
     const path = new URL(request.url).pathname;
+    hits[path] = (hits[path] ?? 0) + 1;
     if (path === "/favicon.png") {
       return new Response(FAVICON_PNG, { headers: { "content-type": "image/png" } });
+    }
+    // The redirect-echo pair, on paths nothing else loads so the host trace
+    // can be grepped for them. `/echo-bounce` never renders: it stalls, then
+    // redirects, which is what gives a drive a window in which a redirect is
+    // provably still in flight.
+    if (path === "/echo-bounce") {
+      return Bun.sleep(600).then(
+        () => new Response(null, { status: 302, headers: { location: "/echo-committed" } }),
+      );
+    }
+    if (path === "/echo-committed") {
+      return new Response('<!doctype html><meta charset="utf-8"><title>echo</title><h1>echo</h1>', {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     }
     if (path === "/download") {
       return new Response("probe payload", {
@@ -128,6 +147,9 @@ const CHECKS = [
   "linkHover",
   "contextMenu",
   "contextMenuItems",
+  "redirectEcho",
+  "cookiePersistence",
+  "scriptDialog",
 ] as const;
 type CheckName = (typeof CHECKS)[number];
 
@@ -135,6 +157,8 @@ function App(): React.ReactNode {
   const main = useRef<NdNodeRef<"webview">>(null);
   const priv = useRef<NdNodeRef<"webview">>(null);
   const scheme = useRef<NdNodeRef<"webview">>(null);
+  const echo = useRef<NdNodeRef<"webview">>(null);
+  const [echoUrl, setEchoUrl] = useState("");
   const started = useRef(false);
   const [schemeReady, setSchemeReady] = useState(false);
   const [phase, setPhase] = useState("starting");
@@ -158,7 +182,7 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (!schemeReady || started.current) return;
     started.current = true;
-    void runProbe({ main, priv, scheme, setResult, setPhase });
+    void runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPhase });
   }, [schemeReady]);
 
   return (
@@ -189,6 +213,16 @@ function App(): React.ReactNode {
               onContextMenuItemClicked={(e) => record("contextMenuItemClicked", e.data)}
               onCookiesChanged={() => record("cookiesChanged", true)}
               onDownloadRequested={(e) => record("downloadRequested", { view: "main", ...(e.data as object) })}
+            />
+            {/* The echo view exists for one invariant: re-asking for the page
+                a view is ALREADY on must start no load, even while a newer
+                load is in flight. Nothing else drives it, so every `setUrl`
+                the host traces for /echo-committed came from this check. */}
+            <webview
+              ref={echo}
+              testID="wv-echo"
+              url={echoUrl}
+              onJavaScriptResult={onJavaScriptResult}
             />
             <webview
               ref={priv}
@@ -230,15 +264,18 @@ interface ProbeArgs {
   main: React.RefObject<NdNodeRef<"webview"> | null>;
   priv: React.RefObject<NdNodeRef<"webview"> | null>;
   scheme: React.RefObject<NdNodeRef<"webview"> | null>;
+  echo: React.RefObject<NdNodeRef<"webview"> | null>;
+  setEchoUrl: (value: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (value: string) => void;
 }
 
-async function runProbe({ main, priv, scheme, setResult, setPhase }: ProbeArgs): Promise<void> {
+async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPhase }: ProbeArgs): Promise<void> {
   const gtk = Platform.backend === "gtk";
   const wv = await poll(async () => main.current, (v) => v != null, "webview ref");
   const wvScheme = await poll(async () => scheme.current, (v) => v != null, "scheme webview ref");
   const wvPrivate = await poll(async () => priv.current, (v) => v != null, "private webview ref");
+  const wvEcho = await poll(async () => echo.current, (v) => v != null, "echo webview ref");
 
   const step = async (name: CheckName, fn: () => Promise<string>): Promise<void> => {
     setPhase(name);
@@ -507,6 +544,91 @@ async function runProbe({ main, priv, scheme, setResult, setPhase }: ProbeArgs):
     // declares itself done and the drive tears the run down.
     await new Promise((r) => setTimeout(r, 200));
     return "ok: 4 items sent (the host-side trace asserts they were stored)";
+  });
+
+  // The url prop is an ECHO in every browser built on this: the engine reports
+  // an address, the app stores it, and storing it re-applies the prop. That is
+  // only stable while "where the view is" has one answer. It has two the moment
+  // a load is cancelled mid-redirect — `get_uri` reports the provisional
+  // address, the committed page is still the previous one — and an app one
+  // event behind then asks for whichever of the two it last heard about. Each
+  // answer starts a load, each load produces the next report, and the pair runs
+  // until the runtime is out of memory.
+  //
+  // So: commit /echo-committed, start /echo-bounce (which stalls before
+  // redirecting), and while that redirect is in flight ask for the committed
+  // page again. The host must refuse. It is asserted from the host's own trace
+  // (scripts/headless-webview.sh): a `setUrl` line is printed only when a load
+  // was actually issued, so exactly one may ever name /echo-committed.
+  await step("redirectEcho", async () => {
+    setEchoUrl(`${BASE}/echo-committed`);
+    await poll(
+      () => executeJavaScript(wvEcho!, "location.pathname"),
+      (p) => p.includes("/echo-committed"),
+      "echo view commits the landing page",
+    );
+    const committedHits = hits["/echo-committed"] ?? 0;
+    setEchoUrl(`${BASE}/echo-bounce`);
+    // Inside the fixture's stall, so the redirect is provably still in flight.
+    await new Promise((r) => setTimeout(r, 250));
+    setEchoUrl(`${BASE}/echo-committed`);
+    await new Promise((r) => setTimeout(r, 2500));
+    // The server cannot tell the two apart — a refused load and a load that
+    // superseded the redirect both cost one fetch — so the outcome is read off
+    // the host trace, the same way setContextMenuItems is. This step's job is
+    // to put the engine in the state and say what it served.
+    const served = (hits["/echo-committed"] ?? 0) - committedHits;
+    return `ok: sequenced (bounce=${hits["/echo-bounce"] ?? 0}, committed served=${served}; the host-side trace asserts one load)`;
+  });
+
+  // A jar that is never written to disk loses every login and every cookie
+  // consent at quit, which reads as the site having ignored the choice. The
+  // file is the whole assertion: WebKitGTK keeps cookies in memory until
+  // something names a file for them, whatever data directory the session has.
+  await step("cookiePersistence", async () => {
+    const home = process.env.XDG_DATA_HOME || `${process.env.HOME ?? ""}/.local/share`;
+    const jar = `${home}/nd-webview-profiles/default/cookies.sqlite`;
+    sendCommand(wv!, "setCookie", { name: "ndpersist", value: "v1", domain: "127.0.0.1", path: "/" });
+    await poll(
+      () => getCookies(wv!, `${BASE}/`),
+      (list) => list.some((c) => c.name === "ndpersist"),
+      "cookie visible after setCookie",
+    );
+    await poll(() => Bun.file(jar).exists(), (there) => there, `cookie jar at ${jar}`);
+    return `ok (${jar})`;
+  });
+
+  // A page that calls alert() parks its own JS thread until the UI process
+  // answers, and an engine whose default answer never arrives parks it for
+  // good: every later evaluateJavaScript on that view queues behind the one
+  // that never returned, which takes every content script and every automation
+  // eval down with it. The assertion is therefore two-part — the dialog is
+  // answered with the value the run scripted, and the view still evaluates
+  // afterwards.
+  //
+  // The answers come from ND_AUTOMATION_DIALOG_SCRIPT (see
+  // scripts/headless-webview.sh), consumed in call order: alert, confirm,
+  // prompt.
+  await step("scriptDialog", async () => {
+    // Never `await` a page eval that raises a dialog without a ceiling: an
+    // unanswered dialog is exactly the bug, and it would hang the probe rather
+    // than fail it.
+    const bounded = async (code: string, what: string): Promise<string> => {
+      const answer = await Promise.race([
+        executeJavaScript(wv!, code),
+        new Promise<string>((_r, reject) => setTimeout(() => reject(new Error(`${what} never answered`)), 8000)),
+      ]);
+      return answer;
+    };
+    await bounded("alert('probe alert'), 'alerted'", "alert");
+    const confirmed = await bounded("String(confirm('probe confirm'))", "confirm");
+    if (confirmed !== "true") return `fail: a scripted-accept confirm read ${JSON.stringify(confirmed)}`;
+    const typed = await bounded("String(prompt('probe prompt', ''))", "prompt");
+    if (typed !== "nd-typed") return `fail: a scripted prompt read ${JSON.stringify(typed)}`;
+    // The part that proves the channel survived: unrelated code, same view.
+    const alive = await bounded("String(2 + 2)", "the eval channel after three dialogs");
+    if (alive !== "4") return `fail: the view stopped evaluating (2+2 read ${JSON.stringify(alive)})`;
+    return "ok (alert, confirm, prompt answered; the view still evaluates)";
   });
 
   setPhase("done");

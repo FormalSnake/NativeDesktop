@@ -44,6 +44,14 @@ final class NDWebView: WKWebView {
     // didCommit can detect WebKit's silent about:blank substitution (blocked
     // ports, some malformed URLs) — those never fire a didFail* callback.
     private var pendingProvisionalURL = ""
+    /// The address of the page that last COMMITTED here. `url` answers the
+    /// provisional address while a load is in flight and reverts to this one if
+    /// that load is cancelled, so an app driving the `url` prop from its own
+    /// onNavigate state sees the two alternate and asks for each in turn. Both
+    /// are "where this view already is"; `ndSetURL` compares against both so
+    /// neither answer can start a fresh load. Peer of `committed_url` in
+    /// src/gtk/webview.zig.
+    private var committedURL = ""
 
     /// `contextMenuMode`: "native" keeps WebKit's own menu and merges the app's
     /// items into it, "suppress" shows no menu at all and leaves the decision
@@ -106,7 +114,7 @@ final class NDWebView: WKWebView {
     /// it differs from the current URL — the echo guard, since onNavigate
     /// feeds the URL back into app state, which re-applies the prop.
     func ndSetURL(_ u: String) {
-        guard !u.isEmpty, u != url?.absoluteString, let real = URL(string: u) else { return }
+        guard !u.isEmpty, u != url?.absoluteString, u != committedURL, let real = URL(string: u) else { return }
         load(URLRequest(url: real))
     }
 
@@ -1104,6 +1112,7 @@ extension NDWebView: WKNavigationDelegate, WKUIDelegate {
     /// (a non-blank provisional URL committing as `about:blank`) and surface it.
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         let committed = webView.url?.absoluteString ?? ""
+        committedURL = committed
         let requested = pendingProvisionalURL
         pendingProvisionalURL = ""
         ndEmitSecurity()
@@ -1155,6 +1164,72 @@ extension NDWebView: WKNavigationDelegate, WKUIDelegate {
             emitEvent("newWindow", json: ndWebViewTextJson(u))
         }
         return nil
+    }
+
+    // MARK: Script dialogs
+    //
+    // `alert`, `confirm` and `prompt` park the page's JS until the UI process
+    // answers. A WKUIDelegate that does not implement these gets WebKit's own
+    // default, which answers immediately with "dismissed" — the page never
+    // hangs, but it also never gets its message in front of anyone. These three
+    // show the message and answer for real, and are the peer of the GTK
+    // `script-dialog` handler in src/gtk/webview.zig.
+    //
+    // Every path calls the completion handler exactly once. A view with no
+    // window has nothing to sheet onto, so it answers straight away rather than
+    // dropping the reply.
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
+        _ = await ndRunScriptPanel(message: message, kind: .alert)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        return await ndRunScriptPanel(message: message, kind: .confirm) != nil
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo) async -> String? {
+        return await ndRunScriptPanel(message: prompt, kind: .prompt(defaultText ?? ""))
+    }
+
+    enum NDScriptPanelKind {
+        case alert
+        case confirm
+        case prompt(String)
+    }
+
+    /// Runs one panel and answers it. `nil` is "dismissed": a cancelled confirm
+    /// or a cancelled prompt. An accepted alert or confirm answers with the
+    /// empty string, an accepted prompt with what was typed.
+    private func ndRunScriptPanel(message: String, kind: NDScriptPanelKind) async -> String? {
+        guard let host = window else { return nil }
+        let alert = NSAlert()
+        alert.messageText = ndScriptPanelTitle(kind)
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        var field: NSTextField?
+        switch kind {
+        case .alert:
+            break
+        case .confirm:
+            alert.addButton(withTitle: "Cancel")
+        case .prompt(let initial):
+            alert.addButton(withTitle: "Cancel")
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+            input.stringValue = initial
+            alert.accessoryView = input
+            field = input
+        }
+        let response = await alert.beginSheetModal(for: host)
+        guard response == .alertFirstButtonReturn else { return nil }
+        return field?.stringValue ?? ""
+    }
+
+    private func ndScriptPanelTitle(_ kind: NDScriptPanelKind) -> String {
+        switch kind {
+        case .alert: return "The page says"
+        case .confirm: return "Confirm"
+        case .prompt: return "The page is asking for input"
+        }
     }
 }
 

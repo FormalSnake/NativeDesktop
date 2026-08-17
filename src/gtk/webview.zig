@@ -19,8 +19,10 @@ const gdk = @import("gdk");
 const gio = @import("gio");
 const gobject = @import("gobject");
 const glib = @import("glib");
+const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ctxmenu = @import("context_menu.zig");
+const automation_dialogs = @import("../automation_dialogs.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents WebView arm.
@@ -139,6 +141,17 @@ const FnSchemeResponseNew = *const fn (*anyopaque, i64) callconv(.c) ?*anyopaque
 const FnSchemeResponseSetStatus = *const fn (*anyopaque, c_uint, ?[*:0]const u8) callconv(.c) void;
 const FnSchemeResponseSetContentType = *const fn (*anyopaque, [*:0]const u8) callconv(.c) void;
 const FnRegisterSchemeAs = *const fn (*anyopaque, [*:0]const u8) callconv(.c) void;
+const FnSetPersistentStorage = *const fn (*anyopaque, [*:0]const u8, c_uint) callconv(.c) void;
+const FnDialogType = *const fn (*anyopaque) callconv(.c) c_uint;
+const FnDialogSetText = *const fn (*anyopaque, ?[*:0]const u8) callconv(.c) void;
+
+/// WebKitScriptDialogType.
+const WEBKIT_SCRIPT_DIALOG_ALERT: c_uint = 0;
+const WEBKIT_SCRIPT_DIALOG_CONFIRM: c_uint = 1;
+const WEBKIT_SCRIPT_DIALOG_PROMPT: c_uint = 2;
+const WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM: c_uint = 3;
+/// WebKitCookiePersistentStorage: TEXT = 0, SQLITE = 1.
+const WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE: c_uint = 1;
 const FnAsyncReady = *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void;
 const FnCookieGet = *const fn (*anyopaque, ?[*:0]const u8, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
 const FnCookieGetAll = *const fn (*anyopaque, ?*anyopaque, ?FnAsyncReady, ?*anyopaque) callconv(.c) void;
@@ -216,6 +229,17 @@ const ExtApi = struct {
     cookie_manager_add_cookie_finish: ?FnCookieMutateFinish = null,
     cookie_manager_delete_cookie: ?FnCookieMutate = null,
     cookie_manager_delete_cookie_finish: ?FnCookieMutateFinish = null,
+    cookie_manager_set_persistent_storage: ?FnSetPersistentStorage = null,
+
+    // script dialogs
+    script_dialog_get_dialog_type: ?FnDialogType = null,
+    script_dialog_get_message: ?FnGetCStr = null,
+    script_dialog_confirm_set_confirmed: ?FnSetBool = null,
+    script_dialog_prompt_get_default_text: ?FnGetCStr = null,
+    script_dialog_prompt_set_text: ?FnDialogSetText = null,
+    script_dialog_ref: ?FnGetPtr = null,
+    script_dialog_unref: ?FnVoidOnPtr = null,
+    script_dialog_close: ?FnVoidOnPtr = null,
 
     // browser chrome
     get_favicon: ?FnGetPtr = null,
@@ -457,6 +481,15 @@ fn loadExt(lib: *std.DynLib) void {
     ext.cookie_manager_add_cookie_finish = lookupWarn(FnCookieMutateFinish, lib, "webkit_cookie_manager_add_cookie_finish", "setCookie");
     ext.cookie_manager_delete_cookie = lookupWarn(FnCookieMutate, lib, "webkit_cookie_manager_delete_cookie", "deleteCookie");
     ext.cookie_manager_delete_cookie_finish = lookupWarn(FnCookieMutateFinish, lib, "webkit_cookie_manager_delete_cookie_finish", "deleteCookie");
+    ext.cookie_manager_set_persistent_storage = lookupWarn(FnSetPersistentStorage, lib, "webkit_cookie_manager_set_persistent_storage", "cookie persistence");
+    ext.script_dialog_get_dialog_type = lookupWarn(FnDialogType, lib, "webkit_script_dialog_get_dialog_type", "script dialogs");
+    ext.script_dialog_get_message = lookupWarn(FnGetCStr, lib, "webkit_script_dialog_get_message", "script dialogs");
+    ext.script_dialog_confirm_set_confirmed = lookupWarn(FnSetBool, lib, "webkit_script_dialog_confirm_set_confirmed", "script dialogs (confirm)");
+    ext.script_dialog_prompt_get_default_text = lookupWarn(FnGetCStr, lib, "webkit_script_dialog_prompt_get_default_text", "script dialogs (prompt)");
+    ext.script_dialog_prompt_set_text = lookupWarn(FnDialogSetText, lib, "webkit_script_dialog_prompt_set_text", "script dialogs (prompt)");
+    ext.script_dialog_ref = lookupWarn(FnGetPtr, lib, "webkit_script_dialog_ref", "script dialogs (asking the user)");
+    ext.script_dialog_unref = lookupWarn(FnVoidOnPtr, lib, "webkit_script_dialog_unref", "script dialogs (asking the user)");
+    ext.script_dialog_close = lookupWarn(FnVoidOnPtr, lib, "webkit_script_dialog_close", "script dialogs (asking the user)");
 
     ext.get_favicon = lookupWarn(FnGetPtr, lib, "webkit_web_view_get_favicon", "faviconChanged");
     ext.network_session_get_website_data_manager = lookupWarn(FnGetPtr, lib, "webkit_network_session_get_website_data_manager", "faviconChanged");
@@ -546,6 +579,13 @@ const ViewState = struct {
     channels: std.StringHashMapUnmanaged(*MessageCtx) = .empty,
     last_secure: ?bool = null,
     last_playing_audio: bool = false,
+    /// URI of the page that last COMMITTED here. `webkit_web_view_get_uri`
+    /// answers the PROVISIONAL uri from the moment a load starts and reverts
+    /// to this one if that load is cancelled, so an app driving the `url` prop
+    /// from its own onNavigate state sees the two alternate and asks for each
+    /// in turn. Both are "where this view already is"; `setUrl` compares
+    /// against both so neither answer can start a fresh load.
+    committed_url: ?[]u8 = null,
 };
 
 fn stateOf(widget: *gtk.Widget) ?*ViewState {
@@ -705,9 +745,47 @@ fn profileSession(profile: []const u8) ?*anyopaque {
     const cache_dir = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-profiles/{s}/cache", .{ std.mem.span(base), profile }, 0) catch return null;
     defer alloc.free(cache_dir);
     const session = mk(data_dir.ptr, cache_dir.ptr) orelse return null;
+    persistCookies(session, data_dir);
     const key = alloc.dupe(u8, profile) catch return session;
     profile_sessions.put(alloc, key, session) catch {};
     return session;
+}
+
+/// Sessions whose jar has already been pointed at a file, keyed by pointer.
+var cookie_sessions: std.AutoHashMapUnmanaged(usize, void) = .empty;
+
+/// A WebKitNetworkSession built with a data directory still keeps its cookies
+/// in memory only: the jar is written nowhere until `set_persistent_storage`
+/// names a file for it. Without this call every login, every preference and
+/// every cookie consent is forgotten at quit, which reads as the site having
+/// ignored the choice rather than as the browser having dropped it.
+///
+/// Ephemeral sessions never get here, by construction: they exist to forget.
+fn persistCookies(session: *anyopaque, dir: [:0]const u8) void {
+    const set_storage = ext.cookie_manager_set_persistent_storage orelse return;
+    const get_cm = ext.network_session_get_cookie_manager orelse return;
+    const key = @intFromPtr(session);
+    if (cookie_sessions.contains(key)) return;
+    cookie_sessions.put(alloc, key, {}) catch return;
+    const cm = get_cm(session) orelse return;
+    // WebKit opens the file but will not build the path to it.
+    _ = glib.mkdirWithParents(dir.ptr, 0o700);
+    const path = std.fmt.allocPrintSentinel(alloc, "{s}/cookies.sqlite", .{dir}, 0) catch return;
+    defer alloc.free(path);
+    set_storage(cm, path.ptr, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+}
+
+/// The profile-less case. Every view without a `profile` shares WebKit's
+/// process-default session, which has a data directory of its own and the same
+/// memory-only jar, so it needs the same call against a directory this
+/// framework owns.
+fn persistDefaultCookies() void {
+    const get_default = ext.network_session_get_default orelse return;
+    const session = get_default() orelse return;
+    const base = glib.getUserDataDir();
+    const dir = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-profiles/default", .{std.mem.span(base)}, 0) catch return;
+    defer alloc.free(dir);
+    persistCookies(session, dir);
 }
 
 /// A view bound to a non-default network session can't come from
@@ -730,9 +808,18 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         return label.as(gtk.Widget);
     };
     const widget = blk: {
-        if (profile.len == 0) break :blk a.web_view_new();
-        const session = profileSession(profile) orelse break :blk a.web_view_new();
-        break :blk createWithSession(session) orelse a.web_view_new();
+        if (profile.len == 0) {
+            persistDefaultCookies();
+            break :blk a.web_view_new();
+        }
+        const session = profileSession(profile) orelse {
+            persistDefaultCookies();
+            break :blk a.web_view_new();
+        };
+        break :blk createWithSession(session) orelse blk2: {
+            persistDefaultCookies();
+            break :blk2 a.web_view_new();
+        };
     };
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
     const state = alloc.create(ViewState) catch {
@@ -754,15 +841,30 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     return widget;
 }
 
-/// createAndUpdate `url` prop: navigate iff it differs from the current URI
-/// (the echo guard — onNavigate feeds the URL back into app state, which
-/// re-applies the prop; without the compare every navigation would reload).
+/// createAndUpdate `url` prop: navigate iff it differs from where the view
+/// already is (the echo guard — onNavigate feeds the URL back into app state,
+/// which re-applies the prop; without the compare every navigation would
+/// reload).
+///
+/// "Where it already is" is two URIs, not one. A redirect that gets cancelled
+/// mid-flight — anything that reloads or re-navigates the view while the
+/// server's 30x is still in flight will do it — leaves the provisional uri and
+/// the committed uri disagreeing, and an app one event behind asks for
+/// whichever of the two it last heard about. Comparing only against
+/// `get_uri()` answers "no, you are on the other one" both ways round, and the
+/// pair ping-pongs until the app runs out of memory. Neither URI is worth a
+/// load, so neither starts one.
 pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     const a = api orelse return;
     if (!isReal(widget)) return;
     if (url.len == 0) return;
     if (a.web_view_get_uri(@ptrCast(widget))) |cur| {
         if (std.mem.eql(u8, std.mem.span(cur), url)) return;
+    }
+    if (stateOf(widget)) |state| {
+        if (state.committed_url) |c| {
+            if (std.mem.eql(u8, c, url)) return;
+        }
     }
     tr("setUrl node={?d} url={s}", .{ widgetNodeId(widget), url });
     a.web_view_load_uri(@ptrCast(widget), url.ptr);
@@ -2166,6 +2268,9 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
         _ = gobject.signalConnectData(obj, "mouse-target-changed", @ptrCast(&cbMouseTarget), data, null, .{});
     }
     _ = gobject.signalConnectData(obj, "context-menu", @ptrCast(&cbContextMenu), data, null, .{});
+    // Unconditional: the default handler is the hang (see cbScriptDialog), so
+    // a view with no answerer is worse than a view that answers badly.
+    _ = gobject.signalConnectData(obj, "script-dialog", @ptrCast(&cbScriptDialog), data, null, .{});
     if (ext.is_playing_audio != null) {
         _ = gobject.signalConnectData(obj, "notify::is-playing-audio", @ptrCast(&cbNotifyAudio), data, null, .{});
     }
@@ -2193,7 +2298,22 @@ fn cbLoadChanged(obj: *gobject.Object, load_event: c_int, data: ?*anyopaque) cal
         f(node_id, "forwardAvailable", .{ .checked = a.web_view_can_go_forward(v) != 0 });
     }
     // TLS state is only meaningful once the navigation has committed.
-    if (load_event == WEBKIT_LOAD_COMMITTED) emitSecurity(node_id, v);
+    if (load_event == WEBKIT_LOAD_COMMITTED) {
+        emitSecurity(node_id, v);
+        rememberCommitted(@ptrCast(obj), v);
+    }
+}
+
+/// Records the committed URI for `setUrl`'s echo guard. A view whose state
+/// allocation failed keeps working with one URI to compare against, which is
+/// the pre-existing behaviour.
+fn rememberCommitted(widget: *gtk.Widget, v: *anyopaque) void {
+    const a = api orelse return;
+    const state = stateOf(widget) orelse return;
+    const uri = a.web_view_get_uri(v) orelse return;
+    const copy = alloc.dupe(u8, std.mem.span(uri)) catch return;
+    if (state.committed_url) |old| alloc.free(old);
+    state.committed_url = copy;
 }
 
 /// `securityChanged` on commit: `secure` means the page came over TLS with no
@@ -2435,6 +2555,173 @@ fn cbLoadFailed(_: *gobject.Object, _: c_int, failing_uri: ?[*:0]const u8, err: 
 /// `create`: fired for window.open/target=_blank. Returning NULL means no
 /// native window is created — the app is expected to open a native tab
 /// itself off the emitted URL.
+// ============================================================================
+// Script dialogs
+// ============================================================================
+
+// `alert`, `confirm` and `prompt` stop the page's JS thread until the UI
+// process answers. WebKitGTK's own default answer is a dialog it builds itself,
+// and where that dialog cannot be shown the answer never comes: the web
+// process stays parked on the reply, and every later evaluateJavaScript on
+// that view — the framework's own executeJavaScript included, so every content
+// script and every automation eval — parks behind it. One `alert()` took a tab
+// out permanently.
+//
+// So the host answers, always, on every path out of this handler: returning
+// TRUE tells WebKit not to run its own, and a handler that returns TRUE
+// without taking a reference has already answered by the time it returns.
+// Asking a person costs a reference and a `close` when they reply; everything
+// that could stop us asking answers immediately instead.
+
+/// A dialog being shown to someone. Owns one reference on the
+/// WebKitScriptDialog, released in `cbScriptDialogResponse` — the one path out.
+const ScriptDialogCtx = struct {
+    dialog: *anyopaque,
+    kind: c_uint,
+    entry: ?*gtk.Entry,
+};
+
+/// Answers `dialog` with the outcome the page should see and lets WebKit
+/// complete it when the signal returns. `text` is prompt-only; a null there is
+/// a cancelled prompt, which is what a page reads as `null`.
+fn answerScriptDialog(dialog: *anyopaque, kind: c_uint, accepted: bool, text: ?[*:0]const u8) void {
+    switch (kind) {
+        WEBKIT_SCRIPT_DIALOG_CONFIRM, WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM => {
+            if (ext.script_dialog_confirm_set_confirmed) |f| f(dialog, @intFromBool(accepted));
+        },
+        WEBKIT_SCRIPT_DIALOG_PROMPT => {
+            if (ext.script_dialog_prompt_set_text) |f| f(dialog, if (accepted) text else null);
+        },
+        else => {}, // alert has no answer beyond "the user saw it"
+    }
+}
+
+/// The scripted answer for an automated run, if the run named one.
+/// `{"accepted": bool, "text": string}` — the shape a prompt needs and a
+/// confirm ignores the tail of.
+fn scriptedDialogAnswer(dialog: *anyopaque, kind: c_uint) bool {
+    const next = automation_dialogs.take("webview.scriptDialog");
+    switch (next) {
+        .unscripted => return false,
+        .exhausted => {
+            // Loud, and still answered: a page must never be left waiting on a
+            // test fixture that ran out of entries.
+            std.debug.print("ND_WARN WebView scriptDialog: the automation dialog script ran out of answers; dismissing\n", .{});
+            answerScriptDialog(dialog, kind, false, null);
+            return true;
+        },
+        .response => |raw| {
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, raw, .{}) catch {
+                std.debug.print("ND_WARN WebView scriptDialog: malformed scripted answer {s}; dismissing\n", .{raw});
+                answerScriptDialog(dialog, kind, false, null);
+                return true;
+            };
+            defer parsed.deinit();
+            var accepted = true;
+            var text: ?[:0]u8 = null;
+            defer if (text) |t| alloc.free(t);
+            if (parsed.value == .object) {
+                if (parsed.value.object.get("accepted")) |a| {
+                    if (a == .bool) accepted = a.bool;
+                }
+                if (parsed.value.object.get("text")) |t| {
+                    if (t == .string) text = alloc.dupeZ(u8, t.string) catch null;
+                }
+            }
+            answerScriptDialog(dialog, kind, accepted, if (text) |t| t.ptr else null);
+            return true;
+        },
+    }
+}
+
+fn cbScriptDialog(obj: *gobject.Object, dialog: ?*anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    const d = dialog orelse return 1;
+    const widget: *gtk.Widget = @ptrCast(obj);
+    const kind = if (ext.script_dialog_get_dialog_type) |f| f(d) else WEBKIT_SCRIPT_DIALOG_ALERT;
+
+    // `beforeunload` is the one dialog a page raises without the user having
+    // done anything dialog-shaped, and the framework gives an app no way to
+    // express a policy for it, so navigation here NEVER blocks: leaving is
+    // always confirmed and nobody is asked. Revisit when apps can answer.
+    if (kind == WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM) {
+        answerScriptDialog(d, kind, true, null);
+        return 1;
+    }
+
+    if (scriptedDialogAnswer(d, kind)) return 1;
+
+    // Everything below is needed to ask a person. Any of it missing means the
+    // answer is "dismissed", now, rather than a tab that never runs JS again.
+    const ref = ext.script_dialog_ref orelse return dismissNow(d, kind);
+    const close = ext.script_dialog_close;
+    const unref = ext.script_dialog_unref;
+    if (close == null or unref == null) return dismissNow(d, kind);
+    // An unrooted view has no window to present into, and AdwDialog answers
+    // that with a warning and no dialog — which is the silent-never-answers
+    // case all over again.
+    if (gtk.Widget.getRoot(widget) == null) return dismissNow(d, kind);
+
+    const message = if (ext.script_dialog_get_message) |f| (if (f(d)) |m| std.mem.span(m) else "") else "";
+    const body = alloc.dupeZ(u8, message) catch return dismissNow(d, kind);
+    defer alloc.free(body);
+
+    const alert = adw.AlertDialog.new(titleForDialog(kind), body.ptr);
+    adw.AlertDialog.addResponse(alert, "dismiss", if (kind == WEBKIT_SCRIPT_DIALOG_ALERT) "OK" else "Cancel");
+    if (kind != WEBKIT_SCRIPT_DIALOG_ALERT) {
+        adw.AlertDialog.addResponse(alert, "accept", "OK");
+        adw.AlertDialog.setResponseAppearance(alert, "accept", .suggested);
+        adw.AlertDialog.setDefaultResponse(alert, "accept");
+    } else {
+        adw.AlertDialog.setDefaultResponse(alert, "dismiss");
+    }
+    // Esc and the close gesture answer the same way the Cancel button does, so
+    // there is no way to leave the page waiting.
+    adw.AlertDialog.setCloseResponse(alert, "dismiss");
+
+    var entry: ?*gtk.Entry = null;
+    if (kind == WEBKIT_SCRIPT_DIALOG_PROMPT) {
+        const e = gtk.Entry.new();
+        if (ext.script_dialog_prompt_get_default_text) |f| {
+            if (f(d)) |def| gtk.Editable.setText(e.as(gtk.Editable), def);
+        }
+        adw.AlertDialog.setExtraChild(alert, e.as(gtk.Widget));
+        entry = e;
+    }
+
+    const ctx = alloc.create(ScriptDialogCtx) catch return dismissNow(d, kind);
+    ctx.* = .{ .dialog = ref(d) orelse d, .kind = kind, .entry = entry };
+    _ = gobject.signalConnectData(@ptrCast(@alignCast(alert)), "response", @ptrCast(&cbScriptDialogResponse), ctx, null, .{});
+    adw.Dialog.present(alert.as(adw.Dialog), widget);
+    return 1;
+}
+
+/// The "answer it here and now" exit. Every caller returns this directly, so
+/// the handler cannot fall out of a branch without having answered.
+fn dismissNow(dialog: *anyopaque, kind: c_uint) c_int {
+    answerScriptDialog(dialog, kind, false, null);
+    return 1;
+}
+
+fn titleForDialog(kind: c_uint) [:0]const u8 {
+    return switch (kind) {
+        WEBKIT_SCRIPT_DIALOG_CONFIRM => "Confirm",
+        WEBKIT_SCRIPT_DIALOG_PROMPT => "The page is asking for input",
+        else => "The page says",
+    };
+}
+
+fn cbScriptDialogResponse(_: *gobject.Object, response: [*:0]const u8, data: ?*anyopaque) callconv(.c) void {
+    const ctx: *ScriptDialogCtx = @ptrCast(@alignCast(data orelse return));
+    defer {
+        if (ext.script_dialog_unref) |f| f(ctx.dialog);
+        alloc.destroy(ctx);
+    }
+    const accepted = std.mem.eql(u8, std.mem.span(response), "accept");
+    const typed: ?[*:0]const u8 = if (ctx.entry) |e| gtk.Editable.getText(e.as(gtk.Editable)) else null;
+    answerScriptDialog(ctx.dialog, ctx.kind, accepted, typed);
+    if (ext.script_dialog_close) |f| f(ctx.dialog);
+}
+
 fn cbCreate(_: *gobject.Object, navigation_action: ?*anyopaque, data: ?*anyopaque) callconv(.c) ?*gtk.Widget {
     const node_id: u32 = @intCast(@intFromPtr(data));
     const get_request = ext.navigation_action_get_request orelse return null;
