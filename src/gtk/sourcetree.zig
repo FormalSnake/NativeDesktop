@@ -712,21 +712,49 @@ pub fn selectedIdOf(widget: *gtk.Widget) ?[]const u8 {
     return selectedNodeId(box, store);
 }
 
-/// setValue {value: "<nodeId>"|""} — selects by node id (fires row-selected
-/// -> Event -> React, the SourceList selectRow contract). "" deselects.
+/// setValue {value: "<nodeId>"|""}: selects by node id, emitting exactly one
+/// selectionChanged {nodeId} for the landed selection. "" deselects.
+///
+/// The emit is explicit rather than left to the box's own row-selected,
+/// because GtkListBox raises that signal only when the selection MOVES, and
+/// the box can already hold the requested row while the app does not: a
+/// controlled `selectedId` frame computed before the last selection lands
+/// after it, and applyProps re-applies it under the echo block, by design.
+/// Leaving the event to the signal made one setValue emit zero events from
+/// that state (the box moved nothing, so the app never learned it now
+/// agreed), which is the sourcetree drive's intermittent selection-leg hang. Driving
+/// the change under the block and emitting here makes the count one per call
+/// whatever the box started from.
 pub fn semanticSelect(widget: *gtk.Widget, id: []const u8) bool {
     const box = innerListBox(widget) orelse return false;
     const store = stores.get(@intFromPtr(box)) orelse return false;
     if (id.len == 0) {
-        // Same browse-mode constraint as applyProps: selectRow(null) is the
-        // clear path that actually works; unselectAll no-ops in browse.
-        gtk.ListBox.selectRow(box, null);
+        {
+            // Same browse-mode constraint as applyProps: selectRow(null) is the
+            // clear path that actually works; unselectAll no-ops in browse.
+            sync_depth += 1;
+            defer sync_depth -= 1;
+            gtk.ListBox.selectRow(box, null);
+        }
+        emitSelection(box, null);
         return true;
     }
     const row = rowForId(box, store, id) orelse return false;
     if (gtk.ListBoxRow.getSelectable(row) == 0) return false;
-    gtk.ListBox.selectRow(box, row);
+    {
+        sync_depth += 1;
+        defer sync_depth -= 1;
+        gtk.ListBox.selectRow(box, row);
+    }
+    emitSelection(box, id);
     return true;
+}
+
+/// selectionChanged for a selection this module drove itself, addressed to the
+/// box's own ND node id. Silent when the tree carries no events yet.
+fn emitSelection(box: *gtk.ListBox, tree_node_id: ?[]const u8) void {
+    const nd_id = node_ids.get(@intFromPtr(box)) orelse return;
+    emitNode(nd_id, "selectionChanged", tree_node_id);
 }
 
 /// rowAction {actionId, testId?}: dispatches a row's trailing action as if

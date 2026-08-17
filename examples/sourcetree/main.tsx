@@ -86,6 +86,7 @@ function App(): React.ReactNode {
   const [lastActivated, setLastActivated] = useState("");
   const [lastAction, setLastAction] = useState("");
   const [lastExpandEvent, setLastExpandEvent] = useState("");
+  const [lastToolbar, setLastToolbar] = useState("");
   const nodes: SourceTreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.id) }));
 
   // Activation transitions re-render the readouts below; the drive frontmosts
@@ -109,7 +110,8 @@ function App(): React.ReactNode {
     <window title="SourceTree Drive" defaultWidth={480} defaultHeight={760}>
       <box orientation="vertical" spacing={8}>
         <box orientation="horizontal" spacing={6} cssClasses={["toolbar"]} testID="st-toolbar">
-          <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]} />
+          <button testID="st-toolbar-refresh" iconName="view-refresh-symbolic" cssClasses={["flat"]}
+            onClick={() => setLastToolbar("refresh")} />
           <button testID="st-toolbar-add" iconName="list-add-symbolic" cssClasses={["flat"]} />
           <button testID="st-toolbar-site" iconData={ICON_DATA} tooltip="Current site" cssClasses={["flat"]} />
           <button testID="st-toolbar-labelled" label="Site" iconData={ICON_DATA} cssClasses={["flat"]} />
@@ -153,6 +155,7 @@ function App(): React.ReactNode {
         <label testID="st-activated-readout" text={`act ${lastActivated || "(none)"}`} />
         <label testID="st-action-readout" text={`action ${lastAction || "(none)"}`} />
         <label testID="st-expand-readout" text={`expand ${lastExpandEvent || "(none)"}`} />
+        <label testID="st-toolbar-readout" text={`toolbar ${lastToolbar || "(none)"}`} />
         <label testID="st-caps-readout" text={capsText} />
         <label testID="st-active-readout" text={activeText} />
       </box>

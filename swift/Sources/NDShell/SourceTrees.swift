@@ -593,20 +593,43 @@ func ndSourceTreeSelectedId(_ view: NSView) -> String? {
     }
 }
 
-/// setValue {value: "<nodeId>"|""} — selects by node id. NOT echo-suppressed:
-/// `selectRowIndexes` posts `outlineViewSelectionDidChange` itself, which is
-/// exactly the selectionChanged a live user click would produce (the same
-/// asymmetry SourceList's semanticSetValue arm relies on).
+/// setValue {value: "<nodeId>"|""}: selects by node id, emitting exactly one
+/// selectionChanged {nodeId} for the landed selection.
+///
+/// A selection that MOVES stays unsuppressed: `selectRowIndexes` posts
+/// `outlineViewSelectionDidChange` itself, and that path also makes the
+/// outline view first responder so the row draws its emphasized state. A
+/// selection that does NOT move posts nothing, so the event is emitted here
+/// instead. That state is reachable whenever a controlled `selectedId` frame
+/// computed before the last selection lands after it: the prop arm re-applies
+/// it echo-suppressed, leaving the view holding a row the app does not, and a
+/// setValue for that same row used to emit zero events (GTK peer:
+/// src/gtk/sourcetree.zig's semanticSelect).
 @MainActor func ndSourceTreeSemanticSelect(_ view: NSView, _ id: String) -> Bool {
     guard let source = sourceTreeDataSource(for: view), let outlineView = source.outlineView else { return false }
+    let current = (outlineView.item(atRow: outlineView.selectedRow) as? NDSourceTreeItem)?.nodeId
     if id.isEmpty {
-        outlineView.deselectAll(nil)
+        if current == nil {
+            source.emitNode("selectionChanged", nil)
+        } else {
+            outlineView.deselectAll(nil)
+        }
         return true
     }
     guard let item = source.itemsByID[id], !item.section, item.selectable else { return false }
     let row = outlineView.row(forItem: item)
     guard row >= 0 else { return false }
-    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    if current == id {
+        // The notification path's first-responder step has to happen here too,
+        // or a row selected through the prop arm keeps drawing unemphasized
+        // after an automation select of that same row.
+        if let window = outlineView.window, window.firstResponder !== outlineView {
+            window.makeFirstResponder(outlineView)
+        }
+        source.emitNode("selectionChanged", id)
+    } else {
+        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
     return true
 }
 

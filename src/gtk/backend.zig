@@ -950,8 +950,10 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
             return invalidValue(err_json_out, node_id);
         }
     } else if (std.mem.eql(u8, kind, "SourceTree")) {
-        // Id-addressed: value is a node ID string ("" deselects); fires
-        // "row-selected" -> Event -> React, same contract as SourceList.
+        // Id-addressed: value is a node ID string ("" deselects). The module
+        // emits selectionChanged itself rather than riding "row-selected",
+        // which GtkListBox raises only when the selection moves. See
+        // sourcetree.zig's semanticSelect.
         if (value != .string) return invalidValue(err_json_out, node_id);
         if (!ndsourcetree_gtk.semanticSelect(widget, value.string)) return invalidValue(err_json_out, node_id);
     } else {

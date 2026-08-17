@@ -4,13 +4,13 @@
 // wave checklist: rows/roles/testIDs in getTree, selectionChanged by id,
 // rowActivated, expand/collapse honoring the controlled `expanded` flags,
 // actionClicked {nodeId, actionId} + native disclosure events (AppKit
-// pointer/keys leg; GTK cannot synthesize input, -32003), hasCommand/
-// hasWidget from the handshake manifest, app.isActive() with host replay,
-// and the AppKit `toolbar` structural class (screenshot). Leg 7 drives the
-// ND_ST_GEOMETRY probe windows and measures row geometry off captures: the
-// disclosure gutter a flat list must not reserve, and the row content a
-// hover-visibility action button must not move. Prints ND_SOURCETREE_OK on
-// success.
+// pointer/keys leg; GTK cannot synthesize input, -32003), a plain <button>
+// event in the same window, hasCommand/hasWidget from the handshake manifest,
+// app.isActive() with host replay, and the AppKit `toolbar` structural class
+// (screenshot). Leg 7 drives the ND_ST_GEOMETRY probe windows and measures
+// row geometry off captures: the disclosure gutter a flat list must not
+// reserve, and the row content a hover-visibility action button must not
+// move. Prints ND_SOURCETREE_OK on success.
 import { inflateSync } from "node:zlib";
 import { launchApp } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
@@ -163,6 +163,18 @@ try {
   // survived the decode and leaves the pixels to the screenshot legs below.
   if (!byTestId.has("st-run-2")) throw new Error("st-run-2 (the iconData row) missing from getTree rows");
   console.log("ND_ST_ICONDATA_OK row with iconData rendered");
+
+  // ---- leg 1b: a plain <button> in the same window still fires --------------
+  // The toolbar button's handler is `onClick`, the name the Button schema
+  // declares. An `on*` prop the schema does NOT declare (`onClicked` here)
+  // registers no listener at all, while the click RPC keeps answering
+  // dispatched:true and the native `clicked` signal keeps being emitted, so
+  // the failure looks like a dead widget rather than a typo. Nothing else in
+  // this drive exercises a button event, which is what let that read as a
+  // sourcetree-specific defect.
+  await app.click("st-toolbar-refresh");
+  await app.waitForText("toolbar refresh", { timeoutMs: T });
+  console.log("ND_ST_BUTTON_OK <button> onClick fired next to the tree");
 
   // ---- leg 2: handshake manifest + activation replay ------------------------
   await app.waitForText("caps present=true nope=false sourcetree=true", { timeoutMs: T });
