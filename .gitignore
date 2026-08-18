@@ -8,3 +8,4 @@ swift/.swiftpm/
 .superpowers/
 dist/
 packages/host-*/bin/
+docs/plans/parity-shots/

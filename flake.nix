@@ -90,6 +90,7 @@
               gst_all_1.gstreamer        # audio: dlopen'd libgstreamer-1.0.so.0 (src/gtk/audio.zig)
               gst_all_1.gst-plugins-base # audio: playbin
               gst_all_1.gst-plugins-good # audio: spectrum element
+              gtksourceview5   # <codeeditor>: dlopen'd libgtksourceview-5.so.0 (src/gtk/codeeditor.zig)
             ];
             # build.zig's test roots import the gobject binding modules
             # unconditionally, so `zig build test` needs pkg-config to resolve
