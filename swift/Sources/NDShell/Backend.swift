@@ -339,6 +339,7 @@ func buildVTable() -> nd_backend {
 @MainActor func ndPurgeNodeRegistries(_ view: NSView) {
     let id = ObjectIdentifier(view)
     ndNodeTypography[id] = nil
+    ndDisabledViews.remove(id)
     ndNavigationSidebars.remove(id)
     ndBoxedLists.remove(id)
     ndBoxedListBackings[id] = nil
@@ -376,6 +377,8 @@ func buildVTable() -> nd_backend {
     ndWindowDialogsPurge(view)
     ndListViewPurge(view)
     ndSourceListPurge(view)
+    ndDragDropPurge(view)
+    ndCodeEditorPurge(view)
     ndPanedTeardown(view)
 }
 

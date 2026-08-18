@@ -1,119 +1,83 @@
 import AppKit
+import SwiftUI
 
-/// Expander: NSButton `.pushDisclosure` (the chevron for panel expansion per
-/// the HIG disclosure-controls page) + a collapsible single-child section,
-/// animated via the standard NSStackView hidden-arranged-subview pattern.
-/// `expanded` is controlled: user toggles flip natively AND emit `toggled`
-/// {checked}; React-driven updates ride withEchoSuppressed.
-final class NDExpanderView: NSStackView {
-    var nodeID: UInt32 = 0
-    let disclosure = NSButton()
-    let labelField = NSTextField(labelWithString: "")
-    let content = FlippedView()
+/// Expander: SwiftUI `DisclosureGroup`, the system disclosure control (its
+/// whole label row is a click target natively, so no extra gesture
+/// recognizer is needed for GtkExpander's "click the label too" parity).
+/// `expanded` is controlled: user toggles emit `toggled` {checked} and
+/// re-render; React-driven updates ride withEchoSuppressed and re-render too
+/// — this class has no persistent SwiftUI state of its own, so every change
+/// goes through `refreshLeaf()` the same way Row/Chart do.
+final class NDExpanderView: NDHostedLeaf {
     private(set) var expanded = false
+    private var label = ""
+    private var childView: NSView?
 
-    init(label: String, expanded: Bool) {
-        super.init(frame: .zero)
-        orientation = .vertical
-        alignment = .leading
-        spacing = 6
-
-        disclosure.bezelStyle = .pushDisclosure
-        disclosure.setButtonType(.pushOnPushOff)
-        disclosure.title = ""
-        disclosure.target = self
-        disclosure.action = #selector(togglePressed(_:))
-        labelField.stringValue = label
-
-        let header = NSStackView()
-        header.orientation = .horizontal
-        header.spacing = 6
-        header.alignment = .centerY
-        header.addArrangedSubview(disclosure)
-        header.addArrangedSubview(labelField)
-        addArrangedSubview(header)
-
-        addArrangedSubview(content)
-        content.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-
-        // The label is a click target too (GtkExpander parity).
-        let click = NSClickGestureRecognizer(target: self, action: #selector(labelClicked(_:)))
-        labelField.addGestureRecognizer(click)
-
+    func applyCreate(label: String, expanded: Bool) {
+        self.label = label
         self.expanded = expanded
-        disclosure.state = expanded ? .on : .off
-        content.isHidden = !expanded
+        refreshLeaf()
     }
 
-    required init?(coder: NSCoder) { fatalError("NDExpanderView is not NSCoding-decodable") }
-
-    @objc private func togglePressed(_ sender: NSButton) {
-        setExpanded(sender.state == .on, animated: true, emit: true)
+    func setLabel(_ label: String) {
+        self.label = label
+        refreshLeaf()
     }
 
-    @objc private func labelClicked(_ sender: Any?) {
-        setExpanded(!expanded, animated: true, emit: true)
+    /// React-driven `expanded` write, echo-suppressed like every other
+    /// controlled prop so the app's own round-trip never re-emits `toggled`.
+    func setExpandedFromProps(_ e: Bool) {
+        guard e != expanded else { return }
+        withEchoSuppressed(self) { setExpanded(e, emit: false) }
     }
 
-    func setExpanded(_ e: Bool, animated: Bool, emit: Bool) {
-        guard e != expanded || content.isHidden == e else {
-            // Same logical state but keep the button glyph honest.
-            disclosure.state = e ? .on : .off
-            return
-        }
+    private func setExpanded(_ e: Bool, emit: Bool) {
         expanded = e
-        disclosure.state = e ? .on : .off
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                ctx.allowsImplicitAnimation = true
-                content.isHidden = !e
-                self.window?.layoutIfNeeded()
-            }
-        } else {
-            content.isHidden = !e
-        }
+        refreshLeaf()
         if emit, !ndIsEchoSuppressed(self) {
-            ndEmitEvent(nodeID, "toggled", "{\"checked\":\(e)}")
+            ndEmitEvent(ndNodeID, "toggled", "{\"checked\":\(e)}")
         }
     }
 
     /// Single-child slot (generated structural Expander arms).
     func setContentChild(_ child: NSView) {
-        content.subviews.forEach { $0.removeFromSuperview() }
-        child.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(child)
-        NSLayoutConstraint.activate([
-            child.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            child.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            child.topAnchor.constraint(equalTo: content.topAnchor),
-            child.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+        childView = child
+        refreshLeaf()
     }
 
     func clearContentChild(_ child: NSView) {
-        if child.superview === content { child.removeFromSuperview() }
+        if childView === child { childView = nil }
+        refreshLeaf()
+    }
+
+    override func leafContent() -> AnyView {
+        AnyView(
+            DisclosureGroup(isExpanded: Binding(
+                get: { [weak self] in self?.expanded ?? false },
+                set: { [weak self] in self?.setExpanded($0, emit: true) }
+            )) {
+                if let childView = self.childView { NDNativeChild(view: childView) }
+            } label: {
+                Text(label)
+            })
     }
 }
 
 /// `ndCreate`'s Expander arm (generated) calls this.
 func makeExpander(_ props: [String: Any]) -> NSView {
-    NDExpanderView(
-        label: propStr(props, "label") ?? "",
-        expanded: propBool(props, "expanded") ?? false
-    )
+    let expander = NDExpanderView()
+    expander.applyCreate(label: propStr(props, "label") ?? "", expanded: propBool(props, "expanded") ?? false)
+    return expander
 }
 
 /// Generated ndApplyProps Expander arm — merged apply.
 func ndExpanderApply(_ view: NSView, _ props: [String: Any]) {
     guard let ex = view as? NDExpanderView else { return }
-    if let l = propStr(props, "label") { ex.labelField.stringValue = l }
-    if let e = propBool(props, "expanded"), e != ex.expanded {
-        withEchoSuppressed(view) { ex.setExpanded(e, animated: ex.window != nil, emit: true) }
-    }
+    if let l = propStr(props, "label") { ex.setLabel(l) }
+    if let e = propBool(props, "expanded") { ex.setExpandedFromProps(e) }
 }
 
 /// Generated ndConnectEvents Expander arm.
 func ndExpanderConnect(_ view: NSView, nodeID: UInt32) {
-    (view as? NDExpanderView)?.nodeID = nodeID
+    (view as? NDExpanderView)?.ndNodeID = nodeID
 }

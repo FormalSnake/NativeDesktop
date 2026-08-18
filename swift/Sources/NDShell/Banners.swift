@@ -31,20 +31,27 @@ struct NDBannerBody: View {
     }
 }
 
-final class NDBannerView: NSView {
+final class NDBannerView: NSView, NDLeafChromeHosting {
     var nodeID: UInt32 = 0
     private var title = ""
     private var buttonLabel: String?
     private(set) var revealed = false
-    private var hosting: NSHostingView<NDBannerBody>!
+    private var hosting: NSHostingView<AnyView>!
     private var heightConstraint: NSLayoutConstraint!
+    // Not an NDHostedLeaf: the reveal animation needs a plain NSView wrapper
+    // clipping a fixed-height constraint, which an NSHostingView subclass
+    // can't also be. NDLeafChrome (SwiftUILeaves.swift) is still reusable
+    // directly, so `enabled`/`tooltip`/`focus` reach the button the same way
+    // they do on a real hosted leaf — ndApplyEnabled/Tooltip/FocusView
+    // special-case NDBannerView the way they do NDNumberInputView.
+    let leafState = NDLeafState()
 
     override var isFlipped: Bool { true }
 
     init() {
         super.init(frame: .zero)
         clipsToBounds = true
-        hosting = NSHostingView(rootView: NDBannerBody(title: "", buttonLabel: nil, onButton: {}))
+        hosting = NSHostingView(rootView: AnyView(EmptyView()))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hosting)
         heightConstraint = heightAnchor.constraint(equalToConstant: 0)
@@ -56,22 +63,28 @@ final class NDBannerView: NSView {
             hosting.topAnchor.constraint(equalTo: topAnchor),
             heightConstraint,
         ])
+        refreshBody()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("NDBannerView is not NSCoding-decodable") }
 
+    private func refreshBody() {
+        hosting.rootView = AnyView(NDLeafChrome(
+            state: leafState,
+            content: NDBannerBody(
+                title: title,
+                buttonLabel: buttonLabel,
+                onButton: { [weak self] in
+                    guard let self else { return }
+                    ndEmitEvent(self.nodeID, "buttonClicked", "{}")
+                })))
+    }
+
     func apply(title: String?, buttonLabel: String?, revealed: Bool?) {
         if let title { self.title = title }
         if let buttonLabel { self.buttonLabel = buttonLabel.isEmpty ? nil : buttonLabel }
-        hosting.rootView = NDBannerBody(
-            title: self.title,
-            buttonLabel: self.buttonLabel,
-            onButton: { [weak self] in
-                guard let self else { return }
-                ndEmitEvent(self.nodeID, "buttonClicked", "{}")
-            }
-        )
+        refreshBody()
         if let revealed, revealed != self.revealed {
             setRevealed(revealed, animated: window != nil)
         } else if self.revealed {

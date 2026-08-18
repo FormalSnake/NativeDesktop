@@ -1,5 +1,6 @@
 // GtkColumnView surface for the <table> widget: columns/rows objectList
-// props, single selection, header-click sort *indication*.
+// props, none/single/multiple selection, header-click sort *indication*,
+// user column resizing and header-drag reordering.
 //
 // Data model: each TableRow's cells are joined with the ASCII unit separator
 // (0x1F) into ONE GtkStringList item, so the model itself carries the cell
@@ -13,6 +14,13 @@
 // + direction) emits "changed", which we forward as sortChanged
 // { columnId, direction } — gtk_column_view_sort_by_column would be the
 // programmatic header-UI setter if a controlled sort prop lands later.
+//
+// Geometry: columns are resizable, and a user drag writes the column's
+// fixed-width, so columnsResized rides notify::fixed-width (debounced, since
+// the property tracks the pointer). Header reordering moves entries in the
+// view's own columns list model, so columnsReordered rides its items-changed.
+// Both are silenced while rebuildColumns runs — a data-driven rebuild is not
+// a user gesture.
 const std = @import("std");
 const gtk = @import("gtk");
 const gio = @import("gio");
@@ -26,9 +34,19 @@ pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.
 const CELL_SEP: u8 = 0x1F; // ASCII unit separator — never present in real cell text
 
 var emit: ?EmitFn = null;
-/// GtkSingleSelection ptr -> its notify::selected handler id (local echo
+/// GtkSelectionModel ptr -> its selection-changed handler id (local echo
 /// suppression — the generated blockEcho map is file-private to widgets.zig).
 var select_handlers: std.AutoHashMapUnmanaged(usize, c_ulong) = .empty;
+/// True for the duration of rebuildColumns: the column geometry signals below
+/// fire for our own writes as readily as for a user drag.
+var rebuilding = false;
+
+/// The GtkStringList behind whichever selection model the mode picked, and
+/// the node id, both stashed on the tracked GtkScrolledWindow so applyProps
+/// never has to know which of the three models is in play.
+const ROWS_KEY = "nd-table-rows";
+const NODE_ID_KEY = "nd-table-node-id";
+const RESIZE_TIMEOUT_KEY = "nd-table-resize-timeout";
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
     const v = props orelse return null;
@@ -87,9 +105,66 @@ fn innerView(widget: *gtk.Widget) ?*gtk.ColumnView {
     return @ptrCast(@alignCast(child));
 }
 
-fn viewSelection(view: *gtk.ColumnView) ?*gtk.SingleSelection {
-    const model = gtk.ColumnView.getModel(view) orelse return null;
-    return @ptrCast(@alignCast(model));
+fn viewSelection(view: *gtk.ColumnView) ?*gtk.SelectionModel {
+    return gtk.ColumnView.getModel(view);
+}
+
+fn rowModel(widget: *gtk.Widget) ?*gtk.StringList {
+    const raw = gobject.Object.getData(asObject(widget), ROWS_KEY) orelse return null;
+    return @ptrCast(@alignCast(raw));
+}
+
+fn asObject(ptr: anytype) *gobject.Object {
+    return @ptrCast(@alignCast(ptr));
+}
+
+fn nodeIdOf(view: *gtk.ColumnView) ?u32 {
+    const raw = gobject.Object.getData(asObject(view), NODE_ID_KEY) orelse return null;
+    return @intCast(@intFromPtr(raw));
+}
+
+/// The `selectionMode` prop, create-only: GTK picks the selection model at
+/// construction and swapping it later would strand the selection handler.
+fn makeSelection(mode: []const u8, rows: *gtk.StringList) *gtk.SelectionModel {
+    if (std.mem.eql(u8, mode, "none")) {
+        return @ptrCast(@alignCast(gtk.NoSelection.new(rows.as(gio.ListModel))));
+    }
+    if (std.mem.eql(u8, mode, "multiple")) {
+        return @ptrCast(@alignCast(gtk.MultiSelection.new(rows.as(gio.ListModel))));
+    }
+    const single = gtk.SingleSelection.new(rows.as(gio.ListModel));
+    gtk.SingleSelection.setAutoselect(single, 0);
+    gtk.SingleSelection.setCanUnselect(single, 1);
+    // gtk_single_selection_new() auto-selects position 0 as part of
+    // constructing the selection over the model, before autoselect above
+    // takes effect — clear it explicitly so selectedIndex: -1 (the default)
+    // means no row is visibly selected, not a phantom row-0 highlight.
+    gtk.SingleSelection.setSelected(single, std.math.maxInt(c_uint));
+    return @ptrCast(@alignCast(single));
+}
+
+/// Selection as row indexes, ascending. One shape for all three modes, so the
+/// wire payload never depends on which model is underneath.
+fn selectedRows(model: *gtk.SelectionModel, out: *std.ArrayList(i64)) void {
+    const bits = gtk.SelectionModel.getSelection(model);
+    defer gtk.Bitset.unref(bits);
+    const n = gtk.Bitset.getSize(bits);
+    var i: u64 = 0;
+    while (i < n) : (i += 1) {
+        out.append(std.heap.page_allocator, @intCast(gtk.Bitset.getNth(bits, @intCast(i)))) catch return;
+    }
+}
+
+fn applySelection(model: *gtk.SelectionModel, rows: *gtk.StringList, indexes: []const i64) void {
+    const count = gio.ListModel.getNItems(rows.as(gio.ListModel));
+    const selected = gtk.Bitset.newEmpty();
+    defer gtk.Bitset.unref(selected);
+    for (indexes) |idx| {
+        if (idx >= 0 and idx < count) _ = gtk.Bitset.add(selected, @intCast(idx));
+    }
+    const mask = gtk.Bitset.newRange(0, count);
+    defer gtk.Bitset.unref(mask);
+    _ = gtk.SelectionModel.setSelection(model, selected, mask);
 }
 
 // ---- row encoding ----------------------------------------------------------
@@ -177,6 +252,8 @@ fn noopCompare(_: ?*const anyopaque, _: ?*const anyopaque, _: ?*anyopaque) callc
 // ---- columns ---------------------------------------------------------------
 
 fn rebuildColumns(view: *gtk.ColumnView, arr: std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    rebuilding = true;
+    defer rebuilding = false;
     // Remove existing columns (walk the live list model back-to-front).
     const columns = gtk.ColumnView.getColumns(view);
     var n = gio.ListModel.getNItems(columns);
@@ -202,6 +279,10 @@ fn rebuildColumns(view: *gtk.ColumnView, arr: std.json.Array, dupeZ: *const fn (
             }
         }
         if (!fixed) gtk.ColumnViewColumn.setExpand(column, 1);
+        // Header-divider dragging is GTK's own; the app hears the result and
+        // decides whether to persist it.
+        gtk.ColumnViewColumn.setResizable(column, 1);
+        _ = gobject.signalConnectData(@ptrCast(@alignCast(column)), "notify::fixed-width", @ptrCast(&cbColumnWidth), view, null, .{});
         const sorter = gtk.CustomSorter.new(&noopCompare, null, null);
         gtk.ColumnViewColumn.setSorter(column, sorter.as(gtk.Sorter));
         gobject.Object.unref(@ptrCast(@alignCast(sorter))); // column holds the ref now
@@ -217,24 +298,28 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     var strv = buildRowStrv(propArray(props, "rows"));
     defer strv.deinit();
     const model = gtk.StringList.new(@ptrCast(strv.buf.ptr));
-    const selection = gtk.SingleSelection.new(model.as(gio.ListModel)); // transfer-full: selection owns model
-    gtk.SingleSelection.setAutoselect(selection, 0);
-    gtk.SingleSelection.setCanUnselect(selection, 1);
-    // gtk_single_selection_new() auto-selects position 0 as part of
-    // constructing the selection over the model, before autoselect above
-    // takes effect — clear it explicitly so selectedIndex: -1 (the default)
-    // means no row is visibly selected, not a phantom row-0 highlight.
-    gtk.SingleSelection.setSelected(selection, std.math.maxInt(c_uint));
-    const sel_idx = propInt(props, "selectedIndex") orelse -1;
-    if (sel_idx >= 0) gtk.SingleSelection.setSelected(selection, @intCast(sel_idx));
+    const selection = makeSelection(propStr(props, "selectionMode") orelse "single", model); // transfer-full: selection owns model
 
-    const view = gtk.ColumnView.new(selection.as(gtk.SelectionModel)); // transfer-full: view owns selection
+    const view = gtk.ColumnView.new(selection); // transfer-full: view owns selection
     gtk.Widget.addCssClass(view.as(gtk.Widget), "data-table");
     gtk.ColumnView.setShowRowSeparators(view, @intFromBool(propBool(props, "showRowSeparators") orelse true));
+    gtk.ColumnView.setReorderable(view, @intFromBool(propBool(props, "columnsReorderable") orelse false));
     if (propArray(props, "columns")) |cols| rebuildColumns(view, cols, dupeZ);
+
+    const sel_idx = propInt(props, "selectedIndex") orelse -1;
+    if (sel_idx >= 0) applySelection(selection, model, &[_]i64{sel_idx});
+    if (propArray(props, "selectedIndexes")) |arr| {
+        var rows: std.ArrayList(i64) = .empty;
+        defer rows.deinit(std.heap.page_allocator);
+        for (arr.items) |it| {
+            if (it == .integer) rows.append(std.heap.page_allocator, it.integer) catch {};
+        }
+        applySelection(selection, model, rows.items);
+    }
 
     const sw = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setChild(sw, view.as(gtk.Widget));
+    gobject.Object.setData(asObject(sw), ROWS_KEY, @ptrCast(model));
     ndempty.register(sw, view.as(gtk.Widget));
     ndempty.configure(sw, propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     const n_rows: usize = if (propArray(props, "rows")) |arr| arr.items.len else 0;
@@ -242,22 +327,23 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     return sw.as(gtk.Widget);
 }
 
-fn blockSelect(selection: *gtk.SingleSelection) void {
-    if (select_handlers.get(@intFromPtr(selection))) |hid| gobject.signalHandlerBlock(@ptrCast(@alignCast(selection)), hid);
+fn blockSelect(selection: *gtk.SelectionModel) void {
+    if (select_handlers.get(@intFromPtr(selection))) |hid| gobject.signalHandlerBlock(asObject(selection), hid);
 }
 
-fn unblockSelect(selection: *gtk.SingleSelection) void {
-    if (select_handlers.get(@intFromPtr(selection))) |hid| gobject.signalHandlerUnblock(@ptrCast(@alignCast(selection)), hid);
+fn unblockSelect(selection: *gtk.SelectionModel) void {
+    if (select_handlers.get(@intFromPtr(selection))) |hid| gobject.signalHandlerUnblock(asObject(selection), hid);
 }
 
 pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const view = innerView(widget) orelse return;
     const selection = viewSelection(view) orelse return;
+    const model = rowModel(widget) orelse return;
 
     ndempty.configure(@ptrCast(@alignCast(widget)), propStr(props, "emptyIconName"), propStr(props, "emptyTitle"), propStr(props, "emptyDescription"));
     if (propArray(props, "columns")) |cols| rebuildColumns(view, cols, dupeZ);
+    if (propBool(props, "columnsReorderable")) |r| gtk.ColumnView.setReorderable(view, @intFromBool(r));
     if (propArray(props, "rows")) |rows| {
-        const model: *gtk.StringList = @ptrCast(@alignCast(gtk.SingleSelection.getModel(selection).?));
         const n_old = gio.ListModel.getNItems(model.as(gio.ListModel));
         var strv = buildRowStrv(rows);
         defer strv.deinit();
@@ -269,12 +355,26 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
         unblockSelect(selection);
         ndempty.update(@ptrCast(@alignCast(widget)), rows.items.len == 0);
     }
-    if (propInt(props, "selectedIndex")) |idx| {
-        const cur = gtk.SingleSelection.getSelected(selection);
-        const cur_idx: i64 = if (cur == std.math.maxInt(c_uint)) -1 else @intCast(cur);
-        if (cur_idx != idx) {
+    // `selectedIndexes` wins when both land in one update: the app that sends
+    // it is the one driving a multiple selection.
+    if (propArray(props, "selectedIndexes")) |arr| {
+        var rows: std.ArrayList(i64) = .empty;
+        defer rows.deinit(std.heap.page_allocator);
+        for (arr.items) |it| {
+            if (it == .integer) rows.append(std.heap.page_allocator, it.integer) catch {};
+        }
+        blockSelect(selection);
+        applySelection(selection, model, rows.items);
+        unblockSelect(selection);
+    } else if (propInt(props, "selectedIndex")) |idx| {
+        var cur: std.ArrayList(i64) = .empty;
+        defer cur.deinit(std.heap.page_allocator);
+        selectedRows(selection, &cur);
+        const same = cur.items.len == 1 and cur.items[0] == idx;
+        const cleared = cur.items.len == 0 and idx < 0;
+        if (!same and !cleared) {
             blockSelect(selection);
-            gtk.SingleSelection.setSelected(selection, if (idx >= 0) @intCast(idx) else std.math.maxInt(c_uint));
+            if (idx >= 0) applySelection(selection, model, &[_]i64{idx}) else applySelection(selection, model, &[_]i64{});
             unblockSelect(selection);
         }
     }
@@ -287,9 +387,10 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     emit = emit_fn;
     const view = innerView(widget) orelse return;
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
+    gobject.Object.setData(asObject(view), NODE_ID_KEY, data);
 
     if (viewSelection(view)) |selection| {
-        const hid = gobject.signalConnectData(@ptrCast(@alignCast(selection)), "notify::selected", @ptrCast(&cbSelected), data, null, .{});
+        const hid = gobject.signalConnectData(asObject(selection), "selection-changed", @ptrCast(&cbSelected), data, null, .{});
         select_handlers.put(std.heap.page_allocator, @intFromPtr(selection), hid) catch {};
     }
     _ = gobject.signalConnectData(@ptrCast(@alignCast(view)), "activate", @ptrCast(&cbActivate), data, null, .{});
@@ -298,15 +399,99 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     if (gtk.ColumnView.getSorter(view)) |sorter| {
         _ = gobject.signalConnectData(@ptrCast(@alignCast(sorter)), "changed", @ptrCast(&cbSorterChanged), data, null, .{});
     }
+    // A header drag reorders the view's own columns list model in place.
+    _ = gobject.signalConnectData(asObject(gtk.ColumnView.getColumns(view)), "items-changed", @ptrCast(&cbColumnsMoved), view, null, .{});
 }
 
-// notify:: handlers get (object, pspec, user_data).
-fn cbSelected(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+// GtkSelectionModel "selection-changed" passes (model, position, n_items,
+// user_data). The payload carries the whole selection AND its first row in
+// `index`, so a single-select app reading e.index is untouched by the
+// multiple mode existing.
+fn cbSelected(obj: *gobject.Object, _: c_uint, _: c_uint, data: ?*anyopaque) callconv(.c) void {
     const node_id: u32 = @intCast(@intFromPtr(data));
-    const selection: *gtk.SingleSelection = @ptrCast(@alignCast(obj));
-    const sel = gtk.SingleSelection.getSelected(selection);
-    const idx: i64 = if (sel == std.math.maxInt(c_uint)) -1 else @intCast(sel);
-    if (emit) |f| f(node_id, "selectionChanged", .{ .index = idx });
+    const f = emit orelse return;
+    const selection: *gtk.SelectionModel = @ptrCast(@alignCast(obj));
+    var rows: std.ArrayList(i64) = .empty;
+    defer rows.deinit(std.heap.page_allocator);
+    selectedRows(selection, &rows);
+
+    var list: std.json.Array = .init(std.heap.page_allocator);
+    defer list.deinit();
+    for (rows.items) |idx| list.append(.{ .integer = idx }) catch {};
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(std.heap.page_allocator);
+    payload.put(std.heap.page_allocator, "indexes", .{ .array = list }) catch {};
+
+    const first: i64 = if (rows.items.len > 0) rows.items[0] else -1;
+    f(node_id, "selectionChanged", .{ .index = first, .data = .{ .object = payload } });
+}
+
+/// A column's fixed-width tracks the pointer through a divider drag, so the
+/// report waits for it to settle (the Paned debounce, one timeout per view).
+fn cbColumnWidth(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    if (rebuilding) return;
+    const view: *gtk.ColumnView = @ptrCast(@alignCast(data.?));
+    if (nodeIdOf(view) == null) return; // not connected yet: a create-time width write
+    const obj = asObject(view);
+    if (gobject.Object.getData(obj, RESIZE_TIMEOUT_KEY)) |raw| {
+        _ = glib.Source.remove(@intCast(@intFromPtr(raw)));
+    }
+    const id = glib.timeoutAdd(120, &cbColumnWidthSettled, view);
+    gobject.Object.setData(obj, RESIZE_TIMEOUT_KEY, @ptrFromInt(@as(usize, id)));
+}
+
+fn cbColumnWidthSettled(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *gtk.ColumnView = @ptrCast(@alignCast(data.?));
+    gobject.Object.setData(asObject(view), RESIZE_TIMEOUT_KEY, null);
+    const node_id = nodeIdOf(view) orelse return 0;
+    const f = emit orelse return 0;
+    const alloc = std.heap.page_allocator;
+    const columns = gtk.ColumnView.getColumns(view);
+    var list: std.json.Array = .init(alloc);
+    defer list.deinit();
+    const n = gio.ListModel.getNItems(columns);
+    var i: c_uint = 0;
+    while (i < n) : (i += 1) {
+        const item = gio.ListModel.getObject(columns, i) orelse continue;
+        defer gobject.Object.unref(item);
+        const column: *gtk.ColumnViewColumn = @ptrCast(@alignCast(item));
+        const id = gtk.ColumnViewColumn.getId(column) orelse continue;
+        var entry: std.json.ObjectMap = .empty;
+        entry.put(alloc, "id", .{ .string = std.mem.span(id) }) catch {};
+        // fixed-width is what a divider drag writes; -1 is still "natural",
+        // which is the honest answer for a column nobody has resized.
+        entry.put(alloc, "width", .{ .integer = gtk.ColumnViewColumn.getFixedWidth(column) }) catch {};
+        list.append(.{ .object = entry }) catch {};
+    }
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "columns", .{ .array = list }) catch {};
+    f(node_id, "columnsResized", .{ .data = .{ .object = payload } });
+    return 0; // G_SOURCE_REMOVE
+}
+
+// GListModel "items-changed" passes (model, position, removed, added, data).
+fn cbColumnsMoved(_: *gobject.Object, _: c_uint, _: c_uint, _: c_uint, data: ?*anyopaque) callconv(.c) void {
+    if (rebuilding) return;
+    const view: *gtk.ColumnView = @ptrCast(@alignCast(data.?));
+    const node_id = nodeIdOf(view) orelse return;
+    const f = emit orelse return;
+    const alloc = std.heap.page_allocator;
+    const columns = gtk.ColumnView.getColumns(view);
+    var ids: std.json.Array = .init(alloc);
+    defer ids.deinit();
+    const n = gio.ListModel.getNItems(columns);
+    var i: c_uint = 0;
+    while (i < n) : (i += 1) {
+        const item = gio.ListModel.getObject(columns, i) orelse continue;
+        defer gobject.Object.unref(item);
+        const id = gtk.ColumnViewColumn.getId(@ptrCast(@alignCast(item))) orelse continue;
+        ids.append(.{ .string = std.mem.span(id) }) catch {};
+    }
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "columnIds", .{ .array = ids }) catch {};
+    f(node_id, "columnsReordered", .{ .data = .{ .object = payload } });
 }
 
 // the ColumnView `activate` signal passes (view, position, user_data).

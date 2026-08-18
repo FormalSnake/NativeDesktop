@@ -2,93 +2,74 @@ import AppKit
 import SwiftUI
 
 /// StatusPage: SwiftUI `ContentUnavailableView`, the native empty-state
-/// primitive (macOS 14+), hosted in an NSHostingView, with the
-/// React children (action buttons) mounted into a plain horizontal
-/// NSStackView BELOW it rather than inside the SwiftUI `actions` builder:
-/// the children are live NSViews the reconciler owns, and re-wrapping them in
-/// NSViewRepresentable would add a sizing bridge for zero visual gain. The
-/// centered column mirrors the GTK backend's AdwStatusPage + inner action box.
+/// primitive (macOS 14+), hosted through NDHostedLeaf. Action buttons are
+/// React-owned NSViews wrapped in `NDNativeChild` and placed straight in
+/// `ContentUnavailableView`'s own `actions` slot rather than a separate
+/// NSStackView bolted on below — the same centered column the GTK backend's
+/// AdwStatusPage draws, but the actions row is now real SwiftUI layout
+/// instead of hand-pinned constraints.
 struct NDStatusPageBody: View {
     var iconSymbol: String?
     var title: String
     var descriptionText: String?
+    var actionViews: [NSView]
 
     var body: some View {
-        ContentUnavailableView {
-            if let iconSymbol {
-                Label(title, systemImage: iconSymbol)
-            } else {
-                Text(title)
-            }
-        } description: {
-            if let descriptionText, !descriptionText.isEmpty {
-                Text(descriptionText)
-            }
-        }
+        ContentUnavailableView(
+            label: {
+                if let iconSymbol {
+                    Label(title, systemImage: iconSymbol)
+                } else {
+                    Text(title)
+                }
+            },
+            description: {
+                if let descriptionText, !descriptionText.isEmpty {
+                    Text(descriptionText)
+                }
+            },
+            actions: {
+                HStack(spacing: 8) {
+                    ForEach(Array(actionViews.enumerated()), id: \.element) { _, view in
+                        NDNativeChild(view: view)
+                    }
+                }
+            })
     }
 }
 
-final class NDStatusPageView: NSView {
+final class NDStatusPageView: NDHostedLeaf {
     private var iconName: String?
     private var title = ""
     private var desc: String?
-    private var hosting: NSHostingView<NDStatusPageBody>!
-    private let column = NSStackView()
-    let actions = NSStackView()
-
-    override var isFlipped: Bool { true }
-
-    init() {
-        super.init(frame: .zero)
-        hosting = NSHostingView(rootView: NDStatusPageBody(iconSymbol: nil, title: "", descriptionText: nil))
-        hosting.sizingOptions = [.intrinsicContentSize]
-
-        actions.orientation = .horizontal
-        actions.spacing = 8
-
-        column.orientation = .vertical
-        column.alignment = .centerX
-        column.spacing = 12
-        column.translatesAutoresizingMaskIntoConstraints = false
-        column.addArrangedSubview(hosting)
-        column.addArrangedSubview(actions)
-        addSubview(column)
-        // The top/bottom >= pins give the page a real minimum height (its
-        // centered column would otherwise paint outside a zero-height frame
-        // when stacked without vexpand).
-        NSLayoutConstraint.activate([
-            column.centerXAnchor.constraint(equalTo: centerXAnchor),
-            column.centerYAnchor.constraint(equalTo: centerYAnchor),
-            column.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
-            column.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 24),
-            column.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -24),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("NDStatusPageView is not NSCoding-decodable") }
+    private var actionViews: [NSView] = []
 
     func apply(iconName: String?, title: String?, description: String?) {
         if let iconName { self.iconName = iconName }
         if let title { self.title = title }
         if let description { self.desc = description }
-        let symbol = self.iconName.map { ndSFSymbol(forFreedesktop: $0) ?? $0 }
-        hosting.rootView = NDStatusPageBody(iconSymbol: symbol, title: self.title, descriptionText: self.desc)
+        refreshLeaf()
+    }
+
+    override func leafContent() -> AnyView {
+        let symbol = iconName.map { ndSFSymbol(forFreedesktop: $0) ?? $0 }
+        return AnyView(NDStatusPageBody(iconSymbol: symbol, title: title, descriptionText: desc, actionViews: actionViews))
     }
 
     func pack(_ child: NSView, before: NSView?) {
-        if actions.arrangedSubviews.contains(child) { actions.removeArrangedSubview(child) }
-        if let before, let idx = actions.arrangedSubviews.firstIndex(of: before) {
-            actions.insertArrangedSubview(child, at: idx)
+        actionViews.removeAll { $0 === child }
+        if let before, let idx = actionViews.firstIndex(of: before) {
+            actionViews.insert(child, at: idx)
         } else {
-            actions.addArrangedSubview(child)
+            actionViews.append(child)
         }
+        refreshLeaf()
     }
 
     func unpack(_ child: NSView) {
-        actions.removeArrangedSubview(child)
+        actionViews.removeAll { $0 === child }
         child.removeFromSuperview()
+        refreshLeaf()
     }
 }
 

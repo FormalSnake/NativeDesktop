@@ -52,6 +52,9 @@ export type {
   SourceTreeAction,
   SourceTreeNode,
   CommandPaletteItem,
+  ChartPoint,
+  ChartSeries,
+  CodeDiagnostic,
 } from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {

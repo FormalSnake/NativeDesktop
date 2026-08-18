@@ -89,7 +89,13 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     if let btn = view as? NDButton, let owner = ndToolbarOwner(of: btn) {
         return owner.ownerWindow()?.isVisible ?? false
     }
-    return !view.isHidden && view.window != nil
+    // `view.window != nil` alone isn't enough for a dismissed Dialog/Sheet:
+    // the handle's `dismiss()` closes the NDModalSheetWindow but the content
+    // stays isReleasedWhenClosed=false and keeps its `window` link, so a
+    // closed overlay's content read back as visible forever. `isVisible`
+    // catches that (a live app window is always visible while up, so this
+    // costs nothing there).
+    return !view.isHidden && (view.window?.isVisible ?? false)
 }
 
 /// Frame (in the live content view's flipped space) of the internal control
@@ -566,10 +572,12 @@ private func setErrRaw(_ out: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
 }
 
 /// Checkbox/Radio/Button all construct a plain `NSButton`, and ListView/
-/// SourceList both construct a plain `NSScrollView`+`NSTableView` — AppKit
-/// gives no reliable way to read either distinction back structurally
-/// afterwards (`buttonType` is setter-only via `setButtonType(_:)`, and a
-/// `.sourceList`-style NSTableView is still an NSTableView). Recorded once
+/// SourceList/Table share a plain `NSScrollView`+`NSTableView` (TreeView the
+/// same shape one level down, `NSOutlineView` being an `NSTableView`
+/// subclass) — AppKit gives no reliable way to read any of those
+/// distinctions back structurally afterwards (`buttonType` is setter-only
+/// via `setButtonType(_:)`, and a `.sourceList`-style NSTableView is still
+/// an NSTableView). Recorded once
 /// at create time instead of reflected after the fact, keyed by view
 /// identity (peer of `Events.swift`'s `radioGroupIdentifier` side-table,
 /// same reasoning). Only needed for kinds that collide on a shared concrete
@@ -582,7 +590,8 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// carried — the ground truth `widgetKind` below would otherwise have to
 /// guess at via reflection.
 @MainActor func ndRecordButtonKind(_ view: NSView, _ kind: String) {
-    guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button" || kind == "SourceList" || kind == "SourceTree" else { return }
+    guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button"
+        || kind == "SourceList" || kind == "SourceTree" || kind == "Table" || kind == "TreeView" else { return }
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
@@ -613,7 +622,8 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
     }
     // NSSwitch is an NSControl rather than an NSButton despite sharing the
     // button state API, so classify it explicitly before the generic button.
-    if view is NSSwitch { return "Switch" }
+    if view is NSSwitch || view is NDSwitchView { return "Switch" }
+    if view is NDCheckboxView { return "Checkbox" }
     // SwitchRow subclasses Row (NDRowView) — check the subclass first.
     if view is NDSwitchRowView { return "SwitchRow" }
     if view is NDRowView { return "Row" }
@@ -624,7 +634,8 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
         return buttonKindOverride[ObjectIdentifier(view)] ?? "Button"
     }
     if view is NSTextField { return "TextInput" }
-    if view is NSSlider { return "Slider" }
+    if view is NSSlider || view is NDSliderView { return "Slider" }
+    if view is NDSegmentedControlView { return "SegmentedControl" }
     return ""
 }
 
@@ -686,6 +697,19 @@ private func escapeJSONString(_ s: String) -> String {
     }
     if let row = view as? NDRowView {
         ndEmitEvent(row.ndNodeID, "activated", "{}")
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    // Switch/Checkbox click toggles like a user tap — neither is an
+    // NSControl any more (SwiftUI Toggle), so performClick below is a no-op
+    // for them.
+    if let toggle = view as? NDSwitchView {
+        toggle.driveChecked(!toggle.checked)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
+    if let checkbox = view as? NDCheckboxView {
+        checkbox.driveChecked(!checkbox.checked)
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
@@ -763,6 +787,24 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
                                _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
                                _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     guard let args, let value = args["value"] else { return invalidValue(errOut, nodeID) }
+    // NSComboBox IS an NSTextField, so the TextInput arm below would claim it
+    // and write free text while the list never moves — and a programmatic
+    // stringValue write posts no controlTextDidChange, so the app saw
+    // nothing at all. An Int picks a list row (the shape a driver needs to
+    // select an option), a String stays free text and emits `changed` itself.
+    if let combo = view as? NDComboBox {
+        if let idx = (value as? NSNumber)?.intValue, !(value is String) {
+            guard idx >= 0, idx < combo.numberOfItems else { return invalidValue(errOut, nodeID) }
+            combo.selectItem(at: idx) // posts the selection notification its own delegate answers
+        } else if let text = value as? String {
+            combo.stringValue = text
+            ndEmitEvent(combo.nodeID, "changed", "{\"text\":\"\(escapeJSONString(text))\"}")
+        } else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"applied\":true}")
+        return 0
+    }
     let kind = widgetKind(view)
 
     switch kind {
@@ -775,14 +817,16 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
               let textView = scroll.documentView as? NSTextView else { return invalidValue(errOut, nodeID) }
         textView.string = text
         EventDispatcher.shared.fireChanged(scroll, text: text) // wired key is the NSScrollView
-    case "Checkbox", "Radio":
+    case "Radio":
         guard let boolValue = value as? Bool, let button = view as? NSButton else { return invalidValue(errOut, nodeID) }
         button.state = boolValue ? .on : .off
         EventDispatcher.shared.fireChecked(button)
+    case "Checkbox":
+        guard let boolValue = value as? Bool, let checkbox = view as? NDCheckboxView else { return invalidValue(errOut, nodeID) }
+        checkbox.driveChecked(boolValue)
     case "Switch":
-        guard let boolValue = value as? Bool, let toggle = view as? NSSwitch else { return invalidValue(errOut, nodeID) }
-        toggle.state = boolValue ? .on : .off
-        EventDispatcher.shared.fireChecked(toggle)
+        guard let boolValue = value as? Bool, let toggle = view as? NDSwitchView else { return invalidValue(errOut, nodeID) }
+        toggle.driveChecked(boolValue)
     case "SwitchRow":
         guard let boolValue = value as? Bool, let row = view as? NDSwitchRowView else { return invalidValue(errOut, nodeID) }
         row.toggle.state = boolValue ? .on : .off
@@ -792,9 +836,8 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     case "Slider":
         let num: Double?
         if let n = value as? NSNumber { num = n.doubleValue } else { num = nil }
-        guard let doubleValue = num, let slider = view as? NSSlider else { return invalidValue(errOut, nodeID) }
-        slider.doubleValue = doubleValue
-        EventDispatcher.shared.fireValue(slider)
+        guard let doubleValue = num, let slider = view as? NDSliderView else { return invalidValue(errOut, nodeID) }
+        slider.driveValue(doubleValue)
     case "Select":
         guard let idx = (value as? NSNumber)?.intValue, let pop = view as? NSPopUpButton,
               idx >= 0, idx < pop.numberOfItems else { return invalidValue(errOut, nodeID) }
@@ -876,8 +919,16 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":false,\"value\":null}")
         return 0
     }
-    var enabled = true
-    if let control = view as? NSControl { enabled = control.isEnabled }
+    // A hosted leaf's own SwiftUI state is the ground truth (it may wrap no
+    // NSControl at all); NSControl carries the real flag for everything else;
+    // a plain NSView keeps it in ndDisabledViews, because AppKit has no
+    // NSView-level enabled (see ndApplyEnabled in the generated Widgets.swift).
+    var enabled = ndViewIsEnabled(view)
+    if let host = view as? NDLeafChromeHosting {
+        enabled = host.leafState.enabled
+    } else if let control = view as? NSControl {
+        enabled = control.isEnabled
+    }
     let win = view.window ?? ndWindow(for: view)
     var focused = false
     if let fr = win?.firstResponder {
@@ -887,9 +938,18 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         // the reliable focus signal for text fields.
         if !focused, let field = view as? NSTextField, field.currentEditor() != nil { focused = true }
     }
+    // Falls back to the SwiftUI-only focus signal a hosted leaf tracks itself
+    // (SwiftUILeaves.swift) — a pure-SwiftUI control's focus does not always
+    // surface as a first-responder NSView in the walk above.
+    if !focused, view is NDLeafChromeHosting { focused = ndHostedLeafFocused(view) }
 
-    var valueJson = "null"
-    switch widgetKind(view) {
+    // A hosted leaf whose body is pure SwiftUI (no backing NSControl the
+    // cases below could cast to) reports its value through NDLeafState
+    // instead — SwiftUILeaves.swift's `ndA11yValueJSON`. One that wraps a
+    // real control (SwitchRow's NSSwitch, say) leaves the default "null"
+    // alone and falls through to that control's own case.
+    var valueJson = (view as? NDHostedLeaf)?.ndA11yValueJSON ?? "null"
+    if valueJson == "null" { switch widgetKind(view) {
     case "TextInput", "SearchInput":
         if let field = view as? NSTextField { valueJson = "\"\(escapeJSONString(field.stringValue))\"" }
     case "TextArea":
@@ -907,16 +967,18 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     case "Select":
         if let pop = view as? NSPopUpButton { valueJson = "\(pop.indexOfSelectedItem)" }
     case "SourceList", "Table", "TreeView":
-        if let scroll = view as? NSScrollView, let tableView = scroll.documentView as? NSTableView,
-           tableView.selectedRow >= 0 {
-            valueJson = "\(tableView.selectedRow)"
+        // The selected row index when there is one; the row count otherwise
+        // (an empty/unselected table reporting `null` forever was the
+        // original bug here — every other data widget reports something).
+        if let scroll = view as? NSScrollView, let tableView = scroll.documentView as? NSTableView {
+            valueJson = tableView.selectedRow >= 0 ? "\(tableView.selectedRow)" : "\(tableView.numberOfRows)"
         }
     case "SourceTree":
         // Id-addressed widget: the value is the selected node's ID, not a row index.
         if let id = ndSourceTreeSelectedId(view) { valueJson = "\"\(escapeJSONString(id))\"" }
     default:
         break
-    }
+    } }
     setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":\(focused),\"value\":\(valueJson)}")
     return 0
 }

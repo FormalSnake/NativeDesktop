@@ -284,6 +284,27 @@ private func ndPaneContentShape(_ view: NSView) -> NDPaneContentShape {
 func ndMakePaneViewController(_ content: NSView) -> NDPaneViewController {
     let host = NDPaneHostView()
     host.translatesAutoresizingMaskIntoConstraints = false
+    ndInstallPaneContent(content, into: host)
+    let vc = NDPaneViewController()
+    vc.view = host
+    // The generated arm hands over `pane.contentView`, never the pane (which
+    // never joins the hierarchy). Recover it so the pane's auxiliary bars
+    // can become this item's accessories.
+    if let pane = ndPaneByContentView[ObjectIdentifier(content)] {
+        vc.pane = pane
+        pane.paneController = vc
+    }
+    return vc
+}
+
+/// Pins a pane's content root inside `host` per its shape, replacing whatever
+/// was installed there. React sends a swapped pane child as remove-then-append
+/// (deletions commit before placements), so the host is momentarily empty
+/// between the two ops and the second half has to be able to install from
+/// scratch — a swap that only knew how to retarget the outgoing view's
+/// constraints left the pane blank for the rest of the process's life.
+func ndInstallPaneContent(_ content: NSView, into host: NSView) {
+    host.subviews.forEach { $0.removeFromSuperview() }
     content.translatesAutoresizingMaskIntoConstraints = false
     switch ndPaneContentShape(content) {
     case .scrolling:
@@ -353,14 +374,4 @@ func ndMakePaneViewController(_ content: NSView) -> NDPaneViewController {
             content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
         ])
     }
-    let vc = NDPaneViewController()
-    vc.view = host
-    // The generated arm hands over `pane.contentView`, never the pane (which
-    // never joins the hierarchy). Recover it so the pane's auxiliary bars
-    // can become this item's accessories.
-    if let pane = ndPaneByContentView[ObjectIdentifier(content)] {
-        vc.pane = pane
-        pane.paneController = vc
-    }
-    return vc
 }

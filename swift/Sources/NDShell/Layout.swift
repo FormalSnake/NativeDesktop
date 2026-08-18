@@ -132,7 +132,7 @@ final class NDPaneHostView: NSView {
 private func ndIsContainerShape(_ view: NSView) -> Bool {
     return view is NSSplitView
         || view is NSScrollView
-        || view is NSStackView          // Box, and NDRow/NDSettingsGroup/NDExpander/NDNumberInput
+        || view is NSStackView          // Box, and NDSettingsGroup/NDNumberInput
         || view is NSTabView
         || view is NSBox                // Separator
         || view is NSCollectionView
@@ -147,6 +147,8 @@ private func ndIsContainerShape(_ view: NSView) -> Bool {
         || view is NDClampView
         || view is NDStatusPageView
         || view is NDBannerView
+        || view is NDExpanderView       // NDHostedLeaf now, not NSStackView — named explicitly
+        || view is NDRowView            // ditto (covers NDSwitchRowView, a subclass)
         || view is NDTerminalView
         || view is NDWebView
         || view is NDVideoView
@@ -196,30 +198,75 @@ func ndHasIntrinsicCrossSize(_ view: NSView, _ axis: NSLayoutConstraint.Orientat
     // Length axis vs thickness axis. A slider and a determinate progress bar
     // have a natural thickness and no natural length, and answering per axis
     // is what stops a horizontal one from being stretched to a row's full
-    // height without also pinning its length.
-    if let slider = view as? NSSlider {
-        return axis == (slider.isVertical ? .horizontal : .vertical)
+    // height without also pinning its length. NDSliderView/NDProgressBarView/
+    // NDSpinnerView are SwiftUI-hosted (SwiftUILeaves.swift family) rather
+    // than NSSlider/NSProgressIndicator, but the same per-axis answer holds —
+    // ProgressBar has no orientation prop, so it is always the "horizontal
+    // bar" case.
+    if let slider = view as? NDSliderView {
+        return axis == (slider.vertical ? .horizontal : .vertical)
     }
-    if let progress = view as? NSProgressIndicator {
-        return progress.style == .spinning || axis == .vertical
-    }
+    if view is NDProgressBarView { return axis == .vertical }
+    if view is NDSpinnerView { return true }
     // A label is sized by its text on both axes; an editable or bezeled field
     // is not. Both tests are needed: `editable: false` on a TextInput leaves a
     // bezeled field that still wants the full width.
     if let field = view as? NSTextField {
         return !field.isEditable && !field.isBezeled
     }
-    // NSButton covers Button/ToggleButton/Checkbox/Radio plus the NSPopUpButton
+    // NSButton covers Button/ToggleButton/Radio plus the NSPopUpButton
     // (Select), NDShareButton and NDFontPickerButton subclasses. NSComboButton
     // (MenuButton/SplitButton) is an NSControl, not an NSButton, so it needs
-    // its own entry.
+    // its own entry. NDSwitchView/NDCheckboxView/NDSegmentedControlView/
+    // NDDatePickerView/NDColorPickerView are SwiftUI-hosted replacements for
+    // NSSwitch/NSButton(checkbox)/NSSegmentedControl/NSDatePicker/NSColorWell
+    // — same "sizes itself" answer on both axes.
     return view is NSButton
         || view is NSComboButton
-        || view is NSSwitch
-        || view is NSSegmentedControl
         || view is NSStepper
-        || view is NSDatePicker
-        || view is NSColorWell
+        || view is NDSwitchView
+        || view is NDCheckboxView
+        || view is NDSegmentedControlView
+        || view is NDDatePickerView
+        || view is NDColorPickerView
+}
+
+/// `NSStackView` used for every `<box>` (nested boxes included). NSStackView's
+/// `intrinsicContentSize` is `(noIntrinsicMetric, noIntrinsicMetric)` on BOTH
+/// axes by default — its size comes from the internal constraint chain
+/// between arranged subviews, not from a reportable value — so the
+/// hugging/compression-resistance recipe `ndBoxChildAttached`'s start/center/
+/// end cases use to pin a LEAF control's cross size has nothing to act on for
+/// a nested box: raising the priority to `.required` is a no-op, and the
+/// outer stack's own low-priority alignment pin (see that function's doc
+/// comment) wins by default, stretching the nested box to the parent's full
+/// width instead of hugging its own content (confirmed empirically: a plain
+/// `NSStackView`'s `intrinsicContentSize` read back `(-1, -1)` no matter what
+/// priority was set). Reporting `fittingSize` instead gives Auto Layout a
+/// real, reactively-invalidated value to hug against, exactly like a leaf
+/// control's own `intrinsicContentSize` — harmless for "fill", whose explicit
+/// width-equality constraint always wins over hugging regardless.
+final class NDBoxStackView: NSStackView {
+    // NOT `fittingSize`: NSStackView's `fittingSize` implementation itself
+    // consults `intrinsicContentSize`, so returning it here recurses without
+    // a base case (confirmed empirically: an immediate SIGSEGV, stack
+    // overflow, on the very first box laid out). Summing arranged subviews'
+    // own `fittingSize` instead terminates at each leaf control's ordinary
+    // (non-overridden) implementation, and at a nested `NDBoxStackView`
+    // child it recurses into ITS arranged subviews rather than back into its
+    // own `fittingSize`.
+    override var intrinsicContentSize: NSSize {
+        let visible = arrangedSubviews.filter { !$0.isHidden }
+        guard !visible.isEmpty else { return NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+        let sizes = visible.map { $0.fittingSize }
+        let horizontal = orientation == .horizontal
+        let mainTotal = sizes.reduce(CGFloat(0)) { $0 + (horizontal ? $1.width : $1.height) }
+            + spacing * CGFloat(visible.count - 1)
+            + (horizontal ? edgeInsets.left + edgeInsets.right : edgeInsets.top + edgeInsets.bottom)
+        let crossMax = (sizes.map { horizontal ? $0.height : $0.width }.max() ?? 0)
+            + (horizontal ? edgeInsets.top + edgeInsets.bottom : edgeInsets.left + edgeInsets.right)
+        return horizontal ? NSSize(width: mainTotal, height: crossMax) : NSSize(width: crossMax, height: mainTotal)
+    }
 }
 
 /// Reconciles one arranged subview's expand/align style against its parent

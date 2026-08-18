@@ -1,38 +1,73 @@
 import AppKit
+import SwiftUI
 
-/// ColorPicker: NSColorWell with the modern `.minimal` well style
-/// (macOS 13+ convention; the swatch opens the picker popover). The wire
-/// value is `#rrggbb` (or `#rrggbbaa` when not fully opaque), matching
-/// src/gtk/style.zig's color convention and the GTK backend's ndRgbaToHex.
-final class NDColorWell: NSColorWell {
-    /// The shared NSColorPanel is process-global; alpha support is per-widget
-    /// in the schema, so each well re-asserts its own setting on activation.
-    var ndSupportsAlpha = false
+/// ColorPicker: SwiftUI `ColorPicker`, itself backed by an NSColorWell with
+/// the modern `.minimal` well style (macOS 13+ convention; the swatch opens
+/// the picker popover) — the same control as before, now routed through
+/// NDHostedLeaf. The wire value is `#rrggbb` (or `#rrggbbaa` when not fully
+/// opaque), matching src/gtk/style.zig's color convention and the GTK
+/// backend's ndRgbaToHex.
+final class NDColorPickerView: NDHostedLeaf {
+    private var color: Color = .black
+    private var nsColor: NSColor = .black
+    private var supportsAlpha = false
 
-    override func activate(_ exclusive: Bool) {
-        NSColorPanel.shared.showsAlpha = ndSupportsAlpha
-        super.activate(exclusive)
+    func applyCreate(value: String, supportsAlpha: Bool) {
+        self.supportsAlpha = supportsAlpha
+        if let c = ndColorFromHex(value) {
+            nsColor = c
+            color = Color(nsColor: c)
+        }
+        refreshLeaf()
     }
+
+    /// React-driven `value` write, echo-suppressed like every other
+    /// controlled prop.
+    func setValueFromProps(_ hex: String) {
+        guard let c = ndColorFromHex(hex), !ndColorsClose(c, nsColor) else { return }
+        withEchoSuppressed(self) { setColor(c, emit: false) }
+    }
+
+    private func setColor(_ c: NSColor, emit: Bool) {
+        nsColor = c
+        color = Color(nsColor: c)
+        refreshLeaf()
+        if emit, !ndIsEchoSuppressed(self) {
+            ndEmitEvent(ndNodeID, "colorChanged", "{\"text\":\(ndJsonString(ndHexFromColor(c)))}")
+        }
+    }
+
+    override func leafContent() -> AnyView {
+        AnyView(
+            ColorPicker(
+                "",
+                selection: Binding(
+                    get: { [weak self] in self?.color ?? .black },
+                    set: { [weak self] newColor in self?.setColor(NSColor(newColor), emit: true) }
+                ),
+                supportsOpacity: supportsAlpha
+            )
+            .labelsHidden())
+    }
+
+    override var ndA11yValueJSON: String { ndJsonString(ndHexFromColor(nsColor)) }
 }
 
 /// `ndCreate`'s ColorPicker arm (generated) calls this.
 func makeColorPicker(_ props: [String: Any]) -> NSView {
-    let well = NDColorWell()
-    well.colorWellStyle = .minimal
-    well.ndSupportsAlpha = propBool(props, "supportsAlpha") ?? false
-    if let v = propStr(props, "value"), let color = ndColorFromHex(v) {
-        well.color = color
-    }
+    let well = NDColorPickerView()
+    well.applyCreate(value: propStr(props, "value") ?? "#000000", supportsAlpha: propBool(props, "supportsAlpha") ?? false)
     return well
 }
 
-/// Generated ndApplyProps ColorPicker.value arm: compare-then-set inside the
-/// echo guard (the well's action re-fires on programmatic sets in some
-/// panel-attached states; the guard makes it definitively silent).
+/// Generated ndApplyProps ColorPicker.value arm.
 func ndColorPickerSetValue(_ view: NSView, _ hex: String) {
-    guard let well = view as? NSColorWell, let color = ndColorFromHex(hex) else { return }
-    guard !ndColorsClose(well.color, color) else { return }
-    withEchoSuppressed(view) { well.color = color }
+    (view as? NDColorPickerView)?.setValueFromProps(hex)
+}
+
+/// Generated ndConnectEvents ColorPicker arm.
+func ndColorPickerConnect(_ view: NSView, nodeID: UInt32) {
+    (view as? NDColorPickerView)?.ndNodeID = nodeID
 }
 
 /// #rrggbb / #rrggbbaa -> NSColor (sRGB, the same space ndHexFromColor reads

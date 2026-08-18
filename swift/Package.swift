@@ -40,6 +40,7 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("Foundation"),
                 .linkedFramework("QuartzCore"),  // CALayer for the screenshot fidelity ladder
+                .linkedFramework("Charts"),      // Swift Charts for the <chart> widget
                 .linkedFramework("WebKit"),      // WKWebView for the <webview> widget
                 .linkedFramework("Security"),    // Keychain (SecItem*) for credentials.* (system seam)
                 .linkedFramework("UserNotifications"),  // UNUserNotificationCenter for notification.show

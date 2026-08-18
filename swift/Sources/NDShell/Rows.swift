@@ -1,89 +1,105 @@
 import AppKit
+import SwiftUI
 
-// AppKit peers of libadwaita's boxed-list rows (`<row>` / `<switchrow>`).
-// Each is an NSStackView so NDSettingsGroupView's SwiftUI grouped Form hosts
-// it as a native row (normalizeNativeRow already special-cases NSStackView),
-// and so a bare row outside a <settingsgroup> still lays out sanely.
+// AppKit peers of libadwaita's boxed-list rows (`<row>` / `<switchrow>`),
+// hosted as SwiftUI `LabeledContent` (SwiftUILeaves.swift).
+//
+// Why not an NSStackView any more: a hand-built row has to decide for itself
+// where the label column ends and the control column begins, and it decided
+// differently per row — a suffix that could stretch filled the card, one that
+// could not sat hard against the text, and a leading icon pushed the title
+// out of line with its neighbours. LabeledContent is the API that owns that
+// split on macOS, so the rows line up with each other and with System
+// Settings without the toolkit measuring anything.
+//
+// The app's child control still arrives from the React tree as an NSView and
+// stays one: it is placed through NDNativeChild, never rebuilt in SwiftUI.
 
-/// `<row>`: leading icon + title/subtitle text column in the leading gravity,
-/// suffix children in the trailing gravity, prefix children ahead of the text.
-class NDRowView: NSStackView {
-    let titleLabel = NSTextField(labelWithString: "")
-    let subtitleLabel = NSTextField(labelWithString: "")
-    private let textColumn = NSStackView()
-    private var iconView: NSImageView?
-    var ndNodeID: UInt32 = 0
+/// `<row>`: leading icon + title/subtitle text column as the label, suffix
+/// children as the content, prefix children ahead of the text.
+class NDRowView: NDHostedLeaf {
     var ndActivatable = false
 
-    init() {
-        super.init(frame: .zero)
-        orientation = .horizontal
-        alignment = .centerY
-        spacing = 10
-        edgeInsets = .init()
-
-        titleLabel.font = .systemFont(ofSize: NSFont.systemFontSize)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.isHidden = true
-
-        textColumn.orientation = .vertical
-        textColumn.alignment = .leading
-        textColumn.spacing = 2
-        textColumn.addArrangedSubview(titleLabel)
-        textColumn.addArrangedSubview(subtitleLabel)
-        addView(textColumn, in: .leading)
-        setContentHuggingPriority(.defaultLow, for: .horizontal)
-    }
-
-    @available(*, unavailable)
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    private var title = ""
+    private var subtitle = ""
+    private var icon: NSImage?
+    // A symbol (iconName) takes the row's secondary-label tint; raw image
+    // bytes (iconData) carry their own colour and render as given.
+    private var iconTinted = true
+    private var prefixViews: [NSView] = []
+    private var suffixViews: [NSView] = []
 
     func applyTitle(_ title: String?) {
-        if let t = title { titleLabel.stringValue = t }
+        guard let title, title != self.title else { return }
+        self.title = title
+        refreshLeaf()
     }
 
     func applySubtitle(_ subtitle: String?) {
-        if let s = subtitle {
-            subtitleLabel.stringValue = s
-            subtitleLabel.isHidden = s.isEmpty
-        }
+        guard let subtitle, subtitle != self.subtitle else { return }
+        self.subtitle = subtitle
+        refreshLeaf()
     }
 
-    /// The row's leading icon, created on first use and retargeted after
-    /// that so an `iconData` update never stacks a second prefix icon.
-    /// Raw image bytes carry their own colour, so only a symbol takes the
-    /// secondary-label tint.
-    func applyIcon(_ image: NSImage, tinted: Bool) {
-        let iv = iconView ?? {
-            let created = NSImageView()
-            iconView = created
-            packPrefix(created)
-            return created
-        }()
-        iv.image = image
-        iv.contentTintColor = tinted ? .secondaryLabelColor : nil
+    func applyIcon(_ image: NSImage?, tinted: Bool = true) {
+        icon = image
+        iconTinted = tinted
+        refreshLeaf()
     }
 
     func packPrefix(_ child: NSView) {
-        // Prefix views sit ahead of the text column within the leading gravity.
-        insertView(child, at: 0, in: .leading)
+        // Prefix children sit ahead of the icon and the text column, which is
+        // where the AppKit stack put them.
+        prefixViews.insert(child, at: 0)
+        refreshLeaf()
     }
 
     func packSuffix(_ child: NSView) {
-        addView(child, in: .trailing)
-        // Track controls (NSSlider and friends) report no intrinsic width and
-        // would collapse in the trailing gravity — give them a System
-        // Settings-sized track.
-        if child.intrinsicContentSize.width == NSView.noIntrinsicMetric {
-            child.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        suffixViews.append(child)
+        refreshLeaf()
+    }
+
+    func unpack(_ child: NSView) {
+        prefixViews.removeAll { $0 === child }
+        suffixViews.removeAll { $0 === child }
+        child.removeFromSuperview()
+        refreshLeaf()
+    }
+
+    override func leafContent() -> AnyView {
+        AnyView(
+            LabeledContent {
+                HStack(spacing: 8) { children(suffixViews) }
+            } label: {
+                HStack(spacing: 8) {
+                    children(prefixViews)
+                    if let icon {
+                        if iconTinted {
+                            Image(nsImage: icon).foregroundStyle(.secondary)
+                        } else {
+                            Image(nsImage: icon)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            })
+    }
+
+    @ViewBuilder private func children(_ views: [NSView]) -> some View {
+        ForEach(Array(views.enumerated()), id: \.element) { _, view in
+            NDNativeChild(view: view, minWidth: ndChildNeedsWidth(view) ? 160 : 0)
+                .frame(minWidth: ndChildNeedsWidth(view) ? 160 : nil)
         }
     }
 
+    /// The row affordance. SwiftUI hit-testing hands clicks that miss a real
+    /// control back to the hosting view, so this still only fires on the row
+    /// itself and never on the control it holds.
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
         guard ndActivatable, ndNodeID != 0 else { return }
@@ -93,16 +109,22 @@ class NDRowView: NSStackView {
     }
 }
 
-/// `<switchrow>`: an NDRowView whose fixed trailing control is an NSSwitch.
+/// `<switchrow>`: an NDRowView whose fixed content is an NSSwitch. The switch
+/// stays a real AppKit control rather than a SwiftUI `Toggle` so the a11y
+/// probe, `semanticClick` and `semanticSetValue` keep reading and driving the
+/// same object they always did.
 final class NDSwitchRowView: NDRowView {
     let toggle = NSSwitch()
 
-    override init() {
-        super.init()
+    required init(rootView: AnyView) {
+        super.init(rootView: rootView)
         toggle.target = self
         toggle.action = #selector(toggled(_:))
-        addView(toggle, in: .trailing)
+        packSuffix(toggle)
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("NDSwitchRowView is not NSCoding-decodable") }
 
     @objc private func toggled(_ sender: NSSwitch) {
         guard ndNodeID != 0, !ndIsEchoSuppressed(self) else { return }
@@ -114,13 +136,14 @@ func makeRow(_ props: [String: Any]) -> NSView {
     let row = NDRowView()
     row.applyTitle(propStr(props, "title") ?? "")
     row.applySubtitle(propStr(props, "subtitle"))
-    if let icon = propStr(props, "iconName"), let image = ndResolveSymbolImage(icon) {
-        row.applyIcon(image, tinted: true)
+    if let icon = propStr(props, "iconName") {
+        row.applyIcon(ndResolveSymbolImage(icon))
     }
     // Image bytes beat a symbol name: a favicon has no SF Symbol, and this is
     // the only way a browser sidebar row can show one.
     ndRowApplyIconData(row, props)
     row.ndActivatable = propBool(props, "activatable") ?? false
+    row.refreshLeaf()
     return row
 }
 
@@ -138,6 +161,7 @@ func makeSwitchRow(_ props: [String: Any]) -> NSView {
     row.applyTitle(propStr(props, "title") ?? "")
     row.applySubtitle(propStr(props, "subtitle"))
     row.toggle.state = (propBool(props, "checked") ?? false) ? .on : .off
+    row.refreshLeaf()
     return row
 }
 
@@ -173,7 +197,7 @@ func ndRowPack(_ row: NDRowView, _ child: NSView, slot: String) {
 }
 
 func ndRowUnpack(_ row: NDRowView, _ child: NSView) {
-    row.removeView(child)
+    row.unpack(child)
 }
 
 /// Generated ndConnectEvents arms (webview idiom: record the id; the view

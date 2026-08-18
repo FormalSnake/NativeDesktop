@@ -143,13 +143,30 @@ final class NDToolbarPaneView: NSView {
         }
         // The generated SplitView/Window append arms snapshot `contentView`
         // ONCE, at attach time — when the logical root changes later (first
-        // bar added, last bar removed) the previously installed view must be
-        // physically replaced where it stands, or the pane goes blank (the
-        // live content gets reparented into a never-attached assembly).
+        // bar added, last bar removed, or React swapping the pane's content
+        // child) the previously installed view must be physically replaced
+        // where it stands, or the pane goes blank (the live content gets
+        // reparented into a never-attached assembly).
         // Swap BEFORE setParts: setParts pulls mainContent into the
         // assembly, which would tear down the installed constraints the
         // swap re-targets.
-        if let old = contentView, let new = newContent, old !== new {
+        //
+        // Once the pane owns a split item, the install site is that item's
+        // host view, which outlives any one content root: reinstall into it
+        // instead of retargeting the outgoing view's constraints. A content
+        // swap arrives as remove-then-append (React commits deletions before
+        // placements), so the append half runs with `contentView` already nil
+        // and has nothing to retarget — and the new root's pin shape can
+        // differ from the outgoing one's anyway (a <scrollview> section
+        // replaced by a <box> section). The window-mounted pane, whose pins
+        // live in the generated Window arm, keeps the retarget path.
+        if let host = paneController?.view, newContent !== contentView {
+            if let new = newContent {
+                ndInstallPaneContent(new, into: host)
+            } else {
+                host.subviews.forEach { $0.removeFromSuperview() }
+            }
+        } else if let old = contentView, let new = newContent, old !== new {
             ndSwapInstalledPaneContent(old, new)
         }
         if let host = newContent as? NDPaneAssemblyView {

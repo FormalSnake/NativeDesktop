@@ -101,6 +101,15 @@ func makeListView(_ props: [String: Any]) -> NSView {
     tableView.autoresizingMask = [.width]
     tableView.sizeLastColumnToFit()
 
+    // An NSScrollView reports no intrinsic size at all, so in a
+    // content-sized column (a Row suffix, a settings group) the whole
+    // widget laid out at zero height and rendered nothing. Same height
+    // floor TextArea/RichText/CodeEditor take, same priority.
+    scrollView.frame.size.height = 120
+    let floor_ = scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120)
+    floor_.priority = NSLayoutConstraint.Priority(999)
+    floor_.isActive = true
+
     listDataSources[ObjectIdentifier(scrollView)] = source
     // reloadData FIRST: before it the table still believes it has 0 rows, so
     // selectRowIndexes is dropped, and ndListViewSetSelectedIndex only runs on

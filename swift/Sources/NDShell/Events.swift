@@ -172,22 +172,10 @@ final class EventDispatcher: NSObject {
         emit(sender, name: name, json: jsonObject(["index": .int(idx)]))
     }
 
-    /// ColorPicker's `colorChanged`: NSColorWell target/action, hex
-    /// round-trip via ndHexFromColor (ColorWells.swift). Fires continuously
-    /// while dragging in the shared NSColorPanel — high-frequency by design.
-    @objc func fireColorText(_ sender: NSControl) {
-        guard let name = soleEventName(sender), let well = sender as? NSColorWell else { return }
-        emit(sender, name: name, json: jsonObject(["text": .string(ndHexFromColor(well.color))]))
-    }
-
-    /// DatePicker's `dateChanged`: NSDatePicker target/action, pinned-UTC
-    /// ISO YYYY-MM-DD via ndDatePickerISO (DatePickers.swift). Out-of-range
-    /// entries are clamped natively by minDate/maxDate BEFORE the action fires,
-    /// so the clamped date is what JS hears (GTK clamp parity).
-    @objc func fireDateText(_ sender: NSControl) {
-        guard let name = soleEventName(sender), let picker = sender as? NSDatePicker else { return }
-        emit(sender, name: name, json: jsonObject(["text": .string(ndDatePickerISO(picker))]))
-    }
+    // ColorPicker's colorChanged and DatePicker's dateChanged now emit
+    // directly from their own SwiftUI-hosted classes (ColorWells.swift,
+    // DatePickers.swift) — neither is an NSControl any more, so they never
+    // reach this target/action dispatcher.
 
     /// Most wired views have exactly one event name; `preferring` picks
     /// between TextInput's two (`changed`/`activate`) when both are present.
