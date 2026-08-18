@@ -74,11 +74,21 @@ export function seedPanes<T>(leaves: readonly T[], id?: (data: T, i: number) => 
   return { root, focusedId: leafNodes[0]!.id, nextId: counter };
 }
 
-function findNode<T>(node: PaneNode<T> | undefined, id: string): PaneNode<T> | undefined {
+/** Package-internal tree access: dock.ts builds panel surgery (edge docking,
+ * undocking a tab into a new panel) on the same path-copying walk the split
+ * ops use, rather than a second copy of it. Not part of the public API. */
+export function findPaneNode<T>(node: PaneNode<T> | undefined, id: string): PaneNode<T> | undefined {
   if (!node) return undefined;
   if (node.id === id) return node;
-  if (node.kind === "split") return findNode(node.children[0], id) ?? findNode(node.children[1], id);
+  if (node.kind === "split") return findPaneNode(node.children[0], id) ?? findPaneNode(node.children[1], id);
   return undefined;
+}
+
+/** The split holding `id`, or undefined when `id` is the root or absent. */
+export function parentPaneSplit<T>(root: PaneNode<T> | undefined, id: string): PaneSplit<T> | undefined {
+  if (!root || root.kind === "leaf") return undefined;
+  if (root.children[0].id === id || root.children[1].id === id) return root;
+  return parentPaneSplit(root.children[0], id) ?? parentPaneSplit(root.children[1], id);
 }
 
 function firstLeaf<T>(node: PaneNode<T>): PaneLeaf<T> {
@@ -87,13 +97,17 @@ function firstLeaf<T>(node: PaneNode<T>): PaneLeaf<T> {
 
 /** Path-copies the subtree containing `id`, applying `fn` to that node.
  * Returns undefined when `id` is not in the tree. */
-function mapNode<T>(node: PaneNode<T>, id: string, fn: (node: PaneNode<T>) => PaneNode<T>): PaneNode<T> | undefined {
+export function mapPaneNode<T>(
+  node: PaneNode<T>,
+  id: string,
+  fn: (node: PaneNode<T>) => PaneNode<T>,
+): PaneNode<T> | undefined {
   if (node.id === id) return fn(node);
   if (node.kind === "leaf") return undefined;
   const [a, b] = node.children;
-  const ma = mapNode(a, id, fn);
+  const ma = mapPaneNode(a, id, fn);
   if (ma) return { ...node, children: [ma, b] };
-  const mb = mapNode(b, id, fn);
+  const mb = mapPaneNode(b, id, fn);
   if (mb) return { ...node, children: [a, mb] };
   return undefined;
 }
@@ -107,11 +121,11 @@ export function splitPane<T>(
   data: T,
   id?: string,
 ): PaneModel<T> {
-  const target = findNode(m.root, paneId);
+  const target = findPaneNode(m.root, paneId);
   if (!target || target.kind !== "leaf") return m;
   const newLeafId = id ?? String(m.nextId);
   const newLeaf: PaneLeaf<T> = { kind: "leaf", id: newLeafId, data };
-  const root = mapNode(m.root!, paneId, (leaf) => ({
+  const root = mapPaneNode(m.root!, paneId, (leaf) => ({
     kind: "split",
     id: `s${m.nextId}`,
     orientation,
@@ -153,7 +167,7 @@ export function closePane<T>(m: PaneModel<T>, paneId: string): PaneModel<T> {
 
 export function focusPane<T>(m: PaneModel<T>, paneId: string): PaneModel<T> {
   if (m.focusedId === paneId) return m;
-  const node = findNode(m.root, paneId);
+  const node = findPaneNode(m.root, paneId);
   if (!node || node.kind !== "leaf") return m;
   return { ...m, focusedId: paneId };
 }
@@ -198,20 +212,20 @@ export function focusNeighbor<T>(m: PaneModel<T>, dir: "left" | "right" | "up" |
 }
 
 export function setPaneRatio<T>(m: PaneModel<T>, splitId: string, ratio: number): PaneModel<T> {
-  const node = findNode(m.root, splitId);
+  const node = findPaneNode(m.root, splitId);
   if (!node || node.kind !== "split") return m;
   const clamped = clampPaneRatio(ratio);
   if (clamped === node.ratio) return m;
-  const root = mapNode(m.root!, splitId, (split) => ({ ...(split as PaneSplit<T>), ratio: clamped }));
+  const root = mapPaneNode(m.root!, splitId, (split) => ({ ...(split as PaneSplit<T>), ratio: clamped }));
   return { ...m, root };
 }
 
 export function updatePane<T>(m: PaneModel<T>, paneId: string, fn: (d: T) => T): PaneModel<T> {
-  const node = findNode(m.root, paneId);
+  const node = findPaneNode(m.root, paneId);
   if (!node || node.kind !== "leaf") return m;
   const next = fn(node.data);
   if (Object.is(next, node.data)) return m;
-  const root = mapNode(m.root!, paneId, (leaf) => ({ ...(leaf as PaneLeaf<T>), data: next }));
+  const root = mapPaneNode(m.root!, paneId, (leaf) => ({ ...(leaf as PaneLeaf<T>), data: next }));
   return { ...m, root };
 }
 
