@@ -230,7 +230,6 @@
     },
     {
       "name": "Button",
-      "commands": ["focus"],
       "intrinsic": "button",
       "container": null,
       "props": [
@@ -262,7 +261,6 @@
     },
     {
       "name": "TextInput",
-      "commands": ["focus"],
       "intrinsic": "textinput",
       "container": null,
       "props": [
@@ -289,7 +287,6 @@
     },
     {
       "name": "TextArea",
-      "commands": ["focus"],
       "intrinsic": "textarea",
       "container": null,
       "props": [
@@ -775,7 +772,6 @@
     },
     {
       "name": "SearchInput",
-      "commands": ["focus"],
       "intrinsic": "searchinput",
       "container": null,
       "props": [

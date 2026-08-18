@@ -18,6 +18,11 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `frameAutosaveName` | string | none | create |
 | `density` | standard \| compact | standard | create |
 | `presentation` | window \| sheet | window | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -29,6 +34,10 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `closed` | `onClosed` | data |
 | `focused` | `onFocused` | checked |
 | `sizeChanged` | `onSizeChanged` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
 
@@ -40,11 +49,20 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|---|
 | `orientation` | vertical \| horizontal | vertical | create |
 | `spacing` | int | -1 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `hoverChanged` | `onHoverChanged` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Label (`<label>`)
 
@@ -54,7 +72,19 @@ Automation role: `label`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | create |
 | `ellipsize` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Button (`<button>`)
 
@@ -68,7 +98,11 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `iconData` | string | none | createAndUpdate |
 | `labelAlign` | start \| center \| end | center | create |
 | `ellipsize` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `prominent` | bool | false | createAndUpdate |
 | `badge` | string | none | createAndUpdate |
 | `size` | small \| regular \| large | regular | createAndUpdate |
@@ -77,6 +111,10 @@ Automation role: `button`. Text source: `label`. Children: none.
 |---|---|---|
 | `clicked` | `onClick` | none |
 | `hoverChanged` | `onHoverChanged` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -89,12 +127,21 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `text` | string |  | createAndUpdate |
 | `placeholder` | string | none | createAndUpdate |
 | `editable` | bool | true | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -106,11 +153,20 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | createAndUpdate |
 | `minContentHeight` | int | 120 | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `changed` | `onChanged` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -122,11 +178,22 @@ Automation role: `checkbox`. Text source: `label`. Children: none.
 |---|---|---|---|
 | `checked` | bool | false | createAndUpdate |
 | `label` | string |  | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## Radio (`<radio>`)
 
@@ -137,11 +204,22 @@ Automation role: `radio`. Text source: `label`. Children: none.
 | `group` | string | none | create |
 | `checked` | bool | false | createAndUpdate |
 | `label` | string |  | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## Select (`<select>`)
 
@@ -151,11 +229,22 @@ Automation role: `combobox`. Text source: none. Children: none.
 |---|---|---|---|
 | `options` | stringList | none | create |
 | `selectedIndex` | int | 0 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `selectionChanged` | `onSelectionChanged` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 `options` is create-only in v1.
 
@@ -170,11 +259,20 @@ Automation role: `slider`. Text source: none. Children: none.
 | `step` | float | 1 | create |
 | `value` | float | 0 | createAndUpdate |
 | `orientation` | horizontal \| vertical | horizontal | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `valueChanged` | `onValueChanged` | value |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## ProgressBar (`<progressbar>`)
 
@@ -183,7 +281,19 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `fraction` | float | 0 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Image (`<image>`)
 
@@ -197,7 +307,19 @@ Automation role: `image`. Text source: none. Children: none.
 | `symbolScale` | small \| medium \| large | medium | create |
 | `symbolWeight` | regular \| medium \| semibold \| bold | regular | create |
 | `symbolRenderingMode` | monochrome \| hierarchical \| multicolor | monochrome | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## ScrollView (`<scrollview>`)
 
@@ -207,7 +329,19 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 |---|---|---|---|
 | `minContentHeight` | int | 0 | create |
 | `hscroll` | auto \| never | auto | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Separator (`<separator>`)
 
@@ -216,7 +350,19 @@ Automation role: `separator`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `orientation` | horizontal \| vertical | horizontal | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Spinner (`<spinner>`)
 
@@ -225,7 +371,19 @@ Automation role: `spinner`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `spinning` | bool | true | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## TabView (`<tabview>`)
 
@@ -234,7 +392,20 @@ Automation role: `tablist`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `selectedIndex` | int | 0 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -253,7 +424,19 @@ Automation role: `grid`. Text source: none. Children: multi.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -277,11 +460,20 @@ Automation role: `list`. Text source: none. Children: none.
 | `emptyIconName` | string | none | createAndUpdate |
 | `emptyTitle` | string | none | createAndUpdate |
 | `emptyDescription` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `rowActivated` | `onRowActivated` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## WebView (`<webview>`)
 
@@ -292,6 +484,11 @@ Automation role: `webview`. Text source: none. Children: none.
 | `url` | string |  | createAndUpdate |
 | `profile` | string |  | create |
 | `contextMenuMode` | native \| suppress | native | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -318,6 +515,10 @@ Automation role: `webview`. Text source: none. Children: none.
 | `contextMenuItemClicked` | `onContextMenuItemClicked` | data |
 | `sessionSaved` | `onSessionSaved` | data |
 | `audioStateChanged` | `onAudioStateChanged` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `focus`.
 
@@ -329,11 +530,20 @@ Automation role: `custom`. Text source: none. Children: none.
 |---|---|---|---|
 | `viewKind` | string | none | create |
 | `props` | string | {} | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `nativeEvent` | `onNativeEvent` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## SplitView (`<splitview>`)
 
@@ -345,7 +555,19 @@ Automation role: `group`. Text source: none. Children: multi.
 | `collapsed` | bool | false | createAndUpdate |
 | `listWidth` | float | 0 | create |
 | `breakpoint` | int | 0 | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -366,12 +588,21 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | `showTitleButtons` | bool | true | create |
 | `canGoBack` | bool | false | createAndUpdate |
 | `canGoForward` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `back` | `onBack` | none |
 | `forward` | `onForward` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -390,7 +621,19 @@ Automation role: `group`. Text source: none. Children: multi.
 | `topBarStyle` | flat \| raised \| raised-border | flat | create |
 | `bottomBarStyle` | flat \| raised \| raised-border | flat | create |
 | `extendContentToTopEdge` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -408,12 +651,21 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | createAndUpdate |
 | `placeholder` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -428,12 +680,21 @@ Automation role: `list`. Text source: none. Children: none.
 | `emptyIconName` | string | none | createAndUpdate |
 | `emptyTitle` | string | none | createAndUpdate |
 | `emptyDescription` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `selectionChanged` | `onSelectionChanged` | index |
 | `rowActivated` | `onRowActivated` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## SourceTree (`<sourcetree>`)
 
@@ -449,6 +710,11 @@ Automation role: `tree`. Text source: none. Children: none.
 | `emptyIconName` | string | none | createAndUpdate |
 | `emptyTitle` | string | none | createAndUpdate |
 | `emptyDescription` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -458,6 +724,10 @@ Automation role: `tree`. Text source: none. Children: none.
 | `nodeExpanded` | `onNodeExpanded` | data |
 | `nodeCollapsed` | `onNodeCollapsed` | data |
 | `actionClicked` | `onActionClicked` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Menubar (`<menubar>`)
 
@@ -466,7 +736,19 @@ Automation role: `menubar`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `defaults` | bool | true | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Menu (`<menu>`)
 
@@ -475,7 +757,19 @@ Automation role: `menu`. Text source: `label`. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `label` | string |  | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## MenuItem (`<menuitem>`)
 
@@ -489,11 +783,19 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 | `accelerator` | string | none | create |
 | `role` | none \| separator \| about \| settings \| quit \| undo \| redo \| cut \| copy \| paste \| delete \| selectAll \| close \| minimize \| zoom \| fullscreen | none | create |
 | `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `selected` | `onSelect` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## SettingsGroup (`<settingsgroup>`)
 
@@ -503,7 +805,19 @@ Automation role: `group`. Text source: `title`. Children: multi.
 |---|---|---|---|
 | `title` | string |  | createAndUpdate |
 | `description` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Row (`<row>`)
 
@@ -516,11 +830,20 @@ Automation role: `listitem`. Text source: `title`. Children: multi.
 | `iconName` | string | none | create |
 | `iconData` | string | none | createAndUpdate |
 | `activatable` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `activated` | `onActivate` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Attached props (set on children):
 
@@ -539,11 +862,20 @@ Automation role: `switch`. Text source: `title`. Children: none.
 | `title` | string |  | createAndUpdate |
 | `subtitle` | string | none | createAndUpdate |
 | `checked` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Clamp (`<clamp>`)
 
@@ -553,7 +885,19 @@ Automation role: `group`. Text source: none. Children: single.
 |---|---|---|---|
 | `maximumSize` | int | 600 | create |
 | `tighteningThreshold` | int | 400 | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Switch (`<switch>`)
 
@@ -562,11 +906,22 @@ Automation role: `switch`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `checked` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## ToggleButton (`<togglebutton>`)
 
@@ -577,11 +932,20 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string |  | createAndUpdate |
 | `iconName` | string | none | create |
 | `active` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
@@ -591,11 +955,20 @@ Automation role: `radiogroup`. Text source: none. Children: none.
 |---|---|---|---|
 | `options` | stringList | none | create |
 | `selectedIndex` | int | 0 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `selectionChanged` | `onSelectionChanged` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## NumberInput (`<numberinput>`)
 
@@ -609,11 +982,22 @@ Automation role: `spinbutton`. Text source: none. Children: none.
 | `step` | float | 1 | create |
 | `digits` | int | 0 | create |
 | `wraps` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `valueChanged` | `onValueChanged` | value |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
 ## LinkButton (`<linkbutton>`)
 
@@ -625,11 +1009,20 @@ Automation role: `link`. Text source: `label`. Children: none.
 | `uri` | string |  | createAndUpdate |
 | `visited` | bool | false | createAndUpdate |
 | `openExternal` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `activate` | `onActivate` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## LevelIndicator (`<levelindicator>`)
 
@@ -643,7 +1036,20 @@ Automation role: `levelbar`. Text source: none. Children: none.
 | `warningValue` | float | none | createAndUpdate |
 | `criticalValue` | float | none | createAndUpdate |
 | `discrete` | bool | false | create |
+| `indicatorStyle` | continuous \| discrete \| rating \| relevancy | continuous | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## ColorPicker (`<colorpicker>`)
 
@@ -653,11 +1059,20 @@ Automation role: `colorpicker`. Text source: none. Children: none.
 |---|---|---|---|
 | `value` | string | #000000 | createAndUpdate |
 | `supportsAlpha` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `colorChanged` | `onColorChanged` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Banner (`<banner>`)
 
@@ -668,11 +1083,20 @@ Automation role: `banner`. Text source: `title`. Children: none.
 | `title` | string |  | createAndUpdate |
 | `buttonLabel` | string | none | createAndUpdate |
 | `revealed` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `buttonClicked` | `onButtonClicked` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## MenuButton (`<menubutton>`)
 
@@ -682,7 +1106,19 @@ Automation role: `menubutton`. Text source: `label`. Children: multi.
 |---|---|---|---|
 | `label` | string |  | createAndUpdate |
 | `iconName` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## SplitButton (`<splitbutton>`)
 
@@ -692,11 +1128,20 @@ Automation role: `splitbutton`. Text source: `label`. Children: multi.
 |---|---|---|---|
 | `label` | string |  | createAndUpdate |
 | `iconName` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `clicked` | `onClick` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Popover (`<popover>`)
 
@@ -706,11 +1151,20 @@ Automation role: `popover`. Text source: none. Children: single.
 |---|---|---|---|
 | `open` | bool | false | createAndUpdate |
 | `position` | top \| bottom \| left \| right | top | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `closed` | `onClosed` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Expander (`<expander>`)
 
@@ -720,11 +1174,20 @@ Automation role: `expander`. Text source: `label`. Children: single.
 |---|---|---|---|
 | `label` | string |  | createAndUpdate |
 | `expanded` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toggled` | `onToggled` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## StatusPage (`<statuspage>`)
 
@@ -735,7 +1198,19 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `iconName` | string | none | createAndUpdate |
 | `title` | string |  | createAndUpdate |
 | `description` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## ToastOverlay (`<toastoverlay>`)
 
@@ -743,12 +1218,21 @@ Automation role: `group`. Text source: none. Children: single.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `toastButtonClicked` | `onToastButtonClicked` | data |
 | `toastDismissed` | `onToastDismissed` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showToast`, `dismissToast`.
 
@@ -762,11 +1246,20 @@ Automation role: `datepicker`. Text source: none. Children: none.
 | `displayStyle` | field \| calendar | calendar | create |
 | `minDate` | string | none | createAndUpdate |
 | `maxDate` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `dateChanged` | `onDateChanged` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Table (`<table>`)
 
@@ -776,18 +1269,32 @@ Automation role: `table`. Text source: none. Children: none.
 |---|---|---|---|
 | `columns` | objectList | none | createAndUpdate |
 | `rows` | objectList | none | createAndUpdate |
+| `selectionMode` | none \| single \| multiple | single | create |
 | `selectedIndex` | int | -1 | createAndUpdate |
+| `selectedIndexes` | intList | none | createAndUpdate |
+| `columnsReorderable` | bool | false | createAndUpdate |
 | `showRowSeparators` | bool | true | createAndUpdate |
 | `emptyIconName` | string | none | createAndUpdate |
 | `emptyTitle` | string | none | createAndUpdate |
 | `emptyDescription` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
-| `selectionChanged` | `onSelectionChanged` | index |
+| `selectionChanged` | `onSelectionChanged` | indexes |
 | `rowActivated` | `onRowActivated` | index |
 | `sortChanged` | `onSortChanged` | data |
+| `columnsResized` | `onColumnsResized` | data |
+| `columnsReordered` | `onColumnsReordered` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## TreeView (`<treeview>`)
 
@@ -801,6 +1308,11 @@ Automation role: `tree`. Text source: none. Children: none.
 | `emptyIconName` | string | none | createAndUpdate |
 | `emptyTitle` | string | none | createAndUpdate |
 | `emptyDescription` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -809,6 +1321,10 @@ Automation role: `tree`. Text source: none. Children: none.
 | `rowActivated` | `onRowActivated` | data |
 | `nodeExpanded` | `onNodeExpanded` | data |
 | `nodeCollapsed` | `onNodeCollapsed` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## FontPicker (`<fontpicker>`)
 
@@ -817,11 +1333,20 @@ Automation role: `fontpicker`. Text source: none. Children: none.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `value` | string | Sans 12 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `fontChanged` | `onFontChanged` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Video (`<video>`)
 
@@ -833,7 +1358,19 @@ Automation role: `video`. Text source: none. Children: none.
 | `autoplay` | bool | false | create |
 | `loop` | bool | false | createAndUpdate |
 | `controls` | bool | true | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## TrayItem (`<trayitem>`)
 
@@ -844,8 +1381,19 @@ Automation role: `trayitem`. Text source: none. Children: multi.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `iconName` | string | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## ShareButton (`<sharebutton>`)
 
@@ -858,7 +1406,19 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `label` | string |  | createAndUpdate |
 | `iconName` | string | none | create |
 | `items` | stringList | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## Terminal (`<terminal>`)
 
@@ -881,6 +1441,11 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `sessionId` | string | none | create |
 | `ticket` | string | none | create |
 | `restoreScrollback` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -892,6 +1457,10 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `selectionChanged` | `onSelectionChanged` | checked |
 | `imagePaste` | `onImagePaste` | data |
 | `focusChanged` | `onFocusChanged` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`, `focus`.
 
@@ -905,11 +1474,20 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|---|
 | `orientation` | horizontal \| vertical | horizontal | create |
 | `position` | float | 0.5 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
 |---|---|---|
 | `positionChanged` | `onPositionChanged` | position |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 
 ## CommandPalette (`<commandpalette>`)
 
@@ -921,6 +1499,11 @@ Automation role: `dialog`. Text source: none. Children: none.
 | `placeholder` | string | none | createAndUpdate |
 | `query` | string |  | createAndUpdate |
 | `items` | objectList | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -929,4 +1512,333 @@ Automation role: `dialog`. Text source: none. Children: none.
 | `activate` | `onActivate` | text |
 | `submit` | `onSubmit` | text |
 | `cancel` | `onCancel` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Avatar (`<avatar>`)
+
+Automation role: `image`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `text` | string |  | createAndUpdate |
+| `imagePath` | string | none | createAndUpdate |
+| `size` | int | 32 | create |
+| `showInitials` | bool | true | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Badge (`<badge>`)
+
+Automation role: `label`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `variant` | neutral \| accent \| success \| warning \| error | neutral | createAndUpdate |
+| `dot` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Tag (`<tag>`)
+
+Automation role: `label`. Text source: `label`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `label` | string |  | createAndUpdate |
+| `variant` | neutral \| accent \| success \| warning \| error | neutral | createAndUpdate |
+| `removable` | bool | false | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `removed` | `onRemoved` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Kbd (`<kbd>`)
+
+Automation role: `label`. Text source: `keys`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `keys` | string |  | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## ComboBox (`<combobox>`)
+
+Automation role: `combobox`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `options` | stringList | none | create |
+| `selectedIndex` | int | 0 | createAndUpdate |
+| `text` | string |  | createAndUpdate |
+| `placeholder` | string | none | create |
+| `editable` | bool | true | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `selectionChanged` | `onSelectionChanged` | index |
+| `changed` | `onChanged` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+## Breadcrumb (`<breadcrumb>`)
+
+Automation role: `toolbar`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `items` | stringList | none | createAndUpdate |
+| `selectedIndex` | int | -1 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `itemActivated` | `onItemActivated` | index |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Dialog (`<dialog>`)
+
+Automation role: `dialog`. Text source: `title`. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `open` | bool | false | createAndUpdate |
+| `title` | string |  | createAndUpdate |
+| `contentWidth` | int | 0 | createAndUpdate |
+| `contentHeight` | int | 0 | createAndUpdate |
+| `closable` | bool | true | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `closed` | `onClosed` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Sheet (`<sheet>`)
+
+Automation role: `dialog`. Text source: none. Children: single.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `open` | bool | false | createAndUpdate |
+| `edge` | top \| bottom \| leading \| trailing | bottom | createAndUpdate |
+| `size` | int | 320 | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `closed` | `onClosed` | none |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## RichText (`<richtext>`)
+
+Automation role: `label`. Text source: `markdown`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `markdown` | string |  | createAndUpdate |
+| `selectable` | bool | true | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `linkActivated` | `onLinkActivated` | text |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## ProgressCircle (`<progresscircle>`)
+
+Automation role: `progressbar`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `fraction` | float | 0 | createAndUpdate |
+| `lineWidth` | int | 3 | createAndUpdate |
+| `showLabel` | bool | false | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Skeleton (`<skeleton>`)
+
+Automation role: `custom`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `width` | int | 0 | createAndUpdate |
+| `height` | int | 16 | createAndUpdate |
+| `radius` | int | 6 | createAndUpdate |
+| `animated` | bool | true | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Chart (`<chart>`)
+
+Automation role: `custom`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `type` | line \| area \| bar \| pie \| scatter \| candlestick | line | createAndUpdate |
+| `series` | objectList | none | createAndUpdate |
+| `xLabel` | string |  | createAndUpdate |
+| `yLabel` | string |  | createAndUpdate |
+| `showLegend` | bool | true | createAndUpdate |
+| `showGrid` | bool | true | createAndUpdate |
+| `animated` | bool | true | createAndUpdate |
+| `minContentHeight` | int | 160 | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `pointSelected` | `onPointSelected` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## CodeEditor (`<codeeditor>`)
+
+Automation role: `textbox`. Text source: `text`. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `text` | string |  | createAndUpdate |
+| `language` | string |  | createAndUpdate |
+| `theme` | string |  | createAndUpdate |
+| `showLineNumbers` | bool | true | createAndUpdate |
+| `readOnly` | bool | false | createAndUpdate |
+| `tabWidth` | int | 4 | createAndUpdate |
+| `diagnostics` | objectList | none | createAndUpdate |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `changed` | `onChange` | text |
+| `cursorMoved` | `onCursorMoved` | data |
+| `diagnosticClicked` | `onDiagnosticClicked` | data |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 

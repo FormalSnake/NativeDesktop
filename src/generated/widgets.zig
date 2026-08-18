@@ -6,7 +6,9 @@ const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const adw = @import("adw");
+const cairo = @import("cairo");
 const pango = @import("pango");
+const pangocairo = @import("pangocairo");
 const protocol = @import("../protocol.zig");
 const ndterm_gtk = @import("../gtk/terminal.zig");
 const ndicons = @import("../gtk/icons.zig");
@@ -19,6 +21,10 @@ const ndsourcetree_gtk = @import("../gtk/sourcetree.zig");
 const ndtoast_gtk = @import("../gtk/toast.zig");
 const ndpalette_gtk = @import("../gtk/commandpalette.zig");
 const ndempty_gtk = @import("../gtk/emptystate.zig");
+const ndchart_gtk = @import("../gtk/chart.zig");
+const ndmotion_gtk = @import("../gtk/motion.zig");
+const nddnd_gtk = @import("../gtk/dnd.zig");
+const ndcode_gtk = @import("../gtk/codeeditor.zig");
 const nd_plugin = @import("../plugin.zig");
 
 fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
@@ -94,17 +100,6 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
         return gtk.Viewport.getChild(vp);
     }
     return child;
-}
-
-/// `focus` — the cross-cutting widget command. The tracked handle is a
-/// scroller FRAME for the text/list kinds, and focusing that lands on the
-/// viewport rather than the editable child, so unwrap first.
-pub fn ndFocusWidget(widget: *gtk.Widget, kind: []const u8) void {
-    const target = if (std.mem.eql(u8, kind, "TextArea") or std.mem.eql(u8, kind, "SourceList") or std.mem.eql(u8, kind, "ListView") or std.mem.eql(u8, kind, "Table") or std.mem.eql(u8, kind, "TreeView"))
-        (scrolledWindowInner(@ptrCast(@alignCast(widget))) orelse widget)
-    else
-        widget;
-    _ = gtk.Widget.grabFocus(target);
 }
 
 /// Returns the lazily-created inner `AdwOverlaySplitView` that hosts a
@@ -1421,9 +1416,999 @@ fn cbSplitViewMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
     adw.ApplicationWindow.addBreakpoint(win, bp); // takes ownership of bp
 }
 
-/// The GTK create dispatcher. `dupeZ` turns a wire string into a NUL-
-/// terminated GTK string using the backend arena (passed by the caller).
+const nd_variant_classes = [_][:0]const u8{ "accent", "success", "warning", "error" };
+
+/// Badge/Tag `variant`. libadwaita already ships accent/success/warning/error
+/// as color classes, and the capsule fill in src/gtk/basecss.zig is
+/// alpha(currentColor, 0.12), so recoloring the text tints the pill with it.
+/// `neutral` is the bare capsule.
+fn ndApplyVariant(widget: *gtk.Widget, variant: []const u8) void {
+    for (nd_variant_classes) |c| {
+        if (std.mem.eql(u8, variant, c)) gtk.Widget.addCssClass(widget, c) else gtk.Widget.removeCssClass(widget, c);
+    }
+}
+
+const ND_BADGE_DOT = "nd-badge-dot";
+
+/// `<badge>`: a GtkLabel wearing basecss.zig's `.nd-badge` capsule, or a bare
+/// bullet glyph in dot mode (a capsule with no text would still carry the
+/// class's horizontal padding).
+fn ndBadgeCreate(text: [:0]const u8, dot: bool, variant: []const u8) *gtk.Widget {
+    const label = if (dot) gtk.Label.new("●") else gtk.Label.new(text);
+    const w = label.as(gtk.Widget);
+    if (dot) gobject.Object.setData(asObject(w), ND_BADGE_DOT, @ptrFromInt(1)) else gtk.Widget.addCssClass(w, "nd-badge");
+    ndApplyVariant(w, variant);
+    return w;
+}
+
+fn ndBadgeSetLabel(widget: *gtk.Widget, text: [:0]const u8) void {
+    if (gobject.Object.getData(asObject(widget), ND_BADGE_DOT) != null) return; // dot badges carry no text
+    gtk.Label.setText(@ptrCast(@alignCast(widget)), text);
+}
+
+const ND_TAG_NODE_ID = "nd-tag-node-id";
+
+/// `<tag>` is always a GtkBox so the removable and plain shapes share one
+/// handle type: a `.pill` GtkLabel (capsule from basecss.zig) plus, when
+/// removable, a flat circular close button.
+fn ndTagCreate(text: [:0]const u8, variant: []const u8, removable: bool) *gtk.Widget {
+    const box = gtk.Box.new(.horizontal, 2);
+    const label = gtk.Label.new(text);
+    gtk.Widget.addCssClass(label.as(gtk.Widget), "pill");
+    ndApplyVariant(label.as(gtk.Widget), variant);
+    gtk.Box.append(box, label.as(gtk.Widget));
+    if (removable) {
+        const btn = gtk.Button.newFromIconName("window-close-symbolic");
+        gtk.Widget.addCssClass(btn.as(gtk.Widget), "flat");
+        gtk.Widget.addCssClass(btn.as(gtk.Widget), "circular");
+        gtk.Widget.setValign(btn.as(gtk.Widget), .center);
+        _ = gobject.signalConnectData(asObject(btn), "clicked", @ptrCast(&cbTagRemoveClicked), null, null, .{});
+        gtk.Box.append(box, btn.as(gtk.Widget));
+    }
+    gtk.Widget.setHalign(box.as(gtk.Widget), .start);
+    return box.as(gtk.Widget);
+}
+
+/// The node id lives on the box (recorded by connectEvents), not on the close
+/// button, so the button can be built before the id is known.
+fn cbTagRemoveClicked(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const btn: *gtk.Widget = @ptrCast(@alignCast(obj));
+    const box = gtk.Widget.getParent(btn) orelse return;
+    const raw = gobject.Object.getData(asObject(box), ND_TAG_NODE_ID) orelse return;
+    const node_id: u32 = @intCast(@intFromPtr(raw));
+    if (emit) |f| f(node_id, "removed", .{});
+}
+
+fn ndTagConnect(widget: *gtk.Widget, node_id: u32) void {
+    gobject.Object.setData(asObject(widget), ND_TAG_NODE_ID, @ptrFromInt(@as(usize, node_id)));
+}
+
+fn ndTagLabel(widget: *gtk.Widget) ?*gtk.Label {
+    const first = gtk.Widget.getFirstChild(widget) orelse return null;
+    if (!gobject.ext.isA(first, gtk.Label)) return null;
+    return @ptrCast(@alignCast(first));
+}
+
+/// `<kbd>` is a GtkFrame (Adwaita draws it as a 1px rounded border, which is
+/// the keycap) around a monospace caption label. The margins are what keep the
+/// glyphs off that border; a frame has no padding of its own.
+fn ndKbdCreate(keys: [:0]const u8) *gtk.Widget {
+    const frame = gtk.Frame.new(null);
+    const label = gtk.Label.new(keys);
+    const lw = label.as(gtk.Widget);
+    gtk.Widget.addCssClass(lw, "monospace");
+    gtk.Widget.addCssClass(lw, "caption");
+    gtk.Widget.setMarginStart(lw, 6);
+    gtk.Widget.setMarginEnd(lw, 6);
+    gtk.Widget.setMarginTop(lw, 1);
+    gtk.Widget.setMarginBottom(lw, 1);
+    gtk.Frame.setChild(frame, lw);
+    gtk.Widget.setValign(frame.as(gtk.Widget), .center);
+    gtk.Widget.setHalign(frame.as(gtk.Widget), .start);
+    return frame.as(gtk.Widget);
+}
+
+fn ndKbdLabel(widget: *gtk.Widget) ?*gtk.Label {
+    const child = gtk.Frame.getChild(@ptrCast(@alignCast(widget))) orelse return null;
+    return @ptrCast(@alignCast(child));
+}
+
+/// GtkDropDown's search needs an expression to match rows against; a
+/// GtkStringList's rows expose their text as GtkStringObject's "string".
+fn ndDropDownSearchExpression() *gtk.Expression {
+    return gtk.PropertyExpression.new(gtk.StringObject.getGObjectType(), null, "string").as(gtk.Expression);
+}
+
+/// ComboBox `text`. GtkDropDown has no free-text entry, so the typed value is
+/// resolved against the option list: an exact match selects that row, anything
+/// else leaves the selection alone.
+fn ndDropDownSelectText(dd: *gtk.DropDown, text: []const u8) void {
+    const model = gtk.DropDown.getModel(dd) orelse return;
+    const sl: *gtk.StringList = @ptrCast(@alignCast(model));
+    const n = gio.ListModel.getNItems(model);
+    var i: c_uint = 0;
+    while (i < n) : (i += 1) {
+        const s = gtk.StringList.getString(sl, i) orelse continue;
+        if (std.mem.eql(u8, std.mem.span(s), text)) {
+            if (gtk.DropDown.getSelected(dd) != i) gtk.DropDown.setSelected(dd, i);
+            return;
+        }
+    }
+}
+
+fn ndDropDownSelectedText(dd: *gtk.DropDown) ?[]const u8 {
+    const item = gtk.DropDown.getSelectedItem(dd) orelse return null;
+    const so: *gtk.StringObject = @ptrCast(@alignCast(item));
+    return std.mem.span(gtk.StringObject.getString(so));
+}
+
+const ND_CRUMB_NODE_ID = "nd-crumb-node-id";
+const ND_CRUMB_INDEX = "nd-crumb-index";
+const ND_CRUMB_SELECTED = "nd-crumb-selected";
+
+/// `<breadcrumb>` is a GtkBox rebuilt whenever `items` change: one flat
+/// GtkButton per crumb with a dimmed separator label between them. The node id
+/// lives on the box and the crumb index on each button, so a rebuild long
+/// after connectEvents still emits the right pair.
+fn ndBreadcrumbRebuild(widget: *gtk.Widget, items: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    // Absent key = untouched: an update carrying only `selectedIndex` must not
+    // wipe the crumbs on its way past.
+    const arr = items orelse return;
+    const box: *gtk.Box = @ptrCast(@alignCast(widget));
+    while (gtk.Widget.getFirstChild(widget)) |child| gtk.Box.remove(box, child);
+    const selected = ndBreadcrumbSelected(widget);
+    var i: usize = 0;
+    for (arr.items) |item| {
+        if (item != .string) continue;
+        if (i > 0) {
+            const sep = gtk.Label.new("›");
+            gtk.Widget.addCssClass(sep.as(gtk.Widget), "dimmed");
+            gtk.Box.append(box, sep.as(gtk.Widget));
+        }
+        const btn = gtk.Button.newWithLabel(dupeZ(item.string));
+        gtk.Widget.addCssClass(btn.as(gtk.Widget), "flat");
+        if (@as(i64, @intCast(i)) == selected) gtk.Widget.addCssClass(btn.as(gtk.Widget), "heading");
+        gobject.Object.setData(asObject(btn), ND_CRUMB_INDEX, @ptrFromInt(i + 1)); // +1: slot 0 is indistinguishable from unset
+        _ = gobject.signalConnectData(asObject(btn), "clicked", @ptrCast(&cbCrumbClicked), null, null, .{});
+        gtk.Box.append(box, btn.as(gtk.Widget));
+        i += 1;
+    }
+}
+
+/// An update carries only the keys that changed, so the current crumb index
+/// is kept on the box: an `items` rebuild has to re-apply it, and a
+/// `selectedIndex` update only moves the emphasis class.
+fn ndBreadcrumbSelected(widget: *gtk.Widget) i64 {
+    const raw = gobject.Object.getData(asObject(widget), ND_CRUMB_SELECTED) orelse return -1;
+    return @as(i64, @intCast(@intFromPtr(raw))) - 1;
+}
+
+fn ndBreadcrumbSetSelected(widget: *gtk.Widget, selected: i64) void {
+    const slot: usize = if (selected < 0) 0 else @intCast(selected + 1);
+    gobject.Object.setData(asObject(widget), ND_CRUMB_SELECTED, @ptrFromInt(slot));
+    var child = gtk.Widget.getFirstChild(widget);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        const raw_idx = gobject.Object.getData(asObject(c), ND_CRUMB_INDEX) orelse continue;
+        const idx: i64 = @intCast(@intFromPtr(raw_idx) - 1);
+        if (idx == selected) gtk.Widget.addCssClass(c, "heading") else gtk.Widget.removeCssClass(c, "heading");
+    }
+}
+
+fn cbCrumbClicked(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const btn: *gtk.Widget = @ptrCast(@alignCast(obj));
+    const box = gtk.Widget.getParent(btn) orelse return;
+    const raw_id = gobject.Object.getData(asObject(box), ND_CRUMB_NODE_ID) orelse return;
+    const raw_idx = gobject.Object.getData(obj, ND_CRUMB_INDEX) orelse return;
+    const node_id: u32 = @intCast(@intFromPtr(raw_id));
+    const idx: i64 = @intCast(@intFromPtr(raw_idx) - 1);
+    if (emit) |f| f(node_id, "itemActivated", .{ .index = idx });
+}
+
+fn ndBreadcrumbConnect(widget: *gtk.Widget, node_id: u32) void {
+    gobject.Object.setData(asObject(widget), ND_CRUMB_NODE_ID, @ptrFromInt(@as(usize, node_id)));
+}
+
+const ND_RATING_STARS = "nd-rating-stars";
+
+/// LevelIndicator `indicatorStyle="rating"`. GTK has no rating level bar, so
+/// the widget becomes a row of star icons rebuilt on every value change; the
+/// star count is the schema `max`, stashed on the box because an update only
+/// carries `value`.
+fn ndRatingCreate(max: f64, value: f64) *gtk.Widget {
+    const box = gtk.Box.new(.horizontal, 2);
+    const stars: usize = if (max >= 1) @intFromFloat(@round(max)) else 5;
+    gobject.Object.setData(asObject(box), ND_RATING_STARS, @ptrFromInt(stars));
+    gtk.Widget.setHalign(box.as(gtk.Widget), .start);
+    ndRatingRebuild(box.as(gtk.Widget), value);
+    return box.as(gtk.Widget);
+}
+
+fn ndRatingRebuild(widget: *gtk.Widget, value: f64) void {
+    const box: *gtk.Box = @ptrCast(@alignCast(widget));
+    const raw = gobject.Object.getData(asObject(widget), ND_RATING_STARS) orelse return;
+    const stars: usize = @intFromPtr(raw);
+    while (gtk.Widget.getFirstChild(widget)) |child| gtk.Box.remove(box, child);
+    var i: usize = 0;
+    while (i < stars) : (i += 1) {
+        const filled = @as(f64, @floatFromInt(i)) < value;
+        const img = gtk.Image.newFromIconName(if (filled) "starred-symbolic" else "non-starred-symbolic");
+        gtk.Box.append(box, img.as(gtk.Widget));
+    }
+}
+
+/// ComboBox wires BOTH its events off one `notify::selected` handler: the
+/// echo-suppression map holds one handler id per object, so two connections
+/// would leave the second unblockable during a React-driven update.
+fn ndComboBoxConnect(widget: *gtk.Widget, node_id: u32) void {
+    const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
+    const hid = gobject.signalConnectData(asObject(widget), "notify::selected", @ptrCast(&cbComboBoxSelected), data, null, .{});
+    noteSuppressible(asObject(widget), hid);
+}
+
+// notify:: handlers get (object, pspec, user_data).
+fn cbComboBoxSelected(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const dd: *gtk.DropDown = @ptrCast(@alignCast(obj));
+    const sel = gtk.DropDown.getSelected(dd);
+    if (sel == std.math.maxInt(c_uint)) return; // GTK_INVALID_LIST_POSITION
+    const f = emit orelse return;
+    f(node_id, "selectionChanged", .{ .index = @intCast(sel) });
+    // GtkDropDown has no free-text entry, so the combo's text IS the selected
+    // row; AppKit's NSComboBox fires `changed` per keystroke as well.
+    if (ndDropDownSelectedText(dd)) |t| f(node_id, "changed", .{ .text = t });
+}
+
+/// `<avatar>` custom image. A missing or unreadable file leaves the initials
+/// fallback in place rather than blanking the avatar.
+fn ndAvatarSetImage(av: *adw.Avatar, path: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (path.len == 0) {
+        adw.Avatar.setCustomImage(av, null);
+        return;
+    }
+    const tex = gdk.Texture.newFromFilename(dupeZ(path), null) orelse {
+        std.debug.print("ND_WARN Avatar imagePath not loadable: {s}\n", .{path});
+        return;
+    };
+    defer gobject.Object.unref(tex.as(gobject.Object));
+    adw.Avatar.setCustomImage(av, tex.as(gdk.Paintable));
+}
+
+/// The universal `focus` command. TextArea and the list-shaped widgets hand
+/// back a GtkScrolledWindow frame, so the focusable widget is the view
+/// inside it, not the frame.
+fn ndGrabFocus(widget: *gtk.Widget) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return; // menu node: nothing to focus
+    var target = widget;
+    if (gobject.ext.isA(widget, gtk.ScrolledWindow)) {
+        if (scrolledWindowInner(@ptrCast(@alignCast(widget)))) |inner| target = inner;
+    }
+    _ = gtk.Widget.grabFocus(target);
+}
+
+/// TabView's tracked handle is the switcher+stack box, so the page signal
+/// lives on the AdwViewStack inside it. The echo map is keyed by GObject,
+/// which is why the `selectedIndex` apply arm blocks the STACK's handler
+/// rather than the box's.
+fn ndTabViewConnect(widget: *gtk.Widget, node_id: u32) void {
+    const stack = ndTabViewStack(widget) orelse return;
+    const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
+    const hid = gobject.signalConnectData(asObject(stack), "notify::visible-child", @ptrCast(&cbTabViewSelected), data, null, .{});
+    noteSuppressible(asObject(stack), hid);
+}
+
+// notify:: handlers get (object, pspec, user_data).
+fn cbTabViewSelected(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    const stack: *adw.ViewStack = @ptrCast(@alignCast(obj));
+    const visible = adw.ViewStack.getVisibleChild(stack) orelse return;
+    var i: i64 = 0;
+    var child = gtk.Widget.getFirstChild(stack.as(gtk.Widget));
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (c == visible) {
+            if (emit) |f| f(node_id, "selectionChanged", .{ .index = i });
+            return;
+        }
+        i += 1;
+    }
+}
+
+const ND_DIALOG_PARENT = "nd-dialog-parent";
+const ND_DIALOG_PENDING_OPEN = "nd-dialog-pending-open";
+const ND_DIALOG_PRESENTED = "nd-dialog-presented";
+const ND_DIALOG_PROGRAMMATIC = "nd-dialog-programmatic-close";
+
+/// `<dialog>` and `<sheet>` are both AdwDialog: libadwaita's modal is
+/// PRESENTED against a parent widget rather than packed into it, so the
+/// node's handle never becomes a layout child — ndDialogAttach below is the
+/// peer of ndPopoverAttach. Presentation mode is the whole difference
+/// between the two: a floating window for `<dialog>`, libadwaita's own
+/// bottom sheet for `<sheet>`.
+fn ndDialogCreate(mode: adw.DialogPresentationMode) *gtk.Widget {
+    const dlg = adw.Dialog.new();
+    adw.Dialog.setPresentationMode(dlg, mode);
+    return dlg.as(gtk.Widget);
+}
+
+const ND_SHEET_EDGE = "nd-sheet-edge";
+const ND_SHEET_SIZE = "nd-sheet-size";
+
+/// A `<sheet>`'s `edge`. AdwDialog knows two presentations, so `bottom` is
+/// the real bottom sheet and the other three fall back to the floating
+/// dialog — GNOME has no side-anchored modal panel, and inventing one out of
+/// a GtkRevealer would stop looking native the moment the OS moves.
+fn ndSheetPresentation(edge: []const u8) adw.DialogPresentationMode {
+    return if (std.mem.eql(u8, edge, "bottom")) .bottom_sheet else .floating;
+}
+
+/// An update carries only the keys that changed, so the edge and the size
+/// each have to survive an update of the other: `size` names the axis the
+/// panel grows along, and which axis that is comes from the edge.
+fn ndSheetSetEdge(widget: *gtk.Widget, edge: []const u8) void {
+    const slot: usize = if (std.mem.eql(u8, edge, "top")) 1
+    else if (std.mem.eql(u8, edge, "leading")) 2
+    else if (std.mem.eql(u8, edge, "trailing")) 3
+    else 4; // bottom
+    gobject.Object.setData(asObject(widget), ND_SHEET_EDGE, @ptrFromInt(slot));
+    adw.Dialog.setPresentationMode(@ptrCast(@alignCast(widget)), ndSheetPresentation(edge));
+    ndSheetApplySize(widget, ndSheetSize(widget));
+}
+
+fn ndSheetIsSideEdge(widget: *gtk.Widget) bool {
+    const raw = gobject.Object.getData(asObject(widget), ND_SHEET_EDGE) orelse return false;
+    const slot = @intFromPtr(raw);
+    return slot == 2 or slot == 3;
+}
+
+fn ndSheetSize(widget: *gtk.Widget) i64 {
+    const raw = gobject.Object.getData(asObject(widget), ND_SHEET_SIZE) orelse return 0;
+    return @intCast(@intFromPtr(raw));
+}
+
+fn ndSheetApplySize(widget: *gtk.Widget, size: i64) void {
+    const dlg: *adw.Dialog = @ptrCast(@alignCast(widget));
+    gobject.Object.setData(asObject(widget), ND_SHEET_SIZE, @ptrFromInt(@as(usize, @intCast(@max(size, 0)))));
+    const px: c_int = if (size > 0) @intCast(size) else -1; // -1 is AdwDialog's natural size
+    if (ndSheetIsSideEdge(widget)) {
+        adw.Dialog.setContentWidth(dlg, px);
+        adw.Dialog.setContentHeight(dlg, -1);
+    } else {
+        adw.Dialog.setContentHeight(dlg, px);
+        adw.Dialog.setContentWidth(dlg, -1);
+    }
+}
+
+/// Cross-cutting structural rule (the AdwDialog peer of ndPopoverAttach): a
+/// dialog child records its tree parent as the widget to present against and
+/// is never packed anywhere.
+fn ndDialogAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
+    if (!gobject.ext.isA(parent, gtk.Widget)) return; // menu-node parent: nothing to present against
+    gobject.Object.setData(asObject(child), ND_DIALOG_PARENT, parent);
+}
+
+fn ndDialogDetach(child: *gtk.Widget, parent: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(child), ND_DIALOG_PARENT) != @as(?*anyopaque, parent)) return;
+    ndDialogSetOpen(child, false);
+    gobject.Object.setData(asObject(child), ND_DIALOG_PARENT, null);
+}
+
+/// Controlled `open`, idempotent in both directions: presented and pending
+/// are tracked here, so a re-render carrying an unchanged `open` is free.
+/// React mounts bottom-up, so at attach time the tree parent has not reached
+/// the window yet and presenting now would open a separate toplevel instead
+/// of an in-window dialog. Every open therefore waits one main-loop turn, by
+/// which point the window exists.
+fn ndDialogSetOpen(widget: *gtk.Widget, open: bool) void {
+    const obj = asObject(widget);
+    if (open) {
+        if (gobject.Object.getData(obj, ND_DIALOG_PENDING_OPEN) != null) return;
+        if (gobject.Object.getData(obj, ND_DIALOG_PRESENTED) != null) return;
+        gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, @ptrFromInt(1));
+        _ = gobject.Object.ref(obj); // survive the turn even if React unmounts first
+        _ = glib.idleAdd(&cbDialogPresentIdle, widget);
+        return;
+    }
+    gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, null);
+    if (gobject.Object.getData(obj, ND_DIALOG_PRESENTED) == null) return;
+    // forceClose, not close: `closable=false` is about the user's affordances,
+    // never about the app's own control of its state.
+    gobject.Object.setData(obj, ND_DIALOG_PROGRAMMATIC, @ptrFromInt(1));
+    adw.Dialog.forceClose(@ptrCast(@alignCast(widget)));
+}
+
+fn cbDialogPresentIdle(data: ?*anyopaque) callconv(.c) c_int {
+    const widget: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    const obj = asObject(widget);
+    defer gobject.Object.unref(obj);
+    if (gobject.Object.getData(obj, ND_DIALOG_PENDING_OPEN) == null) return 0; // closed again before the turn came round
+    gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, null);
+    const parent = gobject.Object.getData(obj, ND_DIALOG_PARENT) orelse return 0; // never attached: nothing to present against
+    gobject.Object.setData(obj, ND_DIALOG_PRESENTED, @ptrFromInt(1));
+    adw.Dialog.present(@ptrCast(@alignCast(widget)), @ptrCast(@alignCast(parent)));
+    return 0; // G_SOURCE_REMOVE
+}
+
+// ---- RichText: Markdown -> Pango markup in a GtkTextBuffer ------------------
+
+const ND_RICH_HREF = "nd-rich-href";
+const ND_RICH_SELECTABLE = "nd-rich-selectable";
+const ND_RICH_NODE_ID = "nd-rich-node-id";
+
+/// The `<richtext>` Markdown subset, parsed identically on both backends:
+/// ATX headings (`#` to `######`), paragraphs (soft-wrapped lines join with a
+/// space), `-`/`*`/`+` bullet lists, fenced code blocks, and the inline runs
+/// `**bold**`, `__bold__`, `*italic*`, `_italic_`, `` `code` `` and
+/// `[label](href)`. Everything else lands as literal text: no ordered lists,
+/// block quotes, tables, images, HTML, reference links, setext headings or
+/// horizontal rules. Emphasis does not nest, and a link's label is one run.
+const NdRichStyle = struct {
+    bold: bool = false,
+    italic: bool = false,
+    code: bool = false,
+    heading: u8 = 0,
+    href: ?[]const u8 = null,
+};
+
+const NdRichLink = struct { label: []const u8, href: []const u8, end: usize };
+
+fn ndRichEscape(out: *std.ArrayList(u8), alloc: std.mem.Allocator, text: []const u8) void {
+    for (text) |c| switch (c) {
+        '&' => out.appendSlice(alloc, "&amp;") catch {},
+        '<' => out.appendSlice(alloc, "&lt;") catch {},
+        '>' => out.appendSlice(alloc, "&gt;") catch {},
+        '"' => out.appendSlice(alloc, "&quot;") catch {},
+        else => out.append(alloc, c) catch {},
+    };
+}
+
+/// The accent colour as `#RRGGBB`, for the link foreground. libadwaita is the
+/// authority on it, the same source the `accentColor` appearance payload uses.
+fn ndAccentRgba(out: *gdk.RGBA) void {
+    const rgba = adw.StyleManager.getAccentColorRgba(adw.StyleManager.getDefault());
+    out.* = rgba.*;
+    gdk.RGBA.free(rgba);
+}
+
+fn ndAccentHex(out: *[8]u8) []const u8 {
+    var rgba: gdk.RGBA = undefined;
+    ndAccentRgba(&rgba);
+    const r: u8 = @intFromFloat(@min(@max(rgba.f_red, 0.0), 1.0) * 255.0);
+    const g: u8 = @intFromFloat(@min(@max(rgba.f_green, 0.0), 1.0) * 255.0);
+    const b: u8 = @intFromFloat(@min(@max(rgba.f_blue, 0.0), 1.0) * 255.0);
+    const s = std.fmt.bufPrint(out, "#{X:0>2}{X:0>2}{X:0>2}", .{ r, g, b }) catch return "#3584E4";
+    return s;
+}
+
+/// One styled run. The markup carries the look; a link ALSO gets an anonymous
+/// GtkTextTag over its range carrying the href, because Pango's own `<a>`
+/// attribute never reaches GtkTextView as something a click handler can read.
+fn ndRichInsertRun(
+    buf: *gtk.TextBuffer,
+    alloc: std.mem.Allocator,
+    text: []const u8,
+    style: NdRichStyle,
+    accent: []const u8,
+    dupeZ: *const fn ([]const u8) [:0]const u8,
+) void {
+    if (text.len == 0) return;
+    var markup: std.ArrayList(u8) = .empty;
+    defer markup.deinit(alloc);
+    if (style.href != null) {
+        markup.appendSlice(alloc, "<span underline=\"single\" foreground=\"") catch {};
+        markup.appendSlice(alloc, accent) catch {};
+        markup.appendSlice(alloc, "\">") catch {};
+    }
+    if (style.heading > 0) {
+        const size: []const u8 = switch (style.heading) {
+            1 => "x-large",
+            2 => "large",
+            else => "medium",
+        };
+        markup.appendSlice(alloc, "<span size=\"") catch {};
+        markup.appendSlice(alloc, size) catch {};
+        markup.appendSlice(alloc, "\" weight=\"bold\">") catch {};
+    }
+    if (style.code) markup.appendSlice(alloc, "<tt>") catch {};
+    if (style.bold) markup.appendSlice(alloc, "<b>") catch {};
+    if (style.italic) markup.appendSlice(alloc, "<i>") catch {};
+    ndRichEscape(&markup, alloc, text);
+    if (style.italic) markup.appendSlice(alloc, "</i>") catch {};
+    if (style.bold) markup.appendSlice(alloc, "</b>") catch {};
+    if (style.code) markup.appendSlice(alloc, "</tt>") catch {};
+    if (style.heading > 0) markup.appendSlice(alloc, "</span>") catch {};
+    if (style.href != null) markup.appendSlice(alloc, "</span>") catch {};
+
+    const z = alloc.dupeZ(u8, markup.items) catch return;
+    defer alloc.free(z);
+    const start_off = gtk.TextBuffer.getCharCount(buf);
+    var end_iter: gtk.TextIter = undefined;
+    gtk.TextBuffer.getEndIter(buf, &end_iter);
+    gtk.TextBuffer.insertMarkup(buf, &end_iter, z, -1);
+
+    const href = style.href orelse return;
+    const tag = gtk.TextTag.new(null);
+    gobject.Object.setData(asObject(tag), ND_RICH_HREF, @ptrCast(@constCast(dupeZ(href).ptr)));
+    _ = gtk.TextTagTable.add(gtk.TextBuffer.getTagTable(buf), tag);
+    gobject.Object.unref(asObject(tag)); // the table holds the ref now
+    var from: gtk.TextIter = undefined;
+    var to: gtk.TextIter = undefined;
+    gtk.TextBuffer.getIterAtOffset(buf, &from, start_off);
+    gtk.TextBuffer.getEndIter(buf, &to);
+    gtk.TextBuffer.applyTag(buf, tag, &from, &to);
+}
+
+fn ndRichParseLink(text: []const u8, start: usize) ?NdRichLink {
+    const close_bracket = std.mem.indexOfScalarPos(u8, text, start + 1, ']') orelse return null;
+    if (close_bracket + 1 >= text.len or text[close_bracket + 1] != '(') return null;
+    const close_paren = std.mem.indexOfScalarPos(u8, text, close_bracket + 2, ')') orelse return null;
+    return .{
+        .label = text[start + 1 .. close_bracket],
+        .href = text[close_bracket + 2 .. close_paren],
+        .end = close_paren + 1,
+    };
+}
+
+/// Inline scan over one block's text. `base` carries the block-level look
+/// (a heading's size and weight), which every run inherits.
+fn ndRichInline(
+    buf: *gtk.TextBuffer,
+    alloc: std.mem.Allocator,
+    text: []const u8,
+    base: NdRichStyle,
+    accent: []const u8,
+    dupeZ: *const fn ([]const u8) [:0]const u8,
+) void {
+    var i: usize = 0;
+    var plain: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '`') {
+            if (std.mem.indexOfScalarPos(u8, text, i + 1, '`')) |close| {
+                ndRichInsertRun(buf, alloc, text[plain..i], base, accent, dupeZ);
+                var run = base;
+                run.code = true;
+                ndRichInsertRun(buf, alloc, text[i + 1 .. close], run, accent, dupeZ);
+                i = close + 1;
+                plain = i;
+                continue;
+            }
+        }
+        if (text[i] == '[') {
+            if (ndRichParseLink(text, i)) |link| {
+                ndRichInsertRun(buf, alloc, text[plain..i], base, accent, dupeZ);
+                var run = base;
+                run.href = link.href;
+                ndRichInsertRun(buf, alloc, link.label, run, accent, dupeZ);
+                i = link.end;
+                plain = i;
+                continue;
+            }
+        }
+        if (text[i] == '*' or text[i] == '_') {
+            const strong = i + 1 < text.len and text[i + 1] == text[i];
+            const marker = text[i .. i + @as(usize, if (strong) 2 else 1)];
+            const body = i + marker.len;
+            if (body < text.len) {
+                if (std.mem.indexOfPos(u8, text, body, marker)) |close| {
+                    if (close > body) {
+                        ndRichInsertRun(buf, alloc, text[plain..i], base, accent, dupeZ);
+                        var run = base;
+                        if (strong) run.bold = true else run.italic = true;
+                        ndRichInsertRun(buf, alloc, text[body..close], run, accent, dupeZ);
+                        i = close + marker.len;
+                        plain = i;
+                        continue;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    ndRichInsertRun(buf, alloc, text[plain..], base, accent, dupeZ);
+}
+
+/// Blank line between blocks, skipped before the first one.
+fn ndRichBlockGap(buf: *gtk.TextBuffer, first: *bool) void {
+    if (first.*) {
+        first.* = false;
+        return;
+    }
+    var iter: gtk.TextIter = undefined;
+    gtk.TextBuffer.getEndIter(buf, &iter);
+    gtk.TextBuffer.insert(buf, &iter, "\n\n", -1);
+}
+
+fn ndRichBulletBody(line: []const u8) ?[]const u8 {
+    if (line.len < 2) return null;
+    if (line[0] != '-' and line[0] != '*' and line[0] != '+') return null;
+    if (line[1] != ' ') return null;
+    return std.mem.trimStart(u8, line[2..], " ");
+}
+
+/// A markdown update builds a WHOLE new buffer rather than clearing the old
+/// one: the tag table is where the link tags live, and swapping the buffer
+/// retires them all instead of growing the table on every render.
+fn ndRichTextRender(view: *gtk.TextView, md: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const alloc = std.heap.page_allocator;
+    var accent_buf: [8]u8 = undefined;
+    const accent = ndAccentHex(&accent_buf);
+    const buf = gtk.TextBuffer.new(null);
+
+    var lines: std.ArrayList([]const u8) = .empty;
+    defer lines.deinit(alloc);
+    var split = std.mem.splitScalar(u8, md, '\n');
+    while (split.next()) |raw| lines.append(alloc, std.mem.trimEnd(u8, raw, "\r")) catch {};
+
+    var first = true;
+    var i: usize = 0;
+    while (i < lines.items.len) {
+        const line = std.mem.trim(u8, lines.items[i], " \t");
+        if (line.len == 0) {
+            i += 1;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "```")) {
+            i += 1;
+            var code: std.ArrayList(u8) = .empty;
+            defer code.deinit(alloc);
+            while (i < lines.items.len and !std.mem.startsWith(u8, std.mem.trim(u8, lines.items[i], " \t"), "```")) : (i += 1) {
+                if (code.items.len > 0) code.append(alloc, '\n') catch {};
+                // Four spaces per line is the indent: GtkTextTag margins would
+                // need a tag per block, and the fence is already monospaced.
+                code.appendSlice(alloc, "    ") catch {};
+                code.appendSlice(alloc, lines.items[i]) catch {};
+            }
+            if (i < lines.items.len) i += 1; // closing fence
+            ndRichBlockGap(buf, &first);
+            ndRichInsertRun(buf, alloc, code.items, .{ .code = true }, accent, dupeZ);
+            continue;
+        }
+        if (line[0] == '#') {
+            var level: usize = 0;
+            while (level < line.len and line[level] == '#') : (level += 1) {}
+            if (level <= 6 and level < line.len and line[level] == ' ') {
+                ndRichBlockGap(buf, &first);
+                ndRichInline(buf, alloc, std.mem.trim(u8, line[level + 1 ..], " "), .{ .heading = @intCast(level) }, accent, dupeZ);
+                i += 1;
+                continue;
+            }
+        }
+        if (ndRichBulletBody(line)) |body| {
+            ndRichBlockGap(buf, &first);
+            ndRichInsertRun(buf, alloc, "\u{2022} ", .{}, accent, dupeZ);
+            ndRichInline(buf, alloc, body, .{}, accent, dupeZ);
+            i += 1;
+            while (i < lines.items.len) {
+                const next = std.mem.trim(u8, lines.items[i], " \t");
+                const next_body = ndRichBulletBody(next) orelse break;
+                ndRichInsertRun(buf, alloc, "\n\u{2022} ", .{}, accent, dupeZ);
+                ndRichInline(buf, alloc, next_body, .{}, accent, dupeZ);
+                i += 1;
+            }
+            continue;
+        }
+        var para: std.ArrayList(u8) = .empty;
+        defer para.deinit(alloc);
+        while (i < lines.items.len) {
+            const p = std.mem.trim(u8, lines.items[i], " \t");
+            if (p.len == 0) break;
+            if (p[0] == '#' or std.mem.startsWith(u8, p, "```") or ndRichBulletBody(p) != null) break;
+            if (para.items.len > 0) para.append(alloc, ' ') catch {};
+            para.appendSlice(alloc, p) catch {};
+            i += 1;
+        }
+        ndRichBlockGap(buf, &first);
+        ndRichInline(buf, alloc, para.items, .{}, accent, dupeZ);
+    }
+
+    gtk.TextView.setBuffer(view, buf);
+    _ = gobject.signalConnectData(asObject(buf), "notify::has-selection", @ptrCast(&cbRichSelectionGuard), view, null, .{});
+    gobject.Object.unref(asObject(buf)); // the view holds the ref now
+}
+
+/// GtkTextView has no "selectable" switch, so a non-selectable view collapses
+/// every selection the moment one forms. The guard rides the buffer, which is
+/// why ndRichTextRender reconnects it on each rebuild.
+fn cbRichSelectionGuard(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const view: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    if (gobject.Object.getData(asObject(view), ND_RICH_SELECTABLE) != null) return;
+    const buf: *gtk.TextBuffer = @ptrCast(@alignCast(obj));
+    if (gtk.TextBuffer.getHasSelection(buf) == 0) return;
+    var iter: gtk.TextIter = undefined;
+    gtk.TextBuffer.getIterAtMark(buf, &iter, gtk.TextBuffer.getInsert(buf));
+    gtk.TextBuffer.selectRange(buf, &iter, &iter);
+}
+
+fn ndRichTextSetSelectable(view: *gtk.Widget, selectable: bool) void {
+    gobject.Object.setData(asObject(view), ND_RICH_SELECTABLE, if (selectable) @ptrFromInt(1) else null);
+    gtk.Widget.setCanFocus(view, @intFromBool(selectable));
+}
+
+/// Click-to-follow: the tag under the pointer is what names the href.
+fn cbRichClicked(_: *gobject.Object, _: c_int, x: f64, y: f64, data: ?*anyopaque) callconv(.c) void {
+    const view: *gtk.TextView = @ptrCast(@alignCast(data.?));
+    const raw_id = gobject.Object.getData(asObject(view), ND_RICH_NODE_ID) orelse return;
+    const node_id: u32 = @intCast(@intFromPtr(raw_id));
+    var bx: c_int = 0;
+    var by: c_int = 0;
+    gtk.TextView.windowToBufferCoords(view, .widget, @intFromFloat(x), @intFromFloat(y), &bx, &by);
+    var iter: gtk.TextIter = undefined;
+    if (gtk.TextView.getIterAtLocation(view, &iter, bx, by) == 0) return;
+    const tags: ?*glib.SList = gtk.TextIter.getTags(&iter);
+    defer if (tags) |l| glib.SList.free(l);
+    var node = tags;
+    while (node) |n| : (node = n.f_next) {
+        const tag = n.f_data orelse continue;
+        const raw = gobject.Object.getData(@ptrCast(@alignCast(tag)), ND_RICH_HREF) orelse continue;
+        const href: [*:0]const u8 = @ptrCast(raw);
+        if (emit) |f| f(node_id, "linkActivated", .{ .text = std.mem.span(href) });
+        return;
+    }
+}
+
+fn ndRichTextCreate(md: []const u8, selectable: bool, dupeZ: *const fn ([]const u8) [:0]const u8) *gtk.Widget {
+    const view = gtk.TextView.new();
+    const vw = view.as(gtk.Widget);
+    gtk.TextView.setEditable(view, 0);
+    gtk.TextView.setCursorVisible(view, 0);
+    gtk.TextView.setWrapMode(view, .word_char);
+    gtk.TextView.setTopMargin(view, 4);
+    gtk.TextView.setBottomMargin(view, 4);
+    gtk.TextView.setLeftMargin(view, 4);
+    gtk.TextView.setRightMargin(view, 4);
+    gtk.TextView.setPixelsBelowLines(view, 2);
+    ndRichTextSetSelectable(vw, selectable);
+    const gesture = gtk.GestureClick.new();
+    gtk.GestureSingle.setButton(gesture.as(gtk.GestureSingle), 1);
+    _ = gobject.signalConnectData(asObject(gesture), "released", @ptrCast(&cbRichClicked), vw, null, .{});
+    gtk.Widget.addController(vw, gesture.as(gtk.EventController));
+    ndRichTextRender(view, md, dupeZ);
+
+    // A document block sizes to its content the way a paragraph does; only a
+    // long one scrolls, and only inside its own frame.
+    const sw = gtk.ScrolledWindow.new();
+    gtk.ScrolledWindow.setChild(sw, vw);
+    gtk.ScrolledWindow.setPropagateNaturalHeight(sw, 1);
+    gtk.Widget.setHexpand(sw.as(gtk.Widget), 1);
+    return sw.as(gtk.Widget);
+}
+
+fn ndRichTextInner(widget: *gtk.Widget) ?*gtk.TextView {
+    const inner = scrolledWindowInner(@ptrCast(@alignCast(widget))) orelse return null;
+    return @ptrCast(@alignCast(inner));
+}
+
+fn ndRichTextConnect(widget: *gtk.Widget, node_id: u32) void {
+    const view = ndRichTextInner(widget) orelse return;
+    gobject.Object.setData(asObject(view), ND_RICH_NODE_ID, @ptrFromInt(@as(usize, node_id)));
+}
+
+// ---- ProgressCircle / Skeleton: the two controls neither toolkit ships -----
+
+/// Object-data ints are stored offset by one, so "absent" stays distinct from
+/// zero (g_object_set_data with a NULL pointer removes the entry).
+fn ndDataInt(widget: *gtk.Widget, key: [*:0]const u8, fallback: i64) i64 {
+    const raw = gobject.Object.getData(asObject(widget), key) orelse return fallback;
+    return @as(i64, @intCast(@intFromPtr(raw))) - 1;
+}
+
+fn ndSetDataInt(widget: *gtk.Widget, key: [*:0]const u8, value: i64) void {
+    gobject.Object.setData(asObject(widget), key, @ptrFromInt(@as(usize, @intCast(@max(value, 0))) + 1));
+}
+
+const ND_PC_PERMILLE = "nd-progresscircle-permille";
+const ND_PC_LINE_WIDTH = "nd-progresscircle-line-width";
+const ND_PC_SHOW_LABEL = "nd-progresscircle-show-label";
+
+/// `<progresscircle>` is a GtkDrawingArea because no determinate ring exists
+/// in GTK: GNOME's own apps draw this arc with Cairo, so the framework does
+/// too rather than faking one out of a GtkLevelBar.
+fn ndProgressCircleCreate(fraction: f64, line_width: i64, show_label: bool) *gtk.Widget {
+    const area = gtk.DrawingArea.new();
+    const w = area.as(gtk.Widget);
+    gtk.DrawingArea.setContentWidth(area, 28);
+    gtk.DrawingArea.setContentHeight(area, 28);
+    ndProgressCircleSetFraction(w, fraction);
+    ndSetDataInt(w, ND_PC_LINE_WIDTH, @max(line_width, 1));
+    ndSetDataInt(w, ND_PC_SHOW_LABEL, @intFromBool(show_label));
+    gtk.DrawingArea.setDrawFunc(area, &ndProgressCircleDraw, null, null);
+    return w;
+}
+
+fn ndProgressCircleSetFraction(widget: *gtk.Widget, fraction: f64) void {
+    const clamped = @min(@max(fraction, 0.0), 1.0);
+    ndSetDataInt(widget, ND_PC_PERMILLE, @intFromFloat(@round(clamped * 1000.0)));
+    gtk.Widget.queueDraw(widget);
+}
+
+fn ndProgressCircleDraw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_int, _: ?*anyopaque) callconv(.c) void {
+    const widget = area.as(gtk.Widget);
+    const w: f64 = @floatFromInt(width);
+    const h: f64 = @floatFromInt(height);
+    const lw: f64 = @floatFromInt(ndDataInt(widget, ND_PC_LINE_WIDTH, 3));
+    const fraction = @as(f64, @floatFromInt(ndDataInt(widget, ND_PC_PERMILLE, 0))) / 1000.0;
+    const radius = @max((@min(w, h) - lw) / 2.0, 1.0);
+    const cx = w / 2.0;
+    const cy = h / 2.0;
+
+    var fg: gdk.RGBA = undefined;
+    gtk.Widget.getColor(widget, &fg);
+    cairo.Context.setLineWidth(cr, lw);
+    cairo.Context.setLineCap(cr, .round);
+    cairo.Context.newPath(cr);
+    cairo.Context.setSourceRgba(cr, fg.f_red, fg.f_green, fg.f_blue, 0.15);
+    cairo.Context.arc(cr, cx, cy, radius, 0.0, std.math.tau);
+    cairo.Context.stroke(cr);
+
+    if (fraction > 0.0) {
+        var accent: gdk.RGBA = undefined;
+        ndAccentRgba(&accent);
+        cairo.Context.newPath(cr);
+        cairo.Context.setSourceRgba(cr, accent.f_red, accent.f_green, accent.f_blue, accent.f_alpha);
+        const start = -std.math.pi / 2.0; // 12 o'clock, clockwise
+        cairo.Context.arc(cr, cx, cy, radius, start, start + std.math.tau * fraction);
+        cairo.Context.stroke(cr);
+    }
+
+    if (ndDataInt(widget, ND_PC_SHOW_LABEL, 0) == 0) return;
+    var text: [8]u8 = undefined;
+    const percent: i64 = @intFromFloat(@round(fraction * 100.0));
+    const label = std.fmt.bufPrintZ(&text, "{d}%", .{percent}) catch return;
+    const layout = gtk.Widget.createPangoLayout(widget, label.ptr);
+    defer gobject.Object.unref(asObject(layout));
+    var tw: c_int = 0;
+    var th: c_int = 0;
+    pango.Layout.getPixelSize(layout, &tw, &th);
+    cairo.Context.setSourceRgba(cr, fg.f_red, fg.f_green, fg.f_blue, fg.f_alpha);
+    cairo.Context.moveTo(cr, cx - @as(f64, @floatFromInt(tw)) / 2.0, cy - @as(f64, @floatFromInt(th)) / 2.0);
+    pangocairo.showLayout(cr, layout);
+}
+
+const ND_SKEL_RADIUS = "nd-skeleton-radius";
+const ND_SKEL_TICK = "nd-skeleton-tick";
+const ND_SKEL_PHASE = "nd-skeleton-phase";
+
+fn ndSkeletonCreate(width: i64, height: i64, radius: i64, animated: bool) *gtk.Widget {
+    const area = gtk.DrawingArea.new();
+    const w = area.as(gtk.Widget);
+    gtk.DrawingArea.setContentHeight(area, @intCast(@max(height, 1)));
+    // width 0 is the "fill the row" shape a placeholder usually wants.
+    // A declared width is a REQUEST, not an allocation: GtkWidget's default
+    // halign is fill, so a hexpanding parent stretches the area past its
+    // requested width regardless. start holds the declared width for real.
+    if (width > 0) {
+        gtk.DrawingArea.setContentWidth(area, @intCast(width));
+        gtk.Widget.setHalign(w, .start);
+    } else gtk.Widget.setHexpand(w, 1);
+    ndSetDataInt(w, ND_SKEL_RADIUS, @max(radius, 0));
+    gtk.DrawingArea.setDrawFunc(area, &ndSkeletonDraw, null, null);
+    ndSkeletonSetAnimated(w, animated);
+    return w;
+}
+
+fn ndSkeletonSetSize(widget: *gtk.Widget, width: ?i64, height: ?i64) void {
+    const area: *gtk.DrawingArea = @ptrCast(@alignCast(widget));
+    if (height) |h| gtk.DrawingArea.setContentHeight(area, @intCast(@max(h, 1)));
+    if (width) |wd| {
+        if (wd > 0) {
+            gtk.Widget.setHexpand(widget, 0);
+            gtk.Widget.setHalign(widget, .start); // same fill-default fix as ndSkeletonCreate
+            gtk.DrawingArea.setContentWidth(area, @intCast(wd));
+        } else {
+            gtk.DrawingArea.setContentWidth(area, 0);
+            gtk.Widget.setHexpand(widget, 1);
+            gtk.Widget.setHalign(widget, .fill);
+        }
+    }
+}
+
+fn ndSkeletonSetAnimated(widget: *gtk.Widget, animated: bool) void {
+    const obj = asObject(widget);
+    // The OS switch outranks the prop: animations off means a flat block,
+    // never a shimmer (src/gtk/motion.zig, shared with <chart>).
+    const want = animated and ndmotion_gtk.animationsEnabled();
+    const running = gobject.Object.getData(obj, ND_SKEL_TICK);
+    if (want and running == null) {
+        const id = gtk.Widget.addTickCallback(widget, &ndSkeletonTick, null, null);
+        gobject.Object.setData(obj, ND_SKEL_TICK, @ptrFromInt(@as(usize, id) + 1));
+    } else if (!want) {
+        if (running) |raw| {
+            gtk.Widget.removeTickCallback(widget, @intCast(@intFromPtr(raw) - 1));
+            gobject.Object.setData(obj, ND_SKEL_TICK, null);
+        }
+        gobject.Object.setData(obj, ND_SKEL_PHASE, null);
+    }
+    gtk.Widget.queueDraw(widget);
+}
+
+const ND_SKEL_PERIOD_US: i64 = 1_400_000;
+
+fn ndSkeletonTick(widget: *gtk.Widget, clock: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) c_int {
+    const now = gdk.FrameClock.getFrameTime(clock);
+    const phase = @mod(now, ND_SKEL_PERIOD_US);
+    ndSetDataInt(widget, ND_SKEL_PHASE, @divTrunc(phase * 1000, ND_SKEL_PERIOD_US));
+    gtk.Widget.queueDraw(widget);
+    return 1; // G_SOURCE_CONTINUE
+}
+
+fn ndRoundedRectPath(cr: *cairo.Context, w: f64, h: f64, r: f64) void {
+    const radius = @min(r, @min(w, h) / 2.0);
+    cairo.Context.newPath(cr);
+    if (radius <= 0.0) {
+        cairo.Context.rectangle(cr, 0.0, 0.0, w, h);
+        cairo.Context.closePath(cr);
+        return;
+    }
+    const half_pi = std.math.pi / 2.0;
+    cairo.Context.arc(cr, w - radius, radius, radius, -half_pi, 0.0);
+    cairo.Context.arc(cr, w - radius, h - radius, radius, 0.0, half_pi);
+    cairo.Context.arc(cr, radius, h - radius, radius, half_pi, std.math.pi);
+    cairo.Context.arc(cr, radius, radius, radius, std.math.pi, std.math.pi + half_pi);
+    cairo.Context.closePath(cr);
+}
+
+fn ndSkeletonDraw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_int, _: ?*anyopaque) callconv(.c) void {
+    const widget = area.as(gtk.Widget);
+    const w: f64 = @floatFromInt(width);
+    const h: f64 = @floatFromInt(height);
+    var fg: gdk.RGBA = undefined;
+    gtk.Widget.getColor(widget, &fg);
+    ndRoundedRectPath(cr, w, h, @floatFromInt(ndDataInt(widget, ND_SKEL_RADIUS, 6)));
+    if (gobject.Object.getData(asObject(widget), ND_SKEL_TICK) == null) {
+        cairo.Context.setSourceRgba(cr, fg.f_red, fg.f_green, fg.f_blue, 0.12);
+        cairo.Context.fill(cr);
+        return;
+    }
+    // The highlight band is one widget wide and travels two widths, so it
+    // enters and leaves the block completely on every pass.
+    const phase = @as(f64, @floatFromInt(ndDataInt(widget, ND_SKEL_PHASE, 0))) / 1000.0;
+    const x = -w + phase * 2.0 * w;
+    const pattern = cairo.Pattern.linearCreate(x, 0.0, x + w, 0.0);
+    defer cairo.Pattern.destroy(pattern);
+    cairo.Pattern.gradientAddColorStopRgba(pattern, 0.0, fg.f_red, fg.f_green, fg.f_blue, 0.10);
+    cairo.Pattern.gradientAddColorStopRgba(pattern, 0.5, fg.f_red, fg.f_green, fg.f_blue, 0.22);
+    cairo.Pattern.gradientAddColorStopRgba(pattern, 1.0, fg.f_red, fg.f_green, fg.f_blue, 0.10);
+    cairo.Context.setSource(cr, pattern);
+    cairo.Context.fill(cr);
+}
+
+/// The GTK create dispatcher. Every kind goes through `createWidget`
+/// below; this wrapper only adds the universal props no per-widget arm
+/// should have to repeat.
 pub fn create(
+    app: *gtk.Application,
+    kind: []const u8,
+    props: ?std.json.Value,
+    dupeZ: *const fn ([]const u8) [:0]const u8,
+    the_window: *?*gtk.Window,
+) !*gtk.Widget {
+    const widget = try createWidget(app, kind, props, dupeZ, the_window);
+    ndApplyTooltip(widget, props, dupeZ);
+    ndApplyEnabled(widget, props);
+    nddnd_gtk.applyProps(widget, props, dupeZ);
+    return widget;
+}
+
+/// `tooltip` is a GtkWidget property, so one arm covers every kind. Menu
+/// nodes (Menubar/Menu/MenuItem) hand back GMenu objects rather than
+/// widgets, hence the type guard.
+fn ndApplyTooltip(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const tip = propStr(props, "tooltip") orelse return;
+    if (!gobject.ext.isA(widget, gtk.Widget)) return;
+    gtk.Widget.setTooltipText(widget, if (tip.len > 0) dupeZ(tip).ptr else null);
+}
+
+/// `enabled` is GtkWidget sensitivity, so one arm covers every kind, and
+/// insensitivity propagates through the subtree the way GTK draws it.
+/// src/gtk/backend.zig's a11y probe reads the same bit back through
+/// gtk_widget_is_sensitive, so getTree reports what the prop set.
+fn ndApplyEnabled(widget: *gtk.Widget, props: ?std.json.Value) void {
+    const on = propBool(props, "enabled") orelse return;
+    if (!gobject.ext.isA(widget, gtk.Widget)) return;
+    gtk.Widget.setSensitive(widget, @intFromBool(on));
+}
+
+/// `dupeZ` turns a wire string into a NUL-terminated GTK string using the
+/// backend arena (passed by the caller).
+fn createWidget(
     app: *gtk.Application,
     kind: []const u8,
     props: ?std.json.Value,
@@ -1510,7 +2495,6 @@ pub fn create(
                 if (gobject.ext.isA(child, adw.ButtonContent)) adw.ButtonContent.setCanShrink(@ptrCast(@alignCast(child)), 1);
             }
         }
-        if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(button.as(gtk.Widget), dupeZ(tt));
         // prominent -> the Adwaita accent treatment (AppKit peer:
         // NSToolbarItem.style .prominent / an accent bezel).
         if (propBool(props, "prominent") orelse false) gtk.Widget.addCssClass(button.as(gtk.Widget), "suggested-action");
@@ -1855,9 +2839,15 @@ pub fn create(
     } else if (std.mem.eql(u8, kind, "LevelIndicator")) {
         const min = propFloat(props, "min") orelse 0;
         const max = propFloat(props, "max") orelse 1;
+        const value = propFloat(props, "value") orelse 0;
+        const indicator_style = propStr(props, "indicatorStyle") orelse "continuous";
+        // GTK has no rating level bar, so that one style becomes a star row;
+        // `relevancy` has no peer either and stays a plain continuous bar.
+        if (std.mem.eql(u8, indicator_style, "rating")) return ndRatingCreate(max, value);
         const bar = gtk.LevelBar.newForInterval(min, max);
-        if (propBool(props, "discrete") orelse false) gtk.LevelBar.setMode(bar, .discrete);
-        gtk.LevelBar.setValue(bar, propFloat(props, "value") orelse 0);
+        const discrete = std.mem.eql(u8, indicator_style, "discrete") or (propBool(props, "discrete") orelse false);
+        if (discrete) gtk.LevelBar.setMode(bar, .discrete);
+        gtk.LevelBar.setValue(bar, value);
         ndLevelBarApplyOffsets(bar, propFloat(props, "warningValue"), propFloat(props, "criticalValue"));
         return bar.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ColorPicker")) {
@@ -2038,6 +3028,78 @@ pub fn create(
         return paned.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "CommandPalette")) {
         return ndpalette_gtk.create(props, dupeZ);  // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)
+    } else if (std.mem.eql(u8, kind, "Avatar")) {
+        const size = propInt(props, "size") orelse 32;
+        const text = propStr(props, "text") orelse "";
+        const show = propBool(props, "showInitials") orelse true;
+        const av = adw.Avatar.new(@intCast(size), if (text.len > 0) dupeZ(text).ptr else null, @intFromBool(show));
+        if (propStr(props, "imagePath")) |ip| ndAvatarSetImage(av, ip, dupeZ);
+        return av.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Badge")) {
+        const dot = propBool(props, "dot") orelse false;
+        const text = dupeZ(propStr(props, "label") orelse "");
+        const variant = propStr(props, "variant") orelse "neutral";
+        return ndBadgeCreate(text, dot, variant);
+    } else if (std.mem.eql(u8, kind, "Tag")) {
+        const text = dupeZ(propStr(props, "label") orelse "");
+        const variant = propStr(props, "variant") orelse "neutral";
+        const removable = propBool(props, "removable") orelse false;
+        return ndTagCreate(text, variant, removable);
+    } else if (std.mem.eql(u8, kind, "Kbd")) {
+        return ndKbdCreate(dupeZ(propStr(props, "keys") orelse ""));
+    } else if (std.mem.eql(u8, kind, "ComboBox")) {
+        const sl = gtk.StringList.new(null);
+        if (propArray(props, "options")) |arr| {
+            for (arr.items) |item| {
+                if (item == .string) gtk.StringList.append(sl, dupeZ(item.string));
+            }
+        }
+        const dd = gtk.DropDown.new(sl.as(gio.ListModel), null); // transfer-full: DropDown owns the model
+        const expr = ndDropDownSearchExpression();
+        gtk.DropDown.setExpression(dd, expr); // refs the expression
+        gtk.Expression.unref(expr);
+        gtk.DropDown.setEnableSearch(dd, 1);
+        const idx = propInt(props, "selectedIndex") orelse 0;
+        if (idx > 0) gtk.DropDown.setSelected(dd, @intCast(idx));
+        if (propStr(props, "text")) |t| { if (t.len > 0) ndDropDownSelectText(dd, t); }
+        // `placeholder`/`editable` have no GtkDropDown peer: its list is never
+        // free-text and the button always shows the selected row. The search
+        // popover above is GTK's answer to the same need.
+        return dd.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Breadcrumb")) {
+        const box = gtk.Box.new(.horizontal, 2);
+        ndBreadcrumbSetSelected(box.as(gtk.Widget), propInt(props, "selectedIndex") orelse -1);
+        ndBreadcrumbRebuild(box.as(gtk.Widget), propArray(props, "items"), dupeZ);
+        return box.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Dialog")) {
+        const dlg = ndDialogCreate(.floating);
+        if (propStr(props, "title")) |t| adw.Dialog.setTitle(@ptrCast(@alignCast(dlg)), dupeZ(t));
+        adw.Dialog.setCanClose(@ptrCast(@alignCast(dlg)), @intFromBool(propBool(props, "closable") orelse true));
+        // 0 is the schema's "natural size"; AdwDialog spells that -1.
+        const cw = propInt(props, "contentWidth") orelse 0;
+        const ch = propInt(props, "contentHeight") orelse 0;
+        adw.Dialog.setContentWidth(@ptrCast(@alignCast(dlg)), if (cw > 0) @intCast(cw) else -1);
+        adw.Dialog.setContentHeight(@ptrCast(@alignCast(dlg)), if (ch > 0) @intCast(ch) else -1);
+        // A create-time open waits for the tree parent (ndDialogSetOpen defers).
+        if (propBool(props, "open") orelse false) ndDialogSetOpen(dlg, true);
+        return dlg;
+    } else if (std.mem.eql(u8, kind, "Sheet")) {
+        const edge = propStr(props, "edge") orelse "bottom";
+        const sheet = ndDialogCreate(ndSheetPresentation(edge));
+        gobject.Object.setData(asObject(sheet), ND_SHEET_SIZE, @ptrFromInt(@as(usize, @intCast(@max(propInt(props, "size") orelse 320, 0)))));
+        ndSheetSetEdge(sheet, edge);
+        if (propBool(props, "open") orelse false) ndDialogSetOpen(sheet, true);
+        return sheet;
+    } else if (std.mem.eql(u8, kind, "RichText")) {
+        return ndRichTextCreate(propStr(props, "markdown") orelse "", propBool(props, "selectable") orelse true, dupeZ);
+    } else if (std.mem.eql(u8, kind, "ProgressCircle")) {
+        return ndProgressCircleCreate(propFloat(props, "fraction") orelse 0, propInt(props, "lineWidth") orelse 3, propBool(props, "showLabel") orelse false);
+    } else if (std.mem.eql(u8, kind, "Skeleton")) {
+        return ndSkeletonCreate(propInt(props, "width") orelse 0, propInt(props, "height") orelse 16, propInt(props, "radius") orelse 6, propBool(props, "animated") orelse true);
+    } else if (std.mem.eql(u8, kind, "Chart")) {
+        return ndchart_gtk.create(props, propInt(props, "minContentHeight") orelse 160);
+    } else if (std.mem.eql(u8, kind, "CodeEditor")) {
+        return ndcode_gtk.create(props, dupeZ);
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -2045,6 +3107,9 @@ pub fn create(
 
 /// The GTK update dispatcher for createAndUpdate props.
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    ndApplyTooltip(widget, props, dupeZ);
+    ndApplyEnabled(widget, props);
+    nddnd_gtk.applyProps(widget, props, dupeZ);
     if (std.mem.eql(u8, kind, "Window")) {
         if (propStr(props, "title")) |t| ndtabs_gtk.setTitle(widget, dupeZ(t));
     } else if (std.mem.eql(u8, kind, "Box")) {
@@ -2057,7 +3122,6 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "label")) |l| ndButtonSetLabel(@ptrCast(@alignCast(widget)), l, dupeZ);
         if (propStr(props, "iconName")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);
         if (propStr(props, "iconData")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);
-        if (propStr(props, "tooltip")) |tt| gtk.Widget.setTooltipText(widget, dupeZ(tt));
         if (propBool(props, "prominent")) |pr| {
             if (pr) gtk.Widget.addCssClass(widget, "suggested-action")
             else gtk.Widget.removeCssClass(widget, "suggested-action");
@@ -2151,7 +3215,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 var page_child = gtk.Widget.getFirstChild(stack.as(gtk.Widget));
                 while (page_child) |c| : (page_child = gtk.Widget.getNextSibling(c)) {
                     if (i == idx) {
+                        // The selection handler hangs off the stack, so that is the
+                        // object to block: a React-driven page change must not echo.
+                        blockEcho(asObject(stack));
                         adw.ViewStack.setVisibleChild(stack, c);
+                        unblockEcho(asObject(stack));
                         break;
                     }
                     i += 1;
@@ -2318,9 +3386,12 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propBool(props, "visited")) |v| gtk.LinkButton.setVisited(@ptrCast(@alignCast(widget)), @intFromBool(v));
         if (propBool(props, "openExternal")) |oe| gobject.Object.setData(asObject(widget), "nd-open-external", if (oe) @as(?*anyopaque, @ptrFromInt(1)) else null);
     } else if (std.mem.eql(u8, kind, "LevelIndicator")) {
-        if (propFloat(props, "value")) |v| gtk.LevelBar.setValue(@ptrCast(@alignCast(widget)), v);
+        if (propFloat(props, "value")) |v| {
+            // indicatorStyle="rating" makes the handle a star row, not a level bar.
+            if (gobject.ext.isA(widget, gtk.LevelBar)) gtk.LevelBar.setValue(@ptrCast(@alignCast(widget)), v) else ndRatingRebuild(widget, v);
+        }
         // warning/critical merge in one call (absent keys keep prior state).
-        ndLevelBarApplyOffsets(@ptrCast(@alignCast(widget)), propFloat(props, "warningValue"), propFloat(props, "criticalValue"));
+        if (gobject.ext.isA(widget, gtk.LevelBar)) ndLevelBarApplyOffsets(@ptrCast(@alignCast(widget)), propFloat(props, "warningValue"), propFloat(props, "criticalValue"));
         // handled together with warningValue above (ndLevelBarApplyOffsets merges both).
     } else if (std.mem.eql(u8, kind, "ColorPicker")) {
         if (propStr(props, "value")) |v| {
@@ -2421,6 +3492,81 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "CommandPalette")) {
         ndpalette_gtk.applyProps(widget, props, dupeZ);
+    } else if (std.mem.eql(u8, kind, "Avatar")) {
+        if (propStr(props, "text")) |t| adw.Avatar.setText(@ptrCast(@alignCast(widget)), if (t.len > 0) dupeZ(t).ptr else null);
+        if (propStr(props, "imagePath")) |ip| ndAvatarSetImage(@ptrCast(@alignCast(widget)), ip, dupeZ);
+    } else if (std.mem.eql(u8, kind, "Badge")) {
+        if (propStr(props, "label")) |l| ndBadgeSetLabel(widget, dupeZ(l));
+        if (propStr(props, "variant")) |v| ndApplyVariant(widget, v);
+    } else if (std.mem.eql(u8, kind, "Tag")) {
+        if (propStr(props, "label")) |l| { if (ndTagLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(l)); }
+        if (propStr(props, "variant")) |v| { if (ndTagLabel(widget)) |lb| ndApplyVariant(lb.as(gtk.Widget), v); }
+    } else if (std.mem.eql(u8, kind, "Kbd")) {
+        if (propStr(props, "keys")) |k| { if (ndKbdLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(k)); }
+    } else if (std.mem.eql(u8, kind, "ComboBox")) {
+        if (propInt(props, "selectedIndex")) |i| {
+            const dd: *gtk.DropDown = @ptrCast(@alignCast(widget));
+            if (i >= 0 and gtk.DropDown.getSelected(dd) != @as(c_uint, @intCast(i))) {
+                blockEcho(asObject(widget));
+                gtk.DropDown.setSelected(dd, @intCast(i));
+                unblockEcho(asObject(widget));
+            }
+        }
+        if (propStr(props, "text")) |t| {
+            if (t.len > 0) {
+                blockEcho(asObject(widget));
+                ndDropDownSelectText(@ptrCast(@alignCast(widget)), t);
+                unblockEcho(asObject(widget));
+            }
+        }
+    } else if (std.mem.eql(u8, kind, "Breadcrumb")) {
+        ndBreadcrumbRebuild(widget, propArray(props, "items"), dupeZ);
+        // Emphasis only: the crumb buttons themselves are untouched.
+        if (propInt(props, "selectedIndex")) |i| ndBreadcrumbSetSelected(widget, i);
+    } else if (std.mem.eql(u8, kind, "Dialog")) {
+        // ndDialogSetOpen is idempotent (it tracks presented/pending itself),
+        // so a re-render carrying an unchanged `open` costs nothing.
+        if (propBool(props, "open")) |o| ndDialogSetOpen(widget, o);
+        if (propStr(props, "title")) |t| adw.Dialog.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
+        if (propInt(props, "contentWidth")) |v| adw.Dialog.setContentWidth(@ptrCast(@alignCast(widget)), if (v > 0) @intCast(v) else -1);
+        if (propInt(props, "contentHeight")) |v| adw.Dialog.setContentHeight(@ptrCast(@alignCast(widget)), if (v > 0) @intCast(v) else -1);
+        if (propBool(props, "closable")) |c| adw.Dialog.setCanClose(@ptrCast(@alignCast(widget)), @intFromBool(c));
+    } else if (std.mem.eql(u8, kind, "Sheet")) {
+        // ndDialogSetOpen is idempotent (it tracks presented/pending itself),
+        // so a re-render carrying an unchanged `open` costs nothing.
+        if (propBool(props, "open")) |o| ndDialogSetOpen(widget, o);
+        if (propStr(props, "edge")) |e| ndSheetSetEdge(widget, e);
+        if (propInt(props, "size")) |v| ndSheetApplySize(widget, v);
+    } else if (std.mem.eql(u8, kind, "RichText")) {
+        if (propStr(props, "markdown")) |md| {
+            if (ndRichTextInner(widget)) |view| ndRichTextRender(view, md, dupeZ);
+        }
+        if (propBool(props, "selectable")) |s| {
+            if (ndRichTextInner(widget)) |view| ndRichTextSetSelectable(view.as(gtk.Widget), s);
+        }
+    } else if (std.mem.eql(u8, kind, "ProgressCircle")) {
+        if (propFloat(props, "fraction")) |f| ndProgressCircleSetFraction(widget, f);
+        if (propInt(props, "lineWidth")) |lw| {
+            ndSetDataInt(widget, ND_PC_LINE_WIDTH, @max(lw, 1));
+            gtk.Widget.queueDraw(widget);
+        }
+        if (propBool(props, "showLabel")) |s| {
+            ndSetDataInt(widget, ND_PC_SHOW_LABEL, @intFromBool(s));
+            gtk.Widget.queueDraw(widget);
+        }
+    } else if (std.mem.eql(u8, kind, "Skeleton")) {
+        // width and height merge in one call (absent keys keep prior state).
+        ndSkeletonSetSize(widget, propInt(props, "width"), propInt(props, "height"));
+        // handled together with width above (ndSkeletonSetSize merges both).
+        if (propInt(props, "radius")) |r| {
+            ndSetDataInt(widget, ND_SKEL_RADIUS, @max(r, 0));
+            gtk.Widget.queueDraw(widget);
+        }
+        if (propBool(props, "animated")) |a| ndSkeletonSetAnimated(widget, a);
+    } else if (std.mem.eql(u8, kind, "Chart")) {
+        ndchart_gtk.applyProps(widget, props);
+    } else if (std.mem.eql(u8, kind, "CodeEditor")) {
+        ndcode_gtk.applyProps(widget, props, dupeZ);
     }
 }
 
@@ -2659,7 +3805,27 @@ fn cbPanedPositionChanged(obj: *gobject.Object, _: ?*anyopaque, data: ?*anyopaqu
     gobject.Object.setData(obj, ND_PANED_DEBOUNCE_ID, @ptrFromInt(@as(usize, id)));
 }
 
+/// AdwDialog's close is animated, so the signal outlives any block scope
+/// around force_close — a flag, not the echo map, is what separates a
+/// programmatic close from a genuine dismissal (Esc, the close button, a
+/// swipe on the bottom sheet). Only the latter reaches the app, which then
+/// flips its controlled `open` back to false.
+fn cbDialogClosed(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    gobject.Object.setData(obj, ND_DIALOG_PRESENTED, null);
+    if (gobject.Object.getData(obj, ND_DIALOG_PROGRAMMATIC) != null) {
+        gobject.Object.setData(obj, ND_DIALOG_PROGRAMMATIC, null);
+        return;
+    }
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "closed", .{});
+}
+
 pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
+    // Drag and drop is universal (see UNIVERSAL_EVENTS in
+    // tools/codegen.ts): the controllers were installed by the props
+    // arm, which runs before this and so has no node id yet. This is
+    // where they learn it.
+    if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Window")) {
         if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);
@@ -2698,6 +3864,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_Slider_valueChanged = asObject(widget);
         const hid_Slider_valueChanged = gobject.signalConnectData(obj_Slider_valueChanged, "value-changed", @ptrCast(&cbScaleValueChanged), data, null, .{});
         noteSuppressible(obj_Slider_valueChanged, hid_Slider_valueChanged);
+    } else if (std.mem.eql(u8, kind, "TabView")) {
+        ndTabViewConnect(widget, node_id);
     } else if (std.mem.eql(u8, kind, "ListView")) {
         const obj_ListView_rowActivated = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
         const hid_ListView_rowActivated = gobject.signalConnectData(obj_ListView_rowActivated, "activate", @ptrCast(&cbListActivate), data, null, .{});
@@ -2795,13 +3963,34 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         noteSuppressible(obj_Paned_positionChanged, hid_Paned_positionChanged);
     } else if (std.mem.eql(u8, kind, "CommandPalette")) {
         if (emit) |f| ndpalette_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "Tag")) {
+        ndTagConnect(widget, node_id);
+    } else if (std.mem.eql(u8, kind, "ComboBox")) {
+        ndComboBoxConnect(widget, node_id);
+    } else if (std.mem.eql(u8, kind, "Breadcrumb")) {
+        ndBreadcrumbConnect(widget, node_id);
+    } else if (std.mem.eql(u8, kind, "Dialog")) {
+        const obj_Dialog_closed = asObject(widget);
+        const hid_Dialog_closed = gobject.signalConnectData(obj_Dialog_closed, "closed", @ptrCast(&cbDialogClosed), data, null, .{});
+        _ = hid_Dialog_closed;
+    } else if (std.mem.eql(u8, kind, "Sheet")) {
+        const obj_Sheet_closed = asObject(widget);
+        const hid_Sheet_closed = gobject.signalConnectData(obj_Sheet_closed, "closed", @ptrCast(&cbDialogClosed), data, null, .{});
+        _ = hid_Sheet_closed;
+    } else if (std.mem.eql(u8, kind, "RichText")) {
+        ndRichTextConnect(widget, node_id);
+    } else if (std.mem.eql(u8, kind, "Chart")) {
+        if (emit) |f| ndchart_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "CodeEditor")) {
+        if (emit) |f| ndcode_gtk.connectEvents(widget, node_id, f);
     }
 }
 
 /// App -> widget imperative commands (widgetCommand NDP frame, M14).
 pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {
-    // Cross-cutting first: `focus` means the same thing on every kind.
-    if (std.mem.eql(u8, command, "focus")) return ndFocusWidget(widget, kind);
+    // `focus` is a GtkWidget operation, so one arm serves every kind that
+    // declares it (see UNIVERSAL_COMMANDS in tools/codegen.ts).
+    if (std.mem.eql(u8, command, "focus") and !std.mem.eql(u8, kind, "Terminal")) return ndGrabFocus(widget);
     if (std.mem.eql(u8, kind, "Window")) {
         if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);
@@ -2820,6 +4009,9 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     // Cross-cutting: a Popover child anchors on its tree parent via
     // gtk_widget_set_parent, whatever the parent kind (M15).
     if (gobject.ext.isA(child, gtk.Popover)) return ndPopoverAttach(child, parent);
+    // Cross-cutting: a Dialog/Sheet child records its tree parent as the
+    // widget to present against, and is never packed into it.
+    if (gobject.ext.isA(child, adw.Dialog)) return ndDialogAttach(child, parent);
     if (std.mem.eql(u8, parent_kind, "Window")) {
         if (!gobject.ext.isA(child, gtk.Widget)) {
             ndMenuAttachToWindow(child);
@@ -2936,6 +4128,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else {
             gtk.Paned.setEndChild(p, child);
         }
+    } else if (std.mem.eql(u8, parent_kind, "Dialog")) {
+        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "Sheet")) {
+        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), child);
     } else {
         std.debug.print("ND_WARN append to non-container kind={s}\n", .{parent_kind});
     }
@@ -2945,8 +4141,9 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
     // null `before` degenerates to append everywhere (matches the M4 hand-written contract).
     const b = before orelse return appendChild(parent, parent_kind, child, attached, dupeZ);
     // Cross-cutting: a Popover child is position-independent — sibling order
-    // never matters for an anchored popover (M15).
+    // never matters for an anchored popover (M15), nor for a presented dialog.
     if (gobject.ext.isA(child, gtk.Popover)) return ndPopoverAttach(child, parent);
+    if (gobject.ext.isA(child, adw.Dialog)) return ndDialogAttach(child, parent);
     if (std.mem.eql(u8, parent_kind, "Box")) {
         const box: *gtk.Box = @ptrCast(@alignCast(parent));
         const prev = gtk.Widget.getPrevSibling(b);
@@ -3046,6 +4243,12 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (gtk.Widget.getParent(child) == parent) gtk.Widget.unparent(child);
         return;
     }
+    // Cross-cutting: an unmounted Dialog/Sheet closes rather than unparents —
+    // it was presented against its tree parent, never packed into it.
+    if (gobject.ext.isA(child, adw.Dialog)) {
+        ndDialogDetach(child, parent);
+        return;
+    }
     // Cross-cutting: cancel a torn-down `<paned>`'s pending settle timer.
     // Additive, not a short-circuit: the ordinary container dispatch below
     // still runs (AppKit peer: ndPanedTeardown in ndRemoveChild).
@@ -3114,6 +4317,10 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else if (gtk.Paned.getEndChild(p) == child) {
             gtk.Paned.setEndChild(p, null);
         }
+    } else if (std.mem.eql(u8, parent_kind, "Dialog")) {
+        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), null);
+    } else if (std.mem.eql(u8, parent_kind, "Sheet")) {
+        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), null);
     } else {
         std.debug.print("ND_WARN remove from non-container kind={s}\n", .{parent_kind});
     }
