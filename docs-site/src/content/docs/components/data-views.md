@@ -16,6 +16,10 @@ change. It never reorders or re-nests the data itself.
 A multi-column list. `GtkColumnView` on GTK, `NSTableView` on macOS. Columns and rows are separate
 arrays, so a column resize or reorder never has to touch every row.
 
+![A sorted Table with three columns on macOS (AppKit)](../../../assets/screens/appkit/parity-table.png)
+
+![A sorted Table with three columns on GNOME (GTK)](../../../assets/screens/gtk/parity-table.png)
+
 ```tsx
 import type { TableColumn, TableRow } from "@nativedesktop/react";
 
@@ -50,17 +54,29 @@ function handleSortChanged(e: { data: unknown }) {
 | --- | --- | --- | --- |
 | `columns` | `TableColumn[]` | createAndUpdate | `{ id, title, width? }`. `id` is echoed back in `sortChanged`, never shown. |
 | `rows` | `TableRow[]` | createAndUpdate | `{ id?, cells }`. `cells` is positional, indexed by `columns`' order. |
-| `selectedIndex` | int | createAndUpdate | Default `-1`. |
+| `selectionMode` | `"none"` \| `"single"` \| `"multiple"` | create | Default `"single"`. Create-only: change it by remounting the node (a different `key`). |
+| `selectedIndex` | int | createAndUpdate | The primary selected row. Default `-1`. |
+| `selectedIndexes` | `number[]` | createAndUpdate | The full selection, meaningful once `selectionMode="multiple"`. |
+| `columnsReorderable` | bool | createAndUpdate | Lets the user drag a column header to reorder it. Default `false`. |
 | `showRowSeparators` | bool | createAndUpdate | Default `true`. |
 
 | Event | Handler | Payload |
 | --- | --- | --- |
-| `selectionChanged` | `onSelectionChanged` | `{ index }` |
+| `selectionChanged` | `onSelectionChanged` | `{ index, data: { indexes } }`, `index` the primary row and `data.indexes` the full selection |
 | `rowActivated` | `onRowActivated` | `{ index }` (double-click / Enter) |
 | `sortChanged` | `onSortChanged` | `{ data: { columnId, direction } }` |
+| `columnsResized` | `onColumnsResized` | `{ data }`, the new column widths |
+| `columnsReordered` | `onColumnsReordered` | `{ data }`, the new column order |
 
 Clicking a column header fires `sortChanged` and stops there. The widget shows the sort indicator
-arrow but does not reorder `rows`. Sort in your handler and pass the new array back down.
+arrow but does not reorder `rows`. Sort in your handler and pass the new array back down. Dragging a
+header with `columnsReorderable` set works the same way: the widget fires `columnsReordered` and
+waits for you to feed the new `columns` order back down, rather than reordering on its own.
+
+With `selectionMode="multiple"`, click a row to select just it and Cmd/Ctrl-click or Shift-click to
+extend the selection, same as a native multi-select list. `selectedIndexes` is the source of truth
+for what's highlighted; keep it in state and read `e.data.indexes` in `onSelectionChanged`. See
+`examples/parity/main.tsx`'s Data section.
 
 ## TreeView (`<treeview>`)
 

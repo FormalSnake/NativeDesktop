@@ -9,9 +9,9 @@ never cross NDP.
 
 ## ColorPicker (`<colorpicker>`)
 
-`NSColorWell` in `.minimal` style (opening the shared `NSColorPanel`) on macOS, a GTK color button
-on Linux. The value is a hex string, `#rrggbb` or `#rrggbbaa` when the color is not fully opaque,
-the same convention `style.background` uses.
+SwiftUI `ColorPicker` (itself an `NSColorWell` in `.minimal` style, opening the shared
+`NSColorPanel`) on macOS, a GTK color button on Linux. The value is a hex string, `#rrggbb` or
+`#rrggbbaa` when the color is not fully opaque, the same convention `style.background` uses.
 
 ```tsx
 const [color, setColor] = useState("#3366cc");
@@ -45,8 +45,10 @@ const [pickedDate, setPickedDate] = useState("");
 `dateChanged` → `onDateChanged` fires `{ text }` with the new ISO string.
 
 `displayStyle="field"` (a compact text field with a dropdown calendar) is honored on macOS only,
-where `NSDatePicker` in `.textFieldAndStepper` style is the closest fit. GTK always renders the
-inline calendar. Use `calendar` for identical layout on both backends.
+where SwiftUI `DatePicker` in its `.stepperField` style (the closest match to the old
+`NSDatePicker.textFieldAndStepper`) is used. GTK always renders the inline calendar. Use `calendar`
+for identical layout on both backends. `minDate`/`maxDate` reach SwiftUI's `DatePicker` through its
+`in:` range parameter, which clamps a selection the same way `NSDatePicker` did.
 
 ## FontPicker (`<fontpicker>`)
 

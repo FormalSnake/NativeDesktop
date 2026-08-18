@@ -67,9 +67,9 @@ above.
 
 ## Expander (`<expander>`)
 
-An inline disclosure widget (`AdwExpanderRow`-style on GTK, an `NSButton` disclosure triangle plus
-a container on macOS) for content that stays in the layout flow instead of floating above it like a
-`Popover`.
+An inline disclosure widget (`AdwExpanderRow`-style on GTK, SwiftUI `DisclosureGroup` on macOS) for
+content that stays in the layout flow instead of floating above it like a `Popover`. The whole label
+row is a click target on macOS, matching GTK's expander.
 
 ```tsx
 const [open, setOpen] = useState(false);

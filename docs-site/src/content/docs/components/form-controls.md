@@ -7,6 +7,14 @@ Five input widgets beyond [Checkbox, Radio, Select, and
 Slider](/components/widget-reference/), all cross-platform on AppKit and GTK/Adwaita, followed by
 the four structural widgets a preferences page is built from.
 
+On macOS, Checkbox, Switch, and Slider are SwiftUI (`Toggle` in its `.checkbox`/`.switch` style, and
+`Slider`), hosted the same way the rest of the leaf widgets are. Radio stays plain AppKit
+(`NSButton` in `.radio` mode): SwiftUI ships no composable radio-group control on macOS outside a
+single `Picker`, and `NSButton`'s is already real system chrome, so there was nothing to gain from
+replacing it. `<slider orientation="vertical">` on macOS lays the track out horizontally at a fixed
+160pt length and rotates it, since SwiftUI has no vertical `Slider` axis; it does not fill the
+available height the way the horizontal orientation fills available width.
+
 ## ToggleButton (`<togglebutton>`)
 
 A button that stays pressed until clicked again (`GtkToggleButton`, or an `NSButton` in
@@ -29,8 +37,9 @@ const [bold, setBold] = useState(false);
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
-A fixed row of mutually exclusive options (`AdwToggleGroup`-style on GTK, `NSSegmentedControl` on
-macOS). Every option is visible at once, unlike `<select>`. Good for two to five short labels.
+A fixed row of mutually exclusive options (`AdwToggleGroup`-style on GTK, SwiftUI `Picker` in its
+`.segmented` style on macOS). Every option is visible at once, unlike `<select>`. Good for two to
+five short labels.
 
 ```tsx
 const [sizeIndex, setSizeIndex] = useState(1);
