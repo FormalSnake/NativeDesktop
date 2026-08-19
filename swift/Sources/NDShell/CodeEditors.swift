@@ -243,6 +243,11 @@ final class NDCodeTextView: NSTextView {
 /// the numbers come from walking those rather than from a second measurement
 /// of the text.
 final class NDLineNumberRuler: NSRulerView {
+    /// Do NOT override `draw(_:)` to paint a gutter background. `NSRulerView`
+    /// drives its own drawing through this method, and a `draw` override that
+    /// calls it directly instead of going through `super` takes the enclosing
+    /// scroll view's text rendering down with it — the editor comes up with
+    /// line numbers and no text at all.
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let textView = clientView as? NSTextView,
               let layoutManager = textView.textLayoutManager else { return }
@@ -307,16 +312,32 @@ func ndCodeEditorCreate(_ props: [String: Any]) -> NSView {
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = true
     scroll.autohidesScrollers = true
-    scroll.borderType = .bezelBorder
+    // No bezel, unlike `<textarea>`: a code editor is a document surface, not a
+    // form field, and neither Xcode nor any other Mac editor draws a field
+    // border around one. At the editor's width the bezel's top edge also read
+    // as a rule crossing the pane rather than as the edge of a control.
+    scroll.borderType = .noBorder
     scroll.drawsBackground = true
 
     let textView = NDCodeTextView(usingTextLayoutManager: true)
     textView.owner = scroll
     textView.isRichText = false
+    // Every macOS text-input convenience is wrong in a code editor: it is not
+    // prose, so the only squiggle under `nam` should be the DIAGNOSTIC's, and
+    // an autocorrected identifier or a smart quote silently changes what
+    // compiles. AppKit defaults several of these from the user's own system
+    // settings, so each has to be turned off by name — continuous spell
+    // checking especially, which is on for most people.
     textView.isAutomaticQuoteSubstitutionEnabled = false
     textView.isAutomaticDashSubstitutionEnabled = false
     textView.isAutomaticSpellingCorrectionEnabled = false
+    textView.isAutomaticTextReplacementEnabled = false
+    textView.isAutomaticTextCompletionEnabled = false
+    textView.isAutomaticLinkDetectionEnabled = false
+    textView.isAutomaticDataDetectionEnabled = false
+    textView.isContinuousSpellCheckingEnabled = false
     textView.isGrammarCheckingEnabled = false
+    textView.smartInsertDeleteEnabled = false
     textView.allowsUndo = true
     textView.drawsBackground = true
     textView.backgroundColor = .textBackgroundColor

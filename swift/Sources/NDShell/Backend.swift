@@ -444,6 +444,15 @@ nonisolated(unsafe) var ndBoxedLists: Set<ObjectIdentifier> = []
 /// removed when the class drops. See `ndApplyBoxedListCard`.
 nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] = [:]
 
+/// The same, for boxes carrying the `card` structural class. `card` is
+/// libadwaita's surface class and therefore the portable contract for "this
+/// group of children is one raised panel" — the unchanged app tree that gets a
+/// rounded surface on GTK has to get one here too. It read as a no-op on the
+/// Mac before, which is why a kanban column and its cards rendered as bare
+/// text on a flat pane. Distinct from `boxed-list`, which additionally turns
+/// its `<separator>` children into inset row dividers. See `ndApplySurfaceCard`.
+nonisolated(unsafe) private var ndSurfaceCardBackings: [ObjectIdentifier: NSBox] = [:]
+
 /// Box views (`NSStackView`) carrying the `toolbar` structural class. They
 /// render as a native header strip on the Mac: an `NSVisualEffectView`
 /// `.headerView` backing plus a 1 pt bottom hairline — see
@@ -599,10 +608,10 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
             btn.showsBorderOnlyWhileMouseInside = true
         default:
             // Typography classes are handled by ndRecomputeTypography below,
-            // not this switch. `nd-native-sidebar`/`boxed-list`/`toolbar` are
-            // structural and handled in the NSStackView blocks after this
-            // loop. The rest (card, view, osd, ...) are roles owned by the
-            // SplitView/HeaderBar widgets on the Mac — silently ignored here.
+            // not this switch. `nd-native-sidebar`/`boxed-list`/`toolbar`/
+            // `card` are structural and handled in the NSStackView blocks
+            // after this loop. The rest (view, osd, ...) are roles owned by
+            // the SplitView/HeaderBar widgets on the Mac — ignored here.
             break
         }
     }
@@ -684,6 +693,19 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
+    // `card`: the raised surface (same block shape as `boxed-list`). A box
+    // carrying BOTH gets the grouped-list treatment only — that one already
+    // draws a surface, and two stacked backings would double the fill.
+    if let stack = view as? NSStackView {
+        let id = ObjectIdentifier(stack)
+        let want = classes.contains("card") && !classes.contains("boxed-list")
+        if want {
+            ndApplySurfaceCard(stack, enabled: true)
+        } else if ndSurfaceCardBackings[id] != nil {
+            ndApplySurfaceCard(stack, enabled: false)
+        }
+    }
+
     // `pill` on a text label: the capsule count badge apps hand-roll on GTK.
     // Set-replace, but gated on a recorded prior state — an unconditional
     // disable would clobber a bezeled TextInput's own drawsBackground.
@@ -761,6 +783,42 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
         ndBoxedListBackings[id] = backing
     }
     backing.fillColor = .underPageBackgroundColor
+}
+
+/// Raised-surface treatment for a `card` box: the same `NSBox` backing idiom
+/// as `ndApplyBoxedListCard`, filled with `.controlBackgroundColor` and hair-
+/// lined with `.separatorColor` so the panel reads against the window
+/// background in both appearances the way a native grouped panel does. Both
+/// colours are dynamic semantic `NSColor`s, so light/dark tracks without a
+/// `cgColor` to re-resolve on an appearance change.
+func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
+    guard let stack = box as? NSStackView else { return }
+    let id = ObjectIdentifier(stack)
+    guard enabled else {
+        if let backing = ndSurfaceCardBackings[id] {
+            backing.removeFromSuperview()
+            ndSurfaceCardBackings[id] = nil
+        }
+        return
+    }
+    if ndSurfaceCardBackings[id] != nil { return }
+    let backing = NSBox()
+    backing.boxType = .custom
+    backing.borderWidth = 1
+    backing.borderColor = .separatorColor
+    backing.fillColor = .controlBackgroundColor
+    backing.cornerRadius = ndConcentricRadius(in: stack, fallback: NDRadius.card)
+    backing.titlePosition = .noTitle
+    backing.contentViewMargins = .zero
+    backing.translatesAutoresizingMaskIntoConstraints = false
+    stack.addSubview(backing, positioned: .below, relativeTo: nil)
+    NSLayoutConstraint.activate([
+        backing.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+        backing.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+        backing.topAnchor.constraint(equalTo: stack.topAnchor),
+        backing.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
+    ])
+    ndSurfaceCardBackings[id] = backing
 }
 
 /// Native header-strip treatment for a `toolbar` box: an `NDToolbarStripBacking`
@@ -907,6 +965,26 @@ func ndApplyActivatable(_ stack: NSStackView, enabled: Bool) {
     stack.addTrackingArea(area)
 }
 
+/// The view a node's font/colour cascade actually writes to. TextArea and
+/// ScrollView widgets are `NSScrollView` wrappers around an `NSTextView`
+/// document view, and it is that inner view the cascade means; everything
+/// else is its own text target.
+///
+/// A `<codeeditor>` is deliberately NOT resolved through. Its NSTextView owns
+/// a monospaced font and per-run syntax colours, and `NSTextView.textColor`
+/// writes across the WHOLE storage, so the cascade's own baseline
+/// (`.systemFont` + `.labelColor`, re-asserted on every style or class
+/// update) repainted every highlighted token in the body colour and swapped
+/// the monospaced font for the system one.
+private func ndTypographyTextTarget(_ view: NSView) -> NSView {
+    if let scrollView = view as? NSScrollView,
+       let textView = scrollView.documentView as? NSTextView,
+       !(textView is NDCodeTextView) {
+        return textView
+    }
+    return view
+}
+
 /// Recomputes the full per-node typography cascade for `view`'s text target
 /// from its stored `ndNodeTypography` state: baseline -> class typography (in
 /// stored order) -> style font -> style color. Style beats classes (GTK
@@ -919,18 +997,11 @@ func ndApplyActivatable(_ stack: NSStackView, enabled: Bool) {
 /// wiping a standing style font, and a style-only update stop leaving stale
 /// class typography behind.
 ///
-/// TextArea/ScrollView widgets are `NSScrollView` wrappers around an
-/// `NSTextView` document view — the baseline and class steps below target
-/// that inner text view, not the scroll view itself; the style steps call
-/// `applyFont`/`applyTextColor`, which resolve the same way internally (and
-/// also handle NSButton's attributedTitle color path).
+/// The baseline and class steps below write to `ndTypographyTextTarget`; the
+/// style steps call `applyFont`/`applyTextColor`, which resolve through the
+/// same helper (and also handle NSButton's attributedTitle color path).
 func ndRecomputeTypography(_ view: NSView) {
-    let textTarget: NSView = {
-        if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
-            return textView
-        }
-        return view
-    }()
+    let textTarget = ndTypographyTextTarget(view)
     let typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
 
     applyCssFontValue(textTarget, .systemFont(ofSize: NSFont.systemFontSize))
@@ -1200,7 +1271,7 @@ private func applyTextColor(_ view: NSView, _ color: NSColor) {
         let attributed = NSMutableAttributedString(string: button.title)
         attributed.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: attributed.length))
         button.attributedTitle = attributed
-    } else if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
+    } else if let textView = ndTypographyTextTarget(view) as? NSTextView {
         textView.textColor = color
     }
 }
@@ -1220,7 +1291,7 @@ private func applyFont(_ view: NSView, _ fontObj: [String: Any]) {
         field.font = font
     } else if let button = view as? NSButton {
         button.font = font
-    } else if let scrollView = view as? NSScrollView, let textView = scrollView.documentView as? NSTextView {
+    } else if let textView = ndTypographyTextTarget(view) as? NSTextView {
         textView.font = font
     }
 }

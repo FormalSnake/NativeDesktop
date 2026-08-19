@@ -416,6 +416,46 @@ fn yToPx(store: *Store, y: f64) f64 {
     return store.plot.y + store.plot.h - (y - store.y_min) / span * store.plot.h;
 }
 
+// ---- bands ----------------------------------------------------------------
+//
+// Bars and candles occupy a BAND, not a point: the plot is cut into one slot
+// per category and the mark is centred inside its own slot, so the whole mark
+// stays between the axes. Mapping them through `xToPx` instead put x_min ON
+// the plot's left edge, which hung the first bar's left half over the y tick
+// labels and pushed the last bar's right half past the plot.
+
+/// Above this many bands the per-band x labels collide, and the axis falls
+/// back to the ends plus the midpoint (`drawAxes`).
+const MAX_LABELED_BANDS: usize = 8;
+
+/// Whether this chart lays its marks out in bands.
+fn isBanded(store: *Store) bool {
+    return store.kind == .bar or store.kind == .candlestick;
+}
+
+/// Points in the widest series, which is what sets the band count.
+fn bandCount(store: *Store) usize {
+    var n: usize = 0;
+    for (store.series.items) |s| n = @max(n, s.points.items.len);
+    return n;
+}
+
+fn bandCenter(store: *Store, index: usize, count: usize) f64 {
+    const n: f64 = @floatFromInt(@max(count, 1));
+    const slot = store.plot.w / n;
+    return store.plot.x + (@as(f64, @floatFromInt(index)) + 0.5) * slot;
+}
+
+/// The x value standing in band `index`, taken from the first series long
+/// enough to have one. Bands are positional, so this is what a tick under a
+/// band has to be labelled with.
+fn bandValue(store: *Store, index: usize) ?f64 {
+    for (store.series.items) |s| {
+        if (index < s.points.items.len) return s.points.items[index].x;
+    }
+    return null;
+}
+
 // ---- draw -----------------------------------------------------------------
 
 fn draw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_int, _: ?*anyopaque) callconv(.c) void {
@@ -503,22 +543,6 @@ fn draw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, height: c_int,
         gobject.Object.unref(asObject(layout));
     }
 
-    // `drawBars` centers each bar exactly on its x value, so the first bar
-    // (at x_min, which maps to plot.x) has its own left half sitting to the
-    // LEFT of the plot origin — straight into the tick-label gutter above.
-    // Reserve that overlap too, sized from the same slot/group math
-    // `drawBars` uses (against the width the label gutter alone would have
-    // left), not a flat constant that would be wrong for a different point
-    // count or series count.
-    if (store.kind == .bar and store.series.items.len > 0) {
-        const n: f64 = @floatFromInt(@max(store.series.items[0].points.items.len, 1));
-        const group: f64 = @max(@as(f64, @floatFromInt(store.series.items.len)), 1.0);
-        const approx_plot_w = @max(right - (left + gutter + 6.0), 1.0);
-        const slot = approx_plot_w / n;
-        const bar_w = @max((slot * 0.7) / group, 1.0);
-        gutter += bar_w / 2.0;
-    }
-
     store.plot = .{
         .x = left + gutter + 6.0,
         .y = top,
@@ -593,12 +617,29 @@ fn drawAxes(widget: *gtk.Widget, cr: *cairo.Context, store: *Store, fg: gdk.RGBA
         drawTextRight(widget, cr, formatTick(&buf, value), plot.x - 6.0, py, 0.8);
     }
 
-    // x ticks: the ends plus the midpoint, which is as much as a small chart
-    // can label without the numbers colliding.
-    const xs = [_]f64{ 0.0, 0.5, 1.0 };
-    for (xs) |t| {
-        const px = @round(plot.x + t * plot.w) + 0.5;
-        if (store.show_grid and t > 0.0 and t < 1.0) {
+    // x ticks. A continuous chart labels the ends plus the midpoint, which is
+    // as much as a small plot can carry without the numbers colliding. A
+    // banded one labels band CENTRES with the categories actually standing
+    // there: a bar under "2.50" reads as a mislabelled bar. Few enough bands
+    // and every one is labelled, since a bar chart's x axis names its
+    // categories and "1, 3, 4" under four bars reads as a missing bar.
+    const bands = if (isBanded(store)) bandCount(store) else 0;
+    const label_every_band = bands > 0 and bands <= MAX_LABELED_BANDS;
+    const tick_count: usize = if (label_every_band) bands else 3;
+    var xi: usize = 0;
+    while (xi < tick_count) : (xi += 1) {
+        const t = if (tick_count == 1) 0.5 else @as(f64, @floatFromInt(xi)) / @as(f64, @floatFromInt(tick_count - 1));
+        var px = @round(plot.x + t * plot.w) + 0.5;
+        var value = store.x_min + (store.x_max - store.x_min) * t;
+        if (bands > 0) {
+            const index: usize = if (label_every_band)
+                xi
+            else
+                @intFromFloat(@round(t * @as(f64, @floatFromInt(bands - 1))));
+            px = @round(bandCenter(store, index, bands)) + 0.5;
+            value = bandValue(store, index) orelse value;
+        }
+        if (store.show_grid and xi > 0 and xi + 1 < tick_count) {
             setSource(cr, fg, 0.12);
             cairo.Context.newPath(cr);
             cairo.Context.moveTo(cr, px, plot.y);
@@ -606,7 +647,6 @@ fn drawAxes(widget: *gtk.Widget, cr: *cairo.Context, store: *Store, fg: gdk.RGBA
             cairo.Context.stroke(cr);
         }
         var buf: [32]u8 = undefined;
-        const value = store.x_min + (store.x_max - store.x_min) * t;
         setSource(cr, fg, 0.55);
         drawTextCentered(widget, cr, formatTick(&buf, value), px, plot.y + plot.h + 3.0, 0.8);
     }
@@ -661,14 +701,14 @@ fn drawScatter(cr: *cairo.Context, store: *Store, s: Series, color: gdk.RGBA, p:
 
 fn drawBars(cr: *cairo.Context, store: *Store, s: Series, color: gdk.RGBA, p: f64, series_index: usize) void {
     if (s.points.items.len == 0) return;
-    const n: f64 = @floatFromInt(s.points.items.len);
-    const slot = store.plot.w / @max(n, 1.0);
+    const bands = bandCount(store);
+    const slot = store.plot.w / @as(f64, @floatFromInt(@max(bands, 1)));
     const group = @max(@as(f64, @floatFromInt(store.series.items.len)), 1.0);
     const bar_w = @max((slot * 0.7) / group, 1.0);
     const base = yToPx(store, @max(@min(0.0, store.y_max), store.y_min));
     setSource(cr, color, 0.9);
-    for (s.points.items) |pt| {
-        const center = xToPx(store, pt.x) - (group - 1.0) * bar_w / 2.0 + @as(f64, @floatFromInt(series_index)) * bar_w;
+    for (s.points.items, 0..) |pt, i| {
+        const center = bandCenter(store, i, bands) - (group - 1.0) * bar_w / 2.0 + @as(f64, @floatFromInt(series_index)) * bar_w;
         const top = base + (yToPx(store, pt.y) - base) * p;
         cairo.Context.rectangle(cr, center - bar_w / 2.0, @min(top, base), bar_w, @abs(base - top));
         cairo.Context.fill(cr);
@@ -677,8 +717,8 @@ fn drawBars(cr: *cairo.Context, store: *Store, s: Series, color: gdk.RGBA, p: f6
 
 fn drawCandles(cr: *cairo.Context, store: *Store, s: Series, p: f64) void {
     if (s.points.items.len == 0) return;
-    const n: f64 = @floatFromInt(s.points.items.len);
-    const body_w = @max((store.plot.w / @max(n, 1.0)) * 0.55, 1.0);
+    const bands = bandCount(store);
+    const body_w = @max((store.plot.w / @as(f64, @floatFromInt(@max(bands, 1)))) * 0.55, 1.0);
     var up = gdk.RGBA{ .f_red = 0.20, .f_green = 0.82, .f_blue = 0.478, .f_alpha = 1.0 };
     var down = gdk.RGBA{ .f_red = 0.753, .f_green = 0.110, .f_blue = 0.157, .f_alpha = 1.0 };
     // An explicit series colour wins over the up/down convention.
@@ -686,9 +726,9 @@ fn drawCandles(cr: *cairo.Context, store: *Store, s: Series, p: f64) void {
         up = c;
         down = c;
     }
-    for (s.points.items) |pt| {
+    for (s.points.items, 0..) |pt, i| {
         if (!pt.has_ohlc) continue;
-        const px = @round(xToPx(store, pt.x)) + 0.5;
+        const px = @round(bandCenter(store, i, bands)) + 0.5;
         const rising = pt.close >= pt.open;
         const c = if (rising) up else down;
         const mid = (pt.high + pt.low) / 2.0;

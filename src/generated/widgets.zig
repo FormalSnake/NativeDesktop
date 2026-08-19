@@ -2201,16 +2201,30 @@ const ND_PC_SHOW_LABEL = "nd-progresscircle-show-label";
 /// `<progresscircle>` is a GtkDrawingArea because no determinate ring exists
 /// in GTK: GNOME's own apps draw this arc with Cairo, so the framework does
 /// too rather than faking one out of a GtkLevelBar.
+///
+/// The label has to fit INSIDE the ring, so a ring carrying one is drawn
+/// larger. At 28px the widest label ("100%") was wider than the circle and
+/// came out clipped to "00%". Same two diameters as the AppKit peer.
+const ND_PC_PLAIN_SIZE: c_int = 28;
+const ND_PC_LABELED_SIZE: c_int = 40;
+
 fn ndProgressCircleCreate(fraction: f64, line_width: i64, show_label: bool) *gtk.Widget {
     const area = gtk.DrawingArea.new();
     const w = area.as(gtk.Widget);
-    gtk.DrawingArea.setContentWidth(area, 28);
-    gtk.DrawingArea.setContentHeight(area, 28);
     ndProgressCircleSetFraction(w, fraction);
     ndSetDataInt(w, ND_PC_LINE_WIDTH, @max(line_width, 1));
-    ndSetDataInt(w, ND_PC_SHOW_LABEL, @intFromBool(show_label));
+    ndProgressCircleSetShowLabel(w, show_label);
     gtk.DrawingArea.setDrawFunc(area, &ndProgressCircleDraw, null, null);
     return w;
+}
+
+fn ndProgressCircleSetShowLabel(widget: *gtk.Widget, show_label: bool) void {
+    ndSetDataInt(widget, ND_PC_SHOW_LABEL, @intFromBool(show_label));
+    const area: *gtk.DrawingArea = @ptrCast(widget);
+    const size: c_int = if (show_label) ND_PC_LABELED_SIZE else ND_PC_PLAIN_SIZE;
+    gtk.DrawingArea.setContentWidth(area, size);
+    gtk.DrawingArea.setContentHeight(area, size);
+    gtk.Widget.queueDraw(widget);
 }
 
 fn ndProgressCircleSetFraction(widget: *gtk.Widget, fraction: f64) void {
@@ -2254,9 +2268,31 @@ fn ndProgressCircleDraw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int
     const label = std.fmt.bufPrintZ(&text, "{d}%", .{percent}) catch return;
     const layout = gtk.Widget.createPangoLayout(widget, label.ptr);
     defer gobject.Object.unref(asObject(layout));
+
+    // Scale the label down until it clears the ring's inner diameter. The
+    // widget font is sized for body text and "100%" set in it overruns even
+    // the larger ring, so measure the real layout rather than assuming a fit.
+    // Iterated, not solved in one step: pango font sizes are integers, so one
+    // proportional shrink rounds back up often enough to still touch the arc.
+    const inner = @max((radius - lw) * 2.0 * 0.82, 1.0);
     var tw: c_int = 0;
     var th: c_int = 0;
     pango.Layout.getPixelSize(layout, &tw, &th);
+    if (@as(f64, @floatFromInt(tw)) > inner) fit: {
+        const ctx = gtk.Widget.getPangoContext(widget);
+        const desc = pango.FontDescription.copy(pango.Context.getFontDescription(ctx)) orelse break :fit;
+        defer pango.FontDescription.free(desc);
+        var size: f64 = @floatFromInt(pango.FontDescription.getSize(desc));
+        var tries: usize = 0;
+        while (tries < 6 and @as(f64, @floatFromInt(tw)) > inner and size > pango.SCALE) : (tries += 1) {
+            const ratio = @min(inner / @max(@as(f64, @floatFromInt(tw)), 1.0), 0.92);
+            size = @max(@round(size * ratio), @as(f64, pango.SCALE));
+            pango.FontDescription.setSize(desc, @intFromFloat(size));
+            pango.Layout.setFontDescription(layout, desc);
+            pango.Layout.getPixelSize(layout, &tw, &th);
+        }
+    }
+
     cairo.Context.setSourceRgba(cr, fg.f_red, fg.f_green, fg.f_blue, fg.f_alpha);
     cairo.Context.moveTo(cr, cx - @as(f64, @floatFromInt(tw)) / 2.0, cy - @as(f64, @floatFromInt(th)) / 2.0);
     pangocairo.showLayout(cr, layout);
@@ -3550,10 +3586,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             ndSetDataInt(widget, ND_PC_LINE_WIDTH, @max(lw, 1));
             gtk.Widget.queueDraw(widget);
         }
-        if (propBool(props, "showLabel")) |s| {
-            ndSetDataInt(widget, ND_PC_SHOW_LABEL, @intFromBool(s));
-            gtk.Widget.queueDraw(widget);
-        }
+        if (propBool(props, "showLabel")) |s| ndProgressCircleSetShowLabel(widget, s);
     } else if (std.mem.eql(u8, kind, "Skeleton")) {
         // width and height merge in one call (absent keys keep prior state).
         ndSkeletonSetSize(widget, propInt(props, "width"), propInt(props, "height"));

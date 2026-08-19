@@ -8,15 +8,15 @@ where a bar doesn't fit, and `Skeleton` for a shimmering placeholder while conte
 and Spinner (linear-determinate and indeterminate) are already covered in the
 [Widget Reference](/components/widget-reference/).
 
-On macOS, ProgressBar, ProgressCircle, and Spinner are SwiftUI (`ProgressView`, `Gauge` in its
-`.accessoryCircularCapacity` style, and `ProgressView` again), hosted the same way the rest of the
-leaf widgets are. GTK still custom-draws ProgressCircle with Cairo, since Adwaita has no determinate
-ring either.
+On macOS, ProgressBar and Spinner are SwiftUI `ProgressView`s, hosted the same way the rest of the
+leaf widgets are. Both toolkits custom-draw ProgressCircle, because neither ships a determinate ring:
+GTK draws the arc with Cairo, macOS with a trimmed SwiftUI `Circle`.
 
 ## ProgressCircle (`<progresscircle>`)
 
-A determinate ring. GTK custom-draws it (neither toolkit ships one natively there); macOS uses
-SwiftUI's `Gauge` in its `.accessoryCircularCapacity` style, the system's own capacity ring.
+A determinate ring, custom-drawn on both backends since neither toolkit ships one: Cairo on GTK, a
+trimmed SwiftUI `Circle` on macOS. With `showLabel` the ring is drawn larger, and the percentage is
+scaled to sit inside it.
 
 ![A ProgressCircle at a live fraction on macOS (AppKit)](../../../assets/screens/appkit/parity-progresscircle.png)
 
@@ -29,7 +29,7 @@ SwiftUI's `Gauge` in its `.accessoryCircularCapacity` style, the system's own ca
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
 | `fraction` | float | createAndUpdate | `0`–`1`. Default `0`. |
-| `lineWidth` | int | createAndUpdate | Ring thickness in points/px. GTK only: `Gauge`'s ring stroke is system-drawn, so this prop is accepted but ignored on macOS. Default `3`. |
+| `lineWidth` | int | createAndUpdate | Ring thickness in points/px, honoured on both backends. Clamped to a third of the ring's diameter so the stroke can never close the hole. Default `3`. |
 | `showLabel` | bool | createAndUpdate | Renders the percentage as centered text. Default `false`. |
 
 Display-only, no events.

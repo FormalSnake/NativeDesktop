@@ -8,6 +8,11 @@ TextKit 2 `NSTextView` with a ruler gutter on macOS. It renders the `diagnostics
 handed and never analyzes the text itself, the same division `<table>` draws between its rows and
 whatever produced them. A language server belongs in app-side TypeScript, not in the widget.
 
+The macOS editor turns off every system text convenience — continuous spell checking, autocorrect,
+smart quotes and dashes, text replacement, link and data detection. Code is not prose, so the only
+squiggle under an identifier is a diagnostic's, and an autocorrected identifier would silently
+change what compiles.
+
 ![CodeEditor with two diagnostics underlined on macOS (AppKit)](../../../assets/screens/appkit/parity-codeeditor.png)
 
 ![CodeEditor with two diagnostics underlined on GNOME (GTK)](../../../assets/screens/gtk/parity-codeeditor.png)

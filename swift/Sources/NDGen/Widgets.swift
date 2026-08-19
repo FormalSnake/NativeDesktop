@@ -515,10 +515,11 @@ final class NDDialogHandleView: NSView, NDOverlayDismissable {
     var contentWidth = 0
     var contentHeight = 0
     var title = "" {
-        didSet { sheet?.title = title }
+        didSet { layoutContent() }
     }
     let contentContainer = FlippedView()
     private weak var anchor: NSView?
+    private weak var child: NSView?
     private var sheet: NDModalSheetWindow?
     private var pendingOpen = false
 
@@ -545,10 +546,49 @@ final class NDDialogHandleView: NSView, NDOverlayDismissable {
         ndEmitEvent(nodeID, "closed", "{}")
     }
 
-    func setChild(_ child: NSView) { ndOverlaySetChild(contentContainer, child) }
+    func setChild(_ child: NSView) {
+        self.child = child
+        layoutContent()
+    }
 
     func clearChild(_ child: NSView) {
+        if self.child === child { self.child = nil }
         if child.superview === contentContainer { child.removeFromSuperview() }
+        layoutContent()
+    }
+
+    /// The title belongs in the sheet's CONTENT on the Mac, set as a bold
+    /// headline above the app's own controls — NSAlert's layout, and what the
+    /// platform's other arbitrary-content modals look like. The window title
+    /// bar is not it: `.fullSizeContentView` puts the content over the title
+    /// bar, so `window.title` rendered nowhere and the sheet came up untitled.
+    private func layoutContent() {
+        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        guard let child else { return }
+        let inset = ndWindowContentMargin
+        child.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.addSubview(child)
+        var constraints = [
+            child.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: inset),
+            child.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -inset),
+            child.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor, constant: -inset),
+        ]
+        if title.isEmpty {
+            constraints.append(child.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: inset))
+        } else {
+            let headline = NSTextField(labelWithString: title)
+            headline.font = .preferredFont(forTextStyle: .headline, options: [:])
+            headline.alignment = .center
+            headline.translatesAutoresizingMaskIntoConstraints = false
+            contentContainer.addSubview(headline)
+            constraints.append(contentsOf: [
+                headline.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: inset),
+                headline.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -inset),
+                headline.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: inset),
+                child.topAnchor.constraint(equalTo: headline.bottomAnchor, constant: ndStandardSpacing),
+            ])
+        }
+        NSLayoutConstraint.activate(constraints)
     }
 
     private func present() {
@@ -576,8 +616,8 @@ final class NDDialogHandleView: NSView, NDOverlayDismissable {
             styleMask: [.titled, .fullSizeContentView],
             backing: .buffered, defer: true)
         window.handle = self
-        window.title = title
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden  // the title is drawn in the content
         window.isReleasedWhenClosed = false
         window.contentView = contentContainer
         sheet = window
@@ -604,8 +644,11 @@ final class NDDialogHandleView: NSView, NDOverlayDismissable {
 /// Esc dismisses; the app owns `open`, like `<dialog>`.
 final class NDSheetHandleView: NSView, NDOverlayDismissable {
     var nodeID: UInt32 = 0
-    /// Stored, and reported back to the app, but it does not steer AppKit
-    /// geometry: macOS presents every sheet from the title bar. GTK honours it.
+    /// Accepted and inert on this backend. macOS presents every sheet from the
+    /// title bar, so there is no edge to anchor to, and `size` is the extent
+    /// ALONG that edge, which only means something once there is one: forcing
+    /// it as the window height padded every sheet with blank space under its
+    /// content. GTK honours both.
     var edge = "bottom"
     var size = 320
     let contentContainer = FlippedView()
@@ -657,7 +700,7 @@ final class NDSheetHandleView: NSView, NDOverlayDismissable {
         let frame = NSRect(
             origin: .zero,
             size: NSSize(width: max(fitting.width, 360),
-                         height: size > 0 ? CGFloat(size) : max(fitting.height, 140)))
+                         height: max(fitting.height, 120)))
         let window = NDModalSheetWindow(
             contentRect: frame,
             styleMask: [.titled, .fullSizeContentView],
@@ -1003,35 +1046,65 @@ func ndRichTextConnect(_ view: NSView, nodeID: UInt32) {
     ndRichTextInner(view)?.nodeID = nodeID
 }
 
-// ---- ProgressCircle / ProgressBar / Spinner: SwiftUI Gauge/ProgressView ----
+// ---- ProgressCircle / ProgressBar / Spinner: SwiftUI-bodied leaves --------
 
-/// `<progresscircle>`: SwiftUI `Gauge` in its `.accessoryCircularCapacity`
-/// style, the circular capacity ring Apple ships for exactly this shape. The
-/// previous implementation hand-drew an NSBezierPath arc because AppKit
-/// itself has no determinate ring; Gauge is the SwiftUI control that closes
-/// that gap. `lineWidth` has no equivalent on this style (the ring's stroke
-/// is system-drawn) and is accepted but ignored on this backend.
+/// `<progresscircle>`: a trimmed `Circle` stroked over a track ring.
+///
+/// SwiftUI's `Gauge` in `.accessoryCircularCapacity` looks like the right
+/// control and is not: it is a watch-complication style with fixed metrics
+/// that draws at 58x58 whatever frame it is given, so a `.frame(32, 32)`
+/// clipped nothing and neighbouring rings overlapped each other and bled out
+/// of their row. Two shapes bound by their own frame cannot do that, and they
+/// honour `lineWidth`, which that style silently dropped. The GTK peer draws
+/// the identical arc with Cairo for the same reason (neither toolkit ships a
+/// determinate ring).
 final class NDProgressCircleView: NDHostedLeaf {
+    /// The label has to fit INSIDE the ring, so a ring carrying one is drawn
+    /// larger. Same two diameters as the GTK peer.
+    private static let plainDiameter: CGFloat = 28
+    private static let labeledDiameter: CGFloat = 40
+
     private var fraction: Double = 0
+    private var lineWidth: Int = 3
     private var showLabel = false
 
-    func apply(fraction: Double?, showLabel: Bool?) {
+    func apply(fraction: Double?, lineWidth: Int?, showLabel: Bool?) {
         if let fraction { self.fraction = fraction }
+        if let lineWidth { self.lineWidth = lineWidth }
         if let showLabel { self.showLabel = showLabel }
         refreshLeaf()
     }
 
     override func leafContent() -> AnyView {
         let value = min(max(fraction, 0), 1)
+        let diameter = showLabel ? Self.labeledDiameter : Self.plainDiameter
+        // A stroke straddles the path, so half of it falls outside the circle:
+        // inset by that half or the ring's outer edge overflows the frame.
+        let stroke = min(max(CGFloat(lineWidth), 1), diameter / 3)
+        let showLabel = showLabel
         return AnyView(
-            Gauge(value: value, in: 0...1) {
-                EmptyView()
-            } currentValueLabel: {
-                if showLabel { Text("\(Int((value * 100).rounded()))%") }
+            ZStack {
+                Circle()
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: stroke)
+                Circle()
+                    .trim(from: 0, to: value)
+                    .stroke(
+                        Color(nsColor: .controlAccentColor),
+                        style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                    .rotationEffect(.degrees(-90))  // 12 o'clock, clockwise
+                if showLabel {
+                    Text("\(Int((value * 100).rounded()))%")
+                        .font(.system(size: diameter * 0.28, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .padding(.horizontal, stroke)
+                }
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .tint(Color(nsColor: .controlAccentColor))
-            .frame(width: 32, height: 32)
+            .padding(stroke / 2)
+            .frame(width: diameter, height: diameter)
+            .accessibilityHidden(true)
         )
     }
 
@@ -1040,15 +1113,18 @@ final class NDProgressCircleView: NDHostedLeaf {
 
 func makeProgressCircle(_ props: [String: Any]) -> NSView {
     let circle = NDProgressCircleView()
-    circle.apply(fraction: propDouble(props, "fraction") ?? 0, showLabel: propBool(props, "showLabel") ?? false)
+    circle.apply(
+        fraction: propDouble(props, "fraction") ?? 0,
+        lineWidth: propInt(props, "lineWidth") ?? 3,
+        showLabel: propBool(props, "showLabel") ?? false)
     return circle
 }
 
-/// Generated ndApplyProps ProgressCircle arm — merged apply; lineWidth is
-/// accepted but inert (class doc).
+/// Generated ndApplyProps ProgressCircle arm — merged apply.
 func ndProgressCircleApply(_ view: NSView, _ props: [String: Any]) {
     (view as? NDProgressCircleView)?.apply(
         fraction: propDouble(props, "fraction"),
+        lineWidth: propInt(props, "lineWidth"),
         showLabel: propBool(props, "showLabel"))
 }
 
@@ -2107,7 +2183,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let md = propStr(props, "markdown") { ndRichTextSetMarkdown(view, md) }
         if let s = propBool(props, "selectable") { ndRichTextSetSelectable(view, s) }
     } else if kind == "ProgressCircle" {
-        ndProgressCircleApply(view, props)  // fraction/showLabel merged; lineWidth is inert (class doc)
+        ndProgressCircleApply(view, props)  // fraction/lineWidth/showLabel merged into one refresh
         // "lineWidth" handled by ndProgressCircleApply above (merged).
         // "showLabel" handled by ndProgressCircleApply above (merged).
     } else if kind == "Skeleton" {

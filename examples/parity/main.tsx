@@ -1,4 +1,4 @@
-import { render, useState, Spacing, ContentMargin, openExternal } from "@nativedesktop/react";
+import { render, useState, Spacing, ContentMargin, ContentWidth, openExternal } from "@nativedesktop/react";
 import type { SourceTreeNode, TableColumn, TableRow } from "@nativedesktop/react";
 import {
   Accordion,
@@ -126,107 +126,109 @@ function DisplaySection(): React.ReactNode {
 
   return (
     <scrollview testID="display-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="Avatar" description="Text initials, live from the name below." testID="display-avatar-group">
-          <row title="Name" testID="display-avatar-name-row">
-            <textinput text={avatarName} onChanged={(e) => setAvatarName(e.text)} testID="display-avatar-input" />
-          </row>
-          <row title="Sizes" testID="display-avatar-sizes-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <avatar text={avatarName} size={24} testID="display-avatar-24" />
-              <avatar text={avatarName} size={32} testID="display-avatar-32" />
-              <avatar text={avatarName} size={48} testID="display-avatar-48" />
-              <avatar text={avatarName} size={64} testID="display-avatar-64" />
-            </box>
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="Avatar" description="Text initials, live from the name below." testID="display-avatar-group">
+            <row title="Name" testID="display-avatar-name-row">
+              <textinput text={avatarName} onChanged={(e) => setAvatarName(e.text)} testID="display-avatar-input" />
+            </row>
+            <row title="Sizes" testID="display-avatar-sizes-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <avatar text={avatarName} size={24} testID="display-avatar-24" />
+                <avatar text={avatarName} size={32} testID="display-avatar-32" />
+                <avatar text={avatarName} size={48} testID="display-avatar-48" />
+                <avatar text={avatarName} size={64} testID="display-avatar-64" />
+              </box>
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="Badge" description="All five variants, plus a dot indicator." testID="display-badge-group">
-          <row title="Live variant" testID="display-badge-variant-row">
-            <select
-              options={badgeVariants}
-              selectedIndex={badgeVariantIndex}
-              onSelectionChanged={(e) => setBadgeVariantIndex(e.index)}
-              testID="display-badge-select"
-            />
-          </row>
-          <row title="Preview" testID="display-badge-preview-row">
-            <box orientation="horizontal" spacing={Spacing.xs}>
-              <badge label="Live" variant={badgeVariants[badgeVariantIndex]} testID="display-badge-live" />
-              {badgeVariants.map((v) => (
-                <badge key={v} label={v} variant={v} testID={`display-badge-${v}`} />
-              ))}
-              <badge dot variant="accent" testID="display-badge-dot" />
-            </box>
-          </row>
-        </settingsgroup>
-
-        <settingsgroup title="Tag" description="Removable chips backed by real state." testID="display-tag-group">
-          <row title="Add" testID="display-tag-add-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <textinput text={newTagLabel} placeholder="New tag" onChanged={(e) => setNewTagLabel(e.text)} testID="display-tag-input" />
-              <button label="Add" onClick={addTag} testID="display-tag-add-button" />
-            </box>
-          </row>
-          <row title="Tags" testID="display-tag-list-row">
-            <box orientation="horizontal" spacing={Spacing.xs}>
-              {tags.map((t) => (
-                <tag key={t.id} label={t.label} variant={t.variant} removable onRemoved={() => removeTag(t.id)} testID={`display-tag-${t.id}`} />
-              ))}
-              {tags.length === 0 && <label text="No tags" cssClasses={["dimmed"]} testID="display-tag-empty" />}
-            </box>
-          </row>
-        </settingsgroup>
-
-        <settingsgroup title="Kbd" description="Shortcut labels, paired with the command they trigger." testID="display-kbd-group">
-          <row title="Command Palette" testID="display-kbd-palette-row">
-            <kbd keys="⌘K" testID="display-kbd-palette" />
-          </row>
-          <row title="Save" testID="display-kbd-save-row">
-            <kbd keys="⌘S" testID="display-kbd-save" />
-          </row>
-          <row title="Rename" testID="display-kbd-rename-row">
-            <kbd keys="F2" testID="display-kbd-rename" />
-          </row>
-        </settingsgroup>
-
-        <settingsgroup title="Level Indicator" description="Rating, continuous, and discrete styles, each driven by a real control." testID="display-level-group">
-          <row title="Rating" testID="display-rating-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <levelindicator indicatorStyle="rating" min={0} max={5} value={ratingValue} testID="display-rating-indicator" />
-              <button label="-" onClick={() => setRatingValue((v) => Math.max(0, v - 1))} testID="display-rating-minus" />
-              <button label="+" onClick={() => setRatingValue((v) => Math.min(5, v + 1))} testID="display-rating-plus" />
-            </box>
-          </row>
-          <row title="Continuous" testID="display-continuous-row">
-            <box orientation="horizontal" spacing={Spacing.sm} style={{ hexpand: true }}>
-              <levelindicator
-                indicatorStyle="continuous"
-                min={0}
-                max={1}
-                value={continuousValue}
-                style={{ hexpand: true }}
-                testID="display-continuous-indicator"
+          <settingsgroup title="Badge" description="All five variants, plus a dot indicator." testID="display-badge-group">
+            <row title="Live variant" testID="display-badge-variant-row">
+              <select
+                options={badgeVariants}
+                selectedIndex={badgeVariantIndex}
+                onSelectionChanged={(e) => setBadgeVariantIndex(e.index)}
+                testID="display-badge-select"
               />
-              <slider
-                min={0}
-                max={1}
-                step={0.01}
-                value={continuousValue}
-                onValueChanged={(e) => setContinuousValue(e.value)}
-                testID="display-continuous-slider"
-              />
-            </box>
-          </row>
-          <row title="Discrete" testID="display-discrete-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <levelindicator indicatorStyle="discrete" min={0} max={5} value={discreteValue} testID="display-discrete-indicator" />
-              <button label="-" onClick={() => setDiscreteValue((v) => Math.max(0, v - 1))} testID="display-discrete-minus" />
-              <button label="+" onClick={() => setDiscreteValue((v) => Math.min(5, v + 1))} testID="display-discrete-plus" />
-            </box>
-          </row>
-        </settingsgroup>
-      </box>
+            </row>
+            <row title="Preview" testID="display-badge-preview-row">
+              <box orientation="horizontal" spacing={Spacing.xs}>
+                <badge label="Live" variant={badgeVariants[badgeVariantIndex]} testID="display-badge-live" />
+                {badgeVariants.map((v) => (
+                  <badge key={v} label={v} variant={v} testID={`display-badge-${v}`} />
+                ))}
+                <badge dot variant="accent" testID="display-badge-dot" />
+              </box>
+            </row>
+          </settingsgroup>
+
+          <settingsgroup title="Tag" description="Removable chips backed by real state." testID="display-tag-group">
+            <row title="Add" testID="display-tag-add-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <textinput text={newTagLabel} placeholder="New tag" onChanged={(e) => setNewTagLabel(e.text)} testID="display-tag-input" />
+                <button label="Add" onClick={addTag} testID="display-tag-add-button" />
+              </box>
+            </row>
+            <row title="Tags" testID="display-tag-list-row">
+              <box orientation="horizontal" spacing={Spacing.xs}>
+                {tags.map((t) => (
+                  <tag key={t.id} label={t.label} variant={t.variant} removable onRemoved={() => removeTag(t.id)} testID={`display-tag-${t.id}`} />
+                ))}
+                {tags.length === 0 && <label text="No tags" cssClasses={["dimmed"]} testID="display-tag-empty" />}
+              </box>
+            </row>
+          </settingsgroup>
+
+          <settingsgroup title="Kbd" description="Shortcut labels, paired with the command they trigger." testID="display-kbd-group">
+            <row title="Command Palette" testID="display-kbd-palette-row">
+              <kbd keys="⌘K" testID="display-kbd-palette" />
+            </row>
+            <row title="Save" testID="display-kbd-save-row">
+              <kbd keys="⌘S" testID="display-kbd-save" />
+            </row>
+            <row title="Rename" testID="display-kbd-rename-row">
+              <kbd keys="F2" testID="display-kbd-rename" />
+            </row>
+          </settingsgroup>
+
+          <settingsgroup title="Level Indicator" description="Rating, continuous, and discrete styles, each driven by a real control." testID="display-level-group">
+            <row title="Rating" testID="display-rating-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <levelindicator indicatorStyle="rating" min={0} max={5} value={ratingValue} testID="display-rating-indicator" />
+                <button label="-" onClick={() => setRatingValue((v) => Math.max(0, v - 1))} testID="display-rating-minus" />
+                <button label="+" onClick={() => setRatingValue((v) => Math.min(5, v + 1))} testID="display-rating-plus" />
+              </box>
+            </row>
+            <row title="Continuous" testID="display-continuous-row">
+              <box orientation="horizontal" spacing={Spacing.sm} style={{ hexpand: true }}>
+                <levelindicator
+                  indicatorStyle="continuous"
+                  min={0}
+                  max={1}
+                  value={continuousValue}
+                  style={{ hexpand: true }}
+                  testID="display-continuous-indicator"
+                />
+                <slider
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={continuousValue}
+                  onValueChanged={(e) => setContinuousValue(e.value)}
+                  testID="display-continuous-slider"
+                />
+              </box>
+            </row>
+            <row title="Discrete" testID="display-discrete-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <levelindicator indicatorStyle="discrete" min={0} max={5} value={discreteValue} testID="display-discrete-indicator" />
+                <button label="-" onClick={() => setDiscreteValue((v) => Math.max(0, v - 1))} testID="display-discrete-minus" />
+                <button label="+" onClick={() => setDiscreteValue((v) => Math.min(5, v + 1))} testID="display-discrete-plus" />
+              </box>
+            </row>
+          </settingsgroup>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -244,59 +246,61 @@ function InputSection(): React.ReactNode {
 
   return (
     <scrollview testID="input-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup
-          title="Select vs ComboBox"
-          description="Same option list, two pickers: Select only lets you choose, ComboBox also accepts free text."
-          testID="input-group"
-        >
-          <row title="Select" subtitle="Fixed list, no typing" testID="input-select-row">
-            <select options={fruitOptions} selectedIndex={selectIndex} onSelectionChanged={(e) => setSelectIndex(e.index)} testID="input-select" />
-          </row>
-          <row title="ComboBox" subtitle="Searchable and editable" testID="input-combobox-row">
-            <combobox
-              options={fruitOptions}
-              selectedIndex={comboIndex}
-              text={comboText}
-              placeholder="Type or pick a fruit"
-              onSelectionChanged={(e) => {
-                setComboIndex(e.index);
-                setComboText(fruitOptions[e.index] ?? comboText);
-              }}
-              onChanged={(e) => setComboText(e.text)}
-              testID="input-combobox"
-            />
-          </row>
-          <row title="Select value" testID="input-select-readout-row">
-            <label text={fruitOptions[selectIndex] ?? "(none)"} cssClasses={["dimmed"]} testID="input-select-readout" />
-          </row>
-          <row title="ComboBox value" testID="input-combobox-readout-row">
-            <label text={comboText || "(empty)"} cssClasses={["dimmed"]} testID="input-combobox-readout" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup
+            title="Select vs ComboBox"
+            description="Same option list, two pickers: Select only lets you choose, ComboBox also accepts free text."
+            testID="input-group"
+          >
+            <row title="Select" subtitle="Fixed list, no typing" testID="input-select-row">
+              <select options={fruitOptions} selectedIndex={selectIndex} onSelectionChanged={(e) => setSelectIndex(e.index)} testID="input-select" />
+            </row>
+            <row title="ComboBox" subtitle="Searchable and editable" testID="input-combobox-row">
+              <combobox
+                options={fruitOptions}
+                selectedIndex={comboIndex}
+                text={comboText}
+                placeholder="Type or pick a fruit"
+                onSelectionChanged={(e) => {
+                  setComboIndex(e.index);
+                  setComboText(fruitOptions[e.index] ?? comboText);
+                }}
+                onChanged={(e) => setComboText(e.text)}
+                testID="input-combobox"
+              />
+            </row>
+            <row title="Select value" testID="input-select-readout-row">
+              <label text={fruitOptions[selectIndex] ?? "(none)"} cssClasses={["dimmed"]} testID="input-select-readout" />
+            </row>
+            <row title="ComboBox value" testID="input-combobox-readout-row">
+              <label text={comboText || "(empty)"} cssClasses={["dimmed"]} testID="input-combobox-readout" />
+            </row>
+          </settingsgroup>
 
-        <settingsgroup
-          title="Enabled"
-          description="The universal `enabled` prop, off on every control type at once."
-          testID="input-enabled-group"
-        >
-          <row title="Controls enabled" testID="input-enabled-toggle-row">
-            <switch checked={controlsEnabled} onToggled={(e) => setControlsEnabled(e.checked)} testID="input-enabled-toggle" />
-          </row>
-          <row title="Button" testID="input-enabled-button-row">
-            <button label={`Clicked ${enabledClickCount}`} enabled={controlsEnabled} onClick={() => setEnabledClickCount((n) => n + 1)} testID="input-enabled-button" />
-          </row>
-          <row title="TextInput" testID="input-enabled-textinput-row">
-            <textinput placeholder="Type here" enabled={controlsEnabled} testID="input-enabled-textinput" />
-          </row>
-          <row title="Select" testID="input-enabled-select-row">
-            <select options={fruitOptions} selectedIndex={0} enabled={controlsEnabled} testID="input-enabled-select" />
-          </row>
-          <row title="Slider" testID="input-enabled-slider-row">
-            <slider min={0} max={1} value={0.5} enabled={controlsEnabled} style={{ hexpand: true }} testID="input-enabled-slider" />
-          </row>
-        </settingsgroup>
-      </box>
+          <settingsgroup
+            title="Enabled"
+            description="The universal `enabled` prop, off on every control type at once."
+            testID="input-enabled-group"
+          >
+            <row title="Controls enabled" testID="input-enabled-toggle-row">
+              <switch checked={controlsEnabled} onToggled={(e) => setControlsEnabled(e.checked)} testID="input-enabled-toggle" />
+            </row>
+            <row title="Button" testID="input-enabled-button-row">
+              <button label={`Clicked ${enabledClickCount}`} enabled={controlsEnabled} onClick={() => setEnabledClickCount((n) => n + 1)} testID="input-enabled-button" />
+            </row>
+            <row title="TextInput" testID="input-enabled-textinput-row">
+              <textinput placeholder="Type here" enabled={controlsEnabled} testID="input-enabled-textinput" />
+            </row>
+            <row title="Select" testID="input-enabled-select-row">
+              <select options={fruitOptions} selectedIndex={0} enabled={controlsEnabled} testID="input-enabled-select" />
+            </row>
+            <row title="Slider" testID="input-enabled-slider-row">
+              <slider min={0} max={1} value={0.5} enabled={controlsEnabled} style={{ hexpand: true }} testID="input-enabled-slider" />
+            </row>
+          </settingsgroup>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -319,37 +323,39 @@ function NavigationSection(): React.ReactNode {
 
   return (
     <scrollview testID="navigation-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="Breadcrumb" description="Click a segment to jump the path." testID="nav-breadcrumb-group">
-          <row title="Path" testID="nav-breadcrumb-row">
-            <breadcrumb items={breadcrumbPath} selectedIndex={breadcrumbIndex} onItemActivated={(e) => setBreadcrumbIndex(e.index)} testID="nav-breadcrumb" />
-          </row>
-          <row title="Current" testID="nav-breadcrumb-readout-row">
-            <label text={breadcrumbPath[breadcrumbIndex] ?? ""} cssClasses={["dimmed"]} testID="nav-breadcrumb-readout" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="Breadcrumb" description="Click a segment to jump the path." testID="nav-breadcrumb-group">
+            <row title="Path" testID="nav-breadcrumb-row">
+              <breadcrumb items={breadcrumbPath} selectedIndex={breadcrumbIndex} onItemActivated={(e) => setBreadcrumbIndex(e.index)} testID="nav-breadcrumb" />
+            </row>
+            <row title="Current" testID="nav-breadcrumb-readout-row">
+              <label text={breadcrumbPath[breadcrumbIndex] ?? ""} cssClasses={["dimmed"]} testID="nav-breadcrumb-readout" />
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="Pagination" description="12 pages, one sibling around the current page." testID="nav-pagination-group">
-          <row title="Page" testID="nav-pagination-row">
-            <Pagination page={page} pageCount={12} onPageChange={setPage} testID="nav-pagination" />
-          </row>
-          <row title="Current" testID="nav-pagination-readout-row">
-            <label text={`Page ${page} of 12`} cssClasses={["dimmed"]} testID="nav-pagination-readout" />
-          </row>
-        </settingsgroup>
+          <settingsgroup title="Pagination" description="12 pages, one sibling around the current page." testID="nav-pagination-group">
+            <row title="Page" testID="nav-pagination-row">
+              <Pagination page={page} pageCount={12} onPageChange={setPage} testID="nav-pagination" />
+            </row>
+            <row title="Current" testID="nav-pagination-readout-row">
+              <label text={`Page ${page} of 12`} cssClasses={["dimmed"]} testID="nav-pagination-readout" />
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="Stepper" description="Click a step, or move with the buttons below." testID="nav-stepper-group">
-          <row title="Steps" testID="nav-stepper-row">
-            <Stepper steps={stepperSteps} activeIndex={stepIndex} onStepClick={setStepIndex} testID="nav-stepper" />
-          </row>
-          <row title="Controls" testID="nav-stepper-controls-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <button label="Back" onClick={() => setStepIndex((i) => Math.max(0, i - 1))} testID="nav-stepper-back" />
-              <button label="Next" onClick={() => setStepIndex((i) => Math.min(stepperSteps.length - 1, i + 1))} testID="nav-stepper-next" />
-            </box>
-          </row>
-        </settingsgroup>
-      </box>
+          <settingsgroup title="Stepper" description="Click a step, or move with the buttons below." testID="nav-stepper-group">
+            <row title="Steps" testID="nav-stepper-row">
+              <Stepper steps={stepperSteps} activeIndex={stepIndex} onStepClick={setStepIndex} testID="nav-stepper" />
+            </row>
+            <row title="Controls" testID="nav-stepper-controls-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <button label="Back" onClick={() => setStepIndex((i) => Math.max(0, i - 1))} testID="nav-stepper-back" />
+                <button label="Next" onClick={() => setStepIndex((i) => Math.min(stepperSteps.length - 1, i + 1))} testID="nav-stepper-next" />
+              </box>
+            </row>
+          </settingsgroup>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -407,76 +413,78 @@ function CompositionSection(): React.ReactNode {
 
   return (
     <scrollview testID="composition-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="Accordion" testID="composition-accordion-group">
-          <Accordion
-            items={accordionSources.map((s) => ({
-              id: s.id,
-              label: s.label,
-              content: <label text={s.body} cssClasses={["dimmed"]} style={{ padding: Spacing.sm }} />,
-            }))}
-            expandedIds={expandedIds}
-            onExpandedChange={setExpandedIds}
-            allowMultiple
-            testID="composition-accordion"
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="Accordion" testID="composition-accordion-group">
+            <Accordion
+              items={accordionSources.map((s) => ({
+                id: s.id,
+                label: s.label,
+                content: <label text={s.body} cssClasses={["dimmed"]} style={{ padding: Spacing.sm }} />,
+              }))}
+              expandedIds={expandedIds}
+              onExpandedChange={setExpandedIds}
+              allowMultiple
+              testID="composition-accordion"
+            />
+          </settingsgroup>
+
+          <DescriptionList title="Build Info" items={buildInfo} testID="composition-description-list" />
+
+          <settingsgroup title="SearchableList" testID="composition-searchable-group">
+            <SearchableList
+              items={searchableItems}
+              onActivate={(item) => setLastActivated(item.label)}
+              placeholder="Filter components"
+              testID="composition-searchable"
+            />
+            <row title="Last activated" testID="composition-searchable-readout-row">
+              <label text={lastActivated} cssClasses={["dimmed"]} testID="composition-searchable-readout" />
+            </row>
+          </settingsgroup>
+
+          <Form title="Sign up" description="Validated inline, native settings-row chrome." testID="composition-form">
+            <FormField
+              label="Email"
+              error={emailError}
+              hint={emailError ? undefined : "We'll only use this for release notes"}
+              testID="composition-form-email-field"
+            >
+              <textinput text={email} placeholder="you@example.com" onChanged={(e) => setEmail(e.text)} testID="composition-form-email-input" />
+            </FormField>
+          </Form>
+
+          <settingsgroup title="OtpInput" testID="composition-otp-group">
+            <row title="Verification code" testID="composition-otp-row">
+              <OtpInput length={6} value={otp} onChange={setOtp} onComplete={(v) => setOtpStatus(`Code complete: ${v}`)} testID="composition-otp" />
+            </row>
+            <row title="Status" testID="composition-otp-status-row">
+              <label text={otpStatus} cssClasses={["dimmed"]} testID="composition-otp-readout" />
+            </row>
+          </settingsgroup>
+
+          <settingsgroup title="ButtonGroup" testID="composition-buttongroup-group">
+            <row title="Range" testID="composition-buttongroup-row">
+              <ButtonGroup items={rangeItems} selectedId={range} onPress={setRange} testID="composition-buttongroup" />
+            </row>
+          </settingsgroup>
+
+          <settingsgroup title="HoverCard" testID="composition-hovercard-group">
+            <row title="Hover the button" testID="composition-hovercard-row">
+              <HoverCard testID="composition-hovercard" content={<label text="Extra detail shown on hover." style={{ padding: Spacing.sm }} />}>
+                <button label="Hover for info" testID="composition-hovercard-anchor" />
+              </HoverCard>
+            </row>
+          </settingsgroup>
+
+          <StatusBar
+            testID="composition-statusbar"
+            left={<label text={`${expandedIds.length} accordion open`} cssClasses={["caption"]} />}
+            center={<label text={`Range: ${range}`} cssClasses={["caption"]} />}
+            right={<label text={otp.length > 0 ? `OTP ${otp.length}/6` : "OTP empty"} cssClasses={["caption"]} />}
           />
-        </settingsgroup>
-
-        <DescriptionList title="Build Info" items={buildInfo} testID="composition-description-list" />
-
-        <settingsgroup title="SearchableList" testID="composition-searchable-group">
-          <SearchableList
-            items={searchableItems}
-            onActivate={(item) => setLastActivated(item.label)}
-            placeholder="Filter components"
-            testID="composition-searchable"
-          />
-          <row title="Last activated" testID="composition-searchable-readout-row">
-            <label text={lastActivated} cssClasses={["dimmed"]} testID="composition-searchable-readout" />
-          </row>
-        </settingsgroup>
-
-        <Form title="Sign up" description="Validated inline, native settings-row chrome." testID="composition-form">
-          <FormField
-            label="Email"
-            error={emailError}
-            hint={emailError ? undefined : "We'll only use this for release notes"}
-            testID="composition-form-email-field"
-          >
-            <textinput text={email} placeholder="you@example.com" onChanged={(e) => setEmail(e.text)} testID="composition-form-email-input" />
-          </FormField>
-        </Form>
-
-        <settingsgroup title="OtpInput" testID="composition-otp-group">
-          <row title="Verification code" testID="composition-otp-row">
-            <OtpInput length={6} value={otp} onChange={setOtp} onComplete={(v) => setOtpStatus(`Code complete: ${v}`)} testID="composition-otp" />
-          </row>
-          <row title="Status" testID="composition-otp-status-row">
-            <label text={otpStatus} cssClasses={["dimmed"]} testID="composition-otp-readout" />
-          </row>
-        </settingsgroup>
-
-        <settingsgroup title="ButtonGroup" testID="composition-buttongroup-group">
-          <row title="Range" testID="composition-buttongroup-row">
-            <ButtonGroup items={rangeItems} selectedId={range} onPress={setRange} testID="composition-buttongroup" />
-          </row>
-        </settingsgroup>
-
-        <settingsgroup title="HoverCard" testID="composition-hovercard-group">
-          <row title="Hover the button" testID="composition-hovercard-row">
-            <HoverCard testID="composition-hovercard" content={<label text="Extra detail shown on hover." style={{ padding: Spacing.sm }} />}>
-              <button label="Hover for info" testID="composition-hovercard-anchor" />
-            </HoverCard>
-          </row>
-        </settingsgroup>
-
-        <StatusBar
-          testID="composition-statusbar"
-          left={<label text={`${expandedIds.length} accordion open`} cssClasses={["caption"]} />}
-          center={<label text={`Range: ${range}`} cssClasses={["caption"]} />}
-          right={<label text={otp.length > 0 ? `OTP ${otp.length}/6` : "OTP empty"} cssClasses={["caption"]} />}
-        />
-      </box>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -565,60 +573,62 @@ function OverlaysSection(): React.ReactNode {
 
   return (
     <scrollview testID="overlays-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="Dialog" description="Arbitrary content in a modal, closed from inside its own form." testID="overlays-dialog-group">
-          <row title="Open" testID="overlays-dialog-open-row">
-            <button label="Edit Profile…" onClick={() => setDialogOpen(true)} testID="overlays-dialog-open-button" />
-          </row>
-          <row title="Last action" testID="overlays-dialog-readout-row">
-            <label text={lastDialogAction} cssClasses={["dimmed"]} testID="overlays-dialog-readout" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="Dialog" description="Arbitrary content in a modal, closed from inside its own form." testID="overlays-dialog-group">
+            <row title="Open" testID="overlays-dialog-open-row">
+              <button label="Edit Profile…" onClick={() => setDialogOpen(true)} testID="overlays-dialog-open-button" />
+            </row>
+            <row title="Last action" testID="overlays-dialog-readout-row">
+              <label text={lastDialogAction} cssClasses={["dimmed"]} testID="overlays-dialog-readout" />
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="Sheet" description="One instance whose edge switches per button, sliding in from each side." testID="overlays-sheet-group">
-          <row title="Open from" testID="overlays-sheet-row">
-            <box orientation="horizontal" spacing={Spacing.sm} cssClasses={["linked"]}>
-              {sheetEdges.map((edge) => (
-                <button key={edge} label={edge} onClick={() => openSheet(edge)} testID={`overlays-sheet-open-${edge}`} />
-              ))}
+          <settingsgroup title="Sheet" description="One instance whose edge switches per button, sliding in from each side." testID="overlays-sheet-group">
+            <row title="Open from" testID="overlays-sheet-row">
+              <box orientation="horizontal" spacing={Spacing.sm} cssClasses={["linked"]}>
+                {sheetEdges.map((edge) => (
+                  <button key={edge} label={edge} onClick={() => openSheet(edge)} testID={`overlays-sheet-open-${edge}`} />
+                ))}
+              </box>
+            </row>
+            <row title="State" testID="overlays-sheet-state-row">
+              <label text={sheetOpen ? `Open from ${sheetEdge}` : "Closed"} cssClasses={["dimmed"]} testID="overlays-sheet-readout" />
+            </row>
+          </settingsgroup>
+
+          <dialog
+            open={dialogOpen}
+            title="Edit Profile"
+            contentWidth={380}
+            onClosed={() => setDialogOpen(false)}
+            testID="overlays-dialog"
+          >
+            <box orientation="vertical" spacing={Spacing.md}>
+              <settingsgroup>
+                <row title="Name" testID="overlays-dialog-name-row">
+                  <textinput text={formName} onChanged={(e) => setFormName(e.text)} testID="overlays-dialog-name-input" />
+                </row>
+                <row title="Email" testID="overlays-dialog-email-row">
+                  <textinput text={formEmail} onChanged={(e) => setFormEmail(e.text)} testID="overlays-dialog-email-input" />
+                </row>
+              </settingsgroup>
+              <box orientation="horizontal" spacing={Spacing.sm} style={{ halign: "end" }}>
+                <button label="Cancel" onClick={cancelDialog} testID="overlays-dialog-cancel" />
+                <button label="Save" prominent onClick={saveDialog} testID="overlays-dialog-save" />
+              </box>
             </box>
-          </row>
-          <row title="State" testID="overlays-sheet-state-row">
-            <label text={sheetOpen ? `Open from ${sheetEdge}` : "Closed"} cssClasses={["dimmed"]} testID="overlays-sheet-readout" />
-          </row>
-        </settingsgroup>
+          </dialog>
 
-        <dialog
-          open={dialogOpen}
-          title="Edit Profile"
-          contentWidth={380}
-          onClosed={() => setDialogOpen(false)}
-          testID="overlays-dialog"
-        >
-          <box orientation="vertical" spacing={Spacing.md}>
-            <settingsgroup>
-              <row title="Name" testID="overlays-dialog-name-row">
-                <textinput text={formName} onChanged={(e) => setFormName(e.text)} testID="overlays-dialog-name-input" />
-              </row>
-              <row title="Email" testID="overlays-dialog-email-row">
-                <textinput text={formEmail} onChanged={(e) => setFormEmail(e.text)} testID="overlays-dialog-email-input" />
-              </row>
-            </settingsgroup>
-            <box orientation="horizontal" spacing={Spacing.sm} style={{ halign: "end" }}>
-              <button label="Cancel" onClick={cancelDialog} testID="overlays-dialog-cancel" />
-              <button label="Save" prominent onClick={saveDialog} testID="overlays-dialog-save" />
+          <sheet open={sheetOpen} edge={sheetEdge} size={280} onClosed={() => setSheetOpen(false)} testID="overlays-sheet">
+            <box orientation="vertical" spacing={Spacing.sm}>
+              <label text={`Sheet from ${sheetEdge}`} cssClasses={["heading"]} testID="overlays-sheet-title" />
+              <label text="Slides in from the edge you picked." cssClasses={["dimmed"]} />
+              <button label="Close" onClick={() => setSheetOpen(false)} testID="overlays-sheet-close" />
             </box>
-          </box>
-        </dialog>
-
-        <sheet open={sheetOpen} edge={sheetEdge} size={280} onClosed={() => setSheetOpen(false)} testID="overlays-sheet">
-          <box orientation="vertical" spacing={Spacing.sm}>
-            <label text={`Sheet from ${sheetEdge}`} cssClasses={["heading"]} testID="overlays-sheet-title" />
-            <label text="Slides in from the edge you picked." cssClasses={["dimmed"]} />
-            <button label="Close" onClick={() => setSheetOpen(false)} testID="overlays-sheet-close" />
-          </box>
-        </sheet>
-      </box>
+          </sheet>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -660,23 +670,25 @@ function RichTextSection(): React.ReactNode {
 
   return (
     <scrollview testID="richtext-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
-        <settingsgroup title="RichText" description="Every supported Markdown construct, plus the notable ones that aren't." testID="richtext-group">
-          <row title="Selectable" testID="richtext-selectable-row">
-            <switch checked={selectable} onToggled={(e) => setSelectable(e.checked)} testID="richtext-selectable-toggle" />
-          </row>
-        </settingsgroup>
-        <richtext
-          markdown={richTextMarkdown}
-          selectable={selectable}
-          onLinkActivated={(e) => {
-            setLastLink(e.text);
-            void openExternal(e.text);
-          }}
-          testID="richtext-view"
-        />
-        <label text={`Last link activated: ${lastLink}`} cssClasses={["dimmed", "caption"]} testID="richtext-link-readout" />
-      </box>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
+          <settingsgroup title="RichText" description="Every supported Markdown construct, plus the notable ones that aren't." testID="richtext-group">
+            <row title="Selectable" testID="richtext-selectable-row">
+              <switch checked={selectable} onToggled={(e) => setSelectable(e.checked)} testID="richtext-selectable-toggle" />
+            </row>
+          </settingsgroup>
+          <richtext
+            markdown={richTextMarkdown}
+            selectable={selectable}
+            onLinkActivated={(e) => {
+              setLastLink(e.text);
+              void openExternal(e.text);
+            }}
+            testID="richtext-view"
+          />
+          <label text={`Last link activated: ${lastLink}`} cssClasses={["dimmed", "caption"]} testID="richtext-link-readout" />
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -954,48 +966,50 @@ function ProgressSection(): React.ReactNode {
 
   return (
     <scrollview testID="progress-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="Live fraction" description="One slider drives a ProgressBar and a ProgressCircle together." testID="progress-live-group">
-          <row title="Fraction" testID="progress-live-row">
-            <box orientation="horizontal" spacing={Spacing.sm} style={{ hexpand: true }}>
-              <slider min={0} max={1} step={0.01} value={fraction} onValueChanged={(e) => setFraction(e.value)} style={{ hexpand: true }} testID="progress-live-slider" />
-              <label text={`${Math.round(fraction * 100)}%`} cssClasses={["dimmed", "numeric"]} testID="progress-live-readout" />
-            </box>
-          </row>
-          <row title="ProgressBar" testID="progress-live-bar-row">
-            <progressbar fraction={fraction} style={{ hexpand: true }} testID="progress-live-bar" />
-          </row>
-          <row title="ProgressCircle" testID="progress-live-circle-row">
-            <progresscircle fraction={fraction} showLabel testID="progress-live-circle" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="Live fraction" description="One slider drives a ProgressBar and a ProgressCircle together." testID="progress-live-group">
+            <row title="Fraction" testID="progress-live-row">
+              <box orientation="horizontal" spacing={Spacing.sm} style={{ hexpand: true }}>
+                <slider min={0} max={1} step={0.01} value={fraction} onValueChanged={(e) => setFraction(e.value)} style={{ hexpand: true }} testID="progress-live-slider" />
+                <label text={`${Math.round(fraction * 100)}%`} cssClasses={["dimmed", "numeric"]} testID="progress-live-readout" />
+              </box>
+            </row>
+            <row title="ProgressBar" testID="progress-live-bar-row">
+              <progressbar fraction={fraction} style={{ hexpand: true }} testID="progress-live-bar" />
+            </row>
+            <row title="ProgressCircle" testID="progress-live-circle-row">
+              <progresscircle fraction={fraction} showLabel testID="progress-live-circle" />
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="ProgressCircle" description="Fixed fractions, with and without the label." testID="progress-circle-group">
-          <row title="Label on" testID="progress-circle-labeled-row">
-            <box orientation="horizontal" spacing={Spacing.md}>
-              {progressFractions.map((f) => (
-                <progresscircle key={f} fraction={f} showLabel testID={`progress-circle-labeled-${Math.round(f * 100)}`} />
-              ))}
-            </box>
-          </row>
-          <row title="Label off" testID="progress-circle-unlabeled-row">
-            <box orientation="horizontal" spacing={Spacing.md}>
-              {progressFractions.map((f) => (
-                <progresscircle key={f} fraction={f} testID={`progress-circle-unlabeled-${Math.round(f * 100)}`} />
-              ))}
-            </box>
-          </row>
-        </settingsgroup>
+          <settingsgroup title="ProgressCircle" description="Fixed fractions, with and without the label." testID="progress-circle-group">
+            <row title="Label on" testID="progress-circle-labeled-row">
+              <box orientation="horizontal" spacing={Spacing.md}>
+                {progressFractions.map((f) => (
+                  <progresscircle key={f} fraction={f} showLabel testID={`progress-circle-labeled-${Math.round(f * 100)}`} />
+                ))}
+              </box>
+            </row>
+            <row title="Label off" testID="progress-circle-unlabeled-row">
+              <box orientation="horizontal" spacing={Spacing.md}>
+                {progressFractions.map((f) => (
+                  <progresscircle key={f} fraction={f} testID={`progress-circle-unlabeled-${Math.round(f * 100)}`} />
+                ))}
+              </box>
+            </row>
+          </settingsgroup>
 
-        <settingsgroup title="Spinner" description="Indeterminate activity, toggled on and off." testID="progress-spinner-group">
-          <row title="Spinning" testID="progress-spinner-row">
-            <box orientation="horizontal" spacing={Spacing.sm}>
-              <spinner spinning={spinning} testID="progress-spinner" />
-              <switch checked={spinning} onToggled={(e) => setSpinning(e.checked)} testID="progress-spinner-toggle" />
-            </box>
-          </row>
-        </settingsgroup>
-      </box>
+          <settingsgroup title="Spinner" description="Indeterminate activity, toggled on and off." testID="progress-spinner-group">
+            <row title="Spinning" testID="progress-spinner-row">
+              <box orientation="horizontal" spacing={Spacing.sm}>
+                <spinner spinning={spinning} testID="progress-spinner" />
+                <switch checked={spinning} onToggled={(e) => setSpinning(e.checked)} testID="progress-spinner-toggle" />
+              </box>
+            </row>
+          </settingsgroup>
+        </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -1019,40 +1033,42 @@ function LoadingSection(): React.ReactNode {
 
   return (
     <scrollview testID="loading-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" style={{ padding: ContentMargin }}>
-        <settingsgroup title="List placeholder" description="Skeletons respect the OS reduce-motion setting." testID="loading-group">
-          <row title="Loaded" testID="loading-toggle-row">
-            <switch checked={loaded} onToggled={(e) => setLoaded(e.checked)} testID="loading-toggle" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" style={{ padding: ContentMargin }}>
+          <settingsgroup title="List placeholder" description="Skeletons respect the OS reduce-motion setting." testID="loading-group">
+            <row title="Loaded" testID="loading-toggle-row">
+              <switch checked={loaded} onToggled={(e) => setLoaded(e.checked)} testID="loading-toggle" />
+            </row>
+          </settingsgroup>
 
-        <box orientation="vertical" testID="loading-list">
-          {loadingRows.map((r, i) => (
-            <box key={r.id} orientation="vertical" testID={`loading-row-${r.id}`}>
-              <box orientation="horizontal" spacing={Spacing.md} style={{ padding: Spacing.sm }}>
-                {loaded ? (
-                  <avatar text={r.name} size={40} testID={`loading-row-${r.id}-avatar`} />
-                ) : (
-                  <skeleton width={40} height={40} radius={20} testID={`loading-row-${r.id}-avatar-skeleton`} />
-                )}
-                <box orientation="vertical" spacing={Spacing.xs} style={{ hexpand: true, valign: "center" }}>
+          <box orientation="vertical" testID="loading-list">
+            {loadingRows.map((r, i) => (
+              <box key={r.id} orientation="vertical" testID={`loading-row-${r.id}`}>
+                <box orientation="horizontal" spacing={Spacing.md} style={{ padding: Spacing.sm }}>
                   {loaded ? (
-                    <label text={r.name} cssClasses={["heading"]} testID={`loading-row-${r.id}-name`} />
+                    <avatar text={r.name} size={40} testID={`loading-row-${r.id}-avatar`} />
                   ) : (
-                    <skeleton width={140} height={14} testID={`loading-row-${r.id}-name-skeleton`} />
+                    <skeleton width={40} height={40} radius={20} testID={`loading-row-${r.id}-avatar-skeleton`} />
                   )}
-                  {loaded ? (
-                    <label text={r.detail} cssClasses={["dimmed", "caption"]} testID={`loading-row-${r.id}-detail`} />
-                  ) : (
-                    <skeleton width={90} height={10} testID={`loading-row-${r.id}-detail-skeleton`} />
-                  )}
+                  <box orientation="vertical" spacing={Spacing.xs} style={{ hexpand: true, valign: "center" }}>
+                    {loaded ? (
+                      <label text={r.name} cssClasses={["heading"]} testID={`loading-row-${r.id}-name`} />
+                    ) : (
+                      <skeleton width={140} height={14} testID={`loading-row-${r.id}-name-skeleton`} />
+                    )}
+                    {loaded ? (
+                      <label text={r.detail} cssClasses={["dimmed", "caption"]} testID={`loading-row-${r.id}-detail`} />
+                    ) : (
+                      <skeleton width={90} height={10} testID={`loading-row-${r.id}-detail-skeleton`} />
+                    )}
+                  </box>
                 </box>
+                {i < loadingRows.length - 1 && <separator orientation="horizontal" />}
               </box>
-              {i < loadingRows.length - 1 && <separator orientation="horizontal" />}
-            </box>
-          ))}
+            ))}
+          </box>
         </box>
-      </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -1222,70 +1238,72 @@ function DragDropSection(): React.ReactNode {
 
   return (
     <scrollview testID="dragdrop-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
-        <settingsgroup
-          title="Drag and drop"
-          description="draggable and dropTarget are universal props on every widget. Drag a card between columns."
-          testID="dragdrop-group"
-        >
-          <row title="Hovered column" testID="dragdrop-hover-row">
-            <label text={hoveredColumn ? hoveredColumn.title : "(none)"} cssClasses={["dimmed"]} testID="dragdrop-hover-readout" />
-          </row>
-          <row title="dragOver x, y" subtitle="Target widget's own coordinate space, top-left origin" testID="dragdrop-point-row">
-            <label
-              text={dragPoint ? `x=${Math.round(dragPoint.x)}, y=${Math.round(dragPoint.y)}` : "(not dragging)"}
-              cssClasses={["dimmed", "numeric"]}
-              testID="dragdrop-point-readout"
-            />
-          </row>
-          <row title="Last dropped" testID="dragdrop-last-row">
-            <label text={lastDropped} cssClasses={["dimmed"]} testID="dragdrop-last-readout" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
+          <settingsgroup
+            title="Drag and drop"
+            description="draggable and dropTarget are universal props on every widget. Drag a card between columns."
+            testID="dragdrop-group"
+          >
+            <row title="Hovered column" testID="dragdrop-hover-row">
+              <label text={hoveredColumn ? hoveredColumn.title : "(none)"} cssClasses={["dimmed"]} testID="dragdrop-hover-readout" />
+            </row>
+            <row title="dragOver x, y" subtitle="Target widget's own coordinate space, top-left origin" testID="dragdrop-point-row">
+              <label
+                text={dragPoint ? `x=${Math.round(dragPoint.x)}, y=${Math.round(dragPoint.y)}` : "(not dragging)"}
+                cssClasses={["dimmed", "numeric"]}
+                testID="dragdrop-point-readout"
+              />
+            </row>
+            <row title="Last dropped" testID="dragdrop-last-row">
+              <label text={lastDropped} cssClasses={["dimmed"]} testID="dragdrop-last-readout" />
+            </row>
+          </settingsgroup>
 
-        <box orientation="horizontal" spacing={Spacing.md} style={{ vexpand: true }} testID="dragdrop-board">
-          {kanbanColumns.map((column) => {
-            const columnCards = cards.filter((c) => c.columnId === column.id);
-            const hovered = dragPoint?.columnId === column.id;
-            return (
-              <box
-                key={column.id}
-                orientation="vertical"
-                spacing={Spacing.xs}
-                style={{ padding: Spacing.sm, hexpand: true, vexpand: true }}
-                cssClasses={hovered ? ["card", "accent"] : ["card"]}
-                dropTarget
-                onDragOver={(e) => setDragPoint({ columnId: column.id, x: e.data.x, y: e.data.y })}
-                onDropped={(e) => {
-                  moveCard(e.text, column.id);
-                  setLastDropped(`${e.text} to ${column.title}`);
-                  setDragPoint(null);
-                }}
-                testID={`dragdrop-column-${column.id}`}
-              >
-                <label text={column.title} cssClasses={["heading"]} testID={`dragdrop-column-${column.id}-title`} />
-                {columnCards.map((card) => (
-                  <box
-                    key={card.id}
-                    orientation="vertical"
-                    style={{ padding: Spacing.sm }}
-                    cssClasses={["card", "activatable"]}
-                    draggable
-                    dragPayload={card.id}
-                    onDragEnded={() => setDragPoint(null)}
-                    testID={`dragdrop-card-${card.id}`}
-                  >
-                    <label text={card.title} testID={`dragdrop-card-${card.id}-title`} />
-                  </box>
-                ))}
-                {columnCards.length === 0 && (
-                  <label text="Drop here" cssClasses={["dimmed", "caption"]} testID={`dragdrop-column-${column.id}-empty`} />
-                )}
-              </box>
-            );
-          })}
+          <box orientation="horizontal" spacing={Spacing.md} style={{ vexpand: true }} testID="dragdrop-board">
+            {kanbanColumns.map((column) => {
+              const columnCards = cards.filter((c) => c.columnId === column.id);
+              const hovered = dragPoint?.columnId === column.id;
+              return (
+                <box
+                  key={column.id}
+                  orientation="vertical"
+                  spacing={Spacing.xs}
+                  style={{ padding: Spacing.sm, hexpand: true, vexpand: true }}
+                  cssClasses={hovered ? ["card", "accent"] : ["card"]}
+                  dropTarget
+                  onDragOver={(e) => setDragPoint({ columnId: column.id, x: e.data.x, y: e.data.y })}
+                  onDropped={(e) => {
+                    moveCard(e.text, column.id);
+                    setLastDropped(`${e.text} to ${column.title}`);
+                    setDragPoint(null);
+                  }}
+                  testID={`dragdrop-column-${column.id}`}
+                >
+                  <label text={column.title} cssClasses={["heading"]} testID={`dragdrop-column-${column.id}-title`} />
+                  {columnCards.map((card) => (
+                    <box
+                      key={card.id}
+                      orientation="vertical"
+                      style={{ padding: Spacing.sm }}
+                      cssClasses={["card", "activatable"]}
+                      draggable
+                      dragPayload={card.id}
+                      onDragEnded={() => setDragPoint(null)}
+                      testID={`dragdrop-card-${card.id}`}
+                    >
+                      <label text={card.title} testID={`dragdrop-card-${card.id}-title`} />
+                    </box>
+                  ))}
+                  {columnCards.length === 0 && (
+                    <label text="Drop here" cssClasses={["dimmed", "caption"]} testID={`dragdrop-column-${column.id}-empty`} />
+                  )}
+                </box>
+              );
+            })}
+          </box>
         </box>
-      </box>
+      </clamp>
     </scrollview>
   );
 }
@@ -1320,53 +1338,55 @@ function CodeEditorSection(): React.ReactNode {
 
   return (
     <scrollview testID="codeeditor-scroll" style={{ vexpand: true }}>
-      <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
-        <settingsgroup
-          title="Code Editor"
-          description="Two diagnostics are pinned to the sample below. Click a squiggle to read its message."
-          testID="codeeditor-group"
-        >
-          <row title="Language" testID="codeeditor-language-row">
-            <select
-              options={codeEditorLanguages}
-              selectedIndex={languageIndex}
-              onSelectionChanged={(e) => setLanguageIndex(e.index)}
-              testID="codeeditor-language-select"
-            />
-          </row>
-          <row title="Line numbers" testID="codeeditor-linenumbers-row">
-            <switch checked={showLineNumbers} onToggled={(e) => setShowLineNumbers(e.checked)} testID="codeeditor-linenumbers-toggle" />
-          </row>
-          <row title="Read only" testID="codeeditor-readonly-row">
-            <switch checked={readOnly} onToggled={(e) => setReadOnly(e.checked)} testID="codeeditor-readonly-toggle" />
-          </row>
-          <row title="Cursor" testID="codeeditor-cursor-row">
-            <label text={cursor} cssClasses={["dimmed", "numeric"]} testID="codeeditor-cursor-readout" />
-          </row>
-          <row title="Last diagnostic clicked" testID="codeeditor-diagnostic-row">
-            <label text={lastDiagnostic} cssClasses={["dimmed"]} testID="codeeditor-diagnostic-readout" />
-          </row>
-        </settingsgroup>
+      <clamp maximumSize={ContentWidth}>
+        <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
+          <settingsgroup
+            title="Code Editor"
+            description="Two diagnostics are pinned to the sample below. Click a squiggle to read its message."
+            testID="codeeditor-group"
+          >
+            <row title="Language" testID="codeeditor-language-row">
+              <select
+                options={codeEditorLanguages}
+                selectedIndex={languageIndex}
+                onSelectionChanged={(e) => setLanguageIndex(e.index)}
+                testID="codeeditor-language-select"
+              />
+            </row>
+            <row title="Line numbers" testID="codeeditor-linenumbers-row">
+              <switch checked={showLineNumbers} onToggled={(e) => setShowLineNumbers(e.checked)} testID="codeeditor-linenumbers-toggle" />
+            </row>
+            <row title="Read only" testID="codeeditor-readonly-row">
+              <switch checked={readOnly} onToggled={(e) => setReadOnly(e.checked)} testID="codeeditor-readonly-toggle" />
+            </row>
+            <row title="Cursor" testID="codeeditor-cursor-row">
+              <label text={cursor} cssClasses={["dimmed", "numeric"]} testID="codeeditor-cursor-readout" />
+            </row>
+            <row title="Last diagnostic clicked" testID="codeeditor-diagnostic-row">
+              <label text={lastDiagnostic} cssClasses={["dimmed"]} testID="codeeditor-diagnostic-readout" />
+            </row>
+          </settingsgroup>
 
-        <codeeditor
-          text={code}
-          language={codeEditorLanguages[languageIndex]}
-          showLineNumbers={showLineNumbers}
-          readOnly={readOnly}
-          diagnostics={codeEditorDiagnostics}
-          onChange={(e) => setCode(e.text)}
-          onCursorMoved={(e) => {
-            const { line, column } = e.data as { line: number; column: number };
-            setCursor(`Line ${line}, Column ${column}`);
-          }}
-          onDiagnosticClicked={(e) => {
-            const d = e.data as { line: number; column: number; severity: string; message: string };
-            setLastDiagnostic(`${d.severity} at line ${d.line}, column ${d.column}: ${d.message}`);
-          }}
-          style={{ vexpand: true }}
-          testID="codeeditor-widget"
-        />
-      </box>
+          <codeeditor
+            text={code}
+            language={codeEditorLanguages[languageIndex]}
+            showLineNumbers={showLineNumbers}
+            readOnly={readOnly}
+            diagnostics={codeEditorDiagnostics}
+            onChange={(e) => setCode(e.text)}
+            onCursorMoved={(e) => {
+              const { line, column } = e.data as { line: number; column: number };
+              setCursor(`Line ${line}, Column ${column}`);
+            }}
+            onDiagnosticClicked={(e) => {
+              const d = e.data as { line: number; column: number; severity: string; message: string };
+              setLastDiagnostic(`${d.severity} at line ${d.line}, column ${d.column}: ${d.message}`);
+            }}
+            style={{ vexpand: true }}
+            testID="codeeditor-widget"
+          />
+        </box>
+      </clamp>
     </scrollview>
   );
 }

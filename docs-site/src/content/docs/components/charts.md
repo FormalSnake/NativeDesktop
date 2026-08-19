@@ -101,7 +101,8 @@ backends.
 
 - **line** – one connected line per series, drawn with a smooth (Catmull-Rom) interpolation.
 - **area** – the same line, filled down to the axis.
-- **bar** – grouped bars per series at each `x`.
+- **bar** – grouped bars per series, one band per point. Bars are centred in their own band rather
+  than on their `x` value, so the first and last bar sit fully inside the axes.
 - **pie** – reads only `series[0]`. Each point becomes one slice: `label` names it, `abs(y)` sizes
   it. A second series would be a second angular scale on the same plot, which isn't a pie, so it's
   ignored.

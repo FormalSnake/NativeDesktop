@@ -51,6 +51,24 @@ export const Spacing: SpacingScale = {
  * into a module-scope constant. */
 export let ContentMargin: number = appleLanguage() ? 20 : 12;
 
+/** The platform's reading measure for settings-shaped content — the width to
+ * cap a content column at, as `<clamp maximumSize>`.
+ *
+ * A column, not a widget: the cap belongs to whatever holds the column so
+ * every child shares it. This matters on AppKit, where `<settingsgroup>` is a
+ * SwiftUI grouped `Form` and that style caps and centers its own card inside
+ * whatever width it is handed. A `<codeeditor>` or `<table>` beside it has no
+ * such cap, so the two disagree by however wide the pane happens to be, and
+ * neither `maxWidth: .infinity` nor a wider frame turns the Form's cap off.
+ * Clamping the column below the cap settles it: the Form stops capping, its
+ * card fills the column, and its siblings line up with it. GTK has the same
+ * shape natively — AdwPreferencesGroup fills its AdwClamp — so one tree reads
+ * correctly on both.
+ *
+ * A live binding for the same reason `ContentMargin` is. */
+export let ContentWidth: number = appleLanguage() ? 720 : 600;
+
 onBackendKnown(() => {
   ContentMargin = appleLanguage() ? 20 : 12;
+  ContentWidth = appleLanguage() ? 720 : 600;
 });

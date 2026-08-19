@@ -41,7 +41,7 @@ const [name, setName] = useState("");
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
 | `open` | bool | createAndUpdate | Controlled visibility. Default `false`. |
-| `title` | string | createAndUpdate | Inert on AppKit: macOS draws no titlebar for a sheet, so it never renders there. GTK shows it in the `AdwDialog` header. |
+| `title` | string | createAndUpdate | GTK shows it in the `AdwDialog` header. macOS draws no titlebar for a sheet, so it is set as a bold headline above your content instead, the way `NSAlert` lays its own message out. |
 | `contentWidth` / `contentHeight` | int | createAndUpdate | Default `0`, which lets the content size itself. |
 | `closable` | bool | createAndUpdate | Default `true`. Set `false` to drop the built-in close affordance and require your own button. |
 
@@ -76,7 +76,7 @@ const [open, setOpen] = useState(false);
 | --- | --- | --- | --- |
 | `open` | bool | createAndUpdate | Controlled visibility. Default `false`. |
 | `edge` | `top` \| `bottom` \| `leading` \| `trailing` | createAndUpdate | Which side it slides in from. Default `bottom`. `leading`/`trailing` follow layout direction rather than literal left/right. Inert on AppKit: macOS presents every sheet from the window's title bar regardless of this value. GTK honours it with `AdwDialog`'s bottom-sheet presentation. |
-| `size` | int | createAndUpdate | Thickness on the axis perpendicular to `edge`: height for `top`/`bottom`, width for `leading`/`trailing`. Default `320`. |
+| `size` | int | createAndUpdate | Thickness on the axis perpendicular to `edge`: height for `top`/`bottom`, width for `leading`/`trailing`. Default `320`. Inert on AppKit for the same reason `edge` is: with no edge to anchor to there is no axis for it to measure, so the sheet sizes to its content. |
 
 | Event | Handler | Payload |
 | --- | --- | --- |

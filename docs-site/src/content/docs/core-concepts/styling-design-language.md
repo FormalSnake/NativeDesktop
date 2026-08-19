@@ -110,16 +110,42 @@ For bespoke layout (`<box spacing>`, `style.padding`), `@nativedesktop/react` ex
 design-language scale instead of magic numbers:
 
 ```tsx
-import { Spacing, ContentMargin } from "@nativedesktop/react";
+import { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/react";
 
 <box spacing={Spacing.sm} style={{ padding: ContentMargin }} />;
 ```
 
 `Spacing` is `{ xs, sm, md, lg, xl }`: `3/6/12/18/24` on the GTK backend (GNOME's multiples of 6),
 `4/8/12/20/24` on AppKit. `ContentMargin` is the standard window-edge margin, `12` on GTK and `20`
-on AppKit. Both are keyed on `Platform.backend`, not `Platform.os`, so the GTK backend running on
-macOS via Quartz still lays out GNOME's numbers. See [Which backend is
-drawing](/core-concepts/architecture/#which-backend-is-drawing). Both resolve after `render()`'s
-handshake (`Spacing`'s fields are live getters, `ContentMargin` a plain binding re-assigned once the
-backend is known) and fall back to the OS convention before that. The structural widgets
-(`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics themselves.
+on AppKit. All three are keyed on `Platform.backend`, not `Platform.os`, so the GTK backend running
+on macOS via Quartz still lays out GNOME's numbers. See [Which backend is
+drawing](/core-concepts/architecture/#which-backend-is-drawing). They resolve after `render()`'s
+handshake (`Spacing`'s fields are live getters, `ContentMargin` and `ContentWidth` plain bindings
+re-assigned once the backend is known) and fall back to the OS convention before that. The
+structural widgets (`<settingsgroup>`, `<row>`, `<clamp>`, `<sourcelist>`) carry native metrics
+themselves.
+
+## Content column
+
+`ContentWidth` is the platform's reading measure for settings-shaped content — `600` on GTK
+(AdwClamp's own default), `720` on AppKit. Give it to a `<clamp>` so the whole column shares one
+width:
+
+```tsx
+<scrollview>
+  <clamp maximumSize={ContentWidth}>
+    <box orientation="vertical" style={{ padding: ContentMargin }}>
+      <settingsgroup title="Code Editor">…</settingsgroup>
+      <codeeditor text={code} language="typescript" />
+    </box>
+  </clamp>
+</scrollview>
+```
+
+The cap belongs to the column, not to any one widget. On AppKit `<settingsgroup>` is a SwiftUI
+grouped `Form`, and that style caps and centers its own card inside whatever width it is handed —
+a `<codeeditor>` or `<table>` beside it has no such cap, so in a wide pane the two disagree, and
+nothing you can pass the group turns its cap off. Clamping the column below the cap settles it:
+the Form stops capping, its card fills the column, and its siblings line up with it. GTK behaves
+the same way natively, since AdwPreferencesGroup fills its AdwClamp. Leave canvases (a chart grid,
+a table, a board) outside the clamp so they still get the whole pane.
