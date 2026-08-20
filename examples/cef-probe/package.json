@@ -1,0 +1,16 @@
+{
+  "name": "cef-probe-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nd dev main.tsx"
+  },
+  "dependencies": {
+    "@nativedesktop/react": "workspace:*",
+    "@nativedesktop/cli": "workspace:*",
+    "react": "19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17"
+  }
+}

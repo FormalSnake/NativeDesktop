@@ -104,8 +104,11 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
 /// parameter of every handler goes through this before the callback returns.
 pub fn releaseParam(p: anytype) void {
     if (p == null) return;
-    const base = &p.*.base;
-    if (base.release) |f| _ = f(@ptrCast(base));
+    // Every CEF struct starts with its base at offset 0, so the object pointer
+    // IS the base pointer; going through `&p.*.base` instead re-derives a C
+    // pointer type Zig will not let the base's own methods be read off.
+    const base: *c.cef_base_ref_counted_t = @ptrCast(@alignCast(p));
+    if (base.release) |f| _ = f(base);
 }
 
 /// Drops a reference obtained from a CEF getter (`get_host`, `get_main_frame`),

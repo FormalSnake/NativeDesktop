@@ -25,6 +25,18 @@
           # pulls in the user's own font directories, so `sans` resolved to
           # whatever happened to be installed and captures were not
           # reproducible between machines.
+          # libcef.so is a generic-Linux binary with 26 sonames NixOS does not
+          # put anywhere a plain dlopen can see. They stay OUT of the shell's
+          # own LD_LIBRARY_PATH (the webkitgtk path above is deliberate about
+          # what is on it) and are exported as ND_CEF_LD_LIBRARY_PATH for the
+          # CEF gate to prepend when it launches the host.
+          cefRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+            nss nspr cups dbus expat alsa-lib libdrm mesa systemd
+            at-spi2-core at-spi2-atk atk libxkbcommon libGL
+            xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
+            xorg.libXfixes xorg.libXrandr xorg.libxcb xorg.libXrender
+            xorg.libXi xorg.libXtst xorg.libXcursor
+          ]);
           fontsConf = pkgs.writeText "nd-headless-fonts.conf" ''
             <?xml version="1.0"?>
             <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
@@ -91,7 +103,10 @@
               gst_all_1.gst-plugins-base # audio: playbin
               gst_all_1.gst-plugins-good # audio: spectrum element
               gtksourceview5   # <codeeditor>: dlopen'd libgtksourceview-5.so.0 (src/gtk/codeeditor.zig)
-            ];
+              xorg.xorgserver  # Xvfb: the CEF gate needs a real X11 root window (windowed embedding is X11-only, and an XWayland root paints nothing to screenshot)
+              xorg.xwininfo    # the no-stray-window census: `xwininfo -root -children` before and after a popup
+              imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
+            ] ++ cefRuntimeLibs;
             # build.zig's test roots import the gobject binding modules
             # unconditionally, so `zig build test` needs pkg-config to resolve
             # gtk4/libadwaita even on the Mac (compile/test-only there — the
@@ -116,6 +131,7 @@
               # rules ("invalid constant used : sans-serif"), leaving `sans`
               # unresolvable.
               export FONTCONFIG_FILE="${fontsConf}"
+              export ND_CEF_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath cefRuntimeLibs}"
             '';
           };
         });
