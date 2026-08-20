@@ -20,10 +20,21 @@ jobs:
         run: |
           curl -sL https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz | tar xJ
           echo "$PWD/zig-aarch64-macos-0.16.0" >> "$GITHUB_PATH"
+      - name: Stage the CEF distribution
+        # The chromium engine compiles in only when the dist's headers resolve
+        # (ND_CEF_ROOT or the dev cache); without this step the published host
+        # silently ships engine-less. Pin matches packages/nd/src/package/cef.ts.
+        run: |
+          mkdir -p "$HOME/.cache/nativedesktop/cef"
+          curl -sL -o cef.tar.bz2 "https://cef-builds.spotifycdn.com/cef_binary_151.3.23%2Bgd211df0%2Bchromium-151.0.7922.170_macosarm64_minimal.tar.bz2"
+          tar xjf cef.tar.bz2 -C "$HOME/.cache/nativedesktop/cef"
+          mv "$HOME/.cache/nativedesktop/cef"/cef_binary_* "$HOME/.cache/nativedesktop/cef/151.3.23-macosarm64"
       - name: Build AppKit host
         run: ./scripts/mac/build-appkit-host.sh
       - name: Strip (local symbols only; a full strip breaks Swift reflection metadata)
         run: strip -x swift/.build/release/NDShell
+      - name: Require the chromium engine in the binary
+        run: strings swift/.build/release/NDShell | grep -q "Chromium Embedded"
       - uses: actions/upload-artifact@v4
         with:
           name: nd-shell
@@ -43,12 +54,20 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev curl xz-utils ca-certificates git
+          apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev curl xz-utils bzip2 ca-certificates git
       - uses: actions/checkout@v4
       - name: Install Zig 0.16.0
         run: |
           curl -sL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz | tar xJ
           echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+      - name: Stage the CEF distribution
+        # Same constraint as the darwin job: no dist at build time means an
+        # engine-less binary. Pin matches packages/nd/src/package/cef.ts.
+        run: |
+          mkdir -p "$HOME/.cache/nativedesktop/cef"
+          curl -sL -o cef.tar.bz2 "https://cef-builds.spotifycdn.com/cef_binary_151.3.23%2Bgd211df0%2Bchromium-151.0.7922.170_linux64_minimal.tar.bz2"
+          tar xjf cef.tar.bz2 -C "$HOME/.cache/nativedesktop/cef"
+          mv "$HOME/.cache/nativedesktop/cef"/cef_binary_* "$HOME/.cache/nativedesktop/cef/151.3.23-linux64"
       - name: Build GTK host
         # A link failure mentioning glibc symbols here means the committed
         # vendor/libghostty-vt linux archive was built against a newer glibc
@@ -58,6 +77,8 @@ jobs:
         run: |
           strip zig-out/bin/nd-hello
           ldd zig-out/bin/nd-hello | tee nd-hello.ldd.txt
+      - name: Require the chromium engine in the binary
+        run: strings zig-out/bin/nd-hello | grep -q libcef
       - name: Print library floors (recorded in the release notes contract)
         run: dpkg-query -W libc6 libgtk-4-1 libadwaita-1-0 | tee nd-hello.floors.txt
       - uses: actions/upload-artifact@v4
