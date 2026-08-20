@@ -42,6 +42,9 @@ pub const msg_wait_for_timeout = "waitFor timeout";
 // inputUnsupported: pointer/drag/keys/doubleClick/rightClick/hover on a backend without synthetic input (GTK4 removed app-constructible events)
 pub const code_input_unsupported: i32 = -32003;
 pub const msg_input_unsupported = "input synthesis unsupported on this backend";
+// windowGone: data: {window}. getTree/screenshot only: params.window named a real Window ref (e.g. from windows()) that has since closed, distinguishing a benign concurrent-close race from invalidParams (a malformed request). Every other window-scoped method resolves a closed window into its own no-match result instead of this error.
+pub const code_window_gone: i32 = -32004;
+pub const msg_window_gone = "window closed";
 pub const code_method_not_found: i32 = -32601;
 pub const msg_method_not_found = "method not found";
 // invalidParams: data: {ref} where applicable; message may carry the specific missing/invalid param

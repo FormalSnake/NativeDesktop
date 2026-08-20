@@ -21,6 +21,25 @@ interface JsonRpcResponse {
   error?: JsonRpcError;
 }
 
+/**
+ * A rejected call's `code`/`data` survive on the error object (matching
+ * schema/rpc.json's `errors` table, e.g. RPC_ERRORS.windowGone.code), so a
+ * caller can branch on the error kind without parsing `.message` text.
+ * `.message` keeps the existing "<msg> (<code>)" shape so callers that
+ * already substring-match a code keep working.
+ */
+export class AutomationRpcError extends Error {
+  readonly code: number;
+  readonly data: unknown;
+
+  constructor(code: number, message: string, data?: unknown) {
+    super(`${message} (${code})`);
+    this.name = "AutomationRpcError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
 export class AutomationClient {
   private socket!: import("bun").Socket;
   private inbox = new Uint8Array(0);
@@ -75,7 +94,7 @@ export class AutomationClient {
     const pending = this.pending.get(msg.id);
     if (!pending) return; // unknown/stale id — drop
     this.pending.delete(msg.id);
-    if (msg.error) pending.reject(new Error(`${msg.error.message} (${msg.error.code})`));
+    if (msg.error) pending.reject(new AutomationRpcError(msg.error.code, msg.error.message, msg.error.data));
     else pending.resolve(msg.result);
   }
 

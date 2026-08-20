@@ -8,8 +8,9 @@
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { Backend } from "@nativedesktop/host";
-import type { ScreenshotResult } from "@nativedesktop/react/rpc";
+import { RPC_ERRORS, type ScreenshotResult } from "@nativedesktop/react/rpc";
 import { pngSize } from "./png.ts";
+import { AutomationRpcError } from "./socket.ts";
 
 export interface ScreenshotOptions {
   window?: number;
@@ -50,6 +51,11 @@ export async function takeScreenshot(
       }
       return shot;
     } catch (e) {
+      // A closed window is never coming back mid-run, so retrying just
+      // burns the retry budget on a guaranteed repeat failure; fail fast
+      // with the distinguishable error instead of the generic "N attempts"
+      // wrapper the frame-invalidation races below are meant for.
+      if (e instanceof AutomationRpcError && e.code === RPC_ERRORS.windowGone.code) throw e;
       lastErr = e as Error;
       if (attempt < retries - 1) await new Promise((r) => setTimeout(r, 150));
     }
