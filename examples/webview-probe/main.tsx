@@ -448,6 +448,13 @@ async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPh
 
   await step("session", async () => {
     const state = await saveSession(wv!);
+    // CEF exposes no session serialization at all: no equivalent of
+    // WebKitWebViewSessionState, and no restorable form of its navigation
+    // entries. Reported rather than failed, the same way the two input checks
+    // below are.
+    if (!state && (process.env.ND_WEBVIEW_ENGINE ?? "system") === "chromium") {
+      return "skip: the chromium engine has no session serialization API";
+    }
     if (!state) return "fail: saveSession returned an empty state";
     sendCommand(wv!, "restoreSession", { state });
     return `ok (${state.length} base64 chars)`;
@@ -586,14 +593,21 @@ async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPh
   // file is the whole assertion: WebKitGTK keeps cookies in memory until
   // something names a file for them, whatever data directory the session has.
   await step("cookiePersistence", async () => {
-    const home = process.env.XDG_DATA_HOME || `${process.env.HOME ?? ""}/.local/share`;
-    const jar = `${home}/nd-webview-profiles/default/cookies.sqlite`;
     sendCommand(wv!, "setCookie", { name: "ndpersist", value: "v1", domain: "127.0.0.1", path: "/" });
     await poll(
       () => getCookies(wv!, `${BASE}/`),
       (list) => list.some((c) => c.name === "ndpersist"),
       "cookie visible after setCookie",
     );
+    // The jar's path is WebKitGTK's own layout, written by the GTK backend's
+    // set_persistent_storage call. Every engine has to keep the cookie, and
+    // the round trip above is that proof; only the system engine on GTK owes
+    // this exact file.
+    if (Platform.backend !== "gtk" || (process.env.ND_WEBVIEW_ENGINE ?? "system") !== "system") {
+      return "ok (cookie survived the round trip; the on-disk jar is not this engine's to place)";
+    }
+    const home = process.env.XDG_DATA_HOME || `${process.env.HOME ?? ""}/.local/share`;
+    const jar = `${home}/nd-webview-profiles/default/cookies.sqlite`;
     await poll(() => Bun.file(jar).exists(), (there) => there, `cookie jar at ${jar}`);
     return `ok (${jar})`;
   });

@@ -23,6 +23,10 @@ const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ctxmenu = @import("context_menu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
+// The opt-in Chromium engine. It answers "not me" for every widget it did not
+// create, so each entry point below is a single fall-through, and a build with
+// no CEF distribution to translate headers against compiles it out entirely.
+const cef = @import("../cef/backend.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents WebView arm.
@@ -569,12 +573,31 @@ fn modeOf(name: []const u8) Mode {
 }
 
 /// Create-only `engine` prop. `.chromium` asks for CEF, which is dlopened at
-/// runtime and is not linked into this host; until that path exists every view
-/// renders on WebKitGTK regardless.
+/// runtime and is not linked into this host.
+///
+/// `ND_WEBVIEW_ENGINE=chromium` selects it for every view that did not ask for
+/// itself: that is the dev handshake `nd dev` uses to deliver the resolved
+/// `webview.engine` from nativedesktop.config.ts, which is a per-app default
+/// rather than a per-view decision.
 const Engine = enum { system, chromium };
 
+/// Whether this process is running the chromium engine at all, which is the
+/// only thing a process-wide call like `registerScheme` can ask.
+fn cefEngineSelected() bool {
+    if (std.c.getenv("ND_WEBVIEW_ENGINE")) |raw| {
+        return std.mem.eql(u8, std.mem.span(raw), "chromium");
+    }
+    return false;
+}
+
 fn engineOf(name: []const u8) Engine {
-    return if (std.mem.eql(u8, name, "chromium")) .chromium else .system;
+    if (std.mem.eql(u8, name, "chromium")) return .chromium;
+    if (name.len == 0 or std.mem.eql(u8, name, "system")) {
+        if (std.c.getenv("ND_WEBVIEW_ENGINE")) |raw| {
+            if (std.mem.eql(u8, std.mem.span(raw), "chromium")) return .chromium;
+        }
+    }
+    return .system;
 }
 
 const ViewState = struct {
@@ -611,7 +634,7 @@ fn isReal(widget: *gtk.Widget) bool {
 /// no-webkitgtk placeholder label) is content the snapshot renderers cannot
 /// rasterize.
 pub fn isRealWebView(widget: *gtk.Widget) bool {
-    return isReal(widget);
+    return isReal(widget) or cef.isReal(widget);
 }
 
 fn widgetNodeId(widget: *gtk.Widget) ?u32 {
@@ -812,6 +835,13 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
 }
 
 pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, context_menu_mode: []const u8) *gtk.Widget {
+    // The CEF backend answers null when it is compiled out, when no CEF
+    // distribution resolves, or when this view did not ask for it; the view
+    // then renders on WebKitGTK rather than on nothing.
+    if (engineOf(engine) == .chromium) {
+        if (cef.create(url, profile, context_menu_mode)) |w| return w;
+        std.debug.print("ND_WARN WebView engine=\"chromium\": CEF unavailable, falling back to the system engine\n", .{});
+    }
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
@@ -865,6 +895,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, cont
 /// pair ping-pongs until the app runs out of memory. Neither URI is worth a
 /// load, so neither starts one.
 pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
+    if (cef.isReal(widget)) return cef.setUrl(widget, url);
     const a = api orelse return;
     if (!isReal(widget)) return;
     if (url.len == 0) return;
@@ -1331,6 +1362,15 @@ pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) Regi
     }
     if (registered_schemes.contains(scheme)) return error.AlreadyRegistered;
     if (any_view_created) return error.TooLate;
+    // The chromium engine has to know its standard schemes before
+    // cef_initialize, which is a different deadline from WebKitGTK's, and it
+    // must not pull libwebkitgtk in just to answer this.
+    if (cefEngineSelected()) {
+        if (!cef.registerScheme(scheme, cors_enabled, secure)) return error.TooLate;
+        const cef_key = alloc.dupe(u8, scheme) catch return;
+        registered_schemes.put(alloc, cef_key, {}) catch {};
+        return;
+    }
     _ = loadApi() orelse return error.Unsupported;
     const get_ctx = ext.web_context_get_default orelse return error.Unsupported;
     const register = ext.web_context_register_uri_scheme orelse return error.Unsupported;
@@ -2172,6 +2212,7 @@ fn mergeCustomItems(state: *ViewState, node_id: u32, menu: *anyopaque, hit: ctxm
 
 /// widgetCommand dispatch (generated widgets.zig WebView arm).
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
+    if (cef.isReal(widget)) return cef.command(widget, cmd, arg);
     const a = api orelse return;
     if (!isReal(widget)) return;
     const v: *anyopaque = @ptrCast(widget);
@@ -2238,6 +2279,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
 /// the schema events. `emit_fn` is the generated module's emit sink (same
 /// EmitFn shape, installed before any widget exists).
 pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
+    if (cef.isReal(widget)) return cef.connectEvents(widget, node_id, emit_fn);
     if (api == null or !isReal(widget)) return;
     emit = emit_fn;
     any_view_created = true;
@@ -2853,6 +2895,16 @@ pub const Info = struct {
 };
 
 pub fn info(widget: *gtk.Widget) ?Info {
+    if (cef.isReal(widget)) {
+        const i = cef.info(widget) orelse return null;
+        return .{
+            .url = i.url,
+            .title = i.title,
+            .loading = i.loading,
+            .can_go_back = i.can_go_back,
+            .can_go_forward = i.can_go_forward,
+        };
+    }
     const a = api orelse return null;
     if (!isReal(widget)) return null;
     const v: *anyopaque = @ptrCast(widget);
@@ -2886,6 +2938,12 @@ const AutoEvalCtx = struct { id: u64 };
 /// evaluate (no webkitgtk, or the symbol is missing). `world` empty/null means
 /// the page's own world, matching `executeJavaScript`.
 pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64 {
+    if (cef.isReal(widget)) {
+        // The CEF ids share this counter's space so `evalPoll` can route on the
+        // id alone: the chromium engine issues odd ids, this one even.
+        const id = cef.evalStart(widget, code, world) orelse return null;
+        return id * 2 + 1;
+    }
     const eval = ext.evaluate_javascript orelse return null;
     if (!isReal(widget)) return null;
     const v: *anyopaque = @ptrCast(widget);
@@ -2909,7 +2967,8 @@ pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64
     const world_z = dupWorldZ(world);
     defer if (world_z) |w| alloc.free(w);
     eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbAutoEvalReady, ctx);
-    return id;
+    // Doubled so the id alone says which engine issued it (see evalPoll).
+    return id * 2;
 }
 
 fn cbAutoEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
@@ -2949,7 +3008,11 @@ fn cbAutoEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque
 pub const EvalState = struct { done: bool, ok: bool, value: ?[]const u8, err: ?[]const u8 };
 
 pub fn evalPoll(id: u64) ?EvalState {
-    const entry = pending_evals.get(id) orelse return null;
+    if (id % 2 == 1) {
+        const state = cef.evalPoll(id / 2) orelse return null;
+        return .{ .done = state.done, .ok = state.ok, .value = state.value, .err = state.err };
+    }
+    const entry = pending_evals.get(id / 2) orelse return null;
     return .{ .done = entry.done, .ok = entry.ok, .value = entry.value, .err = entry.err };
 }
 
@@ -2957,9 +3020,10 @@ pub fn evalPoll(id: u64) ?EvalState {
 /// callback would then write through a freed entry — it is simply orphaned and
 /// reaped by its own callback path on the next `evalRelease` after it settles.
 pub fn evalRelease(id: u64) void {
-    const entry = pending_evals.get(id) orelse return;
+    if (id % 2 == 1) return cef.evalRelease(id / 2);
+    const entry = pending_evals.get(id / 2) orelse return;
     if (!entry.done) return;
-    _ = pending_evals.remove(id);
+    _ = pending_evals.remove(id / 2);
     if (entry.value) |v| alloc.free(v);
     if (entry.err) |e| alloc.free(e);
     alloc.destroy(entry);
@@ -2980,6 +3044,7 @@ const PageTextCtx = struct { node_id: u32 };
 /// Null until the first probe answers, so a predicate simply does not match
 /// yet — the waitFor tick keeps calling.
 pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
+    if (cef.isReal(widget)) return cef.pageText(widget);
     const node_id = widgetNodeId(widget) orelse return null;
     const gop = page_texts.getOrPut(alloc, node_id) catch return null;
     if (!gop.found_existing) gop.value_ptr.* = .{};
