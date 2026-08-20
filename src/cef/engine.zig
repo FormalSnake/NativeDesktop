@@ -2469,7 +2469,18 @@ fn cmdAddUserScript(view: *View, arg: ?std.json.Value) void {
         return;
     };
     tr("addUserScript node={d} id={s} world={s} at={s}", .{ view.node_id, id, world, if (at_start) "start" else "end" });
-    addNewDocumentScript(view, body, world, false, .{ .add_user_script = .{ .id = id_copy, .world = world_copy, .gen = gen } });
+    // runImmediately, matching the AppKit engine. A registration that lands
+    // after the document has already committed would otherwise apply to the
+    // NEXT document only, and there is a window where that is guaranteed: every
+    // call is parked until the devtools agent attaches, and the browser is
+    // loading its first page throughout. An extension's background page has no
+    // next document, so its bootstrap simply never ran.
+    //
+    // WebKitGTK's add_script does not touch the live document, so this is a
+    // deliberate divergence: a script may run once in the initial empty
+    // document and again in the real one, which is what `match_about_blank`
+    // exists for and what the mac engine already does.
+    addNewDocumentScript(view, body, world, true, .{ .add_user_script = .{ .id = id_copy, .world = world_copy, .gen = gen } });
 }
 
 /// Invalidates any install for `id` that is still in flight and returns the
@@ -3318,6 +3329,11 @@ const Resource = struct {
     url: []u8,
     scheme: []u8,
     browser_id: c_int,
+    /// How many times the GTK side has looked for this request's view. The
+    /// browser-id hop and the request itself are posted from DIFFERENT threads
+    /// (the CEF UI thread and the IO thread), so the request can arrive first
+    /// and the view is simply not known yet.
+    attempts: u32 = 0,
     callback: std.atomic.Value(usize) = .init(0),
     body: []u8 = &.{},
     mime: []u8 = &.{},
@@ -3466,17 +3482,34 @@ fn resourceCancel(self: [*c]c.cef_resource_handler_t) callconv(.c) void {
 
 /// GTK thread: registers the parked request and raises the event the app
 /// answers with `respondScheme`.
+/// How long a scheme request waits for its browser to be known before it is
+/// answered with a failure. The first request a browser makes is often its own
+/// initial navigation, which is exactly when the mapping is still in flight:
+/// an extension page served over a custom scheme is the whole of its own
+/// startup, so failing it early is failing the extension.
+const scheme_view_attempts: u32 = 80;
+
 fn announceSchemeRequest(obj: *ResourceObj) void {
     const res = obj.payload;
     const view = browsers_by_id.get(res.browser_id);
-    tr("announceSchemeRequest browser={d} view={?d}", .{ res.browser_id, if (view) |v| v.node_id else null });
-    scheme_seq += 1;
-    const id = std.fmt.allocPrint(alloc, "cefscheme-{d}", .{scheme_seq}) catch return;
-    res.id = id;
     if (view == null) {
+        res.attempts += 1;
+        if (res.attempts <= scheme_view_attempts) {
+            // Re-posted rather than failed: the browser-id hop is already on
+            // the GTK loop behind this one.
+            _ = glib.timeoutAdd(25, &onSchemeRetry, obj);
+            return;
+        }
+        tr("announceSchemeRequest browser={d} view=none url={s}", .{ res.browser_id, res.url });
+        scheme_seq += 1;
+        res.id = std.fmt.allocPrint(alloc, "cefscheme-{d}", .{scheme_seq}) catch return;
         failSchemeRequest(obj, "no view for this browser");
         return;
     }
+    tr("announceSchemeRequest browser={d} view={d} url={s}", .{ res.browser_id, view.?.node_id, res.url });
+    scheme_seq += 1;
+    const id = std.fmt.allocPrint(alloc, "cefscheme-{d}", .{scheme_seq}) catch return;
+    res.id = id;
     // The map holds a reference of its own: a cancelled request releases CEF's,
     // and the answer may still be in flight.
     _ = obj.handOut();
@@ -3492,6 +3525,11 @@ fn announceSchemeRequest(obj: *ResourceObj) void {
     payload.put(alloc, "url", .{ .string = res.url }) catch return;
     payload.put(alloc, "scheme", .{ .string = res.scheme }) catch return;
     f(view.?.node_id, "schemeRequest", .{ .data = .{ .object = payload } });
+}
+
+fn onSchemeRetry(data: ?*anyopaque) callconv(.c) c_int {
+    announceSchemeRequest(@ptrCast(@alignCast(data.?)));
+    return 0;
 }
 
 fn continueSchemeRequest(obj: *ResourceObj) void {
