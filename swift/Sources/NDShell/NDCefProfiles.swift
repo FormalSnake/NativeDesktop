@@ -63,7 +63,7 @@ extension NDCefWebView {
             ndCefWarn("getCookies: missing id")
             return
         }
-        let url = obj["url"] as? String ?? pendingURLForCookies
+        let url = obj["url"] as? String ?? (ndPageState.url ?? "")
         let collector = NDCefCookieCollector(view: self, id: id)
         withCookieManager { manager in
             guard let visitor = collector.makeVisitor() else { return }
@@ -75,10 +75,6 @@ extension NDCefWebView {
             // release here, on either outcome.
             _ = manager.pointee.visit_url_cookies?(manager, &target, 1, visitor)
         }
-    }
-
-    private var pendingURLForCookies: String {
-        ndPageState.url ?? ""
     }
 
     func ndSetCookie(_ obj: [String: Any]) {

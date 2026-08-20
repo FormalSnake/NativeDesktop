@@ -62,6 +62,16 @@ check("armedAfterMount", armed.includes("armed=1"), armed);
 // The invariant the spec calls hard: nothing the engine does may put a second
 // top-level window on screen. The app's own census is the assertion, since the
 // app is the only thing allowed to have opened one.
+// The world-scoped eval has to land in the MAIN frame. The fixture injects
+// into every frame, so the isolated world exists twice and only a cache that
+// remembers which frame each context belongs to can tell them apart.
+const inWorld = (await client.call("webviewEval", {
+  testId: "m1-armed-view",
+  code: "window.__ndFrameIsTop",
+  world: "probe",
+})) as { ok: boolean; value: string | null; error: string | null };
+check("worldTargetsMainFrame", inWorld.ok && inWorld.value === "true", JSON.stringify(inWorld));
+
 // A real right-click into the engine's own view, which is the only way to
 // make on_before_context_menu run. The RPC dismisses the menu it opens.
 await client.call("rightClick", { testId: "m1-view" });

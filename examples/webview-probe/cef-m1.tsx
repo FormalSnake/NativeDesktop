@@ -1,4 +1,4 @@
-import { render, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
+import { render, sendCommand, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
 
 // M1 gate for the Chromium engine on macOS. Everything it asserts arrives on
@@ -18,6 +18,7 @@ const PAGE = `<!doctype html>
 </head><body>
 <h1 id="h">CEF renders here</h1>
 <p>chromium engine, embedded in the AppKit host</p>
+<iframe id="f" srcdoc="<p>inner</p>" style="width:200px;height:60px;border:0"></iframe>
 <script>
   var frames = 0;
   function tick() {
@@ -51,6 +52,7 @@ function App() {
   const [armedUrl, setArmedUrl] = useState("");
   const [armed, setArmed] = useState("pending");
   const view = useRef<NdNodeRef<"webview"> | null>(null);
+  const armedView = useRef<NdNodeRef<"webview"> | null>(null);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -58,6 +60,18 @@ function App() {
   const [forward, setForward] = useState(false);
   const [popup, setPopup] = useState("none");
   useEffect(() => {
+    // Injected into every frame, so the page and its iframe both report a
+    // context for world "probe". A world cache keyed by name alone lets the
+    // iframe's win, and every world-scoped eval then runs in the iframe.
+    if (armedView.current) {
+      sendCommand(armedView.current, "addUserScript", {
+        id: "m1-world",
+        source: 'window.__ndFrameIsTop = String(window.top === window.self);',
+        injectionTime: "start",
+        world: "probe",
+        allFrames: true,
+      });
+    }
     setArmedUrl(`${BASE}?armed=1`);
   }, []);
 
@@ -97,6 +111,7 @@ function App() {
             onNewWindow={(e) => setPopup(e.text)}
           />
           <webview
+            ref={armedView}
             testID="m1-armed-view"
             url={armedUrl}
             onNavigate={(e) => setArmed(e.text)}

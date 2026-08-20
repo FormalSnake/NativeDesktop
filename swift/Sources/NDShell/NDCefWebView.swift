@@ -36,15 +36,26 @@ final class NDCefWebView: NSView {
 
     nonisolated(unsafe) private var browser: UnsafeMutablePointer<cef_browser_t>?
     private var createRequested = false
-    /// The address the app last asked for. Until the engine reports one it is
-    /// also the echo guard's answer to "where is this view".
-    private var pendingURL: String
+    /// The address the app last asked for, and the one that last COMMITTED.
+    /// BOTH are "where this view already is". The `url` prop is an echo: the
+    /// engine reports an address, the app stores it, and storing it re-applies
+    /// the prop, so an app is always one event behind and re-asks for whichever
+    /// of the two it last heard about. A guard that knows only one of them
+    /// turns that into an endless load storm. Peer of NDWebView's
+    /// url/committedURL pair.
+    private var requestedURL: String
+    private var committedURL = ""
     /// What the browser was actually created with. A `url` prop applied while
-    /// the browser was still being created lands in `pendingURL` alone, so
+    /// the browser was still being created lands in `requestedURL` alone, so
     /// adoption has to reconcile the two or the view sits on the old address
     /// forever. Mounting a view with `url=""` and arming it on the next commit
     /// is the normal shape for a tab, a background page or a popup.
     private var createdURL = ""
+    /// A load asked for before the browser had a main frame to load it into.
+    /// CEF hands one over a beat after `on_after_created`, so dropping the
+    /// address (which is what used to happen) left a tab armed one commit
+    /// after mount sitting on about:blank.
+    private var deferredURL = ""
     /// The `profile` prop, resolved to a request context once at create time.
     private let profile: String
 
@@ -84,7 +95,7 @@ final class NDCefWebView: NSView {
     var cachedFrame: NSImage?
 
     init(url: String, profile: String, contextMenuMode: String) {
-        self.pendingURL = url
+        self.requestedURL = url
         self.profile = profile
         self.suppressContextMenu = contextMenuMode == "suppress"
         super.init(frame: .zero)
@@ -157,7 +168,7 @@ final class NDCefWebView: NSView {
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.size
 
-        createdURL = pendingURL.isEmpty ? "about:blank" : pendingURL
+        createdURL = requestedURL.isEmpty ? "about:blank" : requestedURL
         var url = cef_string_t()
         ndCefSetString(createdURL, &url)
         defer { nd_cef_string_clear(&url) }
@@ -187,7 +198,7 @@ final class NDCefWebView: NSView {
         devTools.start()
         ndInstallScripts()
         NDCefSchemeRouter.register(self, browser: created)
-        if !pendingURL.isEmpty, pendingURL != createdURL { loadInMainFrame(pendingURL) }
+        if !requestedURL.isEmpty, requestedURL != createdURL { loadInMainFrame(requestedURL) }
         guard let handle = browserHost.pointee.get_window_handle?(browserHost) else { return }
         let view = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
         view.frame = bounds
@@ -246,8 +257,9 @@ final class NDCefWebView: NSView {
     /// the app feeds `onNavigate` back into the prop, so a load only starts
     /// when the address actually differs from where the view already is.
     func ndSetURL(_ value: String) {
-        guard !value.isEmpty, value != pendingURL else { return }
-        pendingURL = value
+        ndTrace("setURL want=\(value) requested=\(requestedURL) committed=\(committedURL) hasBrowser=\(hasBrowser)")
+        guard !value.isEmpty, value != requestedURL, value != committedURL else { return }
+        requestedURL = value
         // No browser yet, or one that has not reported itself: adoption
         // reconciles this against the address it was created with.
         guard hasBrowser else { return }
@@ -255,12 +267,27 @@ final class NDCefWebView: NSView {
     }
 
     private func loadInMainFrame(_ value: String) {
-        guard let browser, let frame = browser.pointee.get_main_frame?(browser) else { return }
+        guard let browser, let frame = browser.pointee.get_main_frame?(browser) else {
+            deferredURL = value
+            ndTrace("load deferred \(value)")
+            return
+        }
+        deferredURL = ""
+        ndTrace("load issued \(value)")
         defer { nd_cef_ref_release(frame) }
         var url = cef_string_t()
         ndCefSetString(value, &url)
         defer { nd_cef_string_clear(&url) }
         frame.pointee.load_url?(frame, &url)
+    }
+
+    /// Retried from the engine's own load signals, which is where a main frame
+    /// first exists. Re-parks if it still does not, so this cannot spin.
+    fileprivate func retryDeferredLoad() {
+        guard !deferredURL.isEmpty else { return }
+        let value = deferredURL
+        deferredURL = ""
+        loadInMainFrame(value)
     }
 
     /// createAndUpdate `contextMenuMode` prop. The page-side agent decides
@@ -406,7 +433,7 @@ final class NDCefWebView: NSView {
     /// engine's limit rather than a shortcut.
     private func ndSaveSession(_ obj: [String: Any]) {
         let id = obj["id"] as? String ?? ""
-        let payload: [String: Any] = ["url": pendingURL, "title": lastTitle]
+        let payload: [String: Any] = ["url": committedURL, "title": lastTitle]
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
         host?.emitData("sessionSaved", ["id": id, "state": data.base64EncodedString()])
     }
@@ -423,6 +450,11 @@ final class NDCefWebView: NSView {
 
     // MARK: - Events
 
+    func ndTrace(_ message: String) {
+        guard ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" else { return }
+        FileHandle.standardError.write("ND_WV cef node=\(host?.ndNodeID ?? 0) \(message)\n".data(using: .utf8)!)
+    }
+
     func emitText(_ name: String, _ value: String) {
         host?.emitEvent(name, json: ndCefTextJson(value))
     }
@@ -432,7 +464,17 @@ final class NDCefWebView: NSView {
     }
 
     fileprivate func emitAddress(_ value: String) {
-        pendingURL = value
+        ndTrace("addressChange \(value) requested=\(requestedURL) deferred=\(deferredURL)")
+        // The browser is created on about:blank whenever the view has no url
+        // yet. That is this file's placeholder, not a page the app asked for,
+        // and WebKit reports nothing at all for a view that never loaded
+        // anything. Reporting it is what gives the app a second address to
+        // echo back, and the echo is a load storm.
+        if value == "about:blank", requestedURL != "about:blank" { return }
+        // An address the app did not ask for means the page navigated itself,
+        // so the app is free to ask for its own again later.
+        if value != requestedURL { requestedURL = "" }
+        committedURL = value
         emitText("navigate", value)
     }
 
@@ -442,9 +484,12 @@ final class NDCefWebView: NSView {
     }
 
     /// What the automation `webviewInfo` RPC reports for a chromium view.
+    /// The address that actually committed, which is what `webviewInfo`
+    /// promises ("null before the first commit"). Answering with the requested
+    /// one instead would report a page that may never have loaded.
     var ndPageState: NDWebViewPageState {
         NDWebViewPageState(
-            url: pendingURL.isEmpty ? nil : pendingURL,
+            url: committedURL.isEmpty ? nil : committedURL,
             title: lastTitle.isEmpty ? nil : lastTitle,
             loading: lastLoading,
             canGoBack: lastCanGoBack,
@@ -503,7 +548,7 @@ final class NDCefWebView: NSView {
 
     fileprivate func emitFavicon(_ urls: [String]) {
         guard let icon = urls.first(where: { !$0.isEmpty }) else { return }
-        emitData("faviconChanged", ["pageUrl": pendingURL, "iconUrl": icon])
+        emitData("faviconChanged", ["pageUrl": committedURL, "iconUrl": icon])
     }
 
     fileprivate func emitDownload(url: String, suggestedName: String) {
@@ -687,9 +732,17 @@ final class NDCefHandlerBox {
             let back = canGoBack != 0
             let forward = canGoForward != 0
             ndCefDeliver(selfPointer) { view in
+                view?.retryDeferredLoad()
                 view?.updateLoadState(loading: loading, canGoBack: back, canGoForward: forward)
                 if !loading { view?.didFinishLoad() }
             }
+        }
+        // The initial blank document starting to load is the earliest point a
+        // main frame is guaranteed to exist.
+        load.pointee.on_load_start = { selfPointer, browser, frame, _ in
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            ndCefDeliver(selfPointer) { $0?.retryDeferredLoad() }
         }
         load.pointee.on_load_error = { selfPointer, browser, frame, errorCode, errorText, failedUrl in
             let message = ndCefString(errorText)

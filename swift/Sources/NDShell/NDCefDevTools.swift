@@ -25,13 +25,25 @@ final class NDCefDevTools {
     private var nextMessageID: Int32 = 1
     private var pending: [Int32: Reply] = [:]
 
-    /// Execution context ids of the main frame's isolated worlds, by world
-    /// name, learned from `Runtime.executionContextCreated`. Cleared on every
-    /// navigation, which is what makes a world-scoped eval land in the world
+    /// One isolated world in one frame. The frame half is load-bearing: a
+    /// document-start script with a worldName is injected into EVERY frame, so
+    /// a page with an iframe reports the same world name twice, and a cache
+    /// keyed by name alone lets the subframe's context win. Every world-scoped
+    /// eval would then run in the iframe.
+    private struct WorldKey: Hashable {
+        let world: String
+        let frame: String
+    }
+
+    /// Execution contexts learned from `Runtime.executionContextCreated`,
+    /// cleared per navigation so a world-scoped eval lands in the world
     /// belonging to the page that is actually loaded.
-    private var worldContexts: [String: Int] = [:]
+    private var worldContexts: [WorldKey: Int] = [:]
     /// World-scoped work that arrived before its context existed.
-    private var worldWaiters: [String: [(Int?) -> Void]] = [:]
+    private var worldWaiters: [WorldKey: [(Int?) -> Void]] = [:]
+    /// The frame a world-scoped eval means when the caller names none. Learned
+    /// from `Page.getFrameTree` and kept current by `Page.frameNavigated`.
+    private var mainFrameID = ""
 
     init(view: NDCefWebView) {
         self.view = view
@@ -53,6 +65,7 @@ final class NDCefDevTools {
             let waiting = self.queued
             self.queued.removeAll()
             for item in waiting { self.send(item.method, item.params, item.reply) }
+            self.resolveMainFrame { _ in }
             self.whenReady?()
         }
     }
@@ -135,17 +148,28 @@ final class NDCefDevTools {
 
     func handleEvent(method: String, params: [String: Any]) {
         switch method {
+        case "Page.frameNavigated":
+            guard let frame = params["frame"] as? [String: Any],
+                  let id = frame["id"] as? String,
+                  frame["parentId"] == nil else { return }
+            mainFrameID = id
         case "Runtime.executionContextCreated":
             guard let context = params["context"] as? [String: Any],
                   let id = context["id"] as? Int,
                   let name = context["name"] as? String, !name.isEmpty else { return }
+            let auxData = context["auxData"] as? [String: Any]
             // Isolated worlds only: the default context has an empty name, and
             // an eval with no contextId already lands there.
-            guard (context["auxData"] as? [String: Any])?["isDefault"] as? Bool != true else { return }
-            worldContexts[name] = id
-            if let waiters = worldWaiters.removeValue(forKey: name) {
+            guard auxData?["isDefault"] as? Bool != true else { return }
+            guard let frame = auxData?["frameId"] as? String else { return }
+            let key = WorldKey(world: name, frame: frame)
+            worldContexts[key] = id
+            if let waiters = worldWaiters.removeValue(forKey: key) {
                 for waiter in waiters { waiter(id) }
             }
+        case "Runtime.executionContextDestroyed":
+            guard let id = params["executionContextId"] as? Int else { return }
+            worldContexts = worldContexts.filter { $0.value != id }
         case "Runtime.executionContextsCleared":
             worldContexts.removeAll()
         case "Runtime.bindingCalled":
@@ -158,59 +182,77 @@ final class NDCefDevTools {
 
     // MARK: - Worlds
 
-    /// Resolves a world name to its main-frame execution context, waiting for
-    /// the context if the document-start script that creates it has not run
-    /// yet. An empty name is the page's own world, which needs no id.
-    func withWorldContext(_ world: String, _ body: @escaping (Int?) -> Void) {
+    /// Resolves a world name to its execution context in one frame, waiting if
+    /// the document-start script that creates the world has not run yet. An
+    /// empty name is the page's own world, which needs no id. `frame` defaults
+    /// to the main frame, which is what an app means by "this view".
+    func withWorldContext(_ world: String, frame: String? = nil, _ body: @escaping (Int?) -> Void) {
         if world.isEmpty {
             body(nil)
             return
         }
-        if let id = worldContexts[world] {
+        guard let target = frame ?? (mainFrameID.isEmpty ? nil : mainFrameID) else {
+            // The frame tree has not been read yet; read it and come back.
+            resolveMainFrame { [weak self] resolved in
+                guard let self, let resolved else {
+                    body(nil)
+                    return
+                }
+                self.withWorldContext(world, frame: resolved, body)
+            }
+            return
+        }
+        let key = WorldKey(world: world, frame: target)
+        if let id = worldContexts[key] {
             body(id)
             return
         }
-        worldWaiters[world, default: []].append(body)
+        worldWaiters[key, default: []].append(body)
         // A world with no document-start script would never appear on its own.
         // Asking for it directly is what makes `executeJavaScript` into a world
         // the app never injected into behave like WebKit's, which creates the
         // world on demand.
-        createIsolatedWorld(world)
+        createIsolatedWorld(world, frame: target)
     }
 
-    private var creatingWorlds: Set<String> = []
+    private var creatingWorlds: Set<WorldKey> = []
 
-    private func createIsolatedWorld(_ world: String) {
-        guard !creatingWorlds.contains(world) else { return }
-        creatingWorlds.insert(world)
+    private func resolveMainFrame(_ body: @escaping (String?) -> Void) {
         call("Page.getFrameTree") { [weak self] result, _ in
-            guard let self else { return }
             let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any]
-            guard let frameID = frame?["id"] as? String else {
-                self.creatingWorlds.remove(world)
-                self.failWorldWaiters(world)
+            guard let id = frame?["id"] as? String else {
+                body(nil)
                 return
             }
-            self.call("Page.createIsolatedWorld", [
-                "frameId": frameID,
-                "worldName": world,
-                "grantUniveralAccess": true,
-            ]) { created, _ in
-                self.creatingWorlds.remove(world)
-                guard let id = created?["executionContextId"] as? Int else {
-                    self.failWorldWaiters(world)
-                    return
-                }
-                self.worldContexts[world] = id
-                if let waiters = self.worldWaiters.removeValue(forKey: world) {
-                    for waiter in waiters { waiter(id) }
-                }
+            self?.mainFrameID = id
+            body(id)
+        }
+    }
+
+    private func createIsolatedWorld(_ world: String, frame: String) {
+        let key = WorldKey(world: world, frame: frame)
+        guard !creatingWorlds.contains(key) else { return }
+        creatingWorlds.insert(key)
+        call("Page.createIsolatedWorld", [
+            "frameId": frame,
+            "worldName": world,
+            "grantUniveralAccess": true,
+        ]) { [weak self] created, _ in
+            guard let self else { return }
+            self.creatingWorlds.remove(key)
+            guard let id = created?["executionContextId"] as? Int else {
+                self.failWorldWaiters(key)
+                return
+            }
+            self.worldContexts[key] = id
+            if let waiters = self.worldWaiters.removeValue(forKey: key) {
+                for waiter in waiters { waiter(id) }
             }
         }
     }
 
-    private func failWorldWaiters(_ world: String) {
-        guard let waiters = worldWaiters.removeValue(forKey: world) else { return }
+    private func failWorldWaiters(_ key: WorldKey) {
+        guard let waiters = worldWaiters.removeValue(forKey: key) else { return }
         for waiter in waiters { waiter(nil) }
     }
 
