@@ -2431,7 +2431,7 @@ fn cmdSetUserAgent(view: *View, arg: ?std.json.Value) void {
 }
 
 fn cmdFocus(view: *View) void {
-    gtk.Widget.grabFocus(view.widget);
+    _ = gtk.Widget.grabFocus(view.widget);
     const host = hostOf(view) orelse return;
     if (host.set_focus) |set| set(host, 1);
 }
