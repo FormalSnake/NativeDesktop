@@ -1412,7 +1412,7 @@ const Channel = struct { world: []u8, script: ?[]u8 = null };
 
 /// A call that cannot be issued until its world has an execution context.
 const Deferred = union(enum) {
-    eval: struct { sink: EvalSink, code: []u8, world: []u8 },
+    eval: struct { sink: EvalSink, code: []u8, world: []u8, retried: bool = false },
 };
 
 /// Where the string form of one evaluation goes.
@@ -1427,9 +1427,25 @@ const EvalSink = union(enum) {
     discard,
 };
 
+/// An evaluation in flight, with everything a retry needs. A world-scoped call
+/// names an execution context that can die under it: the document commits
+/// between the send and the answer, and the id CEF was given is gone by the
+/// time it looks. That is a race no caller can avoid, so it is absorbed here.
+const EvalCall = struct {
+    sink: EvalSink,
+    code: []u8,
+    world: []u8,
+    retried: bool = false,
+
+    fn deinit(self: *const EvalCall) void {
+        alloc.free(self.code);
+        alloc.free(self.world);
+    }
+};
+
 const Call = union(enum) {
     ignore,
-    eval: EvalSink,
+    eval: EvalCall,
     /// The second hop for a non-primitive result: String(value) computed in the
     /// page rather than approximated from the RemoteObject's description.
     stringify: struct { sink: EvalSink, object_id: []u8 },
@@ -1458,7 +1474,10 @@ fn sinkFree(sink: EvalSink) void {
 fn callFree(call: Call) void {
     switch (call) {
         .ignore => {},
-        .eval => |sink| sinkFree(sink),
+        .eval => |e| {
+            sinkFree(e.sink);
+            e.deinit();
+        },
         .stringify => |s| {
             sinkFree(s.sink);
             alloc.free(s.object_id);
@@ -1627,7 +1646,7 @@ fn drainDeferred(view: *View) void {
                 };
                 continue;
             }
-            _ = issueEval(view, e.sink, e.code, e.world);
+            _ = issueEval(view, e.sink, e.code, e.world, e.retried);
             alloc.free(e.code);
             alloc.free(e.world);
         },
@@ -1642,6 +1661,10 @@ fn drainDeferred(view: *View) void {
 /// One evaluation, world-aware. A world with no execution context yet parks the
 /// call rather than running it in the wrong one.
 fn startEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) bool {
+    return startEvalRetry(view, sink, code, world, false);
+}
+
+fn startEvalRetry(view: *View, sink: EvalSink, code: []const u8, world: []const u8, retried: bool) bool {
     if (world.len != 0) {
         ensureWorld(view, world);
         if (worldContextId(view, world) == 0) {
@@ -1654,6 +1677,7 @@ fn startEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) b
                 .sink = sink,
                 .code = code_copy,
                 .world = world_copy,
+                .retried = retried,
             } }) catch {
                 alloc.free(code_copy);
                 alloc.free(world_copy);
@@ -1662,10 +1686,10 @@ fn startEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) b
             return true;
         }
     }
-    return issueEval(view, sink, code, world);
+    return issueEval(view, sink, code, world, retried);
 }
 
-fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) bool {
+fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8, retried: bool) bool {
     var params: std.ArrayList(u8) = .empty;
     defer params.deinit(alloc);
     params.appendSlice(alloc, "{\"expression\":") catch return false;
@@ -1682,7 +1706,17 @@ fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) b
         params.appendSlice(alloc, n) catch return false;
     }
     params.appendSlice(alloc, "}") catch return false;
-    return cdpSend(view, "Runtime.evaluate", params.items, .{ .eval = sink });
+    const code_copy = alloc.dupe(u8, code) catch return false;
+    const world_copy = alloc.dupe(u8, world) catch {
+        alloc.free(code_copy);
+        return false;
+    };
+    return cdpSend(view, "Runtime.evaluate", params.items, .{ .eval = .{
+        .sink = sink,
+        .code = code_copy,
+        .world = world_copy,
+        .retried = retried,
+    } });
 }
 
 /// The string form of a Runtime.RemoteObject, or null when only the page can
@@ -1856,13 +1890,30 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
     const root = parsed.value;
 
     if (!ok) {
-        failCall(view, call, cdpErrorText(root));
+        const message = cdpErrorText(root);
+        // A world-scoped call whose context died under it is not a failure to
+        // report: the document committed between the send and the answer, and
+        // the world already has (or is about to have) a new context. Forget the
+        // dead id and let the call wait for the new one.
+        if (call == .eval and !call.eval.retried and isMissingContext(message)) {
+            const e = call.eval;
+            defer e.deinit();
+            forgetWorldContext(view, e.world);
+            tr("evalRetry node={d} world={s}", .{ view.node_id, e.world });
+            if (!startEvalRetry(view, e.sink, e.code, e.world, true)) {
+                finishEval(view, e.sink, false, message);
+            }
+            return;
+        }
+        failCall(view, call, message);
         return;
     }
 
     switch (call) {
         .ignore, .agent_ready => {},
-        .eval => |sink| {
+        .eval => |e| {
+            defer e.deinit();
+            const sink = e.sink;
             if (root == .object) {
                 if (root.object.get("exceptionDetails")) |details| {
                     finishEval(view, sink, false, exceptionText(details));
@@ -1957,13 +2008,27 @@ fn failCall(view: *View, call: Call, message: []const u8) void {
             defer alloc.free(id);
             cookiesError(view, id, message);
         },
-        .eval => |sink| finishEval(view, sink, false, message),
+        .eval => |e| {
+            defer e.deinit();
+            finishEval(view, e.sink, false, message);
+        },
         .stringify => |s| {
             alloc.free(s.object_id);
             finishEval(view, s.sink, false, message);
         },
         else => callFree(call),
     }
+}
+
+fn isMissingContext(message: []const u8) bool {
+    return std.mem.indexOf(u8, message, "Cannot find context") != null or
+        std.mem.indexOf(u8, message, "Execution context was destroyed") != null;
+}
+
+fn forgetWorldContext(view: *View, world: []const u8) void {
+    if (world.len == 0) return;
+    const entry = view.worlds.getPtr(world) orelse return;
+    entry.context_id = 0;
 }
 
 fn cdpErrorText(root: std.json.Value) []const u8 {

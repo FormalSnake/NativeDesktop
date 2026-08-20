@@ -128,6 +128,7 @@ function App(): React.ReactNode {
           onForwardAvailable={(e) => record("forward", e.checked)}
           onNewWindow={(e) => record("newWindow", e.text)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
+          onJavaScriptResult={onJavaScriptResult}
         />
         {/* A background tab, which is the shape the bug was found in twice: an
             extension's background page and a tab opened by target=_blank are
