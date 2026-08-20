@@ -60,8 +60,11 @@ toplevels() {
     sed -n 's/^ *\(0x[0-9a-f]*\).*[^0-9]\([0-9]\+\)x\([0-9]\+\)+.*/\1 \2 \3/p' |
     while read -r id w h; do
       [ "$w" -ge 200 ] && [ "$h" -ge 200 ] || continue
-      xwininfo -id "$id" | grep -q "Map State: IsViewable" && echo "$id"
+      # A window can vanish between the listing and the query, so neither the
+      # miss nor the non-match may take `set -e` with it.
+      if xwininfo -id "$id" 2>/dev/null | grep -q "Map State: IsViewable"; then echo "$id"; fi
     done
+  true
 }
 BEFORE_X11="$(toplevels | wc -l)"
 
