@@ -16,9 +16,40 @@ const gobject = @import("gobject");
 
 pub const Window = c_ulong;
 pub const Display = anyopaque;
+const Visual = anyopaque;
+
+/// Xlib's XSetWindowAttributes, laid out for LP64. Only two fields are ever
+/// set here, but the struct has to match byte for byte because Xlib reads the
+/// ones the value mask names by offset.
+const SetWindowAttributes = extern struct {
+    background_pixmap: c_ulong = 0,
+    background_pixel: c_ulong = 0,
+    border_pixmap: c_ulong = 0,
+    border_pixel: c_ulong = 0,
+    bit_gravity: c_int = 0,
+    win_gravity: c_int = 0,
+    backing_store: c_int = 0,
+    backing_planes: c_ulong = 0,
+    backing_pixel: c_ulong = 0,
+    save_under: c_int = 0,
+    event_mask: c_long = 0,
+    do_not_propagate_mask: c_long = 0,
+    override_redirect: c_int = 0,
+    colormap: c_ulong = 0,
+    cursor: c_ulong = 0,
+};
+
+const CW_BACK_PIXEL: c_ulong = 1 << 1;
+const CW_BORDER_PIXEL: c_ulong = 1 << 3;
+const CW_COLORMAP: c_ulong = 1 << 13;
+const INPUT_OUTPUT: c_uint = 1;
 
 const FnInitThreads = *const fn () callconv(.c) c_int;
-const FnCreateSimpleWindow = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint, c_uint, c_ulong, c_ulong) callconv(.c) Window;
+const FnCreateWindow = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint, c_uint, c_int, c_uint, ?*Visual, c_ulong, *SetWindowAttributes) callconv(.c) Window;
+const FnDefaultScreen = *const fn (*Display) callconv(.c) c_int;
+const FnDefaultDepth = *const fn (*Display, c_int) callconv(.c) c_int;
+const FnDefaultVisual = *const fn (*Display, c_int) callconv(.c) ?*Visual;
+const FnDefaultColormap = *const fn (*Display, c_int) callconv(.c) c_ulong;
 const FnWindowOnly = *const fn (*Display, Window) callconv(.c) c_int;
 const FnMoveResize = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint) callconv(.c) c_int;
 const FnResize = *const fn (*Display, Window, c_uint, c_uint) callconv(.c) c_int;
@@ -29,7 +60,11 @@ const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 
 const Api = struct {
     init_threads: FnInitThreads,
-    create_simple_window: FnCreateSimpleWindow,
+    create_window: FnCreateWindow,
+    default_screen: FnDefaultScreen,
+    default_depth: FnDefaultDepth,
+    default_visual: FnDefaultVisual,
+    default_colormap: FnDefaultColormap,
     map_window: FnWindowOnly,
     unmap_window: FnWindowOnly,
     destroy_window: FnWindowOnly,
@@ -64,7 +99,11 @@ fn loadApi() ?*const Api {
 
     const resolved: Api = .{
         .init_threads = x.lookup(FnInitThreads, "XInitThreads") orelse return missing(&x, &g, "XInitThreads"),
-        .create_simple_window = x.lookup(FnCreateSimpleWindow, "XCreateSimpleWindow") orelse return missing(&x, &g, "XCreateSimpleWindow"),
+        .create_window = x.lookup(FnCreateWindow, "XCreateWindow") orelse return missing(&x, &g, "XCreateWindow"),
+        .default_screen = x.lookup(FnDefaultScreen, "XDefaultScreen") orelse return missing(&x, &g, "XDefaultScreen"),
+        .default_depth = x.lookup(FnDefaultDepth, "XDefaultDepth") orelse return missing(&x, &g, "XDefaultDepth"),
+        .default_visual = x.lookup(FnDefaultVisual, "XDefaultVisual") orelse return missing(&x, &g, "XDefaultVisual"),
+        .default_colormap = x.lookup(FnDefaultColormap, "XDefaultColormap") orelse return missing(&x, &g, "XDefaultColormap"),
         .map_window = x.lookup(FnWindowOnly, "XMapWindow") orelse return missing(&x, &g, "XMapWindow"),
         .unmap_window = x.lookup(FnWindowOnly, "XUnmapWindow") orelse return missing(&x, &g, "XUnmapWindow"),
         .destroy_window = x.lookup(FnWindowOnly, "XDestroyWindow") orelse return missing(&x, &g, "XDestroyWindow"),
@@ -134,7 +173,32 @@ pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Win
     const a = loadApi() orelse return 0;
     const dpy = display() orelse return 0;
     if (parent == 0) return 0;
-    const child = a.create_simple_window(dpy, parent, x, y, @max(w, 1), @max(h, 1), 0, 0, 0);
+    // Explicit default visual rather than XCreateSimpleWindow's
+    // CopyFromParent: GTK4 gives its toplevel a 32-bit ARGB visual, and a
+    // container that inherits it is not something Chromium can parent its own
+    // window into. Naming the screen's default depth/visual/colormap here (and
+    // the border pixel that a differing depth requires) is what makes the
+    // embedded window appear at all.
+    const screen = a.default_screen(dpy);
+    var attrs: SetWindowAttributes = .{
+        .background_pixel = 0,
+        .border_pixel = 0,
+        .colormap = a.default_colormap(dpy, screen),
+    };
+    const child = a.create_window(
+        dpy,
+        parent,
+        x,
+        y,
+        @max(w, 1),
+        @max(h, 1),
+        0,
+        a.default_depth(dpy, screen),
+        INPUT_OUTPUT,
+        a.default_visual(dpy, screen),
+        CW_BACK_PIXEL | CW_BORDER_PIXEL | CW_COLORMAP,
+        &attrs,
+    );
     if (child != 0) _ = a.sync(dpy, 0);
     return child;
 }
