@@ -124,6 +124,15 @@ pub fn releaseParam(p: anytype) void {
     if (base.release) |f| _ = f(base);
 }
 
+/// Adds a reference to an object that is about to be passed into CEF while the
+/// caller keeps its own. The mirror of `releaseParam`, for objects this file
+/// did not create.
+pub fn addRefParam(p: anytype) void {
+    if (p == null) return;
+    const base: *c.cef_base_ref_counted_t = @ptrCast(@alignCast(p));
+    if (base.add_ref) |f| f(base);
+}
+
 /// Drops a reference obtained from a CEF getter (`get_host`, `get_main_frame`),
 /// the same contract as a callback parameter in the other direction.
 pub const releaseOwned = releaseParam;

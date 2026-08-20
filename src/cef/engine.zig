@@ -348,6 +348,10 @@ const View = struct {
     find_handler: *FindObj,
     download_handler: *DownloadObj,
 
+    /// The request context this view's browser was created with, or null for
+    /// the global one. Held so the view keeps the profile alive.
+    context: ?*c.cef_request_context_t = null,
+
     /// The last `findStart` text, so findNext/findPrevious can re-issue it:
     /// CEF's find takes the search text on every call.
     last_find: ?[]u8 = null,
@@ -453,9 +457,6 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         return null;
     }
     if (!ensureInitialized()) return null;
-    if (profile.len != 0) {
-        std.debug.print("ND_WARN WebView engine=chromium: `profile` is not wired yet (M2); this view uses the global request context\n", .{});
-    }
     if (std.mem.eql(u8, context_menu_mode, "suppress")) {
         std.debug.print("ND_WARN WebView engine=chromium: `contextMenuMode` is not wired yet (M2); Chromium's own menu is shown\n", .{});
     }
@@ -482,6 +483,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .find_handler = find_handler,
         .download_handler = download_handler,
     };
+    view.context = requestContext(profile);
     if (url) |u| {
         if (u[0] != 0) view.pending_url = alloc.dupeZ(u8, std.mem.span(u)) catch null;
     }
@@ -624,9 +626,14 @@ fn createBrowser(view: *View) void {
     _ = setStr(&url, start);
 
     view.created = true;
-    // The client reference is consumed by CEF (CToCpp::Wrap takes the caller's
-    // ref), so this hands out an added one and keeps ours.
-    if (api.create_browser(&window_info, view.client.handOut(), &url, &browser_settings, null, null) == 0) {
+    // Both the client and the request context are consumed by CEF (CToCpp::Wrap
+    // takes the caller's reference), so each hands out an added one and this
+    // view keeps its own.
+    const context: [*c]c.cef_request_context_t = if (view.context) |ctx| blk: {
+        ref.addRefParam(ctx);
+        break :blk ctx;
+    } else null;
+    if (api.create_browser(&window_info, view.client.handOut(), &url, &browser_settings, null, context) == 0) {
         view.created = false;
         std.debug.print("ND_WARN WebView engine=chromium: cef_browser_host_create_browser failed\n", .{});
     }
@@ -1125,7 +1132,7 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
         !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
         !std.mem.eql(u8, method, "Runtime.bindingCalled") and
-        !std.mem.eql(u8, method, "Security.securityStateChanged") and
+        !std.mem.eql(u8, method, "Network.responseReceived") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
         !std.mem.eql(u8, method, cdp.agent_detached)) return;
     post(.{
@@ -1295,10 +1302,11 @@ fn enableDomains(view: *View) void {
 fn agentReady(view: *View) void {
     if (view.cdp_ready) return;
     _ = cdpSendRaw(view, "Runtime.enable", "", .ignore);
-    // Network carries the cookie surface; Security is what turns a plain-http
-    // page into a securityChanged event without walking navigation entries.
+    // Network carries both the cookie surface and, on the main document's
+    // response, the TLS state securityChanged reports. The Security domain
+    // would say the same thing in one event, but CEF's protocol subset does
+    // not answer Security.enable at all.
     _ = cdpSendRaw(view, "Network.enable", "", .ignore);
-    _ = cdpSendRaw(view, "Security.enable", "", .ignore);
     view.cdp_ready = true;
     const items = view.queued.toOwnedSlice(alloc) catch return;
     defer alloc.free(items);
@@ -1783,8 +1791,16 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
         onBindingCalled(view, root);
         return;
     }
-    if (std.mem.eql(u8, method, "Security.securityStateChanged")) {
-        const state = stringField(root, "securityState") orelse return;
+    if (std.mem.eql(u8, method, "Network.responseReceived")) {
+        // Only the main document's response describes the page's own TLS
+        // state; a subresource's would report the last image loaded.
+        const kind = stringField(root, "type") orelse return;
+        if (!std.mem.eql(u8, kind, "Document")) return;
+        const response = switch (root) {
+            .object => |o| o.get("response") orelse return,
+            else => return,
+        };
+        const state = stringField(response, "securityState") orelse return;
         const secure = std.mem.eql(u8, state, "secure");
         const f = emit orelse return;
         var payload: std.json.ObjectMap = .empty;
@@ -2518,4 +2534,55 @@ fn onBeforeDownload(
 fn freeUserfree(s: c.cef_string_userfree_t) void {
     const api = loader.loaded() orelse return;
     api.string_userfree_utf16_free(s);
+}
+
+// ============================================================================
+// Profiles: one request context per profile
+// ============================================================================
+//
+// The `profile` prop means one cookie jar and one cache, so it maps onto a CEF
+// request context: "" is the global one, a named profile is a persistent
+// context under the shared root_cache_path, and "private…" is a context with no
+// cache path at all, which is CEF's spelling of in-memory.
+
+/// Named profiles are shared: two views asking for the same name must see the
+/// same jar. Ephemeral ones are not, by construction.
+var profile_contexts: std.StringHashMapUnmanaged(*c.cef_request_context_t) = .empty;
+
+fn requestContext(profile: []const u8) ?*c.cef_request_context_t {
+    if (profile.len == 0) return null;
+    const api = loader.loaded() orelse return null;
+    if (!std.mem.startsWith(u8, profile, "private")) {
+        if (profile_contexts.get(profile)) |ctx| return ctx;
+    }
+
+    var settings = std.mem.zeroes(c.cef_request_context_settings_t);
+    settings.size = @sizeOf(c.cef_request_context_settings_t);
+    var path: ?[:0]u8 = null;
+    defer if (path) |p| alloc.free(p);
+    defer clearStr(&settings.cache_path);
+
+    if (!std.mem.startsWith(u8, profile, "private")) {
+        // CEF requires a per-context cache path to sit under root_cache_path,
+        // which cef_settings already names.
+        const root = defaultCacheRoot() orelse return null;
+        defer alloc.free(root);
+        const dir = std.fmt.allocPrintSentinel(alloc, "{s}/profiles/{s}", .{ root, profile }, 0) catch return null;
+        path = dir;
+        _ = glib.mkdirWithParents(dir.ptr, 0o700);
+        _ = setStr(&settings.cache_path, dir);
+        settings.persist_session_cookies = 1;
+    }
+
+    const ctx = api.request_context_create_context(&settings, null);
+    if (ctx == null) {
+        std.debug.print("ND_WARN WebView engine=chromium: could not create a request context for profile \"{s}\"\n", .{profile});
+        return null;
+    }
+    const typed: *c.cef_request_context_t = @ptrCast(ctx);
+    if (std.mem.startsWith(u8, profile, "private")) return typed;
+
+    const key = alloc.dupe(u8, profile) catch return typed;
+    profile_contexts.put(alloc, key, typed) catch alloc.free(key);
+    return typed;
 }

@@ -47,6 +47,7 @@ pub const Api = struct {
     string_list_size: *const fn (list: c.cef_string_list_t) callconv(.c) usize,
     string_list_value: *const fn (list: c.cef_string_list_t, index: usize, value: [*c]c.cef_string_t) callconv(.c) c_int,
     string_userfree_utf16_free: *const fn (str: c.cef_string_userfree_utf16_t) callconv(.c) void,
+    request_context_create_context: *const fn (settings: [*c]const c.cef_request_context_settings_t, handler: [*c]c.cef_request_context_handler_t) callconv(.c) [*c]c.cef_request_context_t,
 };
 
 var api: ?Api = null;
@@ -129,6 +130,7 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .string_list_size = l.lookup(@FieldType(Api, "string_list_size"), "cef_string_list_size") orelse return null,
         .string_list_value = l.lookup(@FieldType(Api, "string_list_value"), "cef_string_list_value") orelse return null,
         .string_userfree_utf16_free = l.lookup(@FieldType(Api, "string_userfree_utf16_free"), "cef_string_userfree_utf16_free") orelse return null,
+        .request_context_create_context = l.lookup(@FieldType(Api, "request_context_create_context"), "cef_request_context_create_context") orelse return null,
     };
 }
 
