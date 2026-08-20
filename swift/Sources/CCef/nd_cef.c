@@ -22,6 +22,18 @@ static struct {
                         cef_request_context_t *);
   const char *(*api_hash)(int, int);
   int (*string_utf8_to_utf16)(const char *, size_t, cef_string_utf16_t *);
+  void (*string_userfree_free)(cef_string_userfree_utf16_t);
+  size_t (*string_list_size)(cef_string_list_t);
+  cef_string_list_t (*string_list_alloc)(void);
+  void (*string_list_append)(cef_string_list_t, const cef_string_t *);
+  void (*string_list_free)(cef_string_list_t);
+  int (*string_list_value)(cef_string_list_t, size_t, cef_string_t *);
+  cef_dictionary_value_t *(*dict_create)(void);
+  cef_request_context_t *(*request_context_create)(const cef_request_context_settings_t *,
+                                                   cef_request_context_handler_t *);
+  int (*register_scheme_handler_factory)(const cef_string_t *,
+                                         const cef_string_t *,
+                                         cef_scheme_handler_factory_t *);
 } g;
 
 static void *g_handle = NULL;
@@ -68,6 +80,15 @@ int nd_cef_load(const char *framework_binary_path) {
   g.quit_message_loop = bind_symbol("cef_quit_message_loop");
   g.create_browser = bind_symbol("cef_browser_host_create_browser");
   g.string_utf8_to_utf16 = bind_symbol("cef_string_utf8_to_utf16");
+  g.string_userfree_free = bind_symbol("cef_string_userfree_utf16_free");
+  g.string_list_size = bind_symbol("cef_string_list_size");
+  g.string_list_value = bind_symbol("cef_string_list_value");
+  g.string_list_alloc = bind_symbol("cef_string_list_alloc");
+  g.string_list_append = bind_symbol("cef_string_list_append");
+  g.string_list_free = bind_symbol("cef_string_list_free");
+  g.dict_create = bind_symbol("cef_dictionary_value_create");
+  g.request_context_create = bind_symbol("cef_request_context_create_context");
+  g.register_scheme_handler_factory = bind_symbol("cef_register_scheme_handler_factory");
 
   if (!g.api_hash || !g.execute_process || !g.initialize || !g.shutdown ||
       !g.run_message_loop || !g.quit_message_loop || !g.create_browser ||
@@ -153,6 +174,54 @@ void nd_cef_string_clear(cef_string_t *value) {
   value->str = NULL;
   value->length = 0;
   value->dtor = NULL;
+}
+
+void nd_cef_string_free(cef_string_userfree_t value) {
+  if (value && g.string_userfree_free) {
+    g.string_userfree_free(value);
+  }
+}
+
+size_t nd_cef_string_list_count(cef_string_list_t list) {
+  return (list && g.string_list_size) ? g.string_list_size(list) : 0;
+}
+
+int nd_cef_string_list_at(cef_string_list_t list, size_t index, cef_string_t *out) {
+  return (list && out && g.string_list_value) ? g.string_list_value(list, index, out) : 0;
+}
+
+cef_string_list_t nd_cef_string_list_alloc(void) {
+  return g.string_list_alloc ? g.string_list_alloc() : NULL;
+}
+
+void nd_cef_string_list_append(cef_string_list_t list, const cef_string_t *value) {
+  if (list && value && g.string_list_append) {
+    g.string_list_append(list, value);
+  }
+}
+
+void nd_cef_string_list_free(cef_string_list_t list) {
+  if (list && g.string_list_free) {
+    g.string_list_free(list);
+  }
+}
+
+cef_dictionary_value_t *nd_cef_dict_create(void) {
+  return g.dict_create ? g.dict_create() : NULL;
+}
+
+cef_request_context_t *nd_cef_request_context_create(
+    const cef_request_context_settings_t *settings,
+    cef_request_context_handler_t *handler) {
+  return g.request_context_create ? g.request_context_create(settings, handler) : NULL;
+}
+
+int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
+                                           const cef_string_t *domain_name,
+                                           cef_scheme_handler_factory_t *factory) {
+  return g.register_scheme_handler_factory
+             ? g.register_scheme_handler_factory(scheme_name, domain_name, factory)
+             : 0;
 }
 
 // MARK: - Refcounting

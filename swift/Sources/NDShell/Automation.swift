@@ -505,6 +505,14 @@ private extension Double {
     let bounds = content.bounds
     content.layoutSubtreeIfNeeded() // real Auto Layout pass before any capture rung
 
+    // Chromium renders into a remote layer that none of the rungs below can
+    // draw, so a chromium <webview> would capture as its page background and
+    // nothing else. Ask the renderer for the pixels first; they are composited
+    // back over rung 1's bitmap.
+    #if canImport(CCef)
+    if let win = targetWindow, NDCefRuntime.isActive { NDCefCapture.refreshAll(in: win) }
+    #endif
+
     // Rung 0 (opt-in): ScreenCaptureKit captures the real composited window
     // — glass included — so it is correct rather than approximated, and the
     // sidebar compositor is skipped entirely. Behind an env flag because it
@@ -524,7 +532,10 @@ private extension Double {
     if let rep = content.bitmapImageRepForCachingDisplay(in: bounds) {
         ndZeroRep(rep) // AppKit reuses this rep per view; see ndZeroRep
         content.cacheDisplay(in: bounds, to: rep)
-        let composed = ndCompositeSidebarPanes(rep, content, targetWindow)
+        var composed = ndCompositeSidebarPanes(rep, content, targetWindow)
+        #if canImport(CCef)
+        if NDCefRuntime.isActive { composed = NDCefCapture.composite(composed, content) }
+        #endif
         if writeIfNonBlank(composed, pngPath, targetWindow) {
             FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=1\n".data(using: .utf8)!)
             return true
@@ -1148,21 +1159,15 @@ private let ndPageTextInterval: TimeInterval = 0.25
     guard let web = view as? NDWebView, let code = args["code"] as? String else {
         return invalidValue(errOut, nodeID)
     }
-    let world = NDWebView.contentWorld(named: args["world"] as? String ?? "")
     let id = ndNextEvalID
     ndNextEvalID += 1
     let entry = NDPendingEval()
     ndPendingEvals[id] = entry
-    web.evaluateJavaScript(code, in: nil, in: world) { result in
+    web.ndAutomationEval(code: code, world: args["world"] as? String ?? "") { ok, value, error in
         entry.done = true
-        switch result {
-        case .success(let value):
-            entry.ok = true
-            entry.value = ndStringifyEvalResult(value)
-        case .failure(let error):
-            let info = (error as NSError).userInfo
-            entry.error = (info["WKJavaScriptExceptionMessage"] as? String) ?? error.localizedDescription
-        }
+        entry.ok = ok
+        entry.value = value
+        entry.error = error
     }
     setResultRaw(resultOut, "{\"evalId\":\(id)}")
     return 0
@@ -1189,11 +1194,11 @@ private let ndPageTextInterval: TimeInterval = 0.25
     var entry = ndPageTexts[nodeID] ?? NDPageText()
     if !entry.inFlight, Date().timeIntervalSince(entry.stamp) >= ndPageTextInterval {
         entry.inFlight = true
-        web.evaluateJavaScript("document.body ? document.body.innerText : \"\"", in: nil, in: .page) { result in
+        web.ndAutomationEval(code: "document.body ? document.body.innerText : \"\"", world: "") { _, value, _ in
             var slot = ndPageTexts[nodeID] ?? NDPageText()
             slot.inFlight = false
             slot.stamp = Date()
-            if case .success(let value) = result, let text = ndStringifyEvalResult(value) { slot.text = text }
+            if let value { slot.text = value }
             ndPageTexts[nodeID] = slot
         }
     }
@@ -1206,7 +1211,7 @@ private let ndPageTextInterval: TimeInterval = 0.25
 /// The result's STRING rendering, matching the javaScriptResult event's
 /// `value` (and WebKitGTK's `jsc_value_to_string`): objects and arrays as
 /// JSON, everything else as its description. `null`/`undefined` answer nil.
-private func ndStringifyEvalResult(_ result: Any?) -> String? {
+func ndStringifyEvalResult(_ result: Any?) -> String? {
     guard let result, !(result is NSNull) else { return nil }
     if result is [String: Any] || result is [Any],
        JSONSerialization.isValidJSONObject(result),

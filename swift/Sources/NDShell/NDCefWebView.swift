@@ -6,9 +6,9 @@ import Foundation
 /// The Chromium (CEF) surface behind `<webview>`, presenting the same internal
 /// contract as the WKWebView in NDWebView.swift: `ndSetURL`, an `ndHandleCommand`
 /// switch, and the schema's events out through `nd_emit_event`. NDWebView owns
-/// one of these and forwards to it when `ND_WEBVIEW_ENGINE=chromium` started
-/// successfully, so the generated widget code (NDGen/Widgets.swift) never
-/// learns there are two engines.
+/// one of these and forwards to it when the resolved engine is chromium, so the
+/// generated widget code (NDGen/Widgets.swift) never learns there are two
+/// engines.
 ///
 /// Embedding is Alloy-style and windowed: CEF creates its own NSView inside
 /// this one. The browser is only created once this view is in a window, which
@@ -16,8 +16,13 @@ import Foundation
 /// Chromium window over the app, the one failure the spec bans outright.
 ///
 /// Where the WKWebView surface polls the view's navigation properties, this
-/// one is push-only: CEF's display and load handlers report the same six state
+/// one is push-only: CEF's display and load handlers report the same state
 /// changes directly, so there is no timer here.
+///
+/// The scriptable half of the contract (evaluate, user scripts, worlds, script
+/// messages, the framework's own page-side agent) lives in NDCefScripts.swift
+/// on top of the DevTools substrate; profiles, cookies and custom schemes live
+/// in NDCefProfiles.swift.
 final class NDCefWebView: NSView {
     /// The `<webview>` node this view reports as. Emits go through it because
     /// the node id and the event names belong to the widget, not the engine.
@@ -27,12 +32,16 @@ final class NDCefWebView: NSView {
     /// a callback arriving after the view is gone resolves to nothing instead
     /// of a freed object. CEF outlives the view whenever a browser is still
     /// closing.
-    nonisolated(unsafe) private let box = NDCefHandlerBox()
+    nonisolated(unsafe) let box = NDCefHandlerBox()
 
     nonisolated(unsafe) private var browser: UnsafeMutablePointer<cef_browser_t>?
     private var createRequested = false
     /// The address to open, held until the browser exists.
     private var pendingURL: String
+    /// The `profile` prop, resolved to a request context once at create time.
+    private let profile: String
+
+    lazy var devTools = NDCefDevTools(view: self)
 
     // Last-emitted navigation state; events fire only on change, matching the
     // WKWebView surface. It doubles as the answer to the automation
@@ -42,9 +51,35 @@ final class NDCefWebView: NSView {
     private var lastCanGoBack = false
     private var lastCanGoForward = false
     private var lastProgress: Double = -1
+    private var lastSecure: Bool?
 
-    init(url: String) {
-        pendingURL = url
+    // Script state (NDCefScripts.swift).
+    var userScripts: [NDCefUserScript] = []
+    var scriptIdentifiers: [String: String] = [:]
+    /// Bumped whenever a key is removed or replaced, so an install whose
+    /// identifier arrives after the fact knows it was superseded.
+    var scriptGenerations: [String: Int] = [:]
+    var messageChannels: Set<NDCefMessageChannel> = []
+    var boundWorlds: Set<String> = []
+    var suppressContextMenu: Bool
+    var contextMenuItems: [NDContextMenuItem] = []
+    var lastMenuHit = NDContextMenuHit()
+    var lastHoveredLink = ""
+    var pendingFindText = ""
+    /// The app's context-menu items keyed by the command id they were given.
+    /// CEF reserves MENU_ID_USER_FIRST upward for the client, so nothing here
+    /// can collide with Chromium's own commands.
+    var contextMenuCommands: [Int32: NDContextMenuItem] = [:]
+    var nextContextMenuCommand: Int32 = 26500
+    /// Newest `Page.captureScreenshot` PNG, kept because the automation
+    /// snapshot ladder is synchronous and Chromium's content lives in a remote
+    /// layer that AppKit's own render paths cannot draw.
+    var cachedFrame: NSImage?
+
+    init(url: String, profile: String, contextMenuMode: String) {
+        self.pendingURL = url
+        self.profile = profile
+        self.suppressContextMenu = contextMenuMode == "suppress"
         super.init(frame: .zero)
         box.view = self
         box.build()
@@ -115,7 +150,12 @@ final class NDCefWebView: NSView {
         ndCefSetString(pendingURL.isEmpty ? "about:blank" : pendingURL, &url)
         defer { nd_cef_string_clear(&url) }
 
-        if nd_cef_create_browser(&info, box.client, &url, &settings, nil, nil) == 0 {
+        // Both the client and the request context are handed over: the library
+        // owns what it is passed, and this view keeps its own reference.
+        let context = NDCefProfiles.context(for: profile)
+        nd_cef_ref_add(box.client)
+        nd_cef_ref_add(context)
+        if nd_cef_create_browser(&info, box.client, &url, &settings, nil, context) == 0 {
             ndCefWarn("cef_browser_host_create_browser failed")
         }
     }
@@ -128,6 +168,13 @@ final class NDCefWebView: NSView {
         browser = created
         guard let browserHost = created.pointee.get_host?(created) else { return }
         defer { nd_cef_ref_release(browserHost) }
+        // The observer has to be attached before the first method call, or the
+        // reply has nowhere to land.
+        nd_cef_ref_add(box.devToolsObserver)
+        box.attachDevTools(browserHost.pointee.add_dev_tools_message_observer?(browserHost, box.devToolsObserver))
+        devTools.start()
+        ndInstallScripts()
+        NDCefSchemeRouter.register(self, browser: created)
         guard let handle = browserHost.pointee.get_window_handle?(browserHost) else { return }
         let view = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
         view.frame = bounds
@@ -144,16 +191,40 @@ final class NDCefWebView: NSView {
     }
 
     private func setBrowserHidden(_ hidden: Bool) {
-        guard let browser, let browserHost = browser.pointee.get_host?(browser) else { return }
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
         browserHost.pointee.was_hidden?(browserHost, hidden ? 1 : 0)
-        nd_cef_ref_release(browserHost)
     }
 
-    /// The CEF view is what takes keystrokes, so the widget's `focus` command
-    /// has to reach past this container.
+    /// The browser's host, with a reference the CALLER owns. Every use is
+    /// paired with `nd_cef_ref_release`.
+    func browserHost() -> UnsafeMutablePointer<cef_browser_host_t>? {
+        guard let browser else { return nil }
+        return browser.pointee.get_host?(browser)
+    }
+
+    var hasBrowser: Bool { browser != nil }
+
+    /// A plain NSView refuses first responder by default, and this one has to
+    /// take it: the widget's `focus` command lands on the NDWebView above,
+    /// which forwards here, and the a11y probe reports focus for any
+    /// descendant. Chromium routes the keystrokes itself once told.
+    override var acceptsFirstResponder: Bool { true }
+
     override func becomeFirstResponder() -> Bool {
-        guard let target = subviews.first else { return super.becomeFirstResponder() }
-        return window?.makeFirstResponder(target) ?? false
+        if let browserHost = browserHost() {
+            browserHost.pointee.set_focus?(browserHost, 1)
+            nd_cef_ref_release(browserHost)
+        }
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        if let browserHost = browserHost() {
+            browserHost.pointee.set_focus?(browserHost, 0)
+            nd_cef_ref_release(browserHost)
+        }
+        return true
     }
 
     // MARK: - Props and commands
@@ -162,7 +233,7 @@ final class NDCefWebView: NSView {
     /// the app feeds `onNavigate` back into the prop, so a load only starts
     /// when the address actually differs from where the view already is.
     func ndSetURL(_ value: String) {
-        guard !value.isEmpty, value != currentURL else { return }
+        guard !value.isEmpty, value != pendingURL else { return }
         guard let browser, let frame = browser.pointee.get_main_frame?(browser) else {
             pendingURL = value
             return
@@ -174,11 +245,23 @@ final class NDCefWebView: NSView {
         frame.pointee.load_url?(frame, &url)
     }
 
-    private var currentURL: String {
-        pendingURL
+    /// createAndUpdate `contextMenuMode` prop. The page-side agent decides
+    /// whether to `preventDefault()`, so the live page is told directly and the
+    /// script is rebuilt for the next load, exactly as on the WebKit surface.
+    func ndSetContextMenuMode(_ mode: String) {
+        let suppress = mode == "suppress"
+        guard suppress != suppressContextMenu else { return }
+        suppressContextMenu = suppress
+        installInternalAgent()
+        devTools.evaluate(
+            "window.__ndSetSuppressMenu && window.__ndSetSuppressMenu(\(suppress))",
+            world: NDCefWebView.internalWorldName
+        ) { _, _ in }
     }
 
     func ndHandleCommand(_ command: String, argJson: String) {
+        let arg = ndCefParseJSON(argJson)
+        let obj = arg as? [String: Any] ?? [:]
         switch command {
         case "goBack":
             if let browser, browser.pointee.can_go_back?(browser) != 0 { browser.pointee.go_back?(browser) }
@@ -189,29 +272,145 @@ final class NDCefWebView: NSView {
         case "stop":
             browser.map { $0.pointee.stop_load?($0) }
         case "setZoom":
-            guard let zoom = ndCefParseJSON(argJson) as? NSNumber else {
+            guard let zoom = arg as? NSNumber else {
                 ndCefWarn("malformed setZoom arg")
                 return
             }
             setZoom(zoom.doubleValue)
+        case "setUserAgent":
+            // Per-context at creation on this engine, so a live change is a
+            // page-level override of navigator.userAgent rather than a header
+            // change. CDP's Network.setUserAgentOverride does both.
+            guard let agent = arg as? String else {
+                ndCefWarn("malformed setUserAgent arg")
+                return
+            }
+            devTools.call("Network.setUserAgentOverride", ["userAgent": agent])
+        case "executeJavaScript": ndExecuteJavaScript(obj)
+        case "addUserScript": ndAddUserScript(obj)
+        case "removeUserScript":
+            guard let id = obj["id"] as? String else {
+                ndCefWarn("removeUserScript: missing id")
+                return
+            }
+            ndRemoveUserScript(id)
+        case "clearUserScripts":
+            ndClearUserScripts(world: obj["world"] as? String)
+        case "registerScriptMessage": ndRegisterScriptMessage(obj)
+        case "unregisterScriptMessage": ndUnregisterScriptMessage(obj)
+        case "respondScheme": NDCefSchemes.respond(obj)
+        case "getCookies": ndGetCookies(obj)
+        case "setCookie": ndSetCookie(obj)
+        case "deleteCookie": ndDeleteCookie(obj)
+        case "findStart", "findNext", "findPrevious": ndFind(command, obj)
+        case "findStop": ndFindStop()
+        case "saveSession": ndSaveSession(obj)
+        case "restoreSession": ndRestoreSession(obj)
+        case "setMuted":
+            let muted = (arg as? NSNumber)?.boolValue ?? (obj["muted"] as? NSNumber)?.boolValue ?? false
+            ndSetMuted(muted)
+        case "setContextMenuItems":
+            contextMenuItems = NDContextMenuItem.parse(arg)
+        case "openDevTools":
+            // A CEF-created devtools window is exactly the stray window the
+            // spec bans; the protocol is already exposed through this file.
+            ndCefWarn("openDevTools: not available on the chromium engine (use executeDevToolsMethod)")
         default:
-            // The rest of the 26-command contract rides the DevTools protocol
-            // and per-context objects, which is M2.
-            ndCefWarn("WebView command \(command) is not implemented on the chromium engine yet")
+            ndCefWarn("unknown WebView command \(command)")
         }
     }
 
     /// CEF zoom is a log scale around 1.0; the widget's factor is linear.
     private func setZoom(_ factor: Double) {
-        guard factor > 0, let browser, let browserHost = browser.pointee.get_host?(browser) else { return }
+        guard factor > 0, let browserHost = browserHost() else { return }
         defer { nd_cef_ref_release(browserHost) }
         browserHost.pointee.set_zoom_level?(browserHost, log(factor) / log(1.2))
     }
 
+    // MARK: - Find
+
+    private func ndFind(_ command: String, _ obj: [String: Any]) {
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        if command == "findStart" {
+            guard let text = obj["text"] as? String else {
+                ndCefWarn("findStart: missing text")
+                return
+            }
+            pendingFindText = text
+        }
+        guard !pendingFindText.isEmpty else { return }
+        var text = cef_string_t()
+        ndCefSetString(pendingFindText, &text)
+        defer { nd_cef_string_clear(&text) }
+        let caseSensitive = (obj["caseSensitive"] as? NSNumber)?.boolValue ?? false
+        browserHost.pointee.find?(
+            browserHost,
+            &text,
+            command == "findPrevious" ? 0 : 1,
+            caseSensitive ? 1 : 0,
+            command == "findStart" ? 0 : 1
+        )
+    }
+
+    private func ndFindStop() {
+        pendingFindText = ""
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        browserHost.pointee.stop_finding?(browserHost, 1)
+    }
+
+    fileprivate func emitFindResult(count: Int32, final: Bool) {
+        host?.emitData("findResult", ["matchFound": count > 0, "matchCount": Int(count), "done": final])
+    }
+
+    // MARK: - Audio
+
+    private func ndSetMuted(_ muted: Bool) {
+        if let browserHost = browserHost() {
+            browserHost.pointee.set_audio_muted?(browserHost, muted ? 1 : 0)
+            nd_cef_ref_release(browserHost)
+        }
+        // The native mute silences the pipeline; the page-side agent is what
+        // reports the state and keeps new media elements muted, the same way
+        // the WebKit surface does it.
+        devTools.evaluate(
+            "window.__ndSetMuted && window.__ndSetMuted(\(muted))",
+            world: NDCefWebView.internalWorldName
+        ) { _, _ in }
+    }
+
+    // MARK: - Session
+
+    /// CEF exposes no serialized interaction state, so the session is the
+    /// address of the current navigation entry. Restoring puts the view back
+    /// on that page; scroll offset and form state do not survive, which is the
+    /// engine's limit rather than a shortcut.
+    private func ndSaveSession(_ obj: [String: Any]) {
+        let id = obj["id"] as? String ?? ""
+        let payload: [String: Any] = ["url": pendingURL, "title": lastTitle]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        host?.emitData("sessionSaved", ["id": id, "state": data.base64EncodedString()])
+    }
+
+    private func ndRestoreSession(_ obj: [String: Any]) {
+        guard let encoded = obj["state"] as? String, let data = Data(base64Encoded: encoded),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let url = payload["url"] as? String else {
+            ndCefWarn("restoreSession: malformed state")
+            return
+        }
+        ndSetURL(url)
+    }
+
     // MARK: - Events
 
-    fileprivate func emitText(_ name: String, _ value: String) {
+    func emitText(_ name: String, _ value: String) {
         host?.emitEvent(name, json: ndCefTextJson(value))
+    }
+
+    func emitData(_ name: String, _ fields: [String: Any]) {
+        host?.emitData(name, fields)
     }
 
     fileprivate func emitAddress(_ value: String) {
@@ -263,42 +462,127 @@ final class NDCefWebView: NSView {
         guard code != -3 else { return }
         host?.emitData("loadFailed", ["url": url, "error": message.isEmpty ? "Load failed (\(code))" : message])
     }
+
+    /// Read off the visible navigation entry at load end, which is where CEF
+    /// keeps the TLS state for the page that actually committed.
+    fileprivate func emitSecurity() {
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        guard let entry = browserHost.pointee.get_visible_navigation_entry?(browserHost) else { return }
+        defer { nd_cef_ref_release(entry) }
+        var secure = false
+        var insecureContent = false
+        if let ssl = entry.pointee.get_sslstatus?(entry) {
+            secure = ssl.pointee.is_secure_connection?(ssl) != 0
+            // DISPLAYED_INSECURE_CONTENT | RAN_INSECURE_CONTENT
+            insecureContent = secure && (ssl.pointee.get_content_status?(ssl).rawValue ?? 0) != 0
+            nd_cef_ref_release(ssl)
+        }
+        guard lastSecure != secure else { return }
+        lastSecure = secure
+        emitData("securityChanged", ["secure": secure, "insecureContent": insecureContent])
+    }
+
+    fileprivate func emitFavicon(_ urls: [String]) {
+        guard let icon = urls.first(where: { !$0.isEmpty }) else { return }
+        emitData("faviconChanged", ["pageUrl": pendingURL, "iconUrl": icon])
+    }
+
+    fileprivate func emitDownload(url: String, suggestedName: String) {
+        var fields: [String: Any] = ["url": url]
+        if !suggestedName.isEmpty { fields["suggestedFilename"] = suggestedName }
+        emitData("downloadRequested", fields)
+    }
+
+    fileprivate func didFinishLoad() {
+        emitSecurity()
+        NDCefCapture.refresh(self)
+    }
 }
 
 // MARK: - Handlers
 
-/// Owns the four capi structs for one view. CEF holds references to them for
-/// as long as a browser exists, which can outlast the NSView, so the structs
-/// point here and this points back weakly.
+/// Owns every capi struct for one view. CEF holds references to them for as
+/// long as a browser exists, which can outlast the NSView, so the structs point
+/// here and this points back weakly.
 final class NDCefHandlerBox {
     weak var view: NDCefWebView?
     fileprivate(set) var client: UnsafeMutablePointer<cef_client_t>?
     fileprivate(set) var display: UnsafeMutablePointer<cef_display_handler_t>?
     fileprivate(set) var load: UnsafeMutablePointer<cef_load_handler_t>?
     fileprivate(set) var lifeSpan: UnsafeMutablePointer<cef_life_span_handler_t>?
+    fileprivate(set) var find: UnsafeMutablePointer<cef_find_handler_t>?
+    fileprivate(set) var download: UnsafeMutablePointer<cef_download_handler_t>?
+    fileprivate(set) var jsDialog: UnsafeMutablePointer<cef_jsdialog_handler_t>?
+    fileprivate(set) var dialog: UnsafeMutablePointer<cef_dialog_handler_t>?
+    fileprivate(set) var contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>?
+    fileprivate(set) var focus: UnsafeMutablePointer<cef_focus_handler_t>?
+    fileprivate(set) var devToolsObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
+    /// Kept for as long as the observer should stay attached: destroying the
+    /// registration is what detaches it.
+    fileprivate(set) var devToolsRegistration: UnsafeMutablePointer<cef_registration_t>?
 
     func build() {
         display = ndCefAlloc(cef_display_handler_t.self, self)
         load = ndCefAlloc(cef_load_handler_t.self, self)
         lifeSpan = ndCefAlloc(cef_life_span_handler_t.self, self)
+        find = ndCefAlloc(cef_find_handler_t.self, self)
+        download = ndCefAlloc(cef_download_handler_t.self, self)
+        jsDialog = ndCefAlloc(cef_jsdialog_handler_t.self, self)
+        dialog = ndCefAlloc(cef_dialog_handler_t.self, self)
+        contextMenu = ndCefAlloc(cef_context_menu_handler_t.self, self)
+        focus = ndCefAlloc(cef_focus_handler_t.self, self)
+        devToolsObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
         client = ndCefAlloc(cef_client_t.self, self)
         wireDisplay()
         wireLoad()
         wireLifeSpan()
+        wireFind()
+        wireDownload()
+        wireJSDialog()
+        wireDialog()
+        wireContextMenu()
+        wireFocus()
+        wireDevTools()
         wireClient()
     }
 
     /// Drops the view's own reference on each struct. CEF may still hold its
     /// own, in which case the block survives with a nil `view`.
     func teardown() {
-        nd_cef_ref_release(client)
-        nd_cef_ref_release(display)
-        nd_cef_ref_release(load)
-        nd_cef_ref_release(lifeSpan)
+        nd_cef_ref_release(devToolsRegistration)
+        for object in [
+            client.map(UnsafeMutableRawPointer.init),
+            display.map(UnsafeMutableRawPointer.init),
+            load.map(UnsafeMutableRawPointer.init),
+            lifeSpan.map(UnsafeMutableRawPointer.init),
+            find.map(UnsafeMutableRawPointer.init),
+            download.map(UnsafeMutableRawPointer.init),
+            jsDialog.map(UnsafeMutableRawPointer.init),
+            dialog.map(UnsafeMutableRawPointer.init),
+            contextMenu.map(UnsafeMutableRawPointer.init),
+            focus.map(UnsafeMutableRawPointer.init),
+            devToolsObserver.map(UnsafeMutableRawPointer.init),
+        ] {
+            nd_cef_ref_release(object)
+        }
         client = nil
         display = nil
         load = nil
         lifeSpan = nil
+        find = nil
+        download = nil
+        jsDialog = nil
+        dialog = nil
+        contextMenu = nil
+        focus = nil
+        devToolsObserver = nil
+        devToolsRegistration = nil
+    }
+
+    fileprivate func attachDevTools(_ registration: UnsafeMutablePointer<cef_registration_t>?) {
+        nd_cef_ref_release(devToolsRegistration)
+        devToolsRegistration = registration
     }
 
     private func wireClient() {
@@ -306,19 +590,31 @@ final class NDCefHandlerBox {
         // Every getter hands back a NEW reference: the caller owns what it
         // receives, per the capi contract.
         client.pointee.get_display_handler = { selfPointer in
-            guard let box = ndCefBox(selfPointer), let handler = box.display else { return nil }
-            nd_cef_ref_add(handler)
-            return handler
+            ndCefHandOut(ndCefBox(selfPointer)?.display)
         }
         client.pointee.get_load_handler = { selfPointer in
-            guard let box = ndCefBox(selfPointer), let handler = box.load else { return nil }
-            nd_cef_ref_add(handler)
-            return handler
+            ndCefHandOut(ndCefBox(selfPointer)?.load)
         }
         client.pointee.get_life_span_handler = { selfPointer in
-            guard let box = ndCefBox(selfPointer), let handler = box.lifeSpan else { return nil }
-            nd_cef_ref_add(handler)
-            return handler
+            ndCefHandOut(ndCefBox(selfPointer)?.lifeSpan)
+        }
+        client.pointee.get_find_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.find)
+        }
+        client.pointee.get_download_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.download)
+        }
+        client.pointee.get_jsdialog_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.jsDialog)
+        }
+        client.pointee.get_dialog_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.dialog)
+        }
+        client.pointee.get_context_menu_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.contextMenu)
+        }
+        client.pointee.get_focus_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.focus)
         }
     }
 
@@ -339,6 +635,18 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(browser)
             ndCefDeliver(selfPointer) { $0?.emitProgress(progress) }
         }
+        display.pointee.on_favicon_urlchange = { selfPointer, browser, iconUrls in
+            nd_cef_ref_release(browser)
+            var urls: [String] = []
+            for index in 0..<nd_cef_string_list_count(iconUrls) {
+                var slot = cef_string_t()
+                if nd_cef_string_list_at(iconUrls, index, &slot) != 0 {
+                    urls.append(ndCefString(&slot))
+                }
+                nd_cef_string_clear(&slot)
+            }
+            ndCefDeliver(selfPointer) { $0?.emitFavicon(urls) }
+        }
     }
 
     private func wireLoad() {
@@ -348,8 +656,9 @@ final class NDCefHandlerBox {
             let loading = isLoading != 0
             let back = canGoBack != 0
             let forward = canGoForward != 0
-            ndCefDeliver(selfPointer) {
-                $0?.updateLoadState(loading: loading, canGoBack: back, canGoForward: forward)
+            ndCefDeliver(selfPointer) { view in
+                view?.updateLoadState(loading: loading, canGoBack: back, canGoForward: forward)
+                if !loading { view?.didFinishLoad() }
             }
         }
         load.pointee.on_load_error = { selfPointer, browser, frame, errorCode, errorText, failedUrl in
@@ -378,8 +687,6 @@ final class NDCefHandlerBox {
         }
         lifeSpan.pointee.on_before_dev_tools_popup = { selfPointer, browser, _, _, _, _, useDefaultWindow in
             nd_cef_ref_release(browser)
-            // No CEF-created devtools window; M2 routes this through a window
-            // the host owns.
             useDefaultWindow?.pointee = 0
         }
         lifeSpan.pointee.on_after_created = { selfPointer, browser in
@@ -404,12 +711,194 @@ final class NDCefHandlerBox {
             ndCefDeliver(selfPointer) { $0?.forgetBrowser() }
         }
     }
+
+    private func wireFind() {
+        guard let find else { return }
+        find.pointee.on_find_result = { selfPointer, browser, _, count, _, _, finalUpdate in
+            nd_cef_ref_release(browser)
+            let isFinal = finalUpdate != 0
+            ndCefDeliver(selfPointer) { $0?.emitFindResult(count: count, final: isFinal) }
+        }
+    }
+
+    private func wireDownload() {
+        guard let download else { return }
+        download.pointee.can_download = { selfPointer, browser, _, _ in
+            nd_cef_ref_release(browser)
+            return 1
+        }
+        // Cancelled by never continuing the callback: the app owns downloading,
+        // exactly as on the WebKit surface where the response policy is
+        // .cancel and the URL is handed to Bun.
+        download.pointee.on_before_download = { selfPointer, browser, item, suggestedName, callback in
+            let name = ndCefString(suggestedName)
+            var url = ""
+            if let item, let raw = item.pointee.get_url?(item) {
+                url = ndCefString(raw)
+                nd_cef_string_free(raw)
+            }
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(item)
+            nd_cef_ref_release(callback)
+            ndCefDeliver(selfPointer) { $0?.emitDownload(url: url, suggestedName: name) }
+            return 0
+        }
+    }
+
+    private func wireJSDialog() {
+        guard let jsDialog else { return }
+        // alert/confirm/prompt park the page's JS until this answers, so every
+        // path here calls cont() exactly once, on the same host-native sheet
+        // the WebKit surface uses.
+        jsDialog.pointee.on_jsdialog = {
+            selfPointer, browser, _, dialogType, messageText, defaultPrompt, callback, suppressMessage in
+            let message = ndCefString(messageText)
+            let initial = ndCefString(defaultPrompt)
+            nd_cef_ref_release(browser)
+            suppressMessage?.pointee = 0
+            guard let callback else { return 0 }
+            nd_cef_ref_add(callback)
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefDialogs.run(view: view, type: dialogType, message: message, initial: initial, callback: token)
+            }
+            nd_cef_ref_release(callback)
+            return 1
+        }
+        jsDialog.pointee.on_before_unload_dialog = { selfPointer, browser, messageText, _, callback in
+            let message = ndCefString(messageText)
+            nd_cef_ref_release(browser)
+            guard let callback else { return 0 }
+            nd_cef_ref_add(callback)
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefDialogs.run(view: view, type: JSDIALOGTYPE_CONFIRM, message: message, initial: "", callback: token)
+            }
+            nd_cef_ref_release(callback)
+            return 1
+        }
+    }
+
+    private func wireDialog() {
+        guard let dialog else { return }
+        dialog.pointee.on_file_dialog = {
+            selfPointer, browser, mode, title, defaultPath, _, extensions, _, callback in
+            let heading = ndCefString(title)
+            let initial = ndCefString(defaultPath)
+            var suffixes: [String] = []
+            for index in 0..<nd_cef_string_list_count(extensions) {
+                var slot = cef_string_t()
+                if nd_cef_string_list_at(extensions, index, &slot) != 0 {
+                    suffixes.append(contentsOf: ndCefString(&slot).split(separator: ";").map(String.init))
+                }
+                nd_cef_string_clear(&slot)
+            }
+            nd_cef_ref_release(browser)
+            guard let callback else { return 0 }
+            nd_cef_ref_add(callback)
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefDialogs.runFilePanel(
+                    view: view, mode: mode, title: heading, initialPath: initial,
+                    extensions: suffixes, callback: token)
+            }
+            nd_cef_ref_release(callback)
+            return 1
+        }
+    }
+
+    private func wireContextMenu() {
+        guard let contextMenu else { return }
+        // "suppress" mode answers the menu itself and shows nothing, so the
+        // app's `contextMenu` event is the only outcome. "native" keeps
+        // Chromium's menu and appends the app's matching items.
+        contextMenu.pointee.run_context_menu = { selfPointer, browser, frame, _, model, callback in
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(model)
+            let suppress = ndCefBox(selfPointer)?.view?.suppressContextMenu ?? false
+            if suppress {
+                callback?.pointee.cancel?(callback)
+                nd_cef_ref_release(callback)
+                return 1
+            }
+            nd_cef_ref_release(callback)
+            return 0
+        }
+        contextMenu.pointee.on_before_context_menu = { selfPointer, browser, frame, params, model in
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(params)
+            guard let model else { return }
+            nd_cef_ref_add(model)
+            let token = UInt(bitPattern: model)
+            ndCefDeliver(selfPointer) { view in
+                view?.ndAppendContextMenuItems(token)
+                nd_cef_ref_release(UnsafeMutableRawPointer(bitPattern: token))
+            }
+            nd_cef_ref_release(model)
+        }
+        contextMenu.pointee.on_context_menu_command = { selfPointer, browser, frame, params, commandID, _ in
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(params)
+            var handled: Int32 = 0
+            ndCefDeliver(selfPointer) { view in
+                handled = (view?.ndContextMenuCommand(commandID) ?? false) ? 1 : 0
+            }
+            return handled
+        }
+    }
+
+    /// A page finishing a load must not move the app's keyboard focus. Chromium
+    /// hands first responder to the newly loaded view by default, so a
+    /// background `<webview>` reloading would silently take the caret out of
+    /// whatever the user was typing in. WebKit never does this, and neither
+    /// does the widget: focus moves when the app's `focus` command says so.
+    private func wireFocus() {
+        guard let focus else { return }
+        focus.pointee.on_set_focus = { selfPointer, browser, source in
+            nd_cef_ref_release(browser)
+            return source == FOCUS_SOURCE_NAVIGATION ? 1 : 0
+        }
+    }
+
+    private func wireDevTools() {
+        guard let devToolsObserver else { return }
+        devToolsObserver.pointee.on_dev_tools_method_result = {
+            selfPointer, browser, messageID, success, result, resultSize in
+            nd_cef_ref_release(browser)
+            // The payload crosses to the main actor as text: a parsed
+            // [String: Any] is not Sendable, and re-parsing there is cheaper
+            // than the alternatives.
+            let raw = ndCefJSONText(result, resultSize)
+            let ok = success != 0
+            ndCefDeliver(selfPointer) {
+                $0?.devTools.handleMethodResult(id: messageID, success: ok, json: ndCefParseJSONText(raw))
+            }
+        }
+        devToolsObserver.pointee.on_dev_tools_event = { selfPointer, browser, method, params, paramsSize in
+            let name = ndCefString(method)
+            nd_cef_ref_release(browser)
+            let raw = ndCefJSONText(params, paramsSize)
+            ndCefDeliver(selfPointer) {
+                $0?.devTools.handleEvent(method: name, params: ndCefParseJSONText(raw) ?? [:])
+            }
+        }
+    }
+}
+
+/// Hands a handler struct to CEF with the reference the caller is owed.
+private func ndCefHandOut<T>(_ handler: UnsafeMutablePointer<T>?) -> UnsafeMutablePointer<T>? {
+    guard let handler else { return nil }
+    nd_cef_ref_add(handler)
+    return handler
 }
 
 /// One refcounted capi struct, owned by |box|. This is the only place handler
 /// objects are allocated: the base callbacks and the atomic count live in
 /// CCef, never open-coded per handler.
-private func ndCefAlloc<T>(_ type: T.Type, _ box: NDCefHandlerBox) -> UnsafeMutablePointer<T>? {
+func ndCefAlloc<T>(_ type: T.Type, _ box: NDCefHandlerBox) -> UnsafeMutablePointer<T>? {
     let owner = Unmanaged.passRetained(box).toOpaque()
     guard let raw = nd_cef_ref_alloc(MemoryLayout<T>.size, owner, { owner in
         guard let owner else { return }
@@ -422,7 +911,7 @@ private func ndCefAlloc<T>(_ type: T.Type, _ box: NDCefHandlerBox) -> UnsafeMuta
 }
 
 /// The box behind a handler struct CEF is calling back into.
-private func ndCefBox(_ handler: UnsafeMutableRawPointer?) -> NDCefHandlerBox? {
+func ndCefBox(_ handler: UnsafeMutableRawPointer?) -> NDCefHandlerBox? {
     guard let handler, let owner = nd_cef_ref_owner(handler) else { return nil }
     return Unmanaged<NDCefHandlerBox>.fromOpaque(owner).takeUnretainedValue()
 }
@@ -431,7 +920,7 @@ private func ndCefBox(_ handler: UnsafeMutableRawPointer?) -> NDCefHandlerBox? {
 /// documented UI-thread, and CEF's UI thread IS the main thread on macOS under
 /// the single-threaded message loop this host runs, so an off-main arrival is
 /// a bug worth seeing rather than a case to smooth over.
-private func ndCefDeliver(
+func ndCefDeliver(
     _ handler: UnsafeMutableRawPointer?,
     _ body: @MainActor (NDCefWebView?) -> Void
 ) {
@@ -458,7 +947,7 @@ private func ndCefDeliver(
 
 /// `{"text": "..."}`, the same minimal escaping the WKWebView surface uses for
 /// URLs and titles.
-private func ndCefTextJson(_ value: String) -> String {
+func ndCefTextJson(_ value: String) -> String {
     let escaped = value
         .replacingOccurrences(of: "\\", with: "\\\\")
         .replacingOccurrences(of: "\"", with: "\\\"")
@@ -466,8 +955,19 @@ private func ndCefTextJson(_ value: String) -> String {
     return "{\"text\":\"\(escaped)\"}"
 }
 
-private func ndCefParseJSON(_ raw: String) -> Any? {
+func ndCefParseJSON(_ raw: String) -> Any? {
     guard let data = raw.data(using: .utf8) else { return nil }
     return try? JSONSerialization.jsonObject(with: data, options: [.allowFragments])
+}
+
+/// The DevTools observer hands results and events over as raw JSON bytes.
+func ndCefJSONText(_ bytes: UnsafeRawPointer?, _ count: Int) -> String {
+    guard let bytes, count > 0 else { return "" }
+    return String(decoding: UnsafeRawBufferPointer(start: bytes, count: count), as: UTF8.self)
+}
+
+func ndCefParseJSONText(_ raw: String) -> [String: Any]? {
+    guard let data = raw.data(using: .utf8) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 }
 #endif

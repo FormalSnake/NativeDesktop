@@ -37,7 +37,7 @@ final class NDWebView: WKWebView {
     /// and events all belong to the CEF view, which presents this class's own
     /// internal contract. Keeping NDWebView as the widget class is what leaves
     /// the generated create arm (NDGen/Widgets.swift) engine-agnostic.
-    private var cefEngine: NDCefWebView?
+    private(set) var cefEngine: NDCefWebView?
     #endif
 
     // Last-emitted navigation state; events fire only on change.
@@ -111,7 +111,7 @@ final class NDWebView: WKWebView {
         uiDelegate = self
         #if canImport(CCef)
         if NDCefRuntime.wants(engine) {
-            let chromium = NDCefWebView(url: url ?? "")
+            let chromium = NDCefWebView(url: url ?? "", profile: profile, contextMenuMode: contextMenuMode)
             chromium.host = self
             chromium.frame = bounds
             chromium.autoresizingMask = [.width, .height]
@@ -148,6 +148,49 @@ final class NDWebView: WKWebView {
         #endif
         guard !u.isEmpty, u != url?.absoluteString, u != committedURL, let real = URL(string: u) else { return }
         load(URLRequest(url: real))
+    }
+
+    /// The `focus` command makes THIS view first responder, but on the
+    /// chromium engine the keystrokes belong to the CEF view inside it. The
+    /// a11y probe reports focus for any descendant, so forwarding satisfies
+    /// both the widget contract and the drive.
+    override var acceptsFirstResponder: Bool {
+        #if canImport(CCef)
+        // An unloaded WKWebView refuses first responder, so the focus command
+        // would stop here and never reach the engine that owns the keystrokes.
+        if cefEngine != nil { return true }
+        #endif
+        return super.acceptsFirstResponder
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        #if canImport(CCef)
+        if let cefEngine { return window?.makeFirstResponder(cefEngine) ?? false }
+        #endif
+        return super.becomeFirstResponder()
+    }
+
+    /// Automation `webviewEval` and the page-text predicate, answered by
+    /// whichever engine is rendering. `ok` false carries the thrown message in
+    /// `error`, which is a RESULT rather than an RPC failure on both engines.
+    func ndAutomationEval(code: String, world: String, _ completion: @escaping (Bool, String?, String?) -> Void) {
+        #if canImport(CCef)
+        if let cefEngine {
+            cefEngine.devTools.evaluate(code, world: world) { value, error in
+                completion(error == nil, value, error)
+            }
+            return
+        }
+        #endif
+        evaluateJavaScript(code, in: nil, in: Self.contentWorld(named: world)) { result in
+            switch result {
+            case .success(let value):
+                completion(true, ndStringifyEvalResult(value), nil)
+            case .failure(let error):
+                let info = (error as NSError).userInfo
+                completion(false, nil, (info["WKJavaScriptExceptionMessage"] as? String) ?? error.localizedDescription)
+            }
+        }
     }
 
     /// Live page state for the automation `webviewInfo` RPC, answered by
@@ -1154,6 +1197,21 @@ func ndWebViewCommand(_ view: NSView, _ command: String, _ argJson: String) {
 
 /// `webviewEngine.registerScheme` bridge for System.swift.
 func ndWebViewRegisterScheme(_ scheme: String, corsEnabled: Bool, secure: Bool) -> String? {
+    #if canImport(CCef)
+    // On Chromium the factory is per request context rather than per view
+    // configuration, so there is no "before the first view mounts" deadline to
+    // enforce; the ordering rule stays documented for portability.
+    if NDCefRuntime.isActive {
+        do {
+            try NDCefSchemes.register(scheme)
+            return nil
+        } catch NDCefSchemes.RegisterError.alreadyRegistered {
+            return "scheme already registered"
+        } catch {
+            return "invalid scheme name (lowercase letters, digits, '+', '-' and '.' only)"
+        }
+    }
+    #endif
     do {
         try NDWebViewSchemes.register(scheme, corsEnabled: corsEnabled, secure: secure)
         return nil
@@ -1269,6 +1327,14 @@ extension NDWebView: WKNavigationDelegate, WKUIDelegate {
     /// or a cancelled prompt. An accepted alert or confirm answers with the
     /// empty string, an accepted prompt with what was typed.
     private func ndRunScriptPanel(message: String, kind: NDScriptPanelKind) async -> String? {
+        // An automated run answers from its script rather than putting up a
+        // sheet nobody will click: an unanswered alert parks the page's JS
+        // thread for good, and every later eval on the view queues behind it.
+        if let scripted = NDScriptedDialogAnswer.next() {
+            guard scripted.accepted else { return nil }
+            if case .prompt = kind { return scripted.text }
+            return ""
+        }
         guard let host = window else { return nil }
         let alert = NSAlert()
         alert.messageText = ndScriptPanelTitle(kind)

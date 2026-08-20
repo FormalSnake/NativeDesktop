@@ -25,7 +25,20 @@
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
+#include "include/capi/cef_context_menu_handler_capi.h"
+#include "include/capi/cef_cookie_capi.h"
+#include "include/capi/cef_devtools_message_observer_capi.h"
+#include "include/capi/cef_dialog_handler_capi.h"
+#include "include/capi/cef_download_handler_capi.h"
+#include "include/capi/cef_find_handler_capi.h"
+#include "include/capi/cef_focus_handler_capi.h"
+#include "include/capi/cef_jsdialog_handler_capi.h"
 #include "include/capi/cef_load_handler_capi.h"
+#include "include/capi/cef_registration_capi.h"
+#include "include/capi/cef_request_context_capi.h"
+#include "include/capi/cef_resource_handler_capi.h"
+#include "include/capi/cef_scheme_capi.h"
+#include "include/capi/cef_values_capi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +90,29 @@ int nd_cef_string_set(const char *src, size_t src_len, cef_string_t *out);
 
 /// Frees a string filled by nd_cef_string_set.
 void nd_cef_string_clear(cef_string_t *value);
+
+/// Frees a cef_string_userfree_t the library returned.
+void nd_cef_string_free(cef_string_userfree_t value);
+
+/// cef_string_list_t, for the handlers that report or take lists of strings.
+size_t nd_cef_string_list_count(cef_string_list_t list);
+int nd_cef_string_list_at(cef_string_list_t list, size_t index, cef_string_t *out);
+cef_string_list_t nd_cef_string_list_alloc(void);
+void nd_cef_string_list_append(cef_string_list_t list, const cef_string_t *value);
+void nd_cef_string_list_free(cef_string_list_t list);
+
+/// An empty dictionary for DevTools method params.
+cef_dictionary_value_t *nd_cef_dict_create(void);
+
+/// One request context, which is what a `profile` resolves to.
+cef_request_context_t *nd_cef_request_context_create(
+    const cef_request_context_settings_t *settings,
+    cef_request_context_handler_t *handler);
+
+/// Process-wide scheme handler factory. |domain_name| may be empty.
+int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
+                                           const cef_string_t *domain_name,
+                                           cef_scheme_handler_factory_t *factory);
 
 // MARK: - Refcounting
 

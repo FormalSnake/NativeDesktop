@@ -120,11 +120,19 @@ enum NDCefRuntime {
     }
 
     /// The process-level `cef_app_t`, alive for as long as CEF is. Its one job
-    /// is the command line: Chromium's popup blocker swallows a `window.open`
-    /// that had no user gesture BEFORE `on_before_popup` runs, which would
-    /// silently drop the `newWindow` event the WKWebView surface fires for the
-    /// same page. Nothing here may open a window, so the blocker only costs us
-    /// the event.
+    /// is the command line.
+    ///
+    /// Chromium's popup blocker swallows a gesture-free `window.open` BEFORE
+    /// `on_before_popup` runs. WebKit does not: the same page fires
+    /// `createWebViewWith` there, so the widget's `newWindow` event arrives on
+    /// the system engine and would silently not arrive on this one. Turning
+    /// the blocker off costs nothing in windows, because `on_before_popup`
+    /// always returns 1 and no popup ever becomes one; it only decides whether
+    /// the app is told. Leaving the blocker on would make the same app behave
+    /// differently per engine, which is the one thing this contract exists to
+    /// prevent. WebKitGTK's `create` signal fires unconditionally too, so this
+    /// keeps `newWindow` identical on both platforms as well as both engines.
+    /// An app that wants popups blocked ignores the event.
     nonisolated(unsafe) private static let application: UnsafeMutablePointer<cef_app_t>? = {
         guard let raw = nd_cef_ref_alloc(MemoryLayout<cef_app_t>.size, nil, nil) else { return nil }
         let app = raw.assumingMemoryBound(to: cef_app_t.self)
@@ -140,6 +148,16 @@ enum NDCefRuntime {
         }
         return app
     }()
+
+    /// Where a named profile's jar lives, under the one root cache path CEF was
+    /// initialized with. The name is hashed so a profile with path characters
+    /// in it cannot escape the root.
+    static func profileCachePath(_ profile: String) -> String {
+        let root = paths?.rootCache ?? NSTemporaryDirectory()
+        var hash: UInt64 = 5381
+        for byte in profile.utf8 { hash = hash &* 33 &+ UInt64(byte) }
+        return "\(root)/profile-\(String(hash, radix: 36))"
+    }
 
     /// Replaces `NSApplication.run()`. CEF's mac pump drives `[NSApp run]`
     /// itself, so the app delegate, the menu bar and terminate all behave as
