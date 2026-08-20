@@ -36,6 +36,8 @@
 #include "include/capi/cef_load_handler_capi.h"
 #include "include/capi/cef_registration_capi.h"
 #include "include/capi/cef_request_context_capi.h"
+#include "include/capi/cef_request_handler_capi.h"
+#include "include/capi/cef_resource_request_handler_capi.h"
 #include "include/capi/cef_resource_handler_capi.h"
 #include "include/capi/cef_scheme_capi.h"
 #include "include/capi/cef_values_capi.h"
@@ -113,6 +115,17 @@ cef_request_context_t *nd_cef_request_context_create(
 int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
                                            const cef_string_t *domain_name,
                                            cef_scheme_handler_factory_t *factory);
+
+/// The process-wide cef_app_t, shared by the host and the helper because
+/// on_register_custom_schemes has to answer identically in every process.
+/// Pass |browser_process| as 1 in the host, 0 in a helper. The caller owns the
+/// returned reference.
+///
+/// Custom schemes come from ND_CEF_SCHEMES (comma separated), which children
+/// inherit through the environment. A scheme has to be declared before
+/// cef_initialize to be standard, secure and CORS enabled, and no app code has
+/// run by then, so the env var is the only channel that reaches every process.
+cef_app_t *nd_cef_app_create(int browser_process);
 
 // MARK: - Refcounting
 

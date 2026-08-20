@@ -119,35 +119,22 @@ enum NDCefRuntime {
         return true
     }
 
-    /// The process-level `cef_app_t`, alive for as long as CEF is. Its one job
-    /// is the command line.
+    /// The process-level `cef_app_t`, alive for as long as CEF is. It lives in
+    /// CCef because the helper needs the identical object (NDCefEngine.swift
+    /// is not compiled into it) and `on_register_custom_schemes` has to answer
+    /// the same in every process.
     ///
-    /// Chromium's popup blocker swallows a gesture-free `window.open` BEFORE
-    /// `on_before_popup` runs. WebKit does not: the same page fires
-    /// `createWebViewWith` there, so the widget's `newWindow` event arrives on
-    /// the system engine and would silently not arrive on this one. Turning
-    /// the blocker off costs nothing in windows, because `on_before_popup`
-    /// always returns 1 and no popup ever becomes one; it only decides whether
-    /// the app is told. Leaving the blocker on would make the same app behave
-    /// differently per engine, which is the one thing this contract exists to
-    /// prevent. WebKitGTK's `create` signal fires unconditionally too, so this
-    /// keeps `newWindow` identical on both platforms as well as both engines.
-    /// An app that wants popups blocked ignores the event.
-    nonisolated(unsafe) private static let application: UnsafeMutablePointer<cef_app_t>? = {
-        guard let raw = nd_cef_ref_alloc(MemoryLayout<cef_app_t>.size, nil, nil) else { return nil }
-        let app = raw.assumingMemoryBound(to: cef_app_t.self)
-        app.pointee.on_before_command_line_processing = { _, processType, commandLine in
-            defer { nd_cef_ref_release(commandLine) }
-            // Browser process only: the renderer's own command line is
-            // Chromium's to build.
-            guard ndCefString(processType).isEmpty, let commandLine else { return }
-            var name = cef_string_t()
-            ndCefSetString("disable-popup-blocking", &name)
-            defer { nd_cef_string_clear(&name) }
-            commandLine.pointee.append_switch?(commandLine, &name)
-        }
-        return app
-    }()
+    /// Its command line turns Chromium's popup blocker off. The blocker
+    /// swallows a gesture-free `window.open` BEFORE `on_before_popup` runs,
+    /// and WebKit does not: the same page fires `createWebViewWith` there, so
+    /// the widget's `newWindow` event would arrive on the system engine and
+    /// silently not arrive on this one. It costs nothing in windows, because
+    /// `on_before_popup` always returns 1 and no popup ever becomes one; it
+    /// only decides whether the app is told. WebKitGTK's `create` signal fires
+    /// unconditionally too, so this keeps `newWindow` identical on both
+    /// platforms as well as both engines. An app that wants popups blocked
+    /// ignores the event.
+    nonisolated(unsafe) private static let application: UnsafeMutablePointer<cef_app_t>? = nd_cef_app_create(1)
 
     /// Where a named profile's jar lives, under the one root cache path CEF was
     /// initialized with. The name is hashed so a profile with path characters

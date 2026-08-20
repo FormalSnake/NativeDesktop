@@ -1207,6 +1207,8 @@ func ndWebViewRegisterScheme(_ scheme: String, corsEnabled: Bool, secure: Bool) 
             return nil
         } catch NDCefSchemes.RegisterError.alreadyRegistered {
             return "scheme already registered"
+        } catch NDCefSchemes.RegisterError.refused {
+            return "the engine refused a handler factory for \"\(scheme)\""
         } catch {
             return "invalid scheme name (lowercase letters, digits, '+', '-' and '.' only)"
         }

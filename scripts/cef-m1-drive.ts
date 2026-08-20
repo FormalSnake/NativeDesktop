@@ -25,6 +25,7 @@ function label(tree: JsonNode, testID: string): string {
 // visible view is never asked for a frame.
 await client.call("waitFor", { condition: { textContains: "title=painted" }, timeoutMs: 60000 });
 await client.call("waitFor", { condition: { textContains: "popup=https://" }, timeoutMs: 30000 });
+await client.call("waitFor", { condition: { textContains: "armed=http" }, timeoutMs: 30000 });
 
 const root = ((await client.call("getTree")) as GetTreeResult).root;
 const failures: string[] = [];
@@ -51,6 +52,12 @@ check("backForward", label(root, "m1-nav") === "false,false", `canGoBack,canGoFo
 
 const popup = label(root, "m1-popup");
 check("newWindow", popup.startsWith("https://"), popup);
+
+// A view mounted empty and given its address on a later commit. The engine
+// used to park that address and never load it, which left every tab, popup and
+// background page on about:blank.
+const armed = label(root, "m1-armed");
+check("armedAfterMount", armed.includes("armed=1"), armed);
 
 // The invariant the spec calls hard: nothing the engine does may put a second
 // top-level window on screen. The app's own census is the assertion, since the

@@ -36,8 +36,15 @@ final class NDCefWebView: NSView {
 
     nonisolated(unsafe) private var browser: UnsafeMutablePointer<cef_browser_t>?
     private var createRequested = false
-    /// The address to open, held until the browser exists.
+    /// The address the app last asked for. Until the engine reports one it is
+    /// also the echo guard's answer to "where is this view".
     private var pendingURL: String
+    /// What the browser was actually created with. A `url` prop applied while
+    /// the browser was still being created lands in `pendingURL` alone, so
+    /// adoption has to reconcile the two or the view sits on the old address
+    /// forever. Mounting a view with `url=""` and arming it on the next commit
+    /// is the normal shape for a tab, a background page or a popup.
+    private var createdURL = ""
     /// The `profile` prop, resolved to a request context once at create time.
     private let profile: String
 
@@ -106,12 +113,16 @@ final class NDCefWebView: NSView {
         createBrowserIfNeeded()
     }
 
-    override func layout() {
-        super.layout()
-        // CEF sizes its NSView from window_info at creation; the autoresizing
-        // mask carries it from there, and this covers the layout passes that
-        // move the view without resizing its superview.
-        for child in subviews { child.frame = bounds }
+    /// The autoresizing pass, deliberately NOT `layout()`. Setting a subview's
+    /// frame from `layout()` marks it as needing a constraint update while the
+    /// window is inside its own constraint pass, and AppKit answers that by
+    /// raising out of `_postWindowNeedsUpdateConstraints`, which NSApplication
+    /// turns into a crash. CEF's view carries an autoresizing mask, so this
+    /// only reconciles the case where it was created before this view had a
+    /// real size.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        for child in subviews where child.frame != bounds { child.frame = bounds }
     }
 
     override func viewDidHide() {
@@ -146,8 +157,9 @@ final class NDCefWebView: NSView {
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.size
 
+        createdURL = pendingURL.isEmpty ? "about:blank" : pendingURL
         var url = cef_string_t()
-        ndCefSetString(pendingURL.isEmpty ? "about:blank" : pendingURL, &url)
+        ndCefSetString(createdURL, &url)
         defer { nd_cef_string_clear(&url) }
 
         // Both the client and the request context are handed over: the library
@@ -175,6 +187,7 @@ final class NDCefWebView: NSView {
         devTools.start()
         ndInstallScripts()
         NDCefSchemeRouter.register(self, browser: created)
+        if !pendingURL.isEmpty, pendingURL != createdURL { loadInMainFrame(pendingURL) }
         guard let handle = browserHost.pointee.get_window_handle?(browserHost) else { return }
         let view = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
         view.frame = bounds
@@ -234,10 +247,15 @@ final class NDCefWebView: NSView {
     /// when the address actually differs from where the view already is.
     func ndSetURL(_ value: String) {
         guard !value.isEmpty, value != pendingURL else { return }
-        guard let browser, let frame = browser.pointee.get_main_frame?(browser) else {
-            pendingURL = value
-            return
-        }
+        pendingURL = value
+        // No browser yet, or one that has not reported itself: adoption
+        // reconciles this against the address it was created with.
+        guard hasBrowser else { return }
+        loadInMainFrame(value)
+    }
+
+    private func loadInMainFrame(_ value: String) {
+        guard let browser, let frame = browser.pointee.get_main_frame?(browser) else { return }
         defer { nd_cef_ref_release(frame) }
         var url = cef_string_t()
         ndCefSetString(value, &url)
@@ -517,6 +535,8 @@ final class NDCefHandlerBox {
     fileprivate(set) var dialog: UnsafeMutablePointer<cef_dialog_handler_t>?
     fileprivate(set) var contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>?
     fileprivate(set) var focus: UnsafeMutablePointer<cef_focus_handler_t>?
+    fileprivate(set) var request: UnsafeMutablePointer<cef_request_handler_t>?
+    fileprivate(set) var resourceRequest: UnsafeMutablePointer<cef_resource_request_handler_t>?
     fileprivate(set) var devToolsObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     /// Kept for as long as the observer should stay attached: destroying the
     /// registration is what detaches it.
@@ -532,6 +552,8 @@ final class NDCefHandlerBox {
         dialog = ndCefAlloc(cef_dialog_handler_t.self, self)
         contextMenu = ndCefAlloc(cef_context_menu_handler_t.self, self)
         focus = ndCefAlloc(cef_focus_handler_t.self, self)
+        request = ndCefAlloc(cef_request_handler_t.self, self)
+        resourceRequest = ndCefAlloc(cef_resource_request_handler_t.self, self)
         devToolsObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
         client = ndCefAlloc(cef_client_t.self, self)
         wireDisplay()
@@ -543,6 +565,7 @@ final class NDCefHandlerBox {
         wireDialog()
         wireContextMenu()
         wireFocus()
+        wireRequest()
         wireDevTools()
         wireClient()
     }
@@ -562,6 +585,8 @@ final class NDCefHandlerBox {
             dialog.map(UnsafeMutableRawPointer.init),
             contextMenu.map(UnsafeMutableRawPointer.init),
             focus.map(UnsafeMutableRawPointer.init),
+            request.map(UnsafeMutableRawPointer.init),
+            resourceRequest.map(UnsafeMutableRawPointer.init),
             devToolsObserver.map(UnsafeMutableRawPointer.init),
         ] {
             nd_cef_ref_release(object)
@@ -576,6 +601,8 @@ final class NDCefHandlerBox {
         dialog = nil
         contextMenu = nil
         focus = nil
+        request = nil
+        resourceRequest = nil
         devToolsObserver = nil
         devToolsRegistration = nil
     }
@@ -615,6 +642,9 @@ final class NDCefHandlerBox {
         }
         client.pointee.get_focus_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.focus)
+        }
+        client.pointee.get_request_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.request)
         }
     }
 
@@ -860,6 +890,45 @@ final class NDCefHandlerBox {
         focus.pointee.on_set_focus = { selfPointer, browser, source in
             nd_cef_ref_release(browser)
             return source == FOCUS_SOURCE_NAVIGATION ? 1 : 0
+        }
+    }
+
+    /// A registered scheme is served from here rather than from its handler
+    /// factory. Chromium owns some scheme names outright (chrome-extension is
+    /// the one that matters: its own loader answers ERR_BLOCKED_BY_CLIENT for
+    /// an id it does not know, and a scheme handler factory is never
+    /// consulted), and `disable_default_handling` is the documented way to
+    /// take a request away from the default loader before it runs.
+    private func wireRequest() {
+        guard let request else { return }
+        request.pointee.get_resource_request_handler = {
+            selfPointer, browser, frame, request, _, _, _, disableDefaultHandling in
+            var url = ""
+            if let request, let raw = request.pointee.get_url?(request) {
+                url = ndCefString(raw)
+                nd_cef_string_free(raw)
+            }
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(request)
+            guard NDCefSchemes.handles(url) else { return nil }
+            disableDefaultHandling?.pointee = 1
+            return ndCefHandOut(ndCefBox(selfPointer)?.resourceRequest)
+        }
+
+        guard let resourceRequest else { return }
+        resourceRequest.pointee.get_resource_handler = { selfPointer, browser, frame, request in
+            var url = ""
+            if let request, let raw = request.pointee.get_url?(request) {
+                url = ndCefString(raw)
+                nd_cef_string_free(raw)
+            }
+            let browserID = browser.flatMap { $0.pointee.get_identifier?($0) } ?? 0
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(request)
+            guard NDCefSchemes.handles(url) else { return nil }
+            return NDCefSchemeRequest.makeHandler(url: url, browserID: browserID)
         }
     }
 

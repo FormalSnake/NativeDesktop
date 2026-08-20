@@ -33,5 +33,14 @@ guard nd_cef_load(frameworkPath) != 0 else {
     exit(1)
 }
 
+// The first CEF call after loading, in every process: the library reads the
+// client's API version from it, and without it any struct this process hands
+// over is rejected as version -1.
+_ = nd_cef_api_hash(nd_cef_compiled_api_version(), 0)
+
+// The helper carries the same app as the host: custom schemes have to be
+// registered identically in every process or the renderer treats them as
+// unknown.
+let app = nd_cef_app_create(0)
 var mainArgs = cef_main_args_t(argc: CommandLine.argc, argv: CommandLine.unsafeArgv)
-exit(nd_cef_execute_process(&mainArgs, nil, nil))
+exit(nd_cef_execute_process(&mainArgs, app, nil))

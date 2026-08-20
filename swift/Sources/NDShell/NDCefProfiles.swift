@@ -266,6 +266,9 @@ final class NDCefCookieCollector: @unchecked Sendable {
 /// request and the page loads, but the origin is opaque.
 enum NDCefSchemes {
     nonisolated(unsafe) private static var schemes: [String] = []
+    /// `schemes` is written on the UI thread and read on the IO thread, where
+    /// the resource interception runs.
+    private static let schemesLock = NSLock()
     nonisolated(unsafe) private static var pending: [String: NDCefSchemeRequest] = [:]
     nonisolated(unsafe) private static var sequence = 0
     nonisolated(unsafe) private static var factory: UnsafeMutablePointer<cef_scheme_handler_factory_t>?
@@ -273,6 +276,7 @@ enum NDCefSchemes {
     enum RegisterError: Error {
         case alreadyRegistered
         case invalid
+        case refused
     }
 
     static func register(_ scheme: String) throws {
@@ -281,28 +285,52 @@ enum NDCefSchemes {
             throw RegisterError.invalid
         }
         guard !schemes.contains(scheme) else { throw RegisterError.alreadyRegistered }
+        guard registerFactory(scheme, context: nil) else { throw RegisterError.refused }
+        schemesLock.lock()
         schemes.append(scheme)
-        registerFactory(scheme, context: nil)
-        for context in NDCefProfiles.all { registerFactory(scheme, context: context) }
+        schemesLock.unlock()
+        for context in NDCefProfiles.all {
+            if !registerFactory(scheme, context: context) {
+                ndCefWarn("scheme \(scheme): the engine refused the factory for an existing profile")
+            }
+        }
+    }
+
+    /// Whether |url| belongs to a scheme this app registered. Called on the IO
+    /// thread for every request the browser makes, so it stays a prefix test.
+    static func handles(_ url: String) -> Bool {
+        guard let separator = url.firstIndex(of: ":") else { return false }
+        let scheme = String(url[url.startIndex..<separator]).lowercased()
+        schemesLock.lock()
+        defer { schemesLock.unlock() }
+        return schemes.contains(scheme)
     }
 
     /// A context created after `register` still has to learn about every
     /// scheme, since the factory is per-context.
     static func install(into context: UnsafeMutablePointer<cef_request_context_t>) {
-        for scheme in schemes { registerFactory(scheme, context: context) }
+        for scheme in schemes where !registerFactory(scheme, context: context) {
+            ndCefWarn("scheme \(scheme): the engine refused the factory for a new profile")
+        }
     }
 
-    private static func registerFactory(_ scheme: String, context: UnsafeMutablePointer<cef_request_context_t>?) {
-        guard let factory = sharedFactory() else { return }
+    /// Reports what the engine actually did. A refused factory used to be
+    /// swallowed, so `registerScheme` answered success for a scheme it could
+    /// never serve.
+    @discardableResult
+    private static func registerFactory(_ scheme: String, context: UnsafeMutablePointer<cef_request_context_t>?) -> Bool {
+        guard let factory = sharedFactory() else { return false }
         var name = cef_string_t()
         ndCefSetString(scheme, &name)
         defer { nd_cef_string_clear(&name) }
         nd_cef_ref_add(factory)
+        let ok: Bool
         if let context {
-            _ = context.pointee.register_scheme_handler_factory?(context, &name, nil, factory)
+            ok = context.pointee.register_scheme_handler_factory?(context, &name, nil, factory) != 0
         } else {
-            _ = nd_cef_register_scheme_handler_factory(&name, nil, factory)
+            ok = nd_cef_register_scheme_handler_factory(&name, nil, factory) != 0
         }
+        return ok
     }
 
     private static func sharedFactory() -> UnsafeMutablePointer<cef_scheme_handler_factory_t>? {

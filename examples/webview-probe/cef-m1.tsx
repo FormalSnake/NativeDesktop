@@ -1,4 +1,4 @@
-import { render, useState } from "@nativedesktop/react";
+import { render, useEffect, useState } from "@nativedesktop/react";
 
 // M1 gate for the Chromium engine on macOS. Everything it asserts arrives on
 // the schema's own event surface, so the same file runs on either engine:
@@ -43,12 +43,22 @@ const BASE = `http://127.0.0.1:${fixture.port}/`;
 
 function App() {
   const [url, setUrl] = useState("");
+  // A view mounted with no address and armed on a LATER commit. That is the
+  // shape a tab, a background page and the framework's own hideOnceArmed
+  // pattern all use, and the engine has to load the address even when it
+  // arrives while the browser is still being created.
+  const [armedUrl, setArmedUrl] = useState("");
+  const [armed, setArmed] = useState("pending");
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [back, setBack] = useState(false);
   const [forward, setForward] = useState(false);
   const [popup, setPopup] = useState("none");
+  useEffect(() => {
+    setArmedUrl(`${BASE}?armed=1`);
+  }, []);
+
   return (
     <window title="ND CEF M1" defaultWidth={900} defaultHeight={640}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
@@ -58,6 +68,7 @@ function App() {
         <label testID="m1-progress" text={`progress=${progress}`} />
         <label testID="m1-nav" text={`nav=${back},${forward}`} />
         <label testID="m1-popup" text={`popup=${popup}`} />
+        <label testID="m1-armed" text={`armed=${armed}`} />
         <box orientation="horizontal" style={{ vexpand: true }}>
           <webview
             testID="m1-view"
@@ -69,6 +80,11 @@ function App() {
             onBackAvailable={(e) => setBack(e.checked)}
             onForwardAvailable={(e) => setForward(e.checked)}
             onNewWindow={(e) => setPopup(e.text)}
+          />
+          <webview
+            testID="m1-armed-view"
+            url={armedUrl}
+            onNavigate={(e) => setArmed(e.text)}
           />
         </box>
       </box>

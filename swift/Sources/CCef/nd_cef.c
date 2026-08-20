@@ -224,6 +224,67 @@ int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
              : 0;
 }
 
+// MARK: - Application
+
+static void CEF_CALLBACK app_register_schemes(cef_app_t *self, cef_scheme_registrar_t *registrar) {
+  (void)self;
+  const char *list = getenv("ND_CEF_SCHEMES");
+  if (!list || !list[0] || !registrar || !registrar->add_custom_scheme) {
+    return;
+  }
+  const int options = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                      CEF_SCHEME_OPTION_CORS_ENABLED | CEF_SCHEME_OPTION_FETCH_ENABLED;
+  const char *cursor = list;
+  while (*cursor) {
+    const char *comma = strchr(cursor, ',');
+    size_t len = comma ? (size_t)(comma - cursor) : strlen(cursor);
+    if (len > 0 && len < 64) {
+      char name[64];
+      memcpy(name, cursor, len);
+      name[len] = '\0';
+      cef_string_t scheme = {0};
+      if (nd_cef_string_set(name, len, &scheme)) {
+        if (!registrar->add_custom_scheme(registrar, &scheme, options)) {
+          fprintf(stderr, "ND_WARN cef scheme %s: the engine refused to register it\n", name);
+        }
+        nd_cef_string_clear(&scheme);
+      }
+    }
+    if (!comma) {
+      break;
+    }
+    cursor = comma + 1;
+  }
+}
+
+static void CEF_CALLBACK app_command_line(cef_app_t *self,
+                                          const cef_string_t *process_type,
+                                          cef_command_line_t *command_line) {
+  (void)self;
+  // Browser process only: a child's command line is Chromium's to build.
+  int is_browser = process_type == NULL || process_type->length == 0;
+  if (is_browser && command_line && command_line->append_switch) {
+    cef_string_t name = {0};
+    if (nd_cef_string_set("disable-popup-blocking", 22, &name)) {
+      command_line->append_switch(command_line, &name);
+      nd_cef_string_clear(&name);
+    }
+  }
+  nd_cef_ref_release(command_line);
+}
+
+cef_app_t *nd_cef_app_create(int browser_process) {
+  cef_app_t *app = (cef_app_t *)nd_cef_ref_alloc(sizeof(cef_app_t), NULL, NULL);
+  if (!app) {
+    return NULL;
+  }
+  app->on_register_custom_schemes = app_register_schemes;
+  if (browser_process) {
+    app->on_before_command_line_processing = app_command_line;
+  }
+  return app;
+}
+
 // MARK: - Refcounting
 
 // Sits immediately before the CEF struct. Its 32-byte size keeps the struct
