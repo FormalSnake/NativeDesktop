@@ -304,9 +304,14 @@ async function run(ctx: {
     ctx.setUrl(`${BASE}/two`);
     await waitFor<string>("navigate", (u) => u.endsWith("/two"), "the marked page loads", 30000);
 
+    // At least once, not exactly once: a script is registered with
+    // runImmediately, so it can run in the document that is already open AND
+    // again as a new-document script. The assertions that matter are that it
+    // ran at all, that it ran again after the reload, and that it ran in the
+    // main frame rather than the iframe.
     const before = await pollValue(
       () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
-      (v) => v === "1",
+      (v) => Number(v) >= 1,
       "the content script ran in its world",
     );
     // Which frame the world eval landed in. The page has an iframe, so a world
@@ -336,7 +341,7 @@ async function run(ctx: {
     // mean its context id did not.
     const after = await pollValue(
       () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
-      (v) => v === "1",
+      (v) => Number(v) >= 1,
       "the content script ran again after a reload",
     );
     await pollValue(
