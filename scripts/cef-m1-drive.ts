@@ -62,6 +62,11 @@ check("armedAfterMount", armed.includes("armed=1"), armed);
 // The invariant the spec calls hard: nothing the engine does may put a second
 // top-level window on screen. The app's own census is the assertion, since the
 // app is the only thing allowed to have opened one.
+// A real right-click into the engine's own view, which is the only way to
+// make on_before_context_menu run. The RPC dismisses the menu it opens.
+await client.call("rightClick", { testId: "m1-view" });
+await Bun.sleep(750);
+
 const windows = (await client.call("windows")) as { windows: { title: string }[] };
 check(
   "noStrayWindow",

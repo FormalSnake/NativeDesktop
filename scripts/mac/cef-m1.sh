@@ -18,7 +18,7 @@ else
 fi
 
 LOG=$(mktemp)
-NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE="$ENGINE" \
+NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE="$ENGINE" ND_WEBVIEW_TRACE=1 \
   ND_SCRIPT=examples/webview-probe/cef-m1.tsx "$HOST" >"$LOG" 2>&1 &
 HOST_PID=$!
 trap '[ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; true' EXIT
@@ -45,6 +45,22 @@ fi
 SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
 ND_AUTOMATION_SOCKET="$SOCK" bun scripts/cef-m1-drive.ts \
   || { echo "FAIL: driver"; grep -vE "^\[[0-9]+:" "$LOG" | tail -40; exit 1; }
+
+if [ "$ENGINE" = "chromium" ]; then
+  # The engine menu is an NSMenu nobody can read back, so the assertion is the
+  # host's own trace: the app's items reached Chromium's model, and they did it
+  # while on_before_context_menu was still on the stack. A model populated
+  # after that call returns is a menu the user sees without them.
+  grep -qE "ND_WV cefContextMenu node=[0-9]+ items=3 sync=1" "$LOG" || {
+    echo "FAIL: the app's items never reached the engine context menu"
+    grep -E "ND_WV cefContextMenu|did not populate synchronously" "$LOG" | tail -5
+    exit 1
+  }
+  ! grep -q "did not populate synchronously" "$LOG" || {
+    echo "FAIL: context menu population was not synchronous"; exit 1
+  }
+  echo "ND_CEF_CTXMENU_OK $(grep -m1 -oE "cefContextMenu node=[0-9]+ items=3 sync=1" "$LOG")"
+fi
 
 kill "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
 HOST_PID=""

@@ -1,4 +1,5 @@
-import { render, useEffect, useState } from "@nativedesktop/react";
+import { render, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
 
 // M1 gate for the Chromium engine on macOS. Everything it asserts arrives on
 // the schema's own event surface, so the same file runs on either engine:
@@ -49,6 +50,7 @@ function App() {
   // arrives while the browser is still being created.
   const [armedUrl, setArmedUrl] = useState("");
   const [armed, setArmed] = useState("pending");
+  const view = useRef<NdNodeRef<"webview"> | null>(null);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -57,6 +59,18 @@ function App() {
   const [popup, setPopup] = useState("none");
   useEffect(() => {
     setArmedUrl(`${BASE}?armed=1`);
+  }, []);
+
+  // The engine menu leg: these have to reach Chromium's own model while
+  // on_before_context_menu is still on the stack, so the drive right-clicks
+  // the view and the host trace reports what the model received.
+  useEffect(() => {
+    if (!view.current) return;
+    setContextMenuItems(view.current, [
+      { id: "m1-alpha", label: "Alpha", contexts: ["all"] },
+      { id: "m1-beta", label: "Beta", contexts: ["all"] },
+      { id: "m1-gamma", label: "Gamma", contexts: ["all"] },
+    ]);
   }, []);
 
   return (
@@ -71,6 +85,7 @@ function App() {
         <label testID="m1-armed" text={`armed=${armed}`} />
         <box orientation="horizontal" style={{ vexpand: true }}>
           <webview
+            ref={view}
             testID="m1-view"
             url={BASE}
             onNavigate={(e) => setUrl(e.text)}
