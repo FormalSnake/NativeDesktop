@@ -2783,6 +2783,7 @@ pub fn schemesLocked() bool {
 /// Records a scheme for `on_register_custom_schemes`, which has already run by
 /// the time CEF is initialized. Returns false when it is too late to matter.
 pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool {
+    tr("registerScheme {s} cors={} secure={} initialized={}", .{ scheme, cors_enabled, secure, initialized });
     if (initialized) return false;
     for (custom_schemes.items) |s| {
         if (std.mem.eql(u8, s.name, scheme)) return true;
@@ -2798,6 +2799,7 @@ pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool
 fn onRegisterCustomSchemes(_: [*c]c.cef_app_t, registrar: [*c]c.cef_scheme_registrar_t) callconv(.c) void {
     if (registrar == null) return;
     const add = registrar.*.add_custom_scheme orelse return;
+    tr("onRegisterCustomSchemes have={d}", .{custom_schemes.items.len});
     // A subprocess has no app and no registrations of its own; the browser put
     // the list on its command line for exactly this moment.
     if (custom_schemes.items.len == 0) adoptSchemesFromCommandLine();
@@ -2882,6 +2884,7 @@ var browsers_by_id: std.AutoHashMapUnmanaged(c_int, *View) = .empty;
 
 fn ensureSchemeFactories() void {
     const api = loader.loaded() orelse return;
+    tr("ensureSchemeFactories count={d}", .{custom_schemes.items.len});
     for (custom_schemes.items) |spec| {
         if (scheme_factories.contains(spec.name)) continue;
         const factory = FactoryObj.create({}) orelse continue;
