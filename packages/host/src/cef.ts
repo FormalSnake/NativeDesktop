@@ -18,6 +18,10 @@ import { join, resolve } from "node:path";
 /** CEF release the framework pins. `webview.cef.version` overrides it. */
 export const DEFAULT_CEF_VERSION = "151.3.23";
 
+/** The CEF subprocess executable, built beside the appkit host binary and
+ * copied into each of the five helper .apps a packaged macOS bundle carries. */
+export const CEF_HELPER_BINARY_NAME = "nd-cef-helper";
+
 /** Platform names as cef-builds.spotifycdn.com spells them. */
 export type CefPlatform = "macosarm64" | "macosx64" | "linux64" | "linuxarm64";
 

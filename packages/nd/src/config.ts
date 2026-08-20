@@ -151,6 +151,11 @@ export interface CefConfig {
   version?: string;
   /** Locale .pak files staged on Linux. Default ["en-US"]. */
   locales?: string[];
+  /** Custom schemes declared at launch, e.g. ["nbext"]. A scheme is only
+   * standard, secure and CORS-enabled if every process was told about it before
+   * cef_initialize, which is long before app code runs, so the list has to come
+   * from config rather than a runtime call. */
+  schemes?: string[];
 }
 
 export interface WebViewConfig {
@@ -199,6 +204,35 @@ export function resolveWebViewEngine(
   if (override) return expectEngine(override, "ND_WEBVIEW_ENGINE");
   const declared = config.webview?.engine?.[target];
   return declared ? expectEngine(declared, `webview.engine.${target}`) : "system";
+}
+
+/** URL scheme grammar, minus the uppercase half: CEF lowercases what it
+ * registers, so a declared "NBExt" would never match the URLs it serves. 63 is
+ * the longest name the engine's fixed scheme buffer takes. */
+const SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*$/;
+
+function expectScheme(value: string, source: string): string {
+  if (!SCHEME_PATTERN.test(value) || value.length > 63) {
+    throw new Error(`nd: ${source} must be a lowercase scheme name of at most 63 characters (got "${value}")`);
+  }
+  return value;
+}
+
+/**
+ * The schemes a launch declares, in config order and deduplicated.
+ * ND_CEF_SCHEMES wins outright, the same way ND_WEBVIEW_ENGINE does, and takes
+ * the comma-separated form the host reads.
+ */
+export function resolveCefSchemes(
+  config: NativeDesktopConfig,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const override = env.ND_CEF_SCHEMES;
+  const declared = override !== undefined
+    ? override.split(",").map((name) => name.trim()).filter((name) => name.length)
+      .map((name) => expectScheme(name, "ND_CEF_SCHEMES"))
+    : (config.webview?.cef?.schemes ?? []).map((name) => expectScheme(name, "webview.cef.schemes"));
+  return [...new Set(declared)];
 }
 
 export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig { return config; }

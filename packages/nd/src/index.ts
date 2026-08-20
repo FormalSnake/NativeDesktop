@@ -7,7 +7,14 @@
 //   `nd package`      ==  assemble + sign the platform bundle (packages/nd/src/package/)
 //   `nd doctor`       ==  packaging/toolchain readiness checks
 import { type Backend, resolveHostBinary } from "@nativedesktop/host";
-import { buildNativePlugins, engineTargetFor, loadConfig, type NativeDesktopConfig, resolveWebViewEngine } from "./config.ts";
+import {
+  buildNativePlugins,
+  engineTargetFor,
+  loadConfig,
+  type NativeDesktopConfig,
+  resolveCefSchemes,
+  resolveWebViewEngine,
+} from "./config.ts";
 import { packageApp, type PackageOptions } from "./package/index.ts";
 
 const DEFAULT_ENTRY = "src/main.tsx";
@@ -17,11 +24,17 @@ async function nativeEnv(config: NativeDesktopConfig): Promise<Record<string, st
   return paths.length ? { ND_PLUGINS: "1", ND_PLUGIN_PATHS: paths.join(":") } : {};
 }
 
-/** The host reads the engine off its environment, so the config decision has to
- * be made here and handed down. Windows has no engine target yet. */
+/** The host reads the engine and its launch-declared schemes off its
+ * environment, so both config decisions have to be made here and handed down.
+ * Windows has no engine target yet. */
 function engineEnv(config: NativeDesktopConfig): Record<string, string> {
   const target = engineTargetFor();
-  return target ? { ND_WEBVIEW_ENGINE: resolveWebViewEngine(config, target) } : {};
+  if (!target) return {};
+  const schemes = resolveCefSchemes(config);
+  return {
+    ND_WEBVIEW_ENGINE: resolveWebViewEngine(config, target),
+    ...(schemes.length ? { ND_CEF_SCHEMES: schemes.join(",") } : {}),
+  };
 }
 
 async function runDev(entry: string, backend?: Backend): Promise<number> {

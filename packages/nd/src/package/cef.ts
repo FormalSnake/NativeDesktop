@@ -14,8 +14,10 @@
 import { $ } from "bun";
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { buildCefHelper } from "@nativedesktop/host";
 import {
   CEF_ARTIFACT_NAMES,
+  CEF_HELPER_BINARY_NAME,
   type CefPlatform,
   cefCacheRoot,
   cefDistDir,
@@ -31,13 +33,7 @@ const CEF_DOWNLOAD_BASE = "https://cef-builds.spotifycdn.com/";
 /** Locales staged when the config names none. */
 export const DEFAULT_CEF_LOCALES: readonly string[] = ["en-US"];
 
-/**
- * The CEF subprocess executable, built by the AppKit engine lane and copied
- * into all five helper bundles. Until that lane lands there is nothing to copy,
- * so packaging fails here rather than producing a bundle that would launch into
- * a broken renderer. One constant to repoint when it exists.
- */
-export const CEF_HELPER_BINARY_NAME = "nd-cef-helper";
+export { CEF_HELPER_BINARY_NAME } from "@nativedesktop/host/cef";
 
 /** Helper bundle suffixes CEF requires on macOS, in the order they are signed.
  * The names are fixed by CEF: it derives each helper path from the main bundle
@@ -434,4 +430,25 @@ export function resolveCefHelperBinary(
   env: Record<string, string | undefined> = process.env,
 ): string {
   return env.ND_CEF_HELPER ?? join(hostBinary, "..", CEF_HELPER_BINARY_NAME);
+}
+
+/** The helper executable, built from the framework checkout when the host is a
+ * source build and the helper product has never been built. Same resolution the
+ * host binary itself gets: use what is there, otherwise build it, and only then
+ * give up. */
+export async function ensureCefHelperBinary(
+  hostBinary: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  const path = resolveCefHelperBinary(hostBinary, env);
+  if (existsSync(path)) return path;
+  if (!env.ND_CEF_HELPER) {
+    const built = await buildCefHelper(hostBinary);
+    if (built) return built;
+  }
+  throw new Error(
+    `nd: the CEF helper executable is missing (${path}). ` +
+      `engine "chromium" needs ${CEF_HELPER_BINARY_NAME} from the AppKit host build; ` +
+      "point ND_CEF_HELPER at one, or package with engine \"system\".",
+  );
 }

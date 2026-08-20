@@ -44,6 +44,11 @@ nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
 // closed window's content view can't be pinned alive by a stale target.
 nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 
+// A packaged bundle carries its engine and its launch-declared schemes in
+// nd-app.json; both have to be in the environment before the selection below
+// reads it, and before any CEF process registers a scheme.
+NDBundleBootstrap.applyEngine()
+
 // Engine selection happens before anything reaches NSApplication: a CEF
 // process needs NSApp to be the CefAppProtocol subclass, and the shared
 // application is created by whichever class asks for it first.
@@ -75,8 +80,8 @@ gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
 nd_set_backend_name(ctx, "appkit")
 
-// Packaged-app launch env (nd-app.json), before the plugin block reads
-// ND_PLUGINS and before nd_start_runtime snapshots the environment.
+// The rest of the packaged-app launch env (nd-app.json), before the plugin
+// block reads ND_PLUGINS and before nd_start_runtime snapshots the environment.
 NDBundleBootstrap.apply()
 
 // Opt-in capability ACL + native plugins. An absent env var keeps the safe

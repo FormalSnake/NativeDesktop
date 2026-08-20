@@ -4,7 +4,7 @@
 // workspace-relative path and relative imports keep resolving packaged.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
-import { buildNativePlugins, type NativeDesktopConfig, type PackageConfig } from "../config.ts";
+import { buildNativePlugins, type NativeDesktopConfig, type PackageConfig, type WebViewEngine } from "../config.ts";
 import type { ResolvedIdentity } from "./identity.ts";
 import { assertResolvableEntries, flattenRuntimeModules } from "./modules.ts";
 
@@ -40,6 +40,12 @@ export interface PayloadOptions {
   identity: ResolvedIdentity;
   /** The bundle's app root (Resources/app or AppDir/app). */
   appRoot: string;
+  /** Engine this bundle was staged for. Recorded in the manifest so the
+   * packaged launch path hands the host what `nd dev` hands it, with no shell
+   * in between. */
+  engine: WebViewEngine;
+  /** Launch-declared CEF schemes, recorded for the same reason. */
+  schemes: string[];
   /** CLI --entry override (app-relative source entry). */
   entry?: string;
   /** false forces raw source (--no-compile). */
@@ -108,14 +114,22 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
     }
   }
 
+  // Bundles a previous run left in the output dir. Under the default config
+  // they sit inside the compile outDir ("dist/mac", "dist/linux" beside
+  // "dist/main.tsx"), so without this a run whose own output lands elsewhere
+  // (`--out`) ships the last .app inside the new one, CEF payload and all.
+  const bundleOut = resolve(workspaceRoot, pkg.outDir ?? "dist");
+  const platformOutputs = new Set([join(bundleOut, "mac"), join(bundleOut, "linux")]);
+  const skipBuiltBundles = (src: string) => !platformOutputs.has(resolve(src));
+
   mkdirSync(destAppDir, { recursive: true });
   const entryDir = entry.includes("/") ? entry.split("/")[0]! : null;
   if (entryDir) {
-    copyPayloadTree(join(appDir, entryDir), join(destAppDir, entryDir), o.appRoot, skipNodeModules);
+    const skip = (src: string) => skipNodeModules(src) && skipBuiltBundles(src);
+    copyPayloadTree(join(appDir, entryDir), join(destAppDir, entryDir), o.appRoot, skip);
   } else {
     // Root-level entry: ship the whole app dir (minus node_modules and any
     // build output nested inside it, which would recurse into the copy).
-    const bundleOut = resolve(workspaceRoot, pkg.outDir ?? "dist");
     const skip = (src: string) => skipNodeModules(src) && resolve(src) !== bundleOut;
     copyPayloadTree(appDir, destAppDir, o.appRoot, skip);
   }
@@ -154,6 +168,8 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
     entry: appEntry,
     cwd,
     pluginPaths,
+    engine: o.engine,
+    schemes: o.schemes,
   }, null, 2)}\n`);
 
   return { entry: appEntry, cwd, pluginPaths };

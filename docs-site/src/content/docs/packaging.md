@@ -71,7 +71,7 @@ package or shared assets, into the same tree.
   `file:` deps; there is no `bun install` inside the bundle. Version conflicts nest under the
   requiring package, and each copied package's entry must resolve on disk, so an unbuilt `dist/`
   fails packaging loudly instead of shipping broken.
-- `app/nd-app.json`: `{ id, name, version, entry, cwd, pluginPaths }` (entry/cwd
+- `app/nd-app.json`: `{ id, name, version, entry, cwd, pluginPaths, engine, schemes }` (entry/cwd
   app-root-relative), the packaged-launch contract below.
 
 ## Packaged apps launch by themselves
@@ -81,11 +81,15 @@ no explicit `ND_SCRIPT` is set, it points `ND_SCRIPT` at the bundled entry, prep
 `Contents/MacOS` to `PATH` (the bundled `bun`), chdirs to `app/<cwd>` (so
 [`getAppDataDir()`](/core-concepts/app-data-storage/) and relative fs reads behave the same
 packaged as in dev), and exports `ND_PLUGINS`/`ND_PLUGIN_PATHS` for bundled plugins. An explicit
-`ND_SCRIPT` (dev override, gate scripts) wins wholesale.
+`ND_SCRIPT` (dev override, gate scripts) wins wholesale. The manifest's `engine` and `schemes` are
+exported earlier still, before the CEF engine is prepared, and stand whatever `ND_SCRIPT` says:
+they describe what is staged in the bundle. An explicit `ND_WEBVIEW_ENGINE`/`ND_CEF_SCHEMES` still
+wins.
 
-On Linux the generated `AppRun` bakes the same values, plus `ND_APP_ID=<app.id>`: the gtk host
-uses it as its GApplication id, and the generated `.desktop` carries `StartupWMClass=<app.id>` so
-icon and window grouping bind.
+On Linux the generated `AppRun` bakes the same values, plus `ND_APP_ID=<app.id>` and the same
+`ND_WEBVIEW_ENGINE`/`ND_CEF_SCHEMES` (behind a `${VAR:-…}` override): the gtk host uses the app id
+as its GApplication id, and the generated `.desktop` carries `StartupWMClass=<app.id>` so icon and
+window grouping bind.
 
 ## Icons
 

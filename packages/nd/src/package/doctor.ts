@@ -5,7 +5,14 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { hostBinaryCandidates, prebuiltHostBinary, resolveBackend } from "@nativedesktop/host";
 import { cefDistDir, cefPlatformKey, resolveCefRoot } from "@nativedesktop/host/cef";
-import { engineTargetFor, loadConfig, type NativeDesktopConfig, resolveWebViewEngine, type WebViewEngine } from "../config.ts";
+import {
+  engineTargetFor,
+  loadConfig,
+  type NativeDesktopConfig,
+  resolveCefSchemes,
+  resolveWebViewEngine,
+  type WebViewEngine,
+} from "../config.ts";
 import { cefBundleAudit, cefVersionFor } from "./cef.ts";
 import { DEFAULT_ENTRY } from "./payload.ts";
 
@@ -70,15 +77,18 @@ export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[]
   const target = engineTargetFor();
   if (!target) return [];
   let engine: WebViewEngine;
+  let schemes: string[];
   try {
     engine = resolveWebViewEngine(config, target);
+    schemes = resolveCefSchemes(config);
   } catch (err) {
     return [{ name: "webview", status: "error", detail: String(err) }];
   }
   const checks: Check[] = [{
     name: "webview",
     status: "ok",
-    detail: `engine=${engine} (${target})${process.env.ND_WEBVIEW_ENGINE ? " from ND_WEBVIEW_ENGINE" : ""}`,
+    detail: `engine=${engine} (${target})${process.env.ND_WEBVIEW_ENGINE ? " from ND_WEBVIEW_ENGINE" : ""}` +
+      (schemes.length ? ` schemes=${schemes.join(",")}` : ""),
   }];
 
   const version = cefVersionFor(config.webview?.cef);

@@ -80,8 +80,8 @@ relative imports/spawns keep resolving. The gallery example uses
   there is no `bun install` inside the bundle. Version conflicts nest under the
   requiring package. Each copied package's entry must resolve on disk, so an
   unbuilt `dist/` fails packaging loudly instead of shipping broken.
-- `app/nd-app.json`: `{ id, name, version, entry, cwd, pluginPaths }`
-  (entry/cwd app-root-relative), the packaged-launch contract below.
+- `app/nd-app.json`: `{ id, name, version, entry, cwd, pluginPaths, engine,
+  schemes }` (entry/cwd app-root-relative), the packaged-launch contract below.
 
 ## Packaged apps launch by themselves
 
@@ -92,11 +92,15 @@ relative imports/spawns keep resolving. The gallery example uses
   `getAppDataDir()` and relative fs reads behave the same packaged as in dev),
   and exports `ND_PLUGINS`/`ND_PLUGIN_PATHS` for bundled plugins. An explicit
   `ND_SCRIPT` (dev override, gate scripts) wins wholesale: script, cwd, and PATH
-  are left alone.
+  are left alone. The manifest's `engine`/`schemes` are exported earlier still
+  (`applyEngine()`, before CEF is prepared) and stand whatever `ND_SCRIPT` says,
+  since they describe what is staged in the bundle; an explicit
+  `ND_WEBVIEW_ENGINE`/`ND_CEF_SCHEMES` still wins.
 - Linux: the generated `AppRun` bakes the same values (absolute `ND_SCRIPT`,
-  `cd`, `PATH`, `ND_APP_ID=<app.id>`, plugin paths). The gtk host reads
-  `ND_APP_ID` for its GApplication id, and the generated `.desktop` carries
-  `StartupWMClass=<app.id>` so icon and window grouping bind.
+  `cd`, `PATH`, `ND_APP_ID=<app.id>`, plugin paths, and
+  `ND_WEBVIEW_ENGINE`/`ND_CEF_SCHEMES` behind a `${VAR:-…}` override). The gtk
+  host reads `ND_APP_ID` for its GApplication id, and the generated `.desktop`
+  carries `StartupWMClass=<app.id>` so icon and window grouping bind.
 
 ## Icons
 

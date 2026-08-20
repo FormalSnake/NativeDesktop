@@ -301,7 +301,7 @@ The config surface, and the create-only `engine` prop it feeds:
 export default defineConfig({
   webview: {
     engine: { mac: "system", linux: "chromium" },
-    cef: { version: "151.3.23", locales: ["en-US", "de"] },
+    cef: { version: "151.3.23", locales: ["en-US", "de"], schemes: ["myapp"] },
   },
 });
 ```
@@ -311,6 +311,14 @@ export default defineConfig({
 nd dev` wins over the config without editing it. Per view, `<webview engine>`
 takes the same two values and defaults to `"system"`; it is create-only, since
 swapping engines under a live view would mean rebuilding it.
+
+`cef.schemes` names the custom schemes the app serves. A scheme is standard,
+secure and CORS-enabled only if every process was told about it before
+`cef_initialize`, which is long before app code runs, so it is declared here and
+exported as `ND_CEF_SCHEMES` (comma separated, and the same dev override);
+`registerScheme` then installs the handler behind it. A packaged app carries
+engine and schemes itself: macOS reads them out of `nd-app.json` at startup,
+Linux out of the generated `AppRun`.
 
 `nd doctor` reports the resolved engine, fails when a chromium config has no CEF
 dist to resolve, and audits the last packaged bundle: an `engine: "system"` build

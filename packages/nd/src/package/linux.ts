@@ -7,7 +7,7 @@ import { chmodSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveHostBinary } from "@nativedesktop/host";
 import { cefPlatformKey } from "@nativedesktop/host/cef";
-import { type NativeDesktopConfig, resolveWebViewEngine } from "../config.ts";
+import { type NativeDesktopConfig, resolveCefSchemes, resolveWebViewEngine } from "../config.ts";
 import { applyCefLinuxPlan, cefVersionFor, ensureCefDist, planCefLinux } from "./cef.ts";
 import { installLinuxIcon } from "./icons.ts";
 import { buildAppRun, buildDesktopEntry, buildMimeInfoXml, type ResolvedIdentity } from "./identity.ts";
@@ -30,11 +30,15 @@ export async function packageLinuxApp(
   }
   mkdirSync(join(appdir, "usr", "bin"), { recursive: true });
 
+  const engine = resolveWebViewEngine(config, "linux");
+  const schemes = resolveCefSchemes(config);
   const payload = await assemblePayload({
     appDir,
     config,
     identity,
     appRoot: join(appdir, "app"),
+    engine,
+    schemes,
     entry: options.entry,
     compile: options.compile,
   });
@@ -45,6 +49,8 @@ export async function packageLinuxApp(
     slug: identity.slug,
     appId: identity.id,
     pluginPaths: payload.pluginPaths,
+    engine,
+    schemes,
   }));
   chmodSync(join(appdir, "AppRun"), 0o755);
   writeFileSync(join(appdir, `${identity.slug}.desktop`), buildDesktopEntry(identity, linux));
@@ -66,7 +72,7 @@ export async function packageLinuxApp(
   cpSync(bunPath, join(appdir, "usr", "bin", "bun"), { dereference: true });
   chmodSync(join(appdir, "usr", "bin", "bun"), 0o755);
 
-  if (resolveWebViewEngine(config, "linux") === "chromium") {
+  if (engine === "chromium") {
     const version = cefVersionFor(config.webview?.cef);
     const distRoot = await ensureCefDist({ cefPlatform: cefPlatformKey("linux", process.arch), version });
     const plan = planCefLinux({ distRoot, appDir: appdir, locales: config.webview?.cef?.locales });

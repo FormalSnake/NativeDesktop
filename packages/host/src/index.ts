@@ -20,7 +20,8 @@
 //     built on first run.
 import { existsSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { CEF_HELPER_BINARY_NAME } from "./cef.ts";
 
 const OS_NAMES: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_NAMES: Record<string, string> = { arm64: "arm64", x64: "x64" };
@@ -197,6 +198,31 @@ export async function resolveHostBinary(
       `linux-x64 (gtk). Build in a NativeDesktop checkout (${backendBuildHint(backend)}) and point ` +
       `ND_HOST_BINARY at it.`;
   throw new Error(`@nativedesktop/host: no ${backend} host binary for "${key}". ${hint}`);
+}
+
+/**
+ * The CEF subprocess executable for an appkit host binary, built from the same
+ * SwiftPM package the host came from. Packaging copies it into the five helper
+ * .apps, and it is a separate product, so a checkout that has only ever run
+ * `nd dev` has the host built and this one missing.
+ *
+ * Returns undefined when the host binary is not a source-checkout build: a
+ * prebuilt platform package ships the helper beside the host, and there is
+ * nothing to build from.
+ */
+export async function buildCefHelper(hostBinary: string): Promise<string | undefined> {
+  const buildDir = dirname(resolve(hostBinary));
+  const repoRoot = resolve(buildDir, "..", "..", "..");
+  if (!isSourceCheckout(repoRoot)) return undefined;
+  const configuration = basename(buildDir) === "debug" ? "debug" : "release";
+  process.stderr.write(`nd: building ${CEF_HELPER_BINARY_NAME} (first run)…\n`);
+  await run(
+    ["swift", "build", "-c", configuration, "--product", CEF_HELPER_BINARY_NAME],
+    resolve(repoRoot, "swift"),
+    appkitBuildEnv(),
+  );
+  const out = resolve(buildDir, CEF_HELPER_BINARY_NAME);
+  return existsSync(out) ? out : undefined;
 }
 
 function backendBuildHint(backend: Backend): string {

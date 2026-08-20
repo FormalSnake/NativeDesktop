@@ -136,8 +136,9 @@ GTK4 via RTLD_NOLOAD (GTK is not linked into libcef since 2018).
 ## Packaging (`cef-pkg` lane)
 
 - `nativedesktop.config.ts`: `webview: { engine: { mac?: "system"|"chromium",
-  linux?: "system"|"chromium" }, cef?: { version?, locales? } }`. Dev override:
-  `ND_WEBVIEW_ENGINE=chromium`.
+  linux?: "system"|"chromium" }, cef?: { version?, locales?, schemes? } }`. Dev
+  overrides: `ND_WEBVIEW_ENGINE=chromium`, `ND_CEF_SCHEMES=a,b`. A packaged app
+  carries both: `nd-app.json` on macOS, the generated `AppRun` on Linux.
 - Schema seam: `engine` create-only prop on WebView ("system" default,
   "chromium"), codegen arms route it into the two hand-written engine files.
 - `nd package` with CEF enabled: resolve the pinned version against

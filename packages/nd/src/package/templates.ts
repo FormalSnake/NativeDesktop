@@ -95,6 +95,10 @@ export interface AppRunSpec {
   appId?: string;
   /** App-root-relative native plugin paths. */
   pluginPaths: string[];
+  /** Engine the AppDir was staged for. */
+  engine?: string;
+  /** Launch-declared CEF schemes. */
+  schemes?: string[];
 }
 
 export function appRunTemplate(s: AppRunSpec): string {
@@ -104,6 +108,11 @@ export function appRunTemplate(s: AppRunSpec): string {
     `export ND_SCRIPT="$HERE/app/${s.entry}"\n` +
     'export PATH="$HERE/usr/bin:$PATH"\n';
   if (s.appId) script += `export ND_APP_ID="${s.appId}"\n`;
+  // Every CEF process reads both of these, and both have to be settled before
+  // cef_initialize. The :- form keeps an explicit override ahead of the bundle,
+  // matching how the mac bootstrap defers to an already-set variable.
+  if (s.engine) script += `export ND_WEBVIEW_ENGINE="\${ND_WEBVIEW_ENGINE:-${s.engine}}"\n`;
+  if (s.schemes?.length) script += `export ND_CEF_SCHEMES="\${ND_CEF_SCHEMES:-${s.schemes.join(",")}}"\n`;
   if (s.pluginPaths.length) {
     script += 'export ND_PLUGINS="1"\n';
     script += `export ND_PLUGIN_PATHS="${s.pluginPaths.map((p) => `$HERE/app/${p}`).join(":")}"\n`;

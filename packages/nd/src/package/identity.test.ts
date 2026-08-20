@@ -205,5 +205,19 @@ describe("buildDesktopEntry / appRunTemplate", () => {
     expect(script).toContain('export ND_APP_ID="com.nativedesktop.gallery"');
     expect(script).toContain('export ND_PLUGIN_PATHS="$HERE/app/native/libdemo.so"');
     expect(script).toContain('exec "$HERE/usr/bin/gallery" "$@"');
+    expect(script).not.toContain("ND_WEBVIEW_ENGINE");
+  });
+
+  test("AppRun exports the engine and its schemes, behind an override", () => {
+    const script = appRunTemplate({
+      entry: "src/main.tsx",
+      cwd: ".",
+      slug: "gallery",
+      pluginPaths: [],
+      engine: "chromium",
+      schemes: ["nbext", "nbint"],
+    });
+    expect(script).toContain('export ND_WEBVIEW_ENGINE="${ND_WEBVIEW_ENGINE:-chromium}"');
+    expect(script).toContain('export ND_CEF_SCHEMES="${ND_CEF_SCHEMES:-nbext,nbint}"');
   });
 });

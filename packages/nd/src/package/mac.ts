@@ -7,15 +7,15 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { join, resolve } from "node:path";
 import { resolveHostBinary } from "@nativedesktop/host";
 import { cefPlatformKey } from "@nativedesktop/host/cef";
-import { type NativeDesktopConfig, resolveWebViewEngine } from "../config.ts";
+import { type NativeDesktopConfig, resolveCefSchemes, resolveWebViewEngine } from "../config.ts";
 import {
   applyCefMacPlan,
   type CefMacPlan,
   cefMacSignTargets,
   cefVersionFor,
   ensureCefDist,
+  ensureCefHelperBinary,
   planCefMac,
-  resolveCefHelperBinary,
   writeCefHelperEntitlements,
 } from "./cef.ts";
 import { installMacIcon } from "./icons.ts";
@@ -45,7 +45,7 @@ async function stageCefMac(
     appId: identity.id,
     version: identity.version,
     minimumSystemVersion,
-    helperBinary: resolveCefHelperBinary(hostBinary),
+    helperBinary: await ensureCefHelperBinary(hostBinary),
   });
   applyCefMacPlan(plan);
   console.error(`ND_PACKAGE_CEF ${plan.framework.to} version=${version}`);
@@ -72,11 +72,14 @@ export async function packageMacApp(
   mkdirSync(join(c, "Resources"), { recursive: true });
   mkdirSync(join(c, "Frameworks"), { recursive: true });
 
+  const engine = resolveWebViewEngine(config, "mac");
   await assemblePayload({
     appDir,
     config,
     identity,
     appRoot: join(c, "Resources", "app"),
+    engine,
+    schemes: resolveCefSchemes(config),
     entry: options.entry,
     compile: options.compile,
   });
@@ -94,7 +97,7 @@ export async function packageMacApp(
   chmodSync(join(c, "MacOS", "bun"), 0o755);
 
   const minimumSystemVersion = mac?.minimumSystemVersion ?? "26.0";
-  const cefPlan = resolveWebViewEngine(config, "mac") === "chromium"
+  const cefPlan = engine === "chromium"
     ? await stageCefMac(config, identity, c, hostBinary, minimumSystemVersion)
     : undefined;
 

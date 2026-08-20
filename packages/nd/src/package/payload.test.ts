@@ -82,6 +82,8 @@ describe("assemblePayload", () => {
       config: { package: { workspaceRoot: "../..", include: ["shared"], compile: false } },
       identity,
       appRoot,
+      engine: "chromium",
+      schemes: ["nbext"],
     });
 
     expect(result).toEqual({ entry: "apps/fixture/src/main.tsx", cwd: "apps/fixture", pluginPaths: [] });
@@ -96,6 +98,8 @@ describe("assemblePayload", () => {
       entry: "apps/fixture/src/main.tsx",
       cwd: "apps/fixture",
       pluginPaths: [],
+      engine: "chromium",
+      schemes: ["nbext"],
     });
   });
 
@@ -117,11 +121,36 @@ describe("assemblePayload", () => {
     for (const dir of ["MacOS", "Resources", "Frameworks"]) mkdirSync(join(contents, dir), { recursive: true });
     const appRoot = join(contents, "Resources", "app");
 
-    const result = await assemblePayload({ appDir, config: {}, identity, appRoot });
+    const result = await assemblePayload({ appDir, config: {}, identity, appRoot, engine: "system", schemes: [] });
 
     expect(result).toEqual({ entry: "dist/main.tsx", cwd: ".", pluginPaths: [] });
     expect(existsSync(join(appRoot, "dist/main.tsx"))).toBe(true);
     expect(existsSync(join(appRoot, "package.json"))).toBe(true);
+    expect(existsSync(join(appRoot, "dist", "mac"))).toBe(false);
+  });
+
+  test("--out elsewhere: a previous run's bundle is left out of the payload", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "nd-payload-out-"));
+    mkdirSync(join(appDir, "src"), { recursive: true });
+    writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }));
+    writeFileSync(join(appDir, "src", "main.tsx"), "export {};\n");
+    mkdirSync(join(appDir, "dist"), { recursive: true });
+    writeFileSync(join(appDir, "dist", "main.tsx"), "export {};\n");
+    // What `nd package mac` wrote last time, in the default output dir.
+    mkdirSync(join(appDir, "dist", "mac", "Fixture.app", "Contents", "Frameworks"), { recursive: true });
+    writeFileSync(join(appDir, "dist", "mac", "Fixture.app", "Contents", "Frameworks", "big.bin"), "x");
+
+    const appRoot = join(mkdtempSync(join(tmpdir(), "nd-payload-out2-")), "mac", "Fixture.app", "Contents", "Resources", "app");
+    await assemblePayload({
+      appDir,
+      config: { package: { compile: false, entry: "dist/main.tsx" } },
+      identity,
+      appRoot,
+      engine: "system",
+      schemes: [],
+    });
+
+    expect(existsSync(join(appRoot, "dist/main.tsx"))).toBe(true);
     expect(existsSync(join(appRoot, "dist", "mac"))).toBe(false);
   });
 
@@ -140,6 +169,8 @@ describe("assemblePayload", () => {
       config: { package: { entry: "main.tsx", compile: false } },
       identity,
       appRoot,
+      engine: "system",
+      schemes: [],
     });
 
     expect(result).toEqual({ entry: "main.tsx", cwd: ".", pluginPaths: [] });
