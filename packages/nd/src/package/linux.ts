@@ -6,7 +6,9 @@ import { $ } from "bun";
 import { chmodSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveHostBinary } from "@nativedesktop/host";
-import type { NativeDesktopConfig } from "../config.ts";
+import { cefPlatformKey } from "@nativedesktop/host/cef";
+import { type NativeDesktopConfig, resolveWebViewEngine } from "../config.ts";
+import { applyCefLinuxPlan, cefVersionFor, ensureCefDist, planCefLinux } from "./cef.ts";
 import { installLinuxIcon } from "./icons.ts";
 import { buildAppRun, buildDesktopEntry, buildMimeInfoXml, type ResolvedIdentity } from "./identity.ts";
 import { assemblePayload } from "./payload.ts";
@@ -63,6 +65,14 @@ export async function packageLinuxApp(
   // dereference: true - `bun` on PATH is frequently a nix-store symlink.
   cpSync(bunPath, join(appdir, "usr", "bin", "bun"), { dereference: true });
   chmodSync(join(appdir, "usr", "bin", "bun"), 0o755);
+
+  if (resolveWebViewEngine(config, "linux") === "chromium") {
+    const version = cefVersionFor(config.webview?.cef);
+    const distRoot = await ensureCefDist({ cefPlatform: cefPlatformKey("linux", process.arch), version });
+    const plan = planCefLinux({ distRoot, appDir: appdir, locales: config.webview?.cef?.locales });
+    await applyCefLinuxPlan(plan);
+    console.error(`ND_PACKAGE_CEF ${plan.root} version=${version} locales=${plan.locales.length}`);
+  }
 
   let bundlePath = appdir;
   const format = options.format ?? linux?.format ?? "appimage";
