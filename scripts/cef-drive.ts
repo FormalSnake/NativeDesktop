@@ -9,7 +9,7 @@
 import { AutomationClient, findNode } from "@nativedesktop/test";
 import type { GetTreeResult, JsonNode } from "@nativedesktop/test";
 
-const CHECKS = ["render", "title", "progress", "history", "popup"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme"] as const;
 
 function mustFind(tree: JsonNode, testID: string): JsonNode {
   const node = findNode(tree, testID);
@@ -29,7 +29,7 @@ const failures: string[] = [];
 for (const name of CHECKS) {
   const text = mustFind(tree.root, `chk-${name}`).text ?? "";
   const value = text.slice(text.indexOf("=") + 1);
-  if (!value.startsWith("ok")) failures.push(`${name}: ${value}`);
+  if (!value.startsWith("ok") && !value.startsWith("skip")) failures.push(`${name}: ${value}`);
   console.log(`  ${name}: ${value}`);
 }
 

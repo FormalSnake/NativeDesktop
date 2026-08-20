@@ -51,3 +51,5 @@ pub fn pageText(_: *gtk.Widget) ?[]const u8 {
 pub fn registerScheme(_: []const u8, _: bool, _: bool) bool {
     return false;
 }
+
+pub fn setContextMenuMode(_: *gtk.Widget, _: []const u8) void {}
