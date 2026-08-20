@@ -734,6 +734,7 @@ fn resizeCefWindow(view: *View, w: c_uint, h: c_uint) void {
 pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     const view = viewOf(widget) orelse return;
     if (url.len == 0) return;
+    tr("setUrl node={d} url={s}", .{ view.node_id, url });
     // Same echo guard the WebKit backend carries: onNavigate feeds the URL back
     // into app state, which re-applies the prop.
     if (view.url) |cur| {
@@ -1104,6 +1105,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         enableDomains(view);
         syncBounds(view);
         resizeCefWindow(view, view.bounds.w, view.bounds.h);
+        tr("settle node={d} pending={?s}", .{ view.node_id, view.pending_url });
         if (view.pending_url) |p| {
             if (browserOf(view)) |browser| loadUrl(browser, p);
             alloc.free(p);
