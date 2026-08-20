@@ -1601,6 +1601,7 @@ fn setWorldContext(view: *View, world: []const u8, context_id: i64) void {
         gop.value_ptr.* = .{};
     }
     gop.value_ptr.context_id = context_id;
+    tr("worldContext node={d} world={s} id={d}", .{ view.node_id, world, context_id });
     drainDeferred(view);
 }
 
@@ -2038,9 +2039,12 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
             },
             else => return,
         };
-        var it = view.worlds.valueIterator();
-        while (it.next()) |world| {
-            if (world.context_id == id) world.context_id = 0;
+        var it = view.worlds.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.context_id == id) {
+                tr("worldContextGone node={d} world={s} id={d}", .{ view.node_id, entry.key_ptr.*, id });
+                entry.value_ptr.context_id = 0;
+            }
         }
         return;
     }
