@@ -3343,6 +3343,15 @@ const menu_command_last: c_int = 28500;
 const CM_TYPEFLAG_SELECTION: c_uint = 1 << 4;
 const CM_TYPEFLAG_EDITABLE: c_uint = 1 << 5;
 
+/// An owned copy, falling back to an empty (still freeable) slice. Every
+/// string in a menu payload is copied because the params it came from are gone
+/// before the GTK loop sees it.
+var no_bytes: [0]u8 = .{};
+
+fn dupeOwned(text: []const u8) []u8 {
+    return alloc.dupe(u8, text) catch no_bytes[0..0];
+}
+
 /// One item currently on screen. The id and check state are copied because the
 /// app may replace its whole tree between the menu opening and a click landing.
 const MenuCommand = struct {
@@ -3353,9 +3362,9 @@ const MenuCommand = struct {
 
 /// What the click landed on, owned so it can outlive the params object.
 const MenuHit = struct {
-    link: []u8 = &.{},
-    image: []u8 = &.{},
-    selection: []u8 = &.{},
+    link: []u8 = no_bytes[0..0],
+    image: []u8 = no_bytes[0..0],
+    selection: []u8 = no_bytes[0..0],
     editable: bool = false,
     x: c_int = 0,
     y: c_int = 0,
@@ -3399,11 +3408,11 @@ fn ownedFromUserfree(
     params: [*c]c.cef_context_menu_params_t,
     getter: ?*const fn ([*c]c.cef_context_menu_params_t) callconv(.c) c.cef_string_userfree_t,
 ) []u8 {
-    const get = getter orelse return &.{};
+    const get = getter orelse return no_bytes[0..0];
     const raw = get(params);
-    if (raw == null) return &.{};
+    if (raw == null) return no_bytes[0..0];
     defer freeUserfree(raw);
-    return dupeStr(raw) orelse &.{};
+    return dupeStr(raw) orelse no_bytes[0..0];
 }
 
 fn clientGetContextMenuHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_context_menu_handler_t {
@@ -3574,7 +3583,7 @@ fn onContextMenuCommand(
 
     view.menu_lock.lock();
     const entry = view.menu_commands.get(command_id);
-    const page_url = alloc.dupe(u8, if (view.menu_page_url_slot) |u| u else "") catch &.{};
+    const page_url = dupeOwned(if (view.menu_page_url_slot) |u| u else "");
     view.menu_lock.unlock();
 
     const cmd = entry orelse {
@@ -3587,11 +3596,11 @@ fn onContextMenuCommand(
         return 1;
     };
     click.* = .{
-        .id = alloc.dupe(u8, cmd.id) catch &.{},
+        .id = dupeOwned(cmd.id),
         .page_url = page_url,
-        .link = alloc.dupe(u8, hit.link) catch &.{},
-        .image = alloc.dupe(u8, hit.image) catch &.{},
-        .selection = alloc.dupe(u8, hit.selection) catch &.{},
+        .link = dupeOwned(hit.link),
+        .image = dupeOwned(hit.image),
+        .selection = dupeOwned(hit.selection),
         .editable = hit.editable,
         // The framework reports the state the click IMPLIES and does not mutate
         // its own copy: the app owns the model and answers with the next
