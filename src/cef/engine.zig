@@ -141,17 +141,22 @@ fn ensureApp() ?*AppObj {
     if (app_obj) |a| return a;
     const a = AppObj.create({}) orelse return null;
     a.cef.on_before_command_line_processing = &onBeforeCommandLine;
+    a.cef.on_register_custom_schemes = &onRegisterCustomSchemes;
     app_obj = a;
     return a;
 }
 
 fn onBeforeCommandLine(
     _: [*c]c.cef_app_t,
-    _: [*c]const c.cef_string_t,
+    process_type: [*c]const c.cef_string_t,
     command_line: [*c]c.cef_command_line_t,
 ) callconv(.c) void {
     defer ref.releaseParam(command_line);
     if (command_line == null) return;
+    // A non-empty process type is a CHILD's command line, being built in the
+    // browser process. It is the only channel a subprocess has for learning
+    // which schemes must be standard before it parses its first URL.
+    if (process_type != null and process_type.*.length != 0) appendSchemesSwitch(command_line);
     if (command_line.*.append_switch_with_value) |append| {
         // Ozone would otherwise pick Wayland under a Wayland session and
         // ignore parent_window entirely; the GDK backend is pinned to x11 to
@@ -258,6 +263,7 @@ fn ensureInitialized() bool {
     }
     initialized = true;
     init_failed = false;
+    ensureSchemeFactories();
     return true;
 }
 
@@ -748,6 +754,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "setCookie")) return cmdSetCookie(view, arg);
     if (std.mem.eql(u8, cmd, "deleteCookie")) return cmdDeleteCookie(view, arg);
     if (std.mem.eql(u8, cmd, "setUserAgent")) return cmdSetUserAgent(view, arg);
+    if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -957,6 +964,9 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
     if (browser == null) return;
     const view = LifeObj.of(self).payload;
     view.browser.store(@intFromPtr(browser), .release);
+    if (browser.*.get_identifier) |get_id| {
+        post(.{ .view = view, .name = "", .settle = false, .cdp_result = false, .browser_id = get_id(browser) });
+    }
     if (browser.*.get_host) |get_host| {
         const host = get_host(browser);
         if (host != null) {
@@ -1014,6 +1024,10 @@ const Emission = struct {
     cdp_event: bool = false,
     message_id: c_int = 0,
     ok: bool = false,
+    /// A parked scheme request being handed from the IO thread to the GTK one.
+    scheme_obj: ?*ResourceObj = null,
+    /// Non-zero on the hop that records a new browser's identifier.
+    browser_id: c_int = 0,
 };
 
 fn post(e: Emission) void {
@@ -1035,6 +1049,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         if (box.extra) |t| alloc.free(t);
         alloc.destroy(box);
     }
+    // A scheme request is keyed by browser id, not by view pointer: the
+    // factory runs on the IO thread with no view in hand.
+    if (box.scheme_obj) |obj| {
+        announceSchemeRequest(obj);
+        return 0;
+    }
     // The tab this came from can have been closed while the event was in
     // flight; the widget, and with it the container window, is already gone.
     if (!live_views.contains(@intFromPtr(box.view))) return 0;
@@ -1047,6 +1067,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (box.cdp_event) {
         const method = box.extra orelse return 0;
         onCdpEvent(view, method, if (box.text) |t| t else "");
+        return 0;
+    }
+
+    if (box.browser_id != 0) {
+        browsers_by_id.put(alloc, box.browser_id, view) catch {};
         return 0;
     }
 
@@ -2724,4 +2749,353 @@ fn onCanDownload(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     return 1;
+}
+
+// ============================================================================
+// Custom URI schemes
+// ============================================================================
+//
+// Two halves that have to agree. The scheme has to be a STANDARD scheme in
+// every process, or Chromium will not parse `ndprobe://host/path` as a
+// navigable URL at all, and that registration happens during startup, long
+// before an app exists: the browser process knows the list because
+// `registerScheme` ran before cef_initialize, and every subprocess reads it off
+// the command line the browser appended it to. The other half is the factory
+// that serves the requests, which parks each one until the app answers it,
+// exactly as the WebKitGTK backend's `respondScheme` does.
+
+const CEF_SCHEME_OPTION_STANDARD: c_int = 1 << 0;
+const CEF_SCHEME_OPTION_CORS_ENABLED: c_int = 1 << 4;
+const CEF_SCHEME_OPTION_SECURE: c_int = 1 << 3;
+const CEF_SCHEME_OPTION_FETCH_ENABLED: c_int = 1 << 5;
+
+const SchemeSpec = struct { name: []u8, cors: bool, secure: bool };
+
+var custom_schemes: std.ArrayList(SchemeSpec) = .empty;
+/// Schemes whose factory is already registered, so a second view does not
+/// register a second one.
+var scheme_factories: std.StringHashMapUnmanaged(void) = .empty;
+
+pub fn schemesLocked() bool {
+    return initialized;
+}
+
+/// Records a scheme for `on_register_custom_schemes`, which has already run by
+/// the time CEF is initialized. Returns false when it is too late to matter.
+pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool {
+    if (initialized) return false;
+    for (custom_schemes.items) |s| {
+        if (std.mem.eql(u8, s.name, scheme)) return true;
+    }
+    const name = alloc.dupe(u8, scheme) catch return false;
+    custom_schemes.append(alloc, .{ .name = name, .cors = cors_enabled, .secure = secure }) catch {
+        alloc.free(name);
+        return false;
+    };
+    return true;
+}
+
+fn onRegisterCustomSchemes(_: [*c]c.cef_app_t, registrar: [*c]c.cef_scheme_registrar_t) callconv(.c) void {
+    if (registrar == null) return;
+    const add = registrar.*.add_custom_scheme orelse return;
+    // A subprocess has no app and no registrations of its own; the browser put
+    // the list on its command line for exactly this moment.
+    if (custom_schemes.items.len == 0) adoptSchemesFromCommandLine();
+    for (custom_schemes.items) |spec| {
+        var name = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&name);
+        if (!setStr(&name, spec.name)) continue;
+        var options: c_int = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_FETCH_ENABLED;
+        if (spec.cors) options |= CEF_SCHEME_OPTION_CORS_ENABLED;
+        if (spec.secure) options |= CEF_SCHEME_OPTION_SECURE;
+        _ = add(registrar, &name, options);
+    }
+}
+
+const schemes_switch = "nd-schemes";
+
+fn adoptSchemesFromCommandLine() void {
+    const api = loader.loaded() orelse return;
+    const cl = api.command_line_get_global();
+    if (cl == null) return;
+    defer ref.releaseParam(cl);
+    const get = cl.*.get_switch_value orelse return;
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    if (!setStr(&name, schemes_switch)) return;
+    const raw = get(cl, &name);
+    if (raw == null) return;
+    defer freeUserfree(raw);
+    const list = dupeStr(raw) orelse return;
+    defer alloc.free(list);
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |part| {
+        if (part.len == 0) continue;
+        // Only the name survives the trip: options are a browser-process
+        // concern for the factory, and the child needs the scheme to be
+        // standard and fetchable, which is the same for all of them.
+        const copy = alloc.dupe(u8, part) catch continue;
+        custom_schemes.append(alloc, .{ .name = copy, .cors = true, .secure = true }) catch alloc.free(copy);
+    }
+}
+
+fn appendSchemesSwitch(cl: [*c]c.cef_command_line_t) void {
+    if (custom_schemes.items.len == 0) return;
+    const append = cl.*.append_switch_with_value orelse return;
+    var joined: std.ArrayList(u8) = .empty;
+    defer joined.deinit(alloc);
+    for (custom_schemes.items, 0..) |spec, i| {
+        if (i != 0) joined.append(alloc, ',') catch return;
+        joined.appendSlice(alloc, spec.name) catch return;
+    }
+    appendSwitch(cl, append, schemes_switch, joined.items);
+}
+
+// ---- Serving -------------------------------------------------------------
+
+const FactoryObj = ref.Counted(c.cef_scheme_handler_factory_t, void);
+const ResourceObj = ref.Counted(c.cef_resource_handler_t, *Resource);
+
+/// One parked scheme request. Created on the IO thread, filled on the GTK
+/// thread when the app answers, read back on the IO thread afterwards. The
+/// `cont` call is the handoff between the two, and nothing touches `body`
+/// before it.
+const Resource = struct {
+    id: []u8,
+    url: []u8,
+    scheme: []u8,
+    browser_id: c_int,
+    callback: std.atomic.Value(usize) = .init(0),
+    body: []u8 = &.{},
+    mime: []u8 = &.{},
+    status: c_int = 200,
+    offset: usize = 0,
+    failed: bool = false,
+};
+
+var pending_scheme_requests: std.StringHashMapUnmanaged(*ResourceObj) = .empty;
+var scheme_seq: u64 = 0;
+/// Browser identifier to view, so a request arriving on the IO thread knows
+/// which node to raise `schemeRequest` on. CEF hands out a fresh wrapper
+/// pointer per callback, so identity has to come from the id.
+var browsers_by_id: std.AutoHashMapUnmanaged(c_int, *View) = .empty;
+
+fn ensureSchemeFactories() void {
+    const api = loader.loaded() orelse return;
+    for (custom_schemes.items) |spec| {
+        if (scheme_factories.contains(spec.name)) continue;
+        const factory = FactoryObj.create({}) orelse continue;
+        factory.cef.create = &factoryCreate;
+        var name = std.mem.zeroes(c.cef_string_t);
+        var domain = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&name);
+        defer clearStr(&domain);
+        if (!setStr(&name, spec.name)) {
+            factory.drop();
+            continue;
+        }
+        // The factory reference is consumed by the registration.
+        if (api.register_scheme_handler_factory(&name, &domain, factory.handOut()) == 0) {
+            factory.drop();
+            std.debug.print("ND_WARN WebView engine=chromium: could not register a handler factory for \"{s}\"\n", .{spec.name});
+            continue;
+        }
+        factory.drop();
+        const key = alloc.dupe(u8, spec.name) catch continue;
+        scheme_factories.put(alloc, key, {}) catch alloc.free(key);
+    }
+}
+
+fn factoryCreate(
+    _: [*c]c.cef_scheme_handler_factory_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    scheme_name: [*c]const c.cef_string_t,
+    request: [*c]c.cef_request_t,
+) callconv(.c) [*c]c.cef_resource_handler_t {
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    var browser_id: c_int = 0;
+    if (browser != null) {
+        if (browser.*.get_identifier) |get_id| browser_id = get_id(browser);
+    }
+    ref.releaseParam(browser);
+
+    var url: []u8 = &.{};
+    if (request != null) {
+        if (request.*.get_url) |get_url| {
+            const raw = get_url(request);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                url = dupeStr(raw) orelse &.{};
+            }
+        }
+    }
+    const scheme = dupeStr(scheme_name) orelse alloc.dupe(u8, "") catch &.{};
+
+    const res = alloc.create(Resource) catch return null;
+    res.* = .{ .id = &.{}, .url = url, .scheme = scheme, .browser_id = browser_id };
+    const obj = ResourceObj.create(res) orelse {
+        alloc.destroy(res);
+        return null;
+    };
+    obj.cef.open = &resourceOpen;
+    obj.cef.get_response_headers = &resourceGetResponseHeaders;
+    obj.cef.read = &resourceRead;
+    obj.cef.cancel = &resourceCancel;
+    // The caller takes the reference this returns.
+    return obj.cptr();
+}
+
+fn resourceOpen(
+    self: [*c]c.cef_resource_handler_t,
+    request: [*c]c.cef_request_t,
+    handle_request: [*c]c_int,
+    callback: [*c]c.cef_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(request);
+    const obj = ResourceObj.of(self);
+    // Kept, not released: this is what wakes the request once the app answers.
+    obj.payload.callback.store(@intFromPtr(callback), .release);
+    if (handle_request != null) handle_request.* = 0;
+    // The registry and the event both live on the GTK thread, so the request is
+    // handed over rather than announced from here.
+    post(.{ .view = @ptrFromInt(@intFromPtr(obj)), .name = "schemeRequest", .scheme_obj = obj });
+    return 1;
+}
+
+fn resourceGetResponseHeaders(
+    self: [*c]c.cef_resource_handler_t,
+    response: [*c]c.cef_response_t,
+    response_length: [*c]i64,
+    _: [*c]c.cef_string_t,
+) callconv(.c) void {
+    const res = ResourceObj.of(self).payload;
+    if (response != null) {
+        if (response.*.set_status) |set| set(response, if (res.failed) 500 else res.status);
+        if (res.mime.len > 0) {
+            if (response.*.set_mime_type) |set| {
+                var s = std.mem.zeroes(c.cef_string_t);
+                defer clearStr(&s);
+                if (setStr(&s, res.mime)) set(response, &s);
+            }
+        }
+    }
+    if (response_length != null) response_length.* = @intCast(res.body.len);
+}
+
+fn resourceRead(
+    self: [*c]c.cef_resource_handler_t,
+    data_out: ?*anyopaque,
+    bytes_to_read: c_int,
+    bytes_read: [*c]c_int,
+    _: [*c]c.cef_resource_read_callback_t,
+) callconv(.c) c_int {
+    const res = ResourceObj.of(self).payload;
+    if (bytes_read != null) bytes_read.* = 0;
+    if (res.offset >= res.body.len) return 0; // 0 with no bytes is completion
+    const out = data_out orelse return 0;
+    const n = @min(@as(usize, @intCast(@max(bytes_to_read, 0))), res.body.len - res.offset);
+    if (n == 0) return 0;
+    @memcpy(@as([*]u8, @ptrCast(out))[0..n], res.body[res.offset..][0..n]);
+    res.offset += n;
+    if (bytes_read != null) bytes_read.* = @intCast(n);
+    return 1;
+}
+
+fn resourceCancel(self: [*c]c.cef_resource_handler_t) callconv(.c) void {
+    const obj = ResourceObj.of(self);
+    const raw = obj.payload.callback.swap(0, .acq_rel);
+    if (raw != 0) ref.releaseParam(@as([*c]c.cef_callback_t, @ptrFromInt(raw)));
+}
+
+/// GTK thread: registers the parked request and raises the event the app
+/// answers with `respondScheme`.
+fn announceSchemeRequest(obj: *ResourceObj) void {
+    const res = obj.payload;
+    const view = browsers_by_id.get(res.browser_id);
+    scheme_seq += 1;
+    const id = std.fmt.allocPrint(alloc, "cefscheme-{d}", .{scheme_seq}) catch return;
+    res.id = id;
+    if (view == null) {
+        failSchemeRequest(obj, "no view for this browser");
+        return;
+    }
+    // The map holds a reference of its own: a cancelled request releases CEF's,
+    // and the answer may still be in flight.
+    _ = obj.handOut();
+    pending_scheme_requests.put(alloc, id, obj) catch {
+        obj.drop();
+        failSchemeRequest(obj, "out of memory");
+        return;
+    };
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "url", .{ .string = res.url }) catch return;
+    payload.put(alloc, "scheme", .{ .string = res.scheme }) catch return;
+    f(view.?.node_id, "schemeRequest", .{ .data = .{ .object = payload } });
+}
+
+fn continueSchemeRequest(obj: *ResourceObj) void {
+    const raw = obj.payload.callback.swap(0, .acq_rel);
+    if (raw == 0) return;
+    const callback: [*c]c.cef_callback_t = @ptrFromInt(raw);
+    defer ref.releaseParam(callback);
+    if (callback.*.cont) |cont| cont(callback);
+}
+
+fn failSchemeRequest(obj: *ResourceObj, message: []const u8) void {
+    std.debug.print("ND_WARN WebView engine=chromium schemeRequest: {s}\n", .{message});
+    obj.payload.failed = true;
+    continueSchemeRequest(obj);
+}
+
+fn cmdRespondScheme(arg: ?std.json.Value) void {
+    const obj_arg = argObject(arg) orelse return;
+    const id = objStr(obj_arg, "id") orelse {
+        std.debug.print("ND_WARN WebView respondScheme: missing id\n", .{});
+        return;
+    };
+    const entry = pending_scheme_requests.fetchRemove(id) orelse {
+        std.debug.print("ND_WARN WebView respondScheme: unknown request id {s}\n", .{id});
+        return;
+    };
+    defer alloc.free(entry.key);
+    const obj = entry.value;
+    defer obj.drop();
+    const res = obj.payload;
+
+    if (objStr(obj_arg, "error")) |msg| {
+        failSchemeRequest(obj, msg);
+        return;
+    }
+    const b64 = objStr(obj_arg, "base64") orelse {
+        failSchemeRequest(obj, "respondScheme: missing base64 body");
+        return;
+    };
+    const decoder = std.base64.standard.Decoder;
+    const size = decoder.calcSizeForSlice(b64) catch {
+        failSchemeRequest(obj, "respondScheme: malformed base64 body");
+        return;
+    };
+    const buf = alloc.alloc(u8, @max(size, 1)) catch {
+        failSchemeRequest(obj, "respondScheme: out of memory");
+        return;
+    };
+    decoder.decode(buf[0..size], b64) catch {
+        alloc.free(buf);
+        failSchemeRequest(obj, "respondScheme: malformed base64 body");
+        return;
+    };
+    res.body = buf[0..size];
+    res.mime = alloc.dupe(u8, objStr(obj_arg, "contentType") orelse "application/octet-stream") catch &.{};
+    if (obj_arg.get("status")) |st| {
+        switch (st) {
+            .integer => |i| res.status = @intCast(i),
+            else => {},
+        }
+    }
+    continueSchemeRequest(obj);
 }

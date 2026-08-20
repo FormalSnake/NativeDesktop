@@ -581,6 +581,15 @@ fn modeOf(name: []const u8) Mode {
 /// rather than a per-view decision.
 const Engine = enum { system, chromium };
 
+/// Whether this process is running the chromium engine at all, which is the
+/// only thing a process-wide call like `registerScheme` can ask.
+fn cefEngineSelected() bool {
+    if (std.c.getenv("ND_WEBVIEW_ENGINE")) |raw| {
+        return std.mem.eql(u8, std.mem.span(raw), "chromium");
+    }
+    return false;
+}
+
 fn engineOf(name: []const u8) Engine {
     if (std.mem.eql(u8, name, "chromium")) return .chromium;
     if (name.len == 0 or std.mem.eql(u8, name, "system")) {
@@ -1353,6 +1362,15 @@ pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) Regi
     }
     if (registered_schemes.contains(scheme)) return error.AlreadyRegistered;
     if (any_view_created) return error.TooLate;
+    // The chromium engine has to know its standard schemes before
+    // cef_initialize, which is a different deadline from WebKitGTK's, and it
+    // must not pull libwebkitgtk in just to answer this.
+    if (cefEngineSelected()) {
+        if (!cef.registerScheme(scheme, cors_enabled, secure)) return error.TooLate;
+        const cef_key = alloc.dupe(u8, scheme) catch return;
+        registered_schemes.put(alloc, cef_key, {}) catch {};
+        return;
+    }
     _ = loadApi() orelse return error.Unsupported;
     const get_ctx = ext.web_context_get_default orelse return error.Unsupported;
     const register = ext.web_context_register_uri_scheme orelse return error.Unsupported;

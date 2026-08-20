@@ -27,5 +27,8 @@ pub const c = @cImport({
     @cInclude("include/capi/cef_find_handler_capi.h");
     @cInclude("include/capi/cef_download_handler_capi.h");
     @cInclude("include/capi/cef_jsdialog_handler_capi.h");
+    @cInclude("include/capi/cef_scheme_capi.h");
+    @cInclude("include/capi/cef_resource_handler_capi.h");
+    @cInclude("include/capi/cef_command_line_capi.h");
     @cInclude("include/cef_api_hash.h");
 });

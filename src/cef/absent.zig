@@ -47,3 +47,7 @@ pub fn evalRelease(_: u64) void {}
 pub fn pageText(_: *gtk.Widget) ?[]const u8 {
     return null;
 }
+
+pub fn registerScheme(_: []const u8, _: bool, _: bool) bool {
+    return false;
+}

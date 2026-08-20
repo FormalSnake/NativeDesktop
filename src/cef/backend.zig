@@ -28,4 +28,5 @@ pub const evalStart = impl.evalStart;
 pub const evalPoll = impl.evalPoll;
 pub const evalRelease = impl.evalRelease;
 pub const pageText = impl.pageText;
+pub const registerScheme = impl.registerScheme;
 pub const EvalState = impl.EvalState;
