@@ -91,6 +91,8 @@ function App(): React.ReactNode {
   const view = useRef<NdNodeRef<"webview">>(null);
   const late = useRef<NdNodeRef<"webview">>(null);
   const hidden = useRef<NdNodeRef<"webview">>(null);
+  const hidden2 = useRef<NdNodeRef<"webview">>(null);
+  const hidden3 = useRef<NdNodeRef<"webview">>(null);
   const [lateReady, setLateReady] = useState(false);
   const [url, setUrl] = useState(`${BASE}/one`);
   const [phase, setPhase] = useState("starting");
@@ -103,7 +105,7 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void run({ view, late, hidden, setUrl, setResult, setPhase, setLateReady });
+    void run({ view, late, hidden, hidden2, hidden3, setUrl, setResult, setPhase, setLateReady });
   }, []);
 
   return (
@@ -141,6 +143,9 @@ function App(): React.ReactNode {
             <label text="front tab" />
           </box>
           <box tabLabel="background" orientation="vertical">
+            {/* Three at once, all with their address present in the very
+                first commit: that is what restoring a session looks like, and
+                the app keeps all but the active one hidden. */}
             <webview
               testID="wv-hidden"
               ref={hidden}
@@ -148,6 +153,20 @@ function App(): React.ReactNode {
               url={`${BASE}/two`}
               onNavigate={(e) => record("hiddenNavigate", e.text)}
               onTitleChanged={(e) => record("hiddenTitle", e.text)}
+              onJavaScriptResult={onJavaScriptResult}
+            />
+            <webview
+              testID="wv-hidden-2"
+              ref={hidden2}
+              engine="chromium"
+              url={`${BASE}/one`}
+              onJavaScriptResult={onJavaScriptResult}
+            />
+            <webview
+              testID="wv-hidden-3"
+              ref={hidden3}
+              engine="chromium"
+              url={`${BASE}/popup`}
               onJavaScriptResult={onJavaScriptResult}
             />
           </box>
@@ -181,6 +200,8 @@ async function run(ctx: {
   view: React.RefObject<NdNodeRef<"webview"> | null>;
   late: React.RefObject<NdNodeRef<"webview"> | null>;
   hidden: React.RefObject<NdNodeRef<"webview"> | null>;
+  hidden2: React.RefObject<NdNodeRef<"webview"> | null>;
+  hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
@@ -322,9 +343,25 @@ async function run(ctx: {
     // answer, not fail, which is what the extension drive asks of a
     // background page.
     if (!ctx.hidden.current) throw new Error("the hidden view never mounted");
-    const evaluated = await executeJavaScript(ctx.hidden.current, "location.pathname");
-    if (evaluated !== "/two") return `fail: eval against the hidden view read ${JSON.stringify(evaluated)}`;
-    return `ok (${at}, ${title}, eval ${evaluated})`;
+    // Every restored view has to answer, not just the first: they all attach
+    // their devtools agent independently, and a queue that never drains on one
+    // of them is the shape a restored session fails in.
+    const wanted: Array<[React.RefObject<NdNodeRef<"webview"> | null>, string]> = [
+      [ctx.hidden, "/two"],
+      [ctx.hidden2, "/one"],
+      [ctx.hidden3, "/popup"],
+    ];
+    const read: string[] = [];
+    for (const [ref, path] of wanted) {
+      if (!ref.current) throw new Error(`a hidden view for ${path} never mounted`);
+      const got = await pollValue(
+        () => executeJavaScript(ref.current!, "location.pathname"),
+        (v) => v === path,
+        `eval against the hidden view on ${path}`,
+      );
+      read.push(String(got));
+    }
+    return `ok (${at}, ${title}, evals ${read.join(" ")})`;
   });
 
   ctx.setPhase("done");

@@ -74,52 +74,63 @@ toplevels() {
 BEFORE_X11="$(toplevels | wc -l)"
 
 LOG=$(mktemp)
-# The trace names the parent, container and CEF window XIDs plus the allocation
-# they were created against; an embedding failure is invisible without them.
-ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
-HOST_PID=$!
 
-for _ in $(seq 1 900); do
-  grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
-  sleep 0.1
-done
-grep -q "ND_AUTOMATION_LISTENING" "$LOG" || { echo "FAIL: no automation listener"; cat "$LOG"; exit 1; }
-grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL: no commit applied"; cat "$LOG"; exit 1; }
+# One launch of the probe, driven end to end. Run twice against the same
+# XDG_DATA_HOME: a restored session is a SECOND launch over a CEF cache that
+# already exists, and every failure this gate was grown for showed up on a
+# view that was revisited rather than freshly made.
+run_pass() {
+  local pass="$1"
+  : >"$LOG"
+  # The trace names the parent, container and CEF window XIDs plus the
+  # allocation they were created against; an embedding failure is invisible
+  # without them.
+  ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+  HOST_PID=$!
 
-# The engine resolves lazily, at the app's first <webview>.
-for _ in $(seq 1 600); do
-  grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" && break
-  sleep 0.1
-done
-grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" || {
-  echo "FAIL: the chromium engine did not load"
-  tail -40 "$LOG"
-  exit 1
+  for _ in $(seq 1 900); do
+    grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
+    sleep 0.1
+  done
+  grep -q "ND_AUTOMATION_LISTENING" "$LOG" || { echo "FAIL($pass): no automation listener"; cat "$LOG"; exit 1; }
+  grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL($pass): no commit applied"; cat "$LOG"; exit 1; }
+
+  # The engine resolves lazily, at the app's first <webview>.
+  for _ in $(seq 1 600); do
+    grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" && break
+    sleep 0.1
+  done
+  grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" || {
+    echo "FAIL($pass): the chromium engine did not load"
+    tail -40 "$LOG"
+    exit 1
+  }
+  # A fallback to WebKitGTK would still pass every event check below, so the
+  # absence of the fallback warning is part of the gate.
+  if grep -q "falling back to the system engine" "$LOG"; then
+    echo "FAIL($pass): the view fell back to the system engine"
+    grep -n "ND_WARN" "$LOG" | head -20
+    exit 1
+  fi
+
+  SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
+  ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="$XDG_RUNTIME_DIR/cef-probe-host-$pass.png" \
+    bun scripts/cef-drive.ts >"$XDG_RUNTIME_DIR/drive-$pass.log" 2>&1 \
+    || { echo "FAIL($pass): driver"; cat "$XDG_RUNTIME_DIR/drive-$pass.log"; tail -80 "$LOG"; exit 1; }
+  cat "$XDG_RUNTIME_DIR/drive-$pass.log"
+  grep -q "ND_CEF_M1_OK" "$XDG_RUNTIME_DIR/drive-$pass.log" || { echo "FAIL($pass): driver did not report success"; exit 1; }
+
+  # The background-page invariant: the probe's hidden views must have got real
+  # browsers without ever being mapped.
+  grep -qE "ND_CEF embed .* mapped=false" "$LOG" || {
+    echo "FAIL($pass): no browser was created for an unmapped view"
+    grep -E "ND_CEF embed" "$LOG" | head -10
+    exit 1
+  }
+  echo "ND_CEF_HIDDEN_VIEW_OK($pass) $(grep -c -E "ND_CEF embed .* mapped=false" "$LOG") unmapped views got browsers"
 }
-# A fallback to WebKitGTK would still pass every event check below, so the
-# absence of the fallback warning is part of the gate.
-grep -q "falling back to the system engine" "$LOG" && {
-  echo "FAIL: the view fell back to the system engine"
-  grep -n "ND_WARN" "$LOG" | head -20
-  exit 1
-}
 
-SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
-ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="$XDG_RUNTIME_DIR/cef-probe-host.png" \
-  bun scripts/cef-drive.ts >"$XDG_RUNTIME_DIR/drive.log" 2>&1 \
-  || { echo "FAIL: driver"; cat "$XDG_RUNTIME_DIR/drive.log"; tail -80 "$LOG"; exit 1; }
-cat "$XDG_RUNTIME_DIR/drive.log"
-grep -q "ND_CEF_M1_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: driver did not report success"; exit 1; }
-
-# The background-page invariant: the probe's hidden view must have got a real
-# browser without ever being mapped. Without this the `hidden` check could pass
-# on a view that was quietly visible after all.
-grep -qE "ND_CEF embed .* mapped=false" "$LOG" || {
-  echo "FAIL: no browser was created for an unmapped view"
-  grep -E "ND_CEF embed" "$LOG" | head -10
-  exit 1
-}
-echo "ND_CEF_HIDDEN_VIEW_OK $(grep -m1 -oE "ND_CEF embed node=[0-9]+ .* mapped=false" "$LOG" | head -c 120)"
+run_pass first
 
 # The no-stray-window invariant, measured at the X server rather than taken on
 # trust. The drive has already run the popup leg by this point, so a
@@ -156,4 +167,11 @@ echo "ND_CEF_PAGE_PAINTED_OK mean brightness $PAGE_MEAN inside the embedded view
 kill -TERM "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
 HOST_PID=""
 
-echo "headless webview (chromium): OK (M1 events verified, X11 capture at $SHOT)"
+# The second launch, over the cache the first one left behind. Restoring a
+# session mounts every view with its address already present and most of them
+# hidden, and that is the shape the reload and restore faults both lived in.
+run_pass second
+kill -TERM "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
+HOST_PID=""
+
+echo "headless webview (chromium): OK (M1 events verified twice, second launch over the first launch's cache; X11 capture at $SHOT)"
