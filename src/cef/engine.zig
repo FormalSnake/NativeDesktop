@@ -696,7 +696,12 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
     }
     if (view.create_attempts >= create_retry_limit) {
         view.create_timer = 0;
-        std.debug.print("ND_WARN WebView engine=chromium: no window for this view after {d}ms; it will never load\n", .{create_retry_limit * create_retry_ms});
+        // Last resort for a view that is mapped but has been allocated
+        // nothing for this long: a browser in a degenerate window that
+        // `syncBounds` will resize is still better than a view that never
+        // loads at all, which is the outcome this whole path exists to remove.
+        std.debug.print("ND_WARN WebView engine=chromium: no allocation after {d}ms; creating the browser anyway\n", .{create_retry_limit * create_retry_ms});
+        createBrowser(view);
         return 0;
     }
     return 1; // G_SOURCE_CONTINUE
