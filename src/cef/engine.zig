@@ -1531,7 +1531,7 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
     }
 
     switch (call) {
-        .ignore => {},
+        .ignore, .agent_ready => {},
         .eval => |sink| {
             if (root == .object) {
                 if (root.object.get("exceptionDetails")) |details| {
