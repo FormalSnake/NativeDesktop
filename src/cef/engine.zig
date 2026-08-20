@@ -29,6 +29,7 @@ const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const cdp = @import("cdp.zig");
+const ctxmenu = @import("../gtk/context_menu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
 
@@ -381,6 +382,11 @@ const View = struct {
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
     context: ?*c.cef_request_context_t = null,
+
+    /// The app's `setContextMenuItems` tree. Stored but not yet shown: the
+    /// engine's own menu is what a right-click raises until M3 merges these
+    /// into on_before_context_menu.
+    menu_items: []ctxmenu.Item = &.{},
 
     /// The last `findStart` text, so findNext/findPrevious can re-issue it:
     /// CEF's find takes the search text on every call.
@@ -784,6 +790,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "deleteCookie")) return cmdDeleteCookie(view, arg);
     if (std.mem.eql(u8, cmd, "setUserAgent")) return cmdSetUserAgent(view, arg);
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
+    if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -1103,7 +1110,6 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
 
     if (box.browser_id != 0) {
-        tr("browserId node={d} id={d}", .{ view.node_id, box.browser_id });
         browsers_by_id.put(alloc, box.browser_id, view) catch {};
         return 0;
     }
@@ -2523,6 +2529,16 @@ fn cmdSetUserAgent(view: *View, arg: ?std.json.Value) void {
     _ = cdpSend(view, "Emulation.setUserAgentOverride", params.items, .ignore);
 }
 
+fn cmdSetContextMenuItems(view: *View, arg: ?std.json.Value) void {
+    const items = ctxmenu.parse(alloc, arg orelse .null) catch {
+        std.debug.print("ND_WARN WebView setContextMenuItems: out of memory, items unchanged\n", .{});
+        return;
+    };
+    ctxmenu.freeItems(alloc, view.menu_items);
+    view.menu_items = items;
+    tr("setContextMenuItems node={d} items={d}", .{ view.node_id, items.len });
+}
+
 fn cmdFocus(view: *View) void {
     _ = gtk.Widget.grabFocus(view.widget);
     const host = hostOf(view) orelse return;
@@ -2932,7 +2948,6 @@ fn ensureSchemeFactories() void {
             continue;
         }
         // The factory reference is consumed by the registration.
-        tr("registerSchemeHandlerFactory {s}", .{spec.name});
         if (api.register_scheme_handler_factory(&name, &domain, factory.handOut()) == 0) {
             factory.drop();
             std.debug.print("ND_WARN WebView engine=chromium: could not register a handler factory for \"{s}\"\n", .{spec.name});
