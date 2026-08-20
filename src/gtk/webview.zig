@@ -913,6 +913,7 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
 
 /// createAndUpdate `contextMenuMode` prop (generated applyProps arm).
 pub fn setContextMenuMode(widget: *gtk.Widget, mode: []const u8) void {
+    if (cef.isReal(widget)) return cef.setContextMenuMode(widget, mode);
     const state = stateOf(widget) orelse return;
     state.mode = modeOf(mode);
 }

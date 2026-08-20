@@ -366,6 +366,7 @@ const LifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
 const FindObj = ref.Counted(c.cef_find_handler_t, *View);
 const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
 const JsDialogHandlerObj = ref.Counted(c.cef_jsdialog_handler_t, *View);
+const ContextMenuObj = ref.Counted(c.cef_context_menu_handler_t, *View);
 
 const View = struct {
     widget: *gtk.Widget,
@@ -378,15 +379,24 @@ const View = struct {
     find_handler: *FindObj,
     download_handler: *DownloadObj,
     jsdialog_handler: *JsDialogHandlerObj,
+    context_menu_handler: *ContextMenuObj,
 
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
     context: ?*c.cef_request_context_t = null,
 
-    /// The app's `setContextMenuItems` tree. Stored but not yet shown: the
-    /// engine's own menu is what a right-click raises until M3 merges these
-    /// into on_before_context_menu.
+    /// The app's `setContextMenuItems` tree, the id-to-item map for the menu
+    /// currently on screen, and the page URL a click reports. All four are
+    /// written on the GTK thread and read on the CEF UI thread while a menu is
+    /// being built, which is what `menu_lock` is for.
+    /// Read on the CEF UI thread on every right-click, written on the GTK one
+    /// by the `contextMenuMode` prop.
+    suppress_menu: std.atomic.Value(bool) = .init(false),
+    menu_lock: SpinLock = .{},
     menu_items: []ctxmenu.Item = &.{},
+    menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
+    next_menu_command: c_int = menu_command_first,
+    menu_page_url_slot: ?[]u8 = null,
 
     /// The last `findStart` text, so findNext/findPrevious can re-issue it:
     /// CEF's find takes the search text on every call.
@@ -490,15 +500,17 @@ fn browserOf(view: *View) ?*c.cef_browser_t {
 // Creation
 // ============================================================================
 
+pub fn setContextMenuMode(widget: *gtk.Widget, mode: []const u8) void {
+    const view = viewOf(widget) orelse return;
+    view.suppress_menu.store(std.mem.eql(u8, mode, "suppress"), .release);
+}
+
 pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) ?*gtk.Widget {
     if (!process_ready) {
         std.debug.print("ND_WARN WebView engine=\"chromium\": this process did not start under CEF (set webview.engine in nativedesktop.config.ts, or ND_WEBVIEW_ENGINE=chromium)\n", .{});
         return null;
     }
     if (!ensureInitialized()) return null;
-    if (std.mem.eql(u8, context_menu_mode, "suppress")) {
-        std.debug.print("ND_WARN WebView engine=chromium: `contextMenuMode` is not wired yet (M2); Chromium's own menu is shown\n", .{});
-    }
 
     // A plain drawable widget: it never paints anything itself, it reserves
     // the rectangle the X11 child window is tracked against.
@@ -513,6 +525,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const find_handler = FindObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -523,7 +536,9 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .find_handler = find_handler,
         .download_handler = download_handler,
         .jsdialog_handler = jsdialog_handler,
+        .context_menu_handler = context_menu_handler,
     };
+    view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
     view.context = requestContext(profile);
     if (url) |u| {
         if (u[0] != 0) view.pending_url = alloc.dupeZ(u8, std.mem.span(u)) catch null;
@@ -535,6 +550,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_find_handler = &clientGetFindHandler;
     client.cef.get_download_handler = &clientGetDownloadHandler;
     client.cef.get_jsdialog_handler = &clientGetJsDialogHandler;
+    client.cef.get_context_menu_handler = &clientGetContextMenuHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
@@ -554,6 +570,9 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     download_handler.cef.can_download = &onCanDownload;
     jsdialog_handler.cef.on_jsdialog = &onJsDialog;
     jsdialog_handler.cef.on_before_unload_dialog = &onBeforeUnloadDialog;
+    context_menu_handler.cef.on_before_context_menu = &onBeforeContextMenu;
+    context_menu_handler.cef.run_context_menu = &onRunContextMenu;
+    context_menu_handler.cef.on_context_menu_command = &onContextMenuCommand;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
@@ -1088,6 +1107,10 @@ const Emission = struct {
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
     browser_id: c_int = 0,
+    /// Context-menu payloads, owned by the emission because the params they
+    /// were read from are gone by the time the GTK loop runs.
+    menu_hit: ?*MenuHit = null,
+    menu_click: ?*MenuClick = null,
 };
 
 fn post(e: Emission) void {
@@ -1107,6 +1130,14 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     defer {
         if (box.text) |t| alloc.free(t);
         if (box.extra) |t| alloc.free(t);
+        if (box.menu_hit) |h| {
+            h.deinit();
+            alloc.destroy(h);
+        }
+        if (box.menu_click) |click| {
+            click.deinit();
+            alloc.destroy(click);
+        }
         alloc.destroy(box);
     }
     // A scheme request is keyed by browser id, not by view pointer: the
@@ -1156,6 +1187,10 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (std.mem.eql(u8, box.name, "navigate")) {
         const text = box.text orelse return 0;
         remember(&view.url, text);
+        // The menu handlers read this from the CEF UI thread.
+        view.menu_lock.lock();
+        remember(&view.menu_page_url_slot, text);
+        view.menu_lock.unlock();
         f(view.node_id, "navigate", .{ .text = text });
     } else if (std.mem.eql(u8, box.name, "titleChanged")) {
         const text = box.text orelse return 0;
@@ -1175,6 +1210,31 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "forwardAvailable")) {
         view.can_go_forward = box.flag;
         f(view.node_id, "forwardAvailable", .{ .checked = box.flag });
+    } else if (std.mem.eql(u8, box.name, "contextMenu")) {
+        const hit = box.menu_hit orelse return 0;
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "x", .{ .integer = hit.x }) catch return 0;
+        payload.put(alloc, "y", .{ .integer = hit.y }) catch return 0;
+        if (hit.link.len > 0) payload.put(alloc, "link", .{ .string = hit.link }) catch return 0;
+        if (hit.image.len > 0) payload.put(alloc, "image", .{ .string = hit.image }) catch return 0;
+        if (hit.selection.len > 0) payload.put(alloc, "selection", .{ .string = hit.selection }) catch return 0;
+        payload.put(alloc, "editable", .{ .bool = hit.editable }) catch return 0;
+        payload.put(alloc, "hasSelection", .{ .bool = hit.selection.len > 0 }) catch return 0;
+        f(view.node_id, "contextMenu", .{ .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "contextMenuItemClicked")) {
+        const click = box.menu_click orelse return 0;
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "id", .{ .string = click.id }) catch return 0;
+        payload.put(alloc, "pageUrl", .{ .string = click.page_url }) catch return 0;
+        if (click.link.len > 0) payload.put(alloc, "linkUrl", .{ .string = click.link }) catch return 0;
+        if (click.image.len > 0) payload.put(alloc, "imageUrl", .{ .string = click.image }) catch return 0;
+        if (click.selection.len > 0) payload.put(alloc, "selectionText", .{ .string = click.selection }) catch return 0;
+        payload.put(alloc, "editable", .{ .bool = click.editable }) catch return 0;
+        if (click.checked) |v| payload.put(alloc, "checked", .{ .bool = v }) catch return 0;
+        if (click.was_checked) |v| payload.put(alloc, "wasChecked", .{ .bool = v }) catch return 0;
+        f(view.node_id, "contextMenuItemClicked", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "faviconChanged")) {
         const text = box.text orelse return 0;
         var payload: std.json.ObjectMap = .empty;
@@ -2555,8 +2615,12 @@ fn cmdSetContextMenuItems(view: *View, arg: ?std.json.Value) void {
         std.debug.print("ND_WARN WebView setContextMenuItems: out of memory, items unchanged\n", .{});
         return;
     };
-    ctxmenu.freeItems(alloc, view.menu_items);
+    // A menu being built on the CEF UI thread is walking the old tree.
+    view.menu_lock.lock();
+    const old = view.menu_items;
     view.menu_items = items;
+    view.menu_lock.unlock();
+    ctxmenu.freeItems(alloc, old);
     tr("setContextMenuItems node={d} items={d}", .{ view.node_id, items.len });
 }
 
@@ -2847,41 +2911,100 @@ var custom_schemes: std.ArrayList(SchemeSpec) = .empty;
 /// register a second one.
 var scheme_factories: std.StringHashMapUnmanaged(void) = .empty;
 
-pub fn schemesLocked() bool {
-    return initialized;
+/// The origin properties a launch-declared scheme gets, matching the AppKit
+/// engine's `app_register_schemes` byte for byte: an app that declares one
+/// scheme for both platforms must not get two different origins.
+const env_scheme_options: c_int = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+    CEF_SCHEME_OPTION_CORS_ENABLED | CEF_SCHEME_OPTION_FETCH_ENABLED;
+
+var env_schemes: std.ArrayList([]u8) = .empty;
+var env_schemes_read = false;
+
+/// `ND_CEF_SCHEMES`, comma separated. The launch path sets it because a scheme
+/// only becomes standard during startup, in EVERY process, and by the time an
+/// app could call `registerScheme` the renderers have already been told what
+/// they will and will not parse. Child processes inherit the environment, so
+/// this needs no propagation of its own.
+fn envSchemes() []const []u8 {
+    if (env_schemes_read) return env_schemes.items;
+    env_schemes_read = true;
+    const raw = std.c.getenv("ND_CEF_SCHEMES") orelse return env_schemes.items;
+    var it = std.mem.splitScalar(u8, std.mem.span(raw), ',');
+    while (it.next()) |part| {
+        const name = std.mem.trim(u8, part, " \t");
+        if (name.len == 0 or name.len >= 64) continue;
+        const copy = alloc.dupe(u8, name) catch continue;
+        env_schemes.append(alloc, copy) catch alloc.free(copy);
+    }
+    return env_schemes.items;
 }
 
-/// Records a scheme for `on_register_custom_schemes`, which has already run by
-/// the time CEF is initialized. Returns false when it is too late to matter.
-pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool {
-    tr("registerScheme {s} cors={} secure={} initialized={}", .{ scheme, cors_enabled, secure, initialized });
-    if (initialized) return false;
-    for (custom_schemes.items) |s| {
-        if (std.mem.eql(u8, s.name, scheme)) return true;
+fn isEnvScheme(name: []const u8) bool {
+    for (envSchemes()) |declared| {
+        if (std.mem.eql(u8, declared, name)) return true;
     }
+    return false;
+}
+
+/// Records a scheme for `on_register_custom_schemes` and gives it a handler
+/// factory. Returns false when the scheme cannot be served at all.
+///
+/// After cef_initialize the origin half is closed: a scheme that is not already
+/// standard cannot become one. A scheme the launch path declared through
+/// ND_CEF_SCHEMES is already standard in every process, so a late call for one
+/// of those still gets its factory, which is the whole point of splitting the
+/// two halves.
+pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool {
+    tr("registerScheme {s} cors={} secure={} initialized={} declared={}", .{
+        scheme, cors_enabled, secure, initialized, isEnvScheme(scheme),
+    });
+    for (custom_schemes.items) |s| {
+        if (std.mem.eql(u8, s.name, scheme)) {
+            if (initialized) ensureSchemeFactories();
+            return true;
+        }
+    }
+    if (initialized and !isEnvScheme(scheme)) return false;
     const name = alloc.dupe(u8, scheme) catch return false;
     custom_schemes.append(alloc, .{ .name = name, .cors = cors_enabled, .secure = secure }) catch {
         alloc.free(name);
         return false;
     };
+    if (initialized) ensureSchemeFactories();
     return true;
+}
+
+fn addCustomScheme(
+    registrar: [*c]c.cef_scheme_registrar_t,
+    add: *const fn ([*c]c.cef_scheme_registrar_t, [*c]const c.cef_string_t, c_int) callconv(.c) c_int,
+    name: []const u8,
+    options: c_int,
+) void {
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (!setStr(&s, name)) return;
+    if (add(registrar, &s, options) == 0) {
+        std.debug.print("ND_WARN CEF scheme {s}: the engine refused to register it\n", .{name});
+    }
 }
 
 fn onRegisterCustomSchemes(_: [*c]c.cef_app_t, registrar: [*c]c.cef_scheme_registrar_t) callconv(.c) void {
     if (registrar == null) return;
     const add = registrar.*.add_custom_scheme orelse return;
-    // A subprocess has no app and no registrations of its own; the browser put
-    // the list on its command line for exactly this moment.
+    // Launch-declared schemes first: they are the ones a subprocess can know
+    // about, and their options are fixed by the contract.
+    for (envSchemes()) |name| addCustomScheme(registrar, add, name, env_scheme_options);
+    // A subprocess has no app and no runtime registrations of its own; the
+    // browser put those on its command line for exactly this moment.
     if (custom_schemes.items.len == 0) adoptSchemesFromCommandLine();
-    tr("onRegisterCustomSchemes have={d}", .{custom_schemes.items.len});
+    tr("onRegisterCustomSchemes env={d} runtime={d}", .{ envSchemes().len, custom_schemes.items.len });
     for (custom_schemes.items) |spec| {
-        var name = std.mem.zeroes(c.cef_string_t);
-        defer clearStr(&name);
-        if (!setStr(&name, spec.name)) continue;
+        // Already registered above, with the properties the contract fixes.
+        if (isEnvScheme(spec.name)) continue;
         var options: c_int = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_FETCH_ENABLED;
         if (spec.cors) options |= CEF_SCHEME_OPTION_CORS_ENABLED;
         if (spec.secure) options |= CEF_SCHEME_OPTION_SECURE;
-        _ = add(registrar, &name, options);
+        addCustomScheme(registrar, add, spec.name, options);
     }
 }
 
@@ -3178,3 +3301,330 @@ fn cmdRespondScheme(arg: ?std.json.Value) void {
     }
     continueSchemeRequest(obj);
 }
+
+// ============================================================================
+// Context menus
+// ============================================================================
+//
+// `native` keeps Chromium's own menu and appends the app's matching items after
+// a separator; `suppress` shows nothing and leaves the whole decision to the
+// app's `contextMenu` event. Both modes emit that event, which is what the
+// WebKitGTK backend does, so an app can drive its own menu on either engine.
+//
+// Everything here runs on the CEF UI thread and has to answer before it
+// returns: a menu model must be populated before `on_before_context_menu`
+// returns, so unlike every other event on this backend it cannot be marshaled
+// to GTK first. The app's tree is read under `menu_lock` instead, and only the
+// resulting events take the usual hop.
+
+/// A lock the CEF UI thread can take. std.Io.Mutex needs an `Io` to block
+/// against and a CEF callback has none; both critical sections here are a menu
+/// tree walk, and contention needs a right-click to land inside the same
+/// microsecond as a `setContextMenuItems`.
+const SpinLock = struct {
+    held: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *SpinLock) void {
+        while (self.held.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {
+            std.Thread.yield() catch {};
+        }
+    }
+
+    fn unlock(self: *SpinLock) void {
+        self.held.store(false, .release);
+    }
+};
+
+/// CEF reserves everything outside [MENU_ID_USER_FIRST, MENU_ID_USER_LAST] for
+/// Chromium's own commands.
+const menu_command_first: c_int = 26500;
+const menu_command_last: c_int = 28500;
+
+const CM_TYPEFLAG_SELECTION: c_uint = 1 << 4;
+const CM_TYPEFLAG_EDITABLE: c_uint = 1 << 5;
+
+/// One item currently on screen. The id and check state are copied because the
+/// app may replace its whole tree between the menu opening and a click landing.
+const MenuCommand = struct {
+    id: []u8,
+    kind: ctxmenu.Kind,
+    checked: bool,
+};
+
+/// What the click landed on, owned so it can outlive the params object.
+const MenuHit = struct {
+    link: []u8 = &.{},
+    image: []u8 = &.{},
+    selection: []u8 = &.{},
+    editable: bool = false,
+    x: c_int = 0,
+    y: c_int = 0,
+
+    fn deinit(self: *MenuHit) void {
+        alloc.free(self.link);
+        alloc.free(self.image);
+        alloc.free(self.selection);
+    }
+
+    fn asCtx(self: *const MenuHit) ctxmenu.Hit {
+        return .{
+            .link = self.link,
+            .image = self.image,
+            .selection = self.selection,
+            .editable = self.editable,
+            .has_selection = self.selection.len > 0,
+        };
+    }
+};
+
+fn readMenuHit(params: [*c]c.cef_context_menu_params_t) MenuHit {
+    var hit: MenuHit = .{};
+    if (params == null) return hit;
+    if (params.*.get_xcoord) |f| hit.x = f(params);
+    if (params.*.get_ycoord) |f| hit.y = f(params);
+    if (params.*.get_type_flags) |f| {
+        const flags = f(params);
+        hit.editable = (flags & CM_TYPEFLAG_EDITABLE) != 0;
+    }
+    if (params.*.is_editable) |f| {
+        if (f(params) != 0) hit.editable = true;
+    }
+    hit.link = ownedFromUserfree(params, params.*.get_link_url);
+    hit.image = ownedFromUserfree(params, params.*.get_source_url);
+    hit.selection = ownedFromUserfree(params, params.*.get_selection_text);
+    return hit;
+}
+
+fn ownedFromUserfree(
+    params: [*c]c.cef_context_menu_params_t,
+    getter: ?*const fn ([*c]c.cef_context_menu_params_t) callconv(.c) c.cef_string_userfree_t,
+) []u8 {
+    const get = getter orelse return &.{};
+    const raw = get(params);
+    if (raw == null) return &.{};
+    defer freeUserfree(raw);
+    return dupeStr(raw) orelse &.{};
+}
+
+fn clientGetContextMenuHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_context_menu_handler_t {
+    return ClientObj.of(self).payload.context_menu_handler.handOut();
+}
+
+fn clearMenuCommands(view: *View) void {
+    var it = view.menu_commands.valueIterator();
+    while (it.next()) |cmd| alloc.free(cmd.id);
+    view.menu_commands.clearRetainingCapacity();
+    view.next_menu_command = menu_command_first;
+}
+
+fn onBeforeContextMenu(
+    self: [*c]c.cef_context_menu_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    params: [*c]c.cef_context_menu_params_t,
+    model: [*c]c.cef_menu_model_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(params);
+    defer ref.releaseParam(model);
+    const view = ContextMenuObj.of(self).payload;
+
+    if (view.suppress_menu.load(.acquire)) {
+        // Nothing of Chromium's is shown in suppress mode, and an empty model
+        // is what makes that true even if run_context_menu is never consulted.
+        if (model != null) {
+            if (model.*.clear) |clear| _ = clear(model);
+        }
+        return;
+    }
+    if (model == null) return;
+
+    var hit = readMenuHit(params);
+    defer hit.deinit();
+
+    view.menu_lock.lock();
+    defer view.menu_lock.unlock();
+    clearMenuCommands(view);
+    if (view.menu_items.len == 0) return;
+
+    const ctx_hit = hit.asCtx();
+    var any = false;
+    for (view.menu_items) |item| {
+        if (item.kind == .separator) continue;
+        if (!ctxmenu.survives(item, ctx_hit)) continue;
+        any = true;
+        break;
+    }
+    if (!any) return;
+    if (model.*.add_separator) |sep| _ = sep(model);
+    appendMenuItems(view, view.menu_items, model, ctx_hit);
+}
+
+fn appendMenuItems(
+    view: *View,
+    items: []const ctxmenu.Item,
+    model: [*c]c.cef_menu_model_t,
+    hit: ctxmenu.Hit,
+) void {
+    var appended: usize = 0;
+    var pending_separator = false;
+    for (items) |item| {
+        if (item.kind == .separator) {
+            if (appended > 0) pending_separator = true;
+            continue;
+        }
+        if (!ctxmenu.survives(item, hit)) continue;
+        if (pending_separator) {
+            if (model.*.add_separator) |sep| _ = sep(model);
+            pending_separator = false;
+        }
+        const command_id = nextMenuCommand(view) orelse return;
+        var label = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&label);
+        if (!setStr(&label, item.label)) continue;
+
+        if (item.children.len > 0) {
+            const add_sub = model.*.add_sub_menu orelse continue;
+            const submenu = add_sub(model, command_id, &label);
+            if (submenu == null) continue;
+            defer ref.releaseOwned(submenu);
+            appendMenuItems(view, item.children, submenu, hit);
+            appended += 1;
+            continue;
+        }
+
+        const key = alloc.dupe(u8, item.id) catch continue;
+        view.menu_commands.put(alloc, command_id, .{
+            .id = key,
+            .kind = item.kind,
+            .checked = item.checked,
+        }) catch {
+            alloc.free(key);
+            continue;
+        };
+        if (item.kind == .checkbox or item.kind == .radio) {
+            if (model.*.add_check_item) |add| _ = add(model, command_id, &label);
+            if (model.*.set_checked) |set| _ = set(model, command_id, @intFromBool(item.checked));
+        } else {
+            if (model.*.add_item) |add| _ = add(model, command_id, &label);
+        }
+        if (!item.enabled) {
+            if (model.*.set_enabled) |set| _ = set(model, command_id, 0);
+        }
+        appended += 1;
+    }
+}
+
+fn nextMenuCommand(view: *View) ?c_int {
+    if (view.next_menu_command >= menu_command_last) return null;
+    const id = view.next_menu_command;
+    view.next_menu_command += 1;
+    return id;
+}
+
+fn onRunContextMenu(
+    self: [*c]c.cef_context_menu_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    params: [*c]c.cef_context_menu_params_t,
+    model: [*c]c.cef_menu_model_t,
+    callback: [*c]c.cef_run_context_menu_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(params);
+    defer ref.releaseParam(model);
+    defer ref.releaseParam(callback);
+    const view = ContextMenuObj.of(self).payload;
+
+    // Emitted in both modes, exactly as the WebKitGTK backend does: an app that
+    // wants to decorate the native menu and an app that wants to replace it
+    // both need to know where the click landed.
+    var hit = readMenuHit(params);
+    const boxed = alloc.create(MenuHit) catch {
+        hit.deinit();
+        return 0;
+    };
+    boxed.* = hit;
+    post(.{ .view = view, .name = "contextMenu", .menu_hit = boxed });
+
+    if (!view.suppress_menu.load(.acquire)) return 0;
+    if (callback != null) {
+        if (callback.*.cancel) |cancel| cancel(callback);
+    }
+    return 1;
+}
+
+fn onContextMenuCommand(
+    self: [*c]c.cef_context_menu_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    params: [*c]c.cef_context_menu_params_t,
+    command_id: c_int,
+    _: c.cef_event_flags_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(params);
+    const view = ContextMenuObj.of(self).payload;
+
+    var hit = readMenuHit(params);
+    defer hit.deinit();
+
+    view.menu_lock.lock();
+    const entry = view.menu_commands.get(command_id);
+    const page_url = alloc.dupe(u8, if (view.menu_page_url_slot) |u| u else "") catch &.{};
+    view.menu_lock.unlock();
+
+    const cmd = entry orelse {
+        alloc.free(page_url);
+        return 0; // one of Chromium's own commands
+    };
+
+    const click = alloc.create(MenuClick) catch {
+        alloc.free(page_url);
+        return 1;
+    };
+    click.* = .{
+        .id = alloc.dupe(u8, cmd.id) catch &.{},
+        .page_url = page_url,
+        .link = alloc.dupe(u8, hit.link) catch &.{},
+        .image = alloc.dupe(u8, hit.image) catch &.{},
+        .selection = alloc.dupe(u8, hit.selection) catch &.{},
+        .editable = hit.editable,
+        // The framework reports the state the click IMPLIES and does not mutate
+        // its own copy: the app owns the model and answers with the next
+        // setContextMenuItems.
+        .checked = switch (cmd.kind) {
+            .checkbox => !cmd.checked,
+            .radio => true,
+            else => null,
+        },
+        .was_checked = switch (cmd.kind) {
+            .checkbox, .radio => cmd.checked,
+            else => null,
+        },
+    };
+    post(.{ .view = view, .name = "contextMenuItemClicked", .menu_click = click });
+    return 1;
+}
+
+const MenuClick = struct {
+    id: []u8,
+    page_url: []u8,
+    link: []u8,
+    image: []u8,
+    selection: []u8,
+    editable: bool,
+    checked: ?bool,
+    was_checked: ?bool,
+
+    fn deinit(self: *MenuClick) void {
+        alloc.free(self.id);
+        alloc.free(self.page_url);
+        alloc.free(self.link);
+        alloc.free(self.image);
+        alloc.free(self.selection);
+    }
+};
