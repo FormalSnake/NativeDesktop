@@ -697,6 +697,17 @@ fn loadUrl(browser: *c.cef_browser_t, url: []const u8) void {
 
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
     const view = viewOf(widget) orelse return;
+    // Only the navigation commands need a live browser. Everything else is a
+    // devtools call, and those are parked until the agent is up precisely
+    // because an app configures a view (user scripts, message channels) in the
+    // same commit that creates it, long before CEF has made the browser.
+    if (std.mem.eql(u8, cmd, "executeJavaScript")) return cmdExecuteJavaScript(view, arg);
+    if (std.mem.eql(u8, cmd, "addUserScript")) return cmdAddUserScript(view, arg);
+    if (std.mem.eql(u8, cmd, "removeUserScript")) return cmdRemoveUserScript(view, arg);
+    if (std.mem.eql(u8, cmd, "clearUserScripts")) return cmdClearUserScripts(view, arg);
+    if (std.mem.eql(u8, cmd, "registerScriptMessage")) return cmdRegisterScriptMessage(view, arg);
+    if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) return cmdUnregisterScriptMessage(view, arg);
+
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
         if (browser.can_go_back) |can| {
@@ -714,18 +725,6 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         if (browser.reload) |f| f(browser);
     } else if (std.mem.eql(u8, cmd, "stop")) {
         if (browser.stop_load) |f| f(browser);
-    } else if (std.mem.eql(u8, cmd, "executeJavaScript")) {
-        cmdExecuteJavaScript(view, arg);
-    } else if (std.mem.eql(u8, cmd, "addUserScript")) {
-        cmdAddUserScript(view, arg);
-    } else if (std.mem.eql(u8, cmd, "removeUserScript")) {
-        cmdRemoveUserScript(view, arg);
-    } else if (std.mem.eql(u8, cmd, "clearUserScripts")) {
-        cmdClearUserScripts(view, arg);
-    } else if (std.mem.eql(u8, cmd, "registerScriptMessage")) {
-        cmdRegisterScriptMessage(view, arg);
-    } else if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) {
-        cmdUnregisterScriptMessage(view, arg);
     } else {
         std.debug.print("ND_WARN WebView engine=chromium: command {s} is not wired yet\n", .{cmd});
     }
