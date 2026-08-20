@@ -90,6 +90,7 @@
               gobject-introspection
               libxslt      # provides xsltproc for zig-gobject codegen
               weston       # headless wayland compositor for CI/agent runs
+              xwayland     # `weston --xwayland`: CEF's windowed embedding is X11-only, so the M2 webview drive needs an X server inside the weston rig
               adwaita-icon-theme # gtk4/libadwaita ship no icon data; without it the headless capture falls back to whatever partial theme the host has
               fontconfig     # fc-match/fc-list, and the library the rig's FONTCONFIG_FILE is written for
               adwaita-fonts  # Adwaita Sans/Mono — GNOME 48's UI fonts, so a headless capture looks like a real session
