@@ -116,11 +116,10 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
 /// Drops the reference a callback parameter arrived with. Every ref-counted
 /// parameter of every handler goes through this before the callback returns.
 pub fn releaseParam(p: anytype) void {
-    if (p == null) return;
     // Every CEF struct starts with its base at offset 0, so the object pointer
     // IS the base pointer; going through `&p.*.base` instead re-derives a C
     // pointer type Zig will not let the base's own methods be read off.
-    const base: *c.cef_base_ref_counted_t = @ptrCast(@alignCast(p));
+    const base = baseOf(p) orelse return;
     if (base.release) |f| _ = f(base);
 }
 
@@ -128,9 +127,17 @@ pub fn releaseParam(p: anytype) void {
 /// caller keeps its own. The mirror of `releaseParam`, for objects this file
 /// did not create.
 pub fn addRefParam(p: anytype) void {
-    if (p == null) return;
-    const base: *c.cef_base_ref_counted_t = @ptrCast(@alignCast(p));
+    const base = baseOf(p) orelse return;
     if (base.add_ref) |f| f(base);
+}
+
+/// The base at offset 0 of any CEF struct, whether the caller holds it as a
+/// C pointer (which may be null) or a plain one (which may not).
+fn baseOf(p: anytype) ?*c.cef_base_ref_counted_t {
+    if (@typeInfo(@TypeOf(p)).pointer.size == .c) {
+        if (p == null) return null;
+    }
+    return @ptrCast(@alignCast(p));
 }
 
 /// Drops a reference obtained from a CEF getter (`get_host`, `get_main_frame`),
