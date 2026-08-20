@@ -1,5 +1,6 @@
 import {
   executeJavaScript,
+  onJavaScriptResult,
   render,
   sendCommand,
   useEffect,
@@ -134,6 +135,7 @@ function App(): React.ReactNode {
             engine="chromium"
             url={`${LATE_SCHEME}://probe/index.html`}
             style={{ vexpand: true, hexpand: true }}
+            onJavaScriptResult={onJavaScriptResult}
             onSchemeRequest={(e) => {
               const request = e.data as { id: string };
               if (!late.current) return;
