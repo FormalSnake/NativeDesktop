@@ -299,6 +299,10 @@ const View = struct {
     // GTK thread only from here down.
     container: x11.Window = 0,
     created: bool = false,
+    /// The "no X11 parent" warning is once per view: `createBrowser` is
+    /// retried every frame until it succeeds, and the frame clock would turn
+    /// one diagnosis into a scrolling wall.
+    warned_no_parent: bool = false,
     tick_id: c_uint = 0,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
@@ -332,6 +336,17 @@ pub fn isReal(widget: *gtk.Widget) bool {
     return gobject.Object.getData(widget.as(gobject.Object), MARKER_KEY) != null;
 }
 
+/// Unwinds a half-built view when one of its handler allocations fails. Each
+/// handler starts at one reference, owned here, so releasing it is what frees
+/// it; no CEF object has seen any of them yet.
+fn abandon(view: *View, client: ?*ClientObj, display_handler: ?*DisplayObj, load_handler: ?*LoadObj) ?*gtk.Widget {
+    if (load_handler) |h| ref.releaseParam(h.cptr());
+    if (display_handler) |h| ref.releaseParam(h.cptr());
+    if (client) |h| ref.releaseParam(h.cptr());
+    alloc.destroy(view);
+    return null;
+}
+
 fn browserOf(view: *View) ?*c.cef_browser_t {
     const raw = view.browser.load(.acquire);
     if (raw == 0) return null;
@@ -361,22 +376,10 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const widget = area.as(gtk.Widget);
 
     const view = alloc.create(View) catch return null;
-    const client = ClientObj.create(view) orelse {
-        alloc.destroy(view);
-        return null;
-    };
-    const display_handler = DisplayObj.create(view) orelse {
-        alloc.destroy(view);
-        return null;
-    };
-    const load_handler = LoadObj.create(view) orelse {
-        alloc.destroy(view);
-        return null;
-    };
-    const life_handler = LifeObj.create(view) orelse {
-        alloc.destroy(view);
-        return null;
-    };
+    const client = ClientObj.create(view) orelse return abandon(view, null, null, null);
+    const display_handler = DisplayObj.create(view) orelse return abandon(view, client, null, null);
+    const load_handler = LoadObj.create(view) orelse return abandon(view, client, display_handler, null);
+    const life_handler = LifeObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -420,12 +423,22 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
-    syncBounds(view);
-    if (!view.created) createBrowser(view);
-    x11.show(view.container);
     if (view.tick_id == 0) {
         view.tick_id = gtk.Widget.addTickCallback(view.widget, &onTick, view, null);
     }
+    syncBounds(view);
+    maybeCreateBrowser(view);
+    x11.show(view.container);
+}
+
+/// The browser is created from the first frame at which the widget has a real
+/// allocation, not from `map`: GTK4 maps before it has necessarily allocated,
+/// and a browser created into a 1x1 window comes up with a 1x1 compositor
+/// surface that the software presenter then fails to read back.
+fn maybeCreateBrowser(view: *View) void {
+    if (view.created) return;
+    if (view.bounds.w <= 1 or view.bounds.h <= 1) return;
+    createBrowser(view);
 }
 
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -468,7 +481,10 @@ fn createBrowser(view: *View) void {
 
     const parent = x11.toplevelXid(view.widget);
     if (parent == 0) {
-        std.debug.print("ND_WARN WebView engine=chromium: the toplevel has no X11 window (Wayland without the x11 backend pin?); browser not created\n", .{});
+        if (!view.warned_no_parent) {
+            view.warned_no_parent = true;
+            std.debug.print("ND_WARN WebView engine=chromium: the toplevel has no X11 window (Wayland without the x11 backend pin?); browser not created\n", .{});
+        }
         return;
     }
     syncBounds(view);
@@ -517,6 +533,7 @@ fn createBrowser(view: *View) void {
 fn onTick(_: *gtk.Widget, _: *gdk.FrameClock, data: ?*anyopaque) callconv(.c) c_int {
     const view: *View = @ptrCast(@alignCast(data.?));
     syncBounds(view);
+    maybeCreateBrowser(view);
     return 1; // G_SOURCE_CONTINUE
 }
 
