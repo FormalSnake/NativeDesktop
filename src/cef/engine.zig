@@ -135,28 +135,49 @@ pub fn shutdown() void {
 // ============================================================================
 
 const AppObj = ref.Counted(c.cef_app_t, void);
+const BrowserProcessObj = ref.Counted(c.cef_browser_process_handler_t, void);
 var app_obj: ?*AppObj = null;
+var browser_process_obj: ?*BrowserProcessObj = null;
 
 fn ensureApp() ?*AppObj {
     if (app_obj) |a| return a;
     const a = AppObj.create({}) orelse return null;
     a.cef.on_before_command_line_processing = &onBeforeCommandLine;
     a.cef.on_register_custom_schemes = &onRegisterCustomSchemes;
+    a.cef.get_browser_process_handler = &appGetBrowserProcessHandler;
     app_obj = a;
     return a;
 }
 
-fn onBeforeCommandLine(
-    _: [*c]c.cef_app_t,
-    process_type: [*c]const c.cef_string_t,
+/// A child process's command line is built through the browser process
+/// handler, not through OnBeforeCommandLineProcessing: that one only ever sees
+/// this process's own. Without this hook a renderer never learns which schemes
+/// are standard, and every custom-scheme URL it is asked to parse is opaque.
+fn appGetBrowserProcessHandler(_: [*c]c.cef_app_t) callconv(.c) [*c]c.cef_browser_process_handler_t {
+    if (browser_process_obj == null) {
+        const h = BrowserProcessObj.create({}) orelse return null;
+        h.cef.on_before_child_process_launch = &onBeforeChildProcessLaunch;
+        browser_process_obj = h;
+    }
+    return browser_process_obj.?.handOut();
+}
+
+fn onBeforeChildProcessLaunch(
+    _: [*c]c.cef_browser_process_handler_t,
     command_line: [*c]c.cef_command_line_t,
 ) callconv(.c) void {
     defer ref.releaseParam(command_line);
     if (command_line == null) return;
-    // A non-empty process type is a CHILD's command line, being built in the
-    // browser process. It is the only channel a subprocess has for learning
-    // which schemes must be standard before it parses its first URL.
-    if (process_type != null and process_type.*.length != 0) appendSchemesSwitch(command_line);
+    appendSchemesSwitch(command_line);
+}
+
+fn onBeforeCommandLine(
+    _: [*c]c.cef_app_t,
+    _: [*c]const c.cef_string_t,
+    command_line: [*c]c.cef_command_line_t,
+) callconv(.c) void {
+    defer ref.releaseParam(command_line);
+    if (command_line == null) return;
     if (command_line.*.append_switch_with_value) |append| {
         // Ozone would otherwise pick Wayland under a Wayland session and
         // ignore parent_window entirely; the GDK backend is pinned to x11 to
@@ -2799,10 +2820,10 @@ pub fn registerScheme(scheme: []const u8, cors_enabled: bool, secure: bool) bool
 fn onRegisterCustomSchemes(_: [*c]c.cef_app_t, registrar: [*c]c.cef_scheme_registrar_t) callconv(.c) void {
     if (registrar == null) return;
     const add = registrar.*.add_custom_scheme orelse return;
-    tr("onRegisterCustomSchemes have={d}", .{custom_schemes.items.len});
     // A subprocess has no app and no registrations of its own; the browser put
     // the list on its command line for exactly this moment.
     if (custom_schemes.items.len == 0) adoptSchemesFromCommandLine();
+    tr("onRegisterCustomSchemes have={d}", .{custom_schemes.items.len});
     for (custom_schemes.items) |spec| {
         var name = std.mem.zeroes(c.cef_string_t);
         defer clearStr(&name);
