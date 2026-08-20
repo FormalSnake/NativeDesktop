@@ -460,8 +460,10 @@ const View = struct {
     worlds: std.StringHashMapUnmanaged(WorldState) = .empty,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     channels: std.StringHashMapUnmanaged(Channel) = .empty,
-    /// Work parked until the world it names has an execution context.
+    /// Work parked until the world it names has an execution context, and the
+    /// clock that expires it if that never happens.
     deferred: std.ArrayList(Deferred) = .empty,
+    deferred_timer: c_uint = 0,
 
     // Last values the handlers pushed, answering `webviewInfo`.
     url: ?[]u8 = null,
@@ -739,6 +741,10 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
     disarmCreateTimer(view);
+    if (view.deferred_timer != 0) {
+        _ = glib.Source.remove(view.deferred_timer);
+        view.deferred_timer = 0;
+    }
     disconnectLayout(view);
     if (browserOf(view)) |browser| {
         if (browser.get_host) |get_host| {
@@ -1444,8 +1450,14 @@ const Channel = struct { world: []u8, script: ?[]u8 = null };
 
 /// A call that cannot be issued until its world has an execution context.
 const Deferred = union(enum) {
-    eval: struct { sink: EvalSink, code: []u8, world: []u8, retried: bool = false },
+    eval: struct { sink: EvalSink, code: []u8, world: []u8, retried: bool = false, deadline_us: i64 = 0 },
 };
+
+/// How long a call may wait for its world to get an execution context. A world
+/// whose document never arrives would otherwise park the call for the process's
+/// life, and a caller waiting on an answer that never comes reads as the whole
+/// feature being dead: an extension's background page reported exactly that.
+const world_wait_us: i64 = 5 * std.time.us_per_s;
 
 /// Where the string form of one evaluation goes.
 const EvalSink = union(enum) {
@@ -1668,26 +1680,62 @@ fn clearWorldContexts(view: *View) void {
 fn drainDeferred(view: *View) void {
     if (view.deferred.items.len == 0) return;
     var still: std.ArrayList(Deferred) = .empty;
+    const now = glib.getMonotonicTime();
     // Take the list first: issuing a call can defer again, and appending to a
     // list being iterated is how that turns into a loop.
     const items = view.deferred.toOwnedSlice(alloc) catch return;
     defer alloc.free(items);
     for (items) |item| switch (item) {
         .eval => |e| {
+            defer alloc.free(e.code);
+            defer alloc.free(e.world);
             if (worldContextId(view, e.world) == 0) {
-                still.append(alloc, item) catch {
+                if (e.deadline_us != 0 and now > e.deadline_us) {
+                    tr("evalExpired node={d} world={s}", .{ view.node_id, e.world });
+                    finishEval(view, e.sink, false, "the isolated world has no execution context");
+                    continue;
+                }
+                const code_copy = alloc.dupe(u8, e.code) catch {
                     sinkFree(e.sink);
-                    alloc.free(e.code);
-                    alloc.free(e.world);
+                    continue;
+                };
+                const world_copy = alloc.dupe(u8, e.world) catch {
+                    alloc.free(code_copy);
+                    sinkFree(e.sink);
+                    continue;
+                };
+                still.append(alloc, .{ .eval = .{
+                    .sink = e.sink,
+                    .code = code_copy,
+                    .world = world_copy,
+                    .retried = e.retried,
+                    .deadline_us = e.deadline_us,
+                } }) catch {
+                    alloc.free(code_copy);
+                    alloc.free(world_copy);
+                    sinkFree(e.sink);
                 };
                 continue;
             }
             _ = issueEval(view, e.sink, e.code, e.world, e.retried);
-            alloc.free(e.code);
-            alloc.free(e.world);
         },
     };
     view.deferred = still;
+    if (view.deferred.items.len > 0) armDeferredTimer(view);
+}
+
+/// Nothing else wakes a deferred call whose world never turns up, so the
+/// deadline needs a clock of its own.
+fn armDeferredTimer(view: *View) void {
+    if (view.deferred_timer != 0) return;
+    view.deferred_timer = glib.timeoutAdd(250, &onDeferredTimer, view);
+}
+
+fn onDeferredTimer(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    view.deferred_timer = 0;
+    drainDeferred(view);
+    return 0;
 }
 
 // ============================================================================
@@ -1714,11 +1762,13 @@ fn startEvalRetry(view: *View, sink: EvalSink, code: []const u8, world: []const 
                 .code = code_copy,
                 .world = world_copy,
                 .retried = retried,
+                .deadline_us = glib.getMonotonicTime() + world_wait_us,
             } }) catch {
                 alloc.free(code_copy);
                 alloc.free(world_copy);
                 return false;
             };
+            armDeferredTimer(view);
             return true;
         }
     }
@@ -1935,18 +1985,16 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
         if (call == .eval and !call.eval.retried and isMissingContext(message)) {
             const e = call.eval;
             defer e.deinit();
-            // Only when the world still holds the id that just died. The new
-            // context often lands BEFORE the failure does, and clearing then
-            // would throw away the very context the retry needs.
-            if (e.context_id != 0 and worldContextId(view, e.world) == e.context_id) {
-                forgetWorldContext(view, e.world);
+            // The new context usually lands BEFORE the failure does, which is
+            // the whole race: re-issue against it. If it has not, this fails
+            // like any other error rather than waiting for a context that may
+            // never come, because a caller can retry and a hung call cannot.
+            const current = worldContextId(view, e.world);
+            tr("evalRetry node={d} world={s} dead={d} now={d}", .{ view.node_id, e.world, e.context_id, current });
+            if (current != 0 and current != e.context_id) {
+                if (issueEval(view, e.sink, e.code, e.world, true)) return;
             }
-            tr("evalRetry node={d} world={s} dead={d} now={d}", .{
-                view.node_id, e.world, e.context_id, worldContextId(view, e.world),
-            });
-            if (!startEvalRetry(view, e.sink, e.code, e.world, true)) {
-                finishEval(view, e.sink, false, message);
-            }
+            finishEval(view, e.sink, false, message);
             return;
         }
         failCall(view, call, message);
@@ -2067,12 +2115,6 @@ fn failCall(view: *View, call: Call, message: []const u8) void {
 fn isMissingContext(message: []const u8) bool {
     return std.mem.indexOf(u8, message, "Cannot find context") != null or
         std.mem.indexOf(u8, message, "Execution context was destroyed") != null;
-}
-
-fn forgetWorldContext(view: *View, world: []const u8) void {
-    if (world.len == 0) return;
-    const entry = view.worlds.getPtr(world) orelse return;
-    entry.context_id = 0;
 }
 
 fn cdpErrorText(root: std.json.Value) []const u8 {
