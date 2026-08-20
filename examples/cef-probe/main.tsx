@@ -66,7 +66,7 @@ const BASE = `http://127.0.0.1:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload"] as const;
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -254,6 +254,56 @@ async function run(ctx: {
     return `ok (${marker})`;
   });
 
+  // A revisited view, which is a different thing from a fresh one: an isolated
+  // world's execution context dies with the document, and a reload is the
+  // cheapest way to make a page that already had content scripts get them
+  // again. The counter is the assertion: a world that was re-made reads 1, a
+  // world whose script never re-ran reads nothing, and a world whose context id
+  // went stale answers with an error instead of a value.
+  await step("reload", async () => {
+    if (!ctx.view.current) throw new Error("no view ref");
+    sendCommand(ctx.view.current, "addUserScript", {
+      id: "reload-world-mark",
+      source: "window.__ndMark = (window.__ndMark || 0) + 1;",
+      injectionTime: "start",
+      world: "reloadworld",
+    });
+    sendCommand(ctx.view.current, "addUserScript", {
+      id: "reload-page-mark",
+      source: 'document.documentElement.setAttribute("data-nd", "marked");',
+      injectionTime: "end",
+    });
+    ctx.setUrl(`${BASE}/two`);
+    await waitFor<string>("navigate", (u) => u.endsWith("/two"), "the marked page loads", 30000);
+
+    const before = await pollValue(
+      () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
+      (v) => v === "1",
+      "the content script ran in its world",
+    );
+    await pollValue(
+      () => executeJavaScript(ctx.view.current!, 'document.documentElement.getAttribute("data-nd")'),
+      (v) => v === "marked",
+      "the content script reached the page",
+    );
+
+    sendCommand(ctx.view.current, "reload");
+    // A fresh document means a fresh world, so the counter is 1 again rather
+    // than 2; reading 2 would mean the old world survived, and an error would
+    // mean its context id did not.
+    const after = await pollValue(
+      () => executeJavaScript(ctx.view.current!, "String(window.__ndMark)", "reloadworld"),
+      (v) => v === "1",
+      "the content script ran again after a reload",
+    );
+    await pollValue(
+      () => executeJavaScript(ctx.view.current!, 'document.documentElement.getAttribute("data-nd")'),
+      (v) => v === "marked",
+      "the reloaded page carries the content script's mark",
+    );
+    return `ok (world mark ${before} before, ${after} after the reload)`;
+  });
+
   await step("hidden", async () => {
     const at = await waitFor<string>(
       "hiddenNavigate",
@@ -277,6 +327,31 @@ async function run(ctx: {
   });
 
   ctx.setPhase("done");
+}
+
+/// Polls a value, treating a thrown eval (a document mid-navigation, a world
+/// with no context yet) as "not yet" rather than as a failure.
+async function pollValue<T>(
+  fn: () => Promise<T>,
+  pred: (v: T) => boolean,
+  what: string,
+  timeoutMs = 30000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown = "(never ran)";
+  for (;;) {
+    try {
+      const value = await fn();
+      last = value;
+      if (pred(value)) return value;
+    } catch (error) {
+      last = `threw ${String(error)}`;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`${what} never held within ${timeoutMs}ms (last: ${JSON.stringify(last)})`);
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
 }
 
 async function poll<T>(

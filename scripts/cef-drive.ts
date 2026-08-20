@@ -9,7 +9,7 @@
 import { AutomationClient, findNode } from "@nativedesktop/test";
 import type { GetTreeResult, JsonNode } from "@nativedesktop/test";
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload"] as const;
 
 function mustFind(tree: JsonNode, testID: string): JsonNode {
   const node = findNode(tree, testID);

@@ -1364,6 +1364,7 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
     // GTK idle source behind every DOM mutation.
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
         !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
+        !std.mem.eql(u8, method, "Runtime.executionContextDestroyed") and
         !std.mem.eql(u8, method, "Runtime.bindingCalled") and
         !std.mem.eql(u8, method, "Network.responseReceived") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
@@ -1525,8 +1526,11 @@ fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call)
 /// navigation, so no world id ever has to be re-derived by hand.
 fn enableDomains(view: *View) void {
     if (view.domains_enabled) return;
+    // Latched only on a send that happened. Setting the flag first meant one
+    // failed send (no host yet) parked every queued call for the view's life,
+    // with nothing left to retry it.
+    if (!cdpSendRaw(view, "Page.enable", "", .agent_ready)) return;
     view.domains_enabled = true;
-    _ = cdpSendRaw(view, "Page.enable", "", .agent_ready);
 }
 
 /// The agent has answered. Runtime.enable goes first because everything parked
@@ -2018,6 +2022,26 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
     }
     if (std.mem.eql(u8, method, "Runtime.executionContextsCleared")) {
         clearWorldContexts(view);
+        return;
+    }
+    if (std.mem.eql(u8, method, "Runtime.executionContextDestroyed")) {
+        // The per-context event, which is what an ordinary navigation or
+        // reload actually sends; executionContextsCleared only arrives on the
+        // transitions that reset the whole agent. Without this a world keeps
+        // the id of the document it had BEFORE the reload, and the next
+        // world-scoped evaluation is aimed at a context that no longer exists.
+        const id = switch (root) {
+            .object => |o| switch (o.get("executionContextId") orelse return) {
+                .integer => |i| i,
+                .float => |fv| @as(i64, @intFromFloat(fv)),
+                else => return,
+            },
+            else => return,
+        };
+        var it = view.worlds.valueIterator();
+        while (it.next()) |world| {
+            if (world.context_id == id) world.context_id = 0;
+        }
         return;
     }
     if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
