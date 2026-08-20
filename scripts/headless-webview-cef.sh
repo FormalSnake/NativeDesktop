@@ -126,6 +126,18 @@ import -window root "$SHOT"
 [ -s "$SHOT" ] || { echo "FAIL: empty X11 capture"; exit 1; }
 file "$SHOT" | grep -q "PNG image" || { echo "FAIL: not a png"; exit 1; }
 
+# A capture of the right size proves nothing on its own: an embedding that
+# never painted leaves the host's own light background there. The probe's
+# fixture is deliberately dark (#101014), so the mean brightness of a rectangle
+# well inside the view separates "Chromium painted" from "GTK did".
+PAGE_MEAN=$(magick "$SHOT" -crop 700x260+120+380 +repage -format "%[fx:mean]" info: 2>/dev/null || echo "")
+[ -n "$PAGE_MEAN" ] || { echo "FAIL: could not measure the captured view"; exit 1; }
+awk -v m="$PAGE_MEAN" 'BEGIN { exit !(m < 0.5) }' || {
+  echo "FAIL: the embedded view is not showing the page (mean brightness $PAGE_MEAN, want the fixture's dark background)"
+  exit 1
+}
+echo "ND_CEF_PAGE_PAINTED_OK mean brightness $PAGE_MEAN inside the embedded view"
+
 kill -TERM "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
 HOST_PID=""
 
