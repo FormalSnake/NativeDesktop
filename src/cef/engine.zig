@@ -28,6 +28,7 @@ const c = capi.c;
 const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
+const cdp = @import("cdp.zig");
 const types = @import("types.zig");
 
 const alloc = std.heap.c_allocator;
@@ -247,6 +248,8 @@ fn ensureInitialized() bool {
     defer clearStr(&settings.locales_dir_path);
     defer clearStr(&settings.root_cache_path);
 
+    cdp.setSink(.{ .result = &cdpResultSink, .event = &cdpEventSink });
+
     var args = mainArgs();
     if (api.initialize(&args, &settings, app.handOut(), null) == 0) {
         std.debug.print("ND_WARN CEF: cef_initialize failed; falling back to the system engine\n", .{});
@@ -292,6 +295,38 @@ fn dupeStr(s: [*c]const c.cef_string_t) ?[]u8 {
 }
 
 // ============================================================================
+// JSON helpers
+// ============================================================================
+
+fn argObject(arg: ?std.json.Value) ?std.json.ObjectMap {
+    return switch (arg orelse return null) {
+        .object => |o| o,
+        else => null,
+    };
+}
+
+fn objStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    return switch (obj.get(key) orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn objBool(obj: std.json.ObjectMap, key: []const u8) ?bool {
+    return switch (obj.get(key) orelse return null) {
+        .bool => |b| b,
+        else => null,
+    };
+}
+
+fn objStrList(obj: std.json.ObjectMap, key: []const u8) ?std.json.Array {
+    return switch (obj.get(key) orelse return null) {
+        .array => |a| a,
+        else => null,
+    };
+}
+
+// ============================================================================
 // Per-view state
 // ============================================================================
 
@@ -317,6 +352,10 @@ const View = struct {
     browser: std.atomic.Value(usize) = .init(0),
     /// The window CEF made inside our container, for tracking the allocation.
     cef_window: std.atomic.Value(usize) = .init(0),
+    /// The view's own long-lived host reference, taken with the browser and
+    /// released with it. Every CDP call goes through it, and re-deriving it per
+    /// call would churn a reference on whichever thread happened to ask.
+    host: std.atomic.Value(usize) = .init(0),
 
     // GTK thread only from here down.
     container: x11.Window = 0,
@@ -328,6 +367,16 @@ const View = struct {
     tick_id: c_uint = 0,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
+
+    // The CDP substrate. GTK thread only: results and events are marshaled
+    // before anything here is touched.
+    session: cdp.Session = .{},
+    domains_enabled: bool = false,
+    worlds: std.StringHashMapUnmanaged(WorldState) = .empty,
+    scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
+    channels: std.StringHashMapUnmanaged(Channel) = .empty,
+    /// Work parked until the world it names has an execution context.
+    deferred: std.ArrayList(Deferred) = .empty,
 
     // Last values the handlers pushed, answering `webviewInfo`.
     url: ?[]u8 = null,
@@ -635,7 +684,7 @@ fn loadUrl(browser: *c.cef_browser_t, url: []const u8) void {
     load(frame, &s);
 }
 
-pub fn command(widget: *gtk.Widget, cmd: []const u8, _: ?std.json.Value) void {
+pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
     const view = viewOf(widget) orelse return;
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -654,8 +703,20 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, _: ?std.json.Value) void {
         if (browser.reload) |f| f(browser);
     } else if (std.mem.eql(u8, cmd, "stop")) {
         if (browser.stop_load) |f| f(browser);
+    } else if (std.mem.eql(u8, cmd, "executeJavaScript")) {
+        cmdExecuteJavaScript(view, arg);
+    } else if (std.mem.eql(u8, cmd, "addUserScript")) {
+        cmdAddUserScript(view, arg);
+    } else if (std.mem.eql(u8, cmd, "removeUserScript")) {
+        cmdRemoveUserScript(view, arg);
+    } else if (std.mem.eql(u8, cmd, "clearUserScripts")) {
+        cmdClearUserScripts(view, arg);
+    } else if (std.mem.eql(u8, cmd, "registerScriptMessage")) {
+        cmdRegisterScriptMessage(view, arg);
+    } else if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) {
+        cmdUnregisterScriptMessage(view, arg);
     } else {
-        std.debug.print("ND_WARN WebView engine=chromium: command {s} is not wired yet (M2)\n", .{cmd});
+        std.debug.print("ND_WARN WebView engine=chromium: command {s} is not wired yet\n", .{cmd});
     }
 }
 
@@ -822,10 +883,16 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
     if (browser.*.get_host) |get_host| {
         const host = get_host(browser);
         if (host != null) {
-            defer ref.releaseOwned(host);
+            // Kept, like the browser reference above: every devtools call needs
+            // it, and on_before_close is what gives both back.
+            view.host.store(@intFromPtr(host), .release);
             if (host.*.get_window_handle) |get_handle| {
                 view.cef_window.store(@intCast(get_handle(host)), .release);
             }
+            // Written here rather than on the GTK thread because the observer
+            // has to exist before the first protocol message; the settle hop
+            // below is the first GTK-side read of it.
+            view.session = cdp.attach(host, @intFromPtr(view));
         }
     }
     tr("created node={d} cefWindow=0x{x}", .{ view.node_id, view.cef_window.load(.acquire) });
@@ -840,6 +907,9 @@ fn onDoClose(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) cal
 fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     const view = LifeObj.of(self).payload;
     view.cef_window.store(0, .release);
+    cdp.detach(&view.session);
+    const host = view.host.swap(0, .acq_rel);
+    if (host != 0) ref.releaseParam(@as([*c]c.cef_browser_host_t, @ptrFromInt(host)));
     const held = view.browser.swap(0, .acq_rel);
     if (held != 0) ref.releaseParam(@as([*c]c.cef_browser_t, @ptrFromInt(held)));
     ref.releaseParam(browser);
@@ -860,6 +930,13 @@ const Emission = struct {
     flag: bool = false,
     number: f64 = 0,
     settle: bool = false,
+    /// Devtools traffic rides the same hop: a protocol result arrives on the
+    /// CEF UI thread, and everything that interprets it (the pending-call
+    /// table, the world map, the script registry) lives on the GTK one.
+    cdp_result: bool = false,
+    cdp_event: bool = false,
+    message_id: c_int = 0,
+    ok: bool = false,
 };
 
 fn post(e: Emission) void {
@@ -886,7 +963,18 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (!live_views.contains(@intFromPtr(box.view))) return 0;
     const view = box.view;
 
+    if (box.cdp_result) {
+        onCdpResult(view, box.message_id, box.ok, if (box.text) |t| t else "");
+        return 0;
+    }
+    if (box.cdp_event) {
+        const method = box.extra orelse return 0;
+        onCdpEvent(view, method, if (box.text) |t| t else "");
+        return 0;
+    }
+
     if (box.settle) {
+        enableDomains(view);
         syncBounds(view);
         resizeCefWindow(view, view.bounds.w, view.bounds.h);
         if (view.pending_url) |p| {
@@ -932,8 +1020,951 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     return 0; // G_SOURCE_REMOVE
 }
 
+/// The devtools sink, both arms on the CEF UI thread. `tag` is the View
+/// pointer cdp.attach was handed.
+fn cdpResultSink(tag: usize, message_id: c_int, ok: bool, json: []const u8) void {
+    const view: *View = @ptrFromInt(tag);
+    post(.{
+        .view = view,
+        .name = "",
+        .cdp_result = true,
+        .message_id = message_id,
+        .ok = ok,
+        .text = alloc.dupe(u8, json) catch null,
+    });
+}
+
+fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
+    const view: *View = @ptrFromInt(tag);
+    // Only the three events this engine acts on are worth a hop; the Page and
+    // Runtime domains are chatty enough that forwarding everything would put a
+    // GTK idle source behind every DOM mutation.
+    if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
+        !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
+        !std.mem.eql(u8, method, "Runtime.bindingCalled")) return;
+    post(.{
+        .view = view,
+        .name = "",
+        .cdp_event = true,
+        .extra = alloc.dupe(u8, method) catch null,
+        .text = alloc.dupe(u8, json) catch null,
+    });
+}
+
 fn remember(slot: *?[]u8, value: []const u8) void {
     const copy = alloc.dupe(u8, value) catch return;
     if (slot.*) |old| alloc.free(old);
     slot.* = copy;
+}
+
+// ============================================================================
+// The CDP substrate
+// ============================================================================
+//
+// Everything the <webview> contract asks for beyond navigation is a DevTools
+// call on Alloy-style CEF: there is no user-script API, no isolated-world API
+// and no script-message channel to bind to. The shapes below are chosen so an
+// app (and the extension broker above it) cannot tell which engine answered:
+// `javaScriptResult` carries the same stringified value WebKitGTK's
+// jsc_value_to_string produces, and `scriptMessage` carries the same
+// {name, world, body} triple.
+
+const WorldState = struct {
+    /// The live Runtime.ExecutionContextId, or 0 while the world has no
+    /// document. Isolated worlds die with their document and come back with a
+    /// new id on the next load, which is why this is refreshed from
+    /// Runtime.executionContextCreated rather than remembered once.
+    context_id: i64 = 0,
+    /// Whether the new-document stub that re-creates this world on every load
+    /// has been registered.
+    requested: bool = false,
+};
+
+const ScriptEntry = struct { identifier: []u8, world: []u8 };
+const Channel = struct { world: []u8, script: ?[]u8 = null };
+
+/// A call that cannot be issued until its world has an execution context.
+const Deferred = union(enum) {
+    eval: struct { sink: EvalSink, code: []u8, world: []u8 },
+};
+
+/// Where the string form of one evaluation goes.
+const EvalSink = union(enum) {
+    /// `executeJavaScript`: emits `javaScriptResult` with this correlation id.
+    app: []u8,
+    /// `webviewEval`: settles this entry in `pending_evals`.
+    auto: u64,
+    /// The `pageTextContains` cache.
+    page_text: u32,
+    /// Fire and forget: the result is not wanted, only the side effect.
+    discard,
+};
+
+const Call = union(enum) {
+    ignore,
+    eval: EvalSink,
+    /// The second hop for a non-primitive result: String(value) computed in the
+    /// page rather than approximated from the RemoteObject's description.
+    stringify: struct { sink: EvalSink, object_id: []u8 },
+    add_user_script: struct { id: []u8, world: []u8 },
+    add_channel_script: struct { name: []u8 },
+};
+
+const PendingCall = struct { view: *View, call: Call };
+
+/// GTK thread only: every CDP result is marshaled before it is looked up here.
+var pending_calls: std.AutoHashMapUnmanaged(c_int, PendingCall) = .empty;
+
+fn sinkFree(sink: EvalSink) void {
+    switch (sink) {
+        .app => |id| alloc.free(id),
+        else => {},
+    }
+}
+
+fn callFree(call: Call) void {
+    switch (call) {
+        .ignore => {},
+        .eval => |sink| sinkFree(sink),
+        .stringify => |s| {
+            sinkFree(s.sink);
+            alloc.free(s.object_id);
+        },
+        .add_user_script => |s| {
+            alloc.free(s.id);
+            alloc.free(s.world);
+        },
+        .add_channel_script => |s| alloc.free(s.name),
+    }
+}
+
+fn hostOf(view: *View) ?*c.cef_browser_host_t {
+    const raw = view.host.load(.acquire);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Queues one CDP call and records what to do with its answer.
+fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
+    const host = hostOf(view) orelse {
+        callFree(call);
+        return false;
+    };
+    const id = cdp.send(host, method, params_json) orelse {
+        callFree(call);
+        return false;
+    };
+    if (std.meta.activeTag(call) == .ignore) return true;
+    pending_calls.put(alloc, id, .{ .view = view, .call = call }) catch {
+        callFree(call);
+        return false;
+    };
+    return true;
+}
+
+/// Page and Runtime, once per browser. Runtime is what makes worlds tractable:
+/// executionContextCreated names every isolated world as it is re-made on each
+/// navigation, so no world id ever has to be re-derived by hand.
+fn enableDomains(view: *View) void {
+    if (view.domains_enabled) return;
+    view.domains_enabled = true;
+    _ = cdpSend(view, "Page.enable", "", .ignore);
+    _ = cdpSend(view, "Runtime.enable", "", .ignore);
+}
+
+// ============================================================================
+// Worlds
+// ============================================================================
+
+fn worldContextId(view: *View, world: []const u8) i64 {
+    if (world.len == 0) return 0; // the page's own world needs no contextId
+    const entry = view.worlds.get(world) orelse return 0;
+    return entry.context_id;
+}
+
+/// Makes sure `world` exists now and after every future navigation. The
+/// mechanism is a new-document script carrying the world name: CDP creates the
+/// isolated world to run it in, on every load, which is exactly the lifetime an
+/// isolated world needs. Page.createIsolatedWorld would answer with an id
+/// sooner but only for the current document, and the id it returns is dead
+/// after the next navigation.
+fn ensureWorld(view: *View, world: []const u8) void {
+    if (world.len == 0) return;
+    const gop = view.worlds.getOrPut(alloc, world) catch return;
+    if (!gop.found_existing) {
+        gop.key_ptr.* = alloc.dupe(u8, world) catch {
+            _ = view.worlds.remove(world);
+            return;
+        };
+        gop.value_ptr.* = .{};
+    }
+    if (gop.value_ptr.requested) return;
+    gop.value_ptr.requested = true;
+
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"source\":\"\",\"runImmediately\":true,\"worldName\":") catch return;
+    cdp.quote(&params, world);
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Page.addScriptToEvaluateOnNewDocument", params.items, .ignore);
+}
+
+fn setWorldContext(view: *View, world: []const u8, context_id: i64) void {
+    const gop = view.worlds.getOrPut(alloc, world) catch return;
+    if (!gop.found_existing) {
+        gop.key_ptr.* = alloc.dupe(u8, world) catch {
+            _ = view.worlds.remove(world);
+            return;
+        };
+        gop.value_ptr.* = .{};
+    }
+    gop.value_ptr.context_id = context_id;
+    drainDeferred(view);
+}
+
+fn clearWorldContexts(view: *View) void {
+    var it = view.worlds.iterator();
+    while (it.next()) |e| e.value_ptr.context_id = 0;
+}
+
+fn drainDeferred(view: *View) void {
+    if (view.deferred.items.len == 0) return;
+    var still: std.ArrayList(Deferred) = .empty;
+    // Take the list first: issuing a call can defer again, and appending to a
+    // list being iterated is how that turns into a loop.
+    const items = view.deferred.toOwnedSlice(alloc) catch return;
+    defer alloc.free(items);
+    for (items) |item| switch (item) {
+        .eval => |e| {
+            if (worldContextId(view, e.world) == 0) {
+                still.append(alloc, item) catch {
+                    sinkFree(e.sink);
+                    alloc.free(e.code);
+                    alloc.free(e.world);
+                };
+                continue;
+            }
+            issueEval(view, e.sink, e.code, e.world);
+            alloc.free(e.code);
+            alloc.free(e.world);
+        },
+    };
+    view.deferred = still;
+}
+
+// ============================================================================
+// Evaluation
+// ============================================================================
+
+/// One evaluation, world-aware. A world with no execution context yet parks the
+/// call rather than running it in the wrong one.
+fn startEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) bool {
+    if (world.len != 0) {
+        ensureWorld(view, world);
+        if (worldContextId(view, world) == 0) {
+            const code_copy = alloc.dupe(u8, code) catch return false;
+            const world_copy = alloc.dupe(u8, world) catch {
+                alloc.free(code_copy);
+                return false;
+            };
+            view.deferred.append(alloc, .{ .eval = .{
+                .sink = sink,
+                .code = code_copy,
+                .world = world_copy,
+            } }) catch {
+                alloc.free(code_copy);
+                alloc.free(world_copy);
+                return false;
+            };
+            return true;
+        }
+    }
+    return issueEval(view, sink, code, world);
+}
+
+fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8) bool {
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"expression\":") catch return false;
+    cdp.quote(&params, code);
+    // returnByValue stays false so an object comes back as a handle this can
+    // stringify in the page; awaitPromise stays false because WebKitGTK's
+    // evaluate_javascript does not await either, and a Promise has to
+    // stringify as "[object Promise]" on both engines.
+    params.appendSlice(alloc, ",\"returnByValue\":false,\"awaitPromise\":false,\"objectGroup\":\"nd\"") catch return false;
+    const context_id = worldContextId(view, world);
+    if (context_id != 0) {
+        var buf: [32]u8 = undefined;
+        const n = std.fmt.bufPrint(&buf, ",\"contextId\":{d}", .{context_id}) catch return false;
+        params.appendSlice(alloc, n) catch return false;
+    }
+    params.appendSlice(alloc, "}") catch return false;
+    return cdpSend(view, "Runtime.evaluate", params.items, .{ .eval = sink });
+}
+
+/// The string form of a Runtime.RemoteObject, or null when only the page can
+/// answer (an object, an array, a function: everything whose String() is not
+/// derivable from the JSON scalar CDP sent).
+fn remoteToString(result: std.json.Value) ?[]u8 {
+    const obj = switch (result) {
+        .object => |o| o,
+        else => return null,
+    };
+    const kind = switch (obj.get("type") orelse return null) {
+        .string => |s| s,
+        else => return null,
+    };
+    if (std.mem.eql(u8, kind, "undefined")) return alloc.dupe(u8, "undefined") catch null;
+    if (std.mem.eql(u8, kind, "object")) {
+        if (obj.get("subtype")) |sub| {
+            switch (sub) {
+                .string => |s| if (std.mem.eql(u8, s, "null")) return alloc.dupe(u8, "null") catch null,
+                else => {},
+            }
+        }
+        return null;
+    }
+    const value = obj.get("value") orelse return null;
+    return switch (value) {
+        .string => |s| alloc.dupe(u8, s) catch null,
+        .bool => |b| alloc.dupe(u8, if (b) "true" else "false") catch null,
+        .integer => |i| std.fmt.allocPrint(alloc, "{d}", .{i}) catch null,
+        .float => |f| std.fmt.allocPrint(alloc, "{d}", .{f}) catch null,
+        .null => alloc.dupe(u8, "null") catch null,
+        // A number CDP could not express as JSON (NaN, Infinity) arrives as
+        // `unserializableValue`, which is already the string form.
+        else => blk: {
+            const raw = obj.get("unserializableValue") orelse break :blk null;
+            break :blk switch (raw) {
+                .string => |s| alloc.dupe(u8, s) catch null,
+                else => null,
+            };
+        },
+    };
+}
+
+fn objectIdOf(result: std.json.Value) ?[]const u8 {
+    const obj = switch (result) {
+        .object => |o| o,
+        else => return null,
+    };
+    return switch (obj.get("objectId") orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+/// Hands the value back to the page to stringify. `String(this)` is exactly
+/// what jsc_value_to_string does on the WebKit side, so "[object Object]" and
+/// "1,2,3" come out the same on both engines.
+fn stringifyRemote(view: *View, sink: EvalSink, object_id: []const u8) void {
+    const owned = alloc.dupe(u8, object_id) catch {
+        finishEval(view, sink, false, "out of memory");
+        return;
+    };
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"objectId\":") catch {
+        alloc.free(owned);
+        finishEval(view, sink, false, "out of memory");
+        return;
+    };
+    cdp.quote(&params, object_id);
+    params.appendSlice(alloc, ",\"functionDeclaration\":\"function(){return String(this)}\",\"returnByValue\":true}") catch {
+        alloc.free(owned);
+        finishEval(view, sink, false, "out of memory");
+        return;
+    };
+    if (!cdpSend(view, "Runtime.callFunctionOn", params.items, .{ .stringify = .{ .sink = sink, .object_id = owned } })) {
+        finishEval(view, sink, false, "Runtime.callFunctionOn could not be sent");
+    }
+}
+
+fn releaseRemote(view: *View, object_id: []const u8) void {
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"objectId\":") catch return;
+    cdp.quote(&params, object_id);
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Runtime.releaseObject", params.items, .ignore);
+}
+
+/// `exceptionDetails.exception.description` is the message WebKit would have
+/// put in its GError; the text after it is the fallback chain.
+fn exceptionText(details: std.json.Value) []const u8 {
+    const obj = switch (details) {
+        .object => |o| o,
+        else => return "unknown error",
+    };
+    if (obj.get("exception")) |ex| {
+        if (ex == .object) {
+            if (ex.object.get("description")) |d| {
+                if (d == .string) return d.string;
+            }
+            if (ex.object.get("value")) |v| {
+                if (v == .string) return v.string;
+            }
+        }
+    }
+    if (obj.get("text")) |t| {
+        if (t == .string) return t.string;
+    }
+    return "unknown error";
+}
+
+fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
+    switch (sink) {
+        .app => |id| {
+            defer alloc.free(id);
+            const f = emit orelse return;
+            var payload: std.json.ObjectMap = .empty;
+            defer payload.deinit(alloc);
+            payload.put(alloc, "id", .{ .string = id }) catch return;
+            payload.put(alloc, "ok", .{ .bool = ok }) catch return;
+            payload.put(alloc, if (ok) "value" else "error", .{ .string = text }) catch return;
+            f(view.node_id, "javaScriptResult", .{ .data = .{ .object = payload } });
+        },
+        .auto => |eval_id| {
+            const entry = pending_evals.get(eval_id) orelse return;
+            entry.done = true;
+            entry.ok = ok;
+            const copy = alloc.dupe(u8, text) catch return;
+            if (ok) {
+                if (entry.value) |old| alloc.free(old);
+                entry.value = copy;
+            } else {
+                if (entry.err) |old| alloc.free(old);
+                entry.err = copy;
+            }
+        },
+        .discard => {},
+        .page_text => |node_id| {
+            const entry = page_texts.getPtr(node_id) orelse return;
+            entry.in_flight = false;
+            entry.stamp_us = glib.getMonotonicTime();
+            if (!ok) return;
+            const copy = alloc.dupe(u8, text) catch return;
+            if (entry.text) |old| alloc.free(old);
+            entry.text = copy;
+        },
+    }
+}
+
+// ============================================================================
+// Result and event routing (GTK thread)
+// ============================================================================
+
+fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void {
+    const entry = pending_calls.fetchRemove(message_id) orelse return;
+    const call = entry.value.call;
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch {
+        failCall(view, call, "the engine returned no parsable result");
+        return;
+    };
+    defer parsed.deinit();
+    const root = parsed.value;
+
+    if (!ok) {
+        failCall(view, call, cdpErrorText(root));
+        return;
+    }
+
+    switch (call) {
+        .ignore => {},
+        .eval => |sink| {
+            if (root == .object) {
+                if (root.object.get("exceptionDetails")) |details| {
+                    finishEval(view, sink, false, exceptionText(details));
+                    return;
+                }
+                if (root.object.get("result")) |result| {
+                    if (remoteToString(result)) |text| {
+                        defer alloc.free(text);
+                        finishEval(view, sink, true, text);
+                        return;
+                    }
+                    if (objectIdOf(result)) |object_id| {
+                        stringifyRemote(view, sink, object_id);
+                        return;
+                    }
+                }
+            }
+            finishEval(view, sink, true, "undefined");
+        },
+        .stringify => |s| {
+            defer alloc.free(s.object_id);
+            releaseRemote(view, s.object_id);
+            if (root == .object) {
+                if (root.object.get("exceptionDetails")) |details| {
+                    finishEval(view, s.sink, false, exceptionText(details));
+                    return;
+                }
+                if (root.object.get("result")) |result| {
+                    if (remoteToString(result)) |text| {
+                        defer alloc.free(text);
+                        finishEval(view, s.sink, true, text);
+                        return;
+                    }
+                }
+            }
+            finishEval(view, s.sink, true, "");
+        },
+        .add_user_script => |s| {
+            defer alloc.free(s.id);
+            defer alloc.free(s.world);
+            const identifier = stringField(root, "identifier") orelse return;
+            const id_copy = alloc.dupe(u8, identifier) catch return;
+            const key = alloc.dupe(u8, s.id) catch {
+                alloc.free(id_copy);
+                return;
+            };
+            const world_copy = alloc.dupe(u8, s.world) catch {
+                alloc.free(id_copy);
+                alloc.free(key);
+                return;
+            };
+            putScript(view, key, .{ .identifier = id_copy, .world = world_copy });
+        },
+        .add_channel_script => |s| {
+            defer alloc.free(s.name);
+            const identifier = stringField(root, "identifier") orelse return;
+            const channel = view.channels.getPtr(s.name) orelse return;
+            if (channel.script) |old| alloc.free(old);
+            channel.script = alloc.dupe(u8, identifier) catch null;
+        },
+    }
+}
+
+fn putScript(view: *View, key: []u8, entry: ScriptEntry) void {
+    if (view.scripts.fetchRemove(key)) |old| {
+        alloc.free(old.key);
+        alloc.free(old.value.identifier);
+        alloc.free(old.value.world);
+    }
+    view.scripts.put(alloc, key, entry) catch {
+        alloc.free(key);
+        alloc.free(entry.identifier);
+        alloc.free(entry.world);
+    };
+}
+
+fn failCall(view: *View, call: Call, message: []const u8) void {
+    switch (call) {
+        .eval => |sink| finishEval(view, sink, false, message),
+        .stringify => |s| {
+            alloc.free(s.object_id);
+            finishEval(view, s.sink, false, message);
+        },
+        else => callFree(call),
+    }
+}
+
+fn cdpErrorText(root: std.json.Value) []const u8 {
+    if (root == .object) {
+        if (root.object.get("message")) |m| {
+            if (m == .string) return m.string;
+        }
+    }
+    return "the devtools method failed";
+}
+
+fn stringField(root: std.json.Value, key: []const u8) ?[]const u8 {
+    if (root != .object) return null;
+    return switch (root.object.get(key) orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch return;
+    defer parsed.deinit();
+    const root = parsed.value;
+
+    if (std.mem.eql(u8, method, "Runtime.executionContextCreated")) {
+        const context = switch (root) {
+            .object => |o| o.get("context") orelse return,
+            else => return,
+        };
+        if (context != .object) return;
+        const id = switch (context.object.get("id") orelse return) {
+            .integer => |i| i,
+            .float => |f| @as(i64, @intFromFloat(f)),
+            else => return,
+        };
+        const name = switch (context.object.get("name") orelse .null) {
+            .string => |s| s,
+            else => "",
+        };
+        if (name.len == 0) return; // the page's own world needs no id
+        setWorldContext(view, name, id);
+        return;
+    }
+    if (std.mem.eql(u8, method, "Runtime.executionContextsCleared")) {
+        clearWorldContexts(view);
+        return;
+    }
+    if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
+        onBindingCalled(view, root);
+        return;
+    }
+}
+
+// ============================================================================
+// Script messages
+// ============================================================================
+//
+// The page-side API is `window.webkit.messageHandlers.NAME.postMessage(v)` on
+// both engines, because that is what app code and the extension broker are
+// written against. On CEF it is a shim: a document-start script per channel
+// that forwards through a Runtime binding, one binding per world so the world
+// a message came from is known from the binding name rather than guessed from
+// an execution context id.
+
+const page_binding = "__ndScriptMessage";
+
+fn bindingName(world: []const u8) ?[]u8 {
+    if (world.len == 0) return alloc.dupe(u8, page_binding) catch null;
+    var out: std.ArrayList(u8) = .empty;
+    out.appendSlice(alloc, page_binding) catch return null;
+    out.append(alloc, '_') catch return null;
+    // A binding name is a JS identifier, and a world name is not constrained
+    // to be one.
+    for (world) |ch| {
+        const safe: u8 = if (std.ascii.isAlphanumeric(ch) or ch == '_') ch else '_';
+        out.append(alloc, safe) catch return null;
+    }
+    return out.toOwnedSlice(alloc) catch null;
+}
+
+fn worldForBinding(view: *View, binding: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, binding, page_binding)) return "";
+    var it = view.worlds.keyIterator();
+    while (it.next()) |key| {
+        const candidate = bindingName(key.*) orelse continue;
+        defer alloc.free(candidate);
+        if (std.mem.eql(u8, candidate, binding)) return key.*;
+    }
+    return null;
+}
+
+fn onBindingCalled(view: *View, root: std.json.Value) void {
+    const binding = stringField(root, "name") orelse return;
+    const payload_text = stringField(root, "payload") orelse return;
+    const world = worldForBinding(view, binding) orelse return;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
+    defer parsed.deinit();
+    if (parsed.value != .object) return;
+    const name = switch (parsed.value.object.get("name") orelse return) {
+        .string => |s| s,
+        else => return,
+    };
+    // A channel the app has since unregistered must not keep delivering.
+    if (!view.channels.contains(name)) return;
+
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "name", .{ .string = name }) catch return;
+    payload.put(alloc, "world", .{ .string = world }) catch return;
+    payload.put(alloc, "body", parsed.value.object.get("body") orelse .null) catch return;
+    const f = emit orelse return;
+    f(view.node_id, "scriptMessage", .{ .data = .{ .object = payload } });
+}
+
+fn cmdRegisterScriptMessage(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse {
+        std.debug.print("ND_WARN WebView registerScriptMessage: missing name\n", .{});
+        return;
+    };
+    const world = objStr(obj, "world") orelse "";
+
+    if (view.channels.get(name)) |existing| {
+        if (!std.mem.eql(u8, existing.world, world)) {
+            std.debug.print(
+                "ND_WARN WebView registerScriptMessage: '{s}' is already registered on this view in world '{s}'; a handler name is per view, not per world, so give world '{s}' a name of its own\n",
+                .{ name, existing.world, world },
+            );
+        }
+        return;
+    }
+    ensureWorld(view, world);
+
+    const binding = bindingName(world) orelse return;
+    defer alloc.free(binding);
+
+    // The binding is per world, and re-adding one is a protocol error rather
+    // than a no-op, so it is added with the world's first channel only.
+    if (!bindingLive(view, world)) {
+        var params: std.ArrayList(u8) = .empty;
+        defer params.deinit(alloc);
+        params.appendSlice(alloc, "{\"name\":") catch return;
+        cdp.quote(&params, binding);
+        if (world.len != 0) {
+            params.appendSlice(alloc, ",\"executionContextName\":") catch return;
+            cdp.quote(&params, world);
+        }
+        params.appendSlice(alloc, "}") catch return;
+        _ = cdpSend(view, "Runtime.addBinding", params.items, .ignore);
+    }
+
+    const key = alloc.dupe(u8, name) catch return;
+    const world_copy = alloc.dupe(u8, world) catch {
+        alloc.free(key);
+        return;
+    };
+    view.channels.put(alloc, key, .{ .world = world_copy }) catch {
+        alloc.free(key);
+        alloc.free(world_copy);
+        return;
+    };
+    tr("registerScriptMessage node={d} name={s} world={s}", .{ view.node_id, name, world });
+
+    const source = shimSource(name, binding) orelse return;
+    defer alloc.free(source);
+    const call_name = alloc.dupe(u8, name) catch return;
+    addNewDocumentScript(view, source, world, true, .{ .add_channel_script = .{ .name = call_name } });
+}
+
+fn bindingLive(view: *View, world: []const u8) bool {
+    var it = view.channels.valueIterator();
+    while (it.next()) |channel| {
+        if (std.mem.eql(u8, channel.world, world)) return true;
+    }
+    return false;
+}
+
+fn shimSource(name: []const u8, binding: []const u8) ?[]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    out.appendSlice(alloc,
+        \\(function(){var w=window;w.webkit=w.webkit||{};var m=w.webkit.messageHandlers=w.webkit.messageHandlers||{};m[
+    ) catch return null;
+    cdp.quote(&out, name);
+    out.appendSlice(alloc, "]={postMessage:function(v){w[") catch return null;
+    cdp.quote(&out, binding);
+    out.appendSlice(alloc, "](JSON.stringify({name:") catch return null;
+    cdp.quote(&out, name);
+    out.appendSlice(alloc, ",body:v===undefined?null:v}))}};})();") catch return null;
+    return out.toOwnedSlice(alloc) catch null;
+}
+
+fn cmdUnregisterScriptMessage(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse return;
+    const entry = view.channels.fetchRemove(name) orelse return;
+    defer alloc.free(entry.key);
+    defer alloc.free(entry.value.world);
+    if (entry.value.script) |identifier| {
+        defer alloc.free(identifier);
+        removeNewDocumentScript(view, identifier);
+    }
+    // Removing the new-document script only affects the NEXT document, and
+    // WebKit's unregister takes the handler away from the live page too.
+    var code: std.ArrayList(u8) = .empty;
+    defer code.deinit(alloc);
+    code.appendSlice(alloc, "(function(){try{delete window.webkit.messageHandlers[") catch return;
+    cdp.quote(&code, name);
+    code.appendSlice(alloc, "]}catch(e){}})()") catch return;
+    _ = startEval(view, .discard, code.items, entry.value.world);
+}
+
+// ============================================================================
+// User scripts
+// ============================================================================
+
+fn addNewDocumentScript(view: *View, source: []const u8, world: []const u8, run_now: bool, call: Call) void {
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"source\":") catch {
+        callFree(call);
+        return;
+    };
+    cdp.quote(&params, source);
+    if (run_now) params.appendSlice(alloc, ",\"runImmediately\":true") catch {};
+    if (world.len != 0) {
+        params.appendSlice(alloc, ",\"worldName\":") catch {};
+        cdp.quote(&params, world);
+    }
+    params.appendSlice(alloc, "}") catch {
+        callFree(call);
+        return;
+    };
+    _ = cdpSend(view, "Page.addScriptToEvaluateOnNewDocument", params.items, call);
+}
+
+fn removeNewDocumentScript(view: *View, identifier: []const u8) void {
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"identifier\":") catch return;
+    cdp.quote(&params, identifier);
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Page.removeScriptToEvaluateOnNewDocument", params.items, .ignore);
+}
+
+/// CDP injects new-document scripts at document-start and has no document-end
+/// option, so an end script is wrapped in the wait for DOMContentLoaded. The
+/// one visible difference from WebKitGTK is scope: the wrapped source runs
+/// inside a function, so a bare `var` in it is no longer a global.
+fn wrapForDocumentEnd(source: []const u8) ?[]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    out.appendSlice(alloc, "(function(){var f=function(){") catch return null;
+    out.appendSlice(alloc, source) catch return null;
+    out.appendSlice(alloc, "\n};if(document.readyState===\"loading\"){document.addEventListener(\"DOMContentLoaded\",f)}else{f()}})();") catch return null;
+    return out.toOwnedSlice(alloc) catch null;
+}
+
+fn cmdAddUserScript(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView addUserScript: malformed arg (expected an object)\n", .{});
+        return;
+    };
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView addUserScript: missing id\n", .{});
+        return;
+    };
+    const source = objStr(obj, "source") orelse {
+        std.debug.print("ND_WARN WebView addUserScript: missing source\n", .{});
+        return;
+    };
+    const world = objStr(obj, "world") orelse "";
+    const at_start = if (objStr(obj, "injectionTime")) |t| std.mem.eql(u8, t, "start") else false;
+    if (objStrList(obj, "allowList") != null or objStrList(obj, "blockList") != null) {
+        std.debug.print("ND_WARN WebView engine=chromium addUserScript: allowList/blockList have no DevTools equivalent and are ignored\n", .{});
+    }
+    ensureWorld(view, world);
+    removeScriptById(view, id);
+
+    const wrapped: ?[]u8 = if (at_start) null else wrapForDocumentEnd(source);
+    defer if (wrapped) |w| alloc.free(w);
+    const body: []const u8 = if (wrapped) |w| w else source;
+
+    const id_copy = alloc.dupe(u8, id) catch return;
+    const world_copy = alloc.dupe(u8, world) catch {
+        alloc.free(id_copy);
+        return;
+    };
+    tr("addUserScript node={d} id={s} world={s} at={s}", .{ view.node_id, id, world, if (at_start) "start" else "end" });
+    addNewDocumentScript(view, body, world, false, .{ .add_user_script = .{ .id = id_copy, .world = world_copy } });
+}
+
+fn removeScriptById(view: *View, id: []const u8) void {
+    const entry = view.scripts.fetchRemove(id) orelse return;
+    defer alloc.free(entry.key);
+    defer alloc.free(entry.value.identifier);
+    defer alloc.free(entry.value.world);
+    removeNewDocumentScript(view, entry.value.identifier);
+}
+
+fn cmdRemoveUserScript(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView removeUserScript: missing id\n", .{});
+        return;
+    };
+    removeScriptById(view, id);
+}
+
+fn cmdClearUserScripts(view: *View, arg: ?std.json.Value) void {
+    tr("clearUserScripts node={d}", .{view.node_id});
+    const world: ?[]const u8 = if (argObject(arg)) |o| objStr(o, "world") else null;
+    var ids: std.ArrayList([]const u8) = .empty;
+    defer ids.deinit(alloc);
+    var it = view.scripts.iterator();
+    while (it.next()) |e| {
+        if (world) |w| {
+            if (!std.mem.eql(u8, e.value_ptr.world, w)) continue;
+        }
+        ids.append(alloc, e.key_ptr.*) catch {};
+    }
+    for (ids.items) |id| removeScriptById(view, id);
+}
+
+fn cmdExecuteJavaScript(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView executeJavaScript: malformed arg (expected {{id, code}})\n", .{});
+        return;
+    };
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView executeJavaScript: malformed arg (expected {{id, code}})\n", .{});
+        return;
+    };
+    const code = objStr(obj, "code") orelse {
+        std.debug.print("ND_WARN WebView executeJavaScript: malformed arg (expected {{id, code}})\n", .{});
+        return;
+    };
+    const world = objStr(obj, "world") orelse "";
+    const id_copy = alloc.dupe(u8, id) catch return;
+    if (!startEval(view, .{ .app = id_copy }, code, world)) alloc.free(id_copy);
+}
+
+// ============================================================================
+// Automation: webviewEval and the pageText cache
+// ============================================================================
+
+const PendingEval = struct {
+    done: bool = false,
+    ok: bool = false,
+    value: ?[]u8 = null,
+    err: ?[]u8 = null,
+};
+
+var pending_evals: std.AutoHashMapUnmanaged(u64, *PendingEval) = .empty;
+var next_eval_id: u64 = 1;
+
+pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64 {
+    const view = viewOf(widget) orelse return null;
+    if (hostOf(view) == null) return null;
+    const entry = alloc.create(PendingEval) catch return null;
+    entry.* = .{};
+    const id = next_eval_id;
+    pending_evals.put(alloc, id, entry) catch {
+        alloc.destroy(entry);
+        return null;
+    };
+    next_eval_id += 1;
+    if (!startEval(view, .{ .auto = id }, code, world orelse "")) {
+        entry.done = true;
+        entry.ok = false;
+        entry.err = alloc.dupe(u8, "the devtools call could not be sent") catch null;
+    }
+    return id;
+}
+
+pub const EvalState = struct { done: bool, ok: bool, value: ?[]const u8, err: ?[]const u8 };
+
+pub fn evalPoll(id: u64) ?EvalState {
+    const entry = pending_evals.get(id) orelse return null;
+    return .{ .done = entry.done, .ok = entry.ok, .value = entry.value, .err = entry.err };
+}
+
+pub fn evalRelease(id: u64) void {
+    const entry = pending_evals.get(id) orelse return;
+    if (!entry.done) return;
+    _ = pending_evals.remove(id);
+    if (entry.value) |v| alloc.free(v);
+    if (entry.err) |e| alloc.free(e);
+    alloc.destroy(entry);
+}
+
+const page_text_interval_us: i64 = 250_000;
+const PageText = struct { text: ?[]u8 = null, stamp_us: i64 = 0, in_flight: bool = false };
+var page_texts: std.AutoHashMapUnmanaged(u32, PageText) = .empty;
+
+pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
+    const view = viewOf(widget) orelse return null;
+    if (view.node_id == 0) return null;
+    const gop = page_texts.getOrPut(alloc, view.node_id) catch return null;
+    if (!gop.found_existing) gop.value_ptr.* = .{};
+    const entry = gop.value_ptr;
+    const now = glib.getMonotonicTime();
+    if (!entry.in_flight and now - entry.stamp_us >= page_text_interval_us) {
+        if (hostOf(view) != null) {
+            entry.in_flight = true;
+            if (!startEval(view, .{ .page_text = view.node_id }, "document.body ? document.body.innerText : \"\"", "")) {
+                entry.in_flight = false;
+            }
+        }
+    }
+    return entry.text;
 }

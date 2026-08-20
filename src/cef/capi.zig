@@ -18,5 +18,10 @@ pub const c = @cImport({
     @cInclude("include/capi/cef_display_handler_capi.h");
     @cInclude("include/capi/cef_life_span_handler_capi.h");
     @cInclude("include/capi/cef_load_handler_capi.h");
+    @cInclude("include/capi/cef_devtools_message_observer_capi.h");
+    @cInclude("include/capi/cef_registration_capi.h");
+    @cInclude("include/capi/cef_task_capi.h");
+    @cInclude("include/capi/cef_parser_capi.h");
+    @cInclude("include/capi/cef_values_capi.h");
     @cInclude("include/cef_api_hash.h");
 });

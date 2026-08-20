@@ -31,3 +31,19 @@ pub fn connectEvents(_: *gtk.Widget, _: u32, _: types.EmitFn) void {}
 pub fn info(_: *gtk.Widget) ?types.Info {
     return null;
 }
+
+pub const EvalState = struct { done: bool, ok: bool, value: ?[]const u8, err: ?[]const u8 };
+
+pub fn evalStart(_: *gtk.Widget, _: []const u8, _: ?[]const u8) ?u64 {
+    return null;
+}
+
+pub fn evalPoll(_: u64) ?EvalState {
+    return null;
+}
+
+pub fn evalRelease(_: u64) void {}
+
+pub fn pageText(_: *gtk.Widget) ?[]const u8 {
+    return null;
+}

@@ -2920,6 +2920,12 @@ const AutoEvalCtx = struct { id: u64 };
 /// evaluate (no webkitgtk, or the symbol is missing). `world` empty/null means
 /// the page's own world, matching `executeJavaScript`.
 pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64 {
+    if (cef.isReal(widget)) {
+        // The CEF ids share this counter's space so `evalPoll` can route on the
+        // id alone: the chromium engine issues odd ids, this one even.
+        const id = cef.evalStart(widget, code, world) orelse return null;
+        return id * 2 + 1;
+    }
     const eval = ext.evaluate_javascript orelse return null;
     if (!isReal(widget)) return null;
     const v: *anyopaque = @ptrCast(widget);
@@ -2943,7 +2949,8 @@ pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64
     const world_z = dupWorldZ(world);
     defer if (world_z) |w| alloc.free(w);
     eval(v, code_z.ptr, -1, if (world_z) |w| w.ptr else null, null, null, &cbAutoEvalReady, ctx);
-    return id;
+    // Doubled so the id alone says which engine issued it (see evalPoll).
+    return id * 2;
 }
 
 fn cbAutoEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) callconv(.c) void {
@@ -2983,7 +2990,11 @@ fn cbAutoEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque
 pub const EvalState = struct { done: bool, ok: bool, value: ?[]const u8, err: ?[]const u8 };
 
 pub fn evalPoll(id: u64) ?EvalState {
-    const entry = pending_evals.get(id) orelse return null;
+    if (id % 2 == 1) {
+        const state = cef.evalPoll(id / 2) orelse return null;
+        return .{ .done = state.done, .ok = state.ok, .value = state.value, .err = state.err };
+    }
+    const entry = pending_evals.get(id / 2) orelse return null;
     return .{ .done = entry.done, .ok = entry.ok, .value = entry.value, .err = entry.err };
 }
 
@@ -2991,9 +3002,10 @@ pub fn evalPoll(id: u64) ?EvalState {
 /// callback would then write through a freed entry — it is simply orphaned and
 /// reaped by its own callback path on the next `evalRelease` after it settles.
 pub fn evalRelease(id: u64) void {
-    const entry = pending_evals.get(id) orelse return;
+    if (id % 2 == 1) return cef.evalRelease(id / 2);
+    const entry = pending_evals.get(id / 2) orelse return;
     if (!entry.done) return;
-    _ = pending_evals.remove(id);
+    _ = pending_evals.remove(id / 2);
     if (entry.value) |v| alloc.free(v);
     if (entry.err) |e| alloc.free(e);
     alloc.destroy(entry);
@@ -3014,6 +3026,7 @@ const PageTextCtx = struct { node_id: u32 };
 /// Null until the first probe answers, so a predicate simply does not match
 /// yet — the waitFor tick keeps calling.
 pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
+    if (cef.isReal(widget)) return cef.pageText(widget);
     const node_id = widgetNodeId(widget) orelse return null;
     const gop = page_texts.getOrPut(alloc, node_id) catch return null;
     if (!gop.found_existing) gop.value_ptr.* = .{};

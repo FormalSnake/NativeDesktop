@@ -39,6 +39,11 @@ pub const Api = struct {
     /// against a CEF-owned window goes through this one (the same thing
     /// cefclient's GTK sample does).
     get_xdisplay: *const fn () callconv(.c) ?*anyopaque,
+    /// The devtools substrate: ExecuteDevToolsMethod only submits from the CEF
+    /// UI thread, so calls made from GTK are posted there first.
+    currently_on: *const fn (thread_id: c.cef_thread_id_t) callconv(.c) c_int,
+    post_task: *const fn (thread_id: c.cef_thread_id_t, task: [*c]c.cef_task_t) callconv(.c) c_int,
+    parse_json_buffer: *const fn (json: ?*const anyopaque, size: usize, options: c.cef_json_parser_options_t) callconv(.c) [*c]c.cef_value_t,
 };
 
 var api: ?Api = null;
@@ -115,6 +120,9 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .string_utf8_to_utf16 = l.lookup(@FieldType(Api, "string_utf8_to_utf16"), "cef_string_utf8_to_utf16") orelse return null,
         .string_utf16_clear = l.lookup(@FieldType(Api, "string_utf16_clear"), "cef_string_utf16_clear") orelse return null,
         .get_xdisplay = l.lookup(@FieldType(Api, "get_xdisplay"), "cef_get_xdisplay") orelse return null,
+        .currently_on = l.lookup(@FieldType(Api, "currently_on"), "cef_currently_on") orelse return null,
+        .post_task = l.lookup(@FieldType(Api, "post_task"), "cef_post_task") orelse return null,
+        .parse_json_buffer = l.lookup(@FieldType(Api, "parse_json_buffer"), "cef_parse_json_buffer") orelse return null,
     };
 }
 
