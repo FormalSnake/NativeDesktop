@@ -1,4 +1,12 @@
-import { render, sendCommand, useEffect, useRef, useState } from "@nativedesktop/react";
+import {
+  executeJavaScript,
+  render,
+  sendCommand,
+  useEffect,
+  useRef,
+  useState,
+  webviewEngine,
+} from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
 
 // M1 assertion target for the Chromium engine: one <webview engine="chromium">
@@ -49,7 +57,15 @@ function html(body: string): Response {
 
 const BASE = `http://127.0.0.1:${fixture.port}`;
 
-const CHECKS = ["render", "title", "progress", "history", "popup"] as const;
+/// The scheme the launch path declares through ND_CEF_SCHEMES. The extension
+/// origin the browser app uses (nbext://) is declared exactly this way, so this
+/// leg is that contract end to end: the origin is made standard during engine
+/// startup, in every process, and the app registers the handler for it long
+/// afterwards, once views already exist.
+const LATE_SCHEME = "ndlate";
+const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
+
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme"] as const;
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -72,6 +88,8 @@ async function waitFor<T>(kind: string, pred: (v: T) => boolean, what: string, t
 
 function App(): React.ReactNode {
   const view = useRef<NdNodeRef<"webview">>(null);
+  const late = useRef<NdNodeRef<"webview">>(null);
+  const [lateReady, setLateReady] = useState(false);
   const [url, setUrl] = useState(`${BASE}/one`);
   const [phase, setPhase] = useState("starting");
   const [results, setResults] = useState<Record<string, string>>({});
@@ -83,7 +101,7 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void run({ view, setUrl, setResult, setPhase });
+    void run({ view, late, setUrl, setResult, setPhase, setLateReady });
   }, []);
 
   return (
@@ -109,6 +127,25 @@ function App(): React.ReactNode {
           onNewWindow={(e) => record("newWindow", e.text)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
         />
+        {lateReady ? (
+          <webview
+            testID="wv-late"
+            ref={late}
+            engine="chromium"
+            url={`${LATE_SCHEME}://probe/index.html`}
+            style={{ vexpand: true, hexpand: true }}
+            onSchemeRequest={(e) => {
+              const request = e.data as { id: string };
+              if (!late.current) return;
+              sendCommand(late.current, "respondScheme", {
+                id: request.id,
+                base64: Buffer.from(LATE_HTML).toString("base64"),
+                mime: "text/html",
+                status: 200,
+              });
+            }}
+          />
+        ) : null}
       </box>
     </window>
   );
@@ -116,9 +153,11 @@ function App(): React.ReactNode {
 
 async function run(ctx: {
   view: React.RefObject<NdNodeRef<"webview"> | null>;
+  late: React.RefObject<NdNodeRef<"webview"> | null>;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
+  setLateReady: (v: boolean) => void;
 }): Promise<void> {
   const step = async (name: CheckName, body: () => Promise<string>): Promise<void> => {
     ctx.setPhase(name);
@@ -162,7 +201,57 @@ async function run(ctx: {
     return `ok (${opened})`;
   });
 
+  await step("lateScheme", async () => {
+    if ((process.env.ND_CEF_SCHEMES ?? "").split(",").indexOf(LATE_SCHEME) < 0) {
+      return `skip: ND_CEF_SCHEMES does not declare ${LATE_SCHEME}`;
+    }
+    // Registered only now, with a browser already running: the origin came
+    // from the launch environment, and this call is only asking for the
+    // handler that serves it.
+    await webviewEngine.registerScheme(LATE_SCHEME);
+    ctx.setLateReady(true);
+    for (let i = 0; i < 200; i += 1) {
+      if (ctx.late.current) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (!ctx.late.current) throw new Error("the late-scheme view never mounted");
+    const marker = await poll(
+      () =>
+        executeJavaScript(
+          ctx.late.current!,
+          "document.getElementById('marker') ? document.getElementById('marker').textContent : ''",
+        ),
+      (t) => t === "late-scheme-ok",
+      `${LATE_SCHEME}:// page render`,
+      20000,
+    );
+    return `ok (${marker})`;
+  });
+
   ctx.setPhase("done");
+}
+
+async function poll<T>(
+  fn: () => Promise<T>,
+  pred: (v: T) => boolean,
+  what: string,
+  timeoutMs: number,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown = "(never ran)";
+  for (;;) {
+    try {
+      const value = await fn();
+      last = value;
+      if (pred(value)) return value;
+    } catch (error) {
+      last = String(error);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`${what} never held within ${timeoutMs}ms (last: ${JSON.stringify(last)})`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 await render(<App />);

@@ -34,6 +34,11 @@ export GDK_BACKEND=x11
 export GSK_RENDERER=cairo
 export NATIVE_AUTOMATION=1
 export ND_WEBVIEW_ENGINE=chromium
+# The launch-declared origin half of the scheme contract, the same variable and
+# the same semantics the AppKit engine reads. The probe registers the handler
+# for it only after a browser is already running, which is the ordering an app
+# that declares an extension origin actually uses.
+export ND_CEF_SCHEMES="${ND_CEF_SCHEMES:-ndlate}"
 export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessCef}"
 XDG_DATA_HOME="$(mktemp -d)"
 export XDG_DATA_HOME
