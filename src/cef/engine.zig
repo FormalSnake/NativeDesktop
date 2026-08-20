@@ -355,9 +355,9 @@ pub fn isReal(widget: *gtk.Widget) bool {
 /// handler starts at one reference, owned here, so releasing it is what frees
 /// it; no CEF object has seen any of them yet.
 fn abandon(view: *View, client: ?*ClientObj, display_handler: ?*DisplayObj, load_handler: ?*LoadObj) ?*gtk.Widget {
-    if (load_handler) |h| ref.releaseParam(h.cptr());
-    if (display_handler) |h| ref.releaseParam(h.cptr());
-    if (client) |h| ref.releaseParam(h.cptr());
+    if (load_handler) |h| h.drop();
+    if (display_handler) |h| h.drop();
+    if (client) |h| h.drop();
     alloc.destroy(view);
     return null;
 }

@@ -64,6 +64,12 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
             return &self.cef;
         }
 
+        /// Drops the reference `create` handed back. Used to unwind a
+        /// half-built object; CEF has not seen it, so this is also the free.
+        pub fn drop(self: *Self) void {
+            _ = release(@ptrCast(&self.cef.base));
+        }
+
         pub fn of(cef: anytype) *Self {
             const typed: *CStruct = @ptrCast(@alignCast(cef));
             return @fieldParentPtr("cef", typed);
