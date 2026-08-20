@@ -1435,6 +1435,10 @@ const EvalCall = struct {
     sink: EvalSink,
     code: []u8,
     world: []u8,
+    /// The context this call actually named, so a retry can tell "the world has
+    /// already moved on" (re-issue against the new one) from "the id we still
+    /// hold is the dead one" (forget it and wait).
+    context_id: i64 = 0,
     retried: bool = false,
 
     fn deinit(self: *const EvalCall) void {
@@ -1715,6 +1719,7 @@ fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8, r
         .sink = sink,
         .code = code_copy,
         .world = world_copy,
+        .context_id = context_id,
         .retried = retried,
     } });
 }
@@ -1898,8 +1903,15 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
         if (call == .eval and !call.eval.retried and isMissingContext(message)) {
             const e = call.eval;
             defer e.deinit();
-            forgetWorldContext(view, e.world);
-            tr("evalRetry node={d} world={s}", .{ view.node_id, e.world });
+            // Only when the world still holds the id that just died. The new
+            // context often lands BEFORE the failure does, and clearing then
+            // would throw away the very context the retry needs.
+            if (e.context_id != 0 and worldContextId(view, e.world) == e.context_id) {
+                forgetWorldContext(view, e.world);
+            }
+            tr("evalRetry node={d} world={s} dead={d} now={d}", .{
+                view.node_id, e.world, e.context_id, worldContextId(view, e.world),
+            });
             if (!startEvalRetry(view, e.sink, e.code, e.world, true)) {
                 finishEval(view, e.sink, false, message);
             }
