@@ -648,6 +648,25 @@ fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) ca
     maybeCreateBrowser(view);
 }
 
+/// Where a hidden view's window lives. It has to be MAPPED, because Chromium
+/// does not run a page whose window is not: an extension's background page
+/// sat at "did not finish starting" for exactly that reason. X clips a child
+/// to its parent, so a window parked this far outside the parent's bounds is
+/// mapped, running, and completely invisible.
+const park_origin: c_int = -8192;
+const park_w: c_uint = 1024;
+const park_h: c_uint = 768;
+
+/// Puts the view's window where a hidden view's window belongs, and keeps it
+/// mapped. Sized like a real viewport rather than 1x1 so the page lays out the
+/// way it will when the view is shown.
+fn parkContainer(view: *View) void {
+    if (view.container == 0) return;
+    x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
+    x11.show(view.container);
+    resizeCefWindow(view, park_w, park_h);
+}
+
 /// A mapped view waits for its first real allocation: GTK4 maps before it has
 /// necessarily allocated, and a browser created into a 1x1 window comes up with
 /// a 1x1 compositor surface the software presenter then fails to read back.
@@ -710,7 +729,10 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     disconnectLayout(view);
-    x11.hide(view.container);
+    // Parked, not hidden: a background tab whose window is unmapped stops
+    // running, and a tab the user comes back to has to still be the page they
+    // left. `onMap` puts it back where it belongs.
+    parkContainer(view);
 }
 
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -749,19 +771,26 @@ fn createBrowser(view: *View) void {
         return;
     }
     syncBounds(view);
-    const container = x11.createChild(parent, view.bounds.x, view.bounds.y, view.bounds.w, view.bounds.h);
+    const hidden = gtk.Widget.getMapped(view.widget) == 0;
+    const start_x: c_int = if (hidden) park_origin else view.bounds.x;
+    const start_y: c_int = if (hidden) park_origin else view.bounds.y;
+    const start_w: c_uint = if (hidden) park_w else view.bounds.w;
+    const start_h: c_uint = if (hidden) park_h else view.bounds.h;
+    const container = x11.createChild(parent, start_x, start_y, start_w, start_h);
     if (container == 0) {
         std.debug.print("ND_WARN WebView engine=chromium: could not create the embedding window; browser not created\n", .{});
         return;
     }
     view.container = container;
-    // Only a mapped view's window is mapped. A hidden view gets a real browser
-    // in an unmapped container, which is what lets it load without ever being
-    // shown, and `onMap` maps it if the app shows it later.
-    if (gtk.Widget.getMapped(view.widget) != 0) x11.show(container);
+    const mapped = gtk.Widget.getMapped(view.widget) != 0;
+    if (mapped) {
+        x11.show(container);
+    } else {
+        x11.moveResize(container, park_origin, park_origin, park_w, park_h);
+        x11.show(container);
+    }
     tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d} mapped={}", .{
-        view.node_id, parent, container, view.bounds.w, view.bounds.h, view.bounds.x, view.bounds.y,
-        gtk.Widget.getMapped(view.widget) != 0,
+        view.node_id, parent, container, view.bounds.w, view.bounds.h, view.bounds.x, view.bounds.y, mapped,
     });
 
     var window_info = std.mem.zeroes(c.cef_window_info_t);
@@ -770,8 +799,8 @@ fn createBrowser(view: *View) void {
     window_info.bounds = .{
         .x = 0,
         .y = 0,
-        .width = @intCast(@max(view.bounds.w, 1)),
-        .height = @intCast(@max(view.bounds.h, 1)),
+        .width = @intCast(@max(start_w, 1)),
+        .height = @intCast(@max(start_h, 1)),
     };
     // Explicit rather than inferred: Chrome style would bring Chrome's own
     // window and toolbar with it, which is the thing this engine must not do.
@@ -814,6 +843,9 @@ fn createBrowser(view: *View) void {
 /// Re-reads the widget's allocation and moves the embedding window to match.
 /// Cheap enough to run per layout pass: the early-out is one compute_bounds.
 fn syncBounds(view: *View) void {
+    // A parked view has no meaningful allocation to track, and moving its
+    // window to one would put it back on screen.
+    if (gtk.Widget.getMapped(view.widget) == 0) return;
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const native_widget: *gtk.Widget = @ptrCast(@alignCast(native));
     var rect: graphene.Rect = undefined;
