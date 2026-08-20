@@ -23,6 +23,7 @@ const FnWindowOnly = *const fn (*Display, Window) callconv(.c) c_int;
 const FnMoveResize = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint) callconv(.c) c_int;
 const FnResize = *const fn (*Display, Window, c_uint, c_uint) callconv(.c) c_int;
 const FnFlush = *const fn (*Display) callconv(.c) c_int;
+const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 
@@ -35,6 +36,7 @@ const Api = struct {
     move_resize_window: FnMoveResize,
     resize_window: FnResize,
     flush: FnFlush,
+    sync: FnSync,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
 };
@@ -69,6 +71,7 @@ fn loadApi() ?*const Api {
         .move_resize_window = x.lookup(FnMoveResize, "XMoveResizeWindow") orelse return missing(&x, &g, "XMoveResizeWindow"),
         .resize_window = x.lookup(FnResize, "XResizeWindow") orelse return missing(&x, &g, "XResizeWindow"),
         .flush = x.lookup(FnFlush, "XFlush") orelse return missing(&x, &g, "XFlush"),
+        .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
     };
@@ -121,12 +124,18 @@ pub fn toplevelXid(widget: *gtk.Widget) Window {
 
 /// The container CEF is parented into. Created unmapped so nothing flashes
 /// before the browser exists; `show` maps it.
+///
+/// XSync, not XFlush: the next thing that happens is CEF, on its own X
+/// connection and its own thread, creating a window whose parent is this XID.
+/// A flush only queues the request, so that XCreateWindow can reach the server
+/// first and fail with BadWindow, and what the caller sees afterwards is a
+/// browser that never paints.
 pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Window {
     const a = loadApi() orelse return 0;
     const dpy = display() orelse return 0;
     if (parent == 0) return 0;
     const child = a.create_simple_window(dpy, parent, x, y, @max(w, 1), @max(h, 1), 0, 0, 0);
-    if (child != 0) _ = a.flush(dpy);
+    if (child != 0) _ = a.sync(dpy, 0);
     return child;
 }
 
@@ -149,12 +158,14 @@ pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
     _ = a.flush(dpy);
 }
 
+/// Mapping is synced for the same reason creation is: CEF only paints into a
+/// viewable window, and it reads that state from its own connection.
 pub fn show(window: Window) void {
     if (window == 0) return;
     const a = loadApi() orelse return;
     const dpy = display() orelse return;
     _ = a.map_window(dpy, window);
-    _ = a.flush(dpy);
+    _ = a.sync(dpy, 0);
 }
 
 pub fn hide(window: Window) void {
