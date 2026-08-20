@@ -372,6 +372,7 @@ extension NDCefWebView {
     /// thread.
     func ndAppendContextMenuItems(_ modelToken: UInt) {
         contextMenuCommands.removeAll()
+        defer { ndTraceContextMenu() }
         guard !contextMenuItems.isEmpty,
               let raw = UnsafeMutableRawPointer(bitPattern: modelToken) else { return }
         let model = raw.assumingMemoryBound(to: cef_menu_model_t.self)
@@ -422,6 +423,15 @@ extension NDCefWebView {
             }
             appended += 1
         }
+    }
+
+    /// What the engine menu actually received, for the drive that cannot read
+    /// an open NSMenu. Peer of the GTK host's `setContextMenuItems` trace.
+    private func ndTraceContextMenu() {
+        guard ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" else { return }
+        FileHandle.standardError.write(
+            "ND_WV cefContextMenu node=\(host?.ndNodeID ?? 0) items=\(contextMenuCommands.count) sync=\(Thread.isMainThread ? 1 : 0)\n"
+                .data(using: .utf8)!)
     }
 
     private func nextContextMenuCommandID() -> Int32 {

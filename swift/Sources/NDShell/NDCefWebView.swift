@@ -855,18 +855,28 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(callback)
             return 0
         }
+        // The model is only valid while this call is on the stack: CEF shows
+        // the menu the moment it returns, so population has to finish here.
+        // ndCefDeliver satisfies that by running its closure INLINE on the CEF
+        // UI thread (the main thread under this host's message loop); it never
+        // queues. `populated` is the enforcement rather than a comment: if
+        // delivery ever stops being synchronous, this says so instead of
+        // silently opening a menu without the app's items.
         contextMenu.pointee.on_before_context_menu = { selfPointer, browser, frame, params, model in
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
             nd_cef_ref_release(params)
             guard let model else { return }
-            nd_cef_ref_add(model)
+            defer { nd_cef_ref_release(model) }
             let token = UInt(bitPattern: model)
+            var populated = false
             ndCefDeliver(selfPointer) { view in
                 view?.ndAppendContextMenuItems(token)
-                nd_cef_ref_release(UnsafeMutableRawPointer(bitPattern: token))
+                populated = true
             }
-            nd_cef_ref_release(model)
+            if !populated {
+                ndCefWarn("on_before_context_menu did not populate synchronously; the app's items were dropped")
+            }
         }
         contextMenu.pointee.on_context_menu_command = { selfPointer, browser, frame, params, commandID, _ in
             nd_cef_ref_release(browser)
