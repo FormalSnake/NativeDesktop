@@ -660,6 +660,13 @@ fn createBrowser(view: *View) void {
     defer clearStr(&url);
     const start: []const u8 = if (view.pending_url) |p| p else "about:blank";
     _ = setStr(&url, start);
+    // The creation URL is a browser-initiated navigation; re-issuing it through
+    // CefFrame::LoadURL afterwards is renderer-initiated, and Chromium refuses
+    // that for a custom scheme, silently leaving the view on about:blank.
+    if (view.pending_url) |p| {
+        alloc.free(p);
+        view.pending_url = null;
+    }
 
     view.created = true;
     // Both the client and the request context are consumed by CEF (CToCpp::Wrap
