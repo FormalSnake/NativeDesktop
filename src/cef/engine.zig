@@ -985,6 +985,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
 
     if (box.settle) {
+        // Belt and braces with the agent-attached event: CEF attaches the
+        // protocol agent when the first observer is registered, but whether
+        // that transition is reported to the observer is version-dependent,
+        // and Page.enable is idempotent.
+        enableDomains(view);
         syncBounds(view);
         resizeCefWindow(view, view.bounds.w, view.bounds.h);
         if (view.pending_url) |p| {
