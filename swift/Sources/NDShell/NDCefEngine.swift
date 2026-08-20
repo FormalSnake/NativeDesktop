@@ -26,6 +26,20 @@ enum NDCefRuntime {
         ProcessInfo.processInfo.environment["ND_WEBVIEW_ENGINE"] == "chromium"
     }
 
+    /// Whether one view gets the Chromium surface, given its create-only
+    /// `engine` prop.
+    ///
+    /// Selection has two layers. The process-level one is the env handshake
+    /// (`nd dev` resolves `webview.engine.mac` and re-exports it), and it has
+    /// to be the default for every view because CEF is initialized before any
+    /// view exists. The prop is the per-view layer and can name chromium on
+    /// top of that. It cannot name a view back OUT of a chromium process:
+    /// React omits props sitting at their default, so "system" and "unset"
+    /// arrive identically by the time the generated create arm has run.
+    static func wants(_ prop: String) -> Bool {
+        isActive && (prop == "chromium" || isRequested)
+    }
+
     /// Resolves the distribution and loads it. Must run before anything
     /// touches `NSApplication.shared`, because a CEF process needs the
     /// CefAppProtocol subclass to be the one that gets created.
@@ -96,7 +110,7 @@ enum NDCefRuntime {
         }
 
         var args = cef_main_args_t(argc: CommandLine.argc, argv: CommandLine.unsafeArgv)
-        guard nd_cef_initialize(&args, &settings, nil, nil) != 0 else {
+        guard nd_cef_initialize(&args, &settings, application, nil) != 0 else {
             ndCefWarn("cef_initialize failed; using the system engine")
             isActive = false
             return false
@@ -104,6 +118,28 @@ enum NDCefRuntime {
         FileHandle.standardError.write("ND_WEBVIEW_ENGINE chromium (\(paths.frameworkDirectory))\n".data(using: .utf8)!)
         return true
     }
+
+    /// The process-level `cef_app_t`, alive for as long as CEF is. Its one job
+    /// is the command line: Chromium's popup blocker swallows a `window.open`
+    /// that had no user gesture BEFORE `on_before_popup` runs, which would
+    /// silently drop the `newWindow` event the WKWebView surface fires for the
+    /// same page. Nothing here may open a window, so the blocker only costs us
+    /// the event.
+    nonisolated(unsafe) private static let application: UnsafeMutablePointer<cef_app_t>? = {
+        guard let raw = nd_cef_ref_alloc(MemoryLayout<cef_app_t>.size, nil, nil) else { return nil }
+        let app = raw.assumingMemoryBound(to: cef_app_t.self)
+        app.pointee.on_before_command_line_processing = { _, processType, commandLine in
+            defer { nd_cef_ref_release(commandLine) }
+            // Browser process only: the renderer's own command line is
+            // Chromium's to build.
+            guard ndCefString(processType).isEmpty, let commandLine else { return }
+            var name = cef_string_t()
+            ndCefSetString("disable-popup-blocking", &name)
+            defer { nd_cef_string_clear(&name) }
+            commandLine.pointee.append_switch?(commandLine, &name)
+        }
+        return app
+    }()
 
     /// Replaces `NSApplication.run()`. CEF's mac pump drives `[NSApp run]`
     /// itself, so the app delegate, the menu bar and terminate all behave as

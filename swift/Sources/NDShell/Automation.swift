@@ -1134,10 +1134,11 @@ private let ndPageTextInterval: TimeInterval = 0.25
                                             _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
                                             _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     guard let web = view as? NDWebView else { return invalidValue(errOut, nodeID) }
-    let url = web.url.map { "\"\(escapeJSONString($0.absoluteString))\"" } ?? "null"
-    let title = (web.title?.isEmpty == false) ? "\"\(escapeJSONString(web.title!))\"" : "null"
+    let state = web.ndPageState
+    let url = state.url.map { "\"\(escapeJSONString($0))\"" } ?? "null"
+    let title = (state.title?.isEmpty == false) ? "\"\(escapeJSONString(state.title!))\"" : "null"
     setResultRaw(resultOut, "{\"ref\":\(nodeID),\"url\":\(url),\"title\":\(title),"
-        + "\"loading\":\(web.isLoading),\"canGoBack\":\(web.canGoBack),\"canGoForward\":\(web.canGoForward)}")
+        + "\"loading\":\(state.loading),\"canGoBack\":\(state.canGoBack),\"canGoForward\":\(state.canGoForward)}")
     return 0
 }
 

@@ -63,8 +63,8 @@ final class NDWebView: WKWebView {
     private var committedURL = ""
 
     /// Create-only `engine` prop, "system" or "chromium". CEF is dlopened at
-    /// runtime and never linked into this shell, so until that path exists
-    /// every view is the WKWebView below whatever the app asked for.
+    /// runtime and never linked into this shell; `NDCefRuntime.wants` turns
+    /// this and the process-level handshake into the one answer below.
     let engine: String
 
     /// `contextMenuMode`: "native" keeps WebKit's own menu and merges the app's
@@ -110,13 +110,13 @@ final class NDWebView: WKWebView {
         navigationDelegate = self
         uiDelegate = self
         #if canImport(CCef)
-        if NDCefRuntime.isActive {
-            let engine = NDCefWebView(url: url ?? "")
-            engine.host = self
-            engine.frame = bounds
-            engine.autoresizingMask = [.width, .height]
-            addSubview(engine)
-            cefEngine = engine
+        if NDCefRuntime.wants(engine) {
+            let chromium = NDCefWebView(url: url ?? "")
+            chromium.host = self
+            chromium.frame = bounds
+            chromium.autoresizingMask = [.width, .height]
+            addSubview(chromium)
+            cefEngine = chromium
             return
         }
         #endif
@@ -148,6 +148,22 @@ final class NDWebView: WKWebView {
         #endif
         guard !u.isEmpty, u != url?.absoluteString, u != committedURL, let real = URL(string: u) else { return }
         load(URLRequest(url: real))
+    }
+
+    /// Live page state for the automation `webviewInfo` RPC, answered by
+    /// whichever engine is rendering. The WKWebView under a chromium view is
+    /// never loaded, so its own properties would all read empty.
+    var ndPageState: NDWebViewPageState {
+        #if canImport(CCef)
+        if let cefEngine { return cefEngine.ndPageState }
+        #endif
+        return NDWebViewPageState(
+            url: url?.absoluteString,
+            title: title,
+            loading: isLoading,
+            canGoBack: canGoBack,
+            canGoForward: canGoForward
+        )
     }
 
     // MARK: - Command dispatch
@@ -913,6 +929,15 @@ final class NDWebView: WKWebView {
         cookieObserver = observer
         cookieStore.add(observer)
     }
+}
+
+/// The six navigation values `webviewInfo` reports, from either engine.
+struct NDWebViewPageState {
+    let url: String?
+    let title: String?
+    let loading: Bool
+    let canGoBack: Bool
+    let canGoForward: Bool
 }
 
 /// The identity of a script-message channel. WebKitGTK keys one by name alone,

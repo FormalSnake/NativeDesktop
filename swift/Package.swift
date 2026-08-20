@@ -14,6 +14,9 @@ let cefVersion = "151.3.23-macosarm64"
 
 func resolveCefRoot() -> String? {
     let environment = ProcessInfo.processInfo.environment
+    // The system-only build, for proving an engine=system host carries nothing
+    // from CEF even on a machine whose dev cache is full.
+    if environment["ND_CEF_DISABLE"] == "1" { return nil }
     var candidates: [String] = []
     if let root = environment["ND_CEF_ROOT"], !root.isEmpty { candidates.append(root) }
     candidates.append("\(NSHomeDirectory())/.cache/nativedesktop/cef/\(cefVersion)")

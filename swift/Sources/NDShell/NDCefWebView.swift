@@ -35,7 +35,9 @@ final class NDCefWebView: NSView {
     private var pendingURL: String
 
     // Last-emitted navigation state; events fire only on change, matching the
-    // WKWebView surface.
+    // WKWebView surface. It doubles as the answer to the automation
+    // `webviewInfo` RPC, which has no engine-side property to read here.
+    private var lastTitle = ""
     private var lastLoading = false
     private var lastCanGoBack = false
     private var lastCanGoForward = false
@@ -217,6 +219,22 @@ final class NDCefWebView: NSView {
         emitText("navigate", value)
     }
 
+    fileprivate func emitTitle(_ value: String) {
+        lastTitle = value
+        emitText("titleChanged", value)
+    }
+
+    /// What the automation `webviewInfo` RPC reports for a chromium view.
+    var ndPageState: NDWebViewPageState {
+        NDWebViewPageState(
+            url: pendingURL.isEmpty ? nil : pendingURL,
+            title: lastTitle.isEmpty ? nil : lastTitle,
+            loading: lastLoading,
+            canGoBack: lastCanGoBack,
+            canGoForward: lastCanGoForward
+        )
+    }
+
     fileprivate func emitProgress(_ value: Double) {
         let rounded = (value * 1000).rounded() / 1000
         guard rounded != lastProgress else { return }
@@ -315,7 +333,7 @@ final class NDCefHandlerBox {
         display.pointee.on_title_change = { selfPointer, browser, title in
             let value = ndCefString(title)
             nd_cef_ref_release(browser)
-            ndCefDeliver(selfPointer) { $0?.emitText("titleChanged", value) }
+            ndCefDeliver(selfPointer) { $0?.emitTitle(value) }
         }
         display.pointee.on_loading_progress_change = { selfPointer, browser, progress in
             nd_cef_ref_release(browser)

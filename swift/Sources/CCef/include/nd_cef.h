@@ -21,6 +21,7 @@
 
 #include "include/capi/cef_app_capi.h"
 #include "include/capi/cef_browser_capi.h"
+#include "include/capi/cef_command_line_capi.h"
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
