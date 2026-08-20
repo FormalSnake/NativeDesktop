@@ -12,9 +12,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-: "${ND_CEF_ROOT:=$HOME/.cache/nativedesktop/cef/151.3.23-linux64}"
-export ND_CEF_ROOT
-[ -f "$ND_CEF_ROOT/Release/libcef.so" ] || { echo "SKIP: no CEF distribution at $ND_CEF_ROOT"; exit 0; }
+: "${ND_CEF_DIST:=$HOME/.cache/nativedesktop/cef/151.3.23-linux64}"
+[ -f "$ND_CEF_DIST/Release/libcef.so" ] || { echo "SKIP: no CEF distribution at $ND_CEF_DIST"; exit 0; }
+# Chromium resolves icudtl.dat and the .pak files against libcef.so's own
+# directory, and it does so inside cef_initialize before `resources_dir_path`
+# is applied, so an unpacked distribution's Release/Resources split aborts the
+# process. `nd package` stages them together; for the dev cache, do the same
+# here with symlinks. Idempotent.
+ln -sfn "$ND_CEF_DIST"/Resources/* "$ND_CEF_DIST/Release/"
+export ND_CEF_ROOT="$ND_CEF_DIST/Release"
 
 # libcef.so is a generic-Linux binary; the flake devshell exports the closure
 # of the 26 sonames it needs (see flake.nix cefRuntimeLibs).
@@ -45,7 +51,18 @@ for _ in $(seq 1 100); do
 done
 xwininfo -root >/dev/null 2>&1 || { echo "FAIL: Xvfb never came up on $DISPLAY"; exit 1; }
 
-toplevels() { xwininfo -root -children | sed -n 's/^ *\(0x[0-9a-f]*\).*/\1/p' | sort; }
+# The census counts windows a user could see: mapped, and at least 200x200.
+# Chromium keeps a handful of 1x1 and 10x10 utility windows on the root
+# (clipboard owner, drag proxy) that are never presented, and counting those
+# would make the invariant unfalsifiable rather than strict.
+toplevels() {
+  xwininfo -root -children |
+    sed -n 's/^ *\(0x[0-9a-f]*\).*[^0-9]\([0-9]\+\)x\([0-9]\+\)+.*/\1 \2 \3/p' |
+    while read -r id w h; do
+      [ "$w" -ge 200 ] && [ "$h" -ge 200 ] || continue
+      xwininfo -id "$id" | grep -q "Map State: IsViewable" && echo "$id"
+    done
+}
 BEFORE_X11="$(toplevels | wc -l)"
 
 LOG=$(mktemp)

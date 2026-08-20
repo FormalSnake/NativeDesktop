@@ -31,11 +31,11 @@
           # what is on it) and are exported as ND_CEF_LD_LIBRARY_PATH for the
           # CEF gate to prepend when it launches the host.
           cefRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
-            nss nspr cups dbus expat alsa-lib libdrm mesa systemd
+            nss nspr cups dbus expat alsa-lib libdrm libgbm systemd
             at-spi2-core at-spi2-atk atk libxkbcommon libGL
-            xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
-            xorg.libXfixes xorg.libXrandr xorg.libxcb xorg.libXrender
-            xorg.libXi xorg.libXtst xorg.libXcursor
+            glib cairo pango
+            libx11 libxcomposite libxdamage libxext libxfixes libxrandr
+            libxcb libxrender libxi libxtst libxcursor
           ]);
           fontsConf = pkgs.writeText "nd-headless-fonts.conf" ''
             <?xml version="1.0"?>
@@ -103,8 +103,8 @@
               gst_all_1.gst-plugins-base # audio: playbin
               gst_all_1.gst-plugins-good # audio: spectrum element
               gtksourceview5   # <codeeditor>: dlopen'd libgtksourceview-5.so.0 (src/gtk/codeeditor.zig)
-              xorg.xorgserver  # Xvfb: the CEF gate needs a real X11 root window (windowed embedding is X11-only, and an XWayland root paints nothing to screenshot)
-              xorg.xwininfo    # the no-stray-window census: `xwininfo -root -children` before and after a popup
+              xorg-server      # Xvfb: the CEF gate needs a real X11 root window (windowed embedding is X11-only, and an XWayland root paints nothing to screenshot)
+              xwininfo         # the no-stray-window census: `xwininfo -root -children` before and after a popup
               imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
             ] ++ cefRuntimeLibs;
             # build.zig's test roots import the gobject binding modules

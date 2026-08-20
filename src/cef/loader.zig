@@ -33,6 +33,12 @@ pub const Api = struct {
     ) callconv(.c) c_int,
     string_utf8_to_utf16: *const fn (src: [*c]const u8, src_len: usize, output: [*c]c.cef_string_utf16_t) callconv(.c) c_int,
     string_utf16_clear: *const fn (str: [*c]c.cef_string_utf16_t) callconv(.c) void,
+    /// CEF's own X11 connection. Windows CEF creates are only guaranteed to
+    /// exist from the connection that made them until a round trip, and an
+    /// error on GDK's connection aborts the host outright, so every request
+    /// against a CEF-owned window goes through this one (the same thing
+    /// cefclient's GTK sample does).
+    get_xdisplay: *const fn () callconv(.c) ?*anyopaque,
 };
 
 var api: ?Api = null;
@@ -41,12 +47,14 @@ var attempted = false;
 /// cannot be unloaded once initialized.
 var lib: std.DynLib = undefined;
 
-/// Directory of the dist that was loaded, for cef_settings' resource paths.
-var dist_root_buf: [std.fs.max_path_bytes]u8 = undefined;
-var dist_root_len: usize = 0;
+/// Directory holding the libcef.so that was loaded. Chromium resolves
+/// icudtl.dat and the .pak files against its own module directory, so this is
+/// also where the resource payload has to live (see `resourcesDir`).
+var lib_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+var lib_dir_len: usize = 0;
 
-pub fn distRoot() []const u8 {
-    return dist_root_buf[0..dist_root_len];
+pub fn libDir() []const u8 {
+    return lib_dir_buf[0..lib_dir_len];
 }
 
 /// Resolves and loads libcef.so, verifying the API pin before anything else is
@@ -81,8 +89,10 @@ pub fn load() ?*const Api {
         }
         lib = candidate;
         api = resolved;
-        dist_root_len = @min(root.len, dist_root_buf.len);
-        @memcpy(dist_root_buf[0..dist_root_len], root[0..dist_root_len]);
+        const dir = std.fs.path.dirname(so) orelse root;
+        lib_dir_len = @min(dir.len, lib_dir_buf.len);
+        @memcpy(lib_dir_buf[0..lib_dir_len], dir[0..lib_dir_len]);
+        warnSplitLayout(root);
         std.debug.print("ND_WEBVIEW_ENGINE chromium ({s})\n", .{so});
         return &api.?;
     }
@@ -104,6 +114,7 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .create_browser = l.lookup(@FieldType(Api, "create_browser"), "cef_browser_host_create_browser") orelse return null,
         .string_utf8_to_utf16 = l.lookup(@FieldType(Api, "string_utf8_to_utf16"), "cef_string_utf8_to_utf16") orelse return null,
         .string_utf16_clear = l.lookup(@FieldType(Api, "string_utf16_clear"), "cef_string_utf16_clear") orelse return null,
+        .get_xdisplay = l.lookup(@FieldType(Api, "get_xdisplay"), "cef_get_xdisplay") orelse return null,
     };
 }
 
@@ -175,15 +186,23 @@ fn findLibrary(root: []const u8) ?[:0]u8 {
     return null;
 }
 
-/// `resources_dir_path` / `locales_dir_path` for cef_settings. Both layouts put
-/// Resources at the root; the caller has already proved the root exists.
+/// `resources_dir_path` for cef_settings: the directory holding icudtl.dat and
+/// the .pak files, which in a working layout is the libcef.so directory itself.
+///
+/// The unpacked distribution splits them (`Release/` and `Resources/`), and
+/// that split cannot be repaired with this setting: Chromium loads ICU inside
+/// cef_initialize BEFORE CEF applies `--resources-dir-path` to DIR_ASSETS, so
+/// it opens `<libcef.so dir>/icudtl.dat`, finds nothing and CHECK-fails. The
+/// resource payload has to be staged next to the library, which is what
+/// `nd package` produces and what `warnSplitLayout` says out loud when it is
+/// not the case.
 pub fn resourcesDir() ?[:0]u8 {
-    const root = distRoot();
-    if (root.len == 0) return null;
-    const path = std.fmt.allocPrintSentinel(alloc, "{s}/Resources", .{root}, 0) catch return null;
-    if (exists(path)) return path;
-    alloc.free(path);
-    return null;
+    const dir = libDir();
+    if (dir.len == 0) return null;
+    const icu = std.fmt.allocPrintSentinel(alloc, "{s}/icudtl.dat", .{dir}, 0) catch return null;
+    defer alloc.free(icu);
+    if (!exists(icu)) return null;
+    return alloc.dupeZ(u8, dir) catch null;
 }
 
 pub fn localesDir() ?[:0]u8 {
@@ -193,4 +212,15 @@ pub fn localesDir() ?[:0]u8 {
     if (exists(path)) return path;
     alloc.free(path);
     return null;
+}
+
+/// An unpacked distribution used as-is, with its resource payload one
+/// directory over from its library. cef_initialize aborts the process on this,
+/// so it is worth saying before the abort rather than after.
+fn warnSplitLayout(root: []const u8) void {
+    const dir = libDir();
+    const icu = std.fmt.allocPrintSentinel(alloc, "{s}/icudtl.dat", .{dir}, 0) catch return;
+    defer alloc.free(icu);
+    if (exists(icu)) return;
+    std.debug.print("ND_WARN CEF: {s} has no icudtl.dat next to libcef.so; stage the dist's Resources/ into {s} (an unpacked {s} keeps them apart, and cef_initialize aborts on it)\n", .{ dir, dir, root });
 }

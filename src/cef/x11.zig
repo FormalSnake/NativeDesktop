@@ -140,10 +140,11 @@ pub fn moveResize(window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void
 
 /// CEF's own window is a child of the container and does not follow it: the
 /// Linux platform delegate sizes it once at creation from window_info.bounds.
-pub fn resize(window: Window, w: c_uint, h: c_uint) void {
+/// `dpy` is CEF's connection, not GDK's: the window belongs to CEF, and a
+/// BadWindow raised on GDK's connection takes the whole host down.
+pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
     if (window == 0) return;
     const a = loadApi() orelse return;
-    const dpy = display() orelse return;
     _ = a.resize_window(dpy, window, @max(w, 1), @max(h, 1));
     _ = a.flush(dpy);
 }

@@ -135,13 +135,24 @@ fn onBeforeCommandLine(
 ) callconv(.c) void {
     defer ref.releaseParam(command_line);
     if (command_line == null) return;
-    const append = command_line.*.append_switch_with_value orelse return;
-    // Ozone would otherwise pick Wayland under a Wayland session and ignore
-    // parent_window entirely; the GDK backend is pinned to x11 to match.
-    appendSwitch(command_line, append, "ozone-platform", "x11");
-    // Chromium dlopens the already-loaded GTK with RTLD_NOLOAD, so it has to
-    // be told which major version the host brought in.
-    appendSwitch(command_line, append, "gtk-version", "4");
+    if (command_line.*.append_switch_with_value) |append| {
+        // Ozone would otherwise pick Wayland under a Wayland session and
+        // ignore parent_window entirely; the GDK backend is pinned to x11 to
+        // match.
+        appendSwitch(command_line, append, "ozone-platform", "x11");
+        // Chromium dlopens the already-loaded GTK with RTLD_NOLOAD, so it has
+        // to be told which major version the host brought in.
+        appendSwitch(command_line, append, "gtk-version", "4");
+    }
+    if (command_line.*.append_switch) |append| {
+        // Alloy style is a browser-level choice; the process still boots
+        // Chrome's runtime, which on a fresh cache path puts up a modal
+        // "Additional Terms of Service" window and blocks cef_initialize
+        // behind it. That window is a CEF-created top-level, which this
+        // engine may not have at all.
+        appendFlag(command_line, append, "no-first-run");
+        appendFlag(command_line, append, "no-default-browser-check");
+    }
 }
 
 fn appendSwitch(
@@ -156,6 +167,17 @@ fn appendSwitch(
     defer clearStr(&v);
     if (!setStr(&n, name) or !setStr(&v, value)) return;
     append(cl, &n, &v);
+}
+
+fn appendFlag(
+    cl: [*c]c.cef_command_line_t,
+    append: *const fn ([*c]c.cef_command_line_t, [*c]const c.cef_string_t) callconv(.c) void,
+    name: []const u8,
+) void {
+    var n = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&n);
+    if (!setStr(&n, name)) return;
+    append(cl, &n);
 }
 
 // ============================================================================
@@ -526,9 +548,17 @@ fn syncBounds(view: *View) void {
     view.bounds = next;
     if (view.container == 0) return;
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
-    // CEF's Linux platform delegate sizes its window once, from
-    // window_info.bounds, and does not follow the parent afterwards.
-    x11.resize(@intCast(view.cef_window.load(.acquire)), next.w, next.h);
+    resizeCefWindow(view, next.w, next.h);
+}
+
+/// CEF's Linux platform delegate sizes its window once, from
+/// window_info.bounds, and does not follow the parent afterwards.
+fn resizeCefWindow(view: *View, w: c_uint, h: c_uint) void {
+    const window = view.cef_window.load(.acquire);
+    if (window == 0) return;
+    const api = loader.loaded() orelse return;
+    const dpy = api.get_xdisplay() orelse return;
+    x11.resizeOn(@ptrCast(dpy), @intCast(window), w, h);
 }
 
 // ============================================================================
@@ -815,7 +845,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.settle) {
         syncBounds(view);
-        x11.resize(@intCast(view.cef_window.load(.acquire)), view.bounds.w, view.bounds.h);
+        resizeCefWindow(view, view.bounds.w, view.bounds.h);
         if (view.pending_url) |p| {
             if (browserOf(view)) |browser| loadUrl(browser, p);
             alloc.free(p);
