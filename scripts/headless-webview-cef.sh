@@ -164,14 +164,30 @@ awk -v m="$PAGE_MEAN" 'BEGIN { exit !(m < 0.5) }' || {
 }
 echo "ND_CEF_PAGE_PAINTED_OK mean brightness $PAGE_MEAN inside the embedded view"
 
-kill -TERM "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
-HOST_PID=""
+quit_host() {
+  local pass="$1"
+  # Quitting with live webviews runs the same teardown a closing window does,
+  # against a toplevel that is going away underneath them. A crash there shows
+  # up as a signal, not as a non-zero exit, so the signal is what is checked:
+  # 143 is the SIGTERM asked for, 134 would be the abort this gate exists for.
+  kill -TERM "$HOST_PID"
+  wait "$HOST_PID" 2>/dev/null
+  local status=$?
+  HOST_PID=""
+  if [ "$status" -ge 128 ] && [ "$status" -ne 143 ]; then
+    echo "FAIL($pass): the host died on signal $((status - 128)) while quitting with live views"
+    tail -30 "$LOG"
+    exit 1
+  fi
+  echo "ND_CEF_CLEAN_QUIT_OK($pass) exit $status with live views"
+}
+
+quit_host first
 
 # The second launch, over the cache the first one left behind. Restoring a
 # session mounts every view with its address already present and most of them
 # hidden, and that is the shape the reload and restore faults both lived in.
 run_pass second
-kill -TERM "$HOST_PID"; wait "$HOST_PID" 2>/dev/null || true
-HOST_PID=""
+quit_host second
 
 echo "headless webview (chromium): OK (M1 events verified twice, second launch over the first launch's cache; X11 capture at $SHOT)"

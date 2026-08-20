@@ -72,7 +72,7 @@ const BASE = `http://127.0.0.1:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow"] as const;
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -99,6 +99,8 @@ function App(): React.ReactNode {
   const hidden = useRef<NdNodeRef<"webview">>(null);
   const hidden2 = useRef<NdNodeRef<"webview">>(null);
   const hidden3 = useRef<NdNodeRef<"webview">>(null);
+  const second = useRef<NdNodeRef<"webview">>(null);
+  const [secondOpen, setSecondOpen] = useState(false);
   const [lateReady, setLateReady] = useState(false);
   const [url, setUrl] = useState(`${BASE}/one`);
   const [phase, setPhase] = useState("starting");
@@ -111,10 +113,37 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void run({ view, late, hidden, hidden2, hidden3, setUrl, setResult, setPhase, setLateReady });
+    void run({
+      view,
+      late,
+      hidden,
+      hidden2,
+      hidden3,
+      second,
+      setUrl,
+      setResult,
+      setPhase,
+      setLateReady,
+      setSecondOpen,
+    });
   }, []);
 
   return (
+    <>
+    {secondOpen ? (
+      <window title="ND CEF Second" testID="second-window" defaultWidth={420} defaultHeight={320}>
+        <box orientation="vertical">
+          <webview
+            testID="wv-second"
+            ref={second}
+            engine="chromium"
+            url={`${BASE}/one`}
+            onNavigate={(e) => record("secondNavigate", e.text)}
+            onJavaScriptResult={onJavaScriptResult}
+          />
+        </box>
+      </window>
+    ) : null}
     <window title="ND CEF Probe" defaultWidth={1000} defaultHeight={700}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
         <label testID="probe-phase" text={`phase=${phase}`} />
@@ -199,6 +228,7 @@ function App(): React.ReactNode {
         ) : null}
       </box>
     </window>
+    </>
   );
 }
 
@@ -208,10 +238,12 @@ async function run(ctx: {
   hidden: React.RefObject<NdNodeRef<"webview"> | null>;
   hidden2: React.RefObject<NdNodeRef<"webview"> | null>;
   hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
+  second: React.RefObject<NdNodeRef<"webview"> | null>;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
   setLateReady: (v: boolean) => void;
+  setSecondOpen: (v: boolean) => void;
 }): Promise<void> {
   const step = async (name: CheckName, body: () => Promise<string>): Promise<void> => {
     ctx.setPhase(name);
@@ -388,6 +420,30 @@ async function run(ctx: {
       read.push(String(got));
     }
     return `ok (${at}, ${title}, evals ${read.join(" ")})`;
+  });
+
+  // Closing a window destroys its toplevel surface, and the X server destroys
+  // that window's whole child subtree with it, so the webview inside is torn
+  // down against XIDs that are already gone. Untrapped, the BadWindow that
+  // raises aborted the host: the assertion is that the host is still here
+  // afterwards and the view in the other window still answers.
+  await step("secondWindow", async () => {
+    ctx.setSecondOpen(true);
+    await waitFor<string>(
+      "secondNavigate",
+      (u) => u.endsWith("/one"),
+      "the second window's view loads",
+      30000,
+    );
+    ctx.setSecondOpen(false);
+    // The host surviving is the point; an eval proves it is still serving.
+    if (!ctx.view.current) throw new Error("no view ref");
+    const alive = await pollValue(
+      () => executeJavaScript(ctx.view.current!, "String(2 + 2)"),
+      (v) => v === "4",
+      "the host survives closing a window that held a webview",
+    );
+    return `ok (host alive after the window closed, eval ${alive})`;
   });
 
   ctx.setPhase("done");

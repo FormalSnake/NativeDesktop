@@ -57,6 +57,7 @@ const FnFlush = *const fn (*Display) callconv(.c) c_int;
 const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
+const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
 
 const Api = struct {
     init_threads: FnInitThreads,
@@ -74,6 +75,10 @@ const Api = struct {
     sync: FnSync,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
+    /// GDK aborts the process on any untrapped X error from its own
+    /// connection, and the windows this file touches can die underneath it.
+    error_trap_push: FnTrap,
+    error_trap_pop_ignored: FnTrap,
 };
 
 var api: ?Api = null;
@@ -113,6 +118,8 @@ fn loadApi() ?*const Api {
         .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
+        .error_trap_push = g.lookup(FnTrap, "gdk_x11_display_error_trap_push") orelse return missing(&x, &g, "gdk_x11_display_error_trap_push"),
+        .error_trap_pop_ignored = g.lookup(FnTrap, "gdk_x11_display_error_trap_pop_ignored") orelse return missing(&x, &g, "gdk_x11_display_error_trap_pop_ignored"),
     };
     xlib = x;
     gtklib = g;
@@ -138,10 +145,40 @@ pub fn initThreads() void {
 /// The GDK display connection, or null when this session is not X11 (a Wayland
 /// session where the backend pin did not take, or a build with no X11 backend).
 pub fn display() ?*Display {
+    const c = conn() orelse return null;
+    return c.x;
+}
+
+/// GDK's connection plus the trap that keeps an error on it from being fatal.
+///
+/// Every window this file touches can be destroyed by someone else first: the
+/// X server tears down a toplevel's whole child subtree when the toplevel goes,
+/// so a webview's own teardown routinely runs against XIDs that no longer
+/// exist. GDK's error handler aborts the process on an untrapped error, which
+/// turned closing a popup window into a crash. Every request below is trapped.
+const Conn = struct {
+    api: *const Api,
+    gdk: *gdk.Display,
+    x: *Display,
+
+    fn push(self: Conn) void {
+        self.api.error_trap_push(self.gdk);
+    }
+
+    /// Also flushes: the trap only covers requests the server has been asked
+    /// about, and an error arrives with the reply.
+    fn pop(self: Conn) void {
+        _ = self.api.flush(self.x);
+        self.api.error_trap_pop_ignored(self.gdk);
+    }
+};
+
+fn conn() ?Conn {
     const a = loadApi() orelse return null;
     const gdk_display = gdk.Display.getDefault() orelse return null;
     if (!isX11(gdk_display)) return null;
-    return a.display_get_xdisplay(gdk_display);
+    const x = a.display_get_xdisplay(gdk_display) orelse return null;
+    return .{ .api = a, .gdk = gdk_display, .x = x };
 }
 
 fn isX11(gdk_display: *gdk.Display) bool {
@@ -170,8 +207,7 @@ pub fn toplevelXid(widget: *gtk.Widget) Window {
 /// first and fail with BadWindow, and what the caller sees afterwards is a
 /// browser that never paints.
 pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Window {
-    const a = loadApi() orelse return 0;
-    const dpy = display() orelse return 0;
+    const c = conn() orelse return 0;
     if (parent == 0) return 0;
     // Explicit default visual rather than XCreateSimpleWindow's
     // CopyFromParent: GTK4 gives its toplevel a 32-bit ARGB visual, and a
@@ -179,36 +215,38 @@ pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Win
     // window into. Naming the screen's default depth/visual/colormap here (and
     // the border pixel that a differing depth requires) is what makes the
     // embedded window appear at all.
-    const screen = a.default_screen(dpy);
+    const screen = c.api.default_screen(c.x);
     var attrs: SetWindowAttributes = .{
         .background_pixel = 0,
         .border_pixel = 0,
-        .colormap = a.default_colormap(dpy, screen),
+        .colormap = c.api.default_colormap(c.x, screen),
     };
-    const child = a.create_window(
-        dpy,
+    c.push();
+    const child = c.api.create_window(
+        c.x,
         parent,
         x,
         y,
         @max(w, 1),
         @max(h, 1),
         0,
-        a.default_depth(dpy, screen),
+        c.api.default_depth(c.x, screen),
         INPUT_OUTPUT,
-        a.default_visual(dpy, screen),
+        c.api.default_visual(c.x, screen),
         CW_BACK_PIXEL | CW_BORDER_PIXEL | CW_COLORMAP,
         &attrs,
     );
-    if (child != 0) _ = a.sync(dpy, 0);
+    if (child != 0) _ = c.api.sync(c.x, 0);
+    c.pop();
     return child;
 }
 
 pub fn moveResize(window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void {
     if (window == 0) return;
-    const a = loadApi() orelse return;
-    const dpy = display() orelse return;
-    _ = a.move_resize_window(dpy, window, x, y, @max(w, 1), @max(h, 1));
-    _ = a.flush(dpy);
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.move_resize_window(c.x, window, x, y, @max(w, 1), @max(h, 1));
+    c.pop();
 }
 
 /// CEF's own window is a child of the container and does not follow it: the
@@ -218,32 +256,44 @@ pub fn moveResize(window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void
 pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
     if (window == 0) return;
     const a = loadApi() orelse return;
+    // Trapped on GDK's display even though the request goes out on CEF's:
+    // Xlib's error handler is per PROCESS, so GDK's fatal one sees errors from
+    // either connection.
+    const gdk_display = gdk.Display.getDefault();
+    if (gdk_display) |g| a.error_trap_push(g);
     _ = a.resize_window(dpy, window, @max(w, 1), @max(h, 1));
     _ = a.flush(dpy);
+    if (gdk_display) |g| a.error_trap_pop_ignored(g);
 }
 
 /// Mapping is synced for the same reason creation is: CEF only paints into a
 /// viewable window, and it reads that state from its own connection.
 pub fn show(window: Window) void {
     if (window == 0) return;
-    const a = loadApi() orelse return;
-    const dpy = display() orelse return;
-    _ = a.map_window(dpy, window);
-    _ = a.sync(dpy, 0);
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.map_window(c.x, window);
+    _ = c.api.sync(c.x, 0);
+    c.pop();
 }
 
 pub fn hide(window: Window) void {
     if (window == 0) return;
-    const a = loadApi() orelse return;
-    const dpy = display() orelse return;
-    _ = a.unmap_window(dpy, window);
-    _ = a.flush(dpy);
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.unmap_window(c.x, window);
+    c.pop();
 }
 
+/// Destroying the container is the one call that is EXPECTED to fail: closing
+/// a window destroys its toplevel surface, the X server destroys that window's
+/// whole child subtree with it, and the webview's own teardown then arrives at
+/// an XID that is already gone. Untrapped, that BadWindow aborted the host
+/// every time a popup window closed, and at quit for every live view.
 pub fn destroy(window: Window) void {
     if (window == 0) return;
-    const a = loadApi() orelse return;
-    const dpy = display() orelse return;
-    _ = a.destroy_window(dpy, window);
-    _ = a.flush(dpy);
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.destroy_window(c.x, window);
+    c.pop();
 }
