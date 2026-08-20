@@ -1103,6 +1103,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
 
     if (box.browser_id != 0) {
+        tr("browserId node={d} id={d}", .{ view.node_id, box.browser_id });
         browsers_by_id.put(alloc, box.browser_id, view) catch {};
         return 0;
     }
@@ -2994,6 +2995,7 @@ fn resourceOpen(
     const obj = ResourceObj.of(self);
     // Kept, not released: this is what wakes the request once the app answers.
     obj.payload.callback.store(@intFromPtr(callback), .release);
+    tr("resourceOpen url={s}", .{obj.payload.url});
     if (handle_request != null) handle_request.* = 0;
     // The registry and the event both live on the GTK thread, so the request is
     // handed over rather than announced from here.
@@ -3051,6 +3053,7 @@ fn resourceCancel(self: [*c]c.cef_resource_handler_t) callconv(.c) void {
 fn announceSchemeRequest(obj: *ResourceObj) void {
     const res = obj.payload;
     const view = browsers_by_id.get(res.browser_id);
+    tr("announceSchemeRequest browser={d} view={?d}", .{ res.browser_id, if (view) |v| v.node_id else null });
     scheme_seq += 1;
     const id = std.fmt.allocPrint(alloc, "cefscheme-{d}", .{scheme_seq}) catch return;
     res.id = id;
