@@ -31,6 +31,15 @@ final class NDWebView: WKWebView {
     var ndNodeID: UInt32 = 0
     nonisolated(unsafe) private var pollTimer: Timer?
 
+    #if canImport(CCef)
+    /// Non-nil once `ND_WEBVIEW_ENGINE=chromium` has actually started CEF. The
+    /// WKWebView underneath is then never loaded or polled: props, commands
+    /// and events all belong to the CEF view, which presents this class's own
+    /// internal contract. Keeping NDWebView as the widget class is what leaves
+    /// the generated create arm (NDGen/Widgets.swift) engine-agnostic.
+    private var cefEngine: NDCefWebView?
+    #endif
+
     // Last-emitted navigation state; events fire only on change.
     private var lastURL = ""
     private var lastTitle = ""
@@ -94,6 +103,17 @@ final class NDWebView: WKWebView {
         // failures, downloads, and window.open popups.
         navigationDelegate = self
         uiDelegate = self
+        #if canImport(CCef)
+        if NDCefRuntime.isActive {
+            let engine = NDCefWebView(url: url ?? "")
+            engine.host = self
+            engine.frame = bounds
+            engine.autoresizingMask = [.width, .height]
+            addSubview(engine)
+            cefEngine = engine
+            return
+        }
+        #endif
         installInternalMachinery()
         if let u = url, !u.isEmpty, let real = URL(string: u) {
             load(URLRequest(url: real))
@@ -114,6 +134,12 @@ final class NDWebView: WKWebView {
     /// it differs from the current URL — the echo guard, since onNavigate
     /// feeds the URL back into app state, which re-applies the prop.
     func ndSetURL(_ u: String) {
+        #if canImport(CCef)
+        if let cefEngine {
+            cefEngine.ndSetURL(u)
+            return
+        }
+        #endif
         guard !u.isEmpty, u != url?.absoluteString, u != committedURL, let real = URL(string: u) else { return }
         load(URLRequest(url: real))
     }
@@ -121,6 +147,12 @@ final class NDWebView: WKWebView {
     // MARK: - Command dispatch
 
     func ndHandleCommand(_ command: String, argJson: String) {
+        #if canImport(CCef)
+        if let cefEngine {
+            cefEngine.ndHandleCommand(command, argJson: argJson)
+            return
+        }
+        #endif
         let arg = ndWebViewParseJSON(argJson)
         let obj = arg as? [String: Any] ?? [:]
         switch command {
@@ -418,6 +450,11 @@ final class NDWebView: WKWebView {
     /// page-side agent decides whether to `preventDefault()`, so the live page
     /// is told directly and the script is rebuilt for the next load.
     func ndSetContextMenuMode(_ mode: String) {
+        #if canImport(CCef)
+        // cef_context_menu_handler is M2; until then the engine keeps its own
+        // menu and the app's items do not merge into it.
+        if cefEngine != nil { return }
+        #endif
         let suppress = mode == "suppress"
         if suppress == suppressContextMenu { return }
         suppressContextMenu = suppress
@@ -852,7 +889,7 @@ final class NDWebView: WKWebView {
         }
     }
 
-    fileprivate func emitEvent(_ name: String, json: String) {
+    func emitEvent(_ name: String, json: String) {
         json.withCString { cJson in
             name.withCString { cName in
                 nd_emit_event(gCtx, ndNodeID, cName, cJson)
@@ -860,7 +897,7 @@ final class NDWebView: WKWebView {
         }
     }
 
-    fileprivate func emitData(_ name: String, _ fields: [String: Any]) {
+    func emitData(_ name: String, _ fields: [String: Any]) {
         emitEvent(name, json: ndWebViewDataJson(fields))
     }
 

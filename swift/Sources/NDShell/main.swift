@@ -44,7 +44,15 @@ nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
 // closed window's content view can't be pinned alive by a stale target.
 nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 
+// Engine selection happens before anything reaches NSApplication: a CEF
+// process needs NSApp to be the CefAppProtocol subclass, and the shared
+// application is created by whichever class asks for it first.
+#if canImport(CCef)
+let ndCefEngine = NDCefRuntime.prepare()
+let app: NSApplication = ndCefEngine ? NDCefApplication.shared : NSApplication.shared
+#else
 let app = NSApplication.shared
+#endif
 app.setActivationPolicy(.regular)
 
 // Screenshot-harness appearance pin: render one appearance regardless of the
@@ -89,6 +97,13 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
         FileHandle.standardError.write("ND_AUTOMATION_ERROR nd_start_automation failed\n".data(using: .utf8)!)
     }
 }
+
+// CEF starts after the core runtime so the Bun child is already spawned when
+// Chromium's own process tree comes up. A refusal here falls back to the
+// system engine rather than taking the app down.
+#if canImport(CCef)
+let ndCefRunning = ndCefEngine && NDCefRuntime.initialize()
+#endif
 // Every quit path goes through NSApplication.terminate(_:) (MenuBar's Quit
 // item / Cmd-Q), which calls exit() inside run() — code after run() never
 // executes. applicationWillTerminate is the one seam where the window/view
@@ -140,4 +155,15 @@ final class NDAppDelegate: NSObject, NSApplicationDelegate {
 // NSApplication.delegate does not retain; this top-level `let` keeps it alive.
 let appDelegate = NDAppDelegate()
 app.delegate = appDelegate
+#if canImport(CCef)
+// CEF owns the loop when it is running: its mac pump drives [NSApp run]
+// itself, so the delegate, the menu bar and terminate behave as they do on the
+// system engine.
+if ndCefRunning {
+    NDCefRuntime.runMessageLoop()
+} else {
+    app.run()
+}
+#else
 app.run()
+#endif
