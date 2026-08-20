@@ -111,6 +111,16 @@ ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="$XDG_RUNTIME_DIR/cef-probe-host.png" 
 cat "$XDG_RUNTIME_DIR/drive.log"
 grep -q "ND_CEF_M1_OK" "$XDG_RUNTIME_DIR/drive.log" || { echo "FAIL: driver did not report success"; exit 1; }
 
+# The background-page invariant: the probe's hidden view must have got a real
+# browser without ever being mapped. Without this the `hidden` check could pass
+# on a view that was quietly visible after all.
+grep -qE "ND_CEF embed .* mapped=false" "$LOG" || {
+  echo "FAIL: no browser was created for an unmapped view"
+  grep -E "ND_CEF embed" "$LOG" | head -10
+  exit 1
+}
+echo "ND_CEF_HIDDEN_VIEW_OK $(grep -m1 -oE "ND_CEF embed node=[0-9]+ .* mapped=false" "$LOG" | head -c 120)"
+
 # The no-stray-window invariant, measured at the X server rather than taken on
 # trust. The drive has already run the popup leg by this point, so a
 # CEF-created top-level would be on the root's child list now. The host's own
