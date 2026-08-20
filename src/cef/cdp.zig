@@ -50,6 +50,8 @@ pub fn attach(host: *c.cef_browser_host_t, tag: usize) Session {
     const observer = ObserverObj.create(tag) orelse return .{};
     observer.cef.on_dev_tools_method_result = &onMethodResult;
     observer.cef.on_dev_tools_event = &onEvent;
+    observer.cef.on_dev_tools_agent_attached = &onAgentAttached;
+    observer.cef.on_dev_tools_agent_detached = &onAgentDetached;
     // The registration consumes the reference it is handed, so this hands out
     // an added one and keeps ours for the teardown path.
     const registration = add(host, observer.handOut());
@@ -96,6 +98,29 @@ fn onEvent(
     defer alloc.free(name);
     const json: []const u8 = if (params) |p| @as([*]const u8, @ptrCast(p))[0..params_size] else "";
     s.event(tag, name, json);
+}
+
+/// Synthetic events for the two agent transitions, so the sink has one channel
+/// to reason about. Nothing may be sent to the agent before it has attached.
+pub const agent_attached = "__nd.agentAttached";
+pub const agent_detached = "__nd.agentDetached";
+
+fn onAgentAttached(
+    self: [*c]c.cef_dev_tools_message_observer_t,
+    browser: [*c]c.cef_browser_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const s = sink orelse return;
+    s.event(ObserverObj.of(self).payload, agent_attached, "");
+}
+
+fn onAgentDetached(
+    self: [*c]c.cef_dev_tools_message_observer_t,
+    browser: [*c]c.cef_browser_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const s = sink orelse return;
+    s.event(ObserverObj.of(self).payload, agent_detached, "");
 }
 
 fn utf8(s: [*c]const c.cef_string_t) ?[]u8 {

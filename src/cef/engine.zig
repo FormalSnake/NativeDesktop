@@ -985,7 +985,6 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
 
     if (box.settle) {
-        enableDomains(view);
         syncBounds(view);
         resizeCefWindow(view, view.bounds.w, view.bounds.h);
         if (view.pending_url) |p| {
@@ -1052,7 +1051,9 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
     // GTK idle source behind every DOM mutation.
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
         !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
-        !std.mem.eql(u8, method, "Runtime.bindingCalled")) return;
+        !std.mem.eql(u8, method, "Runtime.bindingCalled") and
+        !std.mem.eql(u8, method, cdp.agent_attached) and
+        !std.mem.eql(u8, method, cdp.agent_detached)) return;
     post(.{
         .view = view,
         .name = "",
@@ -1171,6 +1172,7 @@ fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Ca
         callFree(call);
         return false;
     };
+    tr("cdp -> node={d} id={d} {s} {s}", .{ view.node_id, id, method, params_json });
     if (std.meta.activeTag(call) == .ignore) return true;
     pending_calls.put(alloc, id, .{ .view = view, .call = call }) catch {
         callFree(call);
@@ -1509,6 +1511,7 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
 // ============================================================================
 
 fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void {
+    tr("cdp <- node={d} id={d} ok={} {s}", .{ view.node_id, message_id, ok, json });
     const entry = pending_calls.fetchRemove(message_id) orelse return;
     const call = entry.value.call;
     if (call == .agent_ready) {
@@ -1646,6 +1649,20 @@ fn stringField(root: std.json.Value, key: []const u8) ?[]const u8 {
 }
 
 fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
+    // The agent transitions carry no parameters and gate everything else: no
+    // devtools method may be sent before the agent has attached.
+    if (std.mem.eql(u8, method, cdp.agent_attached)) {
+        tr("cdp agent attached node={d}", .{view.node_id});
+        enableDomains(view);
+        return;
+    }
+    if (std.mem.eql(u8, method, cdp.agent_detached)) {
+        tr("cdp agent detached node={d}", .{view.node_id});
+        view.cdp_ready = false;
+        view.domains_enabled = false;
+        clearWorldContexts(view);
+        return;
+    }
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch return;
     defer parsed.deinit();
     const root = parsed.value;
