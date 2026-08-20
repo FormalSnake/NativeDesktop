@@ -334,6 +334,8 @@ const ClientObj = ref.Counted(c.cef_client_t, *View);
 const DisplayObj = ref.Counted(c.cef_display_handler_t, *View);
 const LoadObj = ref.Counted(c.cef_load_handler_t, *View);
 const LifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
+const FindObj = ref.Counted(c.cef_find_handler_t, *View);
+const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
 
 const View = struct {
     widget: *gtk.Widget,
@@ -343,6 +345,12 @@ const View = struct {
     display_handler: *DisplayObj,
     load_handler: *LoadObj,
     life_handler: *LifeObj,
+    find_handler: *FindObj,
+    download_handler: *DownloadObj,
+
+    /// The last `findStart` text, so findNext/findPrevious can re-issue it:
+    /// CEF's find takes the search text on every call.
+    last_find: ?[]u8 = null,
 
     /// Written on the CEF UI thread from on_after_created / on_before_close,
     /// read on the GTK thread by every command. A pointer-width atomic rather
@@ -462,6 +470,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const display_handler = DisplayObj.create(view) orelse return abandon(view, client, null, null);
     const load_handler = LoadObj.create(view) orelse return abandon(view, client, display_handler, null);
     const life_handler = LifeObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const find_handler = FindObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -469,6 +479,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .display_handler = display_handler,
         .load_handler = load_handler,
         .life_handler = life_handler,
+        .find_handler = find_handler,
+        .download_handler = download_handler,
     };
     if (url) |u| {
         if (u[0] != 0) view.pending_url = alloc.dupeZ(u8, std.mem.span(u)) catch null;
@@ -477,10 +489,13 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_display_handler = &clientGetDisplayHandler;
     client.cef.get_load_handler = &clientGetLoadHandler;
     client.cef.get_life_span_handler = &clientGetLifeSpanHandler;
+    client.cef.get_find_handler = &clientGetFindHandler;
+    client.cef.get_download_handler = &clientGetDownloadHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
     display_handler.cef.on_loading_progress_change = &onLoadingProgressChange;
+    display_handler.cef.on_favicon_urlchange = &onFaviconUrlChange;
 
     load_handler.cef.on_loading_state_change = &onLoadingStateChange;
     load_handler.cef.on_load_error = &onLoadError;
@@ -490,12 +505,18 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     life_handler.cef.on_after_created = &onAfterCreated;
     life_handler.cef.do_close = &onDoClose;
     life_handler.cef.on_before_close = &onBeforeClose;
+    find_handler.cef.on_find_result = &onFindResult;
+    download_handler.cef.on_before_download = &onBeforeDownload;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
     gobject.Object.setData(widget.as(gobject.Object), VIEW_KEY, view);
     gtk.Widget.setHexpand(widget, 1);
     gtk.Widget.setVexpand(widget, 1);
+    // The `focus` command grabs GTK focus as well as CEF's, and a
+    // GtkDrawingArea takes none by default.
+    gtk.Widget.setCanFocus(widget, 1);
+    gtk.Widget.setFocusable(widget, 1);
 
     _ = gobject.signalConnectData(widget.as(gobject.Object), "map", @ptrCast(&onMap), view, null, .{});
     _ = gobject.signalConnectData(widget.as(gobject.Object), "unmap", @ptrCast(&onUnmap), view, null, .{});
@@ -707,6 +728,10 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "clearUserScripts")) return cmdClearUserScripts(view, arg);
     if (std.mem.eql(u8, cmd, "registerScriptMessage")) return cmdRegisterScriptMessage(view, arg);
     if (std.mem.eql(u8, cmd, "unregisterScriptMessage")) return cmdUnregisterScriptMessage(view, arg);
+    if (std.mem.eql(u8, cmd, "getCookies")) return cmdGetCookies(view, arg);
+    if (std.mem.eql(u8, cmd, "setCookie")) return cmdSetCookie(view, arg);
+    if (std.mem.eql(u8, cmd, "deleteCookie")) return cmdDeleteCookie(view, arg);
+    if (std.mem.eql(u8, cmd, "setUserAgent")) return cmdSetUserAgent(view, arg);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -725,6 +750,22 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         if (browser.reload) |f| f(browser);
     } else if (std.mem.eql(u8, cmd, "stop")) {
         if (browser.stop_load) |f| f(browser);
+    } else if (std.mem.eql(u8, cmd, "findStart")) {
+        cmdFindStart(view, arg);
+    } else if (std.mem.eql(u8, cmd, "findNext")) {
+        cmdFindStep(view, true);
+    } else if (std.mem.eql(u8, cmd, "findPrevious")) {
+        cmdFindStep(view, false);
+    } else if (std.mem.eql(u8, cmd, "findStop")) {
+        cmdFindStop(view);
+    } else if (std.mem.eql(u8, cmd, "setMuted")) {
+        cmdSetMuted(view, arg);
+    } else if (std.mem.eql(u8, cmd, "setZoom")) {
+        cmdSetZoom(view, arg);
+    } else if (std.mem.eql(u8, cmd, "focus")) {
+        cmdFocus(view);
+    } else if (std.mem.eql(u8, cmd, "saveSession") or std.mem.eql(u8, cmd, "restoreSession")) {
+        std.debug.print("ND_WARN WebView engine=chromium: {s} has no CEF equivalent (no session serialization API)\n", .{cmd});
     } else {
         std.debug.print("ND_WARN WebView engine=chromium: command {s} is not wired yet\n", .{cmd});
     }
@@ -761,6 +802,14 @@ fn clientGetLoadHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_load_ha
 
 fn clientGetLifeSpanHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_span_handler_t {
     return ClientObj.of(self).payload.life_handler.handOut();
+}
+
+fn clientGetFindHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_find_handler_t {
+    return ClientObj.of(self).payload.find_handler.handOut();
+}
+
+fn clientGetDownloadHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_download_handler_t {
+    return ClientObj.of(self).payload.download_handler.handOut();
 }
 
 // ============================================================================
@@ -1022,6 +1071,26 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "forwardAvailable")) {
         view.can_go_forward = box.flag;
         f(view.node_id, "forwardAvailable", .{ .checked = box.flag });
+    } else if (std.mem.eql(u8, box.name, "faviconChanged")) {
+        const text = box.text orelse return 0;
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "iconUrl", .{ .string = text }) catch return 0;
+        f(view.node_id, "faviconChanged", .{ .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "findResult")) {
+        const count: i64 = @intFromFloat(box.number);
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "matchFound", .{ .bool = count > 0 }) catch return 0;
+        payload.put(alloc, "matchCount", .{ .integer = count }) catch return 0;
+        payload.put(alloc, "done", .{ .bool = box.flag }) catch return 0;
+        f(view.node_id, "findResult", .{ .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "downloadRequested")) {
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "url", .{ .string = if (box.text) |t| t else "" }) catch return 0;
+        if (box.extra) |name| payload.put(alloc, "suggestedFilename", .{ .string = name }) catch return 0;
+        f(view.node_id, "downloadRequested", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "loadFailed")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
@@ -1056,6 +1125,7 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
         !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
         !std.mem.eql(u8, method, "Runtime.bindingCalled") and
+        !std.mem.eql(u8, method, "Security.securityStateChanged") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
         !std.mem.eql(u8, method, cdp.agent_detached)) return;
     post(.{
@@ -1124,6 +1194,8 @@ const Call = union(enum) {
     stringify: struct { sink: EvalSink, object_id: []u8 },
     add_user_script: struct { id: []u8, world: []u8, gen: u64 },
     add_channel_script: struct { name: []u8 },
+    /// A getCookies correlation id.
+    cookies: []u8,
     /// Page.enable's own reply: the gate every other call waits behind.
     agent_ready,
 };
@@ -1155,6 +1227,7 @@ fn callFree(call: Call) void {
             alloc.free(s.world);
         },
         .add_channel_script => |s| alloc.free(s.name),
+        .cookies => |id| alloc.free(id),
         .agent_ready => {},
     }
 }
@@ -1222,6 +1295,10 @@ fn enableDomains(view: *View) void {
 fn agentReady(view: *View) void {
     if (view.cdp_ready) return;
     _ = cdpSendRaw(view, "Runtime.enable", "", .ignore);
+    // Network carries the cookie surface; Security is what turns a plain-http
+    // page into a securityChanged event without walking navigation entries.
+    _ = cdpSendRaw(view, "Network.enable", "", .ignore);
+    _ = cdpSendRaw(view, "Security.enable", "", .ignore);
     view.cdp_ready = true;
     const items = view.queued.toOwnedSlice(alloc) catch return;
     defer alloc.free(items);
@@ -1601,6 +1678,10 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
             };
             putScript(view, key, .{ .identifier = id_copy, .world = world_copy });
         },
+        .cookies => |id| {
+            defer alloc.free(id);
+            emitCookies(view, id, root);
+        },
         .add_channel_script => |s| {
             defer alloc.free(s.name);
             const identifier = stringField(root, "identifier") orelse return;
@@ -1626,6 +1707,10 @@ fn putScript(view: *View, key: []u8, entry: ScriptEntry) void {
 
 fn failCall(view: *View, call: Call, message: []const u8) void {
     switch (call) {
+        .cookies => |id| {
+            defer alloc.free(id);
+            cookiesError(view, id, message);
+        },
         .eval => |sink| finishEval(view, sink, false, message),
         .stringify => |s| {
             alloc.free(s.object_id);
@@ -1696,6 +1781,19 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
     }
     if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
         onBindingCalled(view, root);
+        return;
+    }
+    if (std.mem.eql(u8, method, "Security.securityStateChanged")) {
+        const state = stringField(root, "securityState") orelse return;
+        const secure = std.mem.eql(u8, state, "secure");
+        const f = emit orelse return;
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "secure", .{ .bool = secure }) catch return;
+        // "insecure-broken" is mixed content or a failed certificate; the
+        // WebKit backend spells the first of those as insecureContent.
+        payload.put(alloc, "insecureContent", .{ .bool = std.mem.eql(u8, state, "insecure-broken") }) catch return;
+        f(view.node_id, "securityChanged", .{ .data = .{ .object = payload } });
         return;
     }
 }
@@ -2076,4 +2174,348 @@ pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
         }
     }
     return entry.text;
+}
+
+// ============================================================================
+// Cookies (CDP Network domain)
+// ============================================================================
+//
+// The Network domain rather than cef_cookie_manager_t: the manager's API is a
+// visitor object plus a completion callback per call, all of it asynchronous
+// across threads, and the protocol gives the same three operations against the
+// view's own request context with no extra ref-counted objects to get wrong.
+
+fn cookiesError(view: *View, id: []const u8, message: []const u8) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "ok", .{ .bool = false }) catch return;
+    payload.put(alloc, "error", .{ .string = message }) catch return;
+    f(view.node_id, "cookiesResult", .{ .data = .{ .object = payload } });
+}
+
+fn cmdGetCookies(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView getCookies: missing id\n", .{});
+        return;
+    };
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    if (objStr(obj, "url")) |url| {
+        params.appendSlice(alloc, "{\"urls\":[") catch return;
+        cdp.quote(&params, url);
+        params.appendSlice(alloc, "]}") catch return;
+    }
+    const id_copy = alloc.dupe(u8, id) catch return;
+    if (!cdpSend(view, "Network.getCookies", params.items, .{ .cookies = id_copy })) {
+        cookiesError(view, id, "the devtools call could not be sent");
+    }
+}
+
+/// CDP's cookie shape into the one both engines emit. `expires` is seconds
+/// since the epoch as a double, with -1 for a session cookie, which is the
+/// null the WebKit backend emits.
+fn emitCookies(view: *View, id: []const u8, root: std.json.Value) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    var cookies: std.json.Array = .init(alloc);
+    defer {
+        for (cookies.items) |item| switch (item) {
+            .object => |o| {
+                var m = o;
+                m.deinit(alloc);
+            },
+            else => {},
+        };
+        cookies.deinit();
+    }
+    if (root == .object) {
+        if (root.object.get("cookies")) |list| {
+            if (list == .array) {
+                for (list.array.items) |raw| {
+                    if (raw != .object) continue;
+                    const src = raw.object;
+                    var out: std.json.ObjectMap = .empty;
+                    out.put(alloc, "name", src.get("name") orelse .{ .string = "" }) catch {};
+                    out.put(alloc, "value", src.get("value") orelse .{ .string = "" }) catch {};
+                    out.put(alloc, "domain", src.get("domain") orelse .{ .string = "" }) catch {};
+                    out.put(alloc, "path", src.get("path") orelse .{ .string = "" }) catch {};
+                    out.put(alloc, "secure", src.get("secure") orelse .{ .bool = false }) catch {};
+                    out.put(alloc, "httpOnly", src.get("httpOnly") orelse .{ .bool = false }) catch {};
+                    const expires: std.json.Value = blk: {
+                        const raw_exp = src.get("expires") orelse break :blk .null;
+                        const seconds: f64 = switch (raw_exp) {
+                            .float => |x| x,
+                            .integer => |x| @floatFromInt(x),
+                            else => break :blk .null,
+                        };
+                        if (seconds <= 0) break :blk .null;
+                        break :blk .{ .integer = @intFromFloat(seconds) };
+                    };
+                    out.put(alloc, "expires", expires) catch {};
+                    out.put(alloc, "sameSite", src.get("sameSite") orelse .{ .string = "None" }) catch {};
+                    cookies.append(.{ .object = out }) catch {};
+                }
+            }
+        }
+    }
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "ok", .{ .bool = true }) catch return;
+    payload.put(alloc, "cookies", .{ .array = cookies }) catch return;
+    f(view.node_id, "cookiesResult", .{ .data = .{ .object = payload } });
+}
+
+fn cookieUrl(out: *std.ArrayList(u8), domain: []const u8, path: []const u8, secure: bool) void {
+    out.appendSlice(alloc, if (secure) "https://" else "http://") catch return;
+    // A leading dot is the cookie-domain spelling, not a hostname.
+    const host = if (domain.len > 0 and domain[0] == '.') domain[1..] else domain;
+    out.appendSlice(alloc, host) catch return;
+    if (path.len == 0 or path[0] != '/') out.append(alloc, '/') catch return;
+    out.appendSlice(alloc, path) catch return;
+}
+
+fn cmdSetCookie(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse return;
+    const value = objStr(obj, "value") orelse "";
+    const domain = objStr(obj, "domain") orelse return;
+    const path = objStr(obj, "path") orelse "/";
+    const secure = objBool(obj, "secure") orelse false;
+
+    var url: std.ArrayList(u8) = .empty;
+    defer url.deinit(alloc);
+    cookieUrl(&url, domain, path, secure);
+
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"name\":") catch return;
+    cdp.quote(&params, name);
+    params.appendSlice(alloc, ",\"value\":") catch return;
+    cdp.quote(&params, value);
+    params.appendSlice(alloc, ",\"domain\":") catch return;
+    cdp.quote(&params, domain);
+    params.appendSlice(alloc, ",\"path\":") catch return;
+    cdp.quote(&params, path);
+    params.appendSlice(alloc, ",\"url\":") catch return;
+    cdp.quote(&params, url.items);
+    params.appendSlice(alloc, if (secure) ",\"secure\":true" else ",\"secure\":false") catch return;
+    if (objBool(obj, "httpOnly") orelse false) params.appendSlice(alloc, ",\"httpOnly\":true") catch return;
+    if (obj.get("expires")) |exp| {
+        switch (exp) {
+            .integer => |i| {
+                var buf: [40]u8 = undefined;
+                const n = std.fmt.bufPrint(&buf, ",\"expires\":{d}", .{i}) catch return;
+                params.appendSlice(alloc, n) catch return;
+            },
+            else => {},
+        }
+    }
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Network.setCookie", params.items, .ignore);
+    emitCookiesChanged(view);
+}
+
+fn cmdDeleteCookie(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const name = objStr(obj, "name") orelse return;
+    const domain = objStr(obj, "domain") orelse return;
+    const path = objStr(obj, "path") orelse "/";
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"name\":") catch return;
+    cdp.quote(&params, name);
+    params.appendSlice(alloc, ",\"domain\":") catch return;
+    cdp.quote(&params, domain);
+    params.appendSlice(alloc, ",\"path\":") catch return;
+    cdp.quote(&params, path);
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Network.deleteCookies", params.items, .ignore);
+    emitCookiesChanged(view);
+}
+
+fn emitCookiesChanged(view: *View) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    f(view.node_id, "cookiesChanged", .{ .data = .{ .object = payload } });
+}
+
+// ============================================================================
+// Find, focus, audio, zoom and user agent
+// ============================================================================
+
+fn cmdFindStart(view: *View, arg: ?std.json.Value) void {
+    const host = hostOf(view) orelse return;
+    const find = host.find orelse return;
+    const obj = argObject(arg) orelse return;
+    const text = objStr(obj, "text") orelse return;
+    const case_sensitive = objBool(obj, "caseSensitive") orelse false;
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (!setStr(&s, text)) return;
+    if (view.last_find) |old| alloc.free(old);
+    view.last_find = alloc.dupe(u8, text) catch null;
+    find(host, &s, 1, @intFromBool(case_sensitive), 0);
+}
+
+fn cmdFindStep(view: *View, forward: bool) void {
+    const host = hostOf(view) orelse return;
+    const find = host.find orelse return;
+    const last = view.last_find orelse return;
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (!setStr(&s, last)) return;
+    find(host, &s, @intFromBool(forward), 0, 1);
+}
+
+fn cmdFindStop(view: *View) void {
+    const host = hostOf(view) orelse return;
+    if (host.stop_finding) |stop| stop(host, 1);
+}
+
+fn cmdSetMuted(view: *View, arg: ?std.json.Value) void {
+    const host = hostOf(view) orelse return;
+    const set_muted = host.set_audio_muted orelse return;
+    const muted = switch (arg orelse return) {
+        .bool => |b| b,
+        else => return,
+    };
+    set_muted(host, @intFromBool(muted));
+    // CEF reports playback state through cef_audio_handler's capture stream,
+    // not as a mute notification, so the state change the app asked for is
+    // reported from here. `playing` stays false: nothing is observed.
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "playing", .{ .bool = false }) catch return;
+    payload.put(alloc, "muted", .{ .bool = muted }) catch return;
+    f(view.node_id, "audioStateChanged", .{ .data = .{ .object = payload } });
+}
+
+fn cmdSetZoom(view: *View, arg: ?std.json.Value) void {
+    const host = hostOf(view) orelse return;
+    const set_zoom = host.set_zoom_level orelse return;
+    const factor: f64 = switch (arg orelse return) {
+        .float => |x| x,
+        .integer => |x| @floatFromInt(x),
+        else => {
+            std.debug.print("ND_WARN WebView setZoom: malformed arg (expected number)\n", .{});
+            return;
+        },
+    };
+    if (factor <= 0) return;
+    // CEF's zoom level is logarithmic (0 is 100%), the prop is a linear factor.
+    set_zoom(host, std.math.log2(factor) / std.math.log2(1.2));
+}
+
+/// A live view's user agent is a CDP override: the request context's own
+/// `user_agent` is fixed at context creation.
+fn cmdSetUserAgent(view: *View, arg: ?std.json.Value) void {
+    const ua: []const u8 = switch (arg orelse return) {
+        .string => |s| s,
+        else => return,
+    };
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    if (ua.len == 0) {
+        _ = cdpSend(view, "Emulation.setUserAgentOverride", "{\"userAgent\":\"\"}", .ignore);
+        return;
+    }
+    params.appendSlice(alloc, "{\"userAgent\":") catch return;
+    cdp.quote(&params, ua);
+    params.appendSlice(alloc, "}") catch return;
+    _ = cdpSend(view, "Emulation.setUserAgentOverride", params.items, .ignore);
+}
+
+fn cmdFocus(view: *View) void {
+    gtk.Widget.grabFocus(view.widget);
+    const host = hostOf(view) orelse return;
+    if (host.set_focus) |set| set(host, 1);
+}
+
+// ============================================================================
+// Find, favicon and download handlers
+// ============================================================================
+
+fn onFindResult(
+    self: [*c]c.cef_find_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: c_int,
+    count: c_int,
+    _: [*c]const c.cef_rect_t,
+    _: c_int,
+    final_update: c_int,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const view = FindObj.of(self).payload;
+    post(.{
+        .view = view,
+        .name = "findResult",
+        .flag = final_update != 0,
+        .number = @floatFromInt(count),
+    });
+}
+
+/// The probe accepts an icon URL without the bytes, and downloading the image
+/// to a data URL is a second async hop the contract does not require, so this
+/// reports the first URL the page named.
+fn onFaviconUrlChange(
+    self: [*c]c.cef_display_handler_t,
+    browser: [*c]c.cef_browser_t,
+    icon_urls: c.cef_string_list_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const api = loader.loaded() orelse return;
+    if (icon_urls == null) return;
+    if (api.string_list_size(icon_urls) == 0) return;
+    var first = std.mem.zeroes(c.cef_string_t);
+    defer api.string_utf16_clear(&first);
+    if (api.string_list_value(icon_urls, 0, &first) == 0) return;
+    post(.{
+        .view = DisplayObj.of(self).payload,
+        .name = "faviconChanged",
+        .text = dupeStr(&first),
+    });
+}
+
+/// Downloads are the app's to run: cancelling and emitting is what the WebKit
+/// backend does, and an engine that silently wrote to ~/Downloads would be a
+/// surprise on either.
+fn onBeforeDownload(
+    self: [*c]c.cef_download_handler_t,
+    browser: [*c]c.cef_browser_t,
+    download_item: [*c]c.cef_download_item_t,
+    suggested_name: [*c]const c.cef_string_t,
+    callback: [*c]c.cef_before_download_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(download_item);
+    defer ref.releaseParam(callback);
+    const view = DownloadObj.of(self).payload;
+    var url: ?[]u8 = null;
+    if (download_item != null) {
+        if (download_item.*.get_url) |get_url| {
+            const raw = get_url(download_item);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                url = dupeStr(raw);
+            }
+        }
+    }
+    post(.{
+        .view = view,
+        .name = "downloadRequested",
+        .text = url,
+        .extra = dupeStr(suggested_name),
+    });
+    // 0 means "do not continue": no path is chosen, so the download never runs.
+    return 0;
+}
+
+fn freeUserfree(s: c.cef_string_userfree_t) void {
+    const api = loader.loaded() orelse return;
+    api.string_userfree_utf16_free(s);
 }

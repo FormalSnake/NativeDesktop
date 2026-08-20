@@ -44,6 +44,9 @@ pub const Api = struct {
     currently_on: *const fn (thread_id: c.cef_thread_id_t) callconv(.c) c_int,
     post_task: *const fn (thread_id: c.cef_thread_id_t, task: [*c]c.cef_task_t) callconv(.c) c_int,
     parse_json_buffer: *const fn (json: ?*const anyopaque, size: usize, options: c.cef_json_parser_options_t) callconv(.c) [*c]c.cef_value_t,
+    string_list_size: *const fn (list: c.cef_string_list_t) callconv(.c) usize,
+    string_list_value: *const fn (list: c.cef_string_list_t, index: usize, value: [*c]c.cef_string_t) callconv(.c) c_int,
+    string_userfree_utf16_free: *const fn (str: c.cef_string_userfree_utf16_t) callconv(.c) void,
 };
 
 var api: ?Api = null;
@@ -123,6 +126,9 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .currently_on = l.lookup(@FieldType(Api, "currently_on"), "cef_currently_on") orelse return null,
         .post_task = l.lookup(@FieldType(Api, "post_task"), "cef_post_task") orelse return null,
         .parse_json_buffer = l.lookup(@FieldType(Api, "parse_json_buffer"), "cef_parse_json_buffer") orelse return null,
+        .string_list_size = l.lookup(@FieldType(Api, "string_list_size"), "cef_string_list_size") orelse return null,
+        .string_list_value = l.lookup(@FieldType(Api, "string_list_value"), "cef_string_list_value") orelse return null,
+        .string_userfree_utf16_free = l.lookup(@FieldType(Api, "string_userfree_utf16_free"), "cef_string_userfree_utf16_free") orelse return null,
     };
 }
 
