@@ -412,7 +412,10 @@ const View = struct {
     /// retried every frame until it succeeds, and the frame clock would turn
     /// one diagnosis into a scrolling wall.
     warned_no_parent: bool = false,
-    tick_id: c_uint = 0,
+    /// The toplevel surface's `layout` handler, which is where the allocation
+    /// is re-read. See `onSurfaceLayout`.
+    layout_handler: c_ulong = 0,
+    layout_surface: ?*gdk.Surface = null,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
 
@@ -570,12 +573,46 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
-    if (view.tick_id == 0) {
-        view.tick_id = gtk.Widget.addTickCallback(view.widget, &onTick, view, null);
-    }
+    connectLayout(view);
     syncBounds(view);
     maybeCreateBrowser(view);
     x11.show(view.container);
+}
+
+/// GTK4 has no size-allocate signal and gives no widget a window of its own, so
+/// the allocation is re-read from the toplevel surface's `layout` phase: GTK
+/// emits it once per frame in which it has laid the toplevel out, which is
+/// exactly when a child's bounds can have moved. A frame-clock tick callback
+/// would see the same changes, but it also keeps the clock awake for as long as
+/// a view is mapped, which is a running cost for a window that is not changing.
+fn connectLayout(view: *View) void {
+    if (view.layout_handler != 0) return;
+    const native = gtk.Widget.getNative(view.widget) orelse return;
+    const surface = gtk.Native.getSurface(native) orelse return;
+    view.layout_surface = surface;
+    view.layout_handler = gobject.signalConnectData(
+        @ptrCast(@alignCast(surface)),
+        "layout",
+        @ptrCast(&onSurfaceLayout),
+        view,
+        null,
+        .{},
+    );
+}
+
+fn disconnectLayout(view: *View) void {
+    if (view.layout_handler == 0) return;
+    if (view.layout_surface) |surface| {
+        gobject.signalHandlerDisconnect(@ptrCast(@alignCast(surface)), view.layout_handler);
+    }
+    view.layout_handler = 0;
+    view.layout_surface = null;
+}
+
+fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    syncBounds(view);
+    maybeCreateBrowser(view);
 }
 
 /// The browser is created from the first frame at which the widget has a real
@@ -590,20 +627,14 @@ fn maybeCreateBrowser(view: *View) void {
 
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
-    if (view.tick_id != 0) {
-        gtk.Widget.removeTickCallback(view.widget, view.tick_id);
-        view.tick_id = 0;
-    }
+    disconnectLayout(view);
     x11.hide(view.container);
 }
 
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
-    if (view.tick_id != 0) {
-        gtk.Widget.removeTickCallback(view.widget, view.tick_id);
-        view.tick_id = 0;
-    }
+    disconnectLayout(view);
     if (browserOf(view)) |browser| {
         if (browser.get_host) |get_host| {
             const host = get_host(browser);
@@ -692,18 +723,8 @@ fn createBrowser(view: *View) void {
 // Geometry
 // ============================================================================
 
-fn onTick(_: *gtk.Widget, _: *gdk.FrameClock, data: ?*anyopaque) callconv(.c) c_int {
-    const view: *View = @ptrCast(@alignCast(data.?));
-    syncBounds(view);
-    maybeCreateBrowser(view);
-    return 1; // G_SOURCE_CONTINUE
-}
-
-/// GTK4 has no size-allocate signal and no per-widget window, so the
-/// allocation is re-read once a frame and only acted on when it moved. The
-/// early-out is a compute_bounds call; the alternative is subclassing
-/// GtkWidget to override size_allocate, which is where this goes in M2 if the
-/// woken frame clock ever shows up in a profile.
+/// Re-reads the widget's allocation and moves the embedding window to match.
+/// Cheap enough to run per layout pass: the early-out is one compute_bounds.
 fn syncBounds(view: *View) void {
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const native_widget: *gtk.Widget = @ptrCast(@alignCast(native));
