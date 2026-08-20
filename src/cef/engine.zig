@@ -2338,9 +2338,11 @@ fn bindingName(world: []const u8) ?[]u8 {
     return out.toOwnedSlice(alloc) catch null;
 }
 
+/// Which world a binding name belongs to. Bindings are per world, not per
+/// frame, so this walks the registered world names rather than the contexts.
 fn worldForBinding(view: *View, binding: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, binding, page_binding)) return "";
-    var it = view.worlds.keyIterator();
+    var it = view.worlds_requested.keyIterator();
     while (it.next()) |key| {
         const candidate = bindingName(key.*) orelse continue;
         defer alloc.free(candidate);
