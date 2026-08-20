@@ -41,6 +41,21 @@ const ERR_ABORTED: c_int = -3;
 
 var emit: ?types.EmitFn = null;
 
+var trace_on: ?bool = null;
+
+/// ND_WEBVIEW_TRACE=1, the same switch the WebKit backend narrates itself with.
+/// Embedding failures here are all geometry and window identity, and neither is
+/// observable from the outside once the process has aborted.
+fn tr(comptime fmt: []const u8, args: anytype) void {
+    const on = trace_on orelse blk: {
+        const on = std.c.getenv("ND_WEBVIEW_TRACE") != null;
+        trace_on = on;
+        break :blk on;
+    };
+    if (!on) return;
+    std.debug.print("ND_CEF " ++ fmt ++ "\n", args);
+}
+
 // ============================================================================
 // Engine selection and process roles
 // ============================================================================
@@ -495,6 +510,9 @@ fn createBrowser(view: *View) void {
     }
     view.container = container;
     x11.show(container);
+    tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d}", .{
+        view.node_id, parent, container, view.bounds.w, view.bounds.h, view.bounds.x, view.bounds.y,
+    });
 
     var window_info = std.mem.zeroes(c.cef_window_info_t);
     window_info.size = @sizeOf(c.cef_window_info_t);
@@ -803,6 +821,7 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
             }
         }
     }
+    tr("created node={d} cefWindow=0x{x}", .{ view.node_id, view.cef_window.load(.acquire) });
     post(.{ .view = view, .name = "", .settle = true });
 }
 
