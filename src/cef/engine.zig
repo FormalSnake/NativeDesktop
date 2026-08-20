@@ -2931,7 +2931,7 @@ fn factoryCreate(
             }
         }
     }
-    const scheme = dupeStr(scheme_name) orelse alloc.dupe(u8, "") catch &.{};
+    const scheme: []u8 = dupeStr(scheme_name) orelse (alloc.dupe(u8, "") catch return null);
 
     const res = alloc.create(Resource) catch return null;
     res.* = .{ .id = &.{}, .url = url, .scheme = scheme, .browser_id = browser_id };
