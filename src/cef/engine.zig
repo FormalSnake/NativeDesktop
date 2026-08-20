@@ -771,8 +771,10 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdSetZoom(view, arg);
     } else if (std.mem.eql(u8, cmd, "focus")) {
         cmdFocus(view);
-    } else if (std.mem.eql(u8, cmd, "saveSession") or std.mem.eql(u8, cmd, "restoreSession")) {
-        std.debug.print("ND_WARN WebView engine=chromium: {s} has no CEF equivalent (no session serialization API)\n", .{cmd});
+    } else if (std.mem.eql(u8, cmd, "saveSession")) {
+        cmdSaveSession(view, arg);
+    } else if (std.mem.eql(u8, cmd, "restoreSession")) {
+        std.debug.print("ND_WARN WebView engine=chromium: restoreSession has no CEF equivalent (no session serialization API)\n", .{});
     } else {
         std.debug.print("ND_WARN WebView engine=chromium: command {s} is not wired yet\n", .{cmd});
     }
@@ -1801,7 +1803,14 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
             else => return,
         };
         const state = stringField(response, "securityState") orelse return;
-        const secure = std.mem.eql(u8, state, "secure");
+        // Not Chromium's notion of a trustworthy origin: http://127.0.0.1 is
+        // "secure" to Chromium and is not TLS, and `secure` on this event has
+        // always meant "came over TLS with no certificate errors" because that
+        // is what WebKitGTK's get_tls_info answers.
+        const url = stringField(response, "url") orelse "";
+        const secure = std.mem.startsWith(u8, url, "https://") and
+            !std.mem.eql(u8, state, "insecure") and
+            !std.mem.eql(u8, state, "insecure-broken");
         const f = emit orelse return;
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
@@ -2585,4 +2594,20 @@ fn requestContext(profile: []const u8) ?*c.cef_request_context_t {
     const key = alloc.dupe(u8, profile) catch return typed;
     profile_contexts.put(alloc, key, typed) catch alloc.free(key);
     return typed;
+}
+
+/// CEF exposes no session serialization: there is no equivalent of
+/// WebKitWebViewSessionState, and the navigation entries CEF does expose carry
+/// no restorable form. The command still answers, because a caller awaiting
+/// `sessionSaved` would otherwise wait forever.
+fn cmdSaveSession(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse return;
+    std.debug.print("ND_WARN WebView engine=chromium: saveSession has no CEF equivalent (no session serialization API)\n", .{});
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "state", .{ .string = "" }) catch return;
+    f(view.node_id, "sessionSaved", .{ .data = .{ .object = payload } });
 }

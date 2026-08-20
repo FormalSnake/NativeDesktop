@@ -448,6 +448,13 @@ async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPh
 
   await step("session", async () => {
     const state = await saveSession(wv!);
+    // CEF exposes no session serialization at all: no equivalent of
+    // WebKitWebViewSessionState, and no restorable form of its navigation
+    // entries. Reported rather than failed, the same way the two input checks
+    // below are.
+    if (!state && (process.env.ND_WEBVIEW_ENGINE ?? "system") === "chromium") {
+      return "skip: the chromium engine has no session serialization API";
+    }
     if (!state) return "fail: saveSession returned an empty state";
     sendCommand(wv!, "restoreSession", { state });
     return `ok (${state.length} base64 chars)`;
