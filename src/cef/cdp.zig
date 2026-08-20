@@ -188,7 +188,9 @@ fn execute(host: *c.cef_browser_host_t, id: c_int, method: []const u8, params_js
     var dict: [*c]c.cef_dictionary_value_t = null;
     var value: [*c]c.cef_value_t = null;
     defer if (value != null) ref.releaseParam(value);
-    defer if (dict != null) ref.releaseParam(dict);
+    // `dict` is deliberately NOT released here: execute_dev_tools_method
+    // consumes the reference, and releasing it as well double-frees the
+    // dictionary out from under a call that is still being validated.
     if (params_json.len > 0) {
         value = api.parse_json_buffer(params_json.ptr, params_json.len, c.JSON_PARSER_RFC);
         if (value != null) {

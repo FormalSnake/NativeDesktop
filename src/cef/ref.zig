@@ -14,6 +14,12 @@
 //   - A ref-counted value returned FROM a callback (get_display_handler and
 //     friends) is a reference the caller owns, so it is add_ref'd on the way
 //     out.
+//   - Passing an object INTO a CEF function transfers the caller's reference:
+//     CefCToCpp::Wrap consumes it ("Release the reference that was added ...
+//     before their structure was passed to us"). Anything still needed after
+//     the call has to be add_ref'd first, which is what `handOut` is for, and
+//     anything NOT needed afterwards must not also be released. Both halves of
+//     that rule have cost this project a crash far from its cause.
 const std = @import("std");
 const capi = @import("capi.zig");
 const c = capi.c;
@@ -53,8 +59,9 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
             return self;
         }
 
-        /// The pointer CEF is handed from a `get_*_handler` arm: the caller
-        /// owns the reference this adds.
+        /// One added reference, for a pointer about to cross into CEF: either
+        /// returned from a `get_*_handler` arm or passed as an argument. Both
+        /// directions consume what they are given.
         pub fn handOut(self: *Self) *CStruct {
             _ = self.refs.fetchAdd(1, .monotonic);
             return &self.cef;

@@ -372,6 +372,17 @@ const View = struct {
     // before anything here is touched.
     session: cdp.Session = .{},
     domains_enabled: bool = false,
+    /// Set when Page.enable has ANSWERED. Sending a devtools method with a
+    /// params dictionary before the agent is attached takes the process down,
+    /// and every command the app issues between create and on_after_created
+    /// arrives before that, so calls are parked rather than sent or dropped.
+    cdp_ready: bool = false,
+    queued: std.ArrayList(Queued) = .empty,
+    /// Per-script-id install counter. A script identifier comes back
+    /// asynchronously, so an id that is re-added (or removed) while its own
+    /// install is in flight would otherwise store the stale identifier and
+    /// leak the live script.
+    script_gens: std.StringHashMapUnmanaged(u64) = .empty,
     worlds: std.StringHashMapUnmanaged(WorldState) = .empty,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     channels: std.StringHashMapUnmanaged(Channel) = .empty,
@@ -1106,9 +1117,13 @@ const Call = union(enum) {
     /// The second hop for a non-primitive result: String(value) computed in the
     /// page rather than approximated from the RemoteObject's description.
     stringify: struct { sink: EvalSink, object_id: []u8 },
-    add_user_script: struct { id: []u8, world: []u8 },
+    add_user_script: struct { id: []u8, world: []u8, gen: u64 },
     add_channel_script: struct { name: []u8 },
+    /// Page.enable's own reply: the gate every other call waits behind.
+    agent_ready,
 };
+
+const Queued = struct { method: []u8, params: []u8, call: Call };
 
 const PendingCall = struct { view: *View, call: Call };
 
@@ -1135,6 +1150,7 @@ fn callFree(call: Call) void {
             alloc.free(s.world);
         },
         .add_channel_script => |s| alloc.free(s.name),
+        .agent_ready => {},
     }
 }
 
@@ -1144,8 +1160,9 @@ fn hostOf(view: *View) ?*c.cef_browser_host_t {
     return @ptrFromInt(raw);
 }
 
-/// Queues one CDP call and records what to do with its answer.
-fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
+/// Sends now, without waiting for the agent. Only Page.enable itself and the
+/// drain below use this.
+fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
     const host = hostOf(view) orelse {
         callFree(call);
         return false;
@@ -1162,14 +1179,51 @@ fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call)
     return true;
 }
 
+/// Queues one CDP call behind the agent handshake and records what to do with
+/// its answer. Everything above this line in the file goes through here.
+fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
+    if (view.cdp_ready) return cdpSendRaw(view, method, params_json, call);
+    const method_copy = alloc.dupe(u8, method) catch {
+        callFree(call);
+        return false;
+    };
+    const params_copy = alloc.dupe(u8, params_json) catch {
+        alloc.free(method_copy);
+        callFree(call);
+        return false;
+    };
+    view.queued.append(alloc, .{ .method = method_copy, .params = params_copy, .call = call }) catch {
+        alloc.free(method_copy);
+        alloc.free(params_copy);
+        callFree(call);
+        return false;
+    };
+    return true;
+}
+
 /// Page and Runtime, once per browser. Runtime is what makes worlds tractable:
 /// executionContextCreated names every isolated world as it is re-made on each
 /// navigation, so no world id ever has to be re-derived by hand.
 fn enableDomains(view: *View) void {
     if (view.domains_enabled) return;
     view.domains_enabled = true;
-    _ = cdpSend(view, "Page.enable", "", .ignore);
-    _ = cdpSend(view, "Runtime.enable", "", .ignore);
+    _ = cdpSendRaw(view, "Page.enable", "", .agent_ready);
+}
+
+/// The agent has answered. Runtime.enable goes first because everything parked
+/// behind it (bindings, world stubs, evaluations) is ordered after it on the
+/// same channel.
+fn agentReady(view: *View) void {
+    if (view.cdp_ready) return;
+    _ = cdpSendRaw(view, "Runtime.enable", "", .ignore);
+    view.cdp_ready = true;
+    const items = view.queued.toOwnedSlice(alloc) catch return;
+    defer alloc.free(items);
+    for (items) |q| {
+        defer alloc.free(q.method);
+        defer alloc.free(q.params);
+        _ = cdpSendRaw(view, q.method, q.params, q.call);
+    }
 }
 
 // ============================================================================
@@ -1457,6 +1511,13 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
 fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void {
     const entry = pending_calls.fetchRemove(message_id) orelse return;
     const call = entry.value.call;
+    if (call == .agent_ready) {
+        // Failure is still an answer: the agent either attached or never will,
+        // and parking the queue forever is worse than one loud call.
+        if (!ok) std.debug.print("ND_WARN CEF: Page.enable was refused; the devtools surface is unavailable on this view\n", .{});
+        agentReady(view);
+        return;
+    }
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch {
         failCall(view, call, "the engine returned no parsable result");
         return;
@@ -1513,6 +1574,14 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
             defer alloc.free(s.id);
             defer alloc.free(s.world);
             const identifier = stringField(root, "identifier") orelse return;
+            // The install this identifier belongs to has since been replaced or
+            // removed. Storing it would point the registry at a dead script and
+            // leave the live one uninstallable, so it is taken straight back
+            // out instead.
+            if ((view.script_gens.get(s.id) orelse 0) != s.gen) {
+                removeNewDocumentScript(view, identifier);
+                return;
+            }
             const id_copy = alloc.dupe(u8, identifier) catch return;
             const key = alloc.dupe(u8, s.id) catch {
                 alloc.free(id_copy);
@@ -1834,6 +1903,7 @@ fn cmdAddUserScript(view: *View, arg: ?std.json.Value) void {
     }
     ensureWorld(view, world);
     removeScriptById(view, id);
+    const gen = bumpScriptGen(view, id) orelse return;
 
     const wrapped: ?[]u8 = if (at_start) null else wrapForDocumentEnd(source);
     defer if (wrapped) |w| alloc.free(w);
@@ -1845,10 +1915,28 @@ fn cmdAddUserScript(view: *View, arg: ?std.json.Value) void {
         return;
     };
     tr("addUserScript node={d} id={s} world={s} at={s}", .{ view.node_id, id, world, if (at_start) "start" else "end" });
-    addNewDocumentScript(view, body, world, false, .{ .add_user_script = .{ .id = id_copy, .world = world_copy } });
+    addNewDocumentScript(view, body, world, false, .{ .add_user_script = .{ .id = id_copy, .world = world_copy, .gen = gen } });
+}
+
+/// Invalidates any install for `id` that is still in flight and returns the
+/// generation the next one will carry.
+fn bumpScriptGen(view: *View, id: []const u8) ?u64 {
+    const gop = view.script_gens.getOrPut(alloc, id) catch return null;
+    if (!gop.found_existing) {
+        gop.key_ptr.* = alloc.dupe(u8, id) catch {
+            _ = view.script_gens.remove(id);
+            return null;
+        };
+        gop.value_ptr.* = 0;
+    }
+    gop.value_ptr.* += 1;
+    return gop.value_ptr.*;
 }
 
 fn removeScriptById(view: *View, id: []const u8) void {
+    // Also invalidates an install still in flight for this id: its identifier
+    // arrives later and would otherwise re-register a script the app removed.
+    _ = bumpScriptGen(view, id);
     const entry = view.scripts.fetchRemove(id) orelse return;
     defer alloc.free(entry.key);
     defer alloc.free(entry.value.identifier);
