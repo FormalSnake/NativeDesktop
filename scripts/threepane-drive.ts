@@ -42,11 +42,8 @@ async function tree(): Promise<GetTreeResult> {
   return (await client.call("getTree")) as GetTreeResult;
 }
 
-// Window titles aren't captured as node text (tree.zig's create-op meta only
-// keys off literal "text"/"label" props, which "title" is not) — wait on the
-// sidebar row's Label text instead, same idiom notes-drive.ts relies on
-// (its "ND Notes" wait actually matches the seeded note title text, not the
-// window's title either).
+// Waits on the sidebar row's Label text, the idiom notes-drive.ts uses too
+// (its "ND Notes" wait matches the seeded note title, not the window's title).
 const waitedWindow = (await client.call("waitFor", {
   condition: { textContains: "All Notes" },
   timeoutMs: 3000,

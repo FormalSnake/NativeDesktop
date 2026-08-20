@@ -1,6 +1,7 @@
 const std = @import("std");
 const protocol = @import("protocol.zig");
 const backend = @import("backend.zig").impl;
+const widget_types = @import("generated/widget_types.zig");
 
 const Widget = backend.Widget;
 
@@ -42,6 +43,17 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
         .string => field.string,
         else => null,
     };
+}
+
+/// The node's readable text, read from the prop the widget's schema declares
+/// as its text source (`automation.textFrom`). Both backends get their
+/// `getTree` text through this one lookup, so a Row reports its `title` on GTK
+/// and AppKit alike; keying off literal "text"/"label" instead left every
+/// title-bearing widget (row, banner, statuspage, headerbar) reporting null,
+/// with nothing for a drive to assert against.
+fn textFromProps(widget_type: []const u8, props: ?std.json.Value) ?[]const u8 {
+    const prop = widget_types.textPropOf(widget_type) orelse return null;
+    return propStr(props, prop);
 }
 
 /// ListView's `itemCount` is derived from `items.len`, never from
@@ -429,7 +441,7 @@ pub const Tree = struct {
                 // testID is stored here for the automation getTree RPC and is
                 // never applied to the GTK widget itself.
                 const test_id = propStr(op.props, "testID");
-                const initial_text = propStr(op.props, "text") orelse propStr(op.props, "label");
+                const initial_text = textFromProps(op.widget.?, op.props);
                 const attached = protocol.Attached.fromProps(op.props);
                 self.putMeta(op.id.?, op.widget.?, test_id, initial_text, 0, attached) catch {};
                 if (view_kind != null) if (self.metaGet(op.id.?)) |m| {
@@ -476,9 +488,7 @@ pub const Tree = struct {
                 backend.applyProps(widget, kind, op.props);
                 applyStyleIfPresent(widget, op.id.?, op.props);
                 if (propStr(op.props, "testID")) |t| self.setMetaTestId(op.id.?, t);
-                if (propStr(op.props, "text") orelse propStr(op.props, "label")) |t| {
-                    self.setMetaText(op.id.?, t);
-                }
+                if (textFromProps(kind, op.props)) |t| self.setMetaText(op.id.?, t);
                 if (rowCountOf(op.props)) |n| self.setMetaItemCount(op.id.?, n);
                 if (parseRows(self.gpa, op.props)) |rows| self.setMetaRows(op.id.?, rows);
             } else if (std.mem.eql(u8, op.op, "insertBefore")) {
@@ -734,6 +744,23 @@ test "node meta stores type/testID/text and frees on remove" {
     try std.testing.expectEqualStrings("Increment", m.text.?);
     t.removeMeta(1);
     try std.testing.expect(t.metaGet(1) == null);
+}
+
+test "node text comes from the widget's schema-declared prop" {
+    const gpa = std.testing.allocator;
+    const json =
+        \\{"label":"Increment","title":"Row Title","text":"body"}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, json, .{});
+    defer parsed.deinit();
+
+    // One table for both backends: a Button reads `label`, a Row `title`, a
+    // Label `text`, and a Box has no text source at all.
+    try std.testing.expectEqualStrings("Increment", textFromProps("Button", parsed.value).?);
+    try std.testing.expectEqualStrings("Row Title", textFromProps("Row", parsed.value).?);
+    try std.testing.expectEqualStrings("body", textFromProps("Label", parsed.value).?);
+    try std.testing.expect(textFromProps("Box", parsed.value) == null);
+    try std.testing.expect(textFromProps("NotAWidget", parsed.value) == null);
 }
 
 test "childrenOf preserves append + insertBefore order" {

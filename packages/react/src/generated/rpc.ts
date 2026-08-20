@@ -306,6 +306,8 @@ export const RPC_ERRORS = {
   waitForTimeout: { code: -32002, message: "waitFor timeout" },
   /** pointer/drag/keys/doubleClick/rightClick/hover on a backend without synthetic input (GTK4 removed app-constructible events) */
   inputUnsupported: { code: -32003, message: "input synthesis unsupported on this backend" },
+  /** data: {window}. getTree/screenshot only: params.window named a real Window ref (e.g. from windows()) that has since closed, distinguishing a benign concurrent-close race from invalidParams (a malformed request). Every other window-scoped method resolves a closed window into its own no-match result instead of this error. */
+  windowGone: { code: -32004, message: "window closed" },
   methodNotFound: { code: -32601, message: "method not found" },
   /** data: {ref} where applicable; message may carry the specific missing/invalid param */
   invalidParams: { code: -32602, message: "invalid params" },

@@ -95,7 +95,14 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     // closed overlay's content read back as visible forever. `isVisible`
     // catches that (a live app window is always visible while up, so this
     // costs nothing there).
-    return !view.isHidden && (view.window?.isVisible ?? false)
+    //
+    // `isHiddenOrHasHiddenAncestor`, not `isHidden`: collapsing an
+    // NSSplitViewItem hides the pane's host view and nothing below it, so
+    // every descendant of a collapsed sidebar kept reporting visible with the
+    // geometry it had before the collapse. GTK answers this with
+    // `gtk_widget_get_mapped`, which is false for the whole subtree under a
+    // hidden pane; the ancestor walk is the same contract.
+    return !view.isHiddenOrHasHiddenAncestor && (view.window?.isVisible ?? false)
 }
 
 /// Frame (in the live content view's flipped space) of the internal control

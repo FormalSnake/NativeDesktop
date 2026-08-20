@@ -35,7 +35,7 @@ const nodeMeta: Omit<SourceTreeNode, "expanded">[] = [
   { id: "run-old", parentId: "sec-settled", title: "old run", caption: "settled yesterday", testID: "st-run-old" },
 ];
 
-// ---- row-geometry probe (ND_ST_GEOMETRY=flat|deep|hover|always) ------------
+// ---- row-geometry probe (ND_ST_GEOMETRY=flat|deep|hover|always|long) -------
 // One tree, alone in a window whose layout does not change between variants,
 // so two captures of two variants are directly comparable pixel for pixel.
 // The variants differ in exactly ONE property each: flat vs deep answers "does
@@ -46,7 +46,25 @@ const nodeMeta: Omit<SourceTreeNode, "expanded">[] = [
 // the hover RPC can aim at) lands on a row.
 const PROBE_ROWS = 20;
 const probeRow = (i: number): SourceTreeNode => ({ id: `g-${i}`, title: `Alpha ${i}`, expanded: false });
+
+// The `long` variant is a browser's tab list: a narrow sidebar whose titles
+// and captions are both longer than the row can hold. Two rules ride on it.
+// The title gets the row's whole width minus the icon and the action slot,
+// and the caption is clipped by that same edge instead of running past the
+// sidebar. Rows carry no icon, so the leftmost ink is still the title.
+const LONG_PROBE_WIDTH = 300;
+const LONG_TITLE = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel";
+const LONG_CAPTION = "example.com/alpha/bravo/charlie/delta/echo/foxtrot";
+const longRow = (i: number): SourceTreeNode => ({
+  id: `l-${i}`,
+  title: `${LONG_TITLE} ${i}`,
+  caption: LONG_CAPTION,
+  actionIds: ["close-run"],
+  expanded: false,
+});
+
 const probeNodes = (variant: string): SourceTreeNode[] => {
+  if (variant === "long") return Array.from({ length: 8 }, (_, i) => longRow(i));
   const rows = Array.from({ length: PROBE_ROWS }, (_, i) => probeRow(i));
   if (variant === "deep") {
     // The one expandable node sits LAST: the rule under test is about the
@@ -64,8 +82,14 @@ const probeNodes = (variant: string): SourceTreeNode[] => {
 
 function GeometryProbe({ variant }: { variant: string }): React.ReactNode {
   return (
-    <window title="SourceTree Geometry" defaultWidth={480} defaultHeight={520}>
-      <box orientation="vertical" spacing={0}>
+    <window
+      title="SourceTree Geometry"
+      defaultWidth={variant === "long" ? LONG_PROBE_WIDTH : 480}
+      defaultHeight={520}
+    >
+      {/* `long` insets the tree from the window, so a row that overruns its
+          own right edge is measurable as ink outside the widget rect. */}
+      <box orientation="vertical" spacing={0} style={{ padding: variant === "long" ? 20 : 0 }}>
         <sourcetree
           testID="st-geo"
           nodes={probeNodes(variant)}

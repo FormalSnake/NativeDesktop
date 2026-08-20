@@ -166,16 +166,29 @@ fn handleOnUi(job: *UiJob) void {
     }
 }
 
-/// Validates `job.window` (when set) as a live Window node ON THE UI THREAD —
+/// Validates `job.window` (when set) as a live Window node ON THE UI THREAD:
 /// `tree.meta` is mutated by `Tree.apply` on the UI thread, so reading it from
-/// the automation thread (the old `windowRefError`) raced a rehash. Fills the
-/// invalid-params error and returns false on a bad ref.
+/// the automation thread (the old `windowRefError`) raced a rehash.
+///
+/// Used only by `getTree`/`screenshot`, the two RPCs with no "target not
+/// found" result shape of their own. A window closing between `windows()`
+/// and a query scoped to its ref is a benign race (a short-lived picker or
+/// prompt closing under a concurrent client), not a malformed request, so
+/// this answers the distinguishable `windowGone` rather than `invalidParams`:
+/// a client can tell "the window raced closed" apart from "I sent garbage".
+/// Every other window-scoped handler (waitFor, resolve, the semantic-action
+/// dispatch, window_action) already resolves a vanished window into its own
+/// "nothing matched" outcome once the window's subtree is gone from
+/// `tree.meta`, so those never call this: a gate ahead of them would just
+/// relabel that outcome as `invalidParams` instead of the answer they already
+/// give.
 fn validateWindowRef(job: *UiJob) bool {
     const wid = job.window orelse return true;
     const m = job.tree.metaGet(wid);
     if (m == null or !std.mem.eql(u8, m.?.widget_type, "Window")) {
-        job.err_code = rpc.code_invalid_params;
-        job.err_msg = "unknown window ref";
+        job.err_code = rpc.code_window_gone;
+        job.err_msg = rpc.msg_window_gone;
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"window\":{d}}}", .{wid}) catch null;
         return false;
     }
     return true;
@@ -404,7 +417,11 @@ fn renderValue(arena: std.mem.Allocator, v: std.json.Value) []const u8 {
 /// a vtable call — the core never walks a native widget itself. Fills
 /// `matched`/`ref_out`/`count`.
 fn handleWaitPoll(job: *UiJob) void {
-    if (!validateWindowRef(job)) return;
+    // No window-ref gate here on purpose: every branch below scopes by
+    // `windowOf(...) == job.window`, and a window that no longer resolves is
+    // nobody's ancestor, so a vanished window already reads as zero
+    // candidates (not matched yet, or matched for state "gone") without a
+    // separate check.
     if (job.text_contains) |needle| {
         var count: u32 = 0;
         var first: ?u32 = null;
@@ -593,7 +610,12 @@ fn resolveReadable(job: *UiJob) ?*Widget {
 /// to its ranked ref here first (§1.2a: one round trip, host-side
 /// resolution).
 fn handleSemanticAction(job: *UiJob, action: []const u8) void {
-    if (!validateWindowRef(job)) return;
+    // No window-ref gate here: a testId target already resolves a vanished
+    // window to zero candidates (resolveJobTarget's notActionable/"unknown"
+    // path below), and a ref target already resolves it to a missing node
+    // (checkActionable/resolveReadable's own "unknown" path) since a
+    // window's subtree leaves `tree.meta` in the same commit that removes
+    // the window itself.
     if (!resolveJobTarget(job)) return;
     const widget = (if (isReadOnlyProbe(job.kind)) resolveReadable(job) else checkActionable(job)) orelse return;
     const action_z = job.gpa.dupeZ(u8, action) catch return;
@@ -637,15 +659,18 @@ fn dispatchToBackend(job: *UiJob, widget: *Widget, node_id: u32, action_z: [:0]c
 /// (Backend registry resolves it), and the backend hit-tests the coordinates
 /// itself exactly like real input would.
 fn handleWindowAction(job: *UiJob) void {
-    if (!validateWindowRef(job)) return;
     const target_id = job.window orelse job.tree.rootId() orelse {
         job.err_code = rpc.code_internal_error;
         job.err_msg = "no root";
         return;
     };
+    // A given `window` that has since closed answers the same notActionable
+    // "unknown" shape a stale widget ref would, rather than invalidParams:
+    // the request named a real target that raced closed, not a malformed one.
     const widget = job.tree.get(target_id) orelse {
-        job.err_code = rpc.code_invalid_params;
-        job.err_msg = "unknown window ref";
+        job.err_code = rpc.code_not_actionable;
+        job.err_msg = rpc.msg_not_actionable;
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"ref\":{d},\"reason\":\"unknown\"}}", .{target_id}) catch null;
         return;
     };
     const action_z = job.gpa.dupeZ(u8, job.action.?) catch return;
@@ -666,7 +691,10 @@ fn handleProbeRect(job: *UiJob) void {
 /// `{ref, refs, count}`. With `actionable` (the default) the winner must
 /// itself pass the actionability predicate, else `ref` is null.
 fn handleResolve(job: *UiJob) void {
-    if (!validateWindowRef(job)) return;
+    // No window-ref gate: collectTestIdMatches scopes by `windowOf(...) ==
+    // job.window`, so a vanished window already yields zero candidates, the
+    // same ResolveResult{ref: null, refs: [], count: 0} an unmatched testId
+    // returns.
     var arena_state = std.heap.ArenaAllocator.init(job.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1182,9 +1210,9 @@ pub const Server = struct {
 
     /// Normalizes an action's target params onto `job`: exactly one of
     /// `ref` / `testId` (the invalidParams envelope otherwise, returned for
-    /// the caller to send). The window ref itself is validated on the UI
-    /// thread (`validateWindowRef`) — `tree.meta` must never be read from
-    /// this (the automation) thread.
+    /// the caller to send). The window, if given, is resolved on the UI
+    /// thread inside `handleSemanticAction`'s target resolution, not here:
+    /// `tree.meta` must never be read from this (the automation) thread.
     fn targetError(self: *Server, id: std.json.Value, job: *UiJob, ref: ?u32, test_id: ?[]const u8, window: ?u32) ?[]u8 {
         if ((ref == null) == (test_id == null)) {
             return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "exactly one of params.ref / params.testId", null) catch null;
@@ -1243,8 +1271,8 @@ pub const Server = struct {
         if (from.window != null and to.window != null and from.window.? != to.window.?) {
             return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "fromRef and toRef must share a window", null);
         }
-        // A ref-less drag's explicit window ref is validated on the UI thread
-        // (handleWindowAction's validateWindowRef), never here.
+        // A ref-less drag's explicit window ref is resolved on the UI thread
+        // inside handleWindowAction, never here.
         const window_id: ?u32 = from.window orelse to.window orelse p.value.window;
 
         const steps = @max(p.value.steps, 1);
@@ -1404,6 +1432,83 @@ test "renderValue: strings raw, numbers stringified, bools true/false" {
     try std.testing.expectEqualStrings("false", renderValue(arena, .{ .bool = false }));
     try std.testing.expectEqualStrings("42", renderValue(arena, .{ .integer = 42 }));
     try std.testing.expectEqualStrings("1.5", renderValue(arena, .{ .float = 1.5 }));
+}
+
+// Regression for the enumerate-then-scope race: a client lists windows(),
+// then issues a query scoped to one of those refs; the window can close in
+// between (a short-lived picker or prompt) with no way for the client to
+// have seen that yet. `Tree.putMeta`/`removeMeta` stand in for the create/
+// remove ops a real commit batch would apply, so this needs no live
+// backend: the branches exercised below never touch `abi_backend.vtable`.
+test "a window ref that closed mid-request never reads as a malformed request" {
+    const gpa = std.testing.allocator;
+    var tree = Tree.initBare(gpa);
+    defer tree.deinitMeta();
+
+    try tree.putMeta(1, "Window", null, null, 0, .{});
+    try tree.putMeta(2, "Button", "ok", "OK", 1, .{});
+
+    // Sanity: a still-live window passes validateWindowRef untouched.
+    {
+        var job = UiJob{ .tree = &tree, .kind = .get_tree, .gpa = gpa, .io = undefined, .window = 1 };
+        try std.testing.expect(validateWindowRef(&job));
+        try std.testing.expectEqual(@as(i32, 0), job.err_code);
+    }
+
+    // The commit that tears a window down removes its whole subtree's meta
+    // in one batch (Tree.apply's remove arm), never leaving a child behind
+    // with a parent that is already gone.
+    tree.removeMeta(2);
+    tree.removeMeta(1);
+
+    // getTree/screenshot: a benign concurrent close answers the
+    // distinguishable windowGone, not invalidParams (which reads as "the
+    // client sent garbage").
+    {
+        var job = UiJob{ .tree = &tree, .kind = .get_tree, .gpa = gpa, .io = undefined, .window = 1 };
+        try std.testing.expect(!validateWindowRef(&job));
+        try std.testing.expectEqual(rpc.code_window_gone, job.err_code);
+        try std.testing.expectEqualStrings(rpc.msg_window_gone, job.err_msg.?);
+        const data = job.err_data_json.?;
+        defer gpa.free(data);
+        try std.testing.expect(std.mem.indexOf(u8, data, "\"window\":1") != null);
+    }
+
+    // click/setValue/type/scroll/...: a testId scoped to the vanished window
+    // resolves through resolveJobTarget's ordinary "unknown target" path,
+    // the same one an unmatched testId already takes, not through
+    // validateWindowRef at all.
+    {
+        var job = UiJob{ .tree = &tree, .kind = .click, .gpa = gpa, .io = undefined, .window = 1, .test_id = "ok" };
+        try std.testing.expect(!resolveJobTarget(&job));
+        try std.testing.expectEqual(rpc.code_not_actionable, job.err_code);
+        const data = job.err_data_json.?;
+        defer gpa.free(data);
+        try std.testing.expect(std.mem.indexOf(u8, data, "\"reason\":\"unknown\"") != null);
+    }
+
+    // resolve: the same vanished-window scoping yields the ordinary
+    // zero-candidate ResolveResult, not an error.
+    {
+        var job = UiJob{ .tree = &tree, .kind = .resolve_ref, .gpa = gpa, .io = undefined, .window = 1, .test_id = "ok" };
+        handleResolve(&job);
+        try std.testing.expectEqual(@as(i32, 0), job.err_code);
+        const json = job.result_json.?;
+        defer gpa.free(json);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"ref\":null") != null);
+        try std.testing.expect(std.mem.indexOf(u8, json, "\"count\":0") != null);
+    }
+
+    // waitFor state "gone": a window closing mid-poll makes its node "gone"
+    // exactly as if it had unmounted on its own, so a script polling for a
+    // picker to disappear observes success instead of a hard error.
+    {
+        var job = UiJob{ .tree = &tree, .kind = .wait_poll, .gpa = gpa, .io = undefined, .window = 1, .test_id = "ok", .state = "gone" };
+        handleWaitPoll(&job);
+        try std.testing.expectEqual(@as(i32, 0), job.err_code);
+        try std.testing.expect(job.matched);
+        try std.testing.expectEqual(@as(u32, 0), job.count);
+    }
 }
 
 /// Builds the JSON-RPC error envelope. `data_json`, if present, is spliced

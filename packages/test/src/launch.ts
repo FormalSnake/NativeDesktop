@@ -8,23 +8,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Backend } from "@nativedesktop/host";
 import { resolveBackend, resolveHostBinary } from "@nativedesktop/host";
-import { AutomationClient } from "./socket.ts";
-import type {
-  DragParams,
-  DragResult,
-  ClickResult,
-  GetTreeResult,
-  JsonNode,
-  KeysResult,
-  ScreenshotResult,
-  ScrollResult,
-  SetValueResult,
-  TypeResult,
-  WaitCondition,
-  WaitForResult,
-  WebViewEvalResult,
-  WebViewInfo,
-  WindowsResult,
+import { AutomationClient, AutomationRpcError } from "./socket.ts";
+import {
+  type DragParams,
+  type DragResult,
+  type ClickResult,
+  type GetTreeResult,
+  type JsonNode,
+  type KeysResult,
+  RPC_ERRORS,
+  type ScreenshotResult,
+  type ScrollResult,
+  type SetValueResult,
+  type TypeResult,
+  type WaitCondition,
+  type WaitForResult,
+  type WebViewEvalResult,
+  type WebViewInfo,
+  type WindowsResult,
 } from "@nativedesktop/react/rpc";
 import { TimedClient } from "./client.ts";
 import { type DialogScript, dialogScriptEnv } from "./dialogs.ts";
@@ -351,14 +352,32 @@ export class AppHandle {
     return this.rpc.call("getTree", { window });
   }
 
+  // A window closing between windows() (or an earlier query) and this call
+  // races the window ref out from under `opts.window`; getTree answers the
+  // distinguishable windowGone error rather than invalidParams (see
+  // schema/rpc.json), and every find* helper below treats that exactly like
+  // an unmatched testId: null, an empty list, or a "not found" throw. tree()
+  // itself does NOT swallow it: a raw tree() caller needs to know the window
+  // is gone rather than get a fake empty snapshot that reads the same as
+  // "this window really has no children".
+  private isWindowGone(e: unknown): boolean {
+    return e instanceof AutomationRpcError && e.code === RPC_ERRORS.windowGone.code;
+  }
+
   async find(testId: string, opts: { window?: number } = {}): Promise<JsonNode | null> {
-    const t = await this.tree(opts.window);
-    return findNode(t.root, testId);
+    const t = await this.tree(opts.window).catch((e) => {
+      if (this.isWindowGone(e)) return null;
+      throw e;
+    });
+    return t ? findNode(t.root, testId) : null;
   }
 
   async findAll(testId: string, opts: { window?: number } = {}): Promise<JsonNode[]> {
-    const t = await this.tree(opts.window);
-    return findAllNodes(t.root, testId);
+    const t = await this.tree(opts.window).catch((e) => {
+      if (this.isWindowGone(e)) return null;
+      throw e;
+    });
+    return t ? findAllNodes(t.root, testId) : [];
   }
 
   async mustFind(testId: string, opts: { window?: number } = {}): Promise<JsonNode> {
@@ -368,8 +387,11 @@ export class AppHandle {
   }
 
   async findMatching(pred: (n: JsonNode) => boolean, opts: { window?: number } = {}): Promise<JsonNode | null> {
-    const t = await this.tree(opts.window);
-    return findMatchingNode(t.root, pred);
+    const t = await this.tree(opts.window).catch((e) => {
+      if (this.isWindowGone(e)) return null;
+      throw e;
+    });
+    return t ? findMatchingNode(t.root, pred) : null;
   }
 
   // --- actions (single RPC, host-side resolution, no retry loops) ------------

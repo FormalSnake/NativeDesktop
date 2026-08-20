@@ -7163,7 +7163,7 @@ function genSwiftCreateBody(w: Widget): string {
     // SplitController.swift. Its `view` IS `controller.splitView`, so that's
     // still what's returned/handled as this widget's ABI handle everywhere
     // else (structural/apply arms, the toolbar's tracking separator).
-    out += "        let controller = NSSplitViewController()\n";
+    out += "        let controller = NDSplitViewController()\n";
     out += "        controller.splitView.isVertical = true\n";
     out += "        controller.splitView.dividerStyle = .thin\n";
     out += "        ndSplitControllers[ObjectIdentifier(controller.splitView)] = controller\n";
@@ -7552,8 +7552,16 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += `        // "${p.name}" handled by ndEmptyStateApply above (merged).\n`;
     } else if (w.name === "SplitView" && p.name === "collapsed") {
       out += '        if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,\n';
-      out += "           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {\n";
-      out += "            sidebarItem.isCollapsed = c\n";
+      out += "           let controller = ndSplitViewController(for: split) {\n";
+      // Restash the live value: a sidebar that unmounts and mounts again is a
+      // fresh NSSplitViewItem, and it must come back in the state the app
+      // holds now rather than the one the splitview was created in.
+      out += "            splitViewCollapsed[ObjectIdentifier(split)] = c\n";
+      // By behavior, not by index: with no sidebar mounted, item 0 is the
+      // content pane, and collapsing that empties the window.
+      out += "            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {\n";
+      out += "                sidebarItem.isCollapsed = c\n";
+      out += "            }\n";
       out += "        }\n";
     } else if (w.name === "Paned" && p.name === "position") {
       out += '        if let f = propDouble(props, "position"), let split = view as? NSSplitView,\n';
@@ -8150,8 +8158,12 @@ const SPLITVIEW_STRUCTURAL_BODY =
   // does honor immediately. An explicit floor keeps the sidebar a sane,
   // non-squeezed width the first time a three-pane split lays out.
   "            item.minimumThickness = 180\n" +
+  // preferredThicknessFraction is kept for the reset/fullscreen paths it does
+  // govern; the landed first-layout width is the controller's job
+  // (NDSplitViewController.pendingSidebarFraction).
   "            if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {\n" +
   "                item.preferredThicknessFraction = fraction\n" +
+  "                controller.pendingSidebarFraction = fraction\n" +
   "            }\n" +
   "            item.canCollapse = true\n" +
   "            item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false\n" +
@@ -8177,6 +8189,7 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            item.titlebarSeparatorStyle = .none\n" +
   "            if let fraction = splitViewListFraction[ObjectIdentifier(split)] {\n" +
   "                item.preferredThicknessFraction = fraction\n" +
+  "                controller.pendingListFraction = fraction\n" +
   "            }\n" +
   "            let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0\n" +
   "            controller.insertSplitViewItem(item, at: insertIndex)\n" +
@@ -8200,7 +8213,8 @@ const SPLITVIEW_STRUCTURAL_BODY =
   "            } else {\n" +
   "                controller.addSplitViewItem(item)\n" +
   "            }\n" +
-  "        }\n";
+  "        }\n" +
+  "        controller.splitViewItemsChanged()\n";
 
 // Shared between ToolbarView's append/insertBefore (slots are
 // position-independent, so `before` plays no part).
@@ -8498,8 +8512,15 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        let split = parent as! NSSplitView\n" +
       "        let controller = ndSplitViewController(for: split)!\n" +
       "        var realChild = child\n" +
+      // The pane's own controller IS the split item's viewController, so it
+      // identifies the item even for a pane whose content child was swapped
+      // or never mounted. Cleared here: it is also what tells has_parent
+      // (Backend.swift) this logical handle is still attached.
+      "        var paneItemHost: NSView? = nil\n" +
       "        if let pane = child as? NDToolbarPaneView {\n" +
       "            ndToolbarPaneDetachedFromSplit(pane)\n" +
+      "            paneItemHost = pane.paneController?.view\n" +
+      "            pane.paneController = nil\n" +
       "            realChild = pane.contentView ?? child\n" +
       "        }\n" +
       // realChild is directly a split view item's viewController.view now (no
@@ -8509,7 +8530,7 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       // (shouldn't occur via the generated arms, kept for defense in depth).
       // realChild sits INSIDE the pane host view (ndMakePaneViewController),
       // so match by descendant, not view identity.
-      "        if let item = controller.splitViewItems.first(where: { $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {\n" +
+      "        if let item = controller.splitViewItems.first(where: { $0.viewController.view === paneItemHost || $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {\n" +
       "            controller.removeSplitViewItem(item)\n" +
       "        } else {\n" +
       "            split.removeArrangedSubview(realChild)\n" +
@@ -8857,12 +8878,13 @@ function genWidgetTypesTs(s: Schema): string {
 
 function genWidgetTypesZig(s: Schema): string {
   let out = HEADER_ZIG + "const std = @import(\"std\");\n\n";
-  out += "const Entry = struct { name: []const u8, value: u16, role: ?[]const u8 };\n";
+  out += "const Entry = struct { name: []const u8, value: u16, role: ?[]const u8, text_from: ?[]const u8 };\n";
   out += "pub const widget_types = [_]Entry{\n";
   for (let i = 0; i < s.widgets.length; i++) {
     const w = s.widgets[i]!;
     const role = w.automation?.role ? JSON.stringify(w.automation.role) : "null";
-    out += `    .{ .name = ${JSON.stringify(w.name)}, .value = ${i + 1}, .role = ${role} },\n`;
+    const textFrom = w.automation?.textFrom ? JSON.stringify(w.automation.textFrom) : "null";
+    out += `    .{ .name = ${JSON.stringify(w.name)}, .value = ${i + 1}, .role = ${role}, .text_from = ${textFrom} },\n`;
   }
   out += "};\n\n";
   out += "pub fn widgetTypeOf(name: []const u8) ?u16 {\n";
@@ -8874,6 +8896,13 @@ function genWidgetTypesZig(s: Schema): string {
   out += "/// The widget's schema-declared automation role (getTree's `role` field).\n";
   out += "pub fn roleOf(name: []const u8) ?[]const u8 {\n";
   out += "    for (widget_types) |e| if (std.mem.eql(u8, e.name, name)) return e.role;\n";
+  out += "    return null;\n}\n\n";
+  out += "/// The prop that supplies the widget's readable text (getTree's `text`\n";
+  out += "/// field, and what waitFor's textContains matches). Schema-declared, so a\n";
+  out += "/// Row reports its `title` and a Button its `label` from ONE table both\n";
+  out += "/// backends read (src/tree.zig).\n";
+  out += "pub fn textPropOf(name: []const u8) ?[]const u8 {\n";
+  out += "    for (widget_types) |e| if (std.mem.eql(u8, e.name, name)) return e.text_from;\n";
   out += "    return null;\n}\n\n";
   out += genZigHostManifest(s);
   return out;
