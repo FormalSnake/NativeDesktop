@@ -26,12 +26,19 @@ const NODES: SourceTreeNode[] = Array.from({ length: 8 }, (_, i) => ({
 
 const startCollapsed = process.env.ND_CHROME_COLLAPSED === "1";
 
+// A window narrow enough that the declared fraction falls under the sidebar's
+// 180pt floor, so the pane can only come up at the floor. The drive resizes
+// the window afterwards and asks what the fraction did with the new width,
+// which is the shape an app that carries its window size in a store hits: the
+// split is laid out at one width and the window settles at another.
+const startNarrow = process.env.ND_CHROME_NARROW === "1";
+
 function App(): React.ReactNode {
   const [showSidebar, setShowSidebar] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
 
   return (
-    <window title="ND Chrome Probe" defaultWidth={900} defaultHeight={600}>
+    <window title="ND Chrome Probe" defaultWidth={startNarrow ? 560 : 900} defaultHeight={600}>
       <splitview testID="sp-split" sidebarWidth={0.3} collapsed={startCollapsed}>
         {showSidebar && (
           <toolbarview slot="sidebar" testID="sp-sidebar-toolbar">

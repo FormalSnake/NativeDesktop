@@ -9,7 +9,8 @@
 //   4. A popover's content stays inside the frame the popover was given.
 //   5. Unmounting the sidebar child removes the pane; the content pane takes
 //      the whole window back, and mounting one again restores it at its width.
-//   6. A collapsed pane's descendants report visible:false.
+//   6. `sidebarWidth` is still that fraction after the window resizes.
+//   7. A collapsed pane's descendants report visible:false.
 // Prints ND_CHROME_OK on success.
 import { launchApp, poll, type JsonNode } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
@@ -130,7 +131,60 @@ try {
   await app.close();
 }
 
-// ---- leg 7: a collapsed pane's descendants are not visible ------------------
+// ---- leg 7: the fraction survives the window settling at another width -----
+// The shape an app that carries its window size in a store hits: the split is
+// laid out at one width and the window ends up at another. A divider position
+// is absolute, so landing the fraction once left a 0.24 sidebar at its 180pt
+// floor on a 1280pt window. The probe starts narrow enough that the fraction
+// is UNDER that floor, so a sidebar that never re-lands cannot hide behind a
+// plausible number.
+//
+// AppKit only: resizing a window from outside it goes through System Events,
+// and there is no seat to drive on the headless GTK leg.
+if (backend === "appkit") {
+  const resized = await launchApp({
+    entry: "examples/notes/chrome-probe.tsx",
+    backend,
+    env: { ND_CHROME_NARROW: "1", ND_APP_ID: `dev.nativedesktop.chromeNarrow${process.pid}` },
+  });
+  try {
+    await resized.waitForText("sidebar on", { timeoutMs: T });
+    const windowWidth = async (): Promise<number> => rect((await resized.tree()).root, "window").w;
+    const insetNow = async (): Promise<number> => rect(await resized.mustFind("sp-content"), "sp-content").x;
+    const before = { w: await windowWidth(), inset: await insetNow() };
+    // Even the width the window merely passes through gets the fraction: this
+    // is the same assertion as leg 1, made where the fraction is below the
+    // sidebar's floor.
+    if (Math.abs(before.inset - before.w * SIDEBAR_FRACTION) > 16) {
+      throw new Error(`narrow start: content pane at x=${before.inset} on a ${before.w}pt window, want ~${before.w * SIDEBAR_FRACTION}`);
+    }
+    const grown = 1280;
+    const osa = Bun.spawnSync([
+      "osascript", "-e",
+      `tell application "System Events" to set size of front window of (first application process whose unix id is ${resized.pid}) to {${grown}, 700}`,
+    ]);
+    if (osa.exitCode !== 0) throw new Error(`osascript resize failed: ${osa.stderr.toString()}`);
+    const settled = await poll(windowWidth, (w) => Math.abs(w - grown) < 2, { timeoutMs: T });
+    const after = await poll(insetNow, (x) => Math.abs(x - settled * SIDEBAR_FRACTION) < 8, { timeoutMs: T }).catch(
+      async () => {
+        throw new Error(
+          `after resizing ${before.w} -> ${settled}, content pane sits at x=${await insetNow()},` +
+            ` want ~${settled * SIDEBAR_FRACTION} (it held the ${before.inset}pt it had)`,
+        );
+      },
+    );
+    console.log(
+      `ND_CHROME_RESIZE_OK content pane ${before.inset} -> ${after} as the window went ${before.w} -> ${settled}` +
+        ` (fraction ${SIDEBAR_FRACTION} throughout)`,
+    );
+  } finally {
+    await resized.close();
+  }
+} else {
+  console.log("ND_CHROME_RESIZE_SKIP gtk: no seat to resize a window from outside it");
+}
+
+// ---- leg 8: a collapsed pane's descendants are not visible ------------------
 // `collapsed` is create-time here, so it takes its own host: nothing else in
 // the probe differs between the two runs. GTK's unmapped subtree reports false
 // all the way down; AppKit hid the pane's host view and nothing under it, so a

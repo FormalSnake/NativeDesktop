@@ -31,58 +31,122 @@ func ndSplitViewController(for split: NSSplitView) -> NDSplitViewController? {
 /// divider-double-click reset and the fullscreen-enter size (Apple's own doc
 /// on the property), not the first layout: measured live, sidebarWidth 0.24
 /// and 0.30 both came up at `minimumThickness`. What decides the landed width
-/// is the divider position, and a fraction of the split's width cannot be
-/// taken until the split HAS a width, which it does not at append time (it is
-/// not in a window yet). So each fraction waits for the first layout pass that
-/// has one, lands as a divider position, and is then forgotten: after that the
-/// divider belongs to whoever dragged it.
+/// is the divider position, so the fraction is taken of the split's width and
+/// set as one.
+///
+/// The fraction stays the authority until a person drags a divider, and it is
+/// re-landed on every width the window settles at, because a position is
+/// absolute and a fraction is not. There is no single "final" width to wait
+/// for: becoming `contentViewController` lays the split out at the
+/// controller's fitting size, `ndInstallSplitAsWindowContent` restores the
+/// frame after it, and an app that carries its window size in a store resizes
+/// again on top of that. Landing once meant taking the fraction of whichever
+/// width happened to be current, and the divider then held its POINTS through
+/// every later resize (measured in a real app: a 0.24 sidebar came up at the
+/// 180pt floor on a 1280pt window, because the fraction was spent while the
+/// window was momentarily at its fitting size). Re-landing also makes the
+/// prop mean the same thing it means on GTK, where
+/// `AdwOverlaySplitView:sidebar-width-fraction` tracks the window for the
+/// widget's whole life.
 final class NDSplitViewController: NSSplitViewController {
     var pendingSidebarFraction: Double?
     var pendingListFraction: Double?
 
+    /// Per pane, the split width its fraction was last landed against. A
+    /// relayout at the same width is not a reason to move a divider; a window
+    /// resize is. Tracked per pane so a collapsed one, which is skipped, still
+    /// gets its fraction when it opens.
+    private var appliedSidebarWidth: CGFloat = 0
+    private var appliedListWidth: CGFloat = 0
+    /// Set the first time a person drags a divider: their points win after
+    /// that, and the declared fraction stops re-landing.
+    private var dividerMoved = false
+    /// Our own `setPosition` calls post the same notification a drag does, so
+    /// they are bracketed rather than mistaken for one.
+    private var landingFractions = false
+    private var observingDrags = false
+
     override func viewDidLayout() {
         super.viewDidLayout()
-        applyPendingFractions()
+        observeDividerDrags()
+        applyFractions()
     }
 
     /// Generated SplitView append/insertBefore arms call this once the item
     /// has landed. Inserting an item into a live split does not run the
     /// controller through `viewDidLayout` (measured: no callback at all), so a
     /// sidebar mounted after the window is up would hold its fraction pending
-    /// forever and come up at `minimumThickness`.
+    /// forever and come up at `minimumThickness`. A pane that just mounted has
+    /// no width of its own whatever the user did to the last one, so this is
+    /// the one path that lands a fraction past `dividerMoved`.
     func splitViewItemsChanged() {
         splitView.layoutSubtreeIfNeeded()
-        applyPendingFractions()
+        appliedSidebarWidth = 0
+        appliedListWidth = 0
+        applyFractions(force: true)
+    }
+
+    private func observeDividerDrags() {
+        guard !observingDrags else { return }
+        observingDrags = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(splitViewWillResize(_:)),
+            name: NSSplitView.willResizeSubviewsNotification,
+            object: splitView,
+        )
+    }
+
+    /// The moment the app's declared fraction stops being the authority.
+    ///
+    /// The notification's `NSSplitViewDividerIndex` is not the test on its
+    /// own: AppKit sets it for its OWN divider adjustments during layout too
+    /// (measured, on a split nobody had touched), and treating that as a drag
+    /// froze the fraction before it had ever landed. A drag runs inside
+    /// AppKit's mouse-tracking loop, so the deciding fact is whether a mouse
+    /// is down in this application right now.
+    @objc private func splitViewWillResize(_ note: Notification) {
+        guard !landingFractions, note.userInfo?["NSSplitViewDividerIndex"] != nil else { return }
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown, .leftMouseDragged: dividerMoved = true
+        default: break
+        }
     }
 
     /// Divider positions are cumulative from the leading edge, so the list's
-    /// position carries the panes before it; the sidebar is applied first for
-    /// that reason. A collapsed pane keeps its fraction pending rather than
-    /// spending it: setting a position would expand the pane the app asked to
-    /// keep shut.
+    /// position carries the panes before it; the sidebar is landed first for
+    /// that reason. A collapsed pane is skipped rather than spent: setting a
+    /// position would open the pane the app asked to keep shut.
     ///
-    /// The width a fraction is taken of has to be the window's, not just any
-    /// non-zero one. Becoming `contentViewController` lays the split out at
-    /// the controller's fitting size first and only then at the window's
-    /// restored frame (`ndInstallSplitAsWindowContent`); measured live, that
-    /// first pass reported 654pt for a window that settles at 900, so a
-    /// fraction spent there lands a sidebar ~27% narrow. Waiting for a pass
-    /// whose width IS the window's content width spends it once, on the real
-    /// number.
-    private func applyPendingFractions() {
+    /// Every width the split settles at gets the fraction, including the ones
+    /// the window is only passing through (the controller's fitting size, the
+    /// restored frame, a size the app applies from a store). Waiting for the
+    /// "real" one instead needs a way to know which that is, and there is
+    /// none: a guard that required the split's width to equal its window's
+    /// content width simply never matched on a window whose fitting size had
+    /// pushed it wider than its own frame, and the sidebar stayed at its
+    /// floor. Landing on each of them costs one divider move per resize and
+    /// is right at rest, which is what an app and a screenshot both see.
+    private func applyFractions(force: Bool = false) {
+        guard force || !dividerMoved else { return }
+        guard pendingSidebarFraction != nil || pendingListFraction != nil else { return }
         let total = splitView.bounds.width
-        guard total > 1, let win = splitView.window,
-              abs(total - win.contentRect(forFrameRect: win.frame).width) < 0.5 else { return }
-        if let fraction = pendingSidebarFraction,
+        guard total > 1, splitView.window != nil else { return }
+        landingFractions = true
+        defer { landingFractions = false }
+        if let fraction = pendingSidebarFraction, abs(total - appliedSidebarWidth) > 0.5,
            let index = splitViewItems.firstIndex(where: { $0.behavior == .sidebar }),
            !splitViewItems[index].isCollapsed {
-            pendingSidebarFraction = nil
+            appliedSidebarWidth = total
             splitView.setPosition((total * fraction).rounded(), ofDividerAt: index)
         }
-        if let fraction = pendingListFraction,
+        if let fraction = pendingListFraction, abs(total - appliedListWidth) > 0.5,
            let index = splitViewItems.firstIndex(where: { $0.behavior == .contentList }),
            !splitViewItems[index].isCollapsed {
-            pendingListFraction = nil
+            appliedListWidth = total
+            // After the sidebar moved, so the panes before this divider are
+            // measured where they actually are.
+            splitView.layoutSubtreeIfNeeded()
             let leading = splitViewItems[..<index].reduce(0.0) { $0 + $1.viewController.view.frame.width }
             splitView.setPosition(leading + (total * fraction).rounded(), ofDividerAt: index)
         }
