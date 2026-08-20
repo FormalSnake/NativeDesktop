@@ -396,4 +396,53 @@ if (app.backend === "appkit") {
   console.log("ND_ST_HOVER_SKIP gtk: no synthetic pointer, so the hidden/drawn pair above is the whole proof");
 }
 
+// ---- leg 8: a narrow row's two lines use the row, and stop at it -----------
+// The `long` variant is a browser's tab list: titles and captions both longer
+// than the row. Two rules, one profile. Nothing may reach the row's trailing
+// margin, because the caption used to have no right edge at all and ran under
+// the action button and out to where the scroll view finally clipped it. And
+// the rightmost glyph has to land near the action slot rather than well short
+// of it, because the row owes its text everything but the icon and the
+// actions.
+const longProbe = await launchApp({
+  entry: "examples/sourcetree/main.tsx",
+  backend,
+  env: { ND_ST_GEOMETRY: "long", ND_APP_ID: `dev.nativedesktop.stLong${process.pid}` },
+});
+try {
+  const widget = (await longProbe.mustFind("st-geo")).geometry;
+  const win = (await longProbe.tree()).root.geometry;
+  if (!widget || !win) throw new Error("st-geo (long) has no geometry");
+  const shot = await longProbe.screenshot(`${shotDir}/sourcetree-geo-long.png`, { minBytes: 2000 });
+  const img = decodePng(new Uint8Array(await Bun.file(shot.path).arrayBuffer()));
+  const bands = profileRows(img, { x: 0, y: widget.y, w: win.w, h: widget.h }, img.w / win.w);
+  const row = bands[0];
+  if (!row || row.length < 3) throw new Error(`st-geo (long) row 0 profiled ${row?.length ?? 0} runs, want at least 3`);
+  const right = widget.x + widget.w;
+  const last = row[row.length - 1]!;
+  // The action button is the rightmost thing a row draws, and it sits inset
+  // from the row's own edge. Ink closer than that inset means something ran
+  // through the action slot to the clip.
+  if (right - last[1] < 8) {
+    throw new Error(
+      `row content runs to x=${last[1]}, ${(right - last[1]).toFixed(1)}pt from the tree's right edge at ${right}` +
+        ` (row runs: ${row.map(fmtRun).join(" ")})`,
+    );
+  }
+  // The run before the action button is the rightmost glyph of a title or a
+  // caption.
+  const text = row[row.length - 2]!;
+  if (text[1] < right - 48) {
+    throw new Error(
+      `rightmost text ends at ${text[1]}, ${(right - text[1]).toFixed(1)}pt short of the tree's ${right}` +
+        ` (row runs: ${row.map(fmtRun).join(" ")})`,
+    );
+  }
+  console.log(
+    `ND_ST_CLIP_OK narrow row: text ends ${fmtRun(text)}, action ${fmtRun(last)}, tree right edge ${right}`,
+  );
+} finally {
+  await longProbe.close();
+}
+
 console.log(`ND_SOURCETREE_OK backend=${app.backend}`);

@@ -218,7 +218,10 @@ final class NDSourceTreeCell: NSTableCellView {
     private let badgeField = NSTextField(labelWithString: "")
     private let actionsStack = NSStackView()
     private var iconWidthConstraint: NSLayoutConstraint!
+    private var captionIconWidthConstraint: NSLayoutConstraint!
+    private var captionLeadingConstraint: NSLayoutConstraint!
     private var captionHeightConstraint: NSLayoutConstraint!
+    private var badgeWidthConstraint: NSLayoutConstraint!
     private var titleTopConstraint: NSLayoutConstraint!
     private var titleCenterConstraint: NSLayoutConstraint!
     private var isSection = false
@@ -292,6 +295,16 @@ final class NDSourceTreeCell: NSTableCellView {
         addSubview(actionsStack)
 
         iconWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: 16)
+        // Hidden views still constrain, so every optional element's slot
+        // collapses with it: an absent caption symbol must not indent the
+        // caption 14pt under the title, and an absent badge must not hold an
+        // empty field's intrinsic width out of the title's share. Between them
+        // they were charging a plain row about 20pt of a ~150pt sidebar cell,
+        // which truncated titles that had room left.
+        captionIconWidthConstraint = captionIconView.widthAnchor.constraint(equalToConstant: 11)
+        captionLeadingConstraint = captionField.leadingAnchor.constraint(equalTo: captionIconView.trailingAnchor, constant: 3)
+        badgeWidthConstraint = badgeField.widthAnchor.constraint(equalToConstant: 0)
+        badgeWidthConstraint.isActive = false
         captionHeightConstraint = captionField.heightAnchor.constraint(equalToConstant: 0)
         captionHeightConstraint.isActive = false
         // configure() activates exactly one of the pair: captionless rows
@@ -310,12 +323,19 @@ final class NDSourceTreeCell: NSTableCellView {
 
             captionIconView.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             captionIconView.centerYAnchor.constraint(equalTo: captionField.centerYAnchor),
-            captionIconView.widthAnchor.constraint(equalToConstant: 11),
+            captionIconWidthConstraint,
             captionIconView.heightAnchor.constraint(equalToConstant: 11),
 
-            captionField.leadingAnchor.constraint(equalTo: captionIconView.trailingAnchor, constant: 3),
+            captionLeadingConstraint,
             captionField.topAnchor.constraint(equalTo: titleField.bottomAnchor),
             captionField.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
+            // The caption's own edge, and the same one the title gets, so the
+            // two lines of a row clip together. Without it nothing bounded the
+            // second line at all: a URL under a tab title ran through the
+            // action button and on to wherever the scroll view finally clipped
+            // it, since a truncating line break only truncates a field that
+            // has a width to truncate to.
+            captionField.trailingAnchor.constraint(lessThanOrEqualTo: badgeField.leadingAnchor, constant: -6),
 
             badgeField.leadingAnchor.constraint(greaterThanOrEqualTo: titleField.trailingAnchor, constant: 6),
             badgeField.trailingAnchor.constraint(equalTo: actionsStack.leadingAnchor, constant: -4),
@@ -365,9 +385,14 @@ final class NDSourceTreeCell: NSTableCellView {
             captionIconView.image = nil
         }
         captionIconView.isHidden = captionIconView.image == nil
+        captionIconWidthConstraint.constant = captionIconView.isHidden ? 0 : 11
+        captionLeadingConstraint.constant = captionIconView.isHidden ? 0 : 3
 
         badgeField.stringValue = item.badge ?? ""
         badgeField.isHidden = item.badge == nil
+        // The gap stays whatever is next to the title; only the empty field's
+        // own width goes.
+        badgeWidthConstraint.isActive = badgeField.isHidden
         // Recycled cells keep whatever colours their previous row had, and
         // `backgroundStyle` does not re-fire on reuse.
         applySelectionColors()
