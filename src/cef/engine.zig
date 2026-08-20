@@ -167,6 +167,13 @@ fn onBeforeCommandLine(
         // engine may not have at all.
         appendFlag(command_line, append, "no-first-run");
         appendFlag(command_line, append, "no-default-browser-check");
+        // Chromium's popup blocker drops a non-gesture window.open before
+        // on_before_popup ever runs, which would silently swallow a navigation
+        // the app is supposed to decide about. WebKitGTK's `create` signal
+        // fires for every window.open, and the <webview> contract is one
+        // `newWindow` event per attempt on both engines, so the decision
+        // belongs to the app, not to the engine.
+        appendFlag(command_line, append, "disable-popup-blocking");
     }
 }
 
