@@ -33,7 +33,13 @@ const fixture = Bun.serve({
   fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/two") {
-      return html(PAGE("ND CEF Two", "<h1>page two</h1>"));
+      // The iframe is the assertion, not decoration: an isolated world gets a
+      // context PER FRAME, the child's is created second, and a world-scoped
+      // eval that keys on the world name alone lands in it.
+      return html(PAGE("ND CEF Two", '<h1>page two</h1><iframe src="/frame" width="80" height="40"></iframe>'));
+    }
+    if (path === "/frame") {
+      return html(PAGE("ND CEF Frame", "<h1>inner frame</h1>"));
     }
     if (path === "/popup") {
       // Page-side JS, not executeJavaScript: the M1 backend has no eval yet,
@@ -303,6 +309,21 @@ async function run(ctx: {
       (v) => v === "1",
       "the content script ran in its world",
     );
+    // Which frame the world eval landed in. The page has an iframe, so a world
+    // keyed by name alone answers from the subframe and this reads top=false.
+    const where = await pollValue(
+      () =>
+        executeJavaScript(
+          ctx.view.current!,
+          'location.pathname + " top=" + (window.top === window)',
+          "reloadworld",
+        ),
+      (v) => typeof v === "string" && v.includes("top=true"),
+      "the world eval targets the main frame, not the iframe",
+    );
+    if (!String(where).startsWith("/two")) {
+      return `fail: the world eval answered from ${JSON.stringify(where)}`;
+    }
     await pollValue(
       () => executeJavaScript(ctx.view.current!, 'document.documentElement.getAttribute("data-nd")'),
       (v) => v === "marked",
@@ -323,7 +344,7 @@ async function run(ctx: {
       (v) => v === "marked",
       "the reloaded page carries the content script's mark",
     );
-    return `ok (world mark ${before} before, ${after} after the reload)`;
+    return `ok (world mark ${before} before, ${after} after the reload; world eval on ${where})`;
   });
 
   await step("hidden", async () => {

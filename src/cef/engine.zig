@@ -457,7 +457,14 @@ const View = struct {
     /// install is in flight would otherwise store the stale identifier and
     /// leak the live script.
     script_gens: std.StringHashMapUnmanaged(u64) = .empty,
-    worlds: std.StringHashMapUnmanaged(WorldState) = .empty,
+    /// World names whose document-start stub is registered, so it is sent once
+    /// per view rather than once per frame.
+    worlds_requested: std.StringHashMapUnmanaged(void) = .empty,
+    /// "<world>\x00<frameId>" to its live execution context id.
+    world_contexts: std.StringHashMapUnmanaged(i64) = .empty,
+    /// The frame an app means by "this view". Learned from Page.getFrameTree
+    /// and kept current by Page.frameNavigated.
+    main_frame: ?[]u8 = null,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     channels: std.StringHashMapUnmanaged(Channel) = .empty,
     /// Work parked until the world it names has an execution context, and the
@@ -1403,6 +1410,7 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
     if (!std.mem.eql(u8, method, "Runtime.executionContextCreated") and
         !std.mem.eql(u8, method, "Runtime.executionContextsCleared") and
         !std.mem.eql(u8, method, "Runtime.executionContextDestroyed") and
+        !std.mem.eql(u8, method, "Page.frameNavigated") and
         !std.mem.eql(u8, method, "Runtime.bindingCalled") and
         !std.mem.eql(u8, method, "Network.responseReceived") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
@@ -1434,16 +1442,17 @@ fn remember(slot: *?[]u8, value: []const u8) void {
 // jsc_value_to_string produces, and `scriptMessage` carries the same
 // {name, world, body} triple.
 
-const WorldState = struct {
-    /// The live Runtime.ExecutionContextId, or 0 while the world has no
-    /// document. Isolated worlds die with their document and come back with a
-    /// new id on the next load, which is why this is refreshed from
-    /// Runtime.executionContextCreated rather than remembered once.
-    context_id: i64 = 0,
-    /// Whether the new-document stub that re-creates this world on every load
-    /// has been registered.
-    requested: bool = false,
-};
+/// An isolated world's execution context, keyed by world name AND frame.
+///
+/// One name is many contexts: every frame of the document gets its own, and a
+/// page with an iframe creates the child's second. Keying on the name alone
+/// meant the last context created won, so a world-scoped evaluation aimed at
+/// "this view" landed inside the iframe: the whole of an extension broker's
+/// delivery path went to the wrong document, and every message it sent carried
+/// the subframe's id.
+fn worldKey(world: []const u8, frame: []const u8) ?[]u8 {
+    return std.fmt.allocPrint(alloc, "{s}\x00{s}", .{ world, frame }) catch null;
+}
 
 const ScriptEntry = struct { identifier: []u8, world: []u8 };
 const Channel = struct { world: []u8, script: ?[]u8 = null };
@@ -1503,6 +1512,8 @@ const Call = union(enum) {
     cookies: []u8,
     /// Page.enable's own reply: the gate every other call waits behind.
     agent_ready,
+    /// Page.getFrameTree's reply, which names the main frame.
+    frame_tree,
 };
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
@@ -1536,7 +1547,7 @@ fn callFree(call: Call) void {
         },
         .add_channel_script => |s| alloc.free(s.name),
         .cookies => |id| alloc.free(id),
-        .agent_ready => {},
+        .agent_ready, .frame_tree => {},
     }
 }
 
@@ -1611,6 +1622,9 @@ fn agentReady(view: *View) void {
     // would say the same thing in one event, but CEF's protocol subset does
     // not answer Security.enable at all.
     _ = cdpSendRaw(view, "Network.enable", "", .ignore);
+    // The main frame has to be known before any world-scoped call can be aimed;
+    // frameNavigated keeps it current from here on.
+    _ = cdpSendRaw(view, "Page.getFrameTree", "", .frame_tree);
     view.cdp_ready = true;
     const items = view.queued.toOwnedSlice(alloc) catch return;
     defer alloc.free(items);
@@ -1625,12 +1639,6 @@ fn agentReady(view: *View) void {
 // Worlds
 // ============================================================================
 
-fn worldContextId(view: *View, world: []const u8) i64 {
-    if (world.len == 0) return 0; // the page's own world needs no contextId
-    const entry = view.worlds.get(world) orelse return 0;
-    return entry.context_id;
-}
-
 /// Makes sure `world` exists now and after every future navigation. The
 /// mechanism is a new-document script carrying the world name: CDP creates the
 /// isolated world to run it in, on every load, which is exactly the lifetime an
@@ -1639,16 +1647,12 @@ fn worldContextId(view: *View, world: []const u8) i64 {
 /// after the next navigation.
 fn ensureWorld(view: *View, world: []const u8) void {
     if (world.len == 0) return;
-    const gop = view.worlds.getOrPut(alloc, world) catch return;
-    if (!gop.found_existing) {
-        gop.key_ptr.* = alloc.dupe(u8, world) catch {
-            _ = view.worlds.remove(world);
-            return;
-        };
-        gop.value_ptr.* = .{};
-    }
-    if (gop.value_ptr.requested) return;
-    gop.value_ptr.requested = true;
+    if (view.worlds_requested.contains(world)) return;
+    const key = alloc.dupe(u8, world) catch return;
+    view.worlds_requested.put(alloc, key, {}) catch {
+        alloc.free(key);
+        return;
+    };
 
     var params: std.ArrayList(u8) = .empty;
     defer params.deinit(alloc);
@@ -1658,23 +1662,64 @@ fn ensureWorld(view: *View, world: []const u8) void {
     _ = cdpSend(view, "Page.addScriptToEvaluateOnNewDocument", params.items, .ignore);
 }
 
-fn setWorldContext(view: *View, world: []const u8, context_id: i64) void {
-    const gop = view.worlds.getOrPut(alloc, world) catch return;
-    if (!gop.found_existing) {
-        gop.key_ptr.* = alloc.dupe(u8, world) catch {
-            _ = view.worlds.remove(world);
-            return;
-        };
-        gop.value_ptr.* = .{};
-    }
-    gop.value_ptr.context_id = context_id;
-    tr("worldContext node={d} world={s} id={d}", .{ view.node_id, world, context_id });
+fn setWorldContext(view: *View, world: []const u8, frame: []const u8, context_id: i64) void {
+    const key = worldKey(world, frame) orelse return;
+    const gop = view.world_contexts.getOrPut(alloc, key) catch {
+        alloc.free(key);
+        return;
+    };
+    if (gop.found_existing) alloc.free(key) else gop.key_ptr.* = key;
+    gop.value_ptr.* = context_id;
+    tr("worldContext node={d} world={s} frame={s} id={d} main={?s}", .{
+        view.node_id, world, frame, context_id, view.main_frame,
+    });
     drainDeferred(view);
 }
 
+/// The context for `world` in the frame an app means by "this view". Zero when
+/// the world has no document there yet, or when the main frame is still
+/// unknown, both of which park the call rather than aiming it at a guess.
+fn worldContextId(view: *View, world: []const u8) i64 {
+    if (world.len == 0) return 0;
+    const frame = view.main_frame orelse return 0;
+    const key = worldKey(world, frame) orelse return 0;
+    defer alloc.free(key);
+    return view.world_contexts.get(key) orelse 0;
+}
+
 fn clearWorldContexts(view: *View) void {
-    var it = view.worlds.iterator();
-    while (it.next()) |e| e.value_ptr.context_id = 0;
+    tr("worldContextsCleared node={d}", .{view.node_id});
+    var it = view.world_contexts.keyIterator();
+    while (it.next()) |k| alloc.free(k.*);
+    view.world_contexts.clearRetainingCapacity();
+}
+
+/// One context died. Every frame's copy of every world is a separate entry, so
+/// this evicts by id rather than by name.
+fn forgetContext(view: *View, context_id: i64) void {
+    var doomed: ?[]const u8 = null;
+    var it = view.world_contexts.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.* == context_id) {
+            doomed = entry.key_ptr.*;
+            break;
+        }
+    }
+    const key = doomed orelse return;
+    if (view.world_contexts.fetchRemove(key)) |removed| alloc.free(removed.key);
+}
+
+/// The main frame, which every world-scoped call is aimed at unless the caller
+/// says otherwise. Read once when the agent comes up and kept current from
+/// Page.frameNavigated, because a cross-document navigation can replace it.
+fn setMainFrame(view: *View, frame: []const u8) void {
+    if (view.main_frame) |old| {
+        if (std.mem.eql(u8, old, frame)) return;
+        alloc.free(old);
+    }
+    view.main_frame = alloc.dupe(u8, frame) catch null;
+    tr("mainFrame node={d} frame={s}", .{ view.node_id, frame });
+    drainDeferred(view);
 }
 
 fn drainDeferred(view: *View) void {
@@ -2003,6 +2048,20 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
 
     switch (call) {
         .ignore, .agent_ready => {},
+        .frame_tree => {
+            const tree = switch (root) {
+                .object => |o| o.get("frameTree") orelse return,
+                else => return,
+            };
+            if (tree != .object) return;
+            const frame = tree.object.get("frame") orelse return;
+            if (frame != .object) return;
+            const id = switch (frame.object.get("id") orelse return) {
+                .string => |str| str,
+                else => return,
+            };
+            setMainFrame(view, id);
+        },
         .eval => |e| {
             defer e.deinit();
             const sink = e.sink;
@@ -2165,11 +2224,22 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
             else => return,
         };
         const name = switch (context.object.get("name") orelse .null) {
-            .string => |s| s,
+            .string => |str| str,
             else => "",
         };
         if (name.len == 0) return; // the page's own world needs no id
-        setWorldContext(view, name, id);
+        const aux = context.object.get("auxData") orelse return;
+        if (aux != .object) return;
+        // An isolated world only. The default context carries the same frame
+        // and an evaluation with no contextId already lands there.
+        if (aux.object.get("isDefault")) |is_default| {
+            if (is_default == .bool and is_default.bool) return;
+        }
+        const frame = switch (aux.object.get("frameId") orelse return) {
+            .string => |str| str,
+            else => return,
+        };
+        setWorldContext(view, name, frame, id);
         return;
     }
     if (std.mem.eql(u8, method, "Runtime.executionContextsCleared")) {
@@ -2179,9 +2249,7 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
     if (std.mem.eql(u8, method, "Runtime.executionContextDestroyed")) {
         // The per-context event, which is what an ordinary navigation or
         // reload actually sends; executionContextsCleared only arrives on the
-        // transitions that reset the whole agent. Without this a world keeps
-        // the id of the document it had BEFORE the reload, and the next
-        // world-scoped evaluation is aimed at a context that no longer exists.
+        // transitions that reset the whole agent.
         const id = switch (root) {
             .object => |o| switch (o.get("executionContextId") orelse return) {
                 .integer => |i| i,
@@ -2190,13 +2258,23 @@ fn onCdpEvent(view: *View, method: []const u8, json: []const u8) void {
             },
             else => return,
         };
-        var it = view.worlds.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.context_id == id) {
-                tr("worldContextGone node={d} world={s} id={d}", .{ view.node_id, entry.key_ptr.*, id });
-                entry.value_ptr.context_id = 0;
-            }
-        }
+        forgetContext(view, id);
+        return;
+    }
+    if (std.mem.eql(u8, method, "Page.frameNavigated")) {
+        const frame = switch (root) {
+            .object => |o| o.get("frame") orelse return,
+            else => return,
+        };
+        if (frame != .object) return;
+        // A subframe navigating is not this view moving; only the frame with
+        // no parent is what an app calls "the page".
+        if (frame.object.get("parentId") != null) return;
+        const id = switch (frame.object.get("id") orelse return) {
+            .string => |str| str,
+            else => return,
+        };
+        setMainFrame(view, id);
         return;
     }
     if (std.mem.eql(u8, method, "Runtime.bindingCalled")) {
