@@ -568,9 +568,19 @@ fn modeOf(name: []const u8) Mode {
     return if (std.mem.eql(u8, name, "suppress")) .suppress else .native;
 }
 
+/// Create-only `engine` prop. `.chromium` asks for CEF, which is dlopened at
+/// runtime and is not linked into this host; until that path exists every view
+/// renders on WebKitGTK regardless.
+const Engine = enum { system, chromium };
+
+fn engineOf(name: []const u8) Engine {
+    return if (std.mem.eql(u8, name, "chromium")) .chromium else .system;
+}
+
 const ViewState = struct {
     node_id: u32 = 0,
     mode: Mode = .native,
+    engine: Engine = .system,
     /// The app's `setContextMenuItems` tree, owned by this view.
     menu_items: []ctxmenu.Item = &.{},
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
@@ -801,7 +811,7 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
     return @ptrCast(@alignCast(obj));
 }
 
-pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) *gtk.Widget {
+pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, context_menu_mode: []const u8) *gtk.Widget {
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
@@ -826,7 +836,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         std.debug.print("ND_WARN WebView state allocation failed; extension surface disabled for this view\n", .{});
         return widget;
     };
-    state.* = .{ .mode = modeOf(context_menu_mode) };
+    state.* = .{ .mode = modeOf(context_menu_mode), .engine = engineOf(engine) };
     gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
     // A webview is a content surface: expand into whatever the parent gives
     // it (a non-expanding WebKitWebView collapses to 0x0 inside a <box>).
