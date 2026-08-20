@@ -7,21 +7,29 @@
 //   `nd package`      ==  assemble + sign the platform bundle (packages/nd/src/package/)
 //   `nd doctor`       ==  packaging/toolchain readiness checks
 import { type Backend, resolveHostBinary } from "@nativedesktop/host";
-import { buildNativePlugins, loadConfig } from "./config.ts";
+import { buildNativePlugins, engineTargetFor, loadConfig, type NativeDesktopConfig, resolveWebViewEngine } from "./config.ts";
 import { packageApp, type PackageOptions } from "./package/index.ts";
 
 const DEFAULT_ENTRY = "src/main.tsx";
 
-async function nativeEnv(): Promise<Record<string, string>> {
-  const paths = await buildNativePlugins(await loadConfig());
+async function nativeEnv(config: NativeDesktopConfig): Promise<Record<string, string>> {
+  const paths = await buildNativePlugins(config);
   return paths.length ? { ND_PLUGINS: "1", ND_PLUGIN_PATHS: paths.join(":") } : {};
+}
+
+/** The host reads the engine off its environment, so the config decision has to
+ * be made here and handed down. Windows has no engine target yet. */
+function engineEnv(config: NativeDesktopConfig): Record<string, string> {
+  const target = engineTargetFor();
+  return target ? { ND_WEBVIEW_ENGINE: resolveWebViewEngine(config, target) } : {};
 }
 
 async function runDev(entry: string, backend?: Backend): Promise<number> {
   const hostBinary = await resolveHostBinary({ backend });
+  const config = await loadConfig();
   const proc = Bun.spawn([hostBinary], {
     cwd: process.cwd(),
-    env: { ...process.env, ...(await nativeEnv()), ND_DEV: "1", ND_SCRIPT: entry },
+    env: { ...process.env, ...(await nativeEnv(config)), ...engineEnv(config), ND_DEV: "1", ND_SCRIPT: entry },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

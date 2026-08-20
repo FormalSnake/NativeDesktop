@@ -47,6 +47,44 @@ export const ENTITLEMENTS_PLIST =
   "    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>\n    <true/>\n" +
   "</dict>\n</plist>\n";
 
+export interface CefHelperPlistFields {
+  /** "<App> Helper (Renderer)" and friends. Also the executable name. */
+  name: string;
+  id: string;
+  version: string;
+  minimumSystemVersion: string;
+}
+
+/** Info.plist for one CEF helper .app. LSUIElement keeps the five subprocesses
+ * out of the Dock and the app switcher; without it every renderer launch would
+ * flash a second icon. */
+export function cefHelperPlist(f: CefHelperPlistFields): string {
+  return infoPlistSkeleton({
+    name: f.name,
+    displayName: f.name,
+    id: f.id,
+    executable: f.name,
+    version: f.version,
+    minimumSystemVersion: f.minimumSystemVersion,
+  }).replace("</dict>\n</plist>", "    <key>LSUIElement</key><string>1</string>\n</dict>\n</plist>");
+}
+
+/** Entitlements for the renderer and GPU helpers. V8 and ANGLE map executable
+ * pages the hardened runtime refuses without these, and the renderer loads the
+ * CEF framework from the outer app's signature, which library validation would
+ * reject. CEF's own sample app ships this exact set. */
+export function cefHelperEntitlements(): string {
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+    '<plist version="1.0">\n<dict>\n' +
+    "    <key>com.apple.security.cs.allow-jit</key>\n    <true/>\n" +
+    "    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>\n    <true/>\n" +
+    "    <key>com.apple.security.cs.disable-library-validation</key>\n    <true/>\n" +
+    "</dict>\n</plist>\n"
+  );
+}
+
 export interface AppRunSpec {
   /** App-root-relative script the host boots. */
   entry: string;

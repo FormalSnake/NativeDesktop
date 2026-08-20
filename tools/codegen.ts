@@ -3342,7 +3342,8 @@ function genZigCreateBody(w: Widget): string {
     out += "        // runtime; placeholder label otherwise (M5b-D7: no hard link dep).\n";
     out += "        const url: ?[*:0]const u8 = if (propStr(props, \"url\")) |u| dupeZ(u).ptr else null;\n";
     out += "        const profile: []const u8 = propStr(props, \"profile\") orelse \"\";\n";
-    out += "        return ndweb_gtk.create(url, profile, propStr(props, \"contextMenuMode\") orelse \"native\");\n";
+    out += `        const engine: []const u8 = propStr(props, "engine") orelse ${zigDefaultStr(w, "engine")};\n`;
+    out += "        return ndweb_gtk.create(url, profile, engine, propStr(props, \"contextMenuMode\") orelse \"native\");\n";
   } else if (w.name === "SplitView") {
     out += "        const sv = adw.OverlaySplitView.new();\n";
     out += "        // show-sidebar defaults TRUE, and with a NULL sidebar the pane is\n";
@@ -7155,7 +7156,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "SourceList") {
     out += "        return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)\n";
   } else if (w.name === "WebView") {
-    out += '        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", contextMenuMode: propStr(props, "contextMenuMode") ?? "native")  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n';
+    out += `        return NDWebView(url: propStr(props, "url"), profile: propStr(props, "profile") ?? "", engine: propStr(props, "engine") ?? ${swiftDefaultStr(w, "engine")}, contextMenuMode: propStr(props, "contextMenuMode") ?? "native")  // WKWebView subclass (M14, NDShell/NDWebView.swift)\n`;
   } else if (w.name === "SplitView") {
     // NSSplitViewController (not a bare NSSplitView) is what earns the
     // automatic Liquid Glass sidebar treatment on macOS 26 — see

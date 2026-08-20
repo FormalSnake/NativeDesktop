@@ -142,10 +142,63 @@ export interface PackageConfig {
   updates?: UpdatesConfig;
 }
 
+/** `<webview>` engine: the platform's own WebKit, or Chromium via CEF. */
+export type WebViewEngine = "system" | "chromium";
+
+export interface CefConfig {
+  /** Pinned CEF release, matched against cef-builds.spotifycdn.com/index.json.
+   * Default: DEFAULT_CEF_VERSION from @nativedesktop/host/cef. */
+  version?: string;
+  /** Locale .pak files staged on Linux. Default ["en-US"]. */
+  locales?: string[];
+}
+
+export interface WebViewConfig {
+  /** Per-platform engine. Absent means "system", which ships zero Chromium bytes. */
+  engine?: { mac?: WebViewEngine; linux?: WebViewEngine };
+  cef?: CefConfig;
+}
+
 export interface NativeDesktopConfig {
   native?: { plugins?: NativePluginConfig[] };
   app?: AppIdentity;
   package?: PackageConfig;
+  webview?: WebViewConfig;
+}
+
+/** Packaging targets, which is also how `webview.engine` is keyed. */
+export type EngineTarget = "mac" | "linux";
+
+const ENGINES: readonly WebViewEngine[] = ["system", "chromium"];
+
+/** The target a platform packages for, or undefined on an unsupported one. */
+export function engineTargetFor(platform: string = process.platform): EngineTarget | undefined {
+  if (platform === "darwin") return "mac";
+  if (platform === "linux") return "linux";
+  return undefined;
+}
+
+function expectEngine(value: string, source: string): WebViewEngine {
+  if (!ENGINES.includes(value as WebViewEngine)) {
+    throw new Error(`nd: ${source} must be "system" or "chromium" (got "${value}")`);
+  }
+  return value as WebViewEngine;
+}
+
+/**
+ * The engine a target actually gets. ND_WEBVIEW_ENGINE wins outright (the dev
+ * override the spec documents, and the handshake `nd dev` re-exports to the
+ * host), then the per-platform config, then "system".
+ */
+export function resolveWebViewEngine(
+  config: NativeDesktopConfig,
+  target: EngineTarget,
+  env: Record<string, string | undefined> = process.env,
+): WebViewEngine {
+  const override = env.ND_WEBVIEW_ENGINE;
+  if (override) return expectEngine(override, "ND_WEBVIEW_ENGINE");
+  const declared = config.webview?.engine?.[target];
+  return declared ? expectEngine(declared, `webview.engine.${target}`) : "system";
 }
 
 export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig { return config; }

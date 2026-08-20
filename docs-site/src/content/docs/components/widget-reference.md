@@ -510,6 +510,7 @@ Automation role: `webview`. Text source: none. Children: none.
 |---|---|---|---|
 | `url` | string |  | createAndUpdate |
 | `profile` | string |  | create |
+| `engine` | system \| chromium | system | create |
 | `contextMenuMode` | native \| suppress | native | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
