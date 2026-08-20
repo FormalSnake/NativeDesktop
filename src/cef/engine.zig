@@ -267,14 +267,28 @@ fn ensureInitialized() bool {
         _ = setStr(&settings.locales_dir_path, p);
     }
     var cache_root: ?[:0]u8 = null;
+    var default_cache: ?[:0]u8 = null;
     defer if (cache_root) |p| alloc.free(p);
+    defer if (default_cache) |p| alloc.free(p);
     if (defaultCacheRoot()) |p| {
         cache_root = p;
         _ = setStr(&settings.root_cache_path, p);
+        // The profile-less case needs a cache path of its own: a global
+        // context with none is in-memory, so every cookie, every login and
+        // every consent is forgotten at quit. The WebKitGTK backend names a
+        // file for the same reason (persistCookies).
+        const dir = std.fmt.allocPrintSentinel(alloc, "{s}/default", .{p}, 0) catch null;
+        if (dir) |d| {
+            default_cache = d;
+            _ = glib.mkdirWithParents(d.ptr, 0o700);
+            _ = setStr(&settings.cache_path, d);
+            settings.persist_session_cookies = 1;
+        }
     }
     defer clearStr(&settings.resources_dir_path);
     defer clearStr(&settings.locales_dir_path);
     defer clearStr(&settings.root_cache_path);
+    defer clearStr(&settings.cache_path);
 
     cdp.setSink(.{ .result = &cdpResultSink, .event = &cdpEventSink });
 
