@@ -418,6 +418,19 @@ const View = struct {
     // GTK thread only from here down.
     container: x11.Window = 0,
     created: bool = false,
+    /// What the browser was actually created with. A `url` prop applied while
+    /// the browser was still being created lands in `pending_url` alone, so
+    /// adoption has to reconcile the two or the view sits on the old address
+    /// forever. Mounting a view with `url=""` and arming it on the next commit
+    /// is the normal shape for a tab, a background page or a popup.
+    created_url: []u8 = no_bytes[0..0],
+    /// Retries `maybeCreateBrowser` until the toplevel exists. GTK4 has no
+    /// signal for "your window is here" that reaches a widget which is never
+    /// mapped, and a view that is never shown (an extension background page, a
+    /// background tab) still has to load.
+    create_timer: c_uint = 0,
+    create_attempts: u32 = 0,
+
     /// The "no X11 parent" warning is once per view: `createBrowser` is
     /// retried every frame until it succeeds, and the frame clock would turn
     /// one diagnosis into a scrolling wall.
@@ -587,6 +600,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     _ = gobject.signalConnectData(widget.as(gobject.Object), "map", @ptrCast(&onMap), view, null, .{});
     _ = gobject.signalConnectData(widget.as(gobject.Object), "unmap", @ptrCast(&onUnmap), view, null, .{});
     _ = gobject.signalConnectData(widget.as(gobject.Object), "destroy", @ptrCast(&onDestroy), view, null, .{});
+    armCreateTimer(view);
     return widget;
 }
 
@@ -634,14 +648,63 @@ fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) ca
     maybeCreateBrowser(view);
 }
 
-/// The browser is created from the first frame at which the widget has a real
-/// allocation, not from `map`: GTK4 maps before it has necessarily allocated,
-/// and a browser created into a 1x1 window comes up with a 1x1 compositor
-/// surface that the software presenter then fails to read back.
+/// A mapped view waits for its first real allocation: GTK4 maps before it has
+/// necessarily allocated, and a browser created into a 1x1 window comes up with
+/// a 1x1 compositor surface the software presenter then fails to read back.
+///
+/// A view that is NOT mapped waits for nothing. It may never be mapped at all,
+/// and it still has to load: an extension's background page and a background
+/// tab opened by target=_blank are both webviews that are navigated while
+/// hidden, and gating their browser on an allocation left them on the raw URL
+/// forever. Their window is created minimal and unmapped, and `syncBounds`
+/// gives it the real geometry if the view is ever shown.
 fn maybeCreateBrowser(view: *View) void {
     if (view.created) return;
-    if (view.bounds.w <= 1 or view.bounds.h <= 1) return;
+    const mapped = gtk.Widget.getMapped(view.widget) != 0;
+    if (mapped and (view.bounds.w <= 1 or view.bounds.h <= 1)) return;
     createBrowser(view);
+}
+
+/// Retried rather than signalled: see `View.create_timer`. Stops on the first
+/// success, and gives up loudly rather than ticking for the process's life.
+const create_retry_ms: c_uint = 50;
+const create_retry_limit: u32 = 400;
+
+fn armCreateTimer(view: *View) void {
+    if (view.create_timer != 0 or view.created) return;
+    view.create_timer = glib.timeoutAdd(create_retry_ms, &onCreateTimer, view);
+}
+
+fn disarmCreateTimer(view: *View) void {
+    if (view.create_timer == 0) return;
+    _ = glib.Source.remove(view.create_timer);
+    view.create_timer = 0;
+}
+
+fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    if (view.created) {
+        view.create_timer = 0;
+        return 0;
+    }
+    view.create_attempts += 1;
+    syncBounds(view);
+    maybeCreateBrowser(view);
+    if (view.created) {
+        view.create_timer = 0;
+        return 0;
+    }
+    if (view.create_attempts >= create_retry_limit) {
+        view.create_timer = 0;
+        // Last resort for a view that is mapped but has been allocated
+        // nothing for this long: a browser in a degenerate window that
+        // `syncBounds` will resize is still better than a view that never
+        // loads at all, which is the outcome this whole path exists to remove.
+        std.debug.print("ND_WARN WebView engine=chromium: no allocation after {d}ms; creating the browser anyway\n", .{create_retry_limit * create_retry_ms});
+        createBrowser(view);
+        return 0;
+    }
+    return 1; // G_SOURCE_CONTINUE
 }
 
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -653,6 +716,7 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
+    disarmCreateTimer(view);
     disconnectLayout(view);
     if (browserOf(view)) |browser| {
         if (browser.get_host) |get_host| {
@@ -691,9 +755,13 @@ fn createBrowser(view: *View) void {
         return;
     }
     view.container = container;
-    x11.show(container);
-    tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d}", .{
+    // Only a mapped view's window is mapped. A hidden view gets a real browser
+    // in an unmapped container, which is what lets it load without ever being
+    // shown, and `onMap` maps it if the app shows it later.
+    if (gtk.Widget.getMapped(view.widget) != 0) x11.show(container);
+    tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d} mapped={}", .{
         view.node_id, parent, container, view.bounds.w, view.bounds.h, view.bounds.x, view.bounds.y,
+        gtk.Widget.getMapped(view.widget) != 0,
     });
 
     var window_info = std.mem.zeroes(c.cef_window_info_t);
@@ -716,15 +784,16 @@ fn createBrowser(view: *View) void {
     defer clearStr(&url);
     const start: []const u8 = if (view.pending_url) |p| p else "about:blank";
     _ = setStr(&url, start);
-    // The creation URL is a browser-initiated navigation; re-issuing it through
-    // CefFrame::LoadURL afterwards is renderer-initiated, and Chromium refuses
-    // that for a custom scheme, silently leaving the view on about:blank.
-    if (view.pending_url) |p| {
-        alloc.free(p);
-        view.pending_url = null;
-    }
+    // Remembered rather than cleared. The creation URL is a browser-initiated
+    // navigation and must not be re-issued through CefFrame::LoadURL, which is
+    // renderer-initiated and which Chromium refuses for a custom scheme; but a
+    // `url` prop that lands between here and on_after_created goes into
+    // `pending_url` alone, and adoption has to notice the two disagree.
+    alloc.free(view.created_url);
+    view.created_url = dupeOwned(start);
 
     view.created = true;
+    disarmCreateTimer(view);
     // Both the client and the request context are consumed by CEF (CToCpp::Wrap
     // takes the caller's reference), so each hands out an added one and this
     // view keeps its own.
@@ -793,6 +862,9 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
     if (view.url) |cur| {
         if (std.mem.eql(u8, cur, url)) return;
     }
+    // Before the first navigate event there is no `url` yet, and the address
+    // the browser was created with is the only answer to "where is this view".
+    if (view.url == null and view.created and std.mem.eql(u8, view.created_url, url)) return;
     if (browserOf(view)) |browser| {
         loadUrl(browser, url);
         return;
@@ -1174,9 +1246,13 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         enableDomains(view);
         syncBounds(view);
         resizeCefWindow(view, view.bounds.w, view.bounds.h);
-        tr("settle node={d} pending={?s}", .{ view.node_id, view.pending_url });
+        tr("settle node={d} pending={?s} created={s}", .{ view.node_id, view.pending_url, view.created_url });
+        // Adoption: the address the app last asked for wins over the one the
+        // browser happened to be created with.
         if (view.pending_url) |p| {
-            if (browserOf(view)) |browser| loadUrl(browser, p);
+            if (!std.mem.eql(u8, p, view.created_url)) {
+                if (browserOf(view)) |browser| loadUrl(browser, p);
+            }
             alloc.free(p);
             view.pending_url = null;
         }
@@ -2299,9 +2375,13 @@ const PendingEval = struct {
 var pending_evals: std.AutoHashMapUnmanaged(u64, *PendingEval) = .empty;
 var next_eval_id: u64 = 1;
 
+/// Null only for a widget this engine did not create. A view whose browser is
+/// still attaching does NOT fail: the call is parked with every other devtools
+/// call and settles when the agent comes up, which the poller already reads as
+/// "not done yet". Answering an error there turned a background page that had
+/// simply not loaded yet into a hard -32602.
 pub fn evalStart(widget: *gtk.Widget, code: []const u8, world: ?[]const u8) ?u64 {
     const view = viewOf(widget) orelse return null;
-    if (hostOf(view) == null) return null;
     const entry = alloc.create(PendingEval) catch return null;
     entry.* = .{};
     const id = next_eval_id;
@@ -2346,11 +2426,9 @@ pub fn pageText(widget: *gtk.Widget) ?[]const u8 {
     const entry = gop.value_ptr;
     const now = glib.getMonotonicTime();
     if (!entry.in_flight and now - entry.stamp_us >= page_text_interval_us) {
-        if (hostOf(view) != null) {
-            entry.in_flight = true;
-            if (!startEval(view, .{ .page_text = view.node_id }, "document.body ? document.body.innerText : \"\"", "")) {
-                entry.in_flight = false;
-            }
+        entry.in_flight = true;
+        if (!startEval(view, .{ .page_text = view.node_id }, "document.body ? document.body.innerText : \"\"", "")) {
+            entry.in_flight = false;
         }
     }
     return entry.text;

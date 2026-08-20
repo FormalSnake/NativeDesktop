@@ -66,7 +66,7 @@ const BASE = `http://127.0.0.1:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden"] as const;
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -90,6 +90,7 @@ async function waitFor<T>(kind: string, pred: (v: T) => boolean, what: string, t
 function App(): React.ReactNode {
   const view = useRef<NdNodeRef<"webview">>(null);
   const late = useRef<NdNodeRef<"webview">>(null);
+  const hidden = useRef<NdNodeRef<"webview">>(null);
   const [lateReady, setLateReady] = useState(false);
   const [url, setUrl] = useState(`${BASE}/one`);
   const [phase, setPhase] = useState("starting");
@@ -102,7 +103,7 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void run({ view, late, setUrl, setResult, setPhase, setLateReady });
+    void run({ view, late, hidden, setUrl, setResult, setPhase, setLateReady });
   }, []);
 
   return (
@@ -128,6 +129,28 @@ function App(): React.ReactNode {
           onNewWindow={(e) => record("newWindow", e.text)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
         />
+        {/* A background tab, which is the shape the bug was found in twice: an
+            extension's background page and a tab opened by target=_blank are
+            both <webview>s navigated on a page nobody is looking at, so they
+            are never mapped and never get an allocation. They still have to
+            load. The host trace asserts this one really was unmapped
+            (`ND_CEF embed ... mapped=false`). */}
+        <tabview selectedIndex={0}>
+          <box tabLabel="front" orientation="vertical">
+            <label text="front tab" />
+          </box>
+          <box tabLabel="background" orientation="vertical">
+            <webview
+              testID="wv-hidden"
+              ref={hidden}
+              engine="chromium"
+              url={`${BASE}/two`}
+              onNavigate={(e) => record("hiddenNavigate", e.text)}
+              onTitleChanged={(e) => record("hiddenTitle", e.text)}
+              onJavaScriptResult={onJavaScriptResult}
+            />
+          </box>
+        </tabview>
         {lateReady ? (
           <webview
             testID="wv-late"
@@ -156,6 +179,7 @@ function App(): React.ReactNode {
 async function run(ctx: {
   view: React.RefObject<NdNodeRef<"webview"> | null>;
   late: React.RefObject<NdNodeRef<"webview"> | null>;
+  hidden: React.RefObject<NdNodeRef<"webview"> | null>;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
@@ -228,6 +252,28 @@ async function run(ctx: {
       20000,
     );
     return `ok (${marker})`;
+  });
+
+  await step("hidden", async () => {
+    const at = await waitFor<string>(
+      "hiddenNavigate",
+      (u) => u.endsWith("/two"),
+      "a never-shown view navigates",
+      30000,
+    );
+    const title = await waitFor<string>(
+      "hiddenTitle",
+      (t) => t === "ND CEF Two",
+      "a never-shown view reports its title",
+      30000,
+    );
+    // The other half of the report: automation against a hidden view must
+    // answer, not fail, which is what the extension drive asks of a
+    // background page.
+    if (!ctx.hidden.current) throw new Error("the hidden view never mounted");
+    const evaluated = await executeJavaScript(ctx.hidden.current, "location.pathname");
+    if (evaluated !== "/two") return `fail: eval against the hidden view read ${JSON.stringify(evaluated)}`;
+    return `ok (${at}, ${title}, eval ${evaluated})`;
   });
 
   ctx.setPhase("done");
