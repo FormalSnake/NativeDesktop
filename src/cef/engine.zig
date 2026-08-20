@@ -884,7 +884,10 @@ fn onAddressChange(
             if (is_main(frame) == 0) return;
         }
     }
-    post(.{ .view = DisplayObj.of(self).payload, .name = "navigate", .text = dupeStr(url) });
+    const view = DisplayObj.of(self).payload;
+    const next = dupeStr(url);
+    tr("navigate node={d} url={?s}", .{ view.node_id, next });
+    post(.{ .view = view, .name = "navigate", .text = next });
 }
 
 fn onTitleChange(
@@ -2928,6 +2931,7 @@ fn ensureSchemeFactories() void {
             continue;
         }
         // The factory reference is consumed by the registration.
+        tr("registerSchemeHandlerFactory {s}", .{spec.name});
         if (api.register_scheme_handler_factory(&name, &domain, factory.handOut()) == 0) {
             factory.drop();
             std.debug.print("ND_WARN WebView engine=chromium: could not register a handler factory for \"{s}\"\n", .{spec.name});
@@ -2953,7 +2957,7 @@ fn factoryCreate(
         if (browser.*.get_identifier) |get_id| browser_id = get_id(browser);
     }
     ref.releaseParam(browser);
-
+    tr("factoryCreate browser={d}", .{browser_id});
     var url: []u8 = &.{};
     if (request != null) {
         if (request.*.get_url) |get_url| {
