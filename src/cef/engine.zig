@@ -3130,7 +3130,10 @@ fn cmdRespondScheme(arg: ?std.json.Value) void {
         return;
     };
     res.body = buf[0..size];
-    res.mime = alloc.dupe(u8, objStr(obj_arg, "contentType") orelse "application/octet-stream") catch &.{};
+    // `mime` is the key the contract uses, the same one the WebKitGTK backend
+    // reads; `contentType` is accepted because it is the obvious guess.
+    const mime = objStr(obj_arg, "mime") orelse objStr(obj_arg, "contentType") orelse "application/octet-stream";
+    res.mime = alloc.dupe(u8, mime) catch &.{};
     if (obj_arg.get("status")) |st| {
         switch (st) {
             .integer => |i| res.status = @intCast(i),
