@@ -29,6 +29,7 @@ const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const cdp = @import("cdp.zig");
+const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
 
 const alloc = std.heap.c_allocator;
@@ -336,6 +337,7 @@ const LoadObj = ref.Counted(c.cef_load_handler_t, *View);
 const LifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
 const FindObj = ref.Counted(c.cef_find_handler_t, *View);
 const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
+const JsDialogHandlerObj = ref.Counted(c.cef_jsdialog_handler_t, *View);
 
 const View = struct {
     widget: *gtk.Widget,
@@ -347,6 +349,7 @@ const View = struct {
     life_handler: *LifeObj,
     find_handler: *FindObj,
     download_handler: *DownloadObj,
+    jsdialog_handler: *JsDialogHandlerObj,
 
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
@@ -473,6 +476,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const life_handler = LifeObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const find_handler = FindObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -482,6 +486,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .life_handler = life_handler,
         .find_handler = find_handler,
         .download_handler = download_handler,
+        .jsdialog_handler = jsdialog_handler,
     };
     view.context = requestContext(profile);
     if (url) |u| {
@@ -493,6 +498,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_life_span_handler = &clientGetLifeSpanHandler;
     client.cef.get_find_handler = &clientGetFindHandler;
     client.cef.get_download_handler = &clientGetDownloadHandler;
+    client.cef.get_jsdialog_handler = &clientGetJsDialogHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
@@ -509,6 +515,9 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     life_handler.cef.on_before_close = &onBeforeClose;
     find_handler.cef.on_find_result = &onFindResult;
     download_handler.cef.on_before_download = &onBeforeDownload;
+    download_handler.cef.can_download = &onCanDownload;
+    jsdialog_handler.cef.on_jsdialog = &onJsDialog;
+    jsdialog_handler.cef.on_before_unload_dialog = &onBeforeUnloadDialog;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
@@ -2610,4 +2619,109 @@ fn cmdSaveSession(view: *View, arg: ?std.json.Value) void {
     payload.put(alloc, "id", .{ .string = id }) catch return;
     payload.put(alloc, "state", .{ .string = "" }) catch return;
     f(view.node_id, "sessionSaved", .{ .data = .{ .object = payload } });
+}
+
+// ============================================================================
+// JavaScript dialogs
+// ============================================================================
+//
+// `alert`, `confirm` and `prompt` park the page's JS thread until the browser
+// answers, and Chrome's own dialog is a window this engine may not have. The
+// handler suppresses it and answers from the same scripted-automation path the
+// WebKit backend uses, so a headless run behaves identically on both.
+
+const JSDIALOGTYPE_ALERT: c_uint = 0;
+const JSDIALOGTYPE_CONFIRM: c_uint = 1;
+const JSDIALOGTYPE_PROMPT: c_uint = 2;
+
+fn clientGetJsDialogHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_jsdialog_handler_t {
+    return ClientObj.of(self).payload.jsdialog_handler.handOut();
+}
+
+fn answerJsDialog(callback: [*c]c.cef_jsdialog_callback_t, accepted: bool, text: ?[]const u8) void {
+    if (callback == null) return;
+    const cont = callback.*.cont orelse return;
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (text) |t| _ = setStr(&s, t);
+    cont(callback, @intFromBool(accepted), &s);
+}
+
+fn onJsDialog(
+    _: [*c]c.cef_jsdialog_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: [*c]const c.cef_string_t,
+    dialog_type: c.cef_jsdialog_type_t,
+    _: [*c]const c.cef_string_t,
+    _: [*c]const c.cef_string_t,
+    callback: [*c]c.cef_jsdialog_callback_t,
+    suppress_message: [*c]c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(callback);
+    if (suppress_message != null) suppress_message.* = 0;
+
+    const next = automation_dialogs.take("webview.scriptDialog");
+    switch (next) {
+        .unscripted => {
+            // No app-side sheet on this engine yet, and a dialog nobody answers
+            // parks the page's JS thread for good, so it is dismissed rather
+            // than left open. An alert is "seen" either way.
+            answerJsDialog(callback, dialog_type == JSDIALOGTYPE_ALERT, null);
+            return 1;
+        },
+        .exhausted => {
+            std.debug.print("ND_WARN WebView scriptDialog: the automation dialog script ran out of answers; dismissing\n", .{});
+            answerJsDialog(callback, false, null);
+            return 1;
+        },
+        .response => |raw| {
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, raw, .{}) catch {
+                std.debug.print("ND_WARN WebView scriptDialog: malformed scripted answer {s}; dismissing\n", .{raw});
+                answerJsDialog(callback, false, null);
+                return 1;
+            };
+            defer parsed.deinit();
+            var accepted = true;
+            var text: ?[]const u8 = null;
+            if (parsed.value == .object) {
+                if (parsed.value.object.get("accepted")) |a| {
+                    if (a == .bool) accepted = a.bool;
+                }
+                if (parsed.value.object.get("text")) |t| {
+                    if (t == .string) text = t.string;
+                }
+            }
+            answerJsDialog(callback, accepted, if (accepted) text else null);
+            return 1;
+        },
+    }
+}
+
+/// Leaving a page is never blocked: the framework gives an app no way to
+/// express a policy for onbeforeunload, and the WebKit backend answers the
+/// same way for the same reason.
+fn onBeforeUnloadDialog(
+    _: [*c]c.cef_jsdialog_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: [*c]const c.cef_string_t,
+    _: c_int,
+    callback: [*c]c.cef_jsdialog_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(callback);
+    answerJsDialog(callback, true, null);
+    return 1;
+}
+
+/// Explicit rather than defaulted: a null `can_download` leaves the decision to
+/// Chromium, and the contract is that the app decides.
+fn onCanDownload(
+    _: [*c]c.cef_download_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: [*c]const c.cef_string_t,
+    _: [*c]const c.cef_string_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    return 1;
 }
