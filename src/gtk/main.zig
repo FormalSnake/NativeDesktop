@@ -7,6 +7,7 @@ const adw = @import("adw");
 const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
 const system = @import("system.zig");
+const cef = @import("../cef/backend.zig");
 
 // Overridable per packaged app: `nd package` bakes ND_APP_ID=<app.id> into the
 // AppRun so window grouping / StartupWMClass bind to the app's own identity.
@@ -27,6 +28,16 @@ var hold_released = false;
 var the_vtable: abi.NdBackend = undefined;
 
 pub fn main(init: std.process.Init) void {
+    // Before anything else, including argument parsing: CEF re-execs this same
+    // binary for its renderer/GPU/utility roles, and in those processes this
+    // call runs the whole subprocess and returns its exit code. Doing any other
+    // work first means doing it once per Chromium process.
+    if (cef.earlyExecuteProcess(init.minimal.args.vector)) |code| std.process.exit(code);
+    // Windowed CEF embedding is X11-only, so a Wayland session runs the app
+    // through XWayland when (and only when) the Chromium engine is asked for.
+    // Must precede GTK's display connection, which AdwApplication opens on
+    // registration below.
+    cef.pinDisplayBackend();
     for (init.minimal.args.vector) |arg| {
         if (std.mem.eql(u8, std.mem.span(arg), "--smoke")) smoke = true;
     }
@@ -72,6 +83,8 @@ pub fn main(init: std.process.Init) void {
     // Only forward argv[0] to GApplication so its GOptionContext doesn't choke
     // on --smoke; the flag is parsed ourselves above.
     const status = gio.Application.run(app.as(gio.Application), 0, null);
+    // Without this the Chromium process tree outlives the host.
+    cef.shutdown();
     std.process.exit(@intCast(status));
 }
 

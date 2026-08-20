@@ -23,6 +23,10 @@ const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ctxmenu = @import("context_menu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
+// The opt-in Chromium engine. It answers "not me" for every widget it did not
+// create, so each entry point below is a single fall-through, and a build with
+// no CEF distribution to translate headers against compiles it out entirely.
+const cef = @import("../cef/backend.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents WebView arm.
@@ -601,7 +605,7 @@ fn isReal(widget: *gtk.Widget) bool {
 /// no-webkitgtk placeholder label) is content the snapshot renderers cannot
 /// rasterize.
 pub fn isRealWebView(widget: *gtk.Widget) bool {
-    return isReal(widget);
+    return isReal(widget) or cef.isReal(widget);
 }
 
 fn widgetNodeId(widget: *gtk.Widget) ?u32 {
@@ -802,6 +806,10 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
 }
 
 pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) *gtk.Widget {
+    // ND_WEBVIEW_ENGINE=chromium picks the CEF backend for this view. It
+    // returns null when CEF is absent or fails to initialize, and the view
+    // falls back to the system engine rather than to nothing.
+    if (cef.create(url, profile, context_menu_mode)) |w| return w;
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
@@ -855,6 +863,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 /// pair ping-pongs until the app runs out of memory. Neither URI is worth a
 /// load, so neither starts one.
 pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
+    if (cef.isReal(widget)) return cef.setUrl(widget, url);
     const a = api orelse return;
     if (!isReal(widget)) return;
     if (url.len == 0) return;
@@ -2162,6 +2171,7 @@ fn mergeCustomItems(state: *ViewState, node_id: u32, menu: *anyopaque, hit: ctxm
 
 /// widgetCommand dispatch (generated widgets.zig WebView arm).
 pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void {
+    if (cef.isReal(widget)) return cef.command(widget, cmd, arg);
     const a = api orelse return;
     if (!isReal(widget)) return;
     const v: *anyopaque = @ptrCast(widget);
@@ -2228,6 +2238,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
 /// the schema events. `emit_fn` is the generated module's emit sink (same
 /// EmitFn shape, installed before any widget exists).
 pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
+    if (cef.isReal(widget)) return cef.connectEvents(widget, node_id, emit_fn);
     if (api == null or !isReal(widget)) return;
     emit = emit_fn;
     any_view_created = true;
@@ -2843,6 +2854,16 @@ pub const Info = struct {
 };
 
 pub fn info(widget: *gtk.Widget) ?Info {
+    if (cef.isReal(widget)) {
+        const i = cef.info(widget) orelse return null;
+        return .{
+            .url = i.url,
+            .title = i.title,
+            .loading = i.loading,
+            .can_go_back = i.can_go_back,
+            .can_go_forward = i.can_go_forward,
+        };
+    }
     const a = api orelse return null;
     if (!isReal(widget)) return null;
     const v: *anyopaque = @ptrCast(widget);

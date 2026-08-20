@@ -16,6 +16,13 @@ pub fn build(b: *std.Build) void {
     const backend_kind = b.option([]const u8, "backend", "widget backend: abi|null") orelse "abi";
     const build_opts = b.addOptions();
     build_opts.addOption([]const u8, "backend", backend_kind);
+
+    // The CEF <webview> engine compiles in only when a CEF binary distribution
+    // is on hand to translate `include/capi/*.h` against. Nothing from the dist
+    // is linked (libcef.so is dlopen'd at runtime, see src/cef/loader.zig);
+    // this is headers only, and the pin below must match `cef.api_version`.
+    const cef_dist = resolveCefDist(b, target);
+    build_opts.addOption(bool, "cef_engine", cef_dist != null);
     const build_options_mod = build_opts.createModule();
 
     const gobject = b.dependency("gobject", .{
@@ -100,6 +107,7 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("generated", exe_mod);
     linkTerminalDeps(exe_mod, ghostty_vt_lib, target);
+    addCefHeaders(exe_mod, cef_dist);
     const exe = b.addExecutable(.{ .name = "nd-hello", .root_module = exe_mod });
     b.installArtifact(exe);
 
@@ -116,6 +124,7 @@ pub fn build(b: *std.Build) void {
     });
     tests_mod.addImport("generated", tests_mod);
     linkTerminalDeps(tests_mod, ghostty_vt_lib, target);
+    addCefHeaders(tests_mod, cef_dist);
     const tests = b.addTest(.{ .root_module = tests_mod });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -411,6 +420,32 @@ pub fn build(b: *std.Build) void {
 // Link the terminal core's native deps into any artifact that compiles
 // src/core/terminal.zig: the prebuilt libghostty-vt archive, libc (forkpty +
 // threads), and libutil on Linux (forkpty lives there; on macOS it's libSystem).
+/// Root of a CEF binary distribution, the directory holding `include/`,
+/// `Release/` and `Resources/`. `-Dcef-dist=` wins, then `ND_CEF_ROOT`, then
+/// the dev cache the packaging lane also writes to. Linux targets only: the
+/// windowed embedding this engine does is X11-only.
+fn resolveCefDist(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
+    const explicit = b.option([]const u8, "cef-dist", "root of a CEF binary distribution (headers only; libcef.so is dlopen'd)");
+    if (target.result.os.tag != .linux) return null;
+    const root = explicit orelse
+        b.graph.environ_map.get("ND_CEF_ROOT") orelse
+        b.pathJoin(&.{ b.graph.environ_map.get("HOME") orelse return null, ".cache/nativedesktop/cef/" ++ cef_version_dir });
+    std.Io.Dir.accessAbsolute(b.graph.io, b.pathJoin(&.{ root, "include", "capi", "cef_app_capi.h" }), .{}) catch {
+        if (explicit != null) std.debug.panic("-Dcef-dist={s} is not a CEF distribution (no include/capi/cef_app_capi.h)", .{root});
+        return null;
+    };
+    return root;
+}
+
+/// The dist's own root is the include path: the capi headers include each
+/// other as `include/capi/...`, relative to the distribution root.
+fn addCefHeaders(mod: *std.Build.Module, dist: ?[]const u8) void {
+    const root = dist orelse return;
+    mod.addIncludePath(.{ .cwd_relative = root });
+}
+
+const cef_version_dir = "151.3.23-linux64";
+
 fn linkTerminalDeps(mod: *std.Build.Module, ghostty_lib: std.Build.LazyPath, target: std.Build.ResolvedTarget) void {
     mod.link_libc = true;
     mod.addObjectFile(ghostty_lib);
