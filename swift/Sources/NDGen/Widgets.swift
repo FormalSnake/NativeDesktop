@@ -1692,7 +1692,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         }
         return NSView()
     } else if kind == "SplitView" {
-        let controller = NSSplitViewController()
+        let controller = NDSplitViewController()
         controller.splitView.isVertical = true
         controller.splitView.dividerStyle = .thin
         ndSplitControllers[ObjectIdentifier(controller.splitView)] = controller
@@ -1977,8 +1977,11 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         }
     } else if kind == "SplitView" {
         if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,
-           let controller = ndSplitViewController(for: split), let sidebarItem = controller.splitViewItems.first {
-            sidebarItem.isCollapsed = c
+           let controller = ndSplitViewController(for: split) {
+            splitViewCollapsed[ObjectIdentifier(split)] = c
+            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
+                sidebarItem.isCollapsed = c
+            }
         }
     } else if kind == "HeaderBar" {
         if let t = propStr(props, "title"), let bar = view as? NDHeaderBarView {
@@ -2439,6 +2442,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             item.minimumThickness = 180
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
+                controller.pendingSidebarFraction = fraction
             }
             item.canCollapse = true
             item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
@@ -2451,6 +2455,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             item.titlebarSeparatorStyle = .none
             if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
+                controller.pendingListFraction = fraction
             }
             let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
             controller.insertSplitViewItem(item, at: insertIndex)
@@ -2469,6 +2474,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
                 controller.addSplitViewItem(item)
             }
         }
+        controller.splitViewItemsChanged()
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
@@ -2562,6 +2568,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             item.minimumThickness = 180
             if let fraction = splitViewSidebarFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
+                controller.pendingSidebarFraction = fraction
             }
             item.canCollapse = true
             item.isCollapsed = splitViewCollapsed[ObjectIdentifier(split)] ?? false
@@ -2574,6 +2581,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             item.titlebarSeparatorStyle = .none
             if let fraction = splitViewListFraction[ObjectIdentifier(split)] {
                 item.preferredThicknessFraction = fraction
+                controller.pendingListFraction = fraction
             }
             let insertIndex = controller.splitViewItems.first?.behavior == .sidebar ? 1 : 0
             controller.insertSplitViewItem(item, at: insertIndex)
@@ -2592,6 +2600,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
                 controller.addSplitViewItem(item)
             }
         }
+        controller.splitViewItemsChanged()
     } else if parentKind == "HeaderBar" {
         ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
     } else if parentKind == "ToolbarView" {
@@ -2683,11 +2692,14 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         let split = parent as! NSSplitView
         let controller = ndSplitViewController(for: split)!
         var realChild = child
+        var paneItemHost: NSView? = nil
         if let pane = child as? NDToolbarPaneView {
             ndToolbarPaneDetachedFromSplit(pane)
+            paneItemHost = pane.paneController?.view
+            pane.paneController = nil
             realChild = pane.contentView ?? child
         }
-        if let item = controller.splitViewItems.first(where: { $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {
+        if let item = controller.splitViewItems.first(where: { $0.viewController.view === paneItemHost || $0.viewController.view === realChild || realChild.isDescendant(of: $0.viewController.view) }) {
             controller.removeSplitViewItem(item)
         } else {
             split.removeArrangedSubview(realChild)

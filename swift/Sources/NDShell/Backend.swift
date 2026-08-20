@@ -138,7 +138,19 @@ func buildVTable() -> nd_backend {
         let widgetBits = Int(bitPattern: w)
         return MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return false }
-            return viewFrom(widgetPtr).superview != nil
+            let view = viewFrom(widgetPtr)
+            // A `<toolbarview>` pane is a LOGICAL holder: its own view never
+            // enters the hierarchy (HeaderBar.swift), so `superview` is nil
+            // from create to teardown, and the core gates its remove op on
+            // this answer (src/tree.zig). Reporting nil meant a sidebar pane
+            // could be unmounted from the tree while its NSSplitViewItem
+            // stayed, holding the gutter. The pane's attachment is what it
+            // reports instead, and the generated SplitView/Window remove arms
+            // that take one are idempotent.
+            if let pane = view as? NDToolbarPaneView {
+                return pane.paneController != nil || pane.manager != nil
+            }
+            return view.superview != nil
         }
     }
 
