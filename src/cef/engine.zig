@@ -919,14 +919,24 @@ pub fn setUrl(widget: *gtk.Widget, url: [:0]const u8) void {
 }
 
 fn loadUrl(browser: *c.cef_browser_t, url: []const u8) void {
-    const get_frame = browser.get_main_frame orelse return;
+    const get_frame = browser.get_main_frame orelse {
+        tr("loadUrl: no get_main_frame", .{});
+        return;
+    };
     const frame = get_frame(browser);
-    if (frame == null) return;
+    if (frame == null) {
+        tr("loadUrl: no main frame for {s}", .{url});
+        return;
+    }
     defer ref.releaseOwned(frame);
-    const load = frame.*.load_url orelse return;
+    const load = frame.*.load_url orelse {
+        tr("loadUrl: no load_url for {s}", .{url});
+        return;
+    };
     var s = std.mem.zeroes(c.cef_string_t);
     defer clearStr(&s);
     if (!setStr(&s, url)) return;
+    tr("loadUrl issued {s}", .{url});
     load(frame, &s);
 }
 
@@ -1518,7 +1528,45 @@ const Call = union(enum) {
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
 
-const PendingCall = struct { view: *View, call: Call };
+/// A devtools call that has been sent and not yet answered.
+///
+/// CEF does not promise a reply. A Runtime.evaluate issued while a navigation
+/// is committing can simply never be answered, and with no deadline the caller
+/// waits for it forever: an app polling an evaluation reads that as the whole
+/// view being dead. An expired call is reported as a failure, which a caller
+/// can retry, rather than as silence it cannot.
+const PendingCall = struct { view: *View, call: Call, deadline_us: i64 };
+
+/// Evaluations are answered inside a caller's own budget or not at all, so
+/// they expire fast enough for the caller to try again; everything else is a
+/// registration whose only failure mode is a wedged agent.
+const eval_call_timeout_us: i64 = 4 * std.time.us_per_s;
+const other_call_timeout_us: i64 = 15 * std.time.us_per_s;
+
+var pending_sweep_timer: c_uint = 0;
+
+fn armPendingSweep() void {
+    if (pending_sweep_timer != 0) return;
+    pending_sweep_timer = glib.timeoutAdd(250, &onPendingSweep, null);
+}
+
+fn onPendingSweep(_: ?*anyopaque) callconv(.c) c_int {
+    pending_sweep_timer = 0;
+    const now = glib.getMonotonicTime();
+    var expired: std.ArrayList(c_int) = .empty;
+    defer expired.deinit(alloc);
+    var it = pending_calls.iterator();
+    while (it.next()) |entry| {
+        if (now > entry.value_ptr.deadline_us) expired.append(alloc, entry.key_ptr.*) catch {};
+    }
+    for (expired.items) |id| {
+        const entry = pending_calls.fetchRemove(id) orelse continue;
+        tr("cdpExpired node={d} id={d}", .{ entry.value.view.node_id, id });
+        failCall(entry.value.view, entry.value.call, "the engine never answered this devtools call");
+    }
+    if (pending_calls.count() > 0) armPendingSweep();
+    return 0;
+}
 
 /// GTK thread only: every CDP result is marshaled before it is looked up here.
 var pending_calls: std.AutoHashMapUnmanaged(c_int, PendingCall) = .empty;
@@ -1570,10 +1618,19 @@ fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Ca
     };
     tr("cdp -> node={d} id={d} {s} {s}", .{ view.node_id, id, method, params_json });
     if (std.meta.activeTag(call) == .ignore) return true;
-    pending_calls.put(alloc, id, .{ .view = view, .call = call }) catch {
+    const budget: i64 = switch (call) {
+        .eval, .stringify => eval_call_timeout_us,
+        else => other_call_timeout_us,
+    };
+    pending_calls.put(alloc, id, .{
+        .view = view,
+        .call = call,
+        .deadline_us = glib.getMonotonicTime() + budget,
+    }) catch {
         callFree(call);
         return false;
     };
+    armPendingSweep();
     return true;
 }
 
