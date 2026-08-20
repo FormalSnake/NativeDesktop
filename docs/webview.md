@@ -294,6 +294,28 @@ CEF (Chromium) is the planned opt-in alternative for apps that need Chromium
 fidelity, enabled per project *and* per platform in `nativedesktop.config.ts`
 (e.g. macOS on WebKit, Linux on CEF).
 
+The config surface, and the create-only `engine` prop it feeds:
+
+```ts
+// nativedesktop.config.ts
+export default defineConfig({
+  webview: {
+    engine: { mac: "system", linux: "chromium" },
+    cef: { version: "151.3.23", locales: ["en-US", "de"] },
+  },
+});
+```
+
+`nd dev` resolves the current platform's entry and exports it to the host as
+`ND_WEBVIEW_ENGINE`, which is also the dev override: `ND_WEBVIEW_ENGINE=chromium
+nd dev` wins over the config without editing it. Per view, `<webview engine>`
+takes the same two values and defaults to `"system"`; it is create-only, since
+swapping engines under a live view would mean rebuilding it.
+
+`nd doctor` reports the resolved engine, fails when a chromium config has no CEF
+dist to resolve, and audits the last packaged bundle: an `engine: "system"` build
+containing Chromium bytes is an error, not a warning.
+
 The opt-in is structural rather than a runtime flag:
 
 - CEF is never linked into the host binary. It loads at runtime
@@ -303,11 +325,17 @@ The opt-in is structural rather than a runtime flag:
   An app that doesn't enable CEF ships zero Chromium bytes: the CEF
   distribution is fetched at package time (official builds:
   cef-builds.spotifycdn.com) and is never committed to the repo.
-- On Linux, `libcef.so` ships largely unstripped (>1 GB on disk); the packaging
-  step must run `strip` when CEF is enabled (~200 MB after).
-- macOS additionally requires helper `.app` bundles (Renderer/GPU/Alerts/main)
-  under `Contents/Frameworks` and inside-out codesigning. Both are packaging
-  concerns, invisible to app code.
+- On Linux, `libcef.so` ships largely unstripped (1.43 GB on disk); packaging
+  runs `strip` on the staged copy when CEF is enabled, which takes it to about
+  269 MB. `locales/` is trimmed to `cef.locales` (default `en-US`) rather than
+  shipping all 100-odd .pak files.
+- `chrome-sandbox` is staged with the mode the dist ships. The setuid sandbox
+  wants it root-owned 4755, which only an installer can do; the user-namespace
+  sandbox is the automatic fallback, and `--no-sandbox` never is.
+- macOS additionally requires the five helper `.app` bundles (main, Alerts, GPU,
+  Plugin, Renderer) under `Contents/Frameworks`, signed inside-out with JIT
+  entitlements on the renderer and GPU helpers before the outer app is signed.
+  All of it is a packaging concern, invisible to app code.
 - Linux caveat: CEF windowed embedding under native Wayland is still unshipped
   upstream (CEF issue #2804; ANGLE's Wayland support merged 2026-05); until it
   lands, embedded CEF on Wayland means off-screen rendering or XWayland.

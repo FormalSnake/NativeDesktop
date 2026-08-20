@@ -53,6 +53,11 @@ final class NDWebView: WKWebView {
     /// src/gtk/webview.zig.
     private var committedURL = ""
 
+    /// Create-only `engine` prop, "system" or "chromium". CEF is dlopened at
+    /// runtime and never linked into this shell, so until that path exists
+    /// every view is the WKWebView below whatever the app asked for.
+    let engine: String
+
     /// `contextMenuMode`: "native" keeps WebKit's own menu and merges the app's
     /// items into it, "suppress" shows no menu at all and leaves the decision
     /// to the app's `contextMenu` event.
@@ -81,7 +86,8 @@ final class NDWebView: WKWebView {
     static let internalWorldName = "nd-internal"
     static let internalHandlerName = "__ndInternal"
 
-    init(url: String?, profile: String, contextMenuMode: String) {
+    init(url: String?, profile: String, engine: String, contextMenuMode: String) {
+        self.engine = engine
         self.suppressContextMenu = contextMenuMode == "suppress"
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = NDWebViewProfiles.dataStore(for: profile)

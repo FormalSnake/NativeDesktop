@@ -47,8 +47,12 @@ var emit: ?types.EmitFn = null;
 
 var requested: ?bool = null;
 
-/// M1 selects the engine from the environment; the schema's `engine` prop is
-/// the packaging lane's seam and lands separately.
+/// Whether this PROCESS is set up for CEF, which is a different question from
+/// whether a given view asked for it. cef_execute_process and the X11 backend
+/// pin both have to happen in main, before any widget exists, so the only
+/// input they can have is the environment: `nd dev` and `nd package` deliver
+/// the resolved `webview.engine` from nativedesktop.config.ts as
+/// ND_WEBVIEW_ENGINE for exactly this reason.
 fn engineRequested() bool {
     if (requested) |r| return r;
     const raw = std.c.getenv("ND_WEBVIEW_ENGINE");
@@ -56,6 +60,12 @@ fn engineRequested() bool {
     requested = r;
     return r;
 }
+
+/// Set once main has run cef_execute_process for this process. A view that
+/// asks for `engine="chromium"` in an app whose config did not is refused
+/// here: without the early call, CEF's own renderer subprocesses would re-exec
+/// this binary and run the whole host in each of them.
+var process_ready = false;
 
 /// argv as the process received it, kept for cef_initialize (which is called
 /// lazily at the first <webview>, long after main's frame is gone).
@@ -71,7 +81,10 @@ pub fn earlyExecuteProcess(argv: []const [*:0]const u8) ?u8 {
     const app = ensureApp() orelse return null;
     var args = mainArgs();
     const rc = api.execute_process(&args, app.handOut(), null);
-    if (rc < 0) return null;
+    if (rc < 0) {
+        process_ready = true;
+        return null;
+    }
     return @truncate(@as(u32, @bitCast(rc)));
 }
 
@@ -308,7 +321,10 @@ fn browserOf(view: *View) ?*c.cef_browser_t {
 // ============================================================================
 
 pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) ?*gtk.Widget {
-    if (!engineRequested()) return null;
+    if (!process_ready) {
+        std.debug.print("ND_WARN WebView engine=\"chromium\": this process did not start under CEF (set webview.engine in nativedesktop.config.ts, or ND_WEBVIEW_ENGINE=chromium)\n", .{});
+        return null;
+    }
     if (!ensureInitialized()) return null;
     if (profile.len != 0) {
         std.debug.print("ND_WARN WebView engine=chromium: `profile` is not wired yet (M2); this view uses the global request context\n", .{});

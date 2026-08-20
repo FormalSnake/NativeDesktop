@@ -572,9 +572,29 @@ fn modeOf(name: []const u8) Mode {
     return if (std.mem.eql(u8, name, "suppress")) .suppress else .native;
 }
 
+/// Create-only `engine` prop. `.chromium` asks for CEF, which is dlopened at
+/// runtime and is not linked into this host.
+///
+/// `ND_WEBVIEW_ENGINE=chromium` selects it for every view that did not ask for
+/// itself: that is the dev handshake `nd dev` uses to deliver the resolved
+/// `webview.engine` from nativedesktop.config.ts, which is a per-app default
+/// rather than a per-view decision.
+const Engine = enum { system, chromium };
+
+fn engineOf(name: []const u8) Engine {
+    if (std.mem.eql(u8, name, "chromium")) return .chromium;
+    if (name.len == 0 or std.mem.eql(u8, name, "system")) {
+        if (std.c.getenv("ND_WEBVIEW_ENGINE")) |raw| {
+            if (std.mem.eql(u8, std.mem.span(raw), "chromium")) return .chromium;
+        }
+    }
+    return .system;
+}
+
 const ViewState = struct {
     node_id: u32 = 0,
     mode: Mode = .native,
+    engine: Engine = .system,
     /// The app's `setContextMenuItems` tree, owned by this view.
     menu_items: []ctxmenu.Item = &.{},
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
@@ -805,11 +825,14 @@ fn createWithSession(session: *anyopaque) ?*gtk.Widget {
     return @ptrCast(@alignCast(obj));
 }
 
-pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []const u8) *gtk.Widget {
-    // ND_WEBVIEW_ENGINE=chromium picks the CEF backend for this view. It
-    // returns null when CEF is absent or fails to initialize, and the view
-    // falls back to the system engine rather than to nothing.
-    if (cef.create(url, profile, context_menu_mode)) |w| return w;
+pub fn create(url: ?[*:0]const u8, profile: []const u8, engine: []const u8, context_menu_mode: []const u8) *gtk.Widget {
+    // The CEF backend answers null when it is compiled out, when no CEF
+    // distribution resolves, or when this view did not ask for it; the view
+    // then renders on WebKitGTK rather than on nothing.
+    if (engineOf(engine) == .chromium) {
+        if (cef.create(url, profile, context_menu_mode)) |w| return w;
+        std.debug.print("ND_WARN WebView engine=\"chromium\": CEF unavailable, falling back to the system engine\n", .{});
+    }
     const a = loadApi() orelse {
         std.debug.print("ND_WARN WebView unavailable (libwebkitgtk-6.0 not found); rendering placeholder label\n", .{});
         const label = gtk.Label.new("WebView unavailable (webkitgtk not installed)");
@@ -834,7 +857,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         std.debug.print("ND_WARN WebView state allocation failed; extension surface disabled for this view\n", .{});
         return widget;
     };
-    state.* = .{ .mode = modeOf(context_menu_mode) };
+    state.* = .{ .mode = modeOf(context_menu_mode), .engine = engineOf(engine) };
     gobject.Object.setData(widget.as(gobject.Object), STATE_KEY, state);
     // A webview is a content surface: expand into whatever the parent gives
     // it (a non-expanding WebKitWebView collapses to 0x0 inside a <box>).

@@ -608,6 +608,7 @@
       "props": [
         { "name": "url", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "profile", "type": "string", "default": "", "appliesTo": "create" },
+        { "name": "engine", "type": "enum", "values": ["system", "chromium"], "default": "system", "appliesTo": "create" },
         { "name": "contextMenuMode", "type": "enum", "values": ["native", "suppress"], "default": "native", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },

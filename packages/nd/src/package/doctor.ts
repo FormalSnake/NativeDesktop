@@ -1,10 +1,12 @@
 // `nd doctor`: checks the current directory's packaging readiness and the
 // host toolchain. Warnings are advisory; only real gaps (a config that names
 // missing files, an unresolvable host binary) exit non-zero.
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { hostBinaryCandidates, prebuiltHostBinary, resolveBackend } from "@nativedesktop/host";
-import { loadConfig, type NativeDesktopConfig } from "../config.ts";
+import { cefDistDir, cefPlatformKey, resolveCefRoot } from "@nativedesktop/host/cef";
+import { engineTargetFor, loadConfig, type NativeDesktopConfig, resolveWebViewEngine, type WebViewEngine } from "../config.ts";
+import { cefBundleAudit, cefVersionFor } from "./cef.ts";
 import { DEFAULT_ENTRY } from "./payload.ts";
 
 export type CheckStatus = "ok" | "warn" | "error";
@@ -42,6 +44,80 @@ function macIconChecks(config: NativeDesktopConfig): Check[] {
     return [{ name: "icon-tools", status: "error", detail: `${source} icon configured but sips/iconutil are missing` }];
   }
   return [];
+}
+
+/** Bundles a previous `nd package` run left in the output dir, which is what the
+ * zero-CEF-bytes claim can be checked against. */
+export function builtBundles(config: NativeDesktopConfig, cwd: string): string[] {
+  const outDir = resolve(cwd, config.package?.workspaceRoot ?? ".", config.package?.outDir ?? "dist");
+  const bundles: string[] = [];
+  const macDir = join(outDir, "mac");
+  if (existsSync(macDir)) {
+    for (const entry of readdirSync(macDir)) if (entry.endsWith(".app")) bundles.push(join(macDir, entry));
+  }
+  const appDir = join(outDir, "linux", "AppDir");
+  if (existsSync(appDir)) bundles.push(appDir);
+  return bundles;
+}
+
+/**
+ * The engine the current platform resolves to, whether CEF can be found when it
+ * asks for one, and whether the last packaged bundle matches: an engine="system"
+ * bundle carrying Chromium bytes breaks the framework's central claim about the
+ * default path, so it fails rather than warns.
+ */
+export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[] {
+  const target = engineTargetFor();
+  if (!target) return [];
+  let engine: WebViewEngine;
+  try {
+    engine = resolveWebViewEngine(config, target);
+  } catch (err) {
+    return [{ name: "webview", status: "error", detail: String(err) }];
+  }
+  const checks: Check[] = [{
+    name: "webview",
+    status: "ok",
+    detail: `engine=${engine} (${target})${process.env.ND_WEBVIEW_ENGINE ? " from ND_WEBVIEW_ENGINE" : ""}`,
+  }];
+
+  const version = cefVersionFor(config.webview?.cef);
+  if (engine === "chromium") {
+    try {
+      const cefPlatform = cefPlatformKey();
+      const root = resolveCefRoot({ cefPlatform, version });
+      checks.push(root
+        ? { name: "cef", status: "ok", detail: `CEF ${version} at ${root}` }
+        : {
+          name: "cef",
+          status: "error",
+          detail: `engine "chromium" but no CEF ${version} dist found (ND_CEF_ROOT, the app bundle, or ${cefDistDir(version, cefPlatform)}); \`nd package\` downloads it`,
+        });
+    } catch (err) {
+      checks.push({ name: "cef", status: "error", detail: String(err) });
+    }
+    if (target === "linux") {
+      checks.push({
+        name: "cef",
+        status: "warn",
+        detail: "chrome-sandbox ships with the dist's own mode; the setuid sandbox wants root:root 4755 at install time (the userns sandbox is the automatic fallback, never --no-sandbox)",
+      });
+    }
+  }
+
+  for (const bundle of builtBundles(config, cwd)) {
+    const found = cefBundleAudit(bundle);
+    if (engine === "chromium") {
+      checks.push(found.length
+        ? { name: "cef-bytes", status: "ok", detail: `${bundle}: ${found.length} CEF artifact(s) staged` }
+        : { name: "cef-bytes", status: "error", detail: `${bundle} carries no CEF payload but engine is "chromium" (repackage)` });
+    } else {
+      checks.push(found.length
+        ? { name: "cef-bytes", status: "error", detail: `${bundle} ships CEF with engine "system": ${found.slice(0, 3).join(", ")}` }
+        : { name: "cef-bytes", status: "ok", detail: `${bundle}: no CEF bytes` });
+    }
+  }
+  return checks;
 }
 
 export async function collectChecks(cwd: string): Promise<Check[]> {
@@ -113,6 +189,8 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
       ? { name: "appimage", status: "ok", detail: which("appimagetool") ? "appimagetool available" : "mksquashfs fallback available" }
       : { name: "appimage", status: "warn", detail: "neither appimagetool nor mksquashfs on PATH (only the raw AppDir can be produced)" });
   }
+
+  checks.push(...webviewChecks(config, cwd));
 
   if (config.package?.updates) {
     checks.push(which("minisign")

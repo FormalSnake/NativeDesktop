@@ -2690,7 +2690,8 @@ fn createWidget(
         // runtime; placeholder label otherwise (M5b-D7: no hard link dep).
         const url: ?[*:0]const u8 = if (propStr(props, "url")) |u| dupeZ(u).ptr else null;
         const profile: []const u8 = propStr(props, "profile") orelse "";
-        return ndweb_gtk.create(url, profile, propStr(props, "contextMenuMode") orelse "native");
+        const engine: []const u8 = propStr(props, "engine") orelse "system";
+        return ndweb_gtk.create(url, profile, engine, propStr(props, "contextMenuMode") orelse "native");
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         const view_kind = propStr(props, "viewKind") orelse "";
         const props_json = propStr(props, "props") orelse "{}";
