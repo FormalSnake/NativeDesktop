@@ -57,11 +57,11 @@ pub fn attach(host: *c.cef_browser_host_t, tag: usize) Session {
         observer.drop();
         return .{};
     }
-    return .{ .observer = observer, .registration = registration };
+    return .{ .observer = observer, .registration = @ptrCast(registration) };
 }
 
 pub fn detach(session: *Session) void {
-    if (session.registration) |r| ref.releaseParam(r);
+    if (session.registration) |r| ref.releaseParam(@as([*c]c.cef_registration_t, r));
     session.registration = null;
     if (session.observer) |o| o.drop();
     session.observer = null;

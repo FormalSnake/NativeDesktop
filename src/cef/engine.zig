@@ -1244,7 +1244,7 @@ fn drainDeferred(view: *View) void {
                 };
                 continue;
             }
-            issueEval(view, e.sink, e.code, e.world);
+            _ = issueEval(view, e.sink, e.code, e.world);
             alloc.free(e.code);
             alloc.free(e.world);
         },
