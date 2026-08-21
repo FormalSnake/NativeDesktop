@@ -1,11 +1,13 @@
 ---
 title: WebView
-description: The <webview> widget embeds the operating system's own web engine (WKWebView on macOS, WebKitGTK on GTK) with no bundled browser.
+description: The <webview> widget embeds a web engine as a native subtree, the system engine (WKWebView, WebKitGTK) by default or Chromium via CEF, chosen per platform in config.
 ---
 
-`<webview>` embeds the platform's own web engine as a native subtree: WKWebView on macOS,
-WebKitGTK on GTK. Pages render with the same engine the rest of the system uses, and nothing
-Chromium-shaped is bundled.
+`<webview>` embeds a web engine as a native subtree. The default is the platform's own engine
+(WKWebView on macOS, WebKitGTK on GTK): pages render with the same engine the rest of the system
+uses, and nothing Chromium-shaped is bundled. Apps that need Chromium fidelity opt into CEF per
+platform instead; see [Choosing the engine](#choosing-the-engine). Everything on this page applies
+to both engines unless a difference is called out.
 
 ![The webview widget rendering a page inside the browser example on macOS (AppKit)](../../../assets/screens/appkit/browser.png)
 
@@ -54,6 +56,7 @@ The full version of this example lives at `examples/browser/main.tsx`.
 | --------------------- | ------- | ------- | --------------- | --------------------------------------------------------- |
 | `url`                 | string  | `""`    | createAndUpdate | The page to load. Setting it navigates; empty is ignored. |
 | `profile`             | string  | `""`    | create          | Storage partition: `""` shares the default one, a name starting with `private` is ephemeral, any other name is a persistent partition of its own. |
+| `engine`              | `"system"` \| `"chromium"` | `"system"` | create | Which engine backs this view. Create-only: swapping engines under a live view would mean rebuilding it. Usually left to the per-platform config default (see below). |
 | `contextMenuMode`     | `"native"` \| `"suppress"` | `"native"` | createAndUpdate | `"native"` shows the engine's own context menu with the app's `setContextMenuItems` merged into it; `"suppress"` shows no engine menu at all and leaves the whole menu to the app, off the `contextMenu` event. |
 | `testID`              | string  | none    | meta            | Automation handle, not rendered.                          |
 
@@ -285,6 +288,12 @@ scheme handlers to a configuration that is frozen once a web view exists, so **t
 the first `<webview>` mounts**; calling it later rejects with a clear error rather than silently
 doing nothing.
 
+On the chromium engine the scheme must also appear in `webview.cef.schemes` in
+`nativedesktop.config.ts`. CEF makes a scheme standard, secure and CORS-enabled only when every
+process learns it before `cef_initialize`, which runs long before app code, so the list has to come
+from config; `registerScheme` then installs the handler behind it. The call itself is identical on
+both engines.
+
 ```tsx
 import { webviewEngine } from "@nativedesktop/react";
 
@@ -316,10 +325,63 @@ supply; both backends look the live cookie up first, because both engines delete
 cache and local storage; `private…` gets an ephemeral partition that leaves nothing on disk. On GTK
 this is a `WebKitNetworkSession`, on macOS a `WKWebsiteDataStore` (named stores need macOS 14+).
 
+## Choosing the engine
+
+`<webview>` runs on one of two engines, chosen per platform in `nativedesktop.config.ts`. The
+default is `"system"` (WKWebView on macOS, WebKitGTK on GTK) and ships zero Chromium bytes.
+`"chromium"` embeds Chromium via CEF for apps that need Chromium fidelity, and the two mix freely
+across platforms:
+
+```ts
+// nativedesktop.config.ts
+import { defineConfig } from "@nativedesktop/cli/config";
+
+export default defineConfig({
+  webview: {
+    engine: { mac: "system", linux: "chromium" },
+    cef: { version: "151.3.23", locales: ["en-US"], schemes: ["myapp"] },
+  },
+});
+```
+
+`nd dev` resolves the current platform's entry and hands it to the host as `ND_WEBVIEW_ENGINE`,
+which doubles as the dev override: `ND_WEBVIEW_ENGINE=chromium nd dev` wins over the config without
+editing it. A packaged app carries the resolved engine itself. Per view, the create-only `engine`
+prop takes the same two values, so one app can hold views on both engines at once; views without
+the prop follow the config.
+
+The app-facing contract does not move with the engine: the props, events, commands, cookies,
+schemes and bridge on this page behave the same on both. CEF is never linked into the host binary;
+it loads at runtime from the app bundle, and packaging stages the CEF distribution (fetched at
+package time, never committed) only when a platform declares `"chromium"`. `nd doctor` reports the
+resolved engine, fails when a chromium config has no CEF dist to resolve, and flags a `"system"`
+build that contains Chromium bytes.
+
+Two differences to plan around:
+
+- Custom schemes are declared in config on CEF. `webviewEngine.registerScheme` is the same call
+  on both engines, but CEF also needs the scheme named in `webview.cef.schemes` (see
+  [Custom URI schemes](#custom-uri-schemes)).
+- `chrome-extension://` belongs to Chromium. On CEF, Chromium blocks embedder navigation to
+  `chrome-extension://` URLs outright, before any scheme handler is consulted. An app that serves
+  Chrome-style extension pages keeps `chrome-extension://` on the system engine and serves the same
+  ids and paths from a scheme of its own on CEF (declared in `cef.schemes`), switching on
+  `ND_WEBVIEW_ENGINE` in one place. Persisted extension URLs then need retargeting on read, since a
+  URL stored under one scheme is unloadable under the other.
+
+On Linux, CEF's windowed embedding still requires X11: native Wayland embedding is unshipped
+upstream (CEF issue #2804), so a Wayland session runs the chromium engine through XWayland.
+
 ## Engine resolution
 
-On macOS the widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework, always
-present, nothing to detect.
+On macOS the system widget is a `WKWebView` subclass (`NDWebView`). WebKit is a system framework,
+always present, nothing to detect.
+
+With `"chromium"` resolved, both platforms load CEF at runtime instead: from the packaged app
+bundle (`Contents/Frameworks` on macOS, `lib/cef` on Linux), or in dev from the dist cache under
+`~/.cache/nativedesktop/cef/<version>-<platform>`. A successful load logs
+`ND_WEBVIEW_ENGINE chromium` with the resolved path; a failed one warns and falls back to the
+system engine.
 
 On GTK, WebKitGTK is resolved at runtime rather than link time. The surface `dlopen`s
 `libwebkitgtk-6.0.so.4` (falling back to `libwebkitgtk-6.0.so` / `.dylib`) and looks up the handful

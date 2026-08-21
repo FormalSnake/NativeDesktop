@@ -290,7 +290,7 @@ dispatch forwards the raw command string to the hand-written engine files,
 ## Engines
 
 The system engine is the default on both platforms and costs zero bundle bytes.
-CEF (Chromium) is the planned opt-in alternative for apps that need Chromium
+CEF (Chromium) is the opt-in alternative for apps that need Chromium
 fidelity, enabled per project *and* per platform in `nativedesktop.config.ts`
 (e.g. macOS on WebKit, Linux on CEF).
 
