@@ -405,6 +405,13 @@ pub const Tree = struct {
         for (batch.ops) |op| {
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
+                // A child dying mid-commit can flush a truncated op, and the
+                // fields below are unwrapped with `.?`. A JS crash must never
+                // take the host down with it.
+                if (op.widget == null or op.id == null) {
+                    std.debug.print("ND_WARN create op missing widget/id (truncated batch?), skipped\n", .{});
+                    continue;
+                }
                 // A post-crash / dev-mode Restart respawn mounts a
                 // brand-new reconciler root, whose first commit re-emits a
                 // `create Window` op for every window — but the generated
