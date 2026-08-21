@@ -26,6 +26,7 @@ for dir in \
   packages/native \
   packages/data \
   packages/panes \
+  packages/ui \
   packages/babel-plugin-nativedesktop \
   packages/nd; do
   echo "publishing $dir"
