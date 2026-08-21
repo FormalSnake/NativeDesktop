@@ -1,6 +1,6 @@
 ---
 title: Overlays
-description: Dialog and Sheet, two containers that present arbitrary content natively instead of a fixed dialog shape.
+description: Dialog and Sheet present arbitrary content natively; Overlay stacks floating layers over in-layout content.
 ---
 
 `<dialog>` and `<sheet>` are containers (single child) that mount arbitrary content into a native
@@ -88,3 +88,22 @@ mounting four separate sheets, as `examples/parity/main.tsx`'s Overlays section 
 
 See the [Widget Reference](/components/widget-reference/) for the generated prop tables and
 `examples/parity/main.tsx`'s Overlays section for both wired to state.
+
+## Overlay (`<overlay>`)
+
+A z-stack inside the layout, not a modal: `GtkOverlay` on GTK, a constraint-pinned NSView stack on
+macOS. The first child is the content and sizes the overlay exactly as it would size a plain parent;
+every later child floats above it without taking layout space. A floating child is positioned by its
+own `halign`/`valign` style keys (`fill`, the default, pins both edges of that axis), so a load bar
+that must not resize the content below it is one progress bar with `valign: "start"`:
+
+```tsx
+<overlay style={{ hexpand: true, vexpand: true }}>
+  <webview url={url} style={{ hexpand: true, vexpand: true }} />
+  {loading && <progressbar fraction={progress} cssClasses={["osd"]} style={{ valign: "start", hexpand: true }} />}
+</overlay>;
+```
+
+Layer stacking follows mount order and there is no reorder primitive: a layer inserted mid-list
+lands on top. Reach for `<dialog>`/`<sheet>` when the content should be modal; `<overlay>` layers
+are part of the page, they just float over it.

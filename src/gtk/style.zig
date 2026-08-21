@@ -8,6 +8,7 @@ const generated = @import("generated");
 // installed once at display level; update = replace provider content. ----
 var gpa: std.mem.Allocator = undefined;
 var providers: std.AutoHashMapUnmanaged(u32, *gtk.CssProvider) = .empty;
+var size_requested: std.AutoHashMapUnmanaged(u32, void) = .empty;
 pub const StyleErrorFn = *const fn (node_id: u32, key: []const u8) void;
 var on_error: ?StyleErrorFn = null;
 var ready = false;
@@ -176,6 +177,21 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
         } else if (std.mem.eql(u8, key, "valign")) {
             if (parseAlign(entry.value_ptr.*)) |a| gtk.Widget.setValign(widget, a);
         }
+    }
+
+    // minWidth/minHeight share one gtk_widget_set_size_request call, so the
+    // pair is read outside the loop: setting one axis must not clobber the
+    // other, and -1 (GTK's "no request") is the baseline when a key drops out
+    // of the style object. `size_requested` remembers which nodes carry a
+    // request so dropping BOTH keys resets once instead of touching every
+    // widget on every apply.
+    if (style.object.get("minWidth") != null or style.object.get("minHeight") != null) {
+        const min_w: c_int = if (style.object.get("minWidth")) |v| @intCast(jsonInt(v)) else -1;
+        const min_h: c_int = if (style.object.get("minHeight")) |v| @intCast(jsonInt(v)) else -1;
+        gtk.Widget.setSizeRequest(widget, min_w, min_h);
+        size_requested.put(gpa, node_id, {}) catch {};
+    } else if (size_requested.remove(node_id)) {
+        gtk.Widget.setSizeRequest(widget, -1, -1);
     }
 
     // 2. Build the CSS half (margin excluded by compileCss's `.widget` skip).

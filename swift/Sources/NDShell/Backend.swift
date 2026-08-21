@@ -1178,6 +1178,58 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
             ndBoxChildAttached(stack, view)
         }
     }
+
+    ndApplyMinSize(view, style)
+}
+
+/// One >= constraint per axis per view, the AppKit peer of GTK's
+/// gtk_widget_set_size_request. Set-replace like the rest of the style
+/// surface: a key dropping out of the style object deactivates its
+/// constraint. Priority 999, not required, so a frame-based parent's
+/// translated autoresizing constraints win a conflict instead of throwing
+/// an unsatisfiable-constraint exception.
+nonisolated(unsafe) private var ndMinSizeConstraints: [ObjectIdentifier: (width: NSLayoutConstraint?, height: NSLayoutConstraint?)] = [:]
+
+private func ndApplyMinSize(_ view: NSView, _ style: [String: Any]) {
+    let minW = (style["minWidth"] as? NSNumber)?.doubleValue
+    let minH = (style["minHeight"] as? NSNumber)?.doubleValue
+    let key = ObjectIdentifier(view)
+    if minW == nil && minH == nil && ndMinSizeConstraints[key] == nil { return }
+    var pair = ndMinSizeConstraints[key] ?? (nil, nil)
+
+    if let w = minW {
+        if let c = pair.width {
+            c.constant = CGFloat(w)
+        } else {
+            let c = view.widthAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(w))
+            c.priority = NSLayoutConstraint.Priority(999)
+            c.isActive = true
+            pair.width = c
+        }
+    } else if let c = pair.width {
+        c.isActive = false
+        pair.width = nil
+    }
+
+    if let h = minH {
+        if let c = pair.height {
+            c.constant = CGFloat(h)
+        } else {
+            let c = view.heightAnchor.constraint(greaterThanOrEqualToConstant: CGFloat(h))
+            c.priority = NSLayoutConstraint.Priority(999)
+            c.isActive = true
+            pair.height = c
+        }
+    } else if let c = pair.height {
+        c.isActive = false
+        pair.height = nil
+    }
+
+    if pair.width == nil && pair.height == nil {
+        ndMinSizeConstraints.removeValue(forKey: key)
+    } else {
+        ndMinSizeConstraints[key] = pair
+    }
 }
 
 /// Scalar (all four sides) or per-side object ({top,left,bottom,right},

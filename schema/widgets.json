@@ -18,6 +18,8 @@
       "vexpand": { "kind": "bool", "target": "widget" },
       "halign":  { "kind": "enum", "target": "widget", "values": ["fill", "start", "end", "center"] },
       "valign":  { "kind": "enum", "target": "widget", "values": ["fill", "start", "end", "center"] },
+      "minWidth":  { "kind": "int", "target": "widget" },
+      "minHeight": { "kind": "int", "target": "widget" },
       "border": {
         "kind": "object",
         "fields": {
@@ -849,6 +851,7 @@
         { "name": "nodeExpanded", "ndpName": "onNodeExpanded", "payload": "data" },
         { "name": "nodeCollapsed", "ndpName": "onNodeCollapsed", "payload": "data" },
         { "name": "actionClicked", "ndpName": "onActionClicked", "payload": "data" },
+        { "name": "middleClicked", "ndpName": "onMiddleClick", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
@@ -1008,6 +1011,27 @@
       "props": [
         { "name": "maximumSize", "type": "int", "default": 600, "appliesTo": "create" },
         { "name": "tighteningThreshold", "type": "int", "default": 400, "appliesTo": "create" },
+        { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
+        { "name": "dragEnded", "ndpName": "onDragEnded" },
+        { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+      ],
+      "automation": { "role": "group", "textFrom": null }
+    },
+    {
+      "name": "Overlay",
+      "intrinsic": "overlay",
+      "container": { "childModel": "multi" },
+      "doc": "Z-stack container: the first child is the content and fills the overlay; every later child floats above it, positioned by its own halign/valign/margin style keys. The layer a floating load bar or badge needs without taking layout space from the content.",
+      "props": [
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },

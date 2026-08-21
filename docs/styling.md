@@ -17,6 +17,8 @@
 | `vexpand` | bool | GTK widget property (not CSS) |
 | `halign` | enum | GTK widget property (not CSS) |
 | `valign` | enum | GTK widget property (not CSS) |
+| `minWidth` | int | GTK widget property (not CSS) |
+| `minHeight` | int | GTK widget property (not CSS) |
 | `border` | object (borderWidth, borderColor, borderRadius) | GTK CSS (`nested`) |
 
 ## Why `margin` differs from `padding`

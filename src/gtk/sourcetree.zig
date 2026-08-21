@@ -618,6 +618,23 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     node_ids.put(alloc, @intFromPtr(box), node_id) catch {};
     _ = gobject.signalConnectData(asObject(box), "row-selected", @ptrCast(&cbRowSelected), @ptrFromInt(@as(usize, node_id)), null, .{});
     _ = gobject.signalConnectData(asObject(box), "row-activated", @ptrCast(&cbRowActivated), @ptrFromInt(@as(usize, node_id)), null, .{});
+    // One gesture on the listbox rather than per row: rows are recycled on
+    // every setNodes rebuild, the listbox is not.
+    const mid = gtk.GestureClick.new();
+    gtk.GestureSingle.setButton(mid.as(gtk.GestureSingle), 2);
+    _ = gtk.GestureClick.signals.pressed.connect(mid, *gtk.ListBox, &cbMiddlePressed, box, .{});
+    gtk.Widget.addController(box.as(gtk.Widget), mid.as(gtk.EventController));
+}
+
+// Middle-click (button 2) on a row emits middleClicked {nodeId}: the
+// close-tab affordance browser-style sidebars are expected to carry. Section
+// rows carry no nd-node-idx and fall through silently.
+fn cbMiddlePressed(_: *gtk.GestureClick, _: c_int, _: f64, y: f64, box: *gtk.ListBox) callconv(.c) void {
+    const store = stores.get(@intFromPtr(box)) orelse return;
+    const nd_id = node_ids.get(@intFromPtr(box)) orelse return;
+    const row = gtk.ListBox.getRowAtY(box, @as(c_int, @intFromFloat(y))) orelse return;
+    const idx = getIdx(asObject(row), "nd-node-idx") orelse return;
+    emitNode(nd_id, "middleClicked", store.nodes.items[idx].id);
 }
 
 fn emitNode(node_id: u32, name: []const u8, tree_node_id: ?[]const u8) void {

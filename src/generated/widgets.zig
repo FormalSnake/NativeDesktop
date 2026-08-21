@@ -2820,6 +2820,9 @@ fn createWidget(
         adw.Clamp.setMaximumSize(clamp, @intCast(propInt(props, "maximumSize") orelse 600));
         adw.Clamp.setTighteningThreshold(clamp, @intCast(propInt(props, "tighteningThreshold") orelse 400));
         return clamp.as(gtk.Widget);
+    } else if (std.mem.eql(u8, kind, "Overlay")) {
+        const overlay = gtk.Overlay.new();
+        return overlay.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Switch")) {
         const sw = gtk.Switch.new();
         gtk.Switch.setActive(sw, @intFromBool(propBool(props, "checked") orelse false));
@@ -4138,6 +4141,15 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else adw.ActionRow.addSuffix(row, child);
     } else if (std.mem.eql(u8, parent_kind, "Clamp")) {
         adw.Clamp.setChild(@ptrCast(@alignCast(parent)), child);
+    } else if (std.mem.eql(u8, parent_kind, "Overlay")) {
+        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) == parent) {
+            // Already mounted here and GtkOverlay cannot reorder layers.
+        } else if (gtk.Overlay.getChild(ov) == null) {
+            gtk.Overlay.setChild(ov, child);
+        } else {
+            gtk.Overlay.addOverlay(ov, child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
         ndMenuOwnerAppend(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
@@ -4251,6 +4263,15 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
                 adw.ActionRow.addPrefix(row, child);
             } else adw.ActionRow.addSuffix(row, child);
         } else adw.ActionRow.addSuffix(row, child);
+    } else if (std.mem.eql(u8, parent_kind, "Overlay")) {
+        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));
+        if (gtk.Widget.getParent(child) == parent) {
+            // Already mounted here and GtkOverlay cannot reorder layers.
+        } else if (gtk.Overlay.getChild(ov) == null) {
+            gtk.Overlay.setChild(ov, child);
+        } else {
+            gtk.Overlay.addOverlay(ov, child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
         const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
@@ -4328,6 +4349,13 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         adw.ActionRow.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Clamp")) {
         adw.Clamp.setChild(@ptrCast(@alignCast(parent)), null);
+    } else if (std.mem.eql(u8, parent_kind, "Overlay")) {
+        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));
+        if (gtk.Overlay.getChild(ov) == child) {
+            gtk.Overlay.setChild(ov, null);
+        } else {
+            gtk.Overlay.removeOverlay(ov, child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
         ndMenuOwnerRemove(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
@@ -4372,6 +4400,8 @@ pub const style_keys = [_]StyleKeyDef{
     .{ .name = "vexpand", .css = null, .target = .widget, .kind = "bool", .unit = null },
     .{ .name = "halign", .css = null, .target = .widget, .kind = "enum", .unit = null },
     .{ .name = "valign", .css = null, .target = .widget, .kind = "enum", .unit = null },
+    .{ .name = "minWidth", .css = null, .target = .widget, .kind = "int", .unit = null },
+    .{ .name = "minHeight", .css = null, .target = .widget, .kind = "int", .unit = null },
     .{ .name = "border", .css = null, .target = .css, .kind = "object", .unit = null },
 };
 pub const StyleSubDef = struct { parent: []const u8, name: []const u8, css: []const u8, kind: []const u8, unit: ?[]const u8 };

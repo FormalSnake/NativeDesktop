@@ -764,6 +764,7 @@ Automation role: `tree`. Text source: none. Children: none.
 | `nodeExpanded` | `onNodeExpanded` | data |
 | `nodeCollapsed` | `onNodeCollapsed` | data |
 | `actionClicked` | `onActionClicked` | data |
+| `middleClicked` | `onMiddleClick` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
@@ -929,6 +930,26 @@ Automation role: `group`. Text source: none. Children: single.
 |---|---|---|---|
 | `maximumSize` | int | 600 | create |
 | `tighteningThreshold` | int | 400 | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
+
+## Overlay (`<overlay>`)
+
+Automation role: `group`. Text source: none. Children: multi.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

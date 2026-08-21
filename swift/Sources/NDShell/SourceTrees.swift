@@ -459,9 +459,28 @@ private func sourceTreeAction(from obj: [String: Any]) -> NDSourceTreeAction? {
     )
 }
 
+/// Middle-click (buttonNumber 2) on a row emits middleClicked {nodeId}: the
+/// close-tab affordance browser-style sidebars are expected to carry. Rows
+/// without an item fall through to the default handling.
+final class NDSourceTreeOutlineView: NSOutlineView {
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber == 2 {
+            let point = convert(event.locationInWindow, from: nil)
+            let rowIndex = row(at: point)
+            if rowIndex >= 0,
+               let item = item(atRow: rowIndex) as? NDSourceTreeItem,
+               let source = dataSource as? NDSourceTreeDataSource {
+                source.emitNode("middleClicked", item.nodeId)
+                return
+            }
+        }
+        super.otherMouseDown(with: event)
+    }
+}
+
 /// `ndCreate`'s SourceTree arm (generated) calls this.
 func makeSourceTree(_ props: [String: Any]) -> NSView {
-    let outlineView = NSOutlineView()
+    let outlineView = NDSourceTreeOutlineView()
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("nd-sourcetree-column"))
     column.resizingMask = .autoresizingMask
     outlineView.addTableColumn(column)

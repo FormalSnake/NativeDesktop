@@ -3104,6 +3104,9 @@ function genZigCreateBody(w: Widget): string {
     out += `        adw.Clamp.setMaximumSize(clamp, @intCast(propInt(props, "maximumSize") orelse ${dflt(w, "maximumSize")}));\n`;
     out += `        adw.Clamp.setTighteningThreshold(clamp, @intCast(propInt(props, "tighteningThreshold") orelse ${dflt(w, "tighteningThreshold")}));\n`;
     out += "        return clamp.as(gtk.Widget);\n";
+  } else if (w.name === "Overlay") {
+    out += "        const overlay = gtk.Overlay.new();\n";
+    out += "        return overlay.as(gtk.Widget);\n";
   } else if (w.name === "Label") {
     out += `        const text = propStr(props, "text") orelse ${zigDefaultStr(w, "text")};\n`;
     out += "        const label = gtk.Label.new(dupeZ(text));\n";
@@ -4354,6 +4357,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "SourceTree.nodeExpanded":     { signal: "",              target: "sourcetree", cb: "", suppress: false },
   "SourceTree.nodeCollapsed":    { signal: "",              target: "sourcetree", cb: "", suppress: false },
   "SourceTree.actionClicked":    { signal: "",              target: "sourcetree", cb: "", suppress: false },
+  "SourceTree.middleClicked":    { signal: "",              target: "sourcetree", cb: "", suppress: false },
   // CommandPalette events (queryChanged/activate/submit/cancel) all fire from
   // inside src/gtk/commandpalette.zig — connectEvents hands it node id + emit once.
   "CommandPalette.queryChanged": { signal: "",              target: "commandpalette", cb: "", suppress: false },
@@ -4947,6 +4951,43 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   Clamp: {
     append: () => "        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), child);\n",
     remove: () => "        adw.Clamp.setChild(@ptrCast(@alignCast(parent)), null);\n",
+  },
+  Overlay: {
+    // First child is the content (GtkOverlay's main child, sizes the overlay);
+    // every later child is an addOverlay layer floating above it. GtkOverlay
+    // has no layer-reorder primitive, so insertBefore degenerates to append:
+    // stacking follows add order and a mid-list insert lands on top.
+    append: () => {
+      let s = "        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) == parent) {\n";
+      s += "            // Already mounted here and GtkOverlay cannot reorder layers.\n";
+      s += "        } else if (gtk.Overlay.getChild(ov) == null) {\n";
+      s += "            gtk.Overlay.setChild(ov, child);\n";
+      s += "        } else {\n";
+      s += "            gtk.Overlay.addOverlay(ov, child);\n";
+      s += "        }\n";
+      return s;
+    },
+    insertBefore: () => {
+      let s = "        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Widget.getParent(child) == parent) {\n";
+      s += "            // Already mounted here and GtkOverlay cannot reorder layers.\n";
+      s += "        } else if (gtk.Overlay.getChild(ov) == null) {\n";
+      s += "            gtk.Overlay.setChild(ov, child);\n";
+      s += "        } else {\n";
+      s += "            gtk.Overlay.addOverlay(ov, child);\n";
+      s += "        }\n";
+      return s;
+    },
+    remove: () => {
+      let s = "        const ov: *gtk.Overlay = @ptrCast(@alignCast(parent));\n";
+      s += "        if (gtk.Overlay.getChild(ov) == child) {\n";
+      s += "            gtk.Overlay.setChild(ov, null);\n";
+      s += "        } else {\n";
+      s += "            gtk.Overlay.removeOverlay(ov, child);\n";
+      s += "        }\n";
+      return s;
+    },
   },
   Box: {
     append: () => {
@@ -6965,6 +7006,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
   } else if (w.name === "Clamp") {
     out += "        return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)\n";
+  } else if (w.name === "Overlay") {
+    out += "        return NDOverlayView()  // z-stack: content + floating layers (NDShell/OverlayStack.swift)\n";
   } else if (w.name === "Label") {
     out += `        let text = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        let label = NDTextField(labelWithString: text)\n";
@@ -7884,6 +7927,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "SourceTree.nodeExpanded":     { selector: "sourcetree",    payload: "data" },
   "SourceTree.nodeCollapsed":    { selector: "sourcetree",    payload: "data" },
   "SourceTree.actionClicked":    { selector: "sourcetree",    payload: "data" },
+  "SourceTree.middleClicked":    { selector: "sourcetree",    payload: "data" },
   // CommandPalette events fire from NDShell/CommandPalette.swift — one connect
   // records the nodeID (webview idiom), the handle emits directly.
   "CommandPalette.queryChanged": { selector: "commandpalette", payload: "text" },
@@ -8404,6 +8448,13 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   Clamp: {
     append: () => "        (parent as! NDClampView).setClampChild(child)\n",
     remove: () => "        (parent as! NDClampView).clearClampChild(child)\n",
+  },
+  Overlay: {
+    // Layer stacking follows add order (subview order); insertBefore
+    // degenerates to append, mirroring the GTK arm.
+    append: () => "        (parent as! NDOverlayView).addOverlayChild(child)\n",
+    insertBefore: () => "        (parent as! NDOverlayView).addOverlayChild(child)\n",
+    remove: () => "        (parent as! NDOverlayView).removeOverlayChild(child)\n",
   },
   Box: {
     // Cross-axis "fill" + main-axis expand are both handled by

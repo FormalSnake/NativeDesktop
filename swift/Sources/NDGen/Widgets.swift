@@ -1748,6 +1748,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)
     } else if kind == "Clamp" {
         return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)
+    } else if kind == "Overlay" {
+        return NDOverlayView()  // z-stack: content + floating layers (NDShell/OverlayStack.swift)
     } else if kind == "Switch" {
         let toggle = NDSwitchView()
         toggle.applyCreate(checked: propBool(props, "checked") ?? false)
@@ -2497,6 +2499,8 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
     } else if parentKind == "Clamp" {
         (parent as! NDClampView).setClampChild(child)
+    } else if parentKind == "Overlay" {
+        (parent as! NDOverlayView).addOverlayChild(child)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "SplitButton" {
@@ -2621,6 +2625,8 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         group.insertReactView(child, before: before)
     } else if parentKind == "Row" {
         ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
+    } else if parentKind == "Overlay" {
+        (parent as! NDOverlayView).addOverlayChild(child)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerAppend(parent, child)
     } else if parentKind == "SplitButton" {
@@ -2720,6 +2726,8 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndRowUnpack(parent as! NDRowView, child)
     } else if parentKind == "Clamp" {
         (parent as! NDClampView).clearClampChild(child)
+    } else if parentKind == "Overlay" {
+        (parent as! NDOverlayView).removeOverlayChild(child)
     } else if parentKind == "MenuButton" {
         ndMenuOwnerRemove(parent, child)
     } else if parentKind == "SplitButton" {
