@@ -47,6 +47,24 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     func applyOpen(_ open: Bool) {
         if open {
             guard !popover.isShown else { return }
+            // A header-bar anchor box never joins the view hierarchy: its
+            // button is promoted to a system-drawn toolbar item, and the
+            // item's internal control is not reliably locatable either
+            // (NSPopover raises on any windowless view; measured with
+            // show(relativeTo: NSToolbarItem) too). Present from the
+            // top-trailing corner of the owning window's content view,
+            // directly under the toolbar's end items where the button lives.
+            if let anchor, anchor.window == nil, let b = ndPromotedAnchorButton(under: anchor),
+               let window = ndToolbarOwner(of: b)?.ownerWindow(), let content = window.contentView {
+                let size = contentContainer.fittingSize
+                popover.contentSize = NSSize(width: max(size.width, 60), height: max(size.height, 28))
+                let bounds = content.bounds
+                let rect = content.isFlipped
+                    ? NSRect(x: bounds.maxX - 44, y: bounds.minY, width: 36, height: 1)
+                    : NSRect(x: bounds.maxX - 44, y: bounds.maxY - 1, width: 36, height: 1)
+                popover.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .maxY : .minY)
+                return
+            }
             guard let anchor, anchor.window != nil else {
                 // Not anchored/realized yet (create-time open, or attach ran
                 // before the window materialized): retry next turn once the

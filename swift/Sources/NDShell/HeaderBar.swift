@@ -344,6 +344,16 @@ func ndToolbarOwner(of view: NSView) -> NDToolbarManager? {
     return ndToolbarPromotedOwners[key]
 }
 
+/// The promoted descendant button of a popover anchor box, if any: its
+/// toolbar owner knows the window the popover must present in.
+func ndPromotedAnchorButton(under view: NSView) -> NDButton? {
+    if let b = view as? NDButton, ndToolbarPromotedItems[ObjectIdentifier(b)] != nil { return b }
+    for sub in view.subviews {
+        if let b = ndPromotedAnchorButton(under: sub) { return b }
+    }
+    return nil
+}
+
 /// Per-promoted-button click target, keyed by BUTTON identity and kept for
 /// the button's lifetime. Distinct object identity per button so (a) the
 /// internal NSToolbarButton AppKit builds for a system-drawn item copies
@@ -908,6 +918,13 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         for view in views {
             if let b = view as? NDButton, ndPromotable(b) {
                 run.append(b)
+            } else if let b = ndAnchorBoxButton(view) {
+                // A popover anchor box: a Box wrapping one button plus
+                // popover handles. The button is promoted exactly as a bare
+                // child would be (the box itself never becomes an item), and
+                // the popover finds the live item through
+                // ndToolbarPromotedItems when it opens.
+                run.append(b)
             } else {
                 flushRun()
                 out.append(identifier(for: view))
@@ -915,6 +932,24 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
         flushRun()
         return out
+    }
+
+    /// The single promotable button inside a Box header child, when the box
+    /// is a popover anchor (one button, everything else a zero-content handle
+    /// like NDPopoverHandleView). A box with more than one button, or with
+    /// real content, keeps its custom-view item.
+    private func ndAnchorBoxButton(_ view: NSView) -> NDButton? {
+        guard let stack = view as? NSStackView else { return nil }
+        var found: NDButton? = nil
+        for sub in stack.arrangedSubviews {
+            if let b = sub as? NDButton {
+                if found != nil || !ndPromotable(b) { return nil }
+                found = b
+            } else if !(sub is NDPopoverHandleView) {
+                return nil
+            }
+        }
+        return found
     }
 
     /// Whether `h` contributes a title item. Every pane's `<headerbar title>`
@@ -1029,6 +1064,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         var allViews: [NSView] = []
         for h in [sidebarHeader, listHeader, contentHeader, inspectorHeader].compactMap({ $0 }) {
             allViews += h.startViews + h.endViews
+            // An anchor box's promoted button carries the identifier, not the
+            // box itself (see ndAnchorBoxButton).
+            for v in h.startViews + h.endViews {
+                if let b = ndAnchorBoxButton(v) { allViews.append(b) }
+            }
             if let n = h.navControl { allViews.append(n) }
             if showsTitleItem(h) { allViews.append(h.titleField) }
         }
@@ -1066,6 +1106,16 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         // overflow + VoiceOver, and `.prominent`/badge render natively.
         if let b = view as? NDButton, ndPromotable(b) {
             return promotedItem(for: b, identifier: itemIdentifier)
+        }
+        // A Box child (e.g. a popover's anchor wrapping its trigger button)
+        // is an NSStackView: Auto Layout on the item's root view removes it
+        // from the toolbar's frame-based item layout, and a stack has no
+        // intrinsic width for the toolbar to size the item from at insertion.
+        // Freeze its fitting size into a frame the item can own.
+        if let stack = view as? NSStackView {
+            stack.translatesAutoresizingMaskIntoConstraints = true
+            let size = stack.fittingSize
+            stack.setFrameSize(NSSize(width: max(size.width, 1), height: max(size.height, 1)))
         }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = view
