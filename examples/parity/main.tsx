@@ -555,6 +555,7 @@ function OverlaysSection(): React.ReactNode {
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEdge, setSheetEdge] = useState<SheetEdge>("bottom");
+  const [barShown, setBarShown] = useState(false);
 
   function saveDialog(): void {
     setLastDialogAction(`Saved ${formName || "(empty)"} <${formEmail || "(empty)"}>`);
@@ -596,6 +597,35 @@ function OverlaysSection(): React.ReactNode {
               <label text={sheetOpen ? `Open from ${sheetEdge}` : "Closed"} cssClasses={["dimmed"]} testID="overlays-sheet-readout" />
             </row>
           </settingsgroup>
+
+          <settingsgroup title="Overlay" description="A z-stack: the bar floats over the content without resizing it." testID="overlays-stack-group">
+            <row title="Floating bar" testID="overlays-stack-row">
+              <button
+                label={barShown ? "Hide Bar" : "Show Bar"}
+                onClick={() => setBarShown(!barShown)}
+                testID="overlays-stack-toggle"
+              />
+            </row>
+          </settingsgroup>
+
+          <overlay testID="overlays-stack" style={{ hexpand: true }}>
+            <box
+              testID="overlays-stack-content"
+              orientation="vertical"
+              cssClasses={["card"]}
+              style={{ minHeight: 120, hexpand: true, padding: Spacing.md }}
+            >
+              <label text="Content under the bar keeps its size." testID="overlays-stack-body" style={{ halign: "start" }} />
+            </box>
+            {barShown && (
+              <progressbar
+                testID="overlays-stack-bar"
+                fraction={0.4}
+                cssClasses={["osd"]}
+                style={{ valign: "start", hexpand: true }}
+              />
+            )}
+          </overlay>
 
           <dialog
             open={dialogOpen}

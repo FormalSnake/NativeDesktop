@@ -165,7 +165,7 @@ const sectionAnchor: Record<string, string> = {
 };
 
 mkdirSync(shotDir, { recursive: true });
-const app = await launchApp({ entry: "examples/parity/main.tsx", backend, hostBinary });
+const app = await launchApp({ entry: "examples/parity/main.tsx", backend, hostBinary, logPath: process.env.ND_HOST_LOG });
 const shots: string[] = [];
 
 try {
@@ -322,7 +322,27 @@ try {
     await app.click("overlays-sheet-close");
     await expectText(app, "overlays-sheet-readout", "Closed");
   }
-  console.log("ND_PARITY_OVERLAYS_OK dialog opened, saved and dismissed; sheet slid in from two edges");
+
+  // Overlay: the floating bar must not move or resize the content under it,
+  // which is the widget's entire contract. minHeight rides along: the content
+  // box asks for 120 and must actually get it.
+  const stackBefore = (await app.find("overlays-stack-content"))?.geometry;
+  if (!stackBefore || stackBefore.h < 120) {
+    fail(`overlay content ignored minHeight 120: ${JSON.stringify(stackBefore)}`);
+  }
+  await app.click("overlays-stack-toggle");
+  await app.waitFor({ testId: "overlays-stack-bar", state: "visible" }, { timeoutMs: 4000 });
+  const stackAfter = (await app.find("overlays-stack-content"))?.geometry;
+  const barGeom = (await app.find("overlays-stack-bar"))?.geometry;
+  if (!stackAfter || stackAfter.y !== stackBefore.y || stackAfter.h !== stackBefore.h) {
+    fail(`the floating bar resized the content: ${JSON.stringify(stackBefore)} -> ${JSON.stringify(stackAfter)}`);
+  }
+  if (!barGeom || barGeom.h <= 0 || barGeom.y > stackAfter.y + stackAfter.h / 2) {
+    fail(`the bar is not floating over the content's top half: ${JSON.stringify(barGeom)} over ${JSON.stringify(stackAfter)}`);
+  }
+  await app.click("overlays-stack-toggle");
+  await app.waitFor({ testId: "overlays-stack-bar", state: "gone" }, { timeoutMs: 4000 });
+  console.log("ND_PARITY_OVERLAYS_OK dialog opened, saved and dismissed; sheet slid in from two edges; the overlay bar floated without resizing the content");
 
   // ---- richtext -----------------------------------------------------------
   await show("richtext");
