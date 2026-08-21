@@ -55,6 +55,7 @@ const FnMoveResize = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint) 
 const FnResize = *const fn (*Display, Window, c_uint, c_uint) callconv(.c) c_int;
 const FnFlush = *const fn (*Display) callconv(.c) c_int;
 const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
+const FnSetInputFocus = *const fn (*Display, Window, c_int, c_ulong) callconv(.c) c_int;
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
@@ -73,6 +74,7 @@ const Api = struct {
     resize_window: FnResize,
     flush: FnFlush,
     sync: FnSync,
+    set_input_focus: FnSetInputFocus,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
     /// GDK aborts the process on any untrapped X error from its own
@@ -116,6 +118,7 @@ fn loadApi() ?*const Api {
         .resize_window = x.lookup(FnResize, "XResizeWindow") orelse return missing(&x, &g, "XResizeWindow"),
         .flush = x.lookup(FnFlush, "XFlush") orelse return missing(&x, &g, "XFlush"),
         .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
+        .set_input_focus = x.lookup(FnSetInputFocus, "XSetInputFocus") orelse return missing(&x, &g, "XSetInputFocus"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
         .error_trap_push = g.lookup(FnTrap, "gdk_x11_display_error_trap_push") orelse return missing(&x, &g, "gdk_x11_display_error_trap_push"),
@@ -246,6 +249,12 @@ pub fn moveResize(window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void
     const c = conn() orelse return;
     c.push();
     _ = c.api.move_resize_window(c.x, window, x, y, @max(w, 1), @max(h, 1));
+    // Flushed because the caller's next request is CEF resizing its inner
+    // window on ITS OWN connection (resizeOn flushes immediately). Left in
+    // GDK's buffer, the outer clip window's resize can reach the server after
+    // the inner one, and the server holds mismatched geometry until GTK's
+    // next flush: visible as tearing or a stuck size during a live resize.
+    _ = c.api.flush(c.x);
     c.pop();
 }
 
@@ -264,6 +273,26 @@ pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
     _ = a.resize_window(dpy, window, @max(w, 1), @max(h, 1));
     _ = a.flush(dpy);
     if (gdk_display) |g| a.error_trap_pop_ignored(g);
+}
+
+/// Xlib RevertToParent: focus falls back to the parent window if the target
+/// is unmapped later, never to PointerRoot (focus-follows-mouse surprises).
+const REVERT_TO_PARENT: c_int = 2;
+const CURRENT_TIME: c_ulong = 0;
+
+/// Returns X input focus to the toplevel that hosts `widget`. GTK's own
+/// grab_focus moves GTK's focus WIDGET but not X input focus, and after any
+/// interaction with the page it is CEF's window that holds the latter; until
+/// it comes back, the toplevel sees no key events and every accelerator in
+/// the app is dead.
+pub fn focusToplevel(widget: *gtk.Widget) void {
+    const xid = toplevelXid(widget);
+    if (xid == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.set_input_focus(c.x, xid, REVERT_TO_PARENT, CURRENT_TIME);
+    _ = c.api.flush(c.x);
+    c.pop();
 }
 
 /// Mapping is synced for the same reason creation is: CEF only paints into a

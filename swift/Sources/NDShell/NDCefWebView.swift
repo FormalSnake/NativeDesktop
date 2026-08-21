@@ -357,11 +357,36 @@ final class NDCefWebView: NSView {
         case "setContextMenuItems":
             contextMenuItems = NDContextMenuItem.parse(arg)
         case "openDevTools":
-            // A CEF-created devtools window is exactly the stray window the
-            // spec bans; the protocol is already exposed through this file.
-            ndCefWarn("openDevTools: not available on the chromium engine (use executeDevToolsMethod)")
+            openDevTools(obj)
         default:
             ndCefWarn("unknown WebView command \(command)")
+        }
+    }
+
+    /// Armed by openDevTools, consumed by on_before_dev_tools_popup: the
+    /// devtools window is allowed only on explicit app request, so a page can
+    /// never conjure it and the stray-window rule holds for everything else.
+    private var devToolsRequested = false
+
+    func takeDevToolsRequest() -> Bool {
+        let wanted = devToolsRequested
+        devToolsRequested = false
+        return wanted
+    }
+
+    /// Chromium's devtools in its own top-level window, the same shape the
+    /// GTK engine ships. Optional x/y (view-relative CSS pixels, the
+    /// contextMenu event's coordinates) starts with that element inspected.
+    private func openDevTools(_ obj: [String: Any]) {
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        devToolsRequested = true
+        var windowInfo = cef_window_info_t()
+        if let x = (obj["x"] as? NSNumber)?.int32Value, let y = (obj["y"] as? NSNumber)?.int32Value {
+            var point = cef_point_t(x: x, y: y)
+            browserHost.pointee.show_dev_tools?(browserHost, &windowInfo, nil, nil, &point)
+        } else {
+            browserHost.pointee.show_dev_tools?(browserHost, &windowInfo, nil, nil, nil)
         }
     }
 
@@ -770,7 +795,13 @@ final class NDCefHandlerBox {
         }
         lifeSpan.pointee.on_before_dev_tools_popup = { selfPointer, browser, _, _, _, _, useDefaultWindow in
             nd_cef_ref_release(browser)
-            useDefaultWindow?.pointee = 0
+            // Allowed only when the app just asked through openDevTools; a
+            // page cannot conjure the window on its own.
+            var wanted = false
+            ndCefDeliver(selfPointer) { view in
+                if let view { wanted = view.takeDevToolsRequest() }
+            }
+            useDefaultWindow?.pointee = wanted ? 1 : 0
         }
         lifeSpan.pointee.on_after_created = { selfPointer, browser in
             guard let browser else { return }

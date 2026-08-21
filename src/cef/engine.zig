@@ -391,6 +391,7 @@ const FindObj = ref.Counted(c.cef_find_handler_t, *View);
 const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
 const JsDialogHandlerObj = ref.Counted(c.cef_jsdialog_handler_t, *View);
 const ContextMenuObj = ref.Counted(c.cef_context_menu_handler_t, *View);
+const FocusObj = ref.Counted(c.cef_focus_handler_t, *View);
 
 const View = struct {
     widget: *gtk.Widget,
@@ -404,6 +405,7 @@ const View = struct {
     download_handler: *DownloadObj,
     jsdialog_handler: *JsDialogHandlerObj,
     context_menu_handler: *ContextMenuObj,
+    focus_handler: *FocusObj,
 
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
@@ -416,6 +418,10 @@ const View = struct {
     /// Read on the CEF UI thread on every right-click, written on the GTK one
     /// by the `contextMenuMode` prop.
     suppress_menu: std.atomic.Value(bool) = .init(false),
+    /// Armed by openDevTools on the GTK thread, consumed by
+    /// onBeforeDevToolsPopup on the CEF UI thread: the devtools window is
+    /// allowed only when the app asked for it, never conjured by the page.
+    devtools_requested: std.atomic.Value(bool) = .init(false),
     menu_lock: SpinLock = .{},
     menu_items: []ctxmenu.Item = &.{},
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
@@ -572,6 +578,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const focus_handler = FocusObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -583,6 +590,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .download_handler = download_handler,
         .jsdialog_handler = jsdialog_handler,
         .context_menu_handler = context_menu_handler,
+        .focus_handler = focus_handler,
     };
     view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
     view.context = requestContext(profile);
@@ -597,6 +605,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_download_handler = &clientGetDownloadHandler;
     client.cef.get_jsdialog_handler = &clientGetJsDialogHandler;
     client.cef.get_context_menu_handler = &clientGetContextMenuHandler;
+    client.cef.get_focus_handler = &clientGetFocusHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
@@ -619,6 +628,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     context_menu_handler.cef.on_before_context_menu = &onBeforeContextMenu;
     context_menu_handler.cef.run_context_menu = &onRunContextMenu;
     context_menu_handler.cef.on_context_menu_command = &onContextMenuCommand;
+    focus_handler.cef.on_set_focus = &onSetFocus;
+    focus_handler.cef.on_take_focus = &onTakeFocus;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
@@ -901,7 +912,12 @@ fn syncBounds(view: *View) void {
         .w = @intFromFloat(@max(@round(@as(f64, rect.f_size.f_width) * scale), 1)),
         .h = @intFromFloat(@max(@round(@as(f64, rect.f_size.f_height) * scale), 1)),
     };
-    if (std.meta.eql(next, view.bounds)) return;
+    // No unchanged early-out: under XWayland both the container and CEF's
+    // inner window can be reconfigured behind GTK's back (the compositor's
+    // resizes land on the X windows first), and a stale cache here is what
+    // left the webview stuck at the wrong size after a live resize. The
+    // layout signal only fires on frames GTK actually laid the toplevel out,
+    // so re-asserting costs one request per real layout, not one per tick.
     view.bounds = next;
     if (view.container == 0) return;
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
@@ -1014,6 +1030,8 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdSetZoom(view, arg);
     } else if (std.mem.eql(u8, cmd, "focus")) {
         cmdFocus(view);
+    } else if (std.mem.eql(u8, cmd, "openDevTools")) {
+        cmdOpenDevTools(view, arg);
     } else if (std.mem.eql(u8, cmd, "saveSession")) {
         cmdSaveSession(view, arg);
     } else if (std.mem.eql(u8, cmd, "restoreSession")) {
@@ -1172,11 +1190,13 @@ fn onBeforePopup(
     return 1;
 }
 
-/// Devtools would otherwise open CEF's own top-level window. M1 has no
-/// devtools surface at all, so the only correct answer is to refuse the
-/// default window (CEF #3165 makes parenting it into a GTK window a crash).
+/// Devtools opens as CEF's own top-level window, and only when the app asked
+/// for it through the openDevTools command; anything else (a page trying to
+/// conjure one) is refused. Parenting the window into GTK instead is not an
+/// option: CEF #3165 makes that a crash, which is why the default standalone
+/// window is the shipped shape.
 fn onBeforeDevToolsPopup(
-    _: [*c]c.cef_life_span_handler_t,
+    self: [*c]c.cef_life_span_handler_t,
     browser: [*c]c.cef_browser_t,
     _: [*c]c.cef_window_info_t,
     _: [*c][*c]c.cef_client_t,
@@ -1185,7 +1205,8 @@ fn onBeforeDevToolsPopup(
     use_default_window: [*c]c_int,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
-    if (use_default_window != null) use_default_window.* = 0;
+    const wanted = LifeObj.of(self).payload.devtools_requested.swap(false, .acq_rel);
+    if (use_default_window != null) use_default_window.* = @intFromBool(wanted);
 }
 
 /// The reference this parameter arrives with is deliberately kept: it is the
@@ -1254,6 +1275,9 @@ const Emission = struct {
     cdp_event: bool = false,
     message_id: c_int = 0,
     ok: bool = false,
+    /// Chromium tabbed past its last focusable and is handing the keyboard
+    /// back; the GTK-side hop returns X input focus to the toplevel.
+    take_focus: bool = false,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -1335,6 +1359,18 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
             alloc.free(p);
             view.pending_url = null;
         }
+        return 0;
+    }
+
+    if (box.take_focus) {
+        // GTK's focus widget and X input focus both come home: grabFocus
+        // alone leaves the keyboard on CEF's X window, and the toplevel
+        // (accelerators included) stays deaf until something else moves it.
+        if (gtk.Widget.getRoot(view.widget)) |root| {
+            const root_widget: *gtk.Widget = @ptrCast(@alignCast(root));
+            _ = gtk.Widget.grabFocus(root_widget);
+        }
+        x11.focusToplevel(view.widget);
         return 0;
     }
 
@@ -3059,6 +3095,38 @@ fn cmdFocus(view: *View) void {
     if (host.set_focus) |set| set(host, 1);
 }
 
+fn jsonToInt(v: std.json.Value) i64 {
+    return switch (v) {
+        .integer => |n| n,
+        .float => |f| @intFromFloat(f),
+        else => 0,
+    };
+}
+
+/// Opens Chromium's devtools in its own top-level window. Optional arg
+/// `{x, y}` (view-relative CSS pixels, the contextMenu event's coordinates)
+/// starts it with that element inspected, which is what an app's
+/// "Inspect Element" menu item wants.
+fn cmdOpenDevTools(view: *View, arg: ?std.json.Value) void {
+    const host = hostOf(view) orelse return;
+    const show = host.show_dev_tools orelse return;
+    var point: c.cef_point_t = .{ .x = 0, .y = 0 };
+    var have_point = false;
+    if (arg) |a| {
+        if (a == .object) {
+            if (a.object.get("x")) |x| {
+                if (a.object.get("y")) |y| {
+                    point = .{ .x = @intCast(jsonToInt(x)), .y = @intCast(jsonToInt(y)) };
+                    have_point = true;
+                }
+            }
+        }
+    }
+    view.devtools_requested.store(true, .release);
+    var window_info = std.mem.zeroes(c.cef_window_info_t);
+    show(host, &window_info, null, null, if (have_point) &point else null);
+}
+
 // ============================================================================
 // Find, favicon and download handlers
 // ============================================================================
@@ -3873,6 +3941,28 @@ fn ownedFromUserfree(
 
 fn clientGetContextMenuHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_context_menu_handler_t {
     return ClientObj.of(self).payload.context_menu_handler.handOut();
+}
+
+fn clientGetFocusHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_focus_handler_t {
+    return ClientObj.of(self).payload.focus_handler.handOut();
+}
+
+/// Chromium asks for real X input focus on every navigation. Granted, the GTK
+/// toplevel stops receiving key events and every accelerator in the app goes
+/// dead until the user clicks native chrome again; on an XWayland session a
+/// grab Chromium fails to release can make that permanent. Refusing
+/// navigation-sourced focus is what Chrome's own browser UI does: the page
+/// only gets the keyboard when the user gives it (FOCUS_SOURCE_SYSTEM).
+fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, source: c.cef_focus_source_t) callconv(.c) c_int {
+    _ = self;
+    defer ref.releaseParam(browser);
+    return @intFromBool(source == c.FOCUS_SOURCE_NAVIGATION);
+}
+
+fn onTakeFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, next: c_int) callconv(.c) void {
+    _ = next;
+    defer ref.releaseParam(browser);
+    post(.{ .view = FocusObj.of(self).payload, .name = "", .take_focus = true });
 }
 
 fn clearMenuCommands(view: *View) void {
