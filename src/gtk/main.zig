@@ -78,8 +78,11 @@ pub fn main(init: std.process.Init) void {
     // profile races them (lost cookies, lost sessions, unarmed extension
     // worlds). Route SIGTERM and SIGINT into the same teardown a window close
     // takes, on the main loop, so every exit is the graceful one.
-    _ = g_unix_signal_add(sigNum(std.posix.SIG.TERM), &onTerminateSignal, null);
-    _ = g_unix_signal_add(sigNum(std.posix.SIG.INT), &onTerminateSignal, null);
+    const term_source = g_unix_signal_add(sigNum(std.posix.SIG.TERM), &onTerminateSignal, null);
+    const int_source = g_unix_signal_add(sigNum(std.posix.SIG.INT), &onTerminateSignal, null);
+    if (term_source == 0 or int_source == 0) {
+        std.debug.print("ND_WARN signal sources failed to install (term={d} int={d}); a SIGTERM will kill cef mid-write\n", .{ term_source, int_source });
+    }
 
     // GApplication is single-instance: a second launch registers as "remote",
     // forwards its activation to the already-running primary, and run() then
