@@ -300,7 +300,17 @@ fn ensureInitialized() bool {
     initialized = true;
     init_failed = false;
     ensureSchemeFactories();
+    // cef_initialize swapped the process's signal actions for Chromium's; give
+    // the embedder its chance to take them back (src/gtk/main.zig).
+    if (on_initialized) |cb| cb();
     return true;
+}
+
+var on_initialized: ?*const fn () callconv(.c) void = null;
+
+/// Called on the thread that ran cef_initialize, right after it succeeds.
+pub fn setOnInitialized(cb: *const fn () callconv(.c) void) void {
+    on_initialized = cb;
 }
 
 /// Per-profile cache directories hang off this in M2; M1 only needs CEF to

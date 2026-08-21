@@ -14,6 +14,8 @@ pub fn pinDisplayBackend() void {}
 
 pub fn shutdown() void {}
 
+pub fn setOnInitialized(_: *const fn () callconv(.c) void) void {}
+
 pub fn create(_: ?[*:0]const u8, _: []const u8, _: []const u8) ?*gtk.Widget {
     return null;
 }

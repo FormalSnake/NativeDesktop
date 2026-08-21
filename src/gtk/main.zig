@@ -71,6 +71,16 @@ pub fn main(init: std.process.Init) void {
     _ = gio.Application.signals.activate.connect(app.as(gtk.Application), ?*anyopaque, &onActivate, null, .{});
     _ = gio.Application.signals.open.connect(app.as(gtk.Application), ?*anyopaque, &onOpen, null, .{});
 
+    // SIGTERM is how the automation harness and any supervisor stop the host,
+    // and its default disposition kills the process before run() returns, so
+    // the cef.shutdown() below never executes on that path: Chromium's child
+    // processes are orphaned mid-write and the next launch over the same
+    // profile races them (lost cookies, lost sessions, unarmed extension
+    // worlds). Route SIGTERM and SIGINT into the same teardown a window close
+    // takes, on the main loop, so every exit is the graceful one.
+    installSignalSources();
+    cef.setOnInitialized(&reinstallSignalSources);
+
     // GApplication is single-instance: a second launch registers as "remote",
     // forwards its activation to the already-running primary, and run() then
     // returns 0 with no output — which reads as the app silently failing to
@@ -236,6 +246,56 @@ fn onCloseRequest(_: *gtk.Window, _: ?*anyopaque) callconv(.c) c_int {
 fn onShutdown(app: *gio.Application, _: ?*anyopaque) callconv(.c) void {
     _ = app;
     if (global_ctx) |ctx| abi.nd_shutdown(ctx);
+}
+
+// glib-unix, not in the generated bindings (same situation as g_source_remove
+// in audio.zig).
+extern fn g_unix_signal_add(signum: c_int, handler: *const fn (?*anyopaque) callconv(.c) c_int, user_data: ?*anyopaque) c_uint;
+extern fn g_source_remove(tag: c_uint) c_int;
+
+/// std.posix.SIG.* are an enum(u32) in Zig 0.16; g_unix_signal_add wants a c_int.
+inline fn sigNum(sig: anytype) c_int {
+    return @intCast(@intFromEnum(sig));
+}
+
+var term_source: c_uint = 0;
+var int_source: c_uint = 0;
+
+fn installSignalSources() void {
+    term_source = g_unix_signal_add(sigNum(std.posix.SIG.TERM), &onTerminateSignal, null);
+    int_source = g_unix_signal_add(sigNum(std.posix.SIG.INT), &onTerminateSignal, null);
+    if (term_source == 0 or int_source == 0) {
+        std.debug.print("ND_WARN signal sources failed to install (term={d} int={d}); a SIGTERM will kill the engine mid-write\n", .{ term_source, int_source });
+    }
+}
+
+/// cef_initialize replaces the process's SIGTERM/SIGINT sigactions with
+/// Chromium's own, which silences GLib's signal sources: the watch stays in
+/// the main context but the handler feeding it is gone. Removing the last
+/// watch for a signum makes GLib restore the action it saved, and re-adding
+/// installs GLib's handler afresh, so a remove/add pair right after
+/// initialize puts this file's graceful quit back in front.
+fn reinstallSignalSources() callconv(.c) void {
+    if (term_source != 0) _ = g_source_remove(term_source);
+    if (int_source != 0) _ = g_source_remove(int_source);
+    installSignalSources();
+}
+
+fn onTerminateSignal(_: ?*anyopaque) callconv(.c) c_int {
+    std.debug.print("ND_TERMINATE_SIGNAL quitting gracefully\n", .{});
+    const app = global_app orelse std.process.exit(0);
+    // Same order as onCloseRequest: core teardown while the widget tree is
+    // still alive, then the windows go, which closes each CEF browser before
+    // run() returns and cef.shutdown() waits Chromium out.
+    if (global_ctx) |ctx| abi.nd_shutdown(ctx);
+    var node: ?*glib.List = gtk.Application.getWindows(app);
+    while (node) |nd| {
+        node = nd.f_next;
+        const win: *gtk.Window = @ptrCast(@alignCast(nd.f_data orelse continue));
+        gtk.Window.destroy(win);
+    }
+    gio.Application.quit(app.as(gio.Application));
+    return 0; // G_SOURCE_REMOVE
 }
 
 fn onClicked(_: *gtk.Button, _: ?*anyopaque) callconv(.c) void {
