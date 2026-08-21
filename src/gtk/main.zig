@@ -258,6 +258,7 @@ inline fn sigNum(sig: anytype) c_int {
 }
 
 fn onTerminateSignal(_: ?*anyopaque) callconv(.c) c_int {
+    std.debug.print("ND_TERMINATE_SIGNAL quitting gracefully\n", .{});
     const app = global_app orelse std.process.exit(0);
     // Same order as onCloseRequest: core teardown while the widget tree is
     // still alive, then the windows go, which closes each CEF browser before
