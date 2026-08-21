@@ -245,11 +245,11 @@
     },
     "packages/babel-plugin-nativedesktop": {
       "name": "babel-plugin-nativedesktop",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "packages/data": {
       "name": "@nativedesktop/data",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "devDependencies": {
         "drizzle-orm": "0.45.2",
         "kysely": "0.29.2",
@@ -263,7 +263,7 @@
     },
     "packages/host": {
       "name": "@nativedesktop/host",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "optionalDependencies": {
         "@nativedesktop/host-darwin-arm64": "workspace:*",
         "@nativedesktop/host-linux-x64": "workspace:*",
@@ -271,11 +271,11 @@
     },
     "packages/host-darwin-arm64": {
       "name": "@nativedesktop/host-darwin-arm64",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "packages/host-linux-x64": {
       "name": "@nativedesktop/host-linux-x64",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "packages/mcp": {
       "name": "@nativedesktop/mcp",
@@ -291,11 +291,11 @@
     },
     "packages/native": {
       "name": "@nativedesktop/native",
-      "version": "0.3.1",
+      "version": "0.3.2",
     },
     "packages/nd": {
       "name": "@nativedesktop/cli",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "bin": {
         "nd": "src/index.ts",
       },
@@ -305,7 +305,7 @@
     },
     "packages/panes": {
       "name": "@nativedesktop/panes",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "devDependencies": {
         "@types/react": "19.2.17",
         "react": "19.2.7",
@@ -316,7 +316,7 @@
     },
     "packages/react": {
       "name": "@nativedesktop/react",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "dependencies": {
         "react-reconciler": "0.33.0",
         "react-refresh": "0.17.0",
@@ -334,7 +334,7 @@
     },
     "packages/rpc": {
       "name": "@nativedesktop/rpc",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "peerDependencies": {
         "@nativedesktop/react": "workspace:^",
       },
@@ -344,7 +344,7 @@
     },
     "packages/test": {
       "name": "@nativedesktop/test",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "dependencies": {
         "@nativedesktop/host": "workspace:*",
         "@nativedesktop/react": "workspace:*",
@@ -352,7 +352,7 @@
     },
     "packages/ui": {
       "name": "@nativedesktop/ui",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "devDependencies": {
         "@types/react": "19.2.17",
         "react": "19.2.7",
