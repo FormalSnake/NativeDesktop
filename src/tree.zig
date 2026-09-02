@@ -1,4 +1,5 @@
 const std = @import("std");
+const marker = @import("marker.zig");
 const protocol = @import("protocol.zig");
 const backend = @import("backend.zig").impl;
 const widget_types = @import("generated/widget_types.zig");
@@ -419,7 +420,7 @@ pub const Tree = struct {
                 // fields below are unwrapped with `.?`. A JS crash must never
                 // take the host down with it.
                 if (op.widget == null or op.id == null) {
-                    std.debug.print("ND_WARN create op missing widget/id (truncated batch?), skipped\n", .{});
+                    marker.print("ND_WARN create op missing widget/id (truncated batch?), skipped\n", .{});
                     continue;
                 }
                 // A post-crash / dev-mode Restart respawn mounts a
@@ -570,17 +571,17 @@ pub const Tree = struct {
                     if (self.children.getPtr(sid)) |list| list.deinit(self.gpa);
                     _ = self.children.remove(sid);
                 }
-                std.debug.print("ND_REMOVE id={d}\n", .{id});
+                marker.print("ND_REMOVE id={d}\n", .{id});
             } else if (std.mem.eql(u8, op.op, "hide")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
                 backend.setVisible(widget, false);
-                std.debug.print("ND_HIDE id={d}\n", .{op.id.?});
+                marker.print("ND_HIDE id={d}\n", .{op.id.?});
             } else if (std.mem.eql(u8, op.op, "unhide")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
                 backend.setVisible(widget, true);
-                std.debug.print("ND_UNHIDE id={d}\n", .{op.id.?});
+                marker.print("ND_UNHIDE id={d}\n", .{op.id.?});
             } else {
-                std.debug.print("ND_WARN unknown op={s}\n", .{op.op});
+                marker.print("ND_WARN unknown op={s}\n", .{op.op});
             }
         }
         // A higher-generation CommitBatch means a hot reload landed a
@@ -593,7 +594,7 @@ pub const Tree = struct {
         if (batch.generation > previous_gen and previous_gen != OVERLAY_GENERATION) {
             self.gcOldGenerations(batch.generation);
         }
-        std.debug.print("ND_COMMIT_APPLIED commitId={d}\n", .{batch.commitId});
+        marker.print("ND_COMMIT_APPLIED commitId={d}\n", .{batch.commitId});
     }
 
     /// Sweeps every tracked node whose id-encoded generation is strictly less
@@ -647,7 +648,7 @@ pub const Tree = struct {
             _ = self.children.remove(id);
             swept += 1;
         }
-        std.debug.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
+        marker.print("ND_GC_SWEEP gen={d} removed={d}\n", .{ new_gen, swept });
     }
 
     /// Clears every non-overlay node's bookkeeping (dev-mode Restart):
@@ -718,7 +719,7 @@ pub const Tree = struct {
             _ = self.children.remove(id);
         }
         self.generation = 0;
-        std.debug.print("ND_CLEAR_APP_NODES removed={d}\n", .{doomed.items.len});
+        marker.print("ND_CLEAR_APP_NODES removed={d}\n", .{doomed.items.len});
     }
 
     /// Widget-preserving cross-window move: relocate a live node's native widget
@@ -746,7 +747,7 @@ pub const Tree = struct {
         backend.reparentChild(child, old_parent, old_parent_kind, new_parent, nmeta.widget_type, before, cmeta.attached);
         if (before_id) |b| self.recordInsertBefore(new_parent_id, child_id, b) else self.recordAppend(new_parent_id, child_id);
         self.setMetaParent(child_id, new_parent_id);
-        std.debug.print("ND_REPARENT child={d} parent={d}\n", .{ child_id, new_parent_id });
+        marker.print("ND_REPARENT child={d} parent={d}\n", .{ child_id, new_parent_id });
     }
 };
 

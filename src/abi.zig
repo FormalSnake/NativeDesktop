@@ -1,4 +1,5 @@
 const std = @import("std");
+const marker = @import("marker.zig");
 const abi_backend = @import("abi_backend.zig");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
@@ -228,7 +229,7 @@ pub export fn nd_load_plugins_from_env(self: *NdContext) callconv(.c) void {
         const path_z = self.gpa.dupeZ(u8, path) catch continue;
         defer self.gpa.free(path_z);
         const rc = nd_load_plugin(self, path_z.ptr);
-        if (rc != 0) std.debug.print("ND_PLUGIN_LOAD_FAILED path={s} rc={d}\n", .{ path, rc });
+        if (rc != 0) marker.print("ND_PLUGIN_LOAD_FAILED path={s} rc={d}\n", .{ path, rc });
     }
 }
 
@@ -240,7 +241,7 @@ pub export fn nd_load_plugins_from_env(self: *NdContext) callconv(.c) void {
 fn pluginEmit(ctx: ?*anyopaque, node_id: u32, name: []const u8, payload_json: []const u8) void {
     const self: *NdContext = @ptrCast(@alignCast(ctx orelse return));
     const parsed = std.json.parseFromSlice(std.json.Value, self.gpa, payload_json, .{}) catch {
-        std.debug.print("ND_PLUGIN_BAD_EVENT event={s} node={d}\n", .{ name, node_id });
+        marker.print("ND_PLUGIN_BAD_EVENT event={s} node={d}\n", .{ name, node_id });
         return;
     };
     defer parsed.deinit();

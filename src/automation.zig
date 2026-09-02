@@ -1,4 +1,5 @@
 const std = @import("std");
+const marker = @import("marker.zig");
 const protocol = @import("protocol.zig");
 // Method names, params/result shapes, and error codes are GENERATED from
 // schema/rpc.json (the single source of truth shared with the TS mirror,
@@ -1111,7 +1112,7 @@ pub const Server = struct {
         const addr = try std.Io.net.UnixAddress.init(self.sock_path);
         self.server = try addr.listen(io, .{});
 
-        std.debug.print("ND_AUTOMATION_LISTENING path={s}\n", .{self.sock_path});
+        marker.print("ND_AUTOMATION_LISTENING path={s}\n", .{self.sock_path});
 
         _ = try std.Thread.spawn(.{}, listenLoop, .{self});
         return self;
@@ -1120,9 +1121,9 @@ pub const Server = struct {
     fn listenLoop(self: *Server) void {
         while (true) {
             const stream = self.server.accept(self.io) catch break;
-            std.debug.print("ND_AUTOMATION_CONNECTED\n", .{});
+            marker.print("ND_AUTOMATION_CONNECTED\n", .{});
             serveClient(self, stream);
-            std.debug.print("ND_AUTOMATION_DISCONNECTED\n", .{});
+            marker.print("ND_AUTOMATION_DISCONNECTED\n", .{});
         }
     }
 
@@ -1136,7 +1137,7 @@ pub const Server = struct {
             const bytes = readFrame(self.gpa, &r.interface) catch return;
             defer self.gpa.free(bytes);
             const response = dispatch(self, bytes) catch |err| blk: {
-                std.debug.print("ND_RPC_INTERNAL_ERROR {any}\n", .{err});
+                marker.print("ND_RPC_INTERNAL_ERROR {any}\n", .{err});
                 break :blk self.gpa.dupe(u8, "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"internal error\"}}") catch return;
             };
             defer self.gpa.free(response);
@@ -1161,7 +1162,7 @@ pub const Server = struct {
         };
         defer parsed.deinit();
         const id = parsed.value.id;
-        std.debug.print("ND_RPC method={s} id={any}\n", .{ parsed.value.method, id });
+        marker.print("ND_RPC method={s} id={any}\n", .{ parsed.value.method, id });
         const method = rpc.methodFromString(parsed.value.method) orelse {
             return errorEnvelope(self.gpa, id, rpc.code_method_not_found, rpc.msg_method_not_found, null);
         };

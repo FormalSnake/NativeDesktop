@@ -1,5 +1,6 @@
 // Context-owned native plugin manager. The C layouts mirror include/nd_plugin.h.
 const std = @import("std");
+const marker = @import("marker.zig");
 const acl = @import("acl.zig");
 
 const NdCommandFn = *const fn ([*:0]const u8, *?[*:0]u8) callconv(.c) i32;
@@ -78,18 +79,18 @@ pub const Manager = struct {
     /// the caller still owns `lib`.
     fn loadEntry(self: *Manager, lib: std.DynLib, desc: *const NdPluginV1, a: *acl.Acl) !void {
         if (desc.abi_version < 1 or desc.abi_version > 3) {
-            std.debug.print("ND_PLUGIN_ABI_MISMATCH got={d} want=1|2|3\n", .{desc.abi_version});
+            marker.print("ND_PLUGIN_ABI_MISMATCH got={d} want=1|2|3\n", .{desc.abi_version});
             return error.AbiMismatch;
         }
         const plugin_name = std.mem.span(desc.name);
         if (plugin_name.len == 0 or self.plugins.contains(plugin_name)) {
-            std.debug.print("ND_PLUGIN_DUPLICATE name={s}\n", .{plugin_name});
+            marker.print("ND_PLUGIN_DUPLICATE name={s}\n", .{plugin_name});
             return error.DuplicatePlugin;
         }
         var i: usize = 0;
         while (desc.capabilities[i]) |cap| : (i += 1) {
             if (!a.isAllowed(0, std.mem.span(cap))) {
-                std.debug.print("ND_PLUGIN_CAP_DENIED name={s} cap={s}\n", .{ plugin_name, std.mem.span(cap) });
+                marker.print("ND_PLUGIN_CAP_DENIED name={s} cap={s}\n", .{ plugin_name, std.mem.span(cap) });
                 return error.CapabilityDenied;
             }
         }
@@ -107,16 +108,16 @@ pub const Manager = struct {
         errdefer cleanupUncommitted(self, loaded, init_ok);
         init_ok = desc.init(&loaded.registry) == 0;
         if (!init_ok) {
-            std.debug.print("ND_PLUGIN_INIT_FAILED name={s}\n", .{plugin_name});
+            marker.print("ND_PLUGIN_INIT_FAILED name={s}\n", .{plugin_name});
             return error.PluginInitFailed;
         }
         if (loaded.failed) {
-            std.debug.print("ND_PLUGIN_DUPLICATE_REGISTRATION name={s}\n", .{plugin_name});
+            marker.print("ND_PLUGIN_DUPLICATE_REGISTRATION name={s}\n", .{plugin_name});
             return error.DuplicateRegistration;
         }
         loaded.loading = false;
         try self.plugins.put(self.gpa, loaded.name, loaded);
-        std.debug.print("ND_PLUGIN_LOADED name={s}\n", .{loaded.name});
+        marker.print("ND_PLUGIN_LOADED name={s}\n", .{loaded.name});
     }
 
     pub fn dispatch(self: *Manager, plugin_name: []const u8, command: []const u8, arg_json: []const u8) ?[]u8 {
@@ -215,7 +216,7 @@ fn registerViewC(reg: *NdPluginRegistry, kind_z: [*:0]const u8, impl: *const NdV
         l.failed = true;
         return;
     };
-    std.debug.print("ND_PLUGIN_VIEW_REGISTERED view_kind={s}\n", .{kind});
+    marker.print("ND_PLUGIN_VIEW_REGISTERED view_kind={s}\n", .{kind});
 }
 fn emitEventC(reg: *NdPluginRegistry, node_id: u32, name: [*:0]const u8, payload: [*:0]const u8) callconv(.c) void {
     const l = hostLoaded(reg);

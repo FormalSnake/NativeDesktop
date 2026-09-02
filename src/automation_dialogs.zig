@@ -13,6 +13,7 @@
 //! the UI thread (widgetCommand), hence the mutex.
 
 const std = @import("std");
+const marker = @import("marker.zig");
 
 pub const Next = union(enum) { unscripted, exhausted, response: []const u8 };
 
@@ -60,7 +61,7 @@ fn ensureInit() void {
         script = readScriptFile(script[1..]) orelse return;
     }
     loadFromJson(gpa, script) catch {
-        std.debug.print("ND_DIALOG_SCRIPT_ERROR malformed script\n", .{});
+        marker.print("ND_DIALOG_SCRIPT_ERROR malformed script\n", .{});
     };
 }
 
@@ -70,7 +71,7 @@ fn readScriptFile(path: []const u8) ?[]const u8 {
     const path_z = gpa.dupeZ(u8, path) catch return null;
     defer gpa.free(path_z);
     const f = std.c.fopen(path_z, "rb") orelse {
-        std.debug.print("ND_DIALOG_SCRIPT_ERROR cannot open {s}\n", .{path});
+        marker.print("ND_DIALOG_SCRIPT_ERROR cannot open {s}\n", .{path});
         return null;
     };
     defer _ = std.c.fclose(f);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const marker = @import("marker.zig");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
 const backend = @import("backend.zig").impl;
@@ -67,7 +68,7 @@ fn systemMethodCapability(method: []const u8) ?[]const u8 {
 /// produce a frame — a silent drop strands the child's request.
 fn pluginCommandReplyJson(gpa: std.mem.Allocator, manager: *plugin.Manager, plugin_name: []const u8, command: []const u8, arg_json: []const u8) ?[]u8 {
     const result = manager.dispatch(plugin_name, command, arg_json) orelse {
-        std.debug.print("ND_PLUGIN_NO_HANDLER plugin={s} command={s}\n", .{ plugin_name, command });
+        marker.print("ND_PLUGIN_NO_HANDLER plugin={s} command={s}\n", .{ plugin_name, command });
         const msg = std.fmt.allocPrint(gpa, "no handler for plugin command {s}.{s}", .{ plugin_name, command }) catch return null;
         defer gpa.free(msg);
         return std.json.Stringify.valueAlloc(gpa, .{ .type = "error", .message = msg, .expected = @as(u32, 0), .got = @as(u32, 0) }, .{}) catch null;
@@ -80,11 +81,11 @@ fn pluginCommandReplyJson(gpa: std.mem.Allocator, manager: *plugin.Manager, plug
     // first, degrade to the structured error frame on failure (never splice
     // raw).
     const validated = std.json.parseFromSlice(std.json.Value, gpa, result, .{}) catch {
-        std.debug.print("ND_PLUGIN_BAD_RESULT plugin={s} command={s}\n", .{ plugin_name, command });
+        marker.print("ND_PLUGIN_BAD_RESULT plugin={s} command={s}\n", .{ plugin_name, command });
         return std.json.Stringify.valueAlloc(gpa, .{ .type = "error", .message = "plugin returned malformed result", .expected = @as(u32, 0), .got = @as(u32, 0) }, .{}) catch null;
     };
     defer validated.deinit();
-    std.debug.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ plugin_name, command });
+    marker.print("ND_PLUGIN_COMMAND_OK plugin={s} command={s}\n", .{ plugin_name, command });
     return std.fmt.allocPrint(gpa, "{{\"type\":\"pluginResult\",\"result\":{s}}}", .{result}) catch null;
 }
 
@@ -337,7 +338,7 @@ pub const Runtime = struct {
         };
         if (self.out_queue.items.len > out_queue_warn_len and !self.out_warned) {
             self.out_warned = true;
-            std.debug.print("ND_WARN outbound queue past {d} frames; the child is not draining events\n", .{out_queue_warn_len});
+            marker.print("ND_WARN outbound queue past {d} frames; the child is not draining events\n", .{out_queue_warn_len});
         }
         self.out_cond.signal(self.io);
     }
@@ -405,7 +406,7 @@ pub const Runtime = struct {
             return;
         };
         self.publishStream(stream);
-        std.debug.print("ND_CHILD_CONNECTED\n", .{});
+        marker.print("ND_CHILD_CONNECTED\n", .{});
 
         var read_buf: [64 * 1024]u8 = undefined;
         var r = stream.reader(self.io, &read_buf);
@@ -441,7 +442,7 @@ pub const Runtime = struct {
             .hostWidgets = widget_types.host_widgets,
             .hostCommands = widget_types.host_commands,
         });
-        std.debug.print("ND_HELLO_OK\n", .{});
+        marker.print("ND_HELLO_OK\n", .{});
         // Replay the standing activation state: the launch transition fired
         // before this child connected (or before a respawn), so without the
         // replay the child would never learn it.
@@ -518,14 +519,14 @@ pub const Runtime = struct {
         const parsed = std.json.parseFromSlice(RE, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch return;
         defer parsed.deinit();
         if (!parsed.value.fatal) {
-            std.debug.print("ND_RUNTIME_ERROR_NONFATAL {s}\n", .{parsed.value.message});
+            marker.print("ND_RUNTIME_ERROR_NONFATAL {s}\n", .{parsed.value.message});
             return;
         }
         if (self.last_error_message) |m| self.gpa.free(m);
         if (self.last_error_stack) |s| self.gpa.free(s);
         self.last_error_message = self.gpa.dupe(u8, parsed.value.message) catch null;
         self.last_error_stack = self.gpa.dupe(u8, parsed.value.stack) catch null;
-        std.debug.print("ND_RUNTIME_ERROR_REPORTED {s}\n", .{parsed.value.message});
+        marker.print("ND_RUNTIME_ERROR_REPORTED {s}\n", .{parsed.value.message});
     }
 
     /// Called from the reader-loop thread on every disconnect path (a dead
@@ -541,7 +542,7 @@ pub const Runtime = struct {
         // must find a null stream, never the dead descriptor.
         self.retireStream(stream);
         self.discardQueuedFrames();
-        std.debug.print("ND_CHILD_EXITED\n", .{});
+        marker.print("ND_CHILD_EXITED\n", .{});
         if (self.overlay_shown) return; // already painted for this child's exit
         const msg = self.last_error_message orelse "Runtime disconnected";
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
@@ -609,12 +610,12 @@ pub const Runtime = struct {
             self.last_error_stack = null;
         }
         self.spawnChild() catch |err| {
-            std.debug.print("ND_RESPAWN_ERROR {any}\n", .{err});
+            marker.print("ND_RESPAWN_ERROR {any}\n", .{err});
             return;
         };
-        std.debug.print("ND_RESPAWNED\n", .{});
+        marker.print("ND_RESPAWNED\n", .{});
         _ = std.Thread.spawn(.{}, readerLoop, .{self}) catch |err| {
-            std.debug.print("ND_RESPAWN_ERROR {any}\n", .{err});
+            marker.print("ND_RESPAWN_ERROR {any}\n", .{err});
         };
     }
 
@@ -688,7 +689,7 @@ pub const Runtime = struct {
     fn permitCommit(self: *Runtime, batch: protocol.CommitBatch) bool {
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
         if (commitGate(the_acl, batch)) |denied| {
-            std.debug.print("ND_ACL_DENY permission={s}\n", .{denied});
+            marker.print("ND_ACL_DENY permission={s}\n", .{denied});
             self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
             return false;
         }
@@ -712,7 +713,7 @@ pub const Runtime = struct {
         defer self.gpa.free(perm);
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
         if (!the_acl.isAllowed(0, perm)) {
-            std.debug.print("ND_ACL_DENY permission={s}\n", .{perm});
+            marker.print("ND_ACL_DENY permission={s}\n", .{perm});
             self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
             return;
         }
@@ -747,7 +748,7 @@ pub const Runtime = struct {
         };
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
         if (!the_acl.isAllowed(0, cap)) {
-            std.debug.print("ND_ACL_DENY permission={s}\n", .{cap});
+            marker.print("ND_ACL_DENY permission={s}\n", .{cap});
             sendSystemResponse(req.id, false, "capability denied");
             return;
         }
@@ -758,14 +759,14 @@ pub const Runtime = struct {
             switch (automation_dialogs.take(req.method)) {
                 .unscripted => {},
                 .exhausted => {
-                    std.debug.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{req.method});
+                    marker.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{req.method});
                     const msg = std.fmt.allocPrint(self.gpa, "dialog script exhausted: {s}", .{req.method}) catch return;
                     defer self.gpa.free(msg);
                     sendSystemResponse(req.id, false, msg);
                     return;
                 },
                 .response => |json| {
-                    std.debug.print("ND_DIALOG_SCRIPTED method={s}\n", .{req.method});
+                    marker.print("ND_DIALOG_SCRIPTED method={s}\n", .{req.method});
                     sendSystemResponse(req.id, true, json);
                     return;
                 },
@@ -813,7 +814,7 @@ pub const Runtime = struct {
         const self = singleton orelse return;
         if (ok) {
             const validated = std.json.parseFromSlice(std.json.Value, self.gpa, json, .{}) catch {
-                std.debug.print("ND_SYSTEM_BAD_RESULT id={d}\n", .{id});
+                marker.print("ND_SYSTEM_BAD_RESULT id={d}\n", .{id});
                 return sendSystemResponse(id, false, "backend returned malformed result");
             };
             validated.deinit();
@@ -840,7 +841,7 @@ pub const Runtime = struct {
         }
         const self = singleton orelse return;
         const validated = std.json.parseFromSlice(std.json.Value, self.gpa, data_json, .{}) catch {
-            std.debug.print("ND_SYSTEM_BAD_EVENT channel={s}\n", .{channel});
+            marker.print("ND_SYSTEM_BAD_EVENT channel={s}\n", .{channel});
             return;
         };
         validated.deinit();
@@ -878,7 +879,7 @@ pub const Runtime = struct {
         // ordinary UI op on an already-committed node.
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
         if (!the_acl.isAllowed(0, "core:commit")) {
-            std.debug.print("ND_ACL_DENY permission=core:commit\n", .{});
+            marker.print("ND_ACL_DENY permission=core:commit\n", .{});
             self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
             return;
         }
@@ -907,16 +908,16 @@ pub const Runtime = struct {
                 switch (automation_dialogs.take(method)) {
                     .unscripted => {},
                     .exhausted => {
-                        std.debug.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{method});
+                        marker.print("ND_DIALOG_SCRIPT_EXHAUSTED method={s}\n", .{method});
                         return;
                     },
                     .response => |json| {
                         const scripted = std.json.parseFromSlice(std.json.Value, self.gpa, json, .{}) catch {
-                            std.debug.print("ND_DIALOG_SCRIPT_ERROR malformed entry method={s}\n", .{method});
+                            marker.print("ND_DIALOG_SCRIPT_ERROR malformed entry method={s}\n", .{method});
                             return;
                         };
                         defer scripted.deinit();
-                        std.debug.print("ND_DIALOG_SCRIPTED method={s}\n", .{method});
+                        marker.print("ND_DIALOG_SCRIPTED method={s}\n", .{method});
                         emitEvent(cmd.nodeId, event_name, .{ .data = scripted.value });
                         return;
                     },
@@ -924,14 +925,14 @@ pub const Runtime = struct {
             }
         }
         const widget = self.tree.get(cmd.nodeId) orelse {
-            std.debug.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
+            marker.print("ND_WARN widgetCommand unknown node id={d}\n", .{cmd.nodeId});
             return;
         };
         const meta = self.tree.metaGet(cmd.nodeId);
         const kind = if (meta) |m| m.widget_type else "";
         const view_kind = if (meta) |m| m.view_kind else null;
         if (view_kind) |vk| backend.nativeViewCommand(vk, widget, cmd.command, cmd.arg) else backend.widgetCommand(widget, kind, cmd.command, cmd.arg);
-        std.debug.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
+        marker.print("ND_WIDGET_COMMAND id={d} command={s}\n", .{ cmd.nodeId, cmd.command });
     }
 
     /// The Window dialog commands the dialog script can intercept, mapped to
