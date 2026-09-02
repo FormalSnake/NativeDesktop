@@ -348,6 +348,12 @@ func ndMinimumChildSize(_ view: NSView) -> NSSize {
     var floor = NSSize.zero
     if intrinsic.width != NSView.noIntrinsicMetric { floor.width = natural.width }
     if intrinsic.height != NSView.noIntrinsicMetric { floor.height = natural.height }
+    // A tab view's pages can be squeezed; its strip cannot. Below the strip's
+    // own width AppKit truncates every label, so that width is a real minimum
+    // even though the host view reports no intrinsic size at all.
+    if ndTabViewController(for: view) != nil {
+        floor.width = max(floor.width, ndTabStripWidth(view))
+    }
     let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
     if kind == "Label" {
         floor.width = min(floor.width, ndLabelMinimumWidth)
@@ -382,8 +388,24 @@ private func ndTabViewNaturalSize(_ tabs: NSTabView, host: NSView) -> NSSize {
                         height: max(0, host.bounds.height - rect.height))
     }
     let floor = tabs.minimumSize
-    return NSSize(width: max(content.width + chrome.width, floor.width),
+    return NSSize(width: max(max(content.width + chrome.width, floor.width), ndTabStripWidth(host)),
                   height: max(content.height + chrome.height, floor.height))
+}
+
+/// The width an `NSTabViewController`'s segmented tab strip needs to draw its
+/// labels. The controller draws the strip as a SIBLING of the tab view inside
+/// its own view, so neither `NSTabView.minimumSize` (measured: zero) nor any
+/// page knows about it, and a tab view measured from its pages alone came up
+/// narrower than its own strip, which AppKit then truncates to one ellipsis
+/// per label.
+func ndTabStripWidth(_ host: NSView) -> CGFloat {
+    var width: CGFloat = 0
+    for sub in host.subviews {
+        guard let segmented = sub as? NSSegmentedControl else { continue }
+        let intrinsic = segmented.intrinsicContentSize.width
+        width = max(width, intrinsic == NSView.noIntrinsicMetric ? segmented.fittingSize.width : intrinsic)
+    }
+    return width
 }
 
 /// GTK's `propagate-natural-height` for the scroll-shaped data widgets. An
