@@ -26,7 +26,7 @@
     },
     {
       "name": "JsonNode",
-      "doc": "One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe.",
+      "doc": "One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind.",
       "fields": [
         { "name": "ref", "type": "u32" },
         { "name": "type", "type": "string" },
@@ -40,7 +40,13 @@
         { "name": "role", "type": "string", "nullable": true },
         { "name": "enabled", "type": "bool" },
         { "name": "focused", "type": "bool" },
-        { "name": "value", "type": "any", "nullable": true }
+        { "name": "value", "type": "any", "nullable": true },
+        { "name": "checked", "type": "bool", "nullable": true },
+        { "name": "selected", "type": "bool", "nullable": true },
+        { "name": "expanded", "type": "bool", "nullable": true },
+        { "name": "placeholder", "type": "string", "nullable": true },
+        { "name": "label", "type": "string", "nullable": true },
+        { "name": "options", "type": "stringList", "nullable": true }
       ]
     },
     {
@@ -124,14 +130,15 @@
     },
     {
       "name": "WindowInfo",
-      "doc": "key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows).",
+      "doc": "key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows). geometry is the window's frame in the same logical, top-left-origin units node Geometry uses (w/h are width/height), null on a backend whose probe does not report it.",
       "fields": [
         { "name": "ref", "type": "u32" },
         { "name": "title", "type": "string", "nullable": true },
         { "name": "key", "type": "bool" },
         { "name": "main", "type": "bool" },
         { "name": "visible", "type": "bool" },
-        { "name": "tabGroup", "type": "string", "nullable": true }
+        { "name": "tabGroup", "type": "string", "nullable": true },
+        { "name": "geometry", "type": "Geometry", "nullable": true }
       ]
     },
     {
@@ -157,6 +164,18 @@
     {
       "name": "KeysResult",
       "fields": [{ "name": "dispatched", "type": "bool" }]
+    },
+    {
+      "name": "FocusResult",
+      "fields": [{ "name": "ok", "type": "bool" }]
+    },
+    {
+      "name": "ScrollIntoViewResult",
+      "doc": "scrolled is false when the target has no scrollable ancestor (nothing to do), which is a success, not an error.",
+      "fields": [
+        { "name": "ok", "type": "bool" },
+        { "name": "scrolled", "type": "bool" }
+      ]
     },
     {
       "name": "WebViewInfo",
@@ -281,6 +300,49 @@
         { "name": "window", "type": "u32", "optional": true }
       ],
       "result": "ClickResult"
+    },
+    {
+      "name": "focus",
+      "doc": "Moves keyboard focus to the target, the same path the widget-level `focus` command takes (first responder on macOS, gtk_widget_grab_focus on GTK), so a following `keys`/`type` lands there. Target by exactly one of ref / testId. After it returns, waitFor {testId, state: \"focused\"} holds.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "FocusResult"
+    },
+    {
+      "name": "scrollIntoView",
+      "doc": "Scrolls the target's nearest scrollable ancestor until the target is inside the viewport, so an off-screen node becomes actionable. A target with no scrollable ancestor answers {ok: true, scrolled: false} rather than an error. Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "ScrollIntoViewResult"
+    },
+    {
+      "name": "snapshotNode",
+      "doc": "In-process render of ONE node's widget to a PNG, same result shape as screenshot. The image is the node's own surface, so its pixel dimensions come from the same handle Geometry measures rather than from the whole window at an unknown backing scale. `path` is an absolute path; absent, the host writes beside the automation socket and answers where. Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true },
+        { "name": "path", "type": "string", "optional": true }
+      ],
+      "result": "ScreenshotResult"
+    },
+    {
+      "name": "setWindowFrame",
+      "doc": "Moves and/or resizes a window; omitted components keep their current value. Coordinates are logical points with a top-left origin, matching WindowInfo.geometry. `window` names a Window node ref (default: the root window). Answers that window's updated WindowInfo. GTK sizes the window but cannot position it (client-side placement is not a Wayland capability), so x/y are ignored there.",
+      "params": [
+        { "name": "window", "type": "u32", "optional": true },
+        { "name": "x", "type": "i32", "optional": true },
+        { "name": "y", "type": "i32", "optional": true },
+        { "name": "width", "type": "i32", "optional": true },
+        { "name": "height", "type": "i32", "optional": true }
+      ],
+      "result": "WindowInfo"
     },
     {
       "name": "resolve",

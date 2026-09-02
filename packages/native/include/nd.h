@@ -49,9 +49,20 @@ typedef struct nd_backend {
   bool (*node_visible)(nd_context*, nd_widget);
   bool (*node_bounds)(nd_context*, nd_widget, nd_rect* out);   /* false = no bounds */
   bool (*snapshot)(nd_context*, const char* png_path);         /* in-process render */
-  /* action: "click"|"setValue"|"type"|"scroll"; arg_json carries params.
-     returns 0 ok, or a negative JSON-RPC-style code; err_json_out (nullable,
-     caller frees via nd_free) gets a data object on failure. */
+  /* Open-ended string dispatch: the automation surface grows here instead of
+     growing the vtable. arg_json carries params, result_json_out the answer
+     (both nullable, caller frees via nd_free); returns 0 ok, or a negative
+     JSON-RPC-style code, with err_json_out carrying a data object on failure.
+     Actions today:
+       act      "click" | "setValue" | "type" | "scroll" | "rowAction" |
+                "focus" | "scrollIntoView"
+       probe    "a11y" | "windowState" | "snapshotNode"
+       window   "window.close" | "window.setFrame"
+       input    "pointer" | "drag" | "keys" | "doubleClick" | "rightClick" |
+                "hover"  (-32003 on a backend without synthetic input)
+       webview  "webviewInfo" | "webviewEvalStart" | "webviewEvalPoll" |
+                "webviewPageText"
+     An unknown action answers -32601, so a backend may implement a subset. */
   int32_t (*semantic_action)(nd_context*, nd_widget, uint32_t node_id,
                              const char* action, const char* arg_json,
                              char** result_json_out, char** err_json_out);

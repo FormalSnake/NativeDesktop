@@ -38,24 +38,31 @@ calls on this page into a `launchApp`/`AppHandle` API for Bun tests and drive sc
 | `rightClick` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | real right-click at the widget's center; an opened context menu is auto-dismissed with an escape (see below); macOS only |
 | `hover` | `{ref?, testId?, window?}` | `{ref, dispatched: true}` | best-effort `mouseMoved` at the widget's center; macOS only |
 | `resolve` | `{testId, window?, actionable?}` (default `actionable: true`) | `{ref, refs, count}` | resolves a testID to the single ACTIONABLE instance, ranked actionable-first then key/front-window-first; `refs` is every match in tree order, `ref` the winner (`null` when none is actionable) |
-| `windows` | `{}` | `{windows: WindowInfo[]}` | every open Window node's live `{ref, title, key, main, visible, tabGroup}`, in tree order |
+| `windows` | `{}` | `{windows: WindowInfo[]}` | every open Window node's live `{ref, title, key, main, visible, tabGroup, geometry}`, in tree order; `geometry` is the window frame in the same logical top-left units node geometry uses (`w`/`h` are width/height), and is `null` on a backend whose probe omits it |
 | `pointer` | `{phase: "down"\|"move"\|"up", x, y, button?, clickCount?, window?}` | `{dispatched: true}` | low-level single pointer phase at window-topleft coordinates; `clickCount: 2` on a down/up pair makes a double-click; macOS only |
 | `drag` | `{fromRef?\|fromX?,fromY?, toRef?\|toX?,toY?, steps?, durationMs?, button?, window?}` | `{dispatched, fromX, fromY, toX, toY, steps}` | press-move-release; ref endpoints resolve to widget centers and must share a window; macOS only |
 | `keys` | `{keys, window?}` | `{dispatched: true}` | `"cmd+shift+n"` presses one chord (drives menu key equivalents); `"escape"`/`"tab"` a named key; any other string types its characters into the focused widget; macOS only |
 | `webviewInfo` | `{ref?, testId?, window?}` | `{ref, url, title, loading, canGoBack, canGoForward}` | live page state read off the engine; the target must be a `WebView` (`invalidParams` otherwise) |
 | `webviewEval` | `{ref?, testId?, window?, code, world?, timeoutMs?}` | `{ref, ok, value, error}` | evaluates `code` in the page, optionally in a named isolated world; default `timeoutMs` 5000 |
+| `focus` | `{ref?, testId?, window?}` | `{ok: true}` | moves keyboard focus to the target, the same path the widget-level `focus` command takes; afterwards `waitFor {testId, state: "focused"}` holds |
+| `scrollIntoView` | `{ref?, testId?, window?}` | `{ok: true, scrolled}` | scrolls the target's nearest scrollable ancestor until the target is inside the viewport; `scrolled: false` means there was no scroll ancestor, which is a success |
+| `snapshotNode` | `{ref?, testId?, window?, path?}` | `{path, width, height}` | renders ONE node to a PNG; `width`/`height` are the node's logical size, so they match its `geometry` (a window `screenshot` is at the display's backing scale instead). Without `path` the host writes beside the automation socket and answers where |
+| `setWindowFrame` | `{window?, x?, y?, width?, height?}` | `WindowInfo` | moves and/or resizes a window, omitted components unchanged; answers that window's `WindowInfo` re-probed after the move |
 
-`click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, `hover`, `webviewInfo`, and
+`click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, `hover`, `focus`,
+`scrollIntoView`, `snapshotNode`, `webviewInfo`, and
 `webviewEval` all target by exactly one of `ref` or `testId` (`invalidParams` otherwise). `window` optionally scopes `testId` resolution
 to one window, using the same actionable-first ranking as `resolve`. Targeting by `testId` is one
 round trip with host-side resolution, so no `getTree` walk is needed first.
 
-`webviewInfo` and `webviewEval` are the two exceptions to the actionability
-check. They ask a page a question rather than act on a widget, so they resolve a
-node the user could not reach: only visibility and bounds are waived, and a node
-that does not exist still answers `-32001`. That is what lets a drive inspect an
-extension's background page or a non-active tab, both of which live in hidden
-`Activity` subtrees. Every other action still refuses a node it cannot see.
+`webviewInfo`, `webviewEval`, `scrollIntoView` and `snapshotNode` are the exceptions to the
+actionability check. They resolve a node the user could not reach: only visibility and bounds are
+waived, and a node that does not exist still answers `-32001`. The two webview methods ask a page a
+question rather than act on a widget, which is what lets a drive inspect an extension's background
+page or a non-active tab, both of which live in hidden `Activity` subtrees. `scrollIntoView` and
+`snapshotNode` waive it for the opposite reason: a node scrolled out of its viewport reports
+invisible, and refusing there would refuse exactly the node `scrollIntoView` exists to bring back.
+Every other action still refuses a node it cannot see.
 
 ### SourceTree row actions
 
@@ -74,7 +81,8 @@ In `@nativedesktop/test`: `app.click({ testId: "row-testid", action: "action-id"
 
 `JsonNode` (from `getTree`, nested under `root`/`children`):
 `{ref, type, testID, text, visible, geometry: {x,y,w,h} | null, children, itemCount, rows, role,
-enabled, focused, value}`. `itemCount` is non-null only for data-driven widgets (currently
+enabled, focused, value, checked, selected, expanded, placeholder, label, options}`.
+`itemCount` is non-null only for data-driven widgets (currently
 `ListView`): it's the row count, never a walk of recycled row widgets. `rows` is non-null only for
 row-driven widgets (`SourceList` `items`, `SourceTree` `nodes`, `CommandPalette` `items`) and
 carries each row's `{title, badge, iconName, testID, id, subtitle}` (every field but `title`
@@ -91,6 +99,36 @@ boolean for `Checkbox`/`Radio`/`Switch`, number for `Slider`, selected index for
 row-selection widgets (`SourceList`/`Table`/`TreeView`), null for widgets without a value. Backends
 without the probe degrade to the defaults (`enabled: true`, `focused: false`, `value: null`) rather
 than failing the snapshot.
+
+The last six fields come from the same probe and are `null` on every node the field does not apply
+to, so a locator can ask `isChecked`/`isSelected`/`isExpanded` of any node and still tell "false"
+apart from "not that kind of thing":
+
+| Field | Non-null on | Meaning |
+|---|---|---|
+| `checked` | `Checkbox`, `Radio`, `Switch`, `SwitchRow` | the on/off state, the same boolean `value` carries |
+| `selected` | a node drawn as a row of a list, table or outline | whether that row is selected (the state lives on the row, not on the app's own widget) |
+| `expanded` | `Expander` | whether the disclosure is open |
+| `placeholder` | `TextInput`, `SearchInput` | the empty-field prompt |
+| `label` | icon-only controls, images, boxed-list rows | the spoken label where it says something `text` does not: a tooltip, an accessibility label, or (GTK) the row title |
+| `options` | `Select`, `ComboBox` | the choices in index order, so `setValue`'s integer index can be aimed by name |
+
+Two platform differences: macOS reports `options` for `SegmentedControl` only when it is a real
+`NSSegmentedControl` (the SwiftUI-hosted one publishes no titles), and `label` on macOS never
+carries a `Row`/`SwitchRow` title, because the title lives inside the SwiftUI body and is not
+readable back.
+
+`visible` intersects the node's frame with every clip between it and the window: each enclosing
+scroll viewport, then the window itself. A row scrolled out of its list is `visible: false` (and so
+fails actionability) even though it is still laid out; `scrollIntoView` is what makes it actionable
+again. `geometry` stays the untransformed frame either way, so a caller can still see where the
+node would be.
+
+A `HeaderBar` measures the run its items occupy in the window toolbar, and a `ToolbarView` measures
+the content it installed. Both tracked handles are holders that never enter the view hierarchy on
+macOS, so measuring them directly reported `0x0` and invisible for chrome that was plainly on
+screen. When AppKit has not attached a custom item's view yet, the header falls back to the whole
+title-bar-plus-toolbar band, which is where those items are drawn.
 
 ## waitFor conditions
 
@@ -184,6 +222,15 @@ Three behaviors that surprise people:
   stretched by its container, say a checkbox in a full-width column, only reacts over its visible
   glyph and label region on macOS. Aim at the leading edge of `geometry` rather than the center, or
   use semantic `click`/`setValue`, which do not depend on coordinates.
+- A `drag` whose press point lands on a `<slider>` is answered semantically on macOS: the drag's end
+  point is mapped to a value and written through the same path `setValue` takes, firing
+  `valueChanged` exactly as a user drag does. A synthesized drag cannot move the control otherwise.
+  `<slider>` is SwiftUI's `Slider` in an `NSHostingView`, and SwiftUI reads the live pointer state
+  rather than the event stream: the posted `mouseDown` lands and the knob jumps to it, then every
+  posted `leftMouseDragged` is ignored, with real deltas, with a shared event number, batched or one
+  per run-loop turn alike. Pressing the physical button needs `CGEvent.post`, which is the
+  accessibility TCC prompt in-process synthesis exists to avoid. Every AppKit control that runs a
+  real tracking loop (split-view dividers, table headers) still takes the posted-event path.
 
 ## Error codes
 
@@ -198,8 +245,8 @@ Three behaviors that surprise people:
 | `-32700` | parse error | none |
 
 Actionability (`-32001`) is checked before every action-dispatch method (`click`, `setValue`,
-`type`, `scroll`): the ref must exist, be visible, be mapped, and have non-degenerate on-screen
-bounds relative to the window. The checks mirror what a real user could reach.
+`type`, `scroll`, `focus`): the ref must exist, be visible, be mapped, and have non-degenerate
+on-screen bounds relative to the window. The checks mirror what a real user could reach.
 
 ## Coordinate space
 

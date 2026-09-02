@@ -36,11 +36,11 @@ fn parseParams(comptime T: type, gpa: std.mem.Allocator, params: ?std.json.Value
 }
 
 /// The kinds of work a `UiJob` can carry. `window_action` targets a Window
-/// node's handle (pointer/drag/keys input synthesis); `probe_rect`
+/// node's handle (pointer/drag/keys input synthesis, `window.setFrame`); `probe_rect`
 /// reads one widget's bounds + owning window on the UI thread so the
 /// automation thread can resolve drag endpoints; `resolve_ref` ranks a
 /// testID's instances; `list_windows` snapshots every Window node's state.
-const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows, webview_info, webview_eval_start, webview_eval_poll };
+const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows, webview_info, webview_eval_start, webview_eval_poll, focus, scroll_into_view, snapshot_node, set_window_frame };
 
 /// A request/response handoff between the automation thread and the
 /// embedder's UI thread. The tree is read exclusively on the UI thread (see
@@ -163,6 +163,10 @@ fn handleOnUi(job: *UiJob) void {
         .webview_info => handleSemanticAction(job, "webviewInfo"),
         .webview_eval_start => handleSemanticAction(job, "webviewEvalStart"),
         .webview_eval_poll => handleSemanticAction(job, "webviewEvalPoll"),
+        .focus => handleSemanticAction(job, "focus"),
+        .scroll_into_view => handleSemanticAction(job, "scrollIntoView"),
+        .snapshot_node => handleSnapshotNode(job),
+        .set_window_frame => handleSetWindowFrame(job),
     }
 }
 
@@ -209,7 +213,16 @@ fn windowOf(tree: *Tree, id: u32) ?u32 {
 /// One node's live windowState probe (`semantic_action` op #17 with the
 /// "windowState" action on a Window node's handle). `title` is allocated in
 /// `arena`. Null when the backend lacks the probe — callers keep defaults.
-const WindowState = struct { key: bool = false, main: bool = false, visible: bool = false, title: ?[]const u8 = null };
+const WindowState = struct {
+    key: bool = false,
+    main: bool = false,
+    visible: bool = false,
+    title: ?[]const u8 = null,
+    /// The window's frame in logical, top-left-origin units. Null when the
+    /// backend's probe omits it, which is what keeps WindowInfo.geometry
+    /// honest rather than reporting a zero rect as a real frame.
+    geometry: ?rpc.Geometry = null,
+};
 fn probeWindowState(arena: std.mem.Allocator, widget: *Widget, id: u32) ?WindowState {
     var res: ?[*:0]u8 = null;
     var err: ?[*:0]u8 = null;
@@ -233,7 +246,27 @@ fn probeWindowState(arena: std.mem.Allocator, widget: *Widget, id: u32) ?WindowS
     if (parsed.object.get("title")) |v| {
         if (v == .string) out.title = v.string;
     }
+    if (parsed.object.get("geometry")) |v| {
+        if (v == .object) {
+            out.geometry = .{
+                .x = jsonInt(v.object.get("x")) orelse 0,
+                .y = jsonInt(v.object.get("y")) orelse 0,
+                .w = jsonInt(v.object.get("w")) orelse 0,
+                .h = jsonInt(v.object.get("h")) orelse 0,
+            };
+        }
+    }
     return out;
+}
+
+/// A JSON number as an i32 (a backend may serialize a logical point as either
+/// an integer or a float).
+fn jsonInt(v: ?std.json.Value) ?i32 {
+    return switch (v orelse return null) {
+        .integer => |i| std.math.cast(i32, i),
+        .float => |f| @intFromFloat(f),
+        else => null,
+    };
 }
 
 /// True when `id`'s owning window reports `key` (the frontmost signal used to
@@ -350,7 +383,21 @@ pub fn isWaitState(s: []const u8) bool {
 /// (`semantic_action` op #17, "a11y"). `value` is allocated in `arena`.
 /// Backends without the probe (or non-widget handles like menu nodes) keep
 /// the defaults.
-const A11yProbe = struct { enabled: bool = true, focused: bool = false, value: ?std.json.Value = null };
+const A11yProbe = struct {
+    enabled: bool = true,
+    focused: bool = false,
+    value: ?std.json.Value = null,
+    // Kind-shaped extras. A backend omits the key on a node the field cannot
+    // apply to (a Label has no checked state), which is what lets a locator
+    // ask isChecked/isSelected/isExpanded of any node and tell "false" apart
+    // from "not a checkable thing".
+    checked: ?bool = null,
+    selected: ?bool = null,
+    expanded: ?bool = null,
+    placeholder: ?[]const u8 = null,
+    label: ?[]const u8 = null,
+    options: ?[]const []const u8 = null,
+};
 fn probeA11y(arena: std.mem.Allocator, widget: *Widget, id: u32) A11yProbe {
     var out = A11yProbe{};
     var res: ?[*:0]u8 = null;
@@ -373,9 +420,39 @@ fn probeA11y(arena: std.mem.Allocator, widget: *Widget, id: u32) A11yProbe {
                     if (p.object.get("value")) |v| {
                         if (v != .null) out.value = v;
                     }
+                    if (p.object.get("checked")) |v| {
+                        if (v == .bool) out.checked = v.bool;
+                    }
+                    if (p.object.get("selected")) |v| {
+                        if (v == .bool) out.selected = v.bool;
+                    }
+                    if (p.object.get("expanded")) |v| {
+                        if (v == .bool) out.expanded = v.bool;
+                    }
+                    if (p.object.get("placeholder")) |v| {
+                        if (v == .string) out.placeholder = v.string;
+                    }
+                    if (p.object.get("label")) |v| {
+                        if (v == .string) out.label = v.string;
+                    }
+                    if (p.object.get("options")) |v| {
+                        if (v == .array) out.options = jsonStringArray(arena, v.array);
+                    }
                 }
             }
         }
+    }
+    return out;
+}
+
+/// A JSON array of strings as a Zig slice, allocated in `arena`. A non-string
+/// element drops the whole array: a half-decoded options list would read as a
+/// real (shorter) one.
+fn jsonStringArray(arena: std.mem.Allocator, arr: std.json.Array) ?[]const []const u8 {
+    const out = arena.alloc([]const u8, arr.items.len) catch return null;
+    for (arr.items, 0..) |item, i| {
+        if (item != .string) return null;
+        out[i] = item.string;
     }
     return out;
 }
@@ -576,19 +653,26 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
             job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
         .webview_eval_start => allocZFromValue(job.gpa, .{ .code = job.code orelse "", .world = job.world }),
         .webview_eval_poll => allocZFromValue(job.gpa, .{ .evalId = job.eval_id }),
+        .snapshot_node => allocZFromValue(job.gpa, .{ .path = @as([]const u8, job.path orelse "") }),
         else => job.gpa.dupeZ(u8, "{}") catch @panic("OOM in automation buildActionArgs"),
     };
 }
 
+/// Kinds that resolve a node the user could not reach: the node must still
+/// EXIST, but visibility and bounds are waived.
+///
 /// The two webview READ RPCs (`webviewInfo`, `webviewEval`) ask a page a
-/// question rather than acting on a widget, so they resolve a node the user
-/// could not reach. Extension background pages and non-active tabs live in
-/// hidden `Activity` subtrees — exactly where a browser's bugs are — and an
-/// actionability refusal there means a drive can never inspect them. The node
-/// must still EXIST; only visibility and bounds are waived.
-fn isReadOnlyProbe(kind: JobKind) bool {
+/// question rather than acting on a widget. Extension background pages and
+/// non-active tabs live in hidden `Activity` subtrees, exactly where a
+/// browser's bugs are, and an actionability refusal there means a drive can
+/// never inspect them.
+///
+/// `scrollIntoView` and `snapshotNode` waive it for the opposite reason: a
+/// node scrolled out of its viewport reports invisible, and refusing there
+/// would refuse exactly the node scrollIntoView exists to bring back.
+fn waivesActionability(kind: JobKind) bool {
     return switch (kind) {
-        .webview_info, .webview_eval_start, .webview_eval_poll => true,
+        .webview_info, .webview_eval_start, .webview_eval_poll, .scroll_into_view, .snapshot_node => true,
         else => false,
     };
 }
@@ -617,7 +701,7 @@ fn handleSemanticAction(job: *UiJob, action: []const u8) void {
     // window's subtree leaves `tree.meta` in the same commit that removes
     // the window itself.
     if (!resolveJobTarget(job)) return;
-    const widget = (if (isReadOnlyProbe(job.kind)) resolveReadable(job) else checkActionable(job)) orelse return;
+    const widget = (if (waivesActionability(job.kind)) resolveReadable(job) else checkActionable(job)) orelse return;
     const action_z = job.gpa.dupeZ(u8, action) catch return;
     defer job.gpa.free(action_z);
     const args_z = buildActionArgs(job);
@@ -721,23 +805,81 @@ fn handleWindows(job: *UiJob) void {
     }
     std.mem.sort(u32, ids.items, {}, std.sort.asc(u32));
     var infos: std.ArrayList(rpc.WindowInfo) = .empty;
-    for (ids.items) |wid| {
-        var info = rpc.WindowInfo{ .ref = wid, .key = false, .main = false, .visible = false };
-        if (job.tree.metaGet(wid)) |m| info.tabGroup = m.tab_group;
-        if (job.tree.get(wid)) |w| {
-            // node_visible is the probe-less fallback; a real windowState
-            // probe overrides it wholesale.
-            info.visible = abi_backend.vtable.node_visible(abi_backend.ctx, w);
-            if (probeWindowState(arena, w, wid)) |ws| {
-                info.key = ws.key;
-                info.main = ws.main;
-                info.visible = ws.visible;
-                info.title = ws.title;
-            }
-        }
-        infos.append(arena, info) catch {};
-    }
+    for (ids.items) |wid| infos.append(arena, windowInfo(arena, job.tree, wid)) catch {};
     const result = rpc.WindowsResult{ .windows = infos.items };
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
+}
+
+/// One Window node's live info: create-time tabGroup plus whatever the
+/// windowState probe reports. Shared by `windows` and `setWindowFrame`, which
+/// answers the same shape re-probed after the move. UI thread only.
+fn windowInfo(arena: std.mem.Allocator, tree: *Tree, wid: u32) rpc.WindowInfo {
+    var info = rpc.WindowInfo{ .ref = wid, .key = false, .main = false, .visible = false };
+    if (tree.metaGet(wid)) |m| info.tabGroup = m.tab_group;
+    const w = tree.get(wid) orelse return info;
+    // node_visible is the probe-less fallback; a real windowState probe
+    // overrides it wholesale.
+    info.visible = abi_backend.vtable.node_visible(abi_backend.ctx, w);
+    if (probeWindowState(arena, w, wid)) |ws| {
+        info.key = ws.key;
+        info.main = ws.main;
+        info.visible = ws.visible;
+        info.title = ws.title;
+        info.geometry = ws.geometry;
+    }
+    return info;
+}
+
+/// `setWindowFrame` moves and resizes a window through the "window.setFrame"
+/// semantic action (peer of "window.close": the action string carries it, no
+/// new vtable op). Answers the window's WindowInfo re-probed AFTER the move,
+/// so a caller reads the frame the platform actually granted rather than the
+/// one it asked for.
+fn handleSetWindowFrame(job: *UiJob) void {
+    if (!validateWindowRef(job)) return;
+    const target_id = job.window orelse job.tree.rootId() orelse {
+        job.err_code = rpc.code_internal_error;
+        job.err_msg = "no root";
+        return;
+    };
+    const widget = job.tree.get(target_id) orelse {
+        job.err_code = rpc.code_window_gone;
+        job.err_msg = rpc.msg_window_gone;
+        job.err_data_json = std.fmt.allocPrint(job.gpa, "{{\"window\":{d}}}", .{target_id}) catch null;
+        return;
+    };
+    dispatchToBackend(job, widget, target_id, "window.setFrame", job.args_json orelse "{}");
+    if (job.err_code != 0) return;
+    if (job.result_json) |r| job.gpa.free(r);
+    job.result_json = null;
+
+    var arena_state = std.heap.ArenaAllocator.init(job.gpa);
+    defer arena_state.deinit();
+    const info = windowInfo(arena_state.allocator(), job.tree, target_id);
+    job.result_json = std.json.Stringify.valueAlloc(job.gpa, info, .{}) catch null;
+}
+
+/// `snapshotNode` renders ONE node's widget through the "snapshotNode"
+/// semantic action, then answers `screenshot`'s {path, width, height}. The
+/// dimensions are read back out of the file the backend just wrote, the same
+/// way `handleScreenshot` does: the snapshot contract carries a bool and
+/// nothing else.
+fn handleSnapshotNode(job: *UiJob) void {
+    const path = job.path orelse {
+        job.err_code = rpc.code_invalid_params;
+        job.err_msg = "missing path";
+        return;
+    };
+    handleSemanticAction(job, "snapshotNode");
+    if (job.err_code != 0) return;
+    if (job.result_json) |r| job.gpa.free(r);
+    job.result_json = null;
+    const dims = readPngDimensions(job.io, path) orelse {
+        job.err_code = rpc.code_internal_error;
+        job.err_msg = "failed to read png dimensions";
+        return;
+    };
+    const result = rpc.ScreenshotResult{ .path = path, .width = dims.w, .height = dims.h };
     job.result_json = std.json.Stringify.valueAlloc(job.gpa, result, .{}) catch null;
 }
 
@@ -936,6 +1078,12 @@ fn buildNode(
         .enabled = enabled,
         .focused = focused,
         .value = value,
+        .checked = probe.checked,
+        .selected = probe.selected,
+        .expanded = probe.expanded,
+        .placeholder = probe.placeholder,
+        .label = probe.label,
+        .options = probe.options,
     };
 }
 
@@ -945,12 +1093,16 @@ pub const Server = struct {
     tree: *Tree,
     server: std.Io.net.Server,
     sock_path: [:0]u8,
+    /// Serial behind `defaultNodePngPath`. Bumped only from the automation
+    /// thread's dispatch, which serves one request at a time.
+    node_png_seq: u32,
 
     pub fn start(gpa: std.mem.Allocator, io: std.Io, tree: *Tree, runtime_dir: []const u8) !*Server {
         const self = try gpa.create(Server);
         self.gpa = gpa;
         self.io = io;
         self.tree = tree;
+        self.node_png_seq = 0;
 
         const pid = std.os.linux.getpid();
         self.sock_path = try std.fmt.allocPrintSentinel(gpa, "{s}/nd-automation-{d}.sock", .{ runtime_dir, pid }, 0);
@@ -1056,7 +1208,7 @@ pub const Server = struct {
                 if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
                 return self.runJobAndEnvelope(&job, id);
             },
-            .@"type" => {
+            .type => {
                 const p = parseParams(rpc.TypeParams, self.gpa, parsed.value.params) catch {
                     return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
                 };
@@ -1140,6 +1292,48 @@ pub const Server = struct {
             },
             .webviewEval => return self.dispatchWebviewEval(id, parsed.value.params),
             .drag => return self.dispatchDrag(id, parsed.value.params),
+            .focus => {
+                const p = parseParams(rpc.FocusParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                var job = UiJob{ .tree = self.tree, .kind = .focus, .gpa = self.gpa, .io = self.io };
+                if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .scrollIntoView => {
+                const p = parseParams(rpc.ScrollIntoViewParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                var job = UiJob{ .tree = self.tree, .kind = .scroll_into_view, .gpa = self.gpa, .io = self.io };
+                if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .snapshotNode => {
+                const p = parseParams(rpc.SnapshotNodeParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const path_z = if (p.value.path) |path|
+                    self.gpa.dupeZ(u8, path) catch return error.OutOfMemory
+                else
+                    self.defaultNodePngPath() catch return error.OutOfMemory;
+                defer self.gpa.free(path_z);
+                var job = UiJob{ .tree = self.tree, .kind = .snapshot_node, .gpa = self.gpa, .io = self.io, .path = path_z };
+                if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .setWindowFrame => {
+                const p = parseParams(rpc.SetWindowFrameParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                const args = allocZFromValue(self.gpa, .{ .x = p.value.x, .y = p.value.y, .width = p.value.width, .height = p.value.height });
+                defer self.gpa.free(args);
+                var job = UiJob{ .tree = self.tree, .kind = .set_window_frame, .gpa = self.gpa, .io = self.io, .window = p.value.window, .args_json = args };
+                return self.runJobAndEnvelope(&job, id);
+            },
         }
     }
 
@@ -1213,6 +1407,15 @@ pub const Server = struct {
     /// the caller to send). The window, if given, is resolved on the UI
     /// thread inside `handleSemanticAction`'s target resolution, not here:
     /// `tree.meta` must never be read from this (the automation) thread.
+    /// Where a `snapshotNode` with no `path` writes: beside the automation
+    /// socket, which is already a per-host directory a drive can reach, and
+    /// serialized so two calls in the same run never collide. Caller frees.
+    fn defaultNodePngPath(self: *Server) ![:0]u8 {
+        const dir = std.fs.path.dirname(self.sock_path) orelse ".";
+        self.node_png_seq += 1;
+        return std.fmt.allocPrintSentinel(self.gpa, "{s}/nd-node-{d}.png", .{ dir, self.node_png_seq }, 0);
+    }
+
     fn targetError(self: *Server, id: std.json.Value, job: *UiJob, ref: ?u32, test_id: ?[]const u8, window: ?u32) ?[]u8 {
         if ((ref == null) == (test_id == null)) {
             return errorEnvelope(self.gpa, id, rpc.code_invalid_params, "exactly one of params.ref / params.testId", null) catch null;
