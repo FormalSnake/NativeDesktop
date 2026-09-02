@@ -1032,9 +1032,70 @@ pub fn menuSemanticClick(node_id: u32) bool {
 }
 
 const ND_POPOVER_PENDING_OPEN = "nd-popover-pending-open";
+const ND_POPOVER_ANCHOR_ID = "nd-popover-anchor-id";
+/// Set on every widget by connectEvents, the one op the core hands a node id
+/// to. Nothing else needs it; a Popover's `anchor` prop names another node by
+/// wire id, and the apply arm holds a widget pointer and a props object, never
+/// the core's node table.
+const ND_NODE_ID = "nd-node-id";
+
+pub fn ndTagNodeId(widget: *gtk.Widget, node_id: u32) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return; // menu nodes hand back GMenu objects
+    gobject.Object.setData(asObject(widget), ND_NODE_ID, @ptrFromInt(node_id));
+}
+
+fn ndNodeIdOf(widget: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(widget), ND_NODE_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Depth-first search for the widget carrying `node_id`, rooted at `from`.
+/// A registry keyed by node id would need a weak ref per node to survive the
+/// widget being destroyed; the search costs nothing until an app names an
+/// anchor, and then only once per anchoring.
+fn ndFindNode(from: *gtk.Widget, node_id: u32) ?*gtk.Widget {
+    if (ndNodeIdOf(from) == node_id) return from;
+    var child = gtk.Widget.getFirstChild(from);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (ndFindNode(c, node_id)) |hit| return hit;
+    }
+    return null;
+}
+
+fn ndPopoverAnchorId(child: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(child), ND_POPOVER_ANCHOR_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Re-parents an anchored popover onto the widget its `anchor` prop names, if
+/// that widget is reachable yet. GtkPopover needs a parent to pop up at all,
+/// so the tree parent stays the fallback and the search runs from the window
+/// the popover already sits in: an anchor created later in the same batch is
+/// found on the next call rather than never.
+fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
+    const want = ndPopoverAnchorId(child);
+    if (want == 0) return;
+    const parent = gtk.Widget.getParent(child) orelse return;
+    const root = gtk.Widget.getAncestor(parent, gtk.Window.getGObjectType()) orelse parent;
+    const anchor = ndFindNode(root, want) orelse return;
+    if (anchor == parent) return;
+    gtk.Widget.unparent(child);
+    gtk.Widget.setParent(child, anchor);
+}
+
+/// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
+/// schema default, so dropping `anchorRef` falls back to the tree parent).
+fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
+    if (ndPopoverAnchorId(child) == node_id) return;
+    gobject.Object.setData(asObject(child), ND_POPOVER_ANCHOR_ID, if (node_id == 0) null else @ptrFromInt(node_id));
+    const up = gtk.Widget.getVisible(child) != 0;
+    if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
+    ndPopoverEnsureAnchor(child);
+    if (up) gtk.Popover.popup(@ptrCast(@alignCast(child)));
+}
 
 /// Cross-cutting structural rule: a GtkPopover child attaches to its tree
-/// parent via gtk_widget_set_parent (never box-packed/slotted — GtkPopover is
+/// parent via gtk_widget_set_parent (never box-packed/slotted, GtkPopover is
 /// not a layout child). Called from the appendChild/insertBefore guards;
 /// honors a create-time open=true that had to wait for a parent to anchor on.
 fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
@@ -1044,6 +1105,7 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
         gtk.Widget.unparent(child);
     }
     gtk.Widget.setParent(child, parent);
+    ndPopoverEnsureAnchor(child);
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) {
         gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
         gtk.Popover.popup(@ptrCast(@alignCast(child)));
@@ -2966,6 +3028,8 @@ fn createWidget(
         gtk.Popover.setPosition(pop, ndPositionFromString(propStr(props, "position") orelse "top"));
         // Anchoring happens when the tree parent appends this node (see the
         // ndPopoverAttach structural guard); a create-time open waits there.
+        const anchor_id: u32 = @intCast(@max(0, propInt(props, "anchor") orelse 0));
+        if (anchor_id != 0) gobject.Object.setData(asObject(pop), ND_POPOVER_ANCHOR_ID, @ptrFromInt(anchor_id));
         if (propBool(props, "open") orelse false) gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
         return pop.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Expander")) {
@@ -3537,6 +3601,7 @@ const nd_resets_SplitButton = [_]NdPropReset{
     .{ .key = "dropTarget", .value = .{ .bool = false } },
 };
 const nd_resets_Popover = [_]NdPropReset{
+    .{ .key = "anchor", .value = .{ .integer = 0 } },
     .{ .key = "open", .value = .{ .bool = false } },
     .{ .key = "position", .value = .{ .string = "top" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4214,10 +4279,12 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "label")) |l| adw.SplitButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));
         if (propStr(props, "iconName")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
     } else if (std.mem.eql(u8, kind, "Popover")) {
+        if (propInt(props, "anchor")) |a| ndPopoverApplyAnchor(widget, @intCast(@max(0, a)));
         if (propBool(props, "open")) |o| {
             const pop: *gtk.Popover = @ptrCast(@alignCast(widget));
             const up = gtk.Widget.getVisible(widget) != 0;
             if (o and !up) {
+                ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here
                 if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)
                 else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach
             } else if (!o and up) {
@@ -4621,6 +4688,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     // arm, which runs before this and so has no node id yet. This is
     // where they learn it.
     if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);
+    // The only op the core hands every node's id to, so it is where a
+    // node id becomes resolvable to a widget (Popover's `anchor` prop
+    // is the one reader).
+    ndTagNodeId(widget, node_id);
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Window")) {
         if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);

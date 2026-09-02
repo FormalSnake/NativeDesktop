@@ -1,7 +1,7 @@
 import { DiscreteEventPriority, ContinuousEventPriority, DefaultEventPriority } from "react-reconciler/constants";
 import { nextNodeId } from "./ids.ts";
 import { Batch, NodeRegistry, type Handler } from "./ops.ts";
-import { intrinsicToName, widgetEvents, handlerPropNames, widgetPlatforms } from "./generated/schema-meta.ts";
+import { intrinsicToName, widgetEvents, handlerPropNames, widgetPlatforms, widgetRefProps } from "./generated/schema-meta.ts";
 import type { WidgetType } from "./generated/intrinsics.ts";
 import { validateStyle } from "./style-validate.ts";
 import { validateCssClasses } from "./css-classes-validate.ts";
@@ -83,12 +83,71 @@ function emitCreateIfNew(inst: Instance): void {
   const text = textOf(props.children);
   if (inst.type === "label" && text !== undefined) props.text = text;
   delete props.children;
+  resolveRefProps(inst, props);
   for (const h of handlerPropNames[inst.type] ?? []) delete props[h];
   activeBatch.push({ op: "create", id: inst.id, widget: intrinsicToName[inst.type] as "Window" | "Box" | "Label" | "Button", props });
   registry.register({ id: inst.id, type: inst.type, props: inst.props, handlers: collectHandlers(inst.type, inst.props) });
   for (const child of inst.children) {
     emitCreateIfNew(child);
     activeBatch.push({ op: "append", parent: inst.id, child: child.id });
+  }
+}
+
+/// The wire id last sent for each of an instance's ref props. A React ref is
+/// one object mutated in place, so oldProps and newProps hold the SAME ref and
+/// a diff over resolved values reports no change on the very render where the
+/// ref starts pointing at a node.
+const lastRefIds = new WeakMap<Instance, Record<string, number>>();
+
+function refId(v: unknown): number | undefined {
+  const id = (v as { current?: { id?: number } | null } | null | undefined)?.current?.id;
+  return typeof id === "number" ? id : undefined;
+}
+
+/// Create path: swaps a ref-valued JSX prop (`anchorRef={buttonRef}`) for the
+/// wire prop carrying the target's node id (`anchor: 7`), in the shallow copy
+/// the caller is about to send.
+///
+/// React attaches host refs AFTER the mutation phase that emits a mount's
+/// create op, so a ref to a node mounting in the same commit still reads null
+/// here and the id lands on the next render that updates this widget. Both
+/// backends resolve the id lazily for that reason.
+function resolveRefProps(inst: Instance, props: Record<string, unknown>): void {
+  const refs = widgetRefProps[inst.type];
+  if (!refs) return;
+  const sent: Record<string, number> = {};
+  for (const [refName, wireName] of Object.entries(refs)) {
+    if (!(refName in props)) continue;
+    const id = refId(props[refName]);
+    delete props[refName];
+    if (id === undefined) continue;
+    props[wireName] = id;
+    sent[wireName] = id;
+  }
+  lastRefIds.set(inst, sent);
+}
+
+/// Update path: diffs each ref prop against the id last sent for it, since the
+/// ref object itself says nothing about whether the node behind it changed.
+function diffRefProps(inst: Instance, props: Record<string, unknown>, changed: Record<string, unknown>): void {
+  const refs = widgetRefProps[inst.type];
+  if (!refs) return;
+  let sent = lastRefIds.get(inst);
+  if (!sent) {
+    sent = {};
+    lastRefIds.set(inst, sent);
+  }
+  for (const [refName, wireName] of Object.entries(refs)) {
+    if (wireName in props) continue; // an explicit id wins, and the generic diff owns it
+    const id = refName in props ? refId(props[refName]) : undefined;
+    if (id === sent[wireName]) continue;
+    if (id === undefined) {
+      changed[wireName] = null;
+      delete sent[wireName];
+      continue;
+    }
+    changed[wireName] = id;
+    sent[wireName] = id;
   }
 }
 
@@ -232,7 +291,11 @@ export const hostConfig = {
       if (t !== undefined && t !== old) activeBatch.push({ op: "setText", id: inst.id, text: t });
     }
     const skip = handlerPropNames[type] ?? [];
-    const wire = (k: string) => k !== "children" && !skip.includes(k) && !(type === "label" && k === "text");
+    const refs = widgetRefProps[type];
+    // A ref prop never crosses the wire under its JSX name; diffRefProps below
+    // owns the wire prop it resolves to.
+    const wire = (k: string) => k !== "children" && !skip.includes(k)
+      && !(type === "label" && k === "text") && !(refs !== undefined && k in refs);
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(newProps)) {
       if (!wire(k)) continue; // "text" on a label is routed through setText above
@@ -249,6 +312,7 @@ export const hostConfig = {
       if (k in newProps || !wire(k)) continue;
       changed[k] = REMOVAL_VALUE[k] ?? null;
     }
+    diffRefProps(inst, newProps, changed);
     if (Object.keys(changed).length) activeBatch.push({ op: "update", id: inst.id, props: changed });
     inst.props = newProps;
     // Re-register handlers so events route to the latest closures.

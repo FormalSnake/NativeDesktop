@@ -1214,6 +1214,7 @@ Automation role: `popover`. Text source: none. Children: single.
 
 | Prop | Type | Default | Applied |
 |---|---|---|---|
+| `anchor` | int | 0 | createAndUpdate |
 | `open` | bool | false | createAndUpdate |
 | `position` | top \| bottom \| left \| right | top | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |

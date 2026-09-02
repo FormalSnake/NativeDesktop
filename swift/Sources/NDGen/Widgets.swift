@@ -1945,7 +1945,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "Banner": ["title": "", "buttonLabel": "", "revealed": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "MenuButton": ["label": "", "iconName": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SplitButton": ["label": "", "iconName": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "Popover": ["open": false, "position": "top", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Popover": ["anchor": 0, "open": false, "position": "top", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Expander": ["label": "", "expanded": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "StatusPage": ["iconName": "", "title": "", "description": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "ToastOverlay": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2195,6 +2195,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let l = propStr(props, "label"), let combo = view as? NSComboButton { combo.title = l }
         if let ic = propStr(props, "iconName"), let combo = view as? NSComboButton { ndApplyComboIcon(combo, ic) }
     } else if kind == "Popover" {
+        if let a = propInt(props, "anchor") { ndPopoverApplyAnchor(view, UInt32(max(0, a))) }
         if let o = propBool(props, "open") { ndPopoverApplyOpen(view, o) }
         if let pos = propStr(props, "position") { ndPopoverApplyPosition(view, pos) }
     } else if kind == "Expander" {
@@ -2334,6 +2335,10 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     // installed by the props arm, which runs before this and so has
     // no node id yet. This is where they learn it.
     ndDragDropConnect(view, nodeID: nodeID)
+    // The only op the core hands every node's id to, so it is where a
+    // node id becomes resolvable to a view (Popover's `anchor` prop is
+    // the one reader; NDShell/Popovers.swift).
+    ndRegisterNode(view, nodeID)
     if kind == "Window" {
         ndWindowDialogsConnect(view, nodeID: nodeID)
         ndWindowTabsConnect(view, nodeID: nodeID)
