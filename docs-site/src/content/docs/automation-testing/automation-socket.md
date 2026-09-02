@@ -239,6 +239,7 @@ Three behaviors that surprise people:
 | `-32001` | not actionable | `{ref, reason: "unknown" \| "invisible" \| "unmapped" \| "offscreen"}` |
 | `-32002` | `waitFor` timed out | `{timeoutMs}` |
 | `-32003` | input synthesis unsupported on this backend | `{ref}`, raised by pointer/drag/keys/doubleClick/rightClick/hover on GTK |
+| `-32004` | window closed | `{window}`; `getTree`/`screenshot` only, when `params.window` named a real window ref that has since closed, distinguishing a benign concurrent-close race from `invalidParams`. Every other window-scoped method resolves a closed window into its own no-match result instead of this error |
 | `-32601` | method not found | none |
 | `-32602` | invalid params | `{ref}` where applicable |
 | `-32603` | internal error | none, or a message describing the failure |
