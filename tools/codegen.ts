@@ -36,6 +36,11 @@ interface Prop {
    *  schema's top-level `types` array (ports rpc.json's `types` mechanism).
    *  Omitted = the legacy SourceList row shape (back-compat). */
   itemShape?: string;
+  /** For an `int` prop carrying another node's wire id: the JSX prop name that
+   *  takes a React ref to that node instead of the raw number. The reconciler
+   *  reads `.current.id` off the ref and wires it under THIS prop's name, so
+   *  an app never has to know node ids exist. */
+  refProp?: string;
 }
 interface Event { name: string; ndpName?: string; payload?: PayloadKind }
 interface AttachedProp { name: string; type: PropType; values?: string[]; default?: string | number | boolean }
@@ -241,7 +246,7 @@ function genZigCssClassSpec(s: Schema): string {
 // ---- artifact (a): TS/JSX intrinsics ----
 function genIntrinsics(s: Schema): string {
   let out = HEADER_TS;
-  out += 'import type { ReactNode, Ref } from "react";\n\n';
+  out += 'import type { ReactNode, Ref, RefObject } from "react";\n\n';
   out += "export { jsx, jsxs, Fragment } from \"react/jsx-runtime\";\n\n";
   out += "export type WidgetName = " + s.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n";
   out += "export type WidgetType = " + s.widgets.map((w) => JSON.stringify(w.intrinsic)).join(" | ") + ";\n\n";
@@ -258,7 +263,10 @@ function genIntrinsics(s: Schema): string {
   const attached = collectAttachedProps(s);
   for (const w of s.widgets) {
     const fields: string[] = [];
-    for (const p of w.props) fields.push(`${p.name}?: ${tsTypeOf(p)}`);
+    for (const p of w.props) {
+      fields.push(`${p.name}?: ${tsTypeOf(p)}`);
+      if (p.refProp) fields.push(`${p.refProp}?: RefObject<NdNodeRef | null>`);
+    }
     for (const e of w.events) fields.push(`${e.ndpName ?? e.name}?: ${tsHandlerType(e)}`);
     for (const ap of attached) fields.push(`${ap.name}?: ${tsTypeOf(ap)}`);
     fields.push("style?: StyleProp");
@@ -298,6 +306,18 @@ function genSchemaMeta(s: Schema): string {
     const evs = w.events.map((e) =>
       `{ name: ${JSON.stringify(e.name)}, handler: ${JSON.stringify(e.ndpName ?? e.name)}, payload: ${JSON.stringify(e.payload ?? "none")} }`);
     out += `  ${JSON.stringify(w.intrinsic)}: [${evs.join(", ")}],\n`;
+  }
+  out += "};\n";
+
+  out += "\n/** JSX ref-prop name -> the wire prop that carries the target's node id\n";
+  out += " *  (schema `refProp`). The reconciler reads `.current.id` off the ref and\n";
+  out += " *  sends the number, so an app never handles a node id itself; only the\n";
+  out += " *  widgets listed here have one. */\n";
+  out += "export const widgetRefProps: Record<string, Record<string, string>> = {\n";
+  for (const w of s.widgets) {
+    const refs = w.props.filter((p) => p.refProp);
+    if (refs.length === 0) continue;
+    out += `  ${JSON.stringify(w.intrinsic)}: { ${refs.map((p) => `${JSON.stringify(p.refProp!)}: ${JSON.stringify(p.name)}`).join(", ")} },\n`;
   }
   out += "};\n";
 
@@ -1356,9 +1376,70 @@ pub fn menuSemanticClick(node_id: u32) bool {
 // ---- M15 widget-expansion helpers (Popover / LevelBar / ColorPicker /
 // DatePicker / Video), injected like ZIG_HELPERS/ZIG_MENU ----
 const ZIG_EXTRA = `const ND_POPOVER_PENDING_OPEN = "nd-popover-pending-open";
+const ND_POPOVER_ANCHOR_ID = "nd-popover-anchor-id";
+/// Set on every widget by connectEvents, the one op the core hands a node id
+/// to. Nothing else needs it; a Popover's \`anchor\` prop names another node by
+/// wire id, and the apply arm holds a widget pointer and a props object, never
+/// the core's node table.
+const ND_NODE_ID = "nd-node-id";
+
+pub fn ndTagNodeId(widget: *gtk.Widget, node_id: u32) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return; // menu nodes hand back GMenu objects
+    gobject.Object.setData(asObject(widget), ND_NODE_ID, @ptrFromInt(node_id));
+}
+
+fn ndNodeIdOf(widget: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(widget), ND_NODE_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Depth-first search for the widget carrying \`node_id\`, rooted at \`from\`.
+/// A registry keyed by node id would need a weak ref per node to survive the
+/// widget being destroyed; the search costs nothing until an app names an
+/// anchor, and then only once per anchoring.
+fn ndFindNode(from: *gtk.Widget, node_id: u32) ?*gtk.Widget {
+    if (ndNodeIdOf(from) == node_id) return from;
+    var child = gtk.Widget.getFirstChild(from);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (ndFindNode(c, node_id)) |hit| return hit;
+    }
+    return null;
+}
+
+fn ndPopoverAnchorId(child: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(child), ND_POPOVER_ANCHOR_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Re-parents an anchored popover onto the widget its \`anchor\` prop names, if
+/// that widget is reachable yet. GtkPopover needs a parent to pop up at all,
+/// so the tree parent stays the fallback and the search runs from the window
+/// the popover already sits in: an anchor created later in the same batch is
+/// found on the next call rather than never.
+fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
+    const want = ndPopoverAnchorId(child);
+    if (want == 0) return;
+    const parent = gtk.Widget.getParent(child) orelse return;
+    const root = gtk.Widget.getAncestor(parent, gtk.Window.getGObjectType()) orelse parent;
+    const anchor = ndFindNode(root, want) orelse return;
+    if (anchor == parent) return;
+    gtk.Widget.unparent(child);
+    gtk.Widget.setParent(child, anchor);
+}
+
+/// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
+/// schema default, so dropping \`anchorRef\` falls back to the tree parent).
+fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
+    if (ndPopoverAnchorId(child) == node_id) return;
+    gobject.Object.setData(asObject(child), ND_POPOVER_ANCHOR_ID, if (node_id == 0) null else @ptrFromInt(node_id));
+    const up = gtk.Widget.getVisible(child) != 0;
+    if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
+    ndPopoverEnsureAnchor(child);
+    if (up) gtk.Popover.popup(@ptrCast(@alignCast(child)));
+}
 
 /// Cross-cutting structural rule: a GtkPopover child attaches to its tree
-/// parent via gtk_widget_set_parent (never box-packed/slotted — GtkPopover is
+/// parent via gtk_widget_set_parent (never box-packed/slotted, GtkPopover is
 /// not a layout child). Called from the appendChild/insertBefore guards;
 /// honors a create-time open=true that had to wait for a parent to anchor on.
 fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
@@ -1368,6 +1449,7 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
         gtk.Widget.unparent(child);
     }
     gtk.Widget.setParent(child, parent);
+    ndPopoverEnsureAnchor(child);
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) {
         gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
         gtk.Popover.popup(@ptrCast(@alignCast(child)));
@@ -2837,8 +2919,10 @@ function genZig(s: Schema): string {
   out += "    std.debug.print(\"ND_WARN unknown widget kind={s}\\n\", .{kind});\n";
   out += "    return error.UnknownWidget;\n";
   out += "}\n\n";
+  out += genZigPropResets(s);
   out += "/// The GTK update dispatcher for createAndUpdate props.\n";
   out += "pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {\n";
+  out += "    ndApplyDroppedDefaults(kind, props);\n";
   out += "    ndApplyTooltip(widget, props, dupeZ);\n";
   out += "    ndApplyEnabled(widget, props);\n";
   out += "    nddnd_gtk.applyProps(widget, props, dupeZ);\n";
@@ -3010,6 +3094,126 @@ function updatableProps(w: Widget): Prop[] {
   return w.props.filter((p) => UNIVERSAL_PROP_OWNERS[p.name] === undefined
     || UNIVERSAL_PROP_OWNERS[p.name] === w.name)
     .filter((p) => p.appliesTo === "createAndUpdate");
+}
+
+// ---- dropped-prop resets ------------------------------------------------
+//
+// A prop that disappears from an app's JSX reaches the host as JSON null
+// (host-config.ts's removal marker; NDP's `update` op carries a props object
+// and nothing else, so there is no removal tag). Every applier arm on both
+// backends type-checks the value before touching the widget, so a null on its
+// own is a no-op and the widget keeps whatever it was last given. The reset
+// table below turns the null back into the value the widget would have had if
+// the prop had never been set: the schema `default` where a prop declares one,
+// otherwise its type's zero value (empty string, 0, false, empty list).
+//
+// The substitution runs once at the top of the apply dispatcher, so the
+// existing per-widget arms need no second null arm each.
+
+/** EVERY createAndUpdate prop, including the ones a universal arm owns
+ *  (`enabled`, `tooltip`, the drag/drop trio): those run above the kind
+ *  dispatch and read the same props object. */
+function resettableProps(w: Widget): Prop[] {
+  return w.props.filter((p) => p.appliesTo === "createAndUpdate");
+}
+
+function floatLit(v: unknown): string {
+  const n = Number(v ?? 0);
+  return Number.isInteger(n) ? `${n}.0` : `${n}`;
+}
+
+function zigResetValue(p: Prop): string {
+  switch (p.type) {
+    case "int": return `.{ .integer = ${Number(p.default ?? 0)} }`;
+    case "float": return `.{ .float = ${floatLit(p.default)} }`;
+    case "bool": return `.{ .bool = ${p.default === true} }`;
+    case "stringList":
+    case "intList":
+    case "objectList": return ".{ .array = nd_empty_json_array }";
+    default: return `.{ .string = ${JSON.stringify(String(p.default ?? ""))} }`;
+  }
+}
+
+function swiftResetValue(p: Prop): string {
+  switch (p.type) {
+    case "int": return String(Number(p.default ?? 0));
+    case "float": return floatLit(p.default);
+    case "bool": return String(p.default === true);
+    case "stringList":
+    case "intList":
+    case "objectList": return "[Any]()";
+    default: return JSON.stringify(String(p.default ?? ""));
+  }
+}
+
+function genZigPropResets(s: Schema): string {
+  let out = "const NdPropReset = struct { key: []const u8, value: std.json.Value };\n";
+  out += "const nd_empty_json_array = std.json.Array{ .items = &[_]std.json.Value{}, .capacity = 0, .allocator = std.heap.page_allocator };\n\n";
+  const kinds: string[] = [];
+  for (const w of s.widgets) {
+    const props = resettableProps(w);
+    if (props.length === 0) continue;
+    kinds.push(w.name);
+    out += `const nd_resets_${w.name} = [_]NdPropReset{\n`;
+    for (const p of props) out += `    .{ .key = ${JSON.stringify(p.name)}, .value = ${zigResetValue(p)} },\n`;
+    out += "};\n";
+  }
+  out += "\nfn ndPropResets(kind: []const u8) []const NdPropReset {\n";
+  for (const k of kinds) out += `    if (std.mem.eql(u8, kind, ${JSON.stringify(k)})) return &nd_resets_${k};\n`;
+  out += "    return &.{};\n";
+  out += "}\n\n";
+  out += "/// Substitutes the schema default for every prop the app dropped, in\n";
+  out += "/// place in the op's own props object. The apply arms below read the\n";
+  out += "/// substituted value, so a prop leaving the JSX resets the widget\n";
+  out += "/// instead of leaving it on its last value. A null under a key with no\n";
+  out += "/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors\n";
+  out += "/// already read it as absent.\n";
+  out += "fn ndApplyDroppedDefaults(kind: []const u8, props: ?std.json.Value) void {\n";
+  out += "    const v = props orelse return;\n";
+  out += "    if (v != .object) return;\n";
+  out += "    var dropped = false;\n";
+  out += "    for (v.object.values()) |val| {\n";
+  out += "        if (val == .null) {\n";
+  out += "            dropped = true;\n";
+  out += "            break;\n";
+  out += "        }\n";
+  out += "    }\n";
+  out += "    if (!dropped) return;\n";
+  out += "    for (ndPropResets(kind)) |reset| {\n";
+  out += "        const slot = v.object.getPtr(reset.key) orelse continue;\n";
+  out += "        if (slot.* != .null) continue;\n";
+  out += "        slot.* = reset.value;\n";
+  out += "    }\n";
+  out += "}\n\n";
+  return out;
+}
+
+function genSwiftPropResets(s: Schema): string {
+  let out = "/// The value each createAndUpdate prop resets to when the app drops it:\n";
+  out += "/// the schema default, or the type's zero value for a prop that declares\n";
+  out += "/// none (empty string, 0, false, empty list).\n";
+  out += "@MainActor let ndPropResets: [String: [String: Any]] = [\n";
+  for (const w of s.widgets) {
+    const props = resettableProps(w);
+    if (props.length === 0) continue;
+    const entries = props.map((p) => `${JSON.stringify(p.name)}: ${swiftResetValue(p)}`).join(", ");
+    out += `    ${JSON.stringify(w.name)}: [${entries}],\n`;
+  }
+  out += "]\n\n";
+  out += "/// A prop the app dropped arrives as JSON null (host-config.ts's removal\n";
+  out += "/// marker); every arm below type-checks before it applies, so without\n";
+  out += "/// this the widget would keep its last value. A null under a key with no\n";
+  out += "/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors\n";
+  out += "/// already read NSNull as absent.\n";
+  out += "@MainActor func ndApplyDroppedDefaults(_ kind: String, _ props: [String: Any]) -> [String: Any] {\n";
+  out += "    guard props.contains(where: { $0.value is NSNull }), let resets = ndPropResets[kind] else { return props }\n";
+  out += "    var out = props\n";
+  out += "    for (key, value) in props where value is NSNull {\n";
+  out += "        if let reset = resets[key] { out[key] = reset }\n";
+  out += "    }\n";
+  out += "    return out\n";
+  out += "}\n\n";
+  return out;
 }
 
 function genZigCreateBody(w: Widget): string {
@@ -3582,6 +3786,8 @@ function genZigCreateBody(w: Widget): string {
     out += `        gtk.Popover.setPosition(pop, ndPositionFromString(propStr(props, "position") orelse ${zigDefaultStr(w, "position")}));\n`;
     out += "        // Anchoring happens when the tree parent appends this node (see the\n";
     out += "        // ndPopoverAttach structural guard); a create-time open waits there.\n";
+    out += `        const anchor_id: u32 = @intCast(@max(0, propInt(props, "anchor") orelse ${dflt(w, "anchor")}));\n`;
+    out += "        if (anchor_id != 0) gobject.Object.setData(asObject(pop), ND_POPOVER_ANCHOR_ID, @ptrFromInt(anchor_id));\n";
     out += `        if (propBool(props, "open") orelse ${dflt(w, "open")}) gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));\n`;
     out += "        return pop.as(gtk.Widget);\n";
   } else if (w.name === "Expander") {
@@ -4166,6 +4372,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            const pop: *gtk.Popover = @ptrCast(@alignCast(widget));\n";
       out += "            const up = gtk.Widget.getVisible(widget) != 0;\n";
       out += "            if (o and !up) {\n";
+      out += "                ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here\n";
       out += "                if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)\n";
       out += "                else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach\n";
       out += "            } else if (!o and up) {\n";
@@ -4174,6 +4381,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "                unblockEcho(asObject(widget));\n";
       out += "            }\n";
       out += "        }\n";
+    } else if (w.name === "Popover" && p.name === "anchor") {
+      out += "        if (propInt(props, \"anchor\")) |a| ndPopoverApplyAnchor(widget, @intCast(@max(0, a)));\n";
     } else if (w.name === "Popover" && p.name === "position") {
       out += "        if (propStr(props, \"position\")) |pos| gtk.Popover.setPosition(@ptrCast(@alignCast(widget)), ndPositionFromString(pos));\n";
     } else if (w.name === "Expander" && p.name === "label") {
@@ -4687,6 +4896,10 @@ function genZigEvents(s: Schema): string {
   out += "    // arm, which runs before this and so has no node id yet. This is\n";
   out += "    // where they learn it.\n";
   out += "    if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);\n";
+  out += "    // The only op the core hands every node's id to, so it is where a\n";
+  out += "    // node id becomes resolvable to a widget (Popover's `anchor` prop\n";
+  out += "    // is the one reader).\n";
+  out += "    ndTagNodeId(widget, node_id);\n";
   const withEvents = s.widgets.filter((w) => ownEvents(w).length > 0);
   if (withEvents.length === 0) {
     out += "    _ = widget;\n    _ = kind;\n    _ = node_id;\n";
@@ -6649,6 +6862,10 @@ final class NDSegmentedControlView: NDHostedLeaf {
     }
 
     override var ndA11yValueJSON: String { "\\(selectedIndex)" }
+
+    // The Picker's segment titles live in the SwiftUI body, so there is no
+    // NSSegmentedControl for the probe to read them off.
+    override var ndA11yOptions: [String]? { options }
 }
 
 func ndSegmentedControlConnect(_ view: NSView, nodeID: UInt32) {
@@ -7003,9 +7220,13 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        group.ndDescription = propStr(props, "description") ?? ""\n`;
     out += "        return group\n";
   } else if (w.name === "Row") {
-    out += "        return makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)\n";
+    out += "        let row = makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)\n";
+    out += "        ndHostedLeafSetA11yLabel(row, propStr(props, \"title\"))\n";
+    out += "        return row\n";
   } else if (w.name === "SwitchRow") {
-    out += "        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
+    out += "        let row = makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
+    out += "        ndHostedLeafSetA11yLabel(row, propStr(props, \"title\"))\n";
+    out += "        return row\n";
   } else if (w.name === "Clamp") {
     out += "        return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)\n";
   } else if (w.name === "Overlay") {
@@ -7445,8 +7666,9 @@ const SWIFT_SUPPRESSED = new Set([
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
-  let out = "@MainActor func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {\n";
-  out += "    let props = parseProps(propsJson)\n";
+  let out = genSwiftPropResets(s);
+  out += "@MainActor func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {\n";
+  out += "    let props = ndApplyDroppedDefaults(kind, parseProps(propsJson))\n";
   out += "    // `tooltip`/`enabled` have no universal NSView peer — ndApplyTooltip/\n";
   out += "    // ndApplyEnabled route each to NSView, NSControl or a hosted leaf's\n";
   out += "    // SwiftUI state as appropriate (below).\n";
@@ -7492,10 +7714,12 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += `        // "${p.name}" handled by ndSettingsGroupApply above (merged).\n`;
     } else if (w.name === "Row" && p.name === "title") {
       out += "        ndRowApply(view, props)  // title/subtitle/iconData merged\n";
+      out += "        ndHostedLeafSetA11yLabel(view, propStr(props, \"title\"))\n";
     } else if (w.name === "Row") {
       out += `        // "${p.name}" handled by ndRowApply above (merged).\n`;
     } else if (w.name === "SwitchRow" && p.name === "title") {
       out += "        ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)\n";
+      out += "        ndHostedLeafSetA11yLabel(view, propStr(props, \"title\"))\n";
     } else if (w.name === "SwitchRow") {
       out += `        // "${p.name}" handled by ndSwitchRowApply above (merged).\n`;
     } else if (w.name === "Chart" && p.name === "type") {
@@ -7765,6 +7989,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let ic = propStr(props, "iconName"), let combo = view as? NSComboButton { ndApplyComboIcon(combo, ic) }\n';
     } else if (w.name === "Popover" && p.name === "open") {
       out += '        if let o = propBool(props, "open") { ndPopoverApplyOpen(view, o) }\n';
+    } else if (w.name === "Popover" && p.name === "anchor") {
+      out += '        if let a = propInt(props, "anchor") { ndPopoverApplyAnchor(view, UInt32(max(0, a))) }\n';
     } else if (w.name === "Popover" && p.name === "position") {
       out += '        if let pos = propStr(props, "position") { ndPopoverApplyPosition(view, pos) }\n';
     } else if (w.name === "Expander" && p.name === "label") {
@@ -8056,6 +8282,10 @@ function genSwiftEvents(s: Schema): string {
   out += "    // installed by the props arm, which runs before this and so has\n";
   out += "    // no node id yet. This is where they learn it.\n";
   out += "    ndDragDropConnect(view, nodeID: nodeID)\n";
+  out += "    // The only op the core hands every node's id to, so it is where a\n";
+  out += "    // node id becomes resolvable to a view (Popover's `anchor` prop is\n";
+  out += "    // the one reader; NDShell/Popovers.swift).\n";
+  out += "    ndRegisterNode(view, nodeID)\n";
   const withEvents = s.widgets.filter((w) => ownEvents(w).length > 0);
   if (withEvents.length === 0) {
     out += "    _ = view; _ = kind; _ = nodeID\n";

@@ -1294,6 +1294,7 @@
       "intrinsic": "popover",
       "container": { "childModel": "single" },
       "props": [
+        { "name": "anchor", "type": "int", "default": 0, "appliesTo": "createAndUpdate", "refProp": "anchorRef" },
         { "name": "open", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "position", "type": "enum", "values": ["top", "bottom", "left", "right"], "default": "top", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },

@@ -232,6 +232,14 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "codeeditor": [{ name: "changed", handler: "onChange", payload: "text" }, { name: "cursorMoved", handler: "onCursorMoved", payload: "data" }, { name: "diagnosticClicked", handler: "onDiagnosticClicked", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
 };
 
+/** JSX ref-prop name -> the wire prop that carries the target's node id
+ *  (schema `refProp`). The reconciler reads `.current.id` off the ref and
+ *  sends the number, so an app never handles a node id itself; only the
+ *  widgets listed here have one. */
+export const widgetRefProps: Record<string, Record<string, string>> = {
+  "popover": { "anchorRef": "anchor" },
+};
+
 export const handlerPropNames: Record<string, string[]> = {
   "window": ["onAlertResult", "onOpenFileResult", "onSaveFileResult", "onNewTabRequested", "onClosed", "onFocused", "onSizeChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "box": ["onHoverChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],

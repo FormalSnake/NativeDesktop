@@ -53,8 +53,56 @@ test("a prop the new render dropped reaches the host as null", () => {
   ]);
 });
 
+// `style`/`cssClasses` are applied by a set-replace pass over the whole value,
+// so the empty value is what resets them; a null falls through the object/array
+// type guards on both backends and leaves the widget styled.
+test("a dropped style or cssClasses is sent as the empty value, not null", () => {
+  expect(updateOps("box", { style: { padding: 12 } }, {})).toEqual([
+    { op: "update", id: expect.any(Number), props: { style: {} } },
+  ]);
+  expect(updateOps("box", { cssClasses: ["card"] }, {})).toEqual([
+    { op: "update", id: expect.any(Number), props: { cssClasses: [] } },
+  ]);
+});
+
 test("dropped children and handler props are never sent as removals", () => {
   expect(updateOps("button", { label: "Go", onClick: () => {}, children: "Go" }, { label: "Go" })).toEqual([]);
+});
+
+// `anchorRef={ref}` is the app-facing form of the `anchor` prop, which crosses
+// the wire as the target's node id. React attaches host refs after the commit
+// that mounts them, so the id lands on the first render that updates the
+// widget, not on the mount.
+test("a ref prop reaches the host as the target's node id", () => {
+  const batch = new Batch();
+  bindCommitTargets(batch, new NodeRegistry());
+  const button = hostConfig.createInstance("button", {}) as Instance;
+  hostConfig.appendChildToContainer({ rootId: null } as Container, button);
+  const trigger: { current: unknown } = { current: null };
+  const mounted = { anchorRef: trigger, open: false };
+  const popover = hostConfig.createInstance("popover", mounted) as Instance;
+  hostConfig.appendChildToContainer({ rootId: null } as Container, popover);
+  expect(batch.drain()).toEqual([
+    { op: "create", id: button.id, widget: "Button", props: {} },
+    { op: "create", id: popover.id, widget: "Popover", props: { open: false } },
+  ]);
+
+  // The ref object is the same one across renders, so only the id it now
+  // resolves to can say whether anything changed.
+  trigger.current = button;
+  const opened = { anchorRef: trigger, open: true };
+  hostConfig.commitUpdate(popover, "popover", mounted, opened);
+  expect(batch.drain()).toEqual([
+    { op: "update", id: popover.id, props: { open: true, anchor: button.id } },
+  ]);
+
+  hostConfig.commitUpdate(popover, "popover", opened, opened);
+  expect(batch.drain()).toEqual([]);
+
+  hostConfig.commitUpdate(popover, "popover", opened, { open: true });
+  expect(batch.drain()).toEqual([
+    { op: "update", id: popover.id, props: { anchor: null } },
+  ]);
 });
 
 test("a declared handler prop registers under the schema's event name", () => {

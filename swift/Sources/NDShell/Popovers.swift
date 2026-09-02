@@ -2,9 +2,10 @@ import AppKit
 
 /// Popover: the node's tracked handle is a host-only NSView (the
 /// NDMenuNodeView idiom; it never enters the hierarchy); the real NSPopover
-/// is lazy, `.transient`, and anchors on the node's TREE PARENT via the
-/// cross-cutting structural guard (`ndPopoverStructuralAttach`), exactly
-/// mirroring the GTK side's gtk_widget_set_parent guard. `open` is a
+/// is lazy, `.transient`, and presents from the view the `anchor` prop names,
+/// falling back to the node's TREE PARENT (recorded by the cross-cutting
+/// structural guard `ndPopoverStructuralAttach`, mirroring the GTK side's
+/// gtk_widget_set_parent guard). `open` is a
 /// controlled bool: click-outside/Esc dismissal syncs back through
 /// `popoverDidClose` -> `closed`; programmatic closes are flagged so they
 /// don't echo (an NSPopover close is animated/async, which outlives a
@@ -13,9 +14,21 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     var nodeID: UInt32 = 0
     var position = "top"
     let contentContainer = FlippedView()
-    private(set) weak var anchor: NSView?
+    private weak var treeParent: NSView?
+    /// `anchor` prop: the wire id of the node to present from, 0 for none.
+    /// Resolved on every present rather than when the prop lands, because the
+    /// anchor may mount after the popover in the same commit.
+    private var anchorNodeID: UInt32 = 0
     private var pendingOpen = false
     private var programmaticClose = false
+
+    /// The view the popover presents from: the `anchor` node when the app named
+    /// one, else the tree parent (the pre-anchor behaviour, and the fallback
+    /// while an anchor ref is still null).
+    var anchor: NSView? {
+        if anchorNodeID != 0, let named = ndNodeView(anchorNodeID) { return named }
+        return treeParent
+    }
 
     private lazy var popover: NSPopover = {
         let controller = NSViewController()
@@ -27,9 +40,9 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         return p
     }()
 
-    /// Cross-cutting append guard: the tree parent is the anchor.
+    /// Cross-cutting append guard: the tree parent is the default anchor.
     func attachToParent(_ parent: NSView) {
-        anchor = parent
+        treeParent = parent
         if pendingOpen {
             pendingOpen = false
             applyOpen(true)
@@ -41,7 +54,18 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             programmaticClose = true
             popover.close()
         }
-        if anchor === parent { anchor = nil }
+        if treeParent === parent { treeParent = nil }
+    }
+
+    func applyAnchor(_ nodeID: UInt32) {
+        guard nodeID != anchorNodeID else { return }
+        anchorNodeID = nodeID
+        guard popover.isShown else { return }
+        // Already up against the old anchor: NSPopover cannot be moved, so
+        // close it and present again from the new one.
+        programmaticClose = true
+        popover.close()
+        applyOpen(true)
     }
 
     func applyOpen(_ open: Bool) {
@@ -134,6 +158,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
 func makePopover(_ props: [String: Any]) -> NSView {
     let handle = NDPopoverHandleView()
     handle.position = propStr(props, "position") ?? "top"
+    handle.applyAnchor(UInt32(max(0, propInt(props, "anchor") ?? 0)))
     if propBool(props, "open") ?? false {
         handle.applyOpen(true) // no anchor yet: recorded as pendingOpen
     }
@@ -148,6 +173,11 @@ func ndPopoverApplyOpen(_ view: NSView, _ open: Bool) {
 /// Generated ndApplyProps Popover.position arm.
 func ndPopoverApplyPosition(_ view: NSView, _ position: String) {
     (view as? NDPopoverHandleView)?.position = position
+}
+
+/// Generated ndApplyProps Popover.anchor arm.
+func ndPopoverApplyAnchor(_ view: NSView, _ nodeID: UInt32) {
+    (view as? NDPopoverHandleView)?.applyAnchor(nodeID)
 }
 
 /// Generated ndConnectEvents Popover arm.
@@ -178,4 +208,24 @@ func ndPopoverSetChild(_ parent: NSView, _ child: NSView) {
 
 func ndPopoverClearChild(_ parent: NSView, _ child: NSView) {
     (parent as? NDPopoverHandleView)?.clearChild(child)
+}
+
+// MARK: - node id -> view
+
+/// Every node's view, keyed by its wire id, so a prop carrying another node's
+/// id can be resolved to the thing it names. Weak values: an unmounted view's
+/// entry clears itself, which is the whole reason this is an NSMapTable and
+/// not a Dictionary. Filled by the generated ndConnectEvents, the one op the
+/// core hands every node's id to.
+/// nonisolated(unsafe): both sides run on the UI thread (the core marshals
+/// every commit there), but the generated create/connect dispatchers are
+/// nonisolated because they are reached from the C ABI.
+nonisolated(unsafe) private let ndNodeViews = NSMapTable<NSNumber, NSView>.strongToWeakObjects()
+
+func ndRegisterNode(_ view: NSView, _ nodeID: UInt32) {
+    ndNodeViews.setObject(view, forKey: NSNumber(value: nodeID))
+}
+
+func ndNodeView(_ nodeID: UInt32) -> NSView? {
+    ndNodeViews.object(forKey: NSNumber(value: nodeID))
 }

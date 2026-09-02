@@ -59,11 +59,42 @@ const [open, setOpen] = useState(false);
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
 | `open` | bool | createAndUpdate | Controlled. Set it from `onClosed` when the user dismisses the popover by clicking outside or pressing Escape. |
+| `anchorRef` | ref to any intrinsic | createAndUpdate | The widget to present from. Without it the popover anchors on its tree parent. |
 | `position` | `top` \| `bottom` \| `left` \| `right` | createAndUpdate | Default `top`. |
 
-`closed` → `onClosed` fires with no payload. On GTK a `<popover>` attaches to whatever widget is its
-tree parent (`gtk_widget_set_parent`), so put it in a `<box>` alongside the button that opens it, as
-above.
+`closed` → `onClosed` fires with no payload.
+
+### Anchoring
+
+By default a popover presents from its tree parent (`gtk_widget_set_parent` on GTK,
+`NSPopover.show(relativeTo:of:)` against the parent view on macOS), which is why the example above
+puts it in the same `<box>` as its button. `anchorRef` names the trigger instead, and then where the
+popover sits in the tree decides nothing:
+
+```tsx
+const trigger = useRef<NdNodeRef<"button">>(null);
+const [open, setOpen] = useState(false);
+
+<button ref={trigger} label="Open" onClick={() => setOpen(true)} />
+{/* anywhere in the tree, including a createPortal pool */}
+<popover anchorRef={trigger} open={open} position="bottom" onClosed={() => setOpen(false)}>
+  <label text="Popover content" />
+</popover>;
+```
+
+The ref is a plain host-element ref (`Ref<NdNodeRef>`), the same handle `sendCommand` addresses, and
+it may point at any intrinsic. Two things follow from React's commit order:
+
+- React attaches host refs after the commit that mounts them, so a ref to a widget mounting in the
+  same render still reads `null` and the anchor lands on the next render that updates the popover.
+  Both backends resolve the anchor when the popover presents, not when the prop arrives, so an
+  anchor created later in the same batch still works.
+- Dropping `anchorRef` resets the anchor and the popover falls back to its tree parent. A popover
+  with no tree parent (rendered through `createPortal` into the off-window pool) then has nowhere to
+  present, which is what `scripts/popover-anchor-drive.ts` asserts.
+
+Under the hood the prop crosses the wire as `anchor`, the target's node id; `anchorRef` is the
+reconciler resolving that id for you, so an app never handles node ids itself.
 
 ## Expander (`<expander>`)
 

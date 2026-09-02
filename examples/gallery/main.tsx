@@ -143,6 +143,8 @@ function App(): React.ReactNode {
 
   // --- Popovers & Menus tab ---
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // The popover below anchors here rather than on its own tree parent.
+  const popoverTrigger = useRef<NdNodeRef<"button">>(null);
   const [lastMenuAction, setLastMenuAction] = useState("");
   const [expanderOpen, setExpanderOpen] = useState(false);
   const [expanderChecked, setExpanderChecked] = useState(false);
@@ -402,12 +404,15 @@ function App(): React.ReactNode {
 
             <box tabLabel="Popovers & Menus" orientation="vertical" spacing={10} testID="popovers-tab" style={{ padding: 12 }}>
               <label text="Popover" cssClasses={["heading"]} />
-              {/* Popover anchors to its own tree parent on GTK
-                  (gtk_widget_set_parent onto whatever parent it's under) —
-                  so it lives in a box alongside the button that opens it. */}
+              {/* anchorRef names the widget to present from, so the popover's
+                  place in the tree decides nothing. Without it a popover
+                  falls back to anchoring on its tree parent, which is why
+                  it used to have to sit in a box beside its own button. */}
               <box orientation="horizontal" spacing={8}>
-                <button testID="popover-trigger" label="Open Popover" onClick={() => setPopoverOpen(true)} />
-                <popover testID="demo-popover" open={popoverOpen} position="bottom" onClosed={() => setPopoverOpen(false)}>
+                <button ref={popoverTrigger} testID="popover-trigger" label="Open Popover" onClick={() => setPopoverOpen(true)} />
+              </box>
+              <box orientation="horizontal" spacing={8}>
+                <popover testID="demo-popover" anchorRef={popoverTrigger} open={popoverOpen} position="bottom" onClosed={() => setPopoverOpen(false)}>
                   <box orientation="vertical" spacing={8} style={{ padding: 12 }}>
                     <label text="Popover content" />
                     <button testID="popover-close" label="Close" onClick={() => setPopoverOpen(false)} />

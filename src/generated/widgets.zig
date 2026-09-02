@@ -1032,9 +1032,70 @@ pub fn menuSemanticClick(node_id: u32) bool {
 }
 
 const ND_POPOVER_PENDING_OPEN = "nd-popover-pending-open";
+const ND_POPOVER_ANCHOR_ID = "nd-popover-anchor-id";
+/// Set on every widget by connectEvents, the one op the core hands a node id
+/// to. Nothing else needs it; a Popover's `anchor` prop names another node by
+/// wire id, and the apply arm holds a widget pointer and a props object, never
+/// the core's node table.
+const ND_NODE_ID = "nd-node-id";
+
+pub fn ndTagNodeId(widget: *gtk.Widget, node_id: u32) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return; // menu nodes hand back GMenu objects
+    gobject.Object.setData(asObject(widget), ND_NODE_ID, @ptrFromInt(node_id));
+}
+
+fn ndNodeIdOf(widget: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(widget), ND_NODE_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Depth-first search for the widget carrying `node_id`, rooted at `from`.
+/// A registry keyed by node id would need a weak ref per node to survive the
+/// widget being destroyed; the search costs nothing until an app names an
+/// anchor, and then only once per anchoring.
+fn ndFindNode(from: *gtk.Widget, node_id: u32) ?*gtk.Widget {
+    if (ndNodeIdOf(from) == node_id) return from;
+    var child = gtk.Widget.getFirstChild(from);
+    while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+        if (ndFindNode(c, node_id)) |hit| return hit;
+    }
+    return null;
+}
+
+fn ndPopoverAnchorId(child: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(child), ND_POPOVER_ANCHOR_ID) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// Re-parents an anchored popover onto the widget its `anchor` prop names, if
+/// that widget is reachable yet. GtkPopover needs a parent to pop up at all,
+/// so the tree parent stays the fallback and the search runs from the window
+/// the popover already sits in: an anchor created later in the same batch is
+/// found on the next call rather than never.
+fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
+    const want = ndPopoverAnchorId(child);
+    if (want == 0) return;
+    const parent = gtk.Widget.getParent(child) orelse return;
+    const root = gtk.Widget.getAncestor(parent, gtk.Window.getGObjectType()) orelse parent;
+    const anchor = ndFindNode(root, want) orelse return;
+    if (anchor == parent) return;
+    gtk.Widget.unparent(child);
+    gtk.Widget.setParent(child, anchor);
+}
+
+/// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
+/// schema default, so dropping `anchorRef` falls back to the tree parent).
+fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
+    if (ndPopoverAnchorId(child) == node_id) return;
+    gobject.Object.setData(asObject(child), ND_POPOVER_ANCHOR_ID, if (node_id == 0) null else @ptrFromInt(node_id));
+    const up = gtk.Widget.getVisible(child) != 0;
+    if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
+    ndPopoverEnsureAnchor(child);
+    if (up) gtk.Popover.popup(@ptrCast(@alignCast(child)));
+}
 
 /// Cross-cutting structural rule: a GtkPopover child attaches to its tree
-/// parent via gtk_widget_set_parent (never box-packed/slotted — GtkPopover is
+/// parent via gtk_widget_set_parent (never box-packed/slotted, GtkPopover is
 /// not a layout child). Called from the appendChild/insertBefore guards;
 /// honors a create-time open=true that had to wait for a parent to anchor on.
 fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
@@ -1044,6 +1105,7 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
         gtk.Widget.unparent(child);
     }
     gtk.Widget.setParent(child, parent);
+    ndPopoverEnsureAnchor(child);
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) {
         gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
         gtk.Popover.popup(@ptrCast(@alignCast(child)));
@@ -2966,6 +3028,8 @@ fn createWidget(
         gtk.Popover.setPosition(pop, ndPositionFromString(propStr(props, "position") orelse "top"));
         // Anchoring happens when the tree parent appends this node (see the
         // ndPopoverAttach structural guard); a create-time open waits there.
+        const anchor_id: u32 = @intCast(@max(0, propInt(props, "anchor") orelse 0));
+        if (anchor_id != 0) gobject.Object.setData(asObject(pop), ND_POPOVER_ANCHOR_ID, @ptrFromInt(anchor_id));
         if (propBool(props, "open") orelse false) gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
         return pop.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Expander")) {
@@ -3145,8 +3209,767 @@ fn createWidget(
     return error.UnknownWidget;
 }
 
+const NdPropReset = struct { key: []const u8, value: std.json.Value };
+const nd_empty_json_array = std.json.Array{ .items = &[_]std.json.Value{}, .capacity = 0, .allocator = std.heap.page_allocator };
+
+const nd_resets_Window = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Box = [_]NdPropReset{
+    .{ .key = "spacing", .value = .{ .integer = -1 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Label = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Button = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "iconData", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "prominent", .value = .{ .bool = false } },
+    .{ .key = "badge", .value = .{ .string = "" } },
+    .{ .key = "size", .value = .{ .string = "regular" } },
+};
+const nd_resets_TextInput = [_]NdPropReset{
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "placeholder", .value = .{ .string = "" } },
+    .{ .key = "editable", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_TextArea = [_]NdPropReset{
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Checkbox = [_]NdPropReset{
+    .{ .key = "checked", .value = .{ .bool = false } },
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Radio = [_]NdPropReset{
+    .{ .key = "checked", .value = .{ .bool = false } },
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Select = [_]NdPropReset{
+    .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Slider = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .float = 0.0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ProgressBar = [_]NdPropReset{
+    .{ .key = "fraction", .value = .{ .float = 0.0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Image = [_]NdPropReset{
+    .{ .key = "path", .value = .{ .string = "" } },
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "pixelSize", .value = .{ .integer = 0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ScrollView = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Separator = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Spinner = [_]NdPropReset{
+    .{ .key = "spinning", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_TabView = [_]NdPropReset{
+    .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Grid = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ListView = [_]NdPropReset{
+    .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedIndex", .value = .{ .integer = -1 } },
+    .{ .key = "emptyIconName", .value = .{ .string = "" } },
+    .{ .key = "emptyTitle", .value = .{ .string = "" } },
+    .{ .key = "emptyDescription", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_WebView = [_]NdPropReset{
+    .{ .key = "url", .value = .{ .string = "" } },
+    .{ .key = "contextMenuMode", .value = .{ .string = "native" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_NativeView = [_]NdPropReset{
+    .{ .key = "props", .value = .{ .string = "{}" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SplitView = [_]NdPropReset{
+    .{ .key = "collapsed", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_HeaderBar = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "subtitle", .value = .{ .string = "" } },
+    .{ .key = "canGoBack", .value = .{ .bool = false } },
+    .{ .key = "canGoForward", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ToolbarView = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SearchInput = [_]NdPropReset{
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "placeholder", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SourceList = [_]NdPropReset{
+    .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedIndex", .value = .{ .integer = -1 } },
+    .{ .key = "emptyIconName", .value = .{ .string = "" } },
+    .{ .key = "emptyTitle", .value = .{ .string = "" } },
+    .{ .key = "emptyDescription", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SourceTree = [_]NdPropReset{
+    .{ .key = "nodes", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "actions", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedId", .value = .{ .string = "" } },
+    .{ .key = "emptyIconName", .value = .{ .string = "" } },
+    .{ .key = "emptyTitle", .value = .{ .string = "" } },
+    .{ .key = "emptyDescription", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Menubar = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Menu = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_MenuItem = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SettingsGroup = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "description", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Row = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "subtitle", .value = .{ .string = "" } },
+    .{ .key = "iconData", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SwitchRow = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "subtitle", .value = .{ .string = "" } },
+    .{ .key = "checked", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Clamp = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Overlay = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Switch = [_]NdPropReset{
+    .{ .key = "checked", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ToggleButton = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "active", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SegmentedControl = [_]NdPropReset{
+    .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_NumberInput = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .float = 0.0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_LinkButton = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "uri", .value = .{ .string = "" } },
+    .{ .key = "visited", .value = .{ .bool = false } },
+    .{ .key = "openExternal", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_LevelIndicator = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .float = 0.0 } },
+    .{ .key = "warningValue", .value = .{ .float = 0.0 } },
+    .{ .key = "criticalValue", .value = .{ .float = 0.0 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ColorPicker = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .string = "#000000" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Banner = [_]NdPropReset{
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "buttonLabel", .value = .{ .string = "" } },
+    .{ .key = "revealed", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_MenuButton = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_SplitButton = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Popover = [_]NdPropReset{
+    .{ .key = "anchor", .value = .{ .integer = 0 } },
+    .{ .key = "open", .value = .{ .bool = false } },
+    .{ .key = "position", .value = .{ .string = "top" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Expander = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "expanded", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_StatusPage = [_]NdPropReset{
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "description", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ToastOverlay = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_DatePicker = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .string = "" } },
+    .{ .key = "minDate", .value = .{ .string = "" } },
+    .{ .key = "maxDate", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Table = [_]NdPropReset{
+    .{ .key = "columns", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "rows", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedIndex", .value = .{ .integer = -1 } },
+    .{ .key = "selectedIndexes", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "columnsReorderable", .value = .{ .bool = false } },
+    .{ .key = "showRowSeparators", .value = .{ .bool = true } },
+    .{ .key = "emptyIconName", .value = .{ .string = "" } },
+    .{ .key = "emptyTitle", .value = .{ .string = "" } },
+    .{ .key = "emptyDescription", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_TreeView = [_]NdPropReset{
+    .{ .key = "nodes", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedIndex", .value = .{ .integer = -1 } },
+    .{ .key = "emptyIconName", .value = .{ .string = "" } },
+    .{ .key = "emptyTitle", .value = .{ .string = "" } },
+    .{ .key = "emptyDescription", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_FontPicker = [_]NdPropReset{
+    .{ .key = "value", .value = .{ .string = "Sans 12" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Video = [_]NdPropReset{
+    .{ .key = "src", .value = .{ .string = "" } },
+    .{ .key = "loop", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_TrayItem = [_]NdPropReset{
+    .{ .key = "iconName", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ShareButton = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Terminal = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Paned = [_]NdPropReset{
+    .{ .key = "position", .value = .{ .float = 0.5 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_CommandPalette = [_]NdPropReset{
+    .{ .key = "open", .value = .{ .bool = false } },
+    .{ .key = "placeholder", .value = .{ .string = "" } },
+    .{ .key = "query", .value = .{ .string = "" } },
+    .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Avatar = [_]NdPropReset{
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "imagePath", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Badge = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "variant", .value = .{ .string = "neutral" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Tag = [_]NdPropReset{
+    .{ .key = "label", .value = .{ .string = "" } },
+    .{ .key = "variant", .value = .{ .string = "neutral" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Kbd = [_]NdPropReset{
+    .{ .key = "keys", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ComboBox = [_]NdPropReset{
+    .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Breadcrumb = [_]NdPropReset{
+    .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "selectedIndex", .value = .{ .integer = -1 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Dialog = [_]NdPropReset{
+    .{ .key = "open", .value = .{ .bool = false } },
+    .{ .key = "title", .value = .{ .string = "" } },
+    .{ .key = "contentWidth", .value = .{ .integer = 0 } },
+    .{ .key = "contentHeight", .value = .{ .integer = 0 } },
+    .{ .key = "closable", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Sheet = [_]NdPropReset{
+    .{ .key = "open", .value = .{ .bool = false } },
+    .{ .key = "edge", .value = .{ .string = "bottom" } },
+    .{ .key = "size", .value = .{ .integer = 320 } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_RichText = [_]NdPropReset{
+    .{ .key = "markdown", .value = .{ .string = "" } },
+    .{ .key = "selectable", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_ProgressCircle = [_]NdPropReset{
+    .{ .key = "fraction", .value = .{ .float = 0.0 } },
+    .{ .key = "lineWidth", .value = .{ .integer = 3 } },
+    .{ .key = "showLabel", .value = .{ .bool = false } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Skeleton = [_]NdPropReset{
+    .{ .key = "width", .value = .{ .integer = 0 } },
+    .{ .key = "height", .value = .{ .integer = 16 } },
+    .{ .key = "radius", .value = .{ .integer = 6 } },
+    .{ .key = "animated", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_Chart = [_]NdPropReset{
+    .{ .key = "type", .value = .{ .string = "line" } },
+    .{ .key = "series", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "xLabel", .value = .{ .string = "" } },
+    .{ .key = "yLabel", .value = .{ .string = "" } },
+    .{ .key = "showLegend", .value = .{ .bool = true } },
+    .{ .key = "showGrid", .value = .{ .bool = true } },
+    .{ .key = "animated", .value = .{ .bool = true } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+const nd_resets_CodeEditor = [_]NdPropReset{
+    .{ .key = "text", .value = .{ .string = "" } },
+    .{ .key = "language", .value = .{ .string = "" } },
+    .{ .key = "theme", .value = .{ .string = "" } },
+    .{ .key = "showLineNumbers", .value = .{ .bool = true } },
+    .{ .key = "readOnly", .value = .{ .bool = false } },
+    .{ .key = "tabWidth", .value = .{ .integer = 4 } },
+    .{ .key = "diagnostics", .value = .{ .array = nd_empty_json_array } },
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
+
+fn ndPropResets(kind: []const u8) []const NdPropReset {
+    if (std.mem.eql(u8, kind, "Window")) return &nd_resets_Window;
+    if (std.mem.eql(u8, kind, "Box")) return &nd_resets_Box;
+    if (std.mem.eql(u8, kind, "Label")) return &nd_resets_Label;
+    if (std.mem.eql(u8, kind, "Button")) return &nd_resets_Button;
+    if (std.mem.eql(u8, kind, "TextInput")) return &nd_resets_TextInput;
+    if (std.mem.eql(u8, kind, "TextArea")) return &nd_resets_TextArea;
+    if (std.mem.eql(u8, kind, "Checkbox")) return &nd_resets_Checkbox;
+    if (std.mem.eql(u8, kind, "Radio")) return &nd_resets_Radio;
+    if (std.mem.eql(u8, kind, "Select")) return &nd_resets_Select;
+    if (std.mem.eql(u8, kind, "Slider")) return &nd_resets_Slider;
+    if (std.mem.eql(u8, kind, "ProgressBar")) return &nd_resets_ProgressBar;
+    if (std.mem.eql(u8, kind, "Image")) return &nd_resets_Image;
+    if (std.mem.eql(u8, kind, "ScrollView")) return &nd_resets_ScrollView;
+    if (std.mem.eql(u8, kind, "Separator")) return &nd_resets_Separator;
+    if (std.mem.eql(u8, kind, "Spinner")) return &nd_resets_Spinner;
+    if (std.mem.eql(u8, kind, "TabView")) return &nd_resets_TabView;
+    if (std.mem.eql(u8, kind, "Grid")) return &nd_resets_Grid;
+    if (std.mem.eql(u8, kind, "ListView")) return &nd_resets_ListView;
+    if (std.mem.eql(u8, kind, "WebView")) return &nd_resets_WebView;
+    if (std.mem.eql(u8, kind, "NativeView")) return &nd_resets_NativeView;
+    if (std.mem.eql(u8, kind, "SplitView")) return &nd_resets_SplitView;
+    if (std.mem.eql(u8, kind, "HeaderBar")) return &nd_resets_HeaderBar;
+    if (std.mem.eql(u8, kind, "ToolbarView")) return &nd_resets_ToolbarView;
+    if (std.mem.eql(u8, kind, "SearchInput")) return &nd_resets_SearchInput;
+    if (std.mem.eql(u8, kind, "SourceList")) return &nd_resets_SourceList;
+    if (std.mem.eql(u8, kind, "SourceTree")) return &nd_resets_SourceTree;
+    if (std.mem.eql(u8, kind, "Menubar")) return &nd_resets_Menubar;
+    if (std.mem.eql(u8, kind, "Menu")) return &nd_resets_Menu;
+    if (std.mem.eql(u8, kind, "MenuItem")) return &nd_resets_MenuItem;
+    if (std.mem.eql(u8, kind, "SettingsGroup")) return &nd_resets_SettingsGroup;
+    if (std.mem.eql(u8, kind, "Row")) return &nd_resets_Row;
+    if (std.mem.eql(u8, kind, "SwitchRow")) return &nd_resets_SwitchRow;
+    if (std.mem.eql(u8, kind, "Clamp")) return &nd_resets_Clamp;
+    if (std.mem.eql(u8, kind, "Overlay")) return &nd_resets_Overlay;
+    if (std.mem.eql(u8, kind, "Switch")) return &nd_resets_Switch;
+    if (std.mem.eql(u8, kind, "ToggleButton")) return &nd_resets_ToggleButton;
+    if (std.mem.eql(u8, kind, "SegmentedControl")) return &nd_resets_SegmentedControl;
+    if (std.mem.eql(u8, kind, "NumberInput")) return &nd_resets_NumberInput;
+    if (std.mem.eql(u8, kind, "LinkButton")) return &nd_resets_LinkButton;
+    if (std.mem.eql(u8, kind, "LevelIndicator")) return &nd_resets_LevelIndicator;
+    if (std.mem.eql(u8, kind, "ColorPicker")) return &nd_resets_ColorPicker;
+    if (std.mem.eql(u8, kind, "Banner")) return &nd_resets_Banner;
+    if (std.mem.eql(u8, kind, "MenuButton")) return &nd_resets_MenuButton;
+    if (std.mem.eql(u8, kind, "SplitButton")) return &nd_resets_SplitButton;
+    if (std.mem.eql(u8, kind, "Popover")) return &nd_resets_Popover;
+    if (std.mem.eql(u8, kind, "Expander")) return &nd_resets_Expander;
+    if (std.mem.eql(u8, kind, "StatusPage")) return &nd_resets_StatusPage;
+    if (std.mem.eql(u8, kind, "ToastOverlay")) return &nd_resets_ToastOverlay;
+    if (std.mem.eql(u8, kind, "DatePicker")) return &nd_resets_DatePicker;
+    if (std.mem.eql(u8, kind, "Table")) return &nd_resets_Table;
+    if (std.mem.eql(u8, kind, "TreeView")) return &nd_resets_TreeView;
+    if (std.mem.eql(u8, kind, "FontPicker")) return &nd_resets_FontPicker;
+    if (std.mem.eql(u8, kind, "Video")) return &nd_resets_Video;
+    if (std.mem.eql(u8, kind, "TrayItem")) return &nd_resets_TrayItem;
+    if (std.mem.eql(u8, kind, "ShareButton")) return &nd_resets_ShareButton;
+    if (std.mem.eql(u8, kind, "Terminal")) return &nd_resets_Terminal;
+    if (std.mem.eql(u8, kind, "Paned")) return &nd_resets_Paned;
+    if (std.mem.eql(u8, kind, "CommandPalette")) return &nd_resets_CommandPalette;
+    if (std.mem.eql(u8, kind, "Avatar")) return &nd_resets_Avatar;
+    if (std.mem.eql(u8, kind, "Badge")) return &nd_resets_Badge;
+    if (std.mem.eql(u8, kind, "Tag")) return &nd_resets_Tag;
+    if (std.mem.eql(u8, kind, "Kbd")) return &nd_resets_Kbd;
+    if (std.mem.eql(u8, kind, "ComboBox")) return &nd_resets_ComboBox;
+    if (std.mem.eql(u8, kind, "Breadcrumb")) return &nd_resets_Breadcrumb;
+    if (std.mem.eql(u8, kind, "Dialog")) return &nd_resets_Dialog;
+    if (std.mem.eql(u8, kind, "Sheet")) return &nd_resets_Sheet;
+    if (std.mem.eql(u8, kind, "RichText")) return &nd_resets_RichText;
+    if (std.mem.eql(u8, kind, "ProgressCircle")) return &nd_resets_ProgressCircle;
+    if (std.mem.eql(u8, kind, "Skeleton")) return &nd_resets_Skeleton;
+    if (std.mem.eql(u8, kind, "Chart")) return &nd_resets_Chart;
+    if (std.mem.eql(u8, kind, "CodeEditor")) return &nd_resets_CodeEditor;
+    return &.{};
+}
+
+/// Substitutes the schema default for every prop the app dropped, in
+/// place in the op's own props object. The apply arms below read the
+/// substituted value, so a prop leaving the JSX resets the widget
+/// instead of leaving it on its last value. A null under a key with no
+/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors
+/// already read it as absent.
+fn ndApplyDroppedDefaults(kind: []const u8, props: ?std.json.Value) void {
+    const v = props orelse return;
+    if (v != .object) return;
+    var dropped = false;
+    for (v.object.values()) |val| {
+        if (val == .null) {
+            dropped = true;
+            break;
+        }
+    }
+    if (!dropped) return;
+    for (ndPropResets(kind)) |reset| {
+        const slot = v.object.getPtr(reset.key) orelse continue;
+        if (slot.* != .null) continue;
+        slot.* = reset.value;
+    }
+}
+
 /// The GTK update dispatcher for createAndUpdate props.
 pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    ndApplyDroppedDefaults(kind, props);
     ndApplyTooltip(widget, props, dupeZ);
     ndApplyEnabled(widget, props);
     nddnd_gtk.applyProps(widget, props, dupeZ);
@@ -3456,10 +4279,12 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "label")) |l| adw.SplitButton.setLabel(@ptrCast(@alignCast(widget)), dupeZ(l));
         if (propStr(props, "iconName")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
     } else if (std.mem.eql(u8, kind, "Popover")) {
+        if (propInt(props, "anchor")) |a| ndPopoverApplyAnchor(widget, @intCast(@max(0, a)));
         if (propBool(props, "open")) |o| {
             const pop: *gtk.Popover = @ptrCast(@alignCast(widget));
             const up = gtk.Widget.getVisible(widget) != 0;
             if (o and !up) {
+                ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here
                 if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)
                 else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach
             } else if (!o and up) {
@@ -3863,6 +4688,10 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     // arm, which runs before this and so has no node id yet. This is
     // where they learn it.
     if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);
+    // The only op the core hands every node's id to, so it is where a
+    // node id becomes resolvable to a widget (Popover's `anchor` prop
+    // is the one reader).
+    ndTagNodeId(widget, node_id);
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     if (std.mem.eql(u8, kind, "Window")) {
         if (emit) |f| nddialog_gtk.connectEvents(widget, node_id, f);

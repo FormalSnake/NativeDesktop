@@ -132,6 +132,18 @@ class NDHostedLeaf: NSHostingView<AnyView>, NDLeafChromeHosting {
     /// real AppKit control inside the body leave this alone — the probe reads
     /// the control, so both halves of a setValue round-trip keep agreeing.
     var ndA11yValueJSON: String { "null" }
+
+    /// The leaf's readable name, recorded by the generated create/apply arms
+    /// from the same prop the body draws. A SwiftUI body publishes no
+    /// accessibility children through its hosting view, so a title rendered as
+    /// `Text` is unreadable from AppKit and the probe would report none.
+    var ndA11yLabel: String?
+
+    /// The choices this leaf offers, in index order, so `setValue`'s integer
+    /// index can be aimed by name. Only a leaf whose options live in the
+    /// SwiftUI body (with no NSPopUpButton or NSSegmentedControl to read)
+    /// overrides.
+    var ndA11yOptions: [String]? { nil }
 }
 
 // ============================================================================
@@ -156,6 +168,15 @@ class NDHostedLeaf: NSHostingView<AnyView>, NDLeafChromeHosting {
     guard let host = view as? NDLeafChromeHosting else { return false }
     host.leafState.tooltip = tip
     return true
+}
+
+/// Records what the a11y probe should report as the leaf's name. Called by the
+/// generated create/apply arms of the leaves that draw their title inside a
+/// SwiftUI body; a nil prop leaves the last name in place, the same way the
+/// merged apply helpers treat an absent key.
+func ndHostedLeafSetA11yLabel(_ view: NSView, _ label: String?) {
+    guard let leaf = view as? NDHostedLeaf, let label else { return }
+    leaf.ndA11yLabel = label.isEmpty ? nil : label
 }
 
 /// The `focus` command for a hosted leaf. The view becomes first responder so

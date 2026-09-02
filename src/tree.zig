@@ -53,7 +53,17 @@ fn propStr(props: ?std.json.Value, key: []const u8) ?[]const u8 {
 /// with nothing for a drive to assert against.
 fn textFromProps(widget_type: []const u8, props: ?std.json.Value) ?[]const u8 {
     const prop = widget_types.textPropOf(widget_type) orelse return null;
+    if (propIsNull(props, prop)) return ""; // the text prop left the app's JSX; the backend reset the widget to its default
     return propStr(props, prop);
+}
+
+/// True when the key is present and carries the reconciler's removal marker
+/// (packages/react/src/host-config.ts), as opposed to being absent from the op.
+fn propIsNull(props: ?std.json.Value, key: []const u8) bool {
+    const v = props orelse return false;
+    if (v != .object) return false;
+    const field = v.object.get(key) orelse return false;
+    return field == .null;
 }
 
 /// ListView's `itemCount` is derived from `items.len`, never from
