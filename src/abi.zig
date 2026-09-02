@@ -298,7 +298,7 @@ pub export fn nd_overlay_register_node(self: *NdContext, handle: ?*anyopaque, wi
     const widget = handle orelse return;
     overlay_seq +%= 1;
     const id = (OVERLAY_GENERATION << 24) | (overlay_seq & 0xffffff);
-    self.tree.nodes.put(self.tree.gpa, id, @ptrCast(widget)) catch return;
+    self.tree.nodes.put(self.tree.gpa, id, @ptrCast(@alignCast(widget))) catch return;
     self.tree.putMeta(id, std.mem.span(widget_type), std.mem.span(test_id), if (text) |t| std.mem.span(t) else null, 0, .{}) catch {
         _ = self.tree.nodes.remove(id);
     };
