@@ -527,11 +527,17 @@ fn ndAccelToGtk(spec: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) ?[
     var it = std.mem.splitScalar(u8, spec, '+');
     var key: ?[]const u8 = null;
     while (it.next()) |part| {
-        if (std.mem.eql(u8, part, "primary")) buf.appendSlice(events_gpa, "<Primary>") catch return null
-        else if (std.mem.eql(u8, part, "shift")) buf.appendSlice(events_gpa, "<Shift>") catch return null
-        else if (std.mem.eql(u8, part, "alt")) buf.appendSlice(events_gpa, "<Alt>") catch return null
-        else if (std.mem.eql(u8, part, "ctrl")) buf.appendSlice(events_gpa, "<Control>") catch return null
-        else key = part;
+        const modifier: ?[]const u8 = if (std.mem.eql(u8, part, "primary"))
+            "<Primary>"
+        else if (std.mem.eql(u8, part, "shift"))
+            "<Shift>"
+        else if (std.mem.eql(u8, part, "alt"))
+            "<Alt>"
+        else if (std.mem.eql(u8, part, "ctrl"))
+            "<Control>"
+        else
+            null;
+        if (modifier) |m| buf.appendSlice(events_gpa, m) catch return null else key = part;
     }
     const k = key orelse return null;
     buf.appendSlice(events_gpa, ndAccelKeyName(k)) catch return null;
@@ -1837,10 +1843,15 @@ fn ndSheetPresentation(edge: []const u8) adw.DialogPresentationMode {
 /// each have to survive an update of the other: `size` names the axis the
 /// panel grows along, and which axis that is comes from the edge.
 fn ndSheetSetEdge(widget: *gtk.Widget, edge: []const u8) void {
-    const slot: usize = if (std.mem.eql(u8, edge, "top")) 1
-    else if (std.mem.eql(u8, edge, "leading")) 2
-    else if (std.mem.eql(u8, edge, "trailing")) 3
-    else 4; // bottom
+    // 4 is bottom.
+    const slot: usize = if (std.mem.eql(u8, edge, "top"))
+        1
+    else if (std.mem.eql(u8, edge, "leading"))
+        2
+    else if (std.mem.eql(u8, edge, "trailing"))
+        3
+    else
+        4;
     gobject.Object.setData(asObject(widget), ND_SHEET_EDGE, @ptrFromInt(slot));
     adw.Dialog.setPresentationMode(@ptrCast(@alignCast(widget)), ndSheetPresentation(edge));
     ndSheetApplySize(widget, ndSheetSize(widget));
@@ -2631,20 +2642,27 @@ fn createWidget(
         // size -> compact/large button metrics (src/gtk/style.zig defines
         // both classes; AppKit peer: NSControl.controlSize).
         const size = propStr(props, "size") orelse "regular";
-        if (std.mem.eql(u8, size, "small")) gtk.Widget.addCssClass(button.as(gtk.Widget), "compact")
-        else if (std.mem.eql(u8, size, "large")) gtk.Widget.addCssClass(button.as(gtk.Widget), "large");
+        if (std.mem.eql(u8, size, "small")) {
+            gtk.Widget.addCssClass(button.as(gtk.Widget), "compact");
+        } else if (std.mem.eql(u8, size, "large")) {
+            gtk.Widget.addCssClass(button.as(gtk.Widget), "large");
+        }
         return button.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         const entry = gtk.Entry.new();
         const editable = entry.as(gtk.Editable);
-        if (propStr(props, "text")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }
+        if (propStr(props, "text")) |t| {
+            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));
+        }
         if (propStr(props, "placeholder")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));
         return entry.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         const view = gtk.TextView.new();
         const buf = gtk.TextView.getBuffer(view);
-        if (propStr(props, "text")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }
+        if (propStr(props, "text")) |t| {
+            if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1);
+        }
         gtk.TextView.setWrapMode(view, .word_char);
         // Scroller-as-handle (src/gtk/table.zig, src/gtk/sourcetree.zig): a
         // bare GtkTextView has no boundary and no scrolling, so the tracked
@@ -2716,11 +2734,15 @@ fn createWidget(
         // pixelSize is the explicit override, so it is applied last and wins
         // over the scale axis whatever order the props arrive in. It also
         // reaches a path-backed image, which symbolScale is not really about.
-        if (propInt(props, "pixelSize")) |px| { if (px > 0) gtk.Image.setPixelSize(img, @intCast(px)); }
+        if (propInt(props, "pixelSize")) |px| {
+            if (px > 0) gtk.Image.setPixelSize(img, @intCast(px));
+        }
         return img.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ScrollView")) {
         const sw = gtk.ScrolledWindow.new();
-        if (propInt(props, "minContentHeight")) |h| { if (h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(h)); }
+        if (propInt(props, "minContentHeight")) |h| {
+            if (h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(h));
+        }
         // hscroll=never clamps content to the viewport width instead of
         // growing a horizontal scrollbar under vertically-scrolling lists.
         if (propStr(props, "hscroll")) |h| {
@@ -2802,9 +2824,13 @@ fn createWidget(
         // min-sidebar-width (an empty 180px gutter). The structural arms
         // flip it on when a sidebar child actually lands.
         adw.OverlaySplitView.setShowSidebar(sv, 0);
-        if (propFloat(props, "sidebarWidth")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }
+        if (propFloat(props, "sidebarWidth")) |sw| {
+            if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw);
+        }
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
-        if (propFloat(props, "listWidth")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }
+        if (propFloat(props, "listWidth")) |lw| {
+            if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {};
+        }
         // Adaptive collapse: the AdwBreakpoint needs the window, which doesn't
         // exist yet — stash the px value and install on map (cbSplitViewMapped),
         // the ND_PANED_PENDING_FRACTION shape. 0 = off, so no +1 offset needed.
@@ -2845,7 +2871,9 @@ fn createWidget(
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         const search = gtk.SearchEntry.new();
         const editable = search.as(gtk.Editable);
-        if (propStr(props, "text")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }
+        if (propStr(props, "text")) |t| {
+            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));
+        }
         if (propStr(props, "placeholder")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));
         return search.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SourceList")) {
@@ -2855,7 +2883,9 @@ fn createWidget(
         gtk.Widget.addCssClass(box.as(gtk.Widget), "navigation-sidebar");
         ndBuildSourceRows(box, propArray(props, "items"), dupeZ);
         const sel_idx = propInt(props, "selectedIndex") orelse -1;
-        if (sel_idx >= 0) { if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r); }
+        if (sel_idx >= 0) {
+            if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r);
+        }
         const sw = gtk.ScrolledWindow.new();
         gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));
         ndempty_gtk.register(sw, box.as(gtk.Widget));
@@ -3118,7 +3148,9 @@ fn createWidget(
         gtk.Video.setLoop(video, @intFromBool(propBool(props, "loop") orelse false));
         // `controls` is accepted but ignored: GtkVideo's overlaid controls
         // have no toggle (AppKit's AVPlayerView honors it).
-        if (propStr(props, "src")) |s| { if (s.len > 0) ndVideoSetSrc(video, dupeZ(s)); }
+        if (propStr(props, "src")) |s| {
+            if (s.len > 0) ndVideoSetSrc(video, dupeZ(s));
+        }
         return video.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TrayItem")) {
         // ND_PLATFORM_NOOP(TrayItem): not available on this platform — invisible empty box by design.
@@ -3162,7 +3194,7 @@ fn createWidget(
         _ = gobject.signalConnectData(asObject(paned), "map", @ptrCast(&cbPanedMapped), null, null, .{});
         return paned.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "CommandPalette")) {
-        return ndpalette_gtk.create(props, dupeZ);  // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)
+        return ndpalette_gtk.create(props, dupeZ); // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)
     } else if (std.mem.eql(u8, kind, "Avatar")) {
         const size = propInt(props, "size") orelse 32;
         const text = propStr(props, "text") orelse "";
@@ -3196,7 +3228,9 @@ fn createWidget(
         gtk.DropDown.setEnableSearch(dd, 1);
         const idx = propInt(props, "selectedIndex") orelse 0;
         if (idx > 0) gtk.DropDown.setSelected(dd, @intCast(idx));
-        if (propStr(props, "text")) |t| { if (t.len > 0) ndDropDownSelectText(dd, t); }
+        if (propStr(props, "text")) |t| {
+            if (t.len > 0) ndDropDownSelectText(dd, t);
+        }
         // `placeholder`/`editable` have no GtkDropDown peer: its list is never
         // free-text and the button always shows the selected row. The search
         // popover above is GTK's answer to the same need.
@@ -4017,15 +4051,21 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "iconName")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);
         if (propStr(props, "iconData")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);
         if (propBool(props, "prominent")) |pr| {
-            if (pr) gtk.Widget.addCssClass(widget, "suggested-action")
-            else gtk.Widget.removeCssClass(widget, "suggested-action");
+            if (pr) {
+                gtk.Widget.addCssClass(widget, "suggested-action");
+            } else {
+                gtk.Widget.removeCssClass(widget, "suggested-action");
+            }
         }
         if (propStr(props, "badge")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);
         if (propStr(props, "size")) |sz| {
             gtk.Widget.removeCssClass(widget, "compact");
             gtk.Widget.removeCssClass(widget, "large");
-            if (std.mem.eql(u8, sz, "small")) gtk.Widget.addCssClass(widget, "compact")
-            else if (std.mem.eql(u8, sz, "large")) gtk.Widget.addCssClass(widget, "large");
+            if (std.mem.eql(u8, sz, "small")) {
+                gtk.Widget.addCssClass(widget, "compact");
+            } else if (std.mem.eql(u8, sz, "large")) {
+                gtk.Widget.addCssClass(widget, "large");
+            }
         }
     } else if (std.mem.eql(u8, kind, "TextInput")) {
         if (propStr(props, "text")) |t| {
@@ -4099,7 +4139,9 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "Image")) {
         if (propStr(props, "path")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));
         if (propStr(props, "iconName")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));
-        if (propInt(props, "pixelSize")) |px| { if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px)); }
+        if (propInt(props, "pixelSize")) |px| {
+            if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px));
+        }
     } else if (std.mem.eql(u8, kind, "Spinner")) {
         if (propBool(props, "spinning")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));
     } else if (std.mem.eql(u8, kind, "TabView")) {
@@ -4316,8 +4358,12 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             const up = gtk.Widget.getVisible(widget) != 0;
             if (o and !up) {
                 ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here
-                if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)
-                else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach
+                if (gtk.Widget.getParent(widget) != null) {
+                    gtk.Popover.popup(pop);
+                } else {
+                    // Not anchored yet: open on attach.
+                    gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
+                }
             } else if (!o and up) {
                 blockEcho(asObject(widget)); // programmatic popdown: `closed` must not echo
                 gtk.Popover.popdown(pop);
@@ -4395,10 +4441,16 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "label")) |l| ndBadgeSetLabel(widget, dupeZ(l));
         if (propStr(props, "variant")) |v| ndApplyVariant(widget, v);
     } else if (std.mem.eql(u8, kind, "Tag")) {
-        if (propStr(props, "label")) |l| { if (ndTagLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(l)); }
-        if (propStr(props, "variant")) |v| { if (ndTagLabel(widget)) |lb| ndApplyVariant(lb.as(gtk.Widget), v); }
+        if (propStr(props, "label")) |l| {
+            if (ndTagLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(l));
+        }
+        if (propStr(props, "variant")) |v| {
+            if (ndTagLabel(widget)) |lb| ndApplyVariant(lb.as(gtk.Widget), v);
+        }
     } else if (std.mem.eql(u8, kind, "Kbd")) {
-        if (propStr(props, "keys")) |k| { if (ndKbdLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(k)); }
+        if (propStr(props, "keys")) |k| {
+            if (ndKbdLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(k));
+        }
     } else if (std.mem.eql(u8, kind, "ComboBox")) {
         if (propInt(props, "selectedIndex")) |i| {
             const dd: *gtk.DropDown = @ptrCast(@alignCast(widget));
@@ -4661,8 +4713,12 @@ fn cbCalendarDaySelected(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) v
     var key = ndCalendarDateKey(cal);
     if (calendar_limits.get(@intFromPtr(cal))) |lim| {
         var clamped: ?i64 = null;
-        if (lim.min) |m| { if (key < m) clamped = m; }
-        if (lim.max) |m| { if (key > m) clamped = m; }
+        if (lim.min) |m| {
+            if (key < m) clamped = m;
+        }
+        if (lim.max) |m| {
+            if (key > m) clamped = m;
+        }
         if (clamped) |c| {
             blockEcho(obj);
             ndCalendarSelectKey(cal, c);
@@ -4770,6 +4826,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     } else if (std.mem.eql(u8, kind, "WebView")) {
         if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "NativeView")) {
+        // NativeView wires from the retained tree, which owns the node id.
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         ndHeaderBarConnectNav(widget, node_id);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
@@ -4964,8 +5021,11 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             adw.HeaderBar.setTitleWidget(hb, child);
             adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
         } else if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
-            else adw.HeaderBar.packStart(hb, child);
+            if (std.mem.eql(u8, sl, "end")) {
+                adw.HeaderBar.packEnd(hb, child);
+            } else {
+                adw.HeaderBar.packStart(hb, child);
+            }
         } else adw.HeaderBar.packStart(hb, child);
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));
@@ -5021,8 +5081,11 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
         const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
-        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)))
-        else gtk.Box.append(box, child);
+        if (gtk.Widget.getParent(child) != null) {
+            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)));
+        } else {
+            gtk.Box.append(box, child);
+        }
     } else if (std.mem.eql(u8, parent_kind, "ToastOverlay")) {
         adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
@@ -5102,8 +5165,11 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             adw.HeaderBar.setTitleWidget(hb, child);
             adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
         } else if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "end")) adw.HeaderBar.packEnd(hb, child)
-            else adw.HeaderBar.packStart(hb, child);
+            if (std.mem.eql(u8, sl, "end")) {
+                adw.HeaderBar.packEnd(hb, child);
+            } else {
+                adw.HeaderBar.packStart(hb, child);
+            }
         } else adw.HeaderBar.packStart(hb, child);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
         // AdwPreferencesGroup cannot insert at an index: a mid-list insert
@@ -5136,8 +5202,11 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
         const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
         const prev = gtk.Widget.getPrevSibling(b);
-        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)
-        else gtk.Box.insertChildAfter(box, child, prev);
+        if (gtk.Widget.getParent(child) != null) {
+            gtk.Box.reorderChildAfter(box, child, prev);
+        } else {
+            gtk.Box.insertChildAfter(box, child, prev);
+        }
     } else if (std.mem.eql(u8, parent_kind, "Paned")) {
         const p: *gtk.Paned = @ptrCast(@alignCast(parent));
         if (gtk.Paned.getStartChild(p) == null) {
@@ -5273,4 +5342,4 @@ pub const style_subkeys = [_]StyleSubDef{
     .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
     .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
 };
-pub const css_class_spec = [_][]const u8{"suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline", "large-title", "property", "round", "opaque", "devel", "icon-dropshadow", "lowres-icon"};
+pub const css_class_spec = [_][]const u8{ "suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline", "large-title", "property", "round", "opaque", "devel", "icon-dropshadow", "lowres-icon" };

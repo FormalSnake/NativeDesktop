@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, type, scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -13,7 +13,7 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "click", .method = .click },
     .{ .name = "waitFor", .method = .waitFor },
     .{ .name = "setValue", .method = .setValue },
-    .{ .name = "type", .method = .@"type" },
+    .{ .name = "type", .method = .type },
     .{ .name = "scroll", .method = .scroll },
     .{ .name = "doubleClick", .method = .doubleClick },
     .{ .name = "rightClick", .method = .rightClick },
@@ -94,7 +94,7 @@ pub const RowJson = struct {
 /// first knowing its kind.
 pub const JsonNode = struct {
     ref: u32,
-    @"type": []const u8,
+    type: []const u8,
     testID: ?[]const u8 = null,
     text: ?[]const u8 = null,
     visible: bool,
@@ -471,4 +471,3 @@ pub const KeysParams = struct {
     keys: ?[]const u8 = null,
     window: ?u32 = null,
 };
-

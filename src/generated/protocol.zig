@@ -170,4 +170,3 @@ pub const SystemEvent = struct {
     channel: []const u8,
     data: std.json.Value = .null,
 };
-

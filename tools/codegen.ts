@@ -237,9 +237,9 @@ function genCssClassSpec(s: Schema): string {
 
 function genZigCssClassSpec(s: Schema): string {
   const classes = s.cssClasses ?? [];
-  let out = "pub const css_class_spec = [_][]const u8{";
+  let out = "pub const css_class_spec = [_][]const u8{ ";
   out += classes.map((c) => JSON.stringify(c)).join(", ");
-  out += "};\n";
+  out += " };\n";
   return out;
 }
 
@@ -868,11 +868,17 @@ fn ndAccelToGtk(spec: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) ?[
     var it = std.mem.splitScalar(u8, spec, '+');
     var key: ?[]const u8 = null;
     while (it.next()) |part| {
-        if (std.mem.eql(u8, part, "primary")) buf.appendSlice(events_gpa, "<Primary>") catch return null
-        else if (std.mem.eql(u8, part, "shift")) buf.appendSlice(events_gpa, "<Shift>") catch return null
-        else if (std.mem.eql(u8, part, "alt")) buf.appendSlice(events_gpa, "<Alt>") catch return null
-        else if (std.mem.eql(u8, part, "ctrl")) buf.appendSlice(events_gpa, "<Control>") catch return null
-        else key = part;
+        const modifier: ?[]const u8 = if (std.mem.eql(u8, part, "primary"))
+            "<Primary>"
+        else if (std.mem.eql(u8, part, "shift"))
+            "<Shift>"
+        else if (std.mem.eql(u8, part, "alt"))
+            "<Alt>"
+        else if (std.mem.eql(u8, part, "ctrl"))
+            "<Control>"
+        else
+            null;
+        if (modifier) |m| buf.appendSlice(events_gpa, m) catch return null else key = part;
     }
     const k = key orelse return null;
     buf.appendSlice(events_gpa, ndAccelKeyName(k)) catch return null;
@@ -2188,10 +2194,15 @@ fn ndSheetPresentation(edge: []const u8) adw.DialogPresentationMode {
 /// each have to survive an update of the other: \`size\` names the axis the
 /// panel grows along, and which axis that is comes from the edge.
 fn ndSheetSetEdge(widget: *gtk.Widget, edge: []const u8) void {
-    const slot: usize = if (std.mem.eql(u8, edge, "top")) 1
-    else if (std.mem.eql(u8, edge, "leading")) 2
-    else if (std.mem.eql(u8, edge, "trailing")) 3
-    else 4; // bottom
+    // 4 is bottom.
+    const slot: usize = if (std.mem.eql(u8, edge, "top"))
+        1
+    else if (std.mem.eql(u8, edge, "leading"))
+        2
+    else if (std.mem.eql(u8, edge, "trailing"))
+        3
+    else
+        4;
     gobject.Object.setData(asObject(widget), ND_SHEET_EDGE, @ptrFromInt(slot));
     adw.Dialog.setPresentationMode(@ptrCast(@alignCast(widget)), ndSheetPresentation(edge));
     ndSheetApplySize(widget, ndSheetSize(widget));
@@ -3403,26 +3414,29 @@ function genZigCreateBody(w: Widget): string {
     out += "        // size -> compact/large button metrics (src/gtk/style.zig defines\n";
     out += "        // both classes; AppKit peer: NSControl.controlSize).\n";
     out += `        const size = propStr(props, "size") orelse ${zigDefaultStr(w, "size")};\n`;
-    out += "        if (std.mem.eql(u8, size, \"small\")) gtk.Widget.addCssClass(button.as(gtk.Widget), \"compact\")\n";
-    out += "        else if (std.mem.eql(u8, size, \"large\")) gtk.Widget.addCssClass(button.as(gtk.Widget), \"large\");\n";
+    out += "        if (std.mem.eql(u8, size, \"small\")) {\n";
+    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"compact\");\n";
+    out += "        } else if (std.mem.eql(u8, size, \"large\")) {\n";
+    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"large\");\n";
+    out += "        }\n";
     out += "        return button.as(gtk.Widget);\n";
   } else if (w.name === "TextInput") {
     out += "        const entry = gtk.Entry.new();\n";
     out += "        const editable = entry.as(gtk.Editable);\n";
-    out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }\n";
+    out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));\n        }\n";
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));\n";
     out += "        if (propBool(props, \"editable\")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));\n";
     out += "        return entry.as(gtk.Widget);\n";
   } else if (w.name === "SearchInput") {
     out += "        const search = gtk.SearchEntry.new();\n";
     out += "        const editable = search.as(gtk.Editable);\n";
-    out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t)); }\n";
+    out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));\n        }\n";
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));\n";
     out += "        return search.as(gtk.Widget);\n";
   } else if (w.name === "TextArea") {
     out += "        const view = gtk.TextView.new();\n";
     out += "        const buf = gtk.TextView.getBuffer(view);\n";
-    out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1); }\n";
+    out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.TextBuffer.setText(buf, dupeZ(t), -1);\n        }\n";
     out += "        gtk.TextView.setWrapMode(view, .word_char);\n";
     out += "        // Scroller-as-handle (src/gtk/table.zig, src/gtk/sourcetree.zig): a\n";
     out += "        // bare GtkTextView has no boundary and no scrolling, so the tracked\n";
@@ -3498,11 +3512,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        // pixelSize is the explicit override, so it is applied last and wins\n";
     out += "        // over the scale axis whatever order the props arrive in. It also\n";
     out += "        // reaches a path-backed image, which symbolScale is not really about.\n";
-    out += "        if (propInt(props, \"pixelSize\")) |px| { if (px > 0) gtk.Image.setPixelSize(img, @intCast(px)); }\n";
+    out += "        if (propInt(props, \"pixelSize\")) |px| {\n            if (px > 0) gtk.Image.setPixelSize(img, @intCast(px));\n        }\n";
     out += "        return img.as(gtk.Widget);\n";
   } else if (w.name === "ScrollView") {
     out += "        const sw = gtk.ScrolledWindow.new();\n";
-    out += "        if (propInt(props, \"minContentHeight\")) |h| { if (h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(h)); }\n";
+    out += "        if (propInt(props, \"minContentHeight\")) |h| {\n            if (h > 0) gtk.ScrolledWindow.setMinContentHeight(sw, @intCast(h));\n        }\n";
     out += "        // hscroll=never clamps content to the viewport width instead of\n";
     out += "        // growing a horizontal scrollbar under vertically-scrolling lists.\n";
     out += "        if (propStr(props, \"hscroll\")) |h| {\n";
@@ -3567,7 +3581,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        gtk.Widget.addCssClass(box.as(gtk.Widget), \"navigation-sidebar\");\n";
     out += "        ndBuildSourceRows(box, propArray(props, \"items\"), dupeZ);\n";
     out += `        const sel_idx = propInt(props, "selectedIndex") orelse ${dflt(w, "selectedIndex")};\n`;
-    out += "        if (sel_idx >= 0) { if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r); }\n";
+    out += "        if (sel_idx >= 0) {\n            if (gtk.ListBox.getRowAtIndex(box, @intCast(sel_idx))) |r| gtk.ListBox.selectRow(box, r);\n        }\n";
     out += "        const sw = gtk.ScrolledWindow.new();\n";
     out += "        gtk.ScrolledWindow.setChild(sw, box.as(gtk.Widget));\n";
     out += "        ndempty_gtk.register(sw, box.as(gtk.Widget));\n";
@@ -3589,9 +3603,9 @@ function genZigCreateBody(w: Widget): string {
     out += "        // min-sidebar-width (an empty 180px gutter). The structural arms\n";
     out += "        // flip it on when a sidebar child actually lands.\n";
     out += "        adw.OverlaySplitView.setShowSidebar(sv, 0);\n";
-    out += "        if (propFloat(props, \"sidebarWidth\")) |sw| { if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw); }\n";
+    out += "        if (propFloat(props, \"sidebarWidth\")) |sw| {\n            if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw);\n        }\n";
     out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
-    out += "        if (propFloat(props, \"listWidth\")) |lw| { if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {}; }\n";
+    out += "        if (propFloat(props, \"listWidth\")) |lw| {\n            if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {};\n        }\n";
     out += "        // Adaptive collapse: the AdwBreakpoint needs the window, which doesn't\n";
     out += "        // exist yet — stash the px value and install on map (cbSplitViewMapped),\n";
     out += "        // the ND_PANED_PENDING_FRACTION shape. 0 = off, so no +1 offset needed.\n";
@@ -3878,10 +3892,10 @@ function genZigCreateBody(w: Widget): string {
     out += `        gtk.Video.setLoop(video, @intFromBool(propBool(props, "loop") orelse ${dflt(w, "loop")}));\n`;
     out += "        // `controls` is accepted but ignored: GtkVideo's overlaid controls\n";
     out += "        // have no toggle (AppKit's AVPlayerView honors it).\n";
-    out += "        if (propStr(props, \"src\")) |s| { if (s.len > 0) ndVideoSetSrc(video, dupeZ(s)); }\n";
+    out += "        if (propStr(props, \"src\")) |s| {\n            if (s.len > 0) ndVideoSetSrc(video, dupeZ(s));\n        }\n";
     out += "        return video.as(gtk.Widget);\n";
   } else if (w.name === "CommandPalette") {
-    out += "        return ndpalette_gtk.create(props, dupeZ);  // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)\n";
+    out += "        return ndpalette_gtk.create(props, dupeZ); // AdwDialog Cmd-K overlay (src/gtk/commandpalette.zig)\n";
   } else if (w.name === "Avatar") {
     out += `        const size = propInt(props, "size") orelse ${dflt(w, "size")};\n`;
     out += `        const text = propStr(props, "text") orelse ${zigDefaultStr(w, "text")};\n`;
@@ -3915,7 +3929,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        gtk.DropDown.setEnableSearch(dd, 1);\n";
     out += `        const idx = propInt(props, "selectedIndex") orelse ${dflt(w, "selectedIndex")};\n`;
     out += "        if (idx > 0) gtk.DropDown.setSelected(dd, @intCast(idx));\n";
-    out += "        if (propStr(props, \"text\")) |t| { if (t.len > 0) ndDropDownSelectText(dd, t); }\n";
+    out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) ndDropDownSelectText(dd, t);\n        }\n";
     out += "        // `placeholder`/`editable` have no GtkDropDown peer: its list is never\n";
     out += "        // free-text and the button always shows the selected row. The search\n";
     out += "        // popover above is GTK's answer to the same need.\n";
@@ -4084,8 +4098,11 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"iconData\")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "prominent") {
       out += "        if (propBool(props, \"prominent\")) |pr| {\n";
-      out += "            if (pr) gtk.Widget.addCssClass(widget, \"suggested-action\")\n";
-      out += "            else gtk.Widget.removeCssClass(widget, \"suggested-action\");\n";
+      out += "            if (pr) {\n";
+      out += "                gtk.Widget.addCssClass(widget, \"suggested-action\");\n";
+      out += "            } else {\n";
+      out += "                gtk.Widget.removeCssClass(widget, \"suggested-action\");\n";
+      out += "            }\n";
       out += "        }\n";
     } else if (w.name === "Button" && p.name === "badge") {
       out += "        if (propStr(props, \"badge\")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);\n";
@@ -4093,8 +4110,11 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"size\")) |sz| {\n";
       out += "            gtk.Widget.removeCssClass(widget, \"compact\");\n";
       out += "            gtk.Widget.removeCssClass(widget, \"large\");\n";
-      out += "            if (std.mem.eql(u8, sz, \"small\")) gtk.Widget.addCssClass(widget, \"compact\")\n";
-      out += "            else if (std.mem.eql(u8, sz, \"large\")) gtk.Widget.addCssClass(widget, \"large\");\n";
+      out += "            if (std.mem.eql(u8, sz, \"small\")) {\n";
+      out += "                gtk.Widget.addCssClass(widget, \"compact\");\n";
+      out += "            } else if (std.mem.eql(u8, sz, \"large\")) {\n";
+      out += "                gtk.Widget.addCssClass(widget, \"large\");\n";
+      out += "            }\n";
       out += "        }\n";
     } else if (w.name === "Select" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
@@ -4125,7 +4145,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Image" && p.name === "iconName") {
       out += "        if (propStr(props, \"iconName\")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));\n";
     } else if (w.name === "Image" && p.name === "pixelSize") {
-      out += "        if (propInt(props, \"pixelSize\")) |px| { if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px)); }\n";
+      out += "        if (propInt(props, \"pixelSize\")) |px| {\n            if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px));\n        }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
       out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
@@ -4300,11 +4320,11 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Badge" && p.name === "variant") {
       out += "        if (propStr(props, \"variant\")) |v| ndApplyVariant(widget, v);\n";
     } else if (w.name === "Tag" && p.name === "label") {
-      out += "        if (propStr(props, \"label\")) |l| { if (ndTagLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(l)); }\n";
+      out += "        if (propStr(props, \"label\")) |l| {\n            if (ndTagLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(l));\n        }\n";
     } else if (w.name === "Tag" && p.name === "variant") {
-      out += "        if (propStr(props, \"variant\")) |v| { if (ndTagLabel(widget)) |lb| ndApplyVariant(lb.as(gtk.Widget), v); }\n";
+      out += "        if (propStr(props, \"variant\")) |v| {\n            if (ndTagLabel(widget)) |lb| ndApplyVariant(lb.as(gtk.Widget), v);\n        }\n";
     } else if (w.name === "Kbd" && p.name === "keys") {
-      out += "        if (propStr(props, \"keys\")) |k| { if (ndKbdLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(k)); }\n";
+      out += "        if (propStr(props, \"keys\")) |k| {\n            if (ndKbdLabel(widget)) |lb| gtk.Label.setText(lb, dupeZ(k));\n        }\n";
     } else if (w.name === "ComboBox" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |i| {\n";
       out += "            const dd: *gtk.DropDown = @ptrCast(@alignCast(widget));\n";
@@ -4404,8 +4424,12 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            const up = gtk.Widget.getVisible(widget) != 0;\n";
       out += "            if (o and !up) {\n";
       out += "                ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here\n";
-      out += "                if (gtk.Widget.getParent(widget) != null) gtk.Popover.popup(pop)\n";
-      out += "                else gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1)); // not anchored yet: open on attach\n";
+      out += "                if (gtk.Widget.getParent(widget) != null) {\n";
+      out += "                    gtk.Popover.popup(pop);\n";
+      out += "                } else {\n";
+      out += "                    // Not anchored yet: open on attach.\n";
+      out += "                    gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));\n";
+      out += "                }\n";
       out += "            } else if (!o and up) {\n";
       out += "                blockEcho(asObject(widget)); // programmatic popdown: `closed` must not echo\n";
       out += "                gtk.Popover.popdown(pop);\n";
@@ -4811,8 +4835,12 @@ fn cbCalendarDaySelected(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) v
     var key = ndCalendarDateKey(cal);
     if (calendar_limits.get(@intFromPtr(cal))) |lim| {
         var clamped: ?i64 = null;
-        if (lim.min) |m| { if (key < m) clamped = m; }
-        if (lim.max) |m| { if (key > m) clamped = m; }
+        if (lim.min) |m| {
+            if (key < m) clamped = m;
+        }
+        if (lim.max) |m| {
+            if (key > m) clamped = m;
+        }
         if (clamped) |c| {
             blockEcho(obj);
             ndCalendarSelectKey(cal, c);
@@ -4968,7 +4996,10 @@ function genZigEvents(s: Schema): string {
         continue;
       }
       if (t.target === "nativeview") {
-        // The retained core tree connects NativeView after create so it can pass node_id.
+        // The retained core tree connects NativeView after create so it can
+        // pass node_id. The arm still needs a body: `zig fmt` folds an empty
+        // one onto its neighbour's line.
+        out += "        // NativeView wires from the retained tree, which owns the node id.\n";
         continue;
       }
       if (t.target === "webview") {
@@ -5115,8 +5146,11 @@ function headerBarAttach(): string {
   s += "            adw.HeaderBar.setTitleWidget(hb, child);\n";
   s += "            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it\n";
   s += "        } else if (attached.slot) |sl| {\n";
-  s += "            if (std.mem.eql(u8, sl, \"end\")) adw.HeaderBar.packEnd(hb, child)\n";
-  s += "            else adw.HeaderBar.packStart(hb, child);\n";
+  s += "            if (std.mem.eql(u8, sl, \"end\")) {\n";
+  s += "                adw.HeaderBar.packEnd(hb, child);\n";
+  s += "            } else {\n";
+  s += "                adw.HeaderBar.packStart(hb, child);\n";
+  s += "            }\n";
   s += "        } else adw.HeaderBar.packStart(hb, child);\n";
   return s;
 }
@@ -5505,16 +5539,22 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     append: () => {
       let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
       s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
-      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)))\n";
-      s += "        else gtk.Box.append(box, child);\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)));\n";
+      s += "        } else {\n";
+      s += "            gtk.Box.append(box, child);\n";
+      s += "        }\n";
       return s;
     },
     insertBefore: () => {
       let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
       s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
       s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
-      s += "        if (gtk.Widget.getParent(child) != null) gtk.Box.reorderChildAfter(box, child, prev)\n";
-      s += "        else gtk.Box.insertChildAfter(box, child, prev);\n";
+      s += "        if (gtk.Widget.getParent(child) != null) {\n";
+      s += "            gtk.Box.reorderChildAfter(box, child, prev);\n";
+      s += "        } else {\n";
+      s += "            gtk.Box.insertChildAfter(box, child, prev);\n";
+      s += "        }\n";
       return s;
     },
     remove: () => {
@@ -9399,11 +9439,15 @@ function tsDocLine(doc: string | undefined): string {
   return doc ? `/** ${doc} */\n` : "";
 }
 
+// Keywords only. A primitive type name (`type`, `bool`, `u32`) is an ordinary
+// identifier that a declaration may shadow, and quoting one is what `zig fmt`
+// undoes on its next pass, which would leave the generated files failing
+// `zig fmt --check` forever.
 const ZIG_KEYWORDS = new Set([
   "align", "and", "anyframe", "anytype", "asm", "break", "catch", "comptime", "const", "continue",
   "defer", "else", "enum", "error", "export", "extern", "fn", "for", "if", "inline", "noalias",
   "opaque", "or", "orelse", "packed", "pub", "resume", "return", "struct", "suspend", "switch",
-  "test", "threadlocal", "try", "type", "union", "unreachable", "var", "volatile", "while",
+  "test", "threadlocal", "try", "union", "unreachable", "var", "volatile", "while",
 ]);
 function zigIdent(name: string): string {
   return ZIG_KEYWORDS.has(name) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? `@"${name}"` : name;
@@ -9595,6 +9639,9 @@ function genRpcTs(s: RpcSchema): string {
 
 async function writeIfChanged(rel: string, content: string): Promise<void> {
   const path = resolve(ROOT, rel);
+  // `zig fmt` ends a file at one newline, so a generator whose last section
+  // leaves a blank line there emits something `zig fmt --check` rejects.
+  if (rel.endsWith(".zig")) content = content.replace(/\n+$/, "\n");
   await Bun.write(path, content);
   console.log("wrote", rel, `(${content.length} bytes)`);
 }
