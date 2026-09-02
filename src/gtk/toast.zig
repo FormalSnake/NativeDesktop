@@ -161,7 +161,7 @@ fn cbToastDismissed(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const id = toastId(toast) orelse return;
     emitWithId(node_id, "toastDismissed", id);
     if (toasts.fetchRemove(id)) |kv| {
-        std.heap.page_allocator.free(@as([*:0]const u8, @ptrCast(kv.key.ptr))[0 .. kv.key.len :0]);
+        std.heap.page_allocator.free(@as([*:0]const u8, @ptrCast(kv.key.ptr))[0..kv.key.len :0]);
         gobject.Object.unref(@ptrCast(@alignCast(kv.value)));
     }
 }

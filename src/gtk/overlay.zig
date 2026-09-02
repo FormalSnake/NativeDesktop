@@ -66,12 +66,14 @@ fn onRestartClicked(_: *gtk.Button, data: ?*anyopaque) callconv(.c) void {
     // Defer off the click signal's call stack (re-entrancy: the click
     // handler runs from inside the same GTK main-loop dispatch that would
     // be tearing down/rebuilding the widget tree the button lives in).
-    const Ctx = struct { fn call(fn_data: ?*anyopaque) callconv(.c) c_int {
-        const f: RestartFn = @ptrCast(@alignCast(fn_data.?));
-        f();
-        return 0; // G_SOURCE_REMOVE
-    } };
-    _ = glib.idleAdd(&Ctx.call, @constCast(@ptrCast(restart)));
+    const Ctx = struct {
+        fn call(fn_data: ?*anyopaque) callconv(.c) c_int {
+            const f: RestartFn = @ptrCast(@alignCast(fn_data.?));
+            f();
+            return 0; // G_SOURCE_REMOVE
+        }
+    };
+    _ = glib.idleAdd(&Ctx.call, @ptrCast(@constCast(restart)));
 }
 
 /// Paints a crash panel on EVERY open window (multi-window): a JS crash is one
@@ -121,7 +123,7 @@ fn show(tree: *Tree, window: *gtk.Window, message: []const u8, dev: bool, restar
     registerOverlayNode(tree, err.as(gtk.Widget), "Label", "nd-overlay-error", message);
     if (dev) {
         const btn = gtk.Button.newWithLabel(dupeZ("Restart"));
-        _ = gtk.Button.signals.clicked.connect(btn, ?*anyopaque, &onRestartClicked, @constCast(@ptrCast(restart)), .{});
+        _ = gtk.Button.signals.clicked.connect(btn, ?*anyopaque, &onRestartClicked, @ptrCast(@constCast(restart)), .{});
         gtk.Box.append(box, btn.as(gtk.Widget));
         registerOverlayNode(tree, btn.as(gtk.Widget), "Button", "nd-overlay-restart", "Restart");
     }

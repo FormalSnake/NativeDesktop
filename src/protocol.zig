@@ -46,13 +46,27 @@ pub const Attached = struct {
         var a = Attached{};
         const v = props orelse return a;
         if (v != .object) return a;
-        if (v.object.get("gridRow")) |f| { if (f == .integer) a.grid_row = f.integer; }
-        if (v.object.get("gridColumn")) |f| { if (f == .integer) a.grid_column = f.integer; }
-        if (v.object.get("gridRowSpan")) |f| { if (f == .integer) a.grid_row_span = f.integer; }
-        if (v.object.get("gridColumnSpan")) |f| { if (f == .integer) a.grid_column_span = f.integer; }
-        if (v.object.get("tabLabel")) |f| { if (f == .string) a.tab_label = f.string; }
-        if (v.object.get("tabIcon")) |f| { if (f == .string) a.tab_icon = f.string; }
-        if (v.object.get("slot")) |f| { if (f == .string) a.slot = f.string; }
+        if (v.object.get("gridRow")) |f| {
+            if (f == .integer) a.grid_row = f.integer;
+        }
+        if (v.object.get("gridColumn")) |f| {
+            if (f == .integer) a.grid_column = f.integer;
+        }
+        if (v.object.get("gridRowSpan")) |f| {
+            if (f == .integer) a.grid_row_span = f.integer;
+        }
+        if (v.object.get("gridColumnSpan")) |f| {
+            if (f == .integer) a.grid_column_span = f.integer;
+        }
+        if (v.object.get("tabLabel")) |f| {
+            if (f == .string) a.tab_label = f.string;
+        }
+        if (v.object.get("tabIcon")) |f| {
+            if (f == .string) a.tab_icon = f.string;
+        }
+        if (v.object.get("slot")) |f| {
+            if (f == .string) a.slot = f.string;
+        }
         return a;
     }
 };
@@ -211,8 +225,7 @@ test "styleError event payload serializes key-only, other fields still omitted" 
 
 test "attached fromProps extracts grid and tab metadata" {
     const gpa = std.testing.allocator;
-    const parsed = try std.json.parseFromSlice(std.json.Value, gpa,
-        "{\"gridRow\":2,\"gridColumn\":1,\"gridColumnSpan\":3,\"tabLabel\":\"Form\",\"slot\":\"sidebar\"}", .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, "{\"gridRow\":2,\"gridColumn\":1,\"gridColumnSpan\":3,\"tabLabel\":\"Form\",\"slot\":\"sidebar\"}", .{});
     defer parsed.deinit();
     const a = Attached.fromProps(parsed.value);
     try std.testing.expectEqual(@as(i64, 2), a.grid_row);

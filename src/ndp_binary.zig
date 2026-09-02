@@ -209,6 +209,9 @@ pub fn traceToJson(gpa: std.mem.Allocator, payload: []const u8) ![]u8 {
 // This fixture reproduces the spec's byte-for-byte hex dump (the
 // authoritative bytes) with stringTableOffset corrected to 82 so the header
 // is internally consistent with the op stream that follows it.
+// Rows are one wire field or one op each, so the annotations line up with the
+// bytes they describe. zig fmt repacks a byte array to its own column count.
+// zig fmt: off
 const golden_payload = [_]u8{
     // header (28 bytes)
     0x4e, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // magic,version,6x reserved
@@ -234,6 +237,7 @@ const golden_payload = [_]u8{
     0x09, 0x00, 0x00, 0x00, 0x43, 0x6c, 0x69, 0x63, 0x6b, 0x73, 0x3a, 0x20, 0x30, // "Clicks: 0"
     0x09, 0x00, 0x00, 0x00, 0x43, 0x6c, 0x69, 0x63, 0x6b, 0x73, 0x3a, 0x20, 0x31, // "Clicks: 1"
 };
+// zig fmt: on
 
 test "golden vector decodes to the expected CommitBatch" {
     const gpa = std.testing.allocator;

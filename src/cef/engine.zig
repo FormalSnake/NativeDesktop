@@ -109,7 +109,7 @@ pub fn earlyExecuteProcess(argv: []const [*:0]const u8) ?u8 {
 fn mainArgs() c.cef_main_args_t {
     return .{
         .argc = @intCast(main_argv.len),
-        .argv = @constCast(@ptrCast(main_argv.ptr)),
+        .argv = @ptrCast(@constCast(main_argv.ptr)),
     };
 }
 
