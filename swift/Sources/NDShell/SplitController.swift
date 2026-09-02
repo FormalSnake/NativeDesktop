@@ -423,6 +423,52 @@ private func ndPaneContentShape(_ view: NSView) -> NDPaneContentShape {
     return ndIsListShaped(view) ? .scrollingWithSiblings : .plain
 }
 
+/// What `ndInstallPaneContent` landed for a pane content root, so the shape can
+/// be re-derived later against the same host.
+private struct NDPaneInstall {
+    weak var host: NSView?
+    var shape: NDPaneContentShape
+    var bottom: NSLayoutConstraint?
+}
+
+nonisolated(unsafe) private var ndPaneInstalls: [ObjectIdentifier: NDPaneInstall] = [:]
+
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndPaneInstallPurge(_ view: NSView) {
+    ndPaneInstalls[ObjectIdentifier(view)] = nil
+}
+
+/// Re-derives a pane content root's shape and updates the pane in place.
+///
+/// `ndIsListShaped` is answered from the box's children and their `vexpand`
+/// flags, and both keep moving after the pane is installed: a footer caption
+/// mounts, a list gains its expand flag through a later `ndApplyStyle`. Reached
+/// from `ndInvalidateBoxChain` (Layout.swift), which is already called for
+/// every one of those events, so this runs inside the same synchronous commit
+/// that changed the tree.
+///
+/// Only the safe-area pair is re-derived. `.plain` and `.scrollingWithSiblings`
+/// differ by exactly one constraint (whether the bottom edge follows the safe
+/// area or the host), so switching between them is a constant swap on the live
+/// pane. Crossing into or out of `.scrolling` would have to move the content
+/// into or out of an NSBackgroundExtensionView, i.e. reparent a pane that is on
+/// screen, which is what evicted live pane content the last time this was
+/// tried; that shape stays decided at install.
+func ndRefreshPaneShape(_ content: NSView) {
+    guard var install = ndPaneInstalls[ObjectIdentifier(content)],
+          let host = install.host,
+          let bottom = install.bottom else { return }
+    let want = ndPaneContentShape(content)
+    guard want != install.shape, install.shape != .scrolling, want != .scrolling else { return }
+    bottom.isActive = false
+    let anchor = want == .scrollingWithSiblings ? host.safeAreaLayoutGuide.bottomAnchor : host.bottomAnchor
+    let replacement = content.bottomAnchor.constraint(equalTo: anchor)
+    replacement.isActive = true
+    install.bottom = replacement
+    install.shape = want
+    ndPaneInstalls[ObjectIdentifier(content)] = install
+}
+
 /// Wraps a pane's content in a flipped plain-NSView host (generated
 /// SplitView append/insertBefore arms). The NSSplitViewItem supplies the
 /// sidebar material/glass BEHIND this host; a plain NSView host does not
@@ -467,7 +513,10 @@ func ndMakePaneViewController(_ content: NSView) -> NDPaneViewController {
 func ndInstallPaneContent(_ content: NSView, into host: NSView) {
     host.subviews.forEach { $0.removeFromSuperview() }
     content.translatesAutoresizingMaskIntoConstraints = false
-    switch ndPaneContentShape(content) {
+    let shape = ndPaneContentShape(content)
+    var bottom: NSLayoutConstraint?
+    defer { ndPaneInstalls[ObjectIdentifier(content)] = NDPaneInstall(host: host, shape: shape, bottom: bottom) }
+    switch shape {
     case .scrolling:
         let extended = NSBackgroundExtensionView()
         extended.translatesAutoresizingMaskIntoConstraints = false
@@ -514,11 +563,12 @@ func ndInstallPaneContent(_ content: NSView, into host: NSView) {
         // CONTENT into those regions, not just a background colour, which put
         // a smeared copy of a focused search field's ring and of a list's
         // footer caption into the titlebar band.
+        bottom = content.bottomAnchor.constraint(equalTo: host.safeAreaLayoutGuide.bottomAnchor)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
             content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-            content.bottomAnchor.constraint(equalTo: host.safeAreaLayoutGuide.bottomAnchor),
+            bottom!,
         ])
     case .plain:
         host.addSubview(content)
@@ -528,10 +578,11 @@ func ndInstallPaneContent(_ content: NSView, into host: NSView) {
         // the floating glass sidebar (Tahoe layering — the editor background
         // is what the glass blurs), but its LAYOUT must inset past it. For
         // the sidebar pane those insets are zero, so one form serves both.
+        bottom = content.bottomAnchor.constraint(equalTo: host.bottomAnchor)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            bottom!,
             content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
         ])
     }

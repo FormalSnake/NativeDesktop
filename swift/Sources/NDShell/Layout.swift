@@ -256,6 +256,10 @@ func ndInvalidateBoxChain(from view: NSView) {
             if current !== child { box.ndInvalidateChildMeasure(child) }
             box.ndMarkLayoutDirty()
         }
+        // A pane's list shape is derived from its children and their expand
+        // flags, so it is re-derived on the same events, synchronously
+        // (SplitController.swift's `ndRefreshPaneShape`).
+        ndRefreshPaneShape(current)
         ndScheduleShapeRefresh(current)
         child = current
         cursor = current.superview
