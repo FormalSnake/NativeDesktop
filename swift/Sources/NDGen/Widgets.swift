@@ -1500,6 +1500,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         let winH = propInt(props, "defaultHeight") ?? 320
         let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         if let t = propStr(props, "title") { win.title = t }
+        ndWindowDeclaredSize[ObjectIdentifier(win)] = (width: propInt(props, "defaultWidth") != nil, height: propInt(props, "defaultHeight") != nil)
         win.titlebarAppearsTransparent = true
         // The core (not AppKit) owns window lifetime: close() must never
         // dealloc the window while the retained tree still references it.
@@ -2532,6 +2533,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             ]
             NSLayoutConstraint.activate(pins)
             ndRegisterWindowRootPins(child, pins)
+            ndRegisterWindowAutoSize(child, window)
         }
     } else if parentKind == "Box" {
         let box = parent as! NDBoxView

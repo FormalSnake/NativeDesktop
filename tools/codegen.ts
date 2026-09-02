@@ -7161,6 +7161,10 @@ function genSwiftCreateBody(w: Widget): string {
     // a blank strip instead of the standard titlebar.
     out += "        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(winW), height: CGFloat(winH)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)\n";
     out += '        if let t = propStr(props, "title") { win.title = t }\n';
+    // GTK sizes a window from its content whenever the app names no default,
+    // so the root's natural size can only fill in the axes the app left out
+    // (Layout.swift's ndRefreshWindowContentSize).
+    out += '        ndWindowDeclaredSize[ObjectIdentifier(win)] = (width: propInt(props, "defaultWidth") != nil, height: propInt(props, "defaultHeight") != nil)\n';
     out += "        win.titlebarAppearsTransparent = true\n";
     out += "        // The core (not AppKit) owns window lifetime: close() must never\n";
     out += "        // dealloc the window while the retained tree still references it.\n";
@@ -8644,6 +8648,9 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            ]\n" +
       "            NSLayoutConstraint.activate(pins)\n" +
       "            ndRegisterWindowRootPins(child, pins)\n" +
+      // Opening size and minimum size both come from this root, on the same
+      // settling pass the inset is re-derived on (Layout.swift).
+      "            ndRegisterWindowAutoSize(child, window)\n" +
       "        }\n",
     // A registered split currently installed as contentViewController has no
     // superview to remove from (removeFromSuperview() would no-op or, worse,

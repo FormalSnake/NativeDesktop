@@ -61,6 +61,84 @@ func ndRefreshWindowRootInset(_ child: NSView) {
     pins[3].constant = -inset
 }
 
+/// Window roots that may size their window, against the window to size. GTK
+/// sizes a window from its content whenever the app names no default, so a
+/// natural width there can widen the window; AppKit has no such rule and a
+/// window opened at `defaultWidth` (480 when the app names none) could never
+/// grow to fit what it holds.
+nonisolated(unsafe) private var ndWindowAutoSize: [ObjectIdentifier: NSWindow] = [:]
+
+/// Which of `defaultWidth`/`defaultHeight` the app actually named, per window.
+/// A named value wins over the content's natural size on that axis. Written by
+/// the generated Window create arm.
+nonisolated(unsafe) var ndWindowDeclaredSize: [ObjectIdentifier: (width: Bool, height: Bool)] = [:]
+
+/// Windows already sized from their content. The natural size is an OPENING
+/// size, not a constraint: once it lands, the user's own resize owns the
+/// window and a later content change must not yank it back.
+nonisolated(unsafe) private var ndWindowContentSized: Set<ObjectIdentifier> = []
+
+func ndRegisterWindowAutoSize(_ child: NSView, _ window: NSWindow?) {
+    guard let window else { return }
+    ndWindowAutoSize[ObjectIdentifier(child)] = window
+    // A tree is built bottom-up, so the root is the LAST node to attach and
+    // nothing invalidates the chain after it. Queue the settling pass here or
+    // the window is never measured at all.
+    ndScheduleShapeRefresh(child)
+}
+
+/// The view whose natural and minimum sizes describe what the window has to
+/// fit. A ToastOverlay is a logical wrapper that draws nothing and presents
+/// its toasts as separate panels (Toasts.swift), so the content it holds is
+/// the real root.
+private func ndWindowContentRoot(_ child: NSView) -> NSView {
+    if let overlay = child as? NDToastOverlayView, let inner = overlay.subviews.first { return inner }
+    return child
+}
+
+/// Sizes a window from its root child: the natural size once, on each axis the
+/// app left undeclared, and the minimum size on every pass. Both are clamped
+/// to the screen's visible frame, so a long tree cannot open a window larger
+/// than the display it opens on.
+func ndRefreshWindowContentSize(_ child: NSView) {
+    guard let win = ndWindowAutoSize[ObjectIdentifier(child)], let content = win.contentView else { return }
+    let root = ndWindowContentRoot(child)
+    // The root pins to the safe area and carries the window content margin, so
+    // both are on top of whatever the content itself measures.
+    let inset = ndWindowRootInset(child)
+    let safe = content.safeAreaInsets
+    let padW = safe.left + safe.right + inset * 2
+    let padH = safe.top + safe.bottom + inset * 2
+    let limit = (win.screen ?? NSScreen.main)?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+
+    let minimum = ndMinimumChildSize(root)
+    let minSize = NSSize(width: min(minimum.width + padW, limit.width),
+                         height: min(minimum.height + padH, limit.height))
+    if !NSEqualSizes(win.contentMinSize, minSize) { win.contentMinSize = minSize }
+
+    let key = ObjectIdentifier(win)
+    guard !ndWindowContentSized.contains(key) else { return }
+    let declared = ndWindowDeclaredSize[key] ?? (width: true, height: true)
+    if declared.width && declared.height {
+        ndWindowContentSized.insert(key)
+        return
+    }
+    let natural = ndNaturalChildSize(root)
+    // A root measured before its children landed has no size to open at;
+    // leave the window alone and try again on the next settling pass.
+    guard natural.width > 0, natural.height > 0 else { return }
+    ndWindowContentSized.insert(key)
+    var target = content.frame.size
+    if !declared.width { target.width = min(max(natural.width + padW, minSize.width), limit.width) }
+    if !declared.height { target.height = min(max(natural.height + padH, minSize.height), limit.height) }
+    guard !NSEqualSizes(target, content.frame.size) else { return }
+    win.setContentSize(target)
+    // setContentSize holds the top-left, which leaves a window the create arm
+    // centred sitting off-centre. A tab in a group and a sheet are placed by
+    // their host, so neither may be moved here.
+    if win.sheetParent == nil, win.tabGroup == nil { win.center() }
+}
+
 /// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
 func ndLayoutPurge(_ view: NSView) {
     let id = ObjectIdentifier(view)
@@ -68,6 +146,7 @@ func ndLayoutPurge(_ view: NSView) {
     ndWidgetKinds[id] = nil
     ndBoxedListDividers.remove(id)
     ndWindowRootPins[id] = nil
+    ndWindowAutoSize[id] = nil
 }
 
 
@@ -283,7 +362,10 @@ private func ndScheduleShapeRefresh(_ view: NSView) {
         ndShapeRefreshScheduled = false
         let pending = ndPendingShapeRefresh
         ndPendingShapeRefresh.removeAll()
-        for view in pending.values { ndRefreshWindowRootInset(view) }
+        for view in pending.values {
+            ndRefreshWindowRootInset(view)
+            ndRefreshWindowContentSize(view)
+        }
     }
 }
 
