@@ -23,7 +23,7 @@ const app = await launchApp({ entry, backend });
 const { windows: startWindows } = await app.windows();
 const start = startWindows.length;
 
-await app.keys("cmd+t");
+await app.keyboard.press("Meta+t");
 const opened = await app.waitForWindows(start + 1, 5000);
 if (opened !== start + 1) throw new Error(`cmd+t: window count ${start} -> ${opened}, want ${start + 1}`);
 
@@ -32,7 +32,7 @@ if (opened !== start + 1) throw new Error(`cmd+t: window count ${start} -> ${ope
 // hand-rolled poll loop this script used to carry.
 await app.screenshot("/tmp/nd-tabs-two.png");
 
-await app.keys("cmd+w");
+await app.keyboard.press("Meta+w");
 const closed = await app.waitForWindows(start, 5000);
 if (closed !== start) throw new Error(`cmd+w: window count ${opened} -> ${closed}, want ${start}`);
 

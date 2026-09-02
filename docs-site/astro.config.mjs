@@ -90,6 +90,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Automation Socket', slug: 'automation-testing/automation-socket' },
 						{ label: 'Test Harness', slug: 'automation-testing/test-harness' },
+						{ label: 'Locators', slug: 'automation-testing/locators' },
 						{ label: 'MCP Tools', slug: 'automation-testing/mcp-tools' },
 					],
 				},

@@ -1,226 +1,269 @@
 #!/usr/bin/env bun
-// Stdio MCP server wrapping the NativeDesktop automation socket (ND_AUTOMATION_SOCKET).
-// Exposes the full automation RPC surface as agent tools, each a thin pass-through to
-// the framed JSON-RPC automation server. pointer/drag/keys/double/right-click/hover
-// post real native events on macOS and answer -32003 on GTK (no in-process event
-// synthesis on GTK4).
-
+// Stdio MCP server for driving a NativeDesktop app.
+//
+// Three tools, not one per RPC. An agent writes @nativedesktop/test code
+// against a live app and gets the value back, the same shape a drive script
+// would take, so anything the harness can express is reachable without a new
+// tool. `snapshot` is the cheap way to see what is on screen, and `reset`
+// puts a wedged or crashed host back.
+//
+// Two modes. With ND_AUTOMATION_SOCKET set the server attaches to a host
+// somebody else launched; otherwise it spawns one from ND_MCP_ENTRY.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { AutomationClient } from "@nativedesktop/test";
+import {
+  asNdNode,
+  AttachedApp,
+  AutomationRpcError,
+  expect,
+  launchApp,
+  Locator,
+  renderSnapshot,
+  type AppHandle,
+} from "@nativedesktop/test";
+import type { Backend } from "@nativedesktop/host";
 
-const client = await AutomationClient.connect();
-const server = new McpServer({ name: "nativedesktop", version: "0.0.0" });
+const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
+const SNAPSHOT_MAX_LINES = 400;
 
-server.registerTool(
-  "nd_get_tree",
-  {
-    description:
-      "Snapshot the accessibility tree: stable refs, testIDs, text, logical geometry, role, enabled, focused, and live value per node. Optional window ref scopes the snapshot to one window.",
-    inputSchema: { window: z.number().optional() },
-  },
-  async ({ window }) => ({
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(await client.call("getTree", window !== undefined ? { window } : undefined), null, 2),
-      },
-    ],
-  }),
-);
+type App = AppHandle | AttachedApp;
 
-server.registerTool(
-  "nd_screenshot",
-  {
-    description: "Render the window in-process to a PNG at the given absolute path.",
-    inputSchema: { path: z.string() },
-  },
-  async ({ path }) => ({ content: [{ type: "text" as const, text: JSON.stringify(await client.call("screenshot", { path })) }] }),
-);
+interface SessionOptions {
+  entry: string;
+  backend?: Backend;
+}
 
-server.registerTool(
-  "nd_click",
-  {
-    description: "Semantic click on a widget by ref (actionability-checked).",
-    inputSchema: { ref: z.number() },
-  },
-  async ({ ref }) => ({ content: [{ type: "text" as const, text: JSON.stringify(await client.call("click", { ref })) }] }),
-);
+let options: SessionOptions = {
+  entry: process.env.ND_MCP_ENTRY ?? "",
+  backend: process.env.ND_MCP_BACKEND as Backend | undefined,
+};
+let app: App | undefined;
+/** Survives across execute calls so an agent can stash a ref, a window, or a
+ * half-built fixture between one-liners. */
+let state: Record<string, unknown> = {};
 
-server.registerTool(
-  "nd_wait_for",
-  {
-    description:
-      "Wait until a tree condition holds, or timeout. Exactly one selector: textContains, refVisible, or testId. With testId, `state` picks the predicate and the page keys refine it — urlContains/pageTitleContains read the engine, pageTextContains injects document.body.innerText (re-probed at most once per 250ms). A testId page key requires the node to be a WebView.",
-    inputSchema: {
-      textContains: z.string().optional(),
-      refVisible: z.number().optional(),
-      testId: z.string().optional(),
-      state: z.enum(["present", "gone", "visible", "enabled", "disabled", "focused"]).optional(),
-      urlContains: z.string().optional(),
-      pageTitleContains: z.string().optional(),
-      pageTextContains: z.string().optional(),
-      timeoutMs: z.number().default(2000),
-    },
-  },
-  async ({ timeoutMs, ...keys }) => {
-    const condition = Object.fromEntries(Object.entries(keys).filter(([, v]) => v !== undefined));
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(await client.call("waitFor", { condition, timeoutMs })) }],
+const attached = Boolean(process.env.ND_AUTOMATION_SOCKET);
+
+async function open(): Promise<App> {
+  if (attached) return AttachedApp.connect();
+  if (!options.entry) {
+    throw new Error("no app to drive: set ND_MCP_ENTRY (or ND_AUTOMATION_SOCKET to attach to a running host)");
+  }
+  return launchApp({ entry: options.entry, backend: options.backend });
+}
+
+async function currentApp(): Promise<App> {
+  if (!app) app = await open();
+  return app;
+}
+
+/** An attached host's stderr belongs to whoever launched it. */
+function stderrTail(target: App): string {
+  return target instanceof AttachedApp ? "(attached host: its stderr is not ours to read)" : target.stderrTail(40);
+}
+
+/** Result values an agent can act on: a Locator is worth its selector, a tree
+ * node its identity, and a cycle is not worth a stack overflow. */
+function serialize(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value instanceof Locator) return value.selector;
+  if (value instanceof AutomationRpcError) return { error: value.message, code: value.code, data: value.data };
+  if (value instanceof Error) return { error: value.message };
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((v) => serialize(v, seen));
+  const node = value as Record<string, unknown>;
+  if (typeof node.ref === "number" && typeof node.type === "string" && Array.isArray(node.children)) {
+    return { ref: node.ref, type: node.type, role: node.role, text: node.text, testID: node.testID };
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(node)) out[key] = serialize(inner, seen);
+  return out;
+}
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: string[]
+) => (...args: unknown[]) => Promise<unknown>;
+
+/** Index of the last `;` outside a string, template, bracket or brace. */
+function lastTopLevelSemicolon(code: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+  let found = -1;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i]!;
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth === 0) found = i;
+  }
+  return found;
+}
+
+function compile(code: string, names: string[]): (...args: unknown[]) => Promise<unknown> {
+  try {
+    // Expression mode first, so a bare `await app.getByTestId("x").count()`
+    // answers with the count instead of undefined.
+    return new AsyncFunction(...names, `return (${code}\n);`);
+  } catch {
+    // Statement mode. The last statement is still returned where it is an
+    // expression, so a chain of setup calls ending in a read answers with
+    // the read rather than nothing.
+    const body = code.trim().replace(/;\s*$/, "");
+    const cut = lastTopLevelSemicolon(body);
+    if (cut > 0) {
+      try {
+        return new AsyncFunction(...names, `${body.slice(0, cut)};\nreturn (${body.slice(cut + 1)}\n);`);
+      } catch {
+        // The tail is a declaration or a control-flow statement, not a value.
+      }
+    }
+    return new AsyncFunction(...names, code);
+  }
+}
+
+/** Console output belongs in the tool result, not on stdout: stdout is the
+ * MCP transport, and one stray log frames the protocol out of sync. */
+function captureConsole(logs: string[]): () => void {
+  const methods = ["log", "info", "warn", "error", "debug"] as const;
+  const saved = methods.map((m) => [m, console[m]] as const);
+  for (const method of methods) {
+    console[method] = (...args: unknown[]): void => {
+      logs.push(args.map((a) => (typeof a === "string" ? a : Bun.inspect(a))).join(" "));
     };
-  },
-);
+  }
+  return () => {
+    for (const [method, fn] of saved) console[method] = fn;
+  };
+}
+
+function text(value: unknown): { content: { type: "text"; text: string }[] } {
+  return {
+    content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }],
+  };
+}
+
+const server = new McpServer({ name: "nativedesktop", version: "0.1.0" });
 
 server.registerTool(
-  "nd_webview_info",
+  "execute",
   {
     description:
-      "Live page state for a WebView node: url, title, loading, canGoBack, canGoForward. Read off the engine, so it works against an app that forwards no navigation events. Target by exactly one of ref / testId.",
-    inputSchema: { ref: z.number().optional(), testId: z.string().optional() },
-  },
-  async (params) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("webviewInfo", params)) }],
-  }),
-);
-
-server.registerTool(
-  "nd_webview_eval",
-  {
-    description:
-      "Evaluate JavaScript in a WebView node's page and return the result's string rendering. `world` picks a named isolated content world (absent = the page's own). A thrown exception comes back as ok:false with the message, not an error. Target by exactly one of ref / testId.",
+      "Control the user's NativeDesktop app via @nativedesktop/test code snippets. Prefer single-line code with semicolons between statements.",
     inputSchema: {
-      ref: z.number().optional(),
-      testId: z.string().optional(),
-      code: z.string(),
-      world: z.string().optional(),
-      timeoutMs: z.number().optional(),
+      code: z
+        .string()
+        .describe(
+          "js @nativedesktop/test code, has {app, state, expect, launchApp, snapshot} in scope. Should be one line, using ; to execute multiple statements. you MUST call execute multiple times instead of writing complex scripts in a single tool call.",
+        ),
+      timeout: z.number().optional().describe("ms before the snippet is abandoned (default 30000)"),
     },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("webviewEval", params)) }],
-  }),
+  async ({ code, timeout }) => {
+    let target: App;
+    try {
+      target = await currentApp();
+    } catch (e) {
+      return text({ error: (e as Error).message, hint: "call reset" });
+    }
+    if (!target.isAlive()) {
+      return text({ error: "the host process is gone", stderrTail: stderrTail(target), hint: "call reset" });
+    }
+    const logs: string[] = [];
+    const restore = captureConsole(logs);
+    const names = ["app", "state", "expect", "launchApp", "snapshot"];
+    try {
+      const fn = compile(code, names);
+      const run = fn(target, state, expect, launchApp, (opts?: { window?: number; interactiveOnly?: boolean }) =>
+        renderTree(target, opts ?? {}),
+      );
+      const result = await Promise.race([
+        run,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`execute timed out after ${timeout ?? DEFAULT_EXECUTE_TIMEOUT_MS}ms`)),
+            timeout ?? DEFAULT_EXECUTE_TIMEOUT_MS),
+        ),
+      ]);
+      return text({ result: serialize(result) ?? null, logs });
+    } catch (e) {
+      const error = e as Error;
+      if (error instanceof AutomationRpcError) {
+        return text({ error: error.message, code: error.code, data: error.data, logs });
+      }
+      const dead = !target.isAlive();
+      return text({
+        error: error.message,
+        logs,
+        ...(dead ? { stderrTail: stderrTail(target), hint: "call reset" } : {}),
+      });
+    } finally {
+      restore();
+    }
+  },
 );
 
+async function renderTree(target: App, opts: { window?: number; interactiveOnly?: boolean }): Promise<string> {
+  const tree = await target.tree(opts.window);
+  return renderSnapshot(asNdNode(tree.root), {
+    interactiveOnly: opts.interactiveOnly ?? false,
+    maxLines: SNAPSHOT_MAX_LINES,
+  });
+}
+
 server.registerTool(
-  "nd_set_value",
+  "snapshot",
   {
     description:
-      "Set a widget's value semantically (fires the native change event): string for TextInput/TextArea, boolean for Checkbox/Radio/Switch, number for Slider, integer index for Select/SourceList.",
-    inputSchema: { ref: z.number(), value: z.union([z.string(), z.number(), z.boolean()]) },
-  },
-  async ({ ref, value }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("setValue", { ref, value })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_type",
-  {
-    description: "Append text to a TextInput semantically (never synthetic keysyms); returns the full text after the insert.",
-    inputSchema: { ref: z.number(), text: z.string() },
-  },
-  async ({ ref, text }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("type", { ref, text })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_scroll",
-  {
-    description: "Scroll a ScrollView by dx/dy logical units; returns the resulting offsets.",
-    inputSchema: { ref: z.number(), dx: z.number().optional(), dy: z.number().optional() },
-  },
-  async ({ ref, dx, dy }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("scroll", { ref, dx, dy })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_double_click",
-  {
-    description: "Double-click a widget's center via real input synthesis (activates table/list rows). macOS only (-32003 on GTK).",
-    inputSchema: { ref: z.number() },
-  },
-  async ({ ref }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("doubleClick", { ref })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_right_click",
-  {
-    description:
-      "Right-click a widget's center via real input synthesis; an opened context menu is auto-dismissed to keep automation responsive. macOS only (-32003 on GTK).",
-    inputSchema: { ref: z.number() },
-  },
-  async ({ ref }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("rightClick", { ref })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_hover",
-  {
-    description: "Move the synthetic pointer over a widget's center (best-effort hover). macOS only (-32003 on GTK).",
-    inputSchema: { ref: z.number() },
-  },
-  async ({ ref }) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("hover", { ref })) }],
-  }),
-);
-
-server.registerTool(
-  "nd_pointer",
-  {
-    description:
-      "Low-level pointer phase (down|move|up) at logical-window-topleft coordinates; clickCount 2 on down+up makes a double-click. Prefer nd_drag for press-move-release. macOS only (-32003 on GTK).",
+      "Compact accessibility tree of the app: one line per node, indented by depth, with the wire ref every action targets. Read this before acting, the way you would read a page.",
     inputSchema: {
-      phase: z.enum(["down", "move", "up"]),
-      x: z.number(),
-      y: z.number(),
-      button: z.enum(["left", "right"]).optional(),
-      clickCount: z.number().optional(),
-      window: z.number().optional(),
+      window: z.number().optional().describe("Window node ref, from app.windows(); absent means the root window"),
+      interactiveOnly: z.boolean().optional().describe("Keep only widgets an action can reach"),
     },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("pointer", params)) }],
-  }),
+  async ({ window, interactiveOnly }) => {
+    try {
+      const target = await currentApp();
+      return text(await renderTree(target, { window, interactiveOnly }));
+    } catch (e) {
+      return text({ error: (e as Error).message, hint: "call reset" });
+    }
+  },
 );
 
 server.registerTool(
-  "nd_drag",
+  "reset",
   {
     description:
-      "Press-move-release drag between two widget refs (their centers) or explicit coordinates — drives slider thumbs, split dividers, selections like a real mouse. macOS only (-32003 on GTK).",
+      "Close the app and launch it again, clearing `state`. Use it after a crash, a wedged dialog, or to start a scenario from a known screen. Attaching to a running host (ND_AUTOMATION_SOCKET) reconnects instead of respawning.",
     inputSchema: {
-      fromRef: z.number().optional(),
-      toRef: z.number().optional(),
-      fromX: z.number().optional(),
-      fromY: z.number().optional(),
-      toX: z.number().optional(),
-      toY: z.number().optional(),
-      steps: z.number().optional(),
-      durationMs: z.number().optional(),
-      window: z.number().optional(),
+      entry: z.string().optional().describe("entry file to launch, e.g. examples/counter/main.tsx"),
+      backend: z.enum(["appkit", "gtk"]).optional(),
     },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("drag", params)) }],
-  }),
-);
-
-server.registerTool(
-  "nd_keys",
-  {
-    description:
-      "Keyboard synthesis: a chord like 'cmd+n' presses one combination (drives menu key equivalents); a plain string like 'hello' types each character into the focused widget. macOS only (-32003 on GTK).",
-    inputSchema: { keys: z.string(), window: z.number().optional() },
+  async ({ entry, backend }) => {
+    if (entry) options = { ...options, entry };
+    if (backend) options = { ...options, backend };
+    await app?.close().catch(() => {});
+    app = undefined;
+    state = {};
+    try {
+      const target = await currentApp();
+      return text({
+        mode: attached ? "attached" : "spawned",
+        pid: target instanceof AttachedApp ? null : target.pid,
+        socket: target instanceof AttachedApp ? process.env.ND_AUTOMATION_SOCKET : target.socketPath,
+        entry: options.entry || null,
+      });
+    } catch (e) {
+      return text({ error: (e as Error).message });
+    }
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: JSON.stringify(await client.call("keys", params)) }],
-  }),
 );
 
 await server.connect(new StdioServerTransport());

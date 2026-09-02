@@ -24,6 +24,11 @@ console.log(`${shot.width}x${shot.height}`);
 await app.close();
 ```
 
+Anything targeting a widget reads better through a
+[locator](/automation-testing/locators/), which re-resolves on every use and polls until the widget
+is actionable. The members below are the process, the raw RPC, and the host-side waits underneath
+it.
+
 ## `launchApp(options)`
 
 ```ts
@@ -74,6 +79,9 @@ stderr.
 | `waitForMarker(marker, timeoutMs?)` | polls captured stderr for a substring (dialog-script exhaustion, crash markers, anything else the host logs) |
 | `windows()` / `waitForWindows(count, timeoutMs?)` | the `windows` RPC / poll it until the count matches |
 | `screenshot(path, opts?)` | see below |
+| `locator(selector)`, `getByTestId`, `getByRole`, `getByText`, `getByLabel`, `getByPlaceholder`, `keyboard`, `mouse`, `window(titleOrIndex)`, `actionTimeout` | the [locator surface](/automation-testing/locators/) |
+| `setWindowSize(w, h, {window?})` | `setWindowFrame` RPC, keeping the window's origin |
+| `isAlive()` | whether the host process is still running |
 | `restart()` | tears down the current process and relaunches with the same options; app state resets to a fresh launch |
 | `close()` / `kill()` | graceful (`SIGTERM`, falls back to `SIGKILL` after 3s) / immediate |
 | `[Symbol.asyncDispose]` | `await using app = await launchApp(...)` closes it automatically |
@@ -183,6 +191,11 @@ teardown instead of tracking handles yourself.
 
 ## Also exported
 
+- `connectApp(path?)` / `AttachedApp`: the same locator surface, plus `tree`, the `waitFor` sugar,
+  `windows()` and `screenshot()`, over a host somebody else launched (`ND_AUTOMATION_SOCKET`). This
+  is what every acceptance gate's drive script uses, since the gate's bash owns the process.
+- `expect(locatorOrValue)`: polling locator matchers, and plain assertions for everything else. See
+  [Locators](/automation-testing/locators/).
 - `pngSize(path)`: PNG dimensions from the IHDR chunk. Used by `screenshot()`, useful standalone.
 - `poll(fn, pred, {timeoutMs?, intervalMs?})`: generic poll-until-predicate, for the rare condition
   `waitFor`'s vocabulary does not cover, such as window count settling or a `SourceList`'s `rows`

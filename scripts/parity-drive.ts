@@ -15,7 +15,7 @@
 // app-constructible events), the same gap gestures-drive.ts documents.
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { launchApp, type AppHandle, type JsonNode } from "../packages/test/src/index.ts";
+import { expect, hasRealSize, launchApp, renderValue, type AppHandle, type JsonNode } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -76,17 +76,17 @@ function checkNode(node: JsonNode, testId: string, e: Expect): void {
   if (e.role && node.role !== e.role) fail(`${where}: role=${node.role}, want ${e.role}`);
   if (e.text !== undefined && node.text !== e.text) fail(`${where}: text=${JSON.stringify(node.text)}, want ${JSON.stringify(e.text)}`);
   if (e.value !== undefined && node.value !== e.value) fail(`${where}: value=${JSON.stringify(node.value)}, want ${JSON.stringify(e.value)}`);
-  if (e.valueContains !== undefined) {
-    const v = typeof node.value === "string" ? node.value : "";
-    if (!v.includes(e.valueContains)) fail(`${where}: value does not contain ${JSON.stringify(e.valueContains)} (got ${JSON.stringify(node.value)})`);
+  if (e.valueContains !== undefined && !renderValue(node.value).includes(e.valueContains)) {
+    fail(`${where}: value does not contain ${JSON.stringify(e.valueContains)} (got ${JSON.stringify(node.value)})`);
   }
   const wantEnabled = e.enabled ?? true;
   if (node.enabled !== wantEnabled) fail(`${where}: enabled=${node.enabled}, want ${wantEnabled}`);
   if (e.handle) return;
   if (!node.visible) fail(`${where}: visible=false — the widget mounted but is not on screen`);
-  const g = node.geometry;
-  if (!g) fail(`${where}: no geometry`);
-  if (g.w <= 0 || g.h <= 0) fail(`${where}: renders as a ${g.w}x${g.h} box at (${g.x},${g.y})`);
+  if (!hasRealSize(node)) {
+    const g = node.geometry;
+    fail(g ? `${where}: renders as a ${g.w}x${g.h} box at (${g.x},${g.y})` : `${where}: no geometry`);
+  }
 }
 
 async function expectWidgets(app: AppHandle, spec: Record<string, Expect>): Promise<void> {
@@ -111,7 +111,7 @@ async function expectNothingCollapsed(app: AppHandle, section: string): Promise<
   const bad: string[] = [];
   const walk = (n: JsonNode): void => {
     const g = n.geometry;
-    if (n.testID && n.visible && !HANDLE_ONLY.has(n.type) && g && (g.w <= 0 || g.h <= 0)) {
+    if (n.testID && n.visible && !HANDLE_ONLY.has(n.type) && g && !hasRealSize(n)) {
       if (!(n.testID in KNOWN_ZERO_SIZE)) bad.push(`${n.testID} (${n.type}) ${g.w}x${g.h}`);
     }
     n.children.forEach(walk);
@@ -122,31 +122,12 @@ async function expectNothingCollapsed(app: AppHandle, section: string): Promise<
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function pointerClick(app: AppHandle, x: number, y: number): Promise<void> {
-  await app.rpc.call("pointer", { phase: "down", x, y });
-  await app.rpc.call("pointer", { phase: "up", x, y });
-}
-
-async function centerOf(app: AppHandle, testId: string): Promise<{ x: number; y: number; w: number; h: number }> {
-  const node = await app.mustFind(testId);
-  const g = node.geometry;
-  if (!g) fail(`${testId}: no geometry to aim at`);
-  return g;
-}
-
-async function textOf(app: AppHandle, testId: string): Promise<string> {
-  const node = await app.mustFind(testId);
-  return node.text ?? "";
-}
-
-async function expectText(app: AppHandle, testId: string, want: string): Promise<void> {
-  const deadline = Date.now() + 3000;
-  for (;;) {
-    const got = await textOf(app, testId);
-    if (got === want) return;
-    if (Date.now() >= deadline) fail(`${testId}: text=${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
-    await sleep(100);
-  }
+/// The widget's rectangle, for the legs that aim a raw pointer at a
+/// sub-region a locator cannot name (a crumb, a tab strip, a table row band).
+async function boxOf(app: AppHandle, testId: string): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = await app.getByTestId(testId).boundingBox();
+  if (!box) fail(`${testId}: no geometry to aim at`);
+  return box;
 }
 
 const sections = [
@@ -179,7 +160,7 @@ try {
   await sleep(400);
 
   async function show(section: string): Promise<void> {
-    await app.setValue("parity-nav", section);
+    await app.getByTestId("parity-nav").fill(section);
     await app.waitForPresent(sectionAnchor[section]!, { timeoutMs: 4000 });
     await sleep(250); // one layout pass after the pane content swaps
   }
@@ -207,13 +188,13 @@ try {
   });
   await expectNothingCollapsed(app, "display");
   // Avatar follows its `text` prop; Badge follows the variant Select.
-  await app.setValue("display-avatar-input", "Grace Hopper");
-  await expectText(app, "display-avatar-48", "Grace Hopper");
-  await app.setValue("display-badge-select", 4);
-  await expectText(app, "display-badge-live", "Live");
+  await app.getByTestId("display-avatar-input").fill("Grace Hopper");
+  await expect(app.getByTestId("display-avatar-48")).toHaveText("Grace Hopper");
+  await app.getByTestId("display-badge-select").selectOption(4);
+  await expect(app.getByTestId("display-badge-live")).toHaveText("Live");
   // Tag add/remove is real state, not decoration.
-  await app.setValue("display-tag-input", "Bun");
-  await app.click("display-tag-add-button");
+  await app.getByTestId("display-tag-input").fill("Bun");
+  await app.getByTestId("display-tag-add-button").click();
   await app.waitForPresent("display-tag-t4", { timeoutMs: 3000 });
   await expectWidgets(app, { "display-tag-t4": { type: "Tag", role: "label", text: "Bun" } });
   console.log("ND_PARITY_DISPLAY_OK avatar/badge/tag/kbd present, sized, and state-driven");
@@ -228,17 +209,17 @@ try {
   await expectNothingCollapsed(app, "input");
   // ComboBox selection: an index picks a list row (selectionChanged ->
   // changed), a string is free text; both must reach app state.
-  await app.setValue("input-combobox", 2);
-  await expectText(app, "input-combobox-readout", "Cherry");
-  await app.setValue("input-combobox", 4);
-  await expectText(app, "input-combobox-readout", "Elderberry");
-  await app.setValue("input-combobox", "Kiwi");
-  await expectText(app, "input-combobox-readout", "Kiwi");
+  await app.getByTestId("input-combobox").selectOption(2);
+  await expect(app.getByTestId("input-combobox-readout")).toHaveText("Cherry");
+  await app.getByTestId("input-combobox").selectOption(4);
+  await expect(app.getByTestId("input-combobox-readout")).toHaveText("Elderberry");
+  await app.getByTestId("input-combobox").fill("Kiwi");
+  await expect(app.getByTestId("input-combobox-readout")).toHaveText("Kiwi");
   let rangeRejected = false;
-  await app.setValue("input-combobox", 99).catch(() => { rangeRejected = true; });
+  await app.getByTestId("input-combobox").selectOption(99).catch(() => { rangeRejected = true; });
   if (!rangeRejected) fail("combobox setValue(99) should have been rejected: only 5 options");
   // `enabled` off must show up in the a11y tree on every control kind.
-  await app.setValue("input-enabled-toggle", false);
+  await app.getByTestId("input-enabled-toggle").uncheck();
   await app.waitForDisabled("input-enabled-button", { timeoutMs: 3000 });
   await expectWidgets(app, {
     "input-enabled-button": { enabled: false },
@@ -246,7 +227,7 @@ try {
     "input-enabled-select": { enabled: false },
     "input-enabled-slider": { enabled: false },
   });
-  await app.setValue("input-enabled-toggle", true);
+  await app.getByTestId("input-enabled-toggle").check();
   await app.waitForEnabled("input-enabled-button", { timeoutMs: 3000 });
   console.log("ND_PARITY_INPUT_OK combobox drove selection + free text; enabled=false reached the a11y tree");
   await shoot(2, "input");
@@ -256,10 +237,10 @@ try {
   await expectWidgets(app, { "nav-breadcrumb": { type: "Breadcrumb", role: "toolbar" } });
   await expectNothingCollapsed(app, "navigation");
   {
-    const g = await centerOf(app, "nav-breadcrumb");
-    await expectText(app, "nav-breadcrumb-readout", "Parity");
-    await pointerClick(app, g.x + 18, g.y + g.h / 2); // first crumb
-    await expectText(app, "nav-breadcrumb-readout", "Home");
+    const g = await boxOf(app, "nav-breadcrumb");
+    await expect(app.getByTestId("nav-breadcrumb-readout")).toHaveText("Parity");
+    await app.mouse.click(g.x + 18, g.y + g.height / 2); // first crumb
+    await expect(app.getByTestId("nav-breadcrumb-readout")).toHaveText("Home");
   }
   console.log("ND_PARITY_NAV_OK breadcrumb itemActivated moved app state");
   await shoot(3, "navigation");
@@ -274,14 +255,14 @@ try {
   await expectWidgets(app, { "data-table": { type: "Table", role: "table" } });
   await expectNothingCollapsed(app, "data");
   {
-    const g = await centerOf(app, "data-table");
-    await expectText(app, "data-selected-readout", "Selected: (none)");
-    await pointerClick(app, g.x + 60, g.y + 40); // header is ~24pt; this is row 0
-    await expectText(app, "data-selected-readout", "Selected: Ada Lovelace");
-    await app.keys("shift+down");
-    await expectText(app, "data-selected-readout", "Selected: Ada Lovelace, Grace Hopper");
-    await app.keys("shift+down");
-    await expectText(app, "data-selected-readout", "Selected: Ada Lovelace, Grace Hopper, Alan Turing");
+    const g = await boxOf(app, "data-table");
+    await expect(app.getByTestId("data-selected-readout")).toHaveText("Selected: (none)");
+    await app.mouse.click(g.x + 60, g.y + 40); // header is ~24pt; this is row 0
+    await expect(app.getByTestId("data-selected-readout")).toHaveText("Selected: Ada Lovelace");
+    await app.keyboard.press("Shift+ArrowDown");
+    await expect(app.getByTestId("data-selected-readout")).toHaveText("Selected: Ada Lovelace, Grace Hopper");
+    await app.keyboard.press("Shift+ArrowDown");
+    await expect(app.getByTestId("data-selected-readout")).toHaveText("Selected: Ada Lovelace, Grace Hopper, Alan Turing");
   }
   console.log("ND_PARITY_TABLE_OK selectionMode=multiple reported the index set {0,1,2}");
   await shoot(5, "data");
@@ -295,52 +276,53 @@ try {
     "overlays-sheet": { type: "Sheet", role: "dialog", handle: true },
   });
   await expectNothingCollapsed(app, "overlays");
-  await app.click("overlays-dialog-open-button");
+  await app.getByTestId("overlays-dialog-open-button").click();
   await app.waitFor({ testId: "overlays-dialog-name-input", state: "visible" }, { timeoutMs: 4000 });
   await expectWidgets(app, {
     "overlays-dialog-name-input": { type: "TextInput", role: "textbox" },
     "overlays-dialog-save": { type: "Button", role: "button", text: "Save" },
   });
   await shoot(6, "overlays");
-  await app.setValue("overlays-dialog-name-input", "Ada");
-  await app.click("overlays-dialog-save");
+  await app.getByTestId("overlays-dialog-name-input").fill("Ada");
+  await app.getByTestId("overlays-dialog-save").click();
   await app.waitFor({ testId: "overlays-dialog-name-input", state: "gone" }, { timeoutMs: 4000 }).catch(async () => {
-    const node = await app.find("overlays-dialog-name-input");
-    if (node?.visible) fail("dialog content is still visible after Save closed the dialog");
+    if (await app.getByTestId("overlays-dialog-name-input").isVisible()) {
+      fail("dialog content is still visible after Save closed the dialog");
+    }
   });
-  await expectText(app, "overlays-dialog-readout", "Saved Ada <(empty)>");
+  await expect(app.getByTestId("overlays-dialog-readout")).toHaveText("Saved Ada <(empty)>");
   // Sheet: one instance, its edge switched per button. The dismissal is
   // asserted through app state, not `visible`: a closed sheet leaves the
   // screen (checked against a capture) but its content nodes keep reporting
   // visible=true, since node_visible does not account for the overlay window
   // the sheet content lives in. The Dialog above does flip correctly.
   for (const edge of ["bottom", "trailing"]) {
-    await app.click(`overlays-sheet-open-${edge}`);
-    await expectText(app, "overlays-sheet-readout", `Open from ${edge}`);
+    await app.getByTestId(`overlays-sheet-open-${edge}`).click();
+    await expect(app.getByTestId("overlays-sheet-readout")).toHaveText(`Open from ${edge}`);
     await app.waitFor({ testId: "overlays-sheet-title", state: "visible" }, { timeoutMs: 4000 });
-    await expectText(app, "overlays-sheet-title", `Sheet from ${edge}`);
-    await app.click("overlays-sheet-close");
-    await expectText(app, "overlays-sheet-readout", "Closed");
+    await expect(app.getByTestId("overlays-sheet-title")).toHaveText(`Sheet from ${edge}`);
+    await app.getByTestId("overlays-sheet-close").click();
+    await expect(app.getByTestId("overlays-sheet-readout")).toHaveText("Closed");
   }
 
   // Overlay: the floating bar must not move or resize the content under it,
   // which is the widget's entire contract. minHeight rides along: the content
   // box asks for 120 and must actually get it.
-  const stackBefore = (await app.find("overlays-stack-content"))?.geometry;
-  if (!stackBefore || stackBefore.h < 120) {
+  const stackBefore = await app.getByTestId("overlays-stack-content").boundingBox();
+  if (!stackBefore || stackBefore.height < 120) {
     fail(`overlay content ignored minHeight 120: ${JSON.stringify(stackBefore)}`);
   }
-  await app.click("overlays-stack-toggle");
+  await app.getByTestId("overlays-stack-toggle").click();
   await app.waitFor({ testId: "overlays-stack-bar", state: "visible" }, { timeoutMs: 4000 });
-  const stackAfter = (await app.find("overlays-stack-content"))?.geometry;
-  const barGeom = (await app.find("overlays-stack-bar"))?.geometry;
-  if (!stackAfter || stackAfter.y !== stackBefore.y || stackAfter.h !== stackBefore.h) {
+  const stackAfter = await app.getByTestId("overlays-stack-content").boundingBox();
+  const barGeom = await app.getByTestId("overlays-stack-bar").boundingBox();
+  if (!stackAfter || stackAfter.y !== stackBefore.y || stackAfter.height !== stackBefore.height) {
     fail(`the floating bar resized the content: ${JSON.stringify(stackBefore)} -> ${JSON.stringify(stackAfter)}`);
   }
-  if (!barGeom || barGeom.h <= 0 || barGeom.y > stackAfter.y + stackAfter.h / 2) {
+  if (!barGeom || barGeom.height <= 0 || barGeom.y > stackAfter.y + stackAfter.height / 2) {
     fail(`the bar is not floating over the content's top half: ${JSON.stringify(barGeom)} over ${JSON.stringify(stackAfter)}`);
   }
-  await app.click("overlays-stack-toggle");
+  await app.getByTestId("overlays-stack-toggle").click();
   await app.waitFor({ testId: "overlays-stack-bar", state: "gone" }, { timeoutMs: 4000 });
   console.log("ND_PARITY_OVERLAYS_OK dialog opened, saved and dismissed; sheet slid in from two edges; the overlay bar floated without resizing the content");
 
@@ -350,10 +332,10 @@ try {
     "richtext-view": { type: "RichText", role: "label", valueContains: "A read-only, natively parsed Markdown view" },
   });
   await expectNothingCollapsed(app, "richtext");
-  await app.setValue("richtext-selectable-toggle", false);
+  await app.getByTestId("richtext-selectable-toggle").uncheck();
   await sleep(200);
   await expectWidgets(app, { "richtext-view": { type: "RichText", role: "label", valueContains: "Code block" } });
-  await app.setValue("richtext-selectable-toggle", true);
+  await app.getByTestId("richtext-selectable-toggle").check();
   console.log("ND_PARITY_RICHTEXT_OK markdown rendered with a real height and survived a selectable flip");
   await shoot(7, "richtext");
 
@@ -372,28 +354,30 @@ try {
   await shoot(8, "charts");
   {
     // The tab strip is a segmented control centred on the TabView's top edge.
-    const g = await centerOf(app, "charts-tabs");
-    const before = await app.mustFind("charts-live-chart");
-    if (before.visible) fail("charts: the Live tab is showing before its tab was clicked");
-    await pointerClick(app, g.x + g.w * 0.54, g.y + 6);
+    const g = await boxOf(app, "charts-tabs");
+    if (await app.getByTestId("charts-live-chart").isVisible()) {
+      fail("charts: the Live tab is showing before its tab was clicked");
+    }
+    await app.mouse.click(g.x + g.width * 0.54, g.y + 6);
     await app.waitFor({ testId: "charts-live-chart", state: "visible" }, { timeoutMs: 4000 });
-    const grid = await app.mustFind("charts-types-grid");
-    if (grid.visible) fail("charts: the Types page is still showing after switching to Live");
+    if (await app.getByTestId("charts-types-grid").isVisible()) {
+      fail("charts: the Types page is still showing after switching to Live");
+    }
     // The live chart must survive every type switch, still on screen and sized.
     for (let i = 0; i < 6; i++) {
-      await app.setValue("charts-live-type-select", i);
+      await app.getByTestId("charts-live-type-select").selectOption(i);
       await sleep(250);
       await expectWidgets(app, { "charts-live-chart": { type: "Chart", role: "custom" } });
     }
     for (const toggle of ["charts-live-legend-toggle", "charts-live-grid-toggle", "charts-live-animated-toggle"]) {
-      await app.setValue(toggle, false);
+      await app.getByTestId(toggle).uncheck();
       await sleep(150);
       await expectWidgets(app, { "charts-live-chart": { type: "Chart", role: "custom" } });
-      await app.setValue(toggle, true);
+      await app.getByTestId(toggle).check();
     }
     await shoot(9, "charts-live");
     // Back to the Types page, proving the strip drives both ways.
-    await pointerClick(app, g.x + g.w * 0.46, g.y + 6);
+    await app.mouse.click(g.x + g.width * 0.46, g.y + 6);
     await app.waitFor({ testId: "charts-types-grid", state: "visible" }, { timeoutMs: 4000 });
   }
   console.log("ND_PARITY_CHARTS_OK six chart types rendered; tab strip switched pages both ways; live chart survived all six type switches");
@@ -406,8 +390,8 @@ try {
     "progress-circle-unlabeled-100": { type: "ProgressCircle", role: "progressbar" },
   });
   await expectNothingCollapsed(app, "progress");
-  await app.setValue("progress-live-slider", 0.75);
-  await expectText(app, "progress-live-readout", "75%");
+  await app.getByTestId("progress-live-slider").fill(0.75);
+  await expect(app.getByTestId("progress-live-readout")).toHaveText("75%");
   await expectWidgets(app, { "progress-live-circle": { type: "ProgressCircle", role: "progressbar" } });
   console.log("ND_PARITY_PROGRESS_OK progresscircle tracked the slider");
   await shoot(10, "progress");
@@ -420,11 +404,11 @@ try {
   });
   await expectNothingCollapsed(app, "loading");
   await shoot(11, "loading");
-  await app.setValue("loading-toggle", true);
+  await app.getByTestId("loading-toggle").check();
   await app.waitForPresent("loading-row-r1-avatar", { timeoutMs: 3000 });
   await app.waitForGone("loading-row-r1-avatar-skeleton", { timeoutMs: 3000 });
   await expectNothingCollapsed(app, "loading (loaded)");
-  await app.setValue("loading-toggle", false);
+  await app.getByTestId("loading-toggle").uncheck();
   await app.waitForPresent("loading-row-r1-avatar-skeleton", { timeoutMs: 3000 });
   console.log("ND_PARITY_LOADING_OK skeletons swapped for real content and back");
 
@@ -445,11 +429,11 @@ try {
     "codeeditor-widget": { type: "CodeEditor", role: "textbox", valueContains: "function greet" },
   });
   await expectNothingCollapsed(app, "codeeditor");
-  await app.setValue("codeeditor-linenumbers-toggle", false);
+  await app.getByTestId("codeeditor-linenumbers-toggle").uncheck();
   await sleep(200);
   await expectWidgets(app, { "codeeditor-widget": { type: "CodeEditor", role: "textbox", valueContains: "function greet" } });
-  await app.setValue("codeeditor-linenumbers-toggle", true);
-  await app.setValue("codeeditor-language-select", 1);
+  await app.getByTestId("codeeditor-linenumbers-toggle").check();
+  await app.getByTestId("codeeditor-language-select").selectOption(1);
   await sleep(200);
   await expectWidgets(app, { "codeeditor-widget": { type: "CodeEditor", role: "textbox", valueContains: "function greet" } });
   console.log("ND_PARITY_CODEEDITOR_OK editor rendered with a real height and survived language/gutter switches");
