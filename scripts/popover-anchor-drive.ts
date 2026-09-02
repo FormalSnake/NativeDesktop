@@ -32,6 +32,15 @@ const mustFind = async (testId: string) => {
   if (!node) throw new Error(`${testId} not found in tree`);
   return node;
 };
+// The example reports its state through two <label>s. A GTK Label carries no
+// a11y value at all, so there the readable state is the node's own text.
+const waitLabel = async (testId: string, want: string) => {
+  if (!gtk) {
+    await app.waitForValue(testId, want, { timeoutMs: T });
+    return;
+  }
+  await poll(async () => (await mustFind(testId)).text, (v) => v === want, { timeoutMs: T });
+};
 const body = async () => findNode((await app.tree()).root, "popover-body");
 const shown = async () => {
   const b = await body();
@@ -48,7 +57,7 @@ try {
 
   // ---- leg 1: the ref places a popover with no tree parent at all ----------
   await app.getByTestId("anchor-button").click();
-  await app.waitForValue("open-label", "open", { timeoutMs: T });
+  await waitLabel("open-label", "open");
   await poll(() => shown(), (v) => v, { timeoutMs: T });
   if (gtk) {
     // Placement, not just presence: the panel's origin has to land on the node
@@ -70,18 +79,18 @@ try {
     // Dropping the anchor unparents the popover, and GTK closes it on the way
     // out, so the app's own `open` goes false without any keystroke.
     await app.getByTestId("detach-button").click();
-    await app.waitForValue("mode-label", "detached", { timeoutMs: T });
-    await app.waitForValue("open-label", "shut", { timeoutMs: T });
+    await waitLabel("mode-label", "detached");
+    await waitLabel("open-label", "shut");
   } else {
     await app.getByTestId("anchor-button").press("Escape");
-    await app.waitForValue("open-label", "shut", { timeoutMs: T });
+    await waitLabel("open-label", "shut");
     await poll(() => shown(), (v) => !v, { timeoutMs: T });
     await app.getByTestId("detach-button").click();
-    await app.waitForValue("mode-label", "detached", { timeoutMs: T });
+    await waitLabel("mode-label", "detached");
   }
   await poll(() => shown(), (v) => !v, { timeoutMs: T });
   await app.getByTestId("anchor-button").click();
-  await app.waitForValue("open-label", "open", { timeoutMs: T });
+  await waitLabel("open-label", "open");
   await new Promise((r) => setTimeout(r, 800));
   if (await shown()) throw new Error("the popover still presented after the anchor ref was dropped: the removal never reset it");
   console.log("ND_POPOVER_ANCHOR_DROP_OK dropping the ref resets the anchor, and a pooled popover has no tree parent to fall back to");
