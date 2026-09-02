@@ -14,93 +14,18 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   asNdNode,
-  AutomationClient,
+  AttachedApp,
   AutomationRpcError,
   expect,
   launchApp,
   Locator,
-  LocatorFactory,
   renderSnapshot,
   type AppHandle,
-  type GetTreeResult,
-  type LocatorClient,
 } from "@nativedesktop/test";
 import type { Backend } from "@nativedesktop/host";
 
-const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
 const SNAPSHOT_MAX_LINES = 400;
-
-/** The attach-mode counterpart of AppHandle: the same locator surface over a
- * socket this process did not spawn, so `execute` code reads the same either
- * way. There is no process to restart, so reset() reconnects instead. */
-class AttachedApp implements LocatorClient {
-  actionTimeout = DEFAULT_ACTION_TIMEOUT_MS;
-  private readonly factory = new LocatorFactory(this);
-
-  constructor(private readonly rpc: AutomationClient) {}
-
-  tree(window?: number): Promise<GetTreeResult> {
-    return this.rpc.call("getTree", { window });
-  }
-
-  callRpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    return this.rpc.call(method as "click", params as never);
-  }
-
-  windows(): Promise<unknown> {
-    return this.rpc.call("windows");
-  }
-
-  screenshot(path: string, opts: { window?: number } = {}): Promise<unknown> {
-    return this.rpc.call("screenshot", { path, window: opts.window });
-  }
-
-  isAlive(): boolean {
-    return true;
-  }
-
-  stderrTail(): string {
-    return "(attached host: its stderr belongs to whoever launched it)";
-  }
-
-  get keyboard() {
-    return this.factory.keyboard;
-  }
-
-  get mouse() {
-    return this.factory.mouse;
-  }
-
-  locator(selector: string): Locator {
-    return this.factory.locator(selector);
-  }
-
-  getByTestId(testId: string): Locator {
-    return this.factory.getByTestId(testId);
-  }
-
-  getByRole(role: string, opts?: Parameters<LocatorFactory["getByRole"]>[1]): Locator {
-    return this.factory.getByRole(role, opts);
-  }
-
-  getByText(text: string | RegExp, opts?: { exact?: boolean }): Locator {
-    return this.factory.getByText(text, opts);
-  }
-
-  getByLabel(text: string | RegExp, opts?: { exact?: boolean }): Locator {
-    return this.factory.getByLabel(text, opts);
-  }
-
-  getByPlaceholder(text: string | RegExp, opts?: { exact?: boolean }): Locator {
-    return this.factory.getByPlaceholder(text, opts);
-  }
-
-  close(): Promise<void> {
-    this.rpc.close();
-    return Promise.resolve();
-  }
-}
 
 type App = AppHandle | AttachedApp;
 
@@ -121,7 +46,7 @@ let state: Record<string, unknown> = {};
 const attached = Boolean(process.env.ND_AUTOMATION_SOCKET);
 
 async function open(): Promise<App> {
-  if (attached) return new AttachedApp(await AutomationClient.connect());
+  if (attached) return AttachedApp.connect();
   if (!options.entry) {
     throw new Error("no app to drive: set ND_MCP_ENTRY (or ND_AUTOMATION_SOCKET to attach to a running host)");
   }
@@ -133,8 +58,9 @@ async function currentApp(): Promise<App> {
   return app;
 }
 
+/** An attached host's stderr belongs to whoever launched it. */
 function stderrTail(target: App): string {
-  return typeof target.stderrTail === "function" ? target.stderrTail(40) : "";
+  return target instanceof AttachedApp ? "(attached host: its stderr is not ours to read)" : target.stderrTail(40);
 }
 
 /** Result values an agent can act on: a Locator is worth its selector, a tree

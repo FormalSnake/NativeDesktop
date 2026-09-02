@@ -25,6 +25,7 @@ export type { PngSize } from "./png.ts";
 // Locators: Playwright semantics over getTree plus the action RPCs. A Locator
 // is lazy and re-resolves on every use, so a drive script never holds a ref
 // across a re-render.
+export { AttachedApp, connectApp } from "./attach.ts";
 export { Locator, LocatorFactory, callHost } from "./locator.ts";
 export type { ActionOptions, BoundingBox, LocatorClient, RoleOptions, TextOptions, WaitForState } from "./locator.ts";
 export { expect, LocatorAssertions, ValueAssertions } from "./expect.ts";
