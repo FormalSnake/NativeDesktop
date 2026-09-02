@@ -135,5 +135,19 @@ the resolved ref and node for exactly that.
 
 `focus`, `scrollIntoView`, `snapshotNode` and `setWindowFrame` are separate RPCs. Against a host that
 predates one, the call fails with `host predates the "<method>" RPC` rather than a bare `-32601`. The
-optional node fields (`checked`, `label`, `placeholder`, `options`, `selected`, `expanded`) fall back
-to `text` and `value` where the host does not send them, so a selector behaves the same either way.
+optional node fields (`checked`, `label`, `placeholder`, `options`, `selected`, `expanded`) are null
+on a node the field does not apply to and on a host that predates them, and each reader falls back to
+`text` and `value` there, so a selector behaves the same either way.
+
+`app.setWindowSize(w, h)` (and `app.setWindowFrame({x, y, width, height})` for a move) answers the
+window's updated `WindowInfo`, whose `geometry` is the same `{x, y, w, h}` a node carries.
+`locator.screenshot()` renders that one node through `snapshotNode`; pass a path or let the host
+write beside the automation socket and tell you where.
+
+## Acceptance
+
+`scripts/locator-drive.ts` against `examples/locators` is the gate for this surface: `focus()` plus
+`toBeFocused`, `press("Meta+a")`, `scrollIntoViewIfNeeded()` on a clipped row, a node-sized
+`screenshot()`, `setWindowSize` with the root's `boundingBox()` following, `isChecked()` across
+`check()`/`uncheck()`, and `selectOption("Downloads")` by label. It prints `ND_LOCATOR_OK` and runs
+as the third leg of `scripts/mac/mac-gestures.sh`.

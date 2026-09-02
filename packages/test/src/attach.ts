@@ -5,7 +5,15 @@
 // drive script, so those scripts never own a process. This is the half of
 // AppHandle that does not need one: the tree, the host-side waits, the
 // locators, and the keyboard and mouse.
-import type { GetTreeResult, ScreenshotResult, WaitCondition, WaitForResult, WindowsResult } from "@nativedesktop/react/rpc";
+import type {
+  GetTreeResult,
+  ScreenshotResult,
+  SetWindowFrameParams,
+  WaitCondition,
+  WaitForResult,
+  WindowInfo,
+  WindowsResult,
+} from "@nativedesktop/react/rpc";
 import { AutomationClient } from "./socket.ts";
 import { Locator, LocatorFactory, type LocatorClient, type RoleOptions, type TextOptions } from "./locator.ts";
 import type { Keyboard, Mouse } from "./keyboard.ts";
@@ -32,7 +40,8 @@ export class AttachedApp implements LocatorClient {
     return this.rpc.call("getTree", { window });
   }
 
-  /** Untyped RPC entry point, for methods the generated map does not cover. */
+  /** Untyped RPC entry point the Locator layer dispatches through, so one
+   * call site serves every action method. */
   callRpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
     return this.rpc.call(method as "click", params as never);
   }
@@ -49,6 +58,20 @@ export class AttachedApp implements LocatorClient {
 
   isAlive(): boolean {
     return true;
+  }
+
+  /** Resizes a window in logical units, keeping its origin. The answer is
+   * that window's updated WindowInfo, whose `geometry` is the same w/h
+   * Geometry a node carries. */
+  setWindowSize(width: number, height: number, opts: { window?: number } = {}): Promise<WindowInfo> {
+    return this.rpc.call("setWindowFrame", { window: opts.window, width, height });
+  }
+
+  /** Moves and/or resizes a window; omitted components keep their current
+   * value. GTK ignores x/y (client-side placement is not a Wayland
+   * capability). */
+  setWindowFrame(frame: SetWindowFrameParams): Promise<WindowInfo> {
+    return this.rpc.call("setWindowFrame", frame);
   }
 
   // --- host-side waits -------------------------------------------------------
