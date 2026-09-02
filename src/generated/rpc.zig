@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, @"type", scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -18,6 +18,10 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "doubleClick", .method = .doubleClick },
     .{ .name = "rightClick", .method = .rightClick },
     .{ .name = "hover", .method = .hover },
+    .{ .name = "focus", .method = .focus },
+    .{ .name = "scrollIntoView", .method = .scrollIntoView },
+    .{ .name = "snapshotNode", .method = .snapshotNode },
+    .{ .name = "setWindowFrame", .method = .setWindowFrame },
     .{ .name = "resolve", .method = .resolve },
     .{ .name = "windows", .method = .windows },
     .{ .name = "pointer", .method = .pointer },
@@ -84,7 +88,10 @@ pub const RowJson = struct {
 /// isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role
 /// is the widget's schema-declared automation role (null when the type declares none);
 /// enabled/focused/value come from a live per-node backend probe and default to true/false/null
-/// on backends without the probe.
+/// on backends without the probe. checked/selected/expanded/placeholder/label/options come from
+/// the same probe and are null on every node the field does not apply to (a Label has no
+/// checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without
+/// first knowing its kind.
 pub const JsonNode = struct {
     ref: u32,
     @"type": []const u8,
@@ -99,6 +106,12 @@ pub const JsonNode = struct {
     enabled: bool,
     focused: bool,
     value: ?std.json.Value = null,
+    checked: ?bool = null,
+    selected: ?bool = null,
+    expanded: ?bool = null,
+    placeholder: ?[]const u8 = null,
+    label: ?[]const u8 = null,
+    options: ?[]const []const u8 = null,
 };
 
 pub const GetTreeResult = struct {
@@ -175,7 +188,9 @@ pub const ResolveResult = struct {
 };
 
 /// key/main/visible/title come from the live windowState probe on the Window node's handle;
-/// tabGroup is the create-time prop (null for plain windows).
+/// tabGroup is the create-time prop (null for plain windows). geometry is the window's frame in
+/// the same logical, top-left-origin units node Geometry uses (w/h are width/height), null on a
+/// backend whose probe does not report it.
 pub const WindowInfo = struct {
     ref: u32,
     title: ?[]const u8 = null,
@@ -183,6 +198,7 @@ pub const WindowInfo = struct {
     main: bool,
     visible: bool,
     tabGroup: ?[]const u8 = null,
+    geometry: ?Geometry = null,
 };
 
 pub const WindowsResult = struct {
@@ -205,6 +221,17 @@ pub const DragResult = struct {
 
 pub const KeysResult = struct {
     dispatched: bool,
+};
+
+pub const FocusResult = struct {
+    ok: bool,
+};
+
+/// scrolled is false when the target has no scrollable ancestor (nothing to do), which is a
+/// success, not an error.
+pub const ScrollIntoViewResult = struct {
+    ok: bool,
+    scrolled: bool,
 };
 
 /// Live page state read off the engine on the UI thread (WebKitGTK's
@@ -322,6 +349,51 @@ pub const HoverParams = struct {
     ref: ?u32 = null,
     testId: ?[]const u8 = null,
     window: ?u32 = null,
+};
+
+/// focus: Moves keyboard focus to the target, the same path the widget-level `focus` command
+/// takes (first responder on macOS, gtk_widget_grab_focus on GTK), so a following `keys`/`type`
+/// lands there. Target by exactly one of ref / testId. After it returns, waitFor {testId,
+/// state: "focused"} holds.
+pub const FocusParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// scrollIntoView: Scrolls the target's nearest scrollable ancestor until the target is inside
+/// the viewport, so an off-screen node becomes actionable. A target with no scrollable ancestor
+/// answers {ok: true, scrolled: false} rather than an error. Target by exactly one of ref /
+/// testId.
+pub const ScrollIntoViewParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// snapshotNode: In-process render of ONE node's widget to a PNG, same result shape as
+/// screenshot. The image is the node's own surface, so its pixel dimensions come from the same
+/// handle Geometry measures rather than from the whole window at an unknown backing scale.
+/// `path` is an absolute path; absent, the host writes beside the automation socket and answers
+/// where. Target by exactly one of ref / testId.
+pub const SnapshotNodeParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+    path: ?[]const u8 = null,
+};
+
+/// setWindowFrame: Moves and/or resizes a window; omitted components keep their current value.
+/// Coordinates are logical points with a top-left origin, matching WindowInfo.geometry.
+/// `window` names a Window node ref (default: the root window). Answers that window's updated
+/// WindowInfo. GTK sizes the window but cannot position it (client-side placement is not a
+/// Wayland capability), so x/y are ignored there.
+pub const SetWindowFrameParams = struct {
+    window: ?u32 = null,
+    x: ?i32 = null,
+    y: ?i32 = null,
+    width: ?i32 = null,
+    height: ?i32 = null,
 };
 
 /// resolve: Resolves a testID to the single ACTIONABLE instance. Candidates are ranked:

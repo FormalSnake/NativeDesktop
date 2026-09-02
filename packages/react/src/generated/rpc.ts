@@ -22,7 +22,7 @@ export interface RowJson {
   subtitle: string | null;
 }
 
-/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. */
+/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind. */
 export interface JsonNode {
   ref: number;
   type: string;
@@ -37,6 +37,12 @@ export interface JsonNode {
   enabled: boolean;
   focused: boolean;
   value: unknown | null;
+  checked: boolean | null;
+  selected: boolean | null;
+  expanded: boolean | null;
+  placeholder: string | null;
+  label: string | null;
+  options: string[] | null;
 }
 
 export interface GetTreeResult {
@@ -100,7 +106,7 @@ export interface ResolveResult {
   count: number;
 }
 
-/** key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows). */
+/** key/main/visible/title come from the live windowState probe on the Window node's handle; tabGroup is the create-time prop (null for plain windows). geometry is the window's frame in the same logical, top-left-origin units node Geometry uses (w/h are width/height), null on a backend whose probe does not report it. */
 export interface WindowInfo {
   ref: number;
   title: string | null;
@@ -108,6 +114,7 @@ export interface WindowInfo {
   main: boolean;
   visible: boolean;
   tabGroup: string | null;
+  geometry: Geometry | null;
 }
 
 export interface WindowsResult {
@@ -130,6 +137,16 @@ export interface DragResult {
 
 export interface KeysResult {
   dispatched: boolean;
+}
+
+export interface FocusResult {
+  ok: boolean;
+}
+
+/** scrolled is false when the target has no scrollable ancestor (nothing to do), which is a success, not an error. */
+export interface ScrollIntoViewResult {
+  ok: boolean;
+  scrolled: boolean;
 }
 
 /** Live page state read off the engine on the UI thread (WebKitGTK's uri/title/is-loading/can-go-back/can-go-forward, WKWebView's url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation. url/title are null before the first commit. */
@@ -222,6 +239,37 @@ export interface HoverParams {
   window?: number;
 }
 
+/** Moves keyboard focus to the target, the same path the widget-level `focus` command takes (first responder on macOS, gtk_widget_grab_focus on GTK), so a following `keys`/`type` lands there. Target by exactly one of ref / testId. After it returns, waitFor {testId, state: "focused"} holds. */
+export interface FocusParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
+/** Scrolls the target's nearest scrollable ancestor until the target is inside the viewport, so an off-screen node becomes actionable. A target with no scrollable ancestor answers {ok: true, scrolled: false} rather than an error. Target by exactly one of ref / testId. */
+export interface ScrollIntoViewParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
+/** In-process render of ONE node's widget to a PNG, same result shape as screenshot. The image is the node's own surface, so its pixel dimensions come from the same handle Geometry measures rather than from the whole window at an unknown backing scale. `path` is an absolute path; absent, the host writes beside the automation socket and answers where. Target by exactly one of ref / testId. */
+export interface SnapshotNodeParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+  path?: string;
+}
+
+/** Moves and/or resizes a window; omitted components keep their current value. Coordinates are logical points with a top-left origin, matching WindowInfo.geometry. `window` names a Window node ref (default: the root window). Answers that window's updated WindowInfo. GTK sizes the window but cannot position it (client-side placement is not a Wayland capability), so x/y are ignored there. */
+export interface SetWindowFrameParams {
+  window?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}
+
 /** Resolves a testID to the single ACTIONABLE instance. Candidates are ranked: actionable (the checkActionable predicate passes) before not; then key/front window before background. `refs` is every match in tree order, `ref` the winner (null when none is actionable and `actionable` is true). */
 export interface ResolveParams {
   testId: string;
@@ -287,6 +335,10 @@ export interface RpcMethods {
   doubleClick: { params: DoubleClickParams; result: ClickResult };
   rightClick: { params: RightClickParams; result: ClickResult };
   hover: { params: HoverParams; result: ClickResult };
+  focus: { params: FocusParams; result: FocusResult };
+  scrollIntoView: { params: ScrollIntoViewParams; result: ScrollIntoViewResult };
+  snapshotNode: { params: SnapshotNodeParams; result: ScreenshotResult };
+  setWindowFrame: { params: SetWindowFrameParams; result: WindowInfo };
   resolve: { params: ResolveParams; result: ResolveResult };
   windows: { params: undefined; result: WindowsResult };
   pointer: { params: PointerParams; result: PointerResult };
