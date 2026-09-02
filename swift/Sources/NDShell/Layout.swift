@@ -753,7 +753,16 @@ final class NDBoxView: NSView {
             // A tab view reports the size of its tallest page, which is a
             // measurement, not a request: the pages are meant to run to the
             // slot's edge the way they do on every other platform.
-            unmeasurable.append(intrinsicMain == NSView.noIntrinsicMetric || ndTabViewController(for: child) != nil)
+            //
+            // The kind decides before the class does: NumberInput is an
+            // NSStackView, which answers noIntrinsicMetric on both axes
+            // exactly as a real container does, and a field and stepper
+            // stretched across the row is never native. `hexpand` remains how
+            // an app asks for the slack (read into `expanding` above, which
+            // is served first).
+            let selfSizedMain = ndSelfSizedOnAxis(child, horizontal ? .horizontal : .vertical)
+            unmeasurable.append(!selfSizedMain
+                && (intrinsicMain == NSView.noIntrinsicMetric || ndTabViewController(for: child) != nil))
         }
 
         ndDistributeMainAxis(&mainSizes, floors: mainFloors, leads: mainLeads, trails: mainTrails,
