@@ -8489,24 +8489,21 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   },
   ScrollView: {
     // childModel is "single" (schema/widgets.json): documentView itself is
-    // never reassigned (create's FlippedView stays put, see genSwiftCreateBody)
-    // — the child is pinned inside it instead, leading+trailing+top+bottom, so
-    // its own intrinsic/fitting height drives the document's scrollable height
-    // while the width tracks the clip view via doc's own constraints. Any
-    // prior child is cleared first to preserve single-child semantics (mirrors
-    // SWIFT_STRUCTURAL.Window's `parent.subviews.forEach { removeFromSuperview() }`).
+    // never reassigned (create's FlippedView stays put, see genSwiftCreateBody).
+    // The child is pinned inside it instead, top+bottom always (so its own
+    // intrinsic/fitting height drives the document's scrollable height) and
+    // horizontally per its `halign` (NDShell/Layout.swift's
+    // ndPinScrollDocumentChild), with the document's own width tracking the
+    // clip view. Any prior child is cleared first to preserve single-child
+    // semantics (mirrors SWIFT_STRUCTURAL.Window's
+    // `parent.subviews.forEach { removeFromSuperview() }`).
     append: () =>
       "        let sv = parent as! NSScrollView\n" +
       "        let doc = sv.documentView!\n" +
       "        doc.subviews.forEach { $0.removeFromSuperview() }\n" +
       "        child.translatesAutoresizingMaskIntoConstraints = false\n" +
       "        doc.addSubview(child)\n" +
-      "        NSLayoutConstraint.activate([\n" +
-      "            child.leadingAnchor.constraint(equalTo: doc.leadingAnchor),\n" +
-      "            child.trailingAnchor.constraint(equalTo: doc.trailingAnchor),\n" +
-      "            child.topAnchor.constraint(equalTo: doc.topAnchor),\n" +
-      "            child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),\n" +
-      "        ])\n",
+      "        ndPinScrollDocumentChild(child, in: doc)\n",
     remove: () =>
       "        let sv = parent as! NSScrollView\n" +
       "        if child.superview === sv.documentView { child.removeFromSuperview() }\n",

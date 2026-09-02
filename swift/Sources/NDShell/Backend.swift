@@ -1468,12 +1468,50 @@ nonisolated(unsafe) private var gridCells: [ObjectIdentifier: [ObjectIdentifier:
 func ndGridPlace(_ grid: NSGridView, _ child: NSView, row: Int, column: Int, rowSpan: Int, columnSpan: Int) {
     while grid.numberOfRows <= row + max(rowSpan, 1) - 1 { grid.addRow(with: []) }
     while grid.numberOfColumns <= column + max(columnSpan, 1) - 1 { grid.addColumn(with: []) }
-    grid.cell(atColumnIndex: column, rowIndex: row).contentView = child
+    let cell = grid.cell(atColumnIndex: column, rowIndex: row)
+    cell.contentView = child
+    ndGridApplyAlignment(cell, child)
     if rowSpan > 1 || columnSpan > 1 {
         grid.mergeCells(inHorizontalRange: NSRange(location: column, length: max(columnSpan, 1)),
                          verticalRange: NSRange(location: row, length: max(rowSpan, 1)))
     }
     gridCells[ObjectIdentifier(grid), default: [:]][ObjectIdentifier(child)] = (row, column)
+}
+
+/// `halign`/`valign`/`hexpand`/`vexpand` on a grid child. GTK honours all four
+/// on a GtkGrid child; NSGridView's vocabulary for the first two is the cell's
+/// placement, and for the second two it is which cell view yields when the grid
+/// has slack, which Auto Layout reads off content hugging. Before this a grid
+/// child took the grid's inherited placement whatever the tree said.
+///
+/// Only what the tree actually declares is written. NSGridView's own inherited
+/// placement is a real default (the grid's, then the row's or column's), and
+/// substituting a resolved one for it moved every existing grid child.
+private func ndGridApplyAlignment(_ cell: NSGridCell, _ child: NSView) {
+    guard let flags = ndLayoutFlags[ObjectIdentifier(child)] else { return }
+    if let x = ndGridPlacement(flags.halign, horizontal: true) { cell.xPlacement = x }
+    if let y = ndGridPlacement(flags.valign, horizontal: false) { cell.yPlacement = y }
+    // A child that expands gives its column or row the slack: filling the cell
+    // is what "expand" means, and the low hugging is what lets the cell grow
+    // past the child's natural size in the first place.
+    if flags.hexpand {
+        cell.xPlacement = flags.halign == nil ? .fill : cell.xPlacement
+        child.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+    if flags.vexpand {
+        cell.yPlacement = flags.valign == nil ? .fill : cell.yPlacement
+        child.setContentHuggingPriority(.defaultLow, for: .vertical)
+    }
+}
+
+private func ndGridPlacement(_ align: String?, horizontal: Bool) -> NSGridCell.Placement? {
+    switch align {
+    case "start": return horizontal ? .leading : .top
+    case "center": return .center
+    case "end": return horizontal ? .trailing : .bottom
+    case "fill": return .fill
+    default: return nil
+    }
 }
 
 func ndGridRemove(_ grid: NSGridView, _ child: NSView) {

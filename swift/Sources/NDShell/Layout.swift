@@ -903,6 +903,40 @@ func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
     }
 }
 
+/// Pins a `<scrollview>`'s single child inside the document view (the generated
+/// ScrollView append arm).
+///
+/// The contract the scroll view is built on stays: the child's width follows
+/// the clip view (vertical scrolling only, the document view is width-pinned at
+/// create) and its own natural height drives the document's scrollable height,
+/// so top and bottom are always pinned. What the four-edge pin lost was
+/// `halign`: GTK places a child narrower than the viewport at the requested
+/// edge, and here every child was stretched instead. `fill` remains the
+/// default, which is what a `<clamp>` or a page-wide column wants.
+func ndPinScrollDocumentChild(_ child: NSView, in doc: NSView) {
+    let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
+    var pins: [NSLayoutConstraint] = [
+        child.topAnchor.constraint(equalTo: doc.topAnchor),
+        child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+    ]
+    switch flags.hexpand ? "fill" : (flags.halign ?? "fill") {
+    case "start":
+        pins.append(child.leadingAnchor.constraint(equalTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(lessThanOrEqualTo: doc.trailingAnchor))
+    case "center":
+        pins.append(child.centerXAnchor.constraint(equalTo: doc.centerXAnchor))
+        pins.append(child.leadingAnchor.constraint(greaterThanOrEqualTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(lessThanOrEqualTo: doc.trailingAnchor))
+    case "end":
+        pins.append(child.trailingAnchor.constraint(equalTo: doc.trailingAnchor))
+        pins.append(child.leadingAnchor.constraint(greaterThanOrEqualTo: doc.leadingAnchor))
+    default:
+        pins.append(child.leadingAnchor.constraint(equalTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(equalTo: doc.trailingAnchor))
+    }
+    NSLayoutConstraint.activate(pins)
+}
+
 /// The widget kinds whose native form is a source-list surface.
 func ndIsSourceListKind(_ view: NSView) -> Bool {
     let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
