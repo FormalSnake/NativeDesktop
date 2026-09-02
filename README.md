@@ -93,9 +93,17 @@ cd ../my-app && bun install && bun run dev
   toolchain readiness checks).
 - **Built for coding agents.** With `NATIVE_AUTOMATION=1` the host serves a JSON-RPC socket:
   `getTree` returns an accessibility tree with roles and live values, and on macOS `pointer`,
-  `drag`, and `keys` post real NSEvents. `@nativedesktop/test` wraps it in `launchApp`, node
-  queries, waits, and screenshots, so an agent drives the app the way a person does. See
-  [Automation Socket](docs-site/src/content/docs/automation-testing/automation-socket.md).
+  `drag`, and `keys` post real NSEvents. `@nativedesktop/test` layers Playwright-shaped locators
+  over it, polling past timing races instead of a hand-rolled wait loop:
+  ```ts
+  await app.getByRole("button", { name: "Save" }).click();
+  await expect(app.getByTestId("toast")).toBeVisible();
+  ```
+  `packages/mcp` puts the same surface behind three MCP tools for an agent driving the app
+  directly: `snapshot` reads the accessibility tree, `execute` runs `@nativedesktop/test` code
+  against the live app, and `reset` relaunches the host after a crash or a wedged dialog. See
+  [Locators](docs-site/src/content/docs/automation-testing/locators.md) and
+  [MCP Tools](docs-site/src/content/docs/automation-testing/mcp-tools.md).
 - **Opt-in updater**: `nd package` with an `updates` config emits a minisign-signed archive and
   manifest that the host verifies before applying. See [docs/packaging.md](docs/packaging.md).
 
