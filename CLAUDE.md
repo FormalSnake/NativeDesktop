@@ -76,6 +76,39 @@ processes). Use `@nativedesktop/data` (below) to keep the main thread free.
 Renaming a field is a compile error on both the Zig and TS sides. Never
 hand-edit `tools/codegen.ts` or the generated files.
 
+**Wire protocol perf:** the binary NDP commit encoder (`runtime/ndp-binary.ts`)
+now measures faster than `JSON.stringify` on a large mount: a single growable
+`ArrayBuffer` with one cached `DataView`, rebuilt only when the buffer grows,
+replaces a `new DataView` allocation on every primitive write
+(`scripts/bench-10k.ts`, sized by `ND_BENCH_NODES`, is the gate). Inbound
+framing (`runtime/ndp.ts`) tracks head/tail offsets into the accumulated
+buffer instead of `Buffer.concat`-ing every chunk. Host-side (`src/runtime.zig`,
+`src/protocol.zig`): a `CommitBatch` is decoded and gated on the reader
+thread, and the UI thread only runs `tree.apply`; outbound frames (events,
+`changed`, terminal output) are handed to a writer thread instead of written
+inline, so a full socket buffer never blocks the run loop. React's prop diff
+now compares object props (`style`, `cssClasses`, `rows`/`columns`/`nodes`) by
+value up to 4 levels deep instead of by identity, so a fresh-object-per-render
+JSX literal (`style={{...}}`) with unchanged contents emits no update op; a
+prop the new render dropped now reaches the host as an explicit removal
+(`null`, except `style` becomes `{}` and `cssClasses` becomes `[]`, since both
+apply through a set-replace path where the empty value IS the reset).
+
+**Dropped-prop reset + popover anchor:** a prop that left an app's JSX used to
+reach the host as JSON `null` forever, since every applier type-checked before
+applying and a null failed the check. Codegen now emits
+`ndApplyDroppedDefaults(kind, props)` on both backends, a per-kind table
+substituting the schema default, or the type's zero value where the prop
+declares none, run at the top of both apply dispatchers; `src/tree.zig` treats
+the same marker as `""` for `textFromProps` so `getTree` doesn't report stale
+text. Popover gained an `anchor` prop (the anchor node's wire id), exposed to
+apps as `anchorRef={ref}` on any intrinsic's ref via a new schema field
+`refProp` (`widgetRefProps` in `schema-meta.ts` pairs the JS ref-prop name
+with the wire field it resolves to); `0` is the no-anchor sentinel, falling
+back to the tree parent. Gates: `scripts/propreset-drive.ts`,
+`scripts/popover-anchor-drive.ts` (the GTK anchor arm is written but unbuilt
+on this pass).
+
 **Windowing:** multi-window works — render multiple `<window>` roots (e.g. a
 fragment) and each opens an independent OS window on both backends. The core
 reconciler (`src/tree.zig`) pools window handles by node id; the ABI's
@@ -120,11 +153,51 @@ answers `dialog.openFile/saveFile/showMessage` and
 never block on a native dialog. `@nativedesktop/test` (`packages/test/`) is the
 harness: `launchApp`/`AppHandle` spawn a host with `NATIVE_AUTOMATION=1`, parse
 the stderr markers, and connect `socket.ts`'s `AutomationClient`, the repo's ONE
-copy of the wire framing (packages/mcp and the drive scripts import it); plus
+copy of the wire framing; every consumer (drive scripts, `packages/mcp`) goes
+through `launchApp`/`Locator`/`expect` rather than the socket directly. Plus
 `poll` (for conditions the vocabulary can't express, e.g. window count),
 `dialogScriptEnv`, `takeScreenshot`/`pngSize`. Screenshot: AppKit ghosting fixed
 (stale cached bitmap reps); `ND_AUTOMATION_CAPTURE=screencapturekit` opts into a
 ScreenCaptureKit rung.
+
+**Playwright-style locators:** `@nativedesktop/test`'s primary interface is now
+Locator-based, layered over the RPCs above. `app.getByTestId/getByRole/
+getByText/getByLabel/getByPlaceholder/locator(selector)` return a lazy
+`Locator` that re-resolves against a fresh `getTree` on every action, runs an
+actionability ladder (single match, visible, enabled, real geometry, stable
+frame) with one retry through `resolve` on a stale ref, and `expect(locator)`
+polls the same match set with Playwright-style matchers. `app.keyboard`/
+`app.mouse`, `app.window(titleOrIndex)`, `app.setWindowSize`, and
+`connectApp()` (attach to a host someone else launched) round out the surface.
+Selector grammar: `role=button[name="Save"][exact] >> nth=1`, `testid=`,
+`text=`, `label=`, `placeholder=`, `type=`, chained with `>>`. Four new host
+RPCs ride the existing `semantic_action` op, no vtable change: `focus`,
+`scrollIntoView` and `snapshotNode` (both waive the actionability check, since
+the point is reaching an off-screen or invisible node), `setWindowFrame`.
+`JsonNode` gains `checked`/`selected`/`expanded`/`placeholder`/`label`/
+`options` (null where a widget kind doesn't apply, so a locator can ask
+`isChecked`/`isSelected` of anything); `WindowInfo` gains `geometry`.
+Visibility now intersects ancestor clips; HeaderBar/ToolbarView nodes measure
+the toolbar run their own items occupy. A semantic `click` now fires the
+button's wired action via `NSApp.sendAction` instead of `performClick` (which
+draws the pressed highlight and blocks for it): about 1.7ms versus about
+106ms per click. A drag whose press point lands on a hosted SwiftUI slider
+(posted `leftMouseDragged` events don't move it; SwiftUI reads live pointer
+state) maps its end point straight to a value through the same path
+`setValue` takes. Gates: `scripts/mac/mac-gestures.sh`'s third leg
+(`examples/locators` + `scripts/locator-drive.ts`) → `ND_LOCATOR_OK`;
+`scripts/headless-locators.sh` on Linux. Docs:
+`docs-site/src/content/docs/automation-testing/locators.md`,
+`docs-site/src/content/docs/core-concepts/layout.md`.
+
+**MCP bridge** (`packages/mcp/`): three tools instead of one per RPC.
+`execute({code})` runs `@nativedesktop/test` code with `{app, state, expect,
+launchApp, snapshot}` in scope and returns its value the same shape a drive
+script would; `snapshot` renders the compact a11y tree (one line per node,
+`[ref=eN]` wire refs) via `renderSnapshot`; `reset` relaunches the host and
+clears state, or reconnects when `ND_AUTOMATION_SOCKET` points at a host
+someone else started. Entry point via `ND_MCP_ENTRY`, backend via
+`ND_MCP_BACKEND`.
 
 **Native system tabs (M17):** `<window tabGroup="x">` roots render as one
 tabbed window per platform's real tab system — macOS: each tab IS an NSWindow
@@ -189,6 +262,40 @@ enables it (and `strip` libcef.so on Linux when it does).
 **Keyboard shortcuts:** menu accelerators are native (an `accelerator` prop →
 `keyEquivalent` + modifiers on macOS, `MenuBar.swift`). There is no general
 widget-level `onKeyDown` yet.
+
+**AppKit box layout:** `<box>` renders as `NDBoxView`
+(`swift/Sources/NDShell/Layout.swift`), a manual frame-placement container
+that replaced NSStackView, whose hugging/compression-resistance priorities had
+to be rewritten on every style apply. Main axis: children pack at their
+natural size and leftover space splits equally among expanding children (GTK
+semantics; NSStackView's `.fill` gave it all to one view). Cross axis:
+fill/start/center/end, defaulting per child from a create-time widget-kind
+table (`ndSelfSizedKinds`: buttons, switches, pickers and the like keep their
+own size; containers, scroll shapes, TextInput/Image/Chart fill) rather than a
+live `intrinsicContentSize` read, which used to flip a child between natural
+and fill depending on whether a SwiftUI leaf had measured yet. Natural and
+minimum size are measured and cached separately per child (a wrapping label's
+minimum is a floor, its natural is its text width); `style.margin`,
+`minWidth`/`minHeight`, hexpand/vexpand/halign/valign are set-replace like
+background and padding already were. `ndInvalidateBoxChain` walks up from a
+changed child to its enclosing boxes, an O(depth) cost, not a whole-tree
+sweep; `ndAppend`/`ndInsert` are O(1). A TabView measures homogeneously over
+all its pages (GTK stack semantics) so siblings below the tab strip don't move
+on a switch; scroll-shaped data widgets (Table/ListView/TreeView) measure rows
+times row height, capped at 10 rows (GTK's `propagate-natural-height`). Frames
+round to the backing pixel grid, outward not to nearest
+(`backingAlignedRect` with `.alignWidthOutward`/`.alignHeightOutward`), so a
+rounded-down label doesn't lose its last glyph. `NDBoxView.isFlipped` is
+`nonisolated`, since every coordinate conversion reads it. Grid (`NSGridView`)
+and ScrollView place their own children through their own AppKit mechanism
+(grid cell placement, constraint pins), not the box's halign/valign
+resolution; a separate AppKit-polish pass landed just after this wave to wire
+halign/valign/hexpand/vexpand through to both. Also this wave: inset table
+style on ListView/Table/TreeView,
+rounded text-field bezels, a prominent button's key equivalent, toast
+buttons, toolbar display-mode customization, Grid spacing, and
+`SplitView.breakpoint` (`SplitController.applyBreakpoint`, an 8pt hysteresis
+band around the threshold).
 
 ### App-facing APIs added recently
 - **System capabilities** (parity with native-sdk.dev's capability pack) —
@@ -378,8 +485,8 @@ widget-level `onKeyDown` yet.
   (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
   (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`
   (worker SQLite), `packages/rpc`, `packages/panes`, `packages/test`
-  (automation harness), `packages/mcp` (MCP bridge),
-  `packages/babel-plugin-nativedesktop`.
+  (automation harness: locators, expect, keyboard/mouse), `packages/mcp`
+  (MCP bridge: execute/snapshot/reset), `packages/babel-plugin-nativedesktop`.
 - **Schemas:** `schema/{widgets,protocol,rpc}.json` → `tools/codegen.ts` →
   generated Zig/TS/Swift.
 - **Build:** `zig build` → `zig-out/bin/nd-hello` (Zig host); the SwiftPM
