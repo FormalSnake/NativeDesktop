@@ -760,8 +760,11 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
     // toplevel to be ACTIVE, which it never is under a headless compositor
     // with no seat. A drive means "this is the window's focus widget", which
     // is what is-focus answers — and it matches what AppKit reports, where the
-    // probe compares against the window's own firstResponder.
-    const focused = gtk.Widget.hasFocus(widget) != 0 or gtk.Widget.isFocus(widget) != 0;
+    // probe compares against the window's own firstResponder. The delegate is
+    // asked too, because that is where focusTarget put the focus.
+    const focus_widget = focusTarget(widget);
+    const focused = gtk.Widget.hasFocus(widget) != 0 or gtk.Widget.isFocus(widget) != 0 or
+        gtk.Widget.hasFocus(focus_widget) != 0 or gtk.Widget.isFocus(focus_widget) != 0;
     const kind = widgetKind(widget);
 
     var value_json: []const u8 = "null";
@@ -961,11 +964,36 @@ fn semanticWindowSetFrame(widget: *gtk.Widget, node_id: u32, args: ?std.json.Val
     const o = objectArg(args);
     const width = if (o) |obj| intArg(obj.get("width")) else null;
     const height = if (o) |obj| intArg(obj.get("height")) else null;
+    var applied = true;
     if (width != null or height != null) {
-        gtk.Window.setDefaultSize(win, width orelse gtk.Widget.getWidth(win_widget), height orelse gtk.Widget.getHeight(win_widget));
+        const want_w = width orelse gtk.Widget.getWidth(win_widget);
+        const want_h = height orelse gtk.Widget.getHeight(win_widget);
+        gtk.Window.setDefaultSize(win, want_w, want_h);
+        applied = settleWindowSize(win_widget, want_w, want_h, 500_000);
     }
-    setResult(result_json_out, .{ .ok = true });
+    setResult(result_json_out, .{
+        .ok = true,
+        .applied = applied,
+        .width = gtk.Widget.getWidth(win_widget),
+        .height = gtk.Widget.getHeight(win_widget),
+    });
     return 0;
+}
+
+/// Pump the main context until the window's allocation matches the size just
+/// requested. A Wayland resize is a round trip through the compositor, so
+/// without this the caller (and the WindowInfo the core re-probes right after
+/// this arm) reads the PRE-resize allocation. Bounded, because a compositor
+/// that refuses the size must not hang the RPC; false means the allocation
+/// never converged and whatever is reported is the real one.
+fn settleWindowSize(win_widget: *gtk.Widget, want_w: c_int, want_h: c_int, budget_us: i64) bool {
+    const deadline = glib.getMonotonicTime() + budget_us;
+    while (true) {
+        if (gtk.Widget.getWidth(win_widget) == want_w and gtk.Widget.getHeight(win_widget) == want_h) return true;
+        if (glib.getMonotonicTime() >= deadline) return false;
+        while (glib.MainContext.iteration(null, 0) != 0) {}
+        glib.usleep(5_000);
+    }
 }
 
 fn intArg(v: ?std.json.Value) ?c_int {
@@ -981,15 +1009,24 @@ fn intArg(v: ?std.json.Value) ?c_int {
 /// helper is file-private and dispatch there needs the tracked kind string,
 /// which the vtable call does not carry.
 fn semanticFocus(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
-    if (isRealWidget(widget)) {
-        var target = widget;
-        if (gobject.ext.isA(widget, gtk.ScrolledWindow)) {
-            if (generated.scrolledWindowInner(@ptrCast(@alignCast(widget)))) |inner| target = inner;
-        }
-        _ = gtk.Widget.grabFocus(target);
-    }
+    if (isRealWidget(widget)) _ = gtk.Widget.grabFocus(focusTarget(widget));
     setResult(result_json_out, .{ .ok = true });
     return 0;
+}
+
+/// The widget that ends up holding the keyboard focus for a tracked handle.
+/// GtkEntry and GtkSearchEntry delegate to an internal GtkText, and a
+/// GtkScrolledWindow to the view it wraps, so after grab_focus the root's
+/// focus widget is one level BELOW the handle. The a11y probe has to look
+/// where the arm aimed, or a focused text field reads back unfocused.
+fn focusTarget(widget: *gtk.Widget) *gtk.Widget {
+    if (gobject.ext.isA(widget, gtk.ScrolledWindow)) {
+        if (generated.scrolledWindowInner(@ptrCast(@alignCast(widget)))) |inner| return inner;
+    }
+    if (gobject.ext.isA(widget, gtk.Editable)) {
+        if (gtk.Editable.getDelegate(@ptrCast(@alignCast(widget)))) |d| return @ptrCast(@alignCast(d));
+    }
+    return widget;
 }
 
 /// "scrollIntoView" scrolls the nearest GtkScrolledWindow ancestor by the
@@ -1061,18 +1098,41 @@ fn semanticSnapshotNode(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value
 fn renderWidgetPng(widget: *gtk.Widget, renderer: *gsk.Renderer, png_path: [*:0]const u8) bool {
     const paintable = gtk.WidgetPaintable.new(widget);
     defer paintable.unref();
+    const width = gtk.Widget.getWidth(widget);
+    const height = gtk.Widget.getHeight(widget);
     const snapshot = gtk.Snapshot.new();
     gdk.Paintable.snapshot(
         paintable.as(gdk.Paintable),
         snapshot.as(gdk.Snapshot),
-        @floatFromInt(gtk.Widget.getWidth(widget)),
-        @floatFromInt(gtk.Widget.getHeight(widget)),
+        @floatFromInt(width),
+        @floatFromInt(height),
     );
     const node = gtk.Snapshot.freeToNode(snapshot) orelse return false;
     defer gsk.RenderNode.unref(node);
-    const texture = gsk.Renderer.renderTexture(renderer, node, null);
+    // An explicit viewport, taken from the same compute_bounds rect
+    // `vtNodeBounds` reports, so the PNG's pixel size IS the rect getTree
+    // gives for the node. With a null viewport the texture takes the render
+    // node's own bounds instead: the ink of whatever the widget drew, which
+    // for a label was 71x15 inside its 608x28 row. That rect is the CSS
+    // border box, wider than get_width by the padding, and its origin sits
+    // outside the content origin, so it has to be honoured and not just
+    // measured. A window gets away with null because its own background node
+    // already spans the whole surface.
+    const viewport = nodeViewport(widget, width, height);
+    const texture = gsk.Renderer.renderTexture(renderer, node, &viewport);
     defer texture.unref();
     return gdk.Texture.saveToPng(texture, png_path) != 0;
+}
+
+/// The rect `snapshotNode` renders, matched to what `vtNodeBounds` reports.
+fn nodeViewport(widget: *gtk.Widget, width: c_int, height: c_int) graphene.Rect {
+    var rect: graphene.Rect = undefined;
+    if (gtk.Widget.computeBounds(widget, widget, &rect) != 0 and
+        rect.f_size.f_width > 0 and rect.f_size.f_height > 0) return rect;
+    return .{
+        .f_origin = .{ .f_x = 0, .f_y = 0 },
+        .f_size = .{ .f_width = @floatFromInt(width), .f_height = @floatFromInt(height) },
+    };
 }
 
 /// Mallocs a NUL-terminated copy of `json` for a `*_json_out` param (freed

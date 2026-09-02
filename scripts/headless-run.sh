@@ -7,6 +7,9 @@
 #
 # The twelve headless-*.sh gates each hand-roll this same sequence; new legs
 # (and scripts/browser-gate.sh) build on this instead of copying it again.
+# The drive runs with ND_BACKEND=gtk: a drive shared with the AppKit gates
+# needs to know which backend answered so it can skip a leg GTK cannot serve
+# (the `keys` RPC is -32003 there).
 # Every run gets its OWN application id and wayland socket: GApplication is
 # single-instance per id on the session bus, so two gates (or an agent's app
 # and a gate) sharing `dev.nativedesktop.hello` make the second one exit with
@@ -69,7 +72,7 @@ grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL: no commit applied"; tail -40
 SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
 
 DRIVE_LOG="$XDG_RUNTIME_DIR/drive-$TAG.log"
-ND_AUTOMATION_SOCKET="$SOCK" bun "$DRIVE" >"$DRIVE_LOG" 2>&1 \
+ND_BACKEND=gtk ND_AUTOMATION_SOCKET="$SOCK" bun "$DRIVE" >"$DRIVE_LOG" 2>&1 \
   || { echo "FAIL: driver"; cat "$DRIVE_LOG"; tail -60 "$LOG"; exit 1; }
 cat "$DRIVE_LOG"
 grep -q "$MARKER" "$DRIVE_LOG" || { echo "FAIL: driver did not report $MARKER"; exit 1; }

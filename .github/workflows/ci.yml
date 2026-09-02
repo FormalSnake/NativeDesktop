@@ -54,3 +54,5 @@ jobs:
         run: nix develop -c bun test packages/
       - name: headless panes (store restore + pane tree)
         run: nix develop -c ./scripts/headless-panes.sh
+      - name: headless locators (focus/scroll/snapshotNode/setWindowFrame)
+        run: nix develop -c ./scripts/headless-locators.sh
