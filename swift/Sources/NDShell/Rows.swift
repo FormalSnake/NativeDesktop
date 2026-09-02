@@ -15,6 +15,25 @@ import SwiftUI
 // The app's child control still arrives from the React tree as an NSView and
 // stays one: it is placed through NDNativeChild, never rebuilt in SwiftUI.
 
+/// The label/content split System Settings draws: the content sits at the
+/// trailing edge and is centered on the WHOLE row.
+///
+/// LabeledContent's default style aligns the two halves on the label's FIRST
+/// text baseline, which for a title+subtitle row puts a 24pt control 3pt above
+/// the row's own top edge (measured: Row 446x32 at y=200, Select 245x24 at
+/// y=197). A row also has no second row to line its label column up with here,
+/// since each row is its own NSHostingView inside a Form representable, so the
+/// default style's column behaviour is not what is being given up.
+private struct NDRowLabeledContentStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            configuration.label
+            Spacer(minLength: 8)
+            configuration.content
+        }
+    }
+}
+
 /// `<row>`: leading icon + title/subtitle text column as the label, suffix
 /// children as the content, prefix children ahead of the text.
 class NDRowView: NDHostedLeaf {
@@ -69,7 +88,7 @@ class NDRowView: NDHostedLeaf {
     override func leafContent() -> AnyView {
         AnyView(
             LabeledContent {
-                HStack(spacing: 8) { children(suffixViews) }
+                HStack(alignment: .center, spacing: 8) { children(suffixViews) }
             } label: {
                 HStack(spacing: 8) {
                     children(prefixViews)
@@ -87,11 +106,28 @@ class NDRowView: NDHostedLeaf {
                         }
                     }
                 }
-            })
+            }
+            .labeledContentStyle(NDRowLabeledContentStyle()))
     }
 
     @ViewBuilder private func children(_ views: [NSView]) -> some View {
         ForEach(Array(views.enumerated()), id: \.element) { _, view in
+            self.child(view)
+        }
+    }
+
+    /// A control whose own width is the right one hugs its content, so the
+    /// row reads as "value, then chevron" at the trailing edge rather than a
+    /// popup stretched across the card with the value stranded 200pt from its
+    /// own chevron. AppKit controls carry a low horizontal hugging priority,
+    /// which is what lets SwiftUI stretch them, so the decision is taken from
+    /// the same static rule the box layout uses (`ndSelfSizedOnAxis`) plus the
+    /// app's own `hexpand`: a Slider in a suffix still gets the full track.
+    @ViewBuilder private func child(_ view: NSView) -> some View {
+        let expands = ndLayoutFlags[ObjectIdentifier(view)]?.hexpand ?? false
+        if !expands && ndSelfSizedOnAxis(view, .horizontal) {
+            NDNativeChild(view: view).fixedSize(horizontal: true, vertical: false)
+        } else {
             NDNativeChild(view: view, minWidth: ndChildNeedsWidth(view) ? 160 : 0)
                 .frame(minWidth: ndChildNeedsWidth(view) ? 160 : nil)
         }
