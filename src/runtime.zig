@@ -105,6 +105,20 @@ pub const Runtime = struct {
     child: std.process.Child,
     writer_mutex: std.Io.Mutex = .init,
     write_buf: [4096]u8 = undefined,
+    // Encoded frames waiting for `writerLoop`. Serializing a frame is cheap
+    // and stays on the caller; the socket write does not, because an event
+    // emitted from the UI thread (scroll, slider drag, terminal output) would
+    // otherwise block the run loop on a full socket buffer. `writerLoop` is
+    // the only thread that touches the stream, so `write_buf` has one user.
+    out_mutex: std.Io.Mutex = .init,
+    out_cond: std.Io.Condition = .init,
+    out_idle_cond: std.Io.Condition = .init,
+    out_queue: std.ArrayList([]u8) = .empty,
+    out_writing: bool = false,
+    out_warned: bool = false,
+    // Mirrors "self.stream is published", readable without the writer mutex so
+    // a UI-thread enqueue never waits behind an in-flight socket write.
+    connected: std.atomic.Value(bool) = .init(false),
     seq: u64 = 0,
     sock_path: [:0]u8,
     // Active widget backend name ("gtk" | "appkit"), supplied by the embedder
@@ -168,6 +182,7 @@ pub const Runtime = struct {
 
         singleton = self;
 
+        _ = try std.Thread.spawn(.{}, writerLoop, .{self});
         _ = try std.Thread.spawn(.{}, readerLoop, .{self});
         return self;
     }
@@ -213,6 +228,7 @@ pub const Runtime = struct {
         self.writer_mutex.lockUncancelable(self.io);
         defer self.writer_mutex.unlock(self.io);
         self.stream = stream;
+        self.connected.store(true, .release);
     }
 
     /// Retires the child socket: nulls the field AND closes the descriptor in
@@ -228,6 +244,7 @@ pub const Runtime = struct {
         const current = self.stream orelse return;
         if (current.socket.handle != want.socket.handle) return;
         self.stream = null;
+        self.connected.store(false, .release);
         current.close(self.io);
     }
 
@@ -278,8 +295,81 @@ pub const Runtime = struct {
 
     fn writeFrameOpts(self: *Runtime, value: anytype, options: std.json.Stringify.Options) void {
         const frame = protocol.encodeFrameOpts(self.gpa, value, options) catch return;
-        defer self.gpa.free(frame);
         if (trace) std.debug.print("<< {s}\n", .{frame[4..]});
+        self.enqueueFrame(frame);
+    }
+
+    /// Frames a pre-serialized JSON payload (u32 LE length ‖ bytes) onto the
+    /// same outbound queue as writeFrameOpts. Used for pluginCommand results:
+    /// the plugin's JSON is arbitrary and already serialized, so splicing it
+    /// in raw (rather than re-stringifying it as a JSON string) keeps the
+    /// pluginResult frame's `result` field structurally typed.
+    fn writeRawJson(self: *Runtime, json: []const u8) void {
+        const frame = self.gpa.alloc(u8, 4 + json.len) catch return;
+        std.mem.writeInt(u32, frame[0..4], @intCast(json.len), .little);
+        @memcpy(frame[4..], json);
+        if (trace) std.debug.print("<< {s}\n", .{json});
+        self.enqueueFrame(frame);
+    }
+
+    /// Queue depth that reports a child which has stopped reading. Events are
+    /// never dropped or coalesced: the protocol has no sequence-gap recovery,
+    /// and a dropped `changed` leaves the app's state permanently behind the
+    /// widget's. So the queue grows and says so once.
+    const out_queue_warn_len = 4096;
+
+    /// Hands an encoded frame to the writer thread, taking ownership of it.
+    /// Never blocks on the socket, which is the point: this runs on the UI
+    /// thread for every native event.
+    fn enqueueFrame(self: *Runtime, frame: []u8) void {
+        // No child on the other end. The direct writers this replaced dropped
+        // these on a null stream, and queueing them instead would deliver a
+        // pre-connect frame ahead of the next child's helloAck.
+        if (!self.connected.load(.acquire)) {
+            self.gpa.free(frame);
+            return;
+        }
+        self.out_mutex.lockUncancelable(self.io);
+        defer self.out_mutex.unlock(self.io);
+        self.out_queue.append(self.gpa, frame) catch {
+            self.gpa.free(frame);
+            return;
+        };
+        if (self.out_queue.items.len > out_queue_warn_len and !self.out_warned) {
+            self.out_warned = true;
+            std.debug.print("ND_WARN outbound queue past {d} frames; the child is not draining events\n", .{out_queue_warn_len});
+        }
+        self.out_cond.signal(self.io);
+    }
+
+    /// Drains the outbound queue onto the socket. The whole queue is swapped
+    /// out under the lock and written outside it, so a producer never waits on
+    /// a socket write, and the emptied list's capacity is handed back for
+    /// reuse instead of being freed and regrown every round.
+    fn writerLoop(self: *Runtime) void {
+        var pending: std.ArrayList([]u8) = .empty;
+        defer pending.deinit(self.gpa);
+        while (true) {
+            self.out_mutex.lockUncancelable(self.io);
+            while (self.out_queue.items.len == 0) self.out_cond.waitUncancelable(self.io, &self.out_mutex);
+            std.mem.swap(std.ArrayList([]u8), &pending, &self.out_queue);
+            self.out_writing = true;
+            self.out_mutex.unlock(self.io);
+
+            for (pending.items) |frame| {
+                self.writeFrameBytes(frame);
+                self.gpa.free(frame);
+            }
+            pending.clearRetainingCapacity();
+
+            self.out_mutex.lockUncancelable(self.io);
+            self.out_writing = false;
+            self.out_idle_cond.broadcast(self.io);
+            self.out_mutex.unlock(self.io);
+        }
+    }
+
+    fn writeFrameBytes(self: *Runtime, frame: []const u8) void {
         self.writer_mutex.lockUncancelable(self.io);
         defer self.writer_mutex.unlock(self.io);
         const stream = self.stream orelse return;
@@ -288,23 +378,25 @@ pub const Runtime = struct {
         w.interface.flush() catch {};
     }
 
-    /// Frames a pre-serialized JSON payload (u32 LE length ‖ bytes) through
-    /// the same writer-mutex path as writeFrameOpts. Used for pluginCommand
-    /// results: the plugin's JSON is arbitrary and already serialized, so
-    /// splicing it in raw (rather than re-stringifying it as a JSON string)
-    /// keeps the pluginResult frame's `result` field structurally typed.
-    fn writeRawJson(self: *Runtime, json: []const u8) void {
-        const frame = self.gpa.alloc(u8, 4 + json.len) catch return;
-        defer self.gpa.free(frame);
-        std.mem.writeInt(u32, frame[0..4], @intCast(json.len), .little);
-        @memcpy(frame[4..], json);
-        if (trace) std.debug.print("<< {s}\n", .{json});
-        self.writer_mutex.lockUncancelable(self.io);
-        defer self.writer_mutex.unlock(self.io);
-        const stream = self.stream orelse return;
-        var w = stream.writer(self.io, &self.write_buf);
-        w.interface.writeAll(frame) catch {};
-        w.interface.flush() catch {};
+    /// Drops every frame still queued for a child that has gone away. A frame
+    /// enqueued microseconds before the disconnect would otherwise still be
+    /// sitting there when a respawned child connects to the same listening
+    /// socket, and would reach it ahead of its own helloAck.
+    fn discardQueuedFrames(self: *Runtime) void {
+        self.out_mutex.lockUncancelable(self.io);
+        defer self.out_mutex.unlock(self.io);
+        for (self.out_queue.items) |frame| self.gpa.free(frame);
+        self.out_queue.clearRetainingCapacity();
+    }
+
+    /// Blocks the CALLING thread until every queued frame has hit the socket.
+    /// Only for the handshake's version-mismatch path, where the error frame
+    /// has to land before the child is killed; never call it from the UI
+    /// thread, which is what the queue exists to keep moving.
+    fn flushWrites(self: *Runtime) void {
+        self.out_mutex.lockUncancelable(self.io);
+        defer self.out_mutex.unlock(self.io);
+        while (self.out_queue.items.len > 0 or self.out_writing) self.out_idle_cond.waitUncancelable(self.io, &self.out_mutex);
     }
 
     fn readerLoop(self: *Runtime) void {
@@ -336,6 +428,7 @@ pub const Runtime = struct {
                     .expected = protocol.ndp_version,
                     .got = parsed.value.ndpVersion,
                 });
+                self.flushWrites();
                 self.child.kill(self.io);
                 self.onChildExit(stream);
                 return;
@@ -372,11 +465,11 @@ pub const Runtime = struct {
                 self.marshalBinaryCommit(bytes); // ownership transfers
                 continue;
             }
-            const kind = protocol.peekType(self.gpa, bytes) catch {
+            var type_buf: [64]u8 = undefined;
+            const kind = protocol.peekType(self.gpa, bytes, &type_buf) orelse {
                 self.gpa.free(bytes);
                 continue;
             };
-            defer self.gpa.free(kind);
             if (std.mem.eql(u8, kind, "commitBatch")) {
                 self.marshalCommit(bytes); // ownership transfers (JSON path)
             } else if (std.mem.eql(u8, kind, "ping")) {
@@ -447,6 +540,7 @@ pub const Runtime = struct {
         // (a systemEvent from an app-activation event, say) racing the teardown
         // must find a null stream, never the dead descriptor.
         self.retireStream(stream);
+        self.discardQueuedFrames();
         std.debug.print("ND_CHILD_EXITED\n", .{});
         if (self.overlay_shown) return; // already painted for this child's exit
         const msg = self.last_error_message orelse "Runtime disconnected";
@@ -524,41 +618,81 @@ pub const Runtime = struct {
         };
     }
 
-    const CommitJob = struct { rt: *Runtime, bytes: []u8 };
+    const FrameJob = struct { rt: *Runtime, bytes: []u8 };
+
+    /// A CommitBatch that the reader thread has already decoded and gated.
+    /// The UI thread only runs `tree.apply`, which is the part that has to be
+    /// there. Exactly one of `json`/`binary` owns the decode's memory; the
+    /// JSON parse borrows unescaped strings straight out of `bytes`, so that
+    /// buffer outlives the apply too.
+    const CommitJob = struct {
+        rt: *Runtime,
+        batch: protocol.CommitBatch,
+        json: ?std.json.Parsed(protocol.CommitBatch) = null,
+        binary: ?ndp_binary.Decoded = null,
+        bytes: ?[]u8 = null,
+    };
 
     fn marshalCommit(self: *Runtime, bytes: []u8) void {
-        const job = self.gpa.create(CommitJob) catch {
+        const parsed = std.json.parseFromSlice(protocol.CommitBatch, self.gpa, bytes, .{ .ignore_unknown_fields = true }) catch {
             self.gpa.free(bytes);
             return;
         };
-        job.* = .{ .rt = self, .bytes = bytes };
+        if (!self.permitCommit(parsed.value)) {
+            parsed.deinit();
+            self.gpa.free(bytes);
+            return;
+        }
+        const job = self.gpa.create(CommitJob) catch {
+            parsed.deinit();
+            self.gpa.free(bytes);
+            return;
+        };
+        job.* = .{ .rt = self, .batch = parsed.value, .json = parsed, .bytes = bytes };
+        abi_backend.vtable.marshal_async(abi_backend.ctx, &applyOnUi, job);
+    }
+
+    fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {
+        // The decoder dupes every string into its own arena, so the payload is
+        // dead the moment decode returns.
+        defer self.gpa.free(bytes);
+        var decoded = ndp_binary.decodeCommitBatch(self.gpa, bytes) catch return;
+        if (!self.permitCommit(decoded.batch)) {
+            decoded.deinit();
+            return;
+        }
+        const job = self.gpa.create(CommitJob) catch {
+            decoded.deinit();
+            return;
+        };
+        job.* = .{ .rt = self, .batch = decoded.batch, .binary = decoded };
         abi_backend.vtable.marshal_async(abi_backend.ctx, &applyOnUi, job);
     }
 
     fn applyOnUi(data: ?*anyopaque) callconv(.c) void {
         const job: *CommitJob = @ptrCast(@alignCast(data.?));
         const self = job.rt;
-        const parsed = std.json.parseFromSlice(protocol.CommitBatch, self.gpa, job.bytes, .{ .ignore_unknown_fields = true }) catch {
-            self.gpa.free(job.bytes);
+        defer {
+            if (job.json) |p| p.deinit();
+            if (job.binary) |*d| d.deinit();
+            if (job.bytes) |b| self.gpa.free(b);
             self.gpa.destroy(job);
-            return;
-        };
-        defer parsed.deinit();
-        self.checkAndApply(parsed.value);
-        self.gpa.free(job.bytes);
-        self.gpa.destroy(job);
+        }
+        self.tree.apply(job.batch);
     }
 
-    /// True if allowed; on denial prints ND_ACL_DENY, sends a structured error
-    /// frame, and returns false (the batch is dropped, not applied).
-    fn checkAndApply(self: *Runtime, batch: protocol.CommitBatch) void {
+    /// True if the batch may be applied; on denial prints ND_ACL_DENY, sends a
+    /// structured error frame, and returns false (the batch is dropped).
+    /// Reads only the ACL, so it runs on the reader thread alongside the
+    /// decode rather than costing the UI thread a pass over every op.
+    fn permitCommit(self: *Runtime, batch: protocol.CommitBatch) bool {
         const the_acl = if (abi_backend.ctx.acl) |a| a else &default_acl;
         if (commitGate(the_acl, batch)) |denied| {
             std.debug.print("ND_ACL_DENY permission={s}\n", .{denied});
             self.writeFrame(.{ .type = "error", .message = "capability denied", .expected = @as(u32, 0), .got = @as(u32, 0) });
-            return;
+            return false;
         }
-        self.tree.apply(batch);
+        return true;
     }
 
     /// Routes a `pluginCommand {"plugin","command","arg"}` NDP frame: gates on
@@ -723,7 +857,7 @@ pub const Runtime = struct {
     /// command sent after a commit is applied after that commit, so a node
     /// created in the previous batch is always resolvable here.
     fn marshalWidgetCommand(self: *Runtime, bytes: []u8) void {
-        const job = self.gpa.create(CommitJob) catch {
+        const job = self.gpa.create(FrameJob) catch {
             self.gpa.free(bytes);
             return;
         };
@@ -732,7 +866,7 @@ pub const Runtime = struct {
     }
 
     fn widgetCommandOnUi(data: ?*anyopaque) callconv(.c) void {
-        const job: *CommitJob = @ptrCast(@alignCast(data.?));
+        const job: *FrameJob = @ptrCast(@alignCast(data.?));
         const self = job.rt;
         defer {
             self.gpa.free(job.bytes);
@@ -825,29 +959,6 @@ pub const Runtime = struct {
             else => null,
         } else null;
         tree.reparent(child_id, parent_id, before_id);
-    }
-
-    fn marshalBinaryCommit(self: *Runtime, bytes: []u8) void {
-        const job = self.gpa.create(CommitJob) catch {
-            self.gpa.free(bytes);
-            return;
-        };
-        job.* = .{ .rt = self, .bytes = bytes };
-        abi_backend.vtable.marshal_async(abi_backend.ctx, &applyBinaryOnUi, job);
-    }
-
-    fn applyBinaryOnUi(data: ?*anyopaque) callconv(.c) void {
-        const job: *CommitJob = @ptrCast(@alignCast(data.?));
-        const self = job.rt;
-        var decoded = ndp_binary.decodeCommitBatch(self.gpa, job.bytes) catch {
-            self.gpa.free(job.bytes);
-            self.gpa.destroy(job);
-            return;
-        };
-        defer decoded.deinit();
-        self.checkAndApply(decoded.batch);
-        self.gpa.free(job.bytes);
-        self.gpa.destroy(job);
     }
 };
 
