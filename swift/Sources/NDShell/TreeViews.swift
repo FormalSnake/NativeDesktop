@@ -125,6 +125,8 @@ func makeTreeView(_ props: [String: Any]) -> NSView {
     outlineView.outlineTableColumn = column
     outlineView.headerView = nil
     outlineView.autoresizesOutlineColumn = false
+    outlineView.style = .inset
+    outlineView.usesAutomaticRowHeights = true
     outlineView.indentationPerLevel = CGFloat(propInt(props, "indentationPerLevel") ?? 16)
     outlineView.autoresizingMask = [.width]
 

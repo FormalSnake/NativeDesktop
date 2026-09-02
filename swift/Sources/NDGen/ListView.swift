@@ -85,7 +85,9 @@ func makeListView(_ props: [String: Any]) -> NSView {
     tableView.addTableColumn(column)
     tableView.headerView = nil
     tableView.rowSizeStyle = .default
-    tableView.usesAlternatingRowBackgroundColors = true
+    tableView.style = .inset
+    tableView.usesAlternatingRowBackgroundColors = false
+    tableView.usesAutomaticRowHeights = true
 
     let source = ListViewDataSource()
     source.tableView = tableView

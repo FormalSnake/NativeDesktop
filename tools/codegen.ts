@@ -7046,6 +7046,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return b\n";
   } else if (w.name === "TextInput") {
     out += `        let field = NDTextField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
+    out += "        field.bezelStyle = .roundedBezel\n";
     out += '        if let ph = propStr(props, "placeholder") { field.placeholderString = ph }\n';
     out += '        if let e = propBool(props, "editable") { field.isEditable = e }\n';
     out += "        return field\n";
@@ -7193,6 +7194,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        return tabController.view\n";
   } else if (w.name === "Grid") {
     out += "        let grid = NSGridView(numberOfColumns: 1, rows: 0)\n";
+    out += "        grid.rowSpacing = ndStandardSpacing\n";
+    out += "        grid.columnSpacing = ndStandardSpacing\n";
     out += "        return grid\n";
   } else if (w.name === "ListView") {
     out += "        return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)\n";
@@ -7216,8 +7219,12 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        if let lw = propDouble(props, "listWidth"), lw > 0 {\n';
     out += "            splitViewListFraction[ObjectIdentifier(controller.splitView)] = lw\n";
     out += "        }\n";
+    out += `        controller.explicitCollapsed = propBool(props, "collapsed") ?? ${swiftDefaultBool(w, "collapsed")}\n`;
     out += `        if propBool(props, "collapsed") ?? ${swiftDefaultBool(w, "collapsed")} {\n`;
     out += "            splitViewCollapsed[ObjectIdentifier(controller.splitView)] = true\n";
+    out += "        }\n";
+    out += `        if let bp = propInt(props, "breakpoint"), bp > 0 {\n`;
+    out += "            controller.breakpointPx = CGFloat(bp)\n";
     out += "        }\n";
     out += "        return controller.splitView\n";
   } else if (w.name === "HeaderBar") {
@@ -7600,6 +7607,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       // fresh NSSplitViewItem, and it must come back in the state the app
       // holds now rather than the one the splitview was created in.
       out += "            splitViewCollapsed[ObjectIdentifier(split)] = c\n";
+      // The value the breakpoint restores once the window widens back past
+      // the threshold (NDSplitViewController.explicitCollapsed).
+      out += "            controller.explicitCollapsed = c\n";
       // By behavior, not by index: with no sidebar mounted, item 0 is the
       // content pane, and collapsing that empties the window.
       out += "            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {\n";
