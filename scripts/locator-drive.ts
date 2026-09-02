@@ -4,11 +4,13 @@
 // the host RPCs behind it (focus, scrollIntoView, snapshotNode,
 // setWindowFrame) and the a11y fields the matchers read (checked, options,
 // placeholder) are covered end to end rather than in unit tests alone.
-// macOS-only (keys/press are -32003 on GTK); run via
-// scripts/mac/mac-gestures.sh, which owns the host and hands over
-// ND_AUTOMATION_SOCKET.
+// Run via scripts/mac/mac-gestures.sh on macOS and scripts/headless-locators.sh
+// on Linux; both own the host and hand over ND_AUTOMATION_SOCKET. Every leg is
+// backend-neutral except the chord half of leg 1: press() and keyboard.type()
+// ride the `keys` RPC, which GTK answers -32003, so ND_BACKEND=gtk skips it.
 import { connectApp, expect, poll } from "../packages/test/src/index.ts";
 
+const gtk = process.env.ND_BACKEND === "gtk";
 const app = await connectApp();
 
 // ---- leg 1: focus() + toBeFocused, then press() a chord --------------------
@@ -19,12 +21,17 @@ await expect(input).toBeFocused();
 
 await input.fill("hello");
 await expect(app.getByTestId("query-label")).toHaveText("Query: hello");
-// press() focuses first, then sends the chord: cmd+a selects the field, so
-// the next character replaces the whole value instead of appending.
-await input.press("Meta+a");
-await app.keyboard.type("z");
-await expect(app.getByTestId("query-label")).toHaveText("Query: z");
-console.log("ND_LOCATOR_FOCUS_OK focus() + toBeFocused, press('Meta+a') replaced the selection");
+if (gtk) {
+  console.log("SKIP press('Meta+a') + keyboard.type: the keys RPC answers -32003 on GTK");
+  console.log("ND_LOCATOR_FOCUS_OK focus() + toBeFocused, fill() through the label");
+} else {
+  // press() focuses first, then sends the chord: cmd+a selects the field, so
+  // the next character replaces the whole value instead of appending.
+  await input.press("Meta+a");
+  await app.keyboard.type("z");
+  await expect(app.getByTestId("query-label")).toHaveText("Query: z");
+  console.log("ND_LOCATOR_FOCUS_OK focus() + toBeFocused, press('Meta+a') replaced the selection");
+}
 
 // ---- leg 2: scrollIntoViewIfNeeded on a clipped row ------------------------
 const lastRow = app.getByTestId("row-39");
