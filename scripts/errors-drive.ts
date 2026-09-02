@@ -14,9 +14,19 @@
 //   --overlay-check: assert nd-overlay-error shows the sync throw's message,
 //                    NOT the earlier non-fatal one (the no-stash rule) ->
 //                    ERRORS_OVERLAY_OK.
+//   --restart:       click the overlay's own Restart button (a host-drawn node,
+//                    not part of the app tree), then assert the respawned app
+//                    is back and the overlay's nodes have left the tree ->
+//                    ERRORS_RESTART_OK. Dev mode only (the button is dev-gated).
 import { connectApp, expect } from "@nativedesktop/test";
 
-const mode = process.argv.includes("--survive") ? "survive" : process.argv.includes("--fatal") ? "fatal" : "overlay-check";
+const mode = process.argv.includes("--survive")
+  ? "survive"
+  : process.argv.includes("--fatal")
+    ? "fatal"
+    : process.argv.includes("--restart")
+      ? "restart"
+      : "overlay-check";
 
 const app = await connectApp();
 
@@ -43,6 +53,17 @@ if (mode === "survive") {
 if (mode === "fatal") {
   await app.getByTestId("throw-sync").click();
   console.log("ERRORS_FATAL_CLICKED");
+  app.close();
+  process.exit(0);
+}
+
+if (mode === "restart") {
+  await app.getByTestId("nd-overlay-restart").click();
+  // The respawned child re-renders the app tree, and clearing the overlay drops
+  // every overlay-generation node the host registered.
+  await app.waitForPresent("bump", { timeoutMs: 15000 });
+  await app.waitForGone("nd-overlay-error", { timeoutMs: 15000 });
+  console.log("ERRORS_RESTART_OK");
   app.close();
   process.exit(0);
 }

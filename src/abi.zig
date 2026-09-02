@@ -3,6 +3,7 @@ const marker = @import("marker.zig");
 const abi_backend = @import("abi_backend.zig");
 const protocol = @import("protocol.zig");
 const Tree = @import("tree.zig").Tree;
+const OVERLAY_GENERATION = @import("tree.zig").OVERLAY_GENERATION;
 const Runtime = @import("runtime.zig").Runtime;
 const automation = @import("automation.zig");
 const acl = @import("acl.zig");
@@ -278,6 +279,47 @@ pub export fn nd_system_response(_: *NdContext, id: u32, ok: bool, json: [*:0]co
 /// payload. Routes to `Runtime.sendSystemEvent`.
 pub export fn nd_system_event(_: *NdContext, channel: [*:0]const u8, data_json: [*:0]const u8) callconv(.c) void {
     Runtime.sendSystemEvent(std.mem.span(channel), std.mem.span(data_json));
+}
+
+/// Sequence half of an overlay node id; the generation half is the reserved
+/// `OVERLAY_GENERATION`, which the reconciler's sweep and hot-reload GC both
+/// skip.
+var overlay_seq: u32 = 0;
+
+/// backend -> core: register one widget of the host-drawn crash overlay in the
+/// automation tree. The embedder builds that chrome itself, so without this
+/// `getTree` is blind to a crash exactly when an agent most needs to see it.
+/// `parent` is 0: overlay chrome is flat, and `getTree` only needs each node's
+/// own type/testID/text. The core takes NO ownership reference — the
+/// embedder's panel owns the widgets, and must call `nd_overlay_clear_nodes`
+/// before they die. GTK registers through the in-process `Tree` API instead
+/// (src/gtk/overlay.zig).
+pub export fn nd_overlay_register_node(self: *NdContext, handle: ?*anyopaque, widget_type: [*:0]const u8, test_id: [*:0]const u8, text: ?[*:0]const u8) callconv(.c) void {
+    const widget = handle orelse return;
+    overlay_seq +%= 1;
+    const id = (OVERLAY_GENERATION << 24) | (overlay_seq & 0xffffff);
+    self.tree.nodes.put(self.tree.gpa, id, @ptrCast(widget)) catch return;
+    self.tree.putMeta(id, std.mem.span(widget_type), std.mem.span(test_id), if (text) |t| std.mem.span(t) else null, 0, .{}) catch {
+        _ = self.tree.nodes.remove(id);
+    };
+}
+
+/// backend -> core: drop every overlay-generation node's bookkeeping, before
+/// the embedder tears the panels down. Peer of the tree half of
+/// src/gtk/overlay.zig's `clearAll`; `release_node` is deliberately not called
+/// (registration took no reference).
+pub export fn nd_overlay_clear_nodes(self: *NdContext) callconv(.c) void {
+    var doomed: std.ArrayList(u32) = .empty;
+    defer doomed.deinit(self.gpa);
+    var it = self.tree.meta.iterator();
+    while (it.next()) |entry| {
+        const id = entry.key_ptr.*;
+        if (id >> 24 == OVERLAY_GENERATION) doomed.append(self.gpa, id) catch continue;
+    }
+    for (doomed.items) |id| {
+        _ = self.tree.nodes.remove(id);
+        self.tree.removeMeta(id);
+    }
 }
 
 /// Best-effort JSON -> `EventPayload` decode for the embedder->core channel;

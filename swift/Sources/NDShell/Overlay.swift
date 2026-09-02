@@ -35,6 +35,7 @@ private func addOverlayPanel(to content: NSView, message: String) {
     panel.wantsLayer = true
     panel.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.75).cgColor
     panel.setAccessibilityIdentifier("nd-overlay-panel")
+    registerOverlayNode(panel, "Box", "nd-overlay-panel", nil)
 
     let title = NSTextField(labelWithString: "Runtime crashed")
     title.font = NSFont.boldSystemFont(ofSize: 16)
@@ -44,6 +45,7 @@ private func addOverlayPanel(to content: NSView, message: String) {
     title.autoresizingMask = [.width]
     title.setAccessibilityIdentifier("nd-overlay-title")
     panel.addSubview(title)
+    registerOverlayNode(title, "Label", "nd-overlay-title", "Runtime crashed")
 
     let errorLabel = NSTextField(wrappingLabelWithString: message)
     errorLabel.textColor = .white
@@ -52,6 +54,7 @@ private func addOverlayPanel(to content: NSView, message: String) {
     errorLabel.autoresizingMask = [.width, .height]
     errorLabel.setAccessibilityIdentifier("nd-overlay-error")
     panel.addSubview(errorLabel)
+    registerOverlayNode(errorLabel, "Label", "nd-overlay-error", message)
 
     if isDevMode {
         let restart = NSButton(title: "Restart", target: RestartTrampoline.shared, action: #selector(RestartTrampoline.fire))
@@ -60,14 +63,42 @@ private func addOverlayPanel(to content: NSView, message: String) {
         restart.autoresizingMask = [.minXMargin, .maxXMargin]
         restart.setAccessibilityIdentifier("nd-overlay-restart")
         panel.addSubview(restart)
+        registerOverlayNode(restart, "Button", "nd-overlay-restart", "Restart")
     }
 
     content.addSubview(panel)
     overlayPanels.append(panel)
 }
 
+/// Puts one overlay widget into the core's retained tree under the reserved
+/// overlay generation, the AppKit peer of src/gtk/overlay.zig's
+/// `registerOverlayNode`. An accessibility identifier alone is invisible to
+/// `getTree`, which reads the core's tree and not the AppKit a11y hierarchy,
+/// so without this an agent goes blind exactly when the app has crashed.
+/// The core stores the pointer without retaining it; `overlayPanels` keeps the
+/// panel (and with it its subviews) alive until `nd_overlay_clear_nodes` has
+/// dropped the ids.
+private func registerOverlayNode(_ view: NSView, _ widgetType: String, _ testID: String, _ text: String?) {
+    guard let ctx = gCtx else { return }
+    let handle = Unmanaged.passUnretained(view).toOpaque()
+    widgetType.withCString { type in
+        testID.withCString { id in
+            if let text {
+                text.withCString { value in
+                    nd_overlay_register_node(ctx, handle, type, id, value)
+                }
+            } else {
+                nd_overlay_register_node(ctx, handle, type, id, nil)
+            }
+        }
+    }
+}
+
 func ndShowOverlay(_ message: String) {
     // Replace any existing panels rather than stacking (empty message = clear).
+    // The tree ids go first: the core holds unretained pointers to these views,
+    // so they must stop being reachable before the panels are released.
+    if let ctx = gCtx { nd_overlay_clear_nodes(ctx) }
     for panel in overlayPanels { panel.removeFromSuperview() }
     overlayPanels.removeAll()
     if message.isEmpty { return }

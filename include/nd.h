@@ -165,4 +165,13 @@ void nd_system_response(nd_context*, uint32_t id, bool ok, const char* json);
    NUL-terminated JSON payload. */
 void nd_system_event(nd_context*, const char* channel, const char* data_json);
 
+/* backend -> core: register one widget of the host-drawn crash overlay in the
+   automation tree, so getTree still sees the crash the embedder painted.
+   `text` may be NULL. The core takes no ownership reference; call
+   nd_overlay_clear_nodes before the widgets are torn down. */
+void nd_overlay_register_node(nd_context*, nd_widget, const char* widget_type,
+                              const char* test_id, const char* text);
+/* backend -> core: drop every node registered by nd_overlay_register_node. */
+void nd_overlay_clear_nodes(nd_context*);
+
 #endif /* ND_H */
