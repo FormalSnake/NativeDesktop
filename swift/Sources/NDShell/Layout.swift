@@ -892,6 +892,11 @@ func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
     if let scroll = child as? NSScrollView, ndIsSourceListKind(child) {
         ndRefreshSourceListMaterial(scroll)
     }
+    // Strip buttons attach after the class lands (src/tree.zig applies props
+    // before append), so the strip metric is given here too.
+    if let btn = child as? NSButton, ndIsToolbarStrip(box) {
+        ndNormalizeToolbarStripButton(btn)
+    }
 }
 
 /// The widget kinds whose native form is a source-list surface.

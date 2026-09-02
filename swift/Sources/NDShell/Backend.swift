@@ -712,6 +712,13 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
+    // A strip button's own class update runs the set-replace baseline and then
+    // `flat`, both of which undo the strip metric; re-assert it here rather
+    // than leaving the strip to drift on the first cssClasses update.
+    if let btn = view as? NSButton, let box = btn.superview as? NDBoxView, ndIsToolbarStrip(box) {
+        ndNormalizeToolbarStripButton(btn)
+    }
+
     // `card`: the raised surface (same block shape as `boxed-list`). A box
     // carrying BOTH gets the grouped-list treatment only — that one already
     // draws a surface, and two stacked backings would double the fill.
@@ -860,6 +867,13 @@ func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
         if ndEdgeInsetsEqual(stack.ndPadding, ndToolbarStripInsets) {
             stack.ndPadding = NSEdgeInsets()
         }
+        // Hand the buttons back to the shape the create arm gave them, then to
+        // whatever their own classes say (mirror of `ndClearSidebarRowFallback`).
+        for child in stack.ndChildren {
+            guard let btn = child as? NSButton else { continue }
+            btn.bezelStyle = .push
+            ndApplyCssClasses(btn, ndCssClasses(of: btn))
+        }
         return
     }
     // The strip inset, unless the app declared a `padding` of its own.
@@ -894,7 +908,59 @@ func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
         hairline.heightAnchor.constraint(equalToConstant: 1),
     ])
     ndToolbarBackings[id] = backing
+    ndNormalizeToolbarStripButtons(stack)
 }
+
+/// Whether `view` is a box carrying the `toolbar` structural class.
+func ndIsToolbarStrip(_ view: NSView) -> Bool {
+    ndToolbarStrips.contains(ObjectIdentifier(view))
+}
+
+/// One control size and one baseline for every button in a `toolbar` strip.
+///
+/// A borderless icon-only NSButton takes its intrinsic size from the glyph,
+/// and a glyph's box is per-symbol: measured at the system font size,
+/// `arrow.clockwise` is 18x21, `plus` 18x17, a labelled button 45x16, and all
+/// three report a 9pt intrinsic height with different alignment-rect insets.
+/// That is four heights and three baselines in one strip. `.toolbar` is the
+/// AppKit bezel for exactly this control, and it reports 20pt high with a 14pt
+/// baseline whatever it holds; `showsBorderOnlyWhileMouseInside` keeps the
+/// flat-until-hover affordance a strip wants, so `flat` still means what it
+/// says. The glyphs are re-rendered at one point size and scale so an
+/// icon-only button and a labelled one draw the same size symbol.
+func ndNormalizeToolbarStripButtons(_ box: NDBoxView) {
+    for child in box.ndChildren {
+        guard let btn = child as? NSButton else { continue }
+        ndNormalizeToolbarStripButton(btn)
+    }
+}
+
+func ndNormalizeToolbarStripButton(_ btn: NSButton) {
+    btn.controlSize = .regular
+    btn.bezelStyle = .toolbar
+    btn.isBordered = true
+    // A row button promoted to the accent bezel keeps a standing border; every
+    // other strip button reveals its bezel on hover.
+    btn.showsBorderOnlyWhileMouseInside = btn.bezelColor == nil
+    guard let image = btn.image else { return }
+    if image.isTemplate {
+        if let resized = image.withSymbolConfiguration(ndToolbarStripSymbolConfig) { btn.image = resized }
+    } else if image.size.height != ndToolbarStripGlyphSide {
+        // Raw image bytes take no symbol configuration (withSymbolConfiguration
+        // hands a bitmap straight back unchanged), so they are squared off at
+        // the box a symbol would have drawn in.
+        image.size = NSSize(width: ndToolbarStripGlyphSide, height: ndToolbarStripGlyphSide)
+        btn.invalidateIntrinsicContentSize()
+    }
+}
+
+nonisolated(unsafe) private let ndToolbarStripSymbolConfig = NSImage.SymbolConfiguration(
+    pointSize: NSFont.systemFontSize, weight: .regular, scale: .medium
+).applying(.preferringHierarchical())
+
+nonisolated(unsafe) private let ndToolbarStripGlyphSide: CGFloat =
+    NSImage(systemSymbolName: "square", accessibilityDescription: nil)?
+        .withSymbolConfiguration(ndToolbarStripSymbolConfig)?.size.height ?? NSFont.systemFontSize
 
 /// Text fields currently carrying the `pill` capsule treatment (set-replace
 /// bookkeeping — see the gated block in `ndApplyCssClasses`).
