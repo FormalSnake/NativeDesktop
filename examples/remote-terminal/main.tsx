@@ -35,10 +35,7 @@ function App(): React.ReactNode {
           style={{
             background: "#0e0e12",
             padding: 14,
-            hexpand: true,
             vexpand: true,
-            halign: "fill",
-            valign: "fill",
           }}
         >
           <box orientation="horizontal" spacing={18}>

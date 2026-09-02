@@ -34,25 +34,14 @@ function TerminalTab({ id, withMenu, onNewTab, onClose }: { id: number; withMenu
       )}
       <toolbarview>
         <headerbar title="Terminal" testID="chrome" />
-        {/* No background or padding here on purpose: <terminal> owns its own
-            surface, and a wrapper tinted a near-but-not-equal shade is what
-            produced the mismatched frame this example used to show. */}
-        <box
-          orientation="vertical"
-          style={{
-            hexpand: true,
-            vexpand: true,
-            halign: "fill",
-            valign: "fill",
-          }}
-        >
-          <terminal
-            cols={100}
-            rows={30}
-            fontSize={13}
-            style={{ hexpand: true, vexpand: true }}
-          />
-        </box>
+        {/* <terminal> is the pane's own content, sized by its own hexpand/
+            vexpand: no wrapper box needed to fill the pane. */}
+        <terminal
+          cols={100}
+          rows={30}
+          fontSize={13}
+          style={{ hexpand: true, vexpand: true }}
+        />
       </toolbarview>
     </window>
   );

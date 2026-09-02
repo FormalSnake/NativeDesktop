@@ -1,24 +1,18 @@
 import { render, useMemo, useState } from "@nativedesktop/react";
 
-// ND Tasks — the "smallest real app": a single-pane task list. The chrome
+// ND Tasks: the "smallest real app", a single-pane task list. The chrome
 // machinery (menu bar + toolbar/headerbar) behind the three-pane Notes
 // example scales DOWN to this minimal shape too.
 //
-// Visual approach, mirroring examples/notes/main.tsx's doctrine:
-//   - The window's one content child is a `<splitview>` holding exactly ONE
-//     pane (`slot="content"`), not a bare `<toolbarview>` directly under
-//     `<window>`. That's deliberate, not incidental: on the Mac backend a
-//     `<toolbarview>` pane's headerbar/content only register with the
-//     window's unified NSToolbar when the pane lands in a `<splitview>`
-//     (swift/Sources/NDShell/HeaderBar.swift's `ndToolbarPaneAttachedToSplit`
-//     fires from the SplitView structural arm only) — a toolbarview parented
-//     straight under `<window>` would never attach there. GTK's
-//     `<toolbarview>` is a real, self-sufficient AdwToolbarView and would
-//     work standalone, but the single-`<splitview>`-pane wrapper keeps both
-//     backends on the exact same proven path Notes already exercises, and
-//     renders identically to a plain window (GTK: a sidebar-less
-//     AdwOverlaySplitView; Mac: one NSSplitViewItem, no divider).
-//   - `<menubar>` is a Window sibling of the splitview (app chrome, not
+// Visual approach:
+//   - The window's one content child is a bare `<toolbarview>`, the same
+//     shape examples/browser and examples/terminal use. Both backends
+//     register a toolbarview parented straight under `<window>`: GTK's
+//     AdwToolbarView is self-sufficient, and on the Mac backend
+//     `ndToolbarPaneAttachedToWindow` (swift/Sources/NDShell/HeaderBar.swift)
+//     registers the header with the window's unified NSToolbar for exactly
+//     this case, so no `<splitview>` wrapper is needed to reach it.
+//   - `<menubar>` is a Window sibling of the toolbarview (app chrome, not
 //     content): default menus (App/File/Edit/View/Window/Help) plus a
 //     declared "Task" menu for New Task / Clear Completed.
 //   - `cssClasses` reaches libadwaita's named classes (suggested-action,
@@ -91,59 +85,57 @@ function App(): React.ReactNode {
           />
         </menu>
       </menubar>
-      <splitview testID="tasks-split">
-        <toolbarview slot="content" testID="tasks-toolbar">
-          <headerbar title="Tasks" testID="tasks-header">
-            <button
-              testID="new-task-button"
-              label=""
-              iconName="list-add"
-              onClick={addTask}
-              slot="end"
-              cssClasses={["suggested-action"]}
-            />
-          </headerbar>
-          <box
-            orientation="vertical"
-            spacing={12}
-            cssClasses={["view"]}
-            style={{ hexpand: true, vexpand: true, padding: 16 }}
-          >
-            <searchinput
-              testID="task-search"
-              text={query}
-              placeholder="Filter tasks"
-              onChanged={(e) => setQuery(e.text)}
-            />
-            {/* vexpand: the row list fills the remaining pane height. */}
-            <scrollview testID="task-scroll" minContentHeight={360} style={{ vexpand: true }}>
-              <box orientation="vertical" spacing={2}>
-                {filtered.map((t) => (
-                  <box
-                    key={t.id}
-                    orientation="horizontal"
-                    style={{ padding: { top: 6, bottom: 6, left: 4, right: 4 } }}
-                  >
-                    <checkbox
-                      testID={`task-row-${t.id}`}
-                      label={t.title}
-                      checked={t.done}
-                      onToggled={(e) => toggleTask(t.id, e.checked)}
-                    />
-                  </box>
-                ))}
-              </box>
-            </scrollview>
-            <separator orientation="horizontal" />
-            <progressbar testID="task-progress" fraction={fraction} />
-            <label
-              testID="task-count"
-              text={`${doneCount} of ${total} done`}
-              cssClasses={["dimmed", "caption"]}
-            />
-          </box>
-        </toolbarview>
-      </splitview>
+      <toolbarview testID="tasks-toolbar">
+        <headerbar title="Tasks" testID="tasks-header">
+          <button
+            testID="new-task-button"
+            label=""
+            iconName="list-add"
+            onClick={addTask}
+            slot="end"
+            cssClasses={["suggested-action"]}
+          />
+        </headerbar>
+        <box
+          orientation="vertical"
+          spacing={12}
+          cssClasses={["view"]}
+          style={{ hexpand: true, vexpand: true, padding: 16 }}
+        >
+          <searchinput
+            testID="task-search"
+            text={query}
+            placeholder="Filter tasks"
+            onChanged={(e) => setQuery(e.text)}
+          />
+          {/* vexpand: the row list fills the remaining pane height. */}
+          <scrollview testID="task-scroll" minContentHeight={360} style={{ vexpand: true }}>
+            <box orientation="vertical" spacing={2}>
+              {filtered.map((t) => (
+                <box
+                  key={t.id}
+                  orientation="horizontal"
+                  style={{ padding: { top: 6, bottom: 6, left: 4, right: 4 } }}
+                >
+                  <checkbox
+                    testID={`task-row-${t.id}`}
+                    label={t.title}
+                    checked={t.done}
+                    onToggled={(e) => toggleTask(t.id, e.checked)}
+                  />
+                </box>
+              ))}
+            </box>
+          </scrollview>
+          <separator orientation="horizontal" />
+          <progressbar testID="task-progress" fraction={fraction} />
+          <label
+            testID="task-count"
+            text={`${doneCount} of ${total} done`}
+            cssClasses={["dimmed", "caption"]}
+          />
+        </box>
+      </toolbarview>
     </window>
   );
 }
