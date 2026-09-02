@@ -130,12 +130,9 @@ final class NDSettingsGroupView: NSStackView {
     /// vertical inset and makes every macOS row taller than System Settings.
     private func normalizeNativeRow(_ view: NSView) {
         ndSettingsGroupRows.insert(ObjectIdentifier(view))
-        // NDRowView/NDSwitchRowView own their internal layout — the shared
-        // box-child reconcile would fight their gravity constraints.
+        // NDRowView/NDSwitchRowView own their internal layout.
         if view is NDRowView { return }
-        guard let stack = view as? NSStackView else { return }
-        stack.edgeInsets = .init()
-        ndBoxReconcileChildren(stack)
+        if let box = view as? NDBoxView { box.ndPadding = .init() }
     }
 
     private func refresh() {

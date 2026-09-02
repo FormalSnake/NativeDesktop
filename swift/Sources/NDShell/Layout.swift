@@ -1,39 +1,75 @@
 import AppKit
 import Foundation
+import ObjectiveC
 
 // AppKit peer of GTK's box-layout style keys (src/gtk/style.zig's hexpand/
-// vexpand/halign/valign + padding). NSStackView has no first-class expand/
-// align widget properties like GtkWidget does, so the flags below are
-// recorded at style-apply time (`ndApplyStyle` in Backend.swift) and
-// consulted at attach time (`ndBoxChildAttached`, called from the generated
-// Box append/insertBefore arms) — src/tree.zig applies style BEFORE the
-// child is appended on create, so there is no stack to reconcile against
-// yet; the recorded flags are read back once the child actually attaches.
+// vexpand/halign/valign + padding/margin + size requests). The flags are
+// recorded at style-apply time (`ndApplyStyle` in Backend.swift) and read by
+// `NDBoxView.layout()`. src/tree.zig applies style BEFORE the child is
+// appended on create, so there is nothing to place against yet when they
+// arrive.
 struct NDLayoutFlags {
     var hexpand = false
     var vexpand = false
     var halign: String? = nil
     var valign: String? = nil
+    var margin = NSEdgeInsets()
+    var minWidth: CGFloat = 0
+    var minHeight: CGFloat = 0
 }
 
 /// Per-child flags, keyed off the child view's identity — same idiom as
 /// Backend.swift's `gridCells`. NOT private: read/written from both this
-/// file (attach/detach reconciliation) and Backend.swift (`ndApplyStyle`).
+/// file (box layout) and Backend.swift (`ndApplyStyle`).
 nonisolated(unsafe) var ndLayoutFlags: [ObjectIdentifier: NDLayoutFlags] = [:]
 
-/// The cross-axis "fill" constraint installed per child (see
-/// `ndBoxChildAttached`), tracked so it can be deactivated/replaced instead
-/// of accumulating a duplicate every time style is re-applied.
-nonisolated(unsafe) private var ndCrossAxisConstraints: [ObjectIdentifier: NSLayoutConstraint] = [:]
+/// The widget kind (`schema/widgets.json` name) each tracked view was created
+/// for, recorded by the generated `ndCreate` wrapper. The cross-axis default
+/// is resolved from the KIND, never from the view's live intrinsic size: a
+/// SwiftUI-hosted leaf reports a different intrinsic size before and after its
+/// first measurement, and reading it per style apply flipped children between
+/// natural and fill mid-session.
+nonisolated(unsafe) var ndWidgetKinds: [ObjectIdentifier: String] = [:]
 
-/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`) for
-/// this file's registries (the divider-pin table is declared further down).
+func ndRecordWidgetKind(_ view: NSView, _ kind: String) {
+    ndWidgetKinds[ObjectIdentifier(view)] = kind
+}
+
+/// Separators inside a `boxed-list` card, which the box draws as an inset
+/// hairline row divider rather than a full-bleed system line
+/// (`ndStyleBoxedListDivider`).
+nonisolated(unsafe) var ndBoxedListDividers: Set<ObjectIdentifier> = []
+
+/// The four safe-area pins the generated Window append arm gives a plain root
+/// child, in top/leading/trailing/bottom order. Kept so `ndWindowRootInset`
+/// can be re-derived when the root's shape changes instead of being frozen at
+/// attach (a root box that gains its scrolling child after mount).
+nonisolated(unsafe) var ndWindowRootPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+
+func ndRegisterWindowRootPins(_ child: NSView, _ pins: [NSLayoutConstraint]) {
+    ndWindowRootPins[ObjectIdentifier(child)] = pins
+}
+
+/// Recomputes a window root child's content margin against its CURRENT shape.
+func ndRefreshWindowRootInset(_ child: NSView) {
+    guard let pins = ndWindowRootPins[ObjectIdentifier(child)], pins.count == 4 else { return }
+    let inset = ndWindowRootInset(child)
+    guard pins[0].constant != inset else { return }
+    pins[0].constant = inset
+    pins[1].constant = inset
+    pins[2].constant = -inset
+    pins[3].constant = -inset
+}
+
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
 func ndLayoutPurge(_ view: NSView) {
     let id = ObjectIdentifier(view)
     ndLayoutFlags[id] = nil
-    ndCrossAxisConstraints[id] = nil
-    ndBoxedListDividerPins[id] = nil
+    ndWidgetKinds[id] = nil
+    ndBoxedListDividers.remove(id)
+    ndWindowRootPins[id] = nil
 }
+
 
 /// `NSButton` subclass carrying GTK-style `padding` — AppKit buttons have no
 /// content-inset API, so padding is folded into `intrinsicContentSize`
@@ -119,449 +155,747 @@ final class NDTextField: NSTextField {
 /// pane itself still spans the full slot (see the SplitView content append
 /// arm in tools/codegen.ts).
 final class NDPaneHostView: NSView {
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 }
 
-/// Container, scroll and collection shapes. Named explicitly, and asked FIRST,
-/// because the whole job of every one of them is to fill what they are given:
-/// an `NSSplitView` held at its "natural" width is one divider wide, and a
-/// stack held at its natural height is as tall as whatever it happens to
-/// contain. A subclass of a listed leaf control that is really a container
-/// would otherwise reach the allowlist in `ndHasIntrinsicCrossSize` and be
-/// sized like the control it inherits from.
-private func ndIsContainerShape(_ view: NSView) -> Bool {
-    return view is NSSplitView
-        || view is NSScrollView
-        || view is NSStackView          // Box, and NDSettingsGroup/NDNumberInput
-        || view is NSTabView
-        || view is NSBox                // Separator
-        || view is NSCollectionView
-        || view is NSGridView
-        || view is NSTableView
-        || view is NSBackgroundExtensionView
-        || view is NDPaneHostView
-        || view is NDPaneAssemblyView
-        || view is NDToolbarPaneView
-        || view is NDHeaderBarView
-        || view is NDToastOverlayView
-        || view is NDClampView
-        || view is NDStatusPageView
-        || view is NDBannerView
-        || view is NDExpanderView       // NDHostedLeaf now, not NSStackView — named explicitly
-        || view is NDRowView            // ditto (covers NDSwitchRowView, a subclass)
-        || view is NDTerminalView
-        || view is NDWebView
-        || view is NDVideoView
-}
 
-/// Whether `view`'s own natural size along `axis` is also its CORRECT size
-/// there. This is the question `ndBoxChildAttached` asks to pick a cross-axis
-/// default.
-///
-/// GTK box children fill the perpendicular axis unless told otherwise, and
+// ============================================================================
+// Box layout
+// ============================================================================
+
+/// Widget kinds whose native AppKit form is self-sized on both axes. GTK box
+/// children fill the perpendicular axis unless told otherwise, and
 /// transplanting that rule verbatim is what turned every AppKit control into a
 /// full-window bar: a push button, popup, switch or date picker stretched to
 /// the window width is never native, whatever the app tree says. AppKit's
-/// answer is the opposite one: those controls size themselves and the stack
-/// places them. So they keep their natural size here, and everything else
-/// keeps GTK's fill.
+/// answer is the opposite one, so these keep their own size and everything
+/// else keeps GTK's fill.
 ///
-/// Only classes whose natural cross-axis size is self-describing and bounded
-/// are listed. Deliberately absent, because filling IS their native form:
-///  - an editable or bezeled NSTextField (TextInput, SearchInput): an empty
-///    field's natural width is a few points, so holding it there would render
-///    an unusable stub. A field is as wide as it is given.
-///  - NSImageView: its natural size is the image's pixel size, which would let
-///    one photo dictate the window width.
-///  - NSLevelIndicator, and a determinate NSProgressIndicator bar: a capacity
-///    bar spanning its container is the native form. Their THICKNESS is still
-///    natural, which is what the per-axis arm below answers.
-///  - every container and scroll shape: these are the things that are supposed
-///    to fill, and they are excluded twice over — by class in
-///    `ndIsContainerShape`, and by the `noIntrinsicMetric` guard that follows
-///    it.
+/// Deliberately absent, because filling IS their native form: TextInput,
+/// SearchInput and ComboBox (an empty field's natural width is a few points),
+/// Image (one photo would dictate the window width), LevelIndicator and Chart
+/// (a capacity bar or plot spanning its container), Breadcrumb, and every
+/// container or scroll shape.
 ///
-/// An app that genuinely wants a stretched control still says so, either with
-/// an explicit `halign`/`valign` of "fill" or with the cross-axis expand flag,
-/// so the GTK tree keeps working unchanged.
-func ndHasIntrinsicCrossSize(_ view: NSView, _ axis: NSLayoutConstraint.Orientation) -> Bool {
-    if ndIsContainerShape(view) { return false }
-    // The answer has to be true of the actual instance, not just of its class:
-    // a view reporting `noIntrinsicMetric` on `axis` has no natural size there
-    // to hold it at, and holding it anyway collapses it (an NSSplitView down
-    // to its divider). This is what keeps a container added to the tree later,
-    // and missed by the list above, filling instead of vanishing.
-    let intrinsic = view.intrinsicContentSize
-    guard (axis == .horizontal ? intrinsic.width : intrinsic.height) != NSView.noIntrinsicMetric else {
-        return false
-    }
-    // Length axis vs thickness axis. A slider and a determinate progress bar
+/// An app that genuinely wants a stretched control still says so with an
+/// explicit `halign`/`valign` of "fill" or with the cross-axis expand flag, so
+/// the GTK tree keeps working unchanged.
+private let ndSelfSizedKinds: Set<String> = [
+    "Label", "Button", "ToggleButton", "Radio", "Checkbox", "Select", "Switch",
+    "SegmentedControl", "DatePicker", "ColorPicker", "MenuButton", "SplitButton",
+    "FontPicker", "ShareButton", "LinkButton", "Spinner", "ProgressCircle",
+    "NumberInput", "Avatar", "Badge", "Tag", "Kbd",
+]
+
+/// Whether `view`'s own natural size along `axis` is also its CORRECT size
+/// there. Answered from the create-time widget kind, never from a live
+/// intrinsic-size read.
+func ndSelfSizedOnAxis(_ view: NSView, _ axis: NSLayoutConstraint.Orientation) -> Bool {
+    let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
+    // Length axis vs thickness axis: a slider and a determinate progress bar
     // have a natural thickness and no natural length, and answering per axis
     // is what stops a horizontal one from being stretched to a row's full
-    // height without also pinning its length. NDSliderView/NDProgressBarView/
-    // NDSpinnerView are SwiftUI-hosted (SwiftUILeaves.swift family) rather
-    // than NSSlider/NSProgressIndicator, but the same per-axis answer holds —
-    // ProgressBar has no orientation prop, so it is always the "horizontal
-    // bar" case.
-    if let slider = view as? NDSliderView {
-        return axis == (slider.vertical ? .horizontal : .vertical)
+    // height without also pinning its length.
+    if kind == "Slider" {
+        let vertical = (view as? NDSliderView)?.vertical ?? false
+        return axis == (vertical ? .horizontal : .vertical)
     }
-    if view is NDProgressBarView { return axis == .vertical }
-    if view is NDSpinnerView { return true }
-    // A label is sized by its text on both axes; an editable or bezeled field
-    // is not. Both tests are needed: `editable: false` on a TextInput leaves a
-    // bezeled field that still wants the full width.
-    if let field = view as? NSTextField {
-        return !field.isEditable && !field.isBezeled
-    }
-    // NSButton covers Button/ToggleButton/Radio plus the NSPopUpButton
-    // (Select), NDShareButton and NDFontPickerButton subclasses. NSComboButton
-    // (MenuButton/SplitButton) is an NSControl, not an NSButton, so it needs
-    // its own entry. NDSwitchView/NDCheckboxView/NDSegmentedControlView/
-    // NDDatePickerView/NDColorPickerView are SwiftUI-hosted replacements for
-    // NSSwitch/NSButton(checkbox)/NSSegmentedControl/NSDatePicker/NSColorWell
-    // — same "sizes itself" answer on both axes.
-    return view is NSButton
-        || view is NSComboButton
-        || view is NSStepper
-        || view is NDSwitchView
-        || view is NDCheckboxView
-        || view is NDSegmentedControlView
-        || view is NDDatePickerView
-        || view is NDColorPickerView
+    if kind == "ProgressBar" { return axis == .vertical }
+    return ndSelfSizedKinds.contains(kind)
 }
 
-/// `NSStackView` used for every `<box>` (nested boxes included). NSStackView's
-/// `intrinsicContentSize` is `(noIntrinsicMetric, noIntrinsicMetric)` on BOTH
-/// axes by default — its size comes from the internal constraint chain
-/// between arranged subviews, not from a reportable value — so the
-/// hugging/compression-resistance recipe `ndBoxChildAttached`'s start/center/
-/// end cases use to pin a LEAF control's cross size has nothing to act on for
-/// a nested box: raising the priority to `.required` is a no-op, and the
-/// outer stack's own low-priority alignment pin (see that function's doc
-/// comment) wins by default, stretching the nested box to the parent's full
-/// width instead of hugging its own content (confirmed empirically: a plain
-/// `NSStackView`'s `intrinsicContentSize` read back `(-1, -1)` no matter what
-/// priority was set). Reporting `fittingSize` instead gives Auto Layout a
-/// real, reactively-invalidated value to hug against, exactly like a leaf
-/// control's own `intrinsicContentSize` — harmless for "fill", whose explicit
-/// width-equality constraint always wins over hugging regardless.
-final class NDBoxStackView: NSStackView {
-    // NOT `fittingSize`: NSStackView's `fittingSize` implementation itself
-    // consults `intrinsicContentSize`, so returning it here recurses without
-    // a base case (confirmed empirically: an immediate SIGSEGV, stack
-    // overflow, on the very first box laid out). Summing arranged subviews'
-    // own `fittingSize` instead terminates at each leaf control's ordinary
-    // (non-overridden) implementation, and at a nested `NDBoxStackView`
-    // child it recurses into ITS arranged subviews rather than back into its
-    // own `fittingSize`.
+/// The AppKit peer of a GTK theme's natural width for a control whose length
+/// carries no content of its own: an empty entry, a slider track, a capacity
+/// bar. AppKit reports nothing for those, so along a horizontal box's main
+/// axis they measured 0 and painted nothing.
+private let ndNaturalLengthFloors: [String: CGFloat] = [
+    "TextInput": 150,
+    "SearchInput": 150,
+    "ComboBox": 150,
+    "Slider": 150,
+    "ProgressBar": 150,
+    "LevelIndicator": 100,
+]
+
+/// A label's text width is its natural size, never its minimum: taking it as a
+/// minimum is what let one long caption on a hidden tab page hold the whole
+/// window open at 1157pt.
+private let ndLabelMinimumWidth: CGFloat = 60
+
+/// GTK's `propagate-natural-height` cap for a scroll-shaped data widget.
+private let ndScrollNaturalRowCap = 10
+
+/// Floor for a scroll shape whose document has no row model (TextArea,
+/// CodeEditor, a plain ScrollView with unconstrained content).
+private let ndScrollNaturalMinHeight: CGFloat = 60
+
+/// Leading inset of a `boxed-list` separator, drawn under the row text rather
+/// than full-bleed (`ndStyleBoxedListDivider`).
+private let ndBoxedListDividerInset: CGFloat = 12
+
+/// Measurement calls `fittingSize`, which runs an Auto Layout or SwiftUI pass
+/// that can invalidate an intrinsic size from inside our own. Propagating that
+/// back up the chain would schedule a fresh layout on every pass forever, so
+/// invalidation is suppressed while a box lays out: the size the pass reads
+/// is already the new one.
+nonisolated(unsafe) private var ndBoxLayoutDepth = 0
+
+/// Marks every enclosing box's measurement stale. Called for anything that can
+/// change what a box has to place: child attach/detach, a `visible` toggle, a
+/// text/title update, a style apply, a padding or spacing change, and a hosted
+/// SwiftUI leaf resizing itself.
+func ndInvalidateBoxChain(from view: NSView) {
+    guard ndBoxLayoutDepth == 0 else { return }
+    var child: NSView = view
+    var cursor: NSView? = view
+    while let current = cursor {
+        if let box = current as? NDBoxView {
+            // Only the one child whose size can have changed, never the whole
+            // cache: a commit of N appends must cost N flag sets and ONE
+            // measurement pass, not N sweeps of N entries.
+            if current !== child { box.ndInvalidateChildMeasure(child) }
+            box.ndMarkLayoutDirty()
+        }
+        ndScheduleShapeRefresh(current)
+        child = current
+        cursor = current.superview
+    }
+}
+
+/// Window roots whose content margin depends on a shape that is still
+/// settling, and whether a coalescing pass is already queued. Deriving it
+/// walks the root's children, so it runs once per runloop turn rather than
+/// once per attach.
+nonisolated(unsafe) private var ndPendingShapeRefresh: [ObjectIdentifier: NSView] = [:]
+nonisolated(unsafe) private var ndShapeRefreshScheduled = false
+
+private func ndScheduleShapeRefresh(_ view: NSView) {
+    let key = ObjectIdentifier(view)
+    guard ndWindowRootPins[key] != nil else { return }
+    ndPendingShapeRefresh[key] = view
+    guard !ndShapeRefreshScheduled else { return }
+    ndShapeRefreshScheduled = true
+    DispatchQueue.main.async {
+        ndShapeRefreshScheduled = false
+        let pending = ndPendingShapeRefresh
+        ndPendingShapeRefresh.removeAll()
+        for view in pending.values { ndRefreshWindowRootInset(view) }
+    }
+}
+
+/// The natural (unconstrained) size of a box child, measured once per dirty
+/// cycle by the box that owns it.
+func ndNaturalChildSize(_ view: NSView) -> NSSize {
+    if let box = view as? NDBoxView { return box.ndNaturalSize() }
+    // The tracked TabView handle is the CONTROLLER's view, which for the
+    // segmented-control-on-top style is a plain NSView wrapping the NSTabView
+    // plus its strip, not the tab view itself.
+    if let tabs = ndTabViewController(for: view)?.tabView { return ndTabViewNaturalSize(tabs, host: view) }
+    // Intrinsic first, fitting only where there is no intrinsic answer: a
+    // leaf's intrinsic size IS its natural size, while an NSHostingView's
+    // fitting size is the size its SwiftUI body would ACCEPT, which for a
+    // slider or a checkbox is three times the control it draws.
+    var size = NSSize.zero
+    let intrinsic = view.intrinsicContentSize
+    if intrinsic.width != NSView.noIntrinsicMetric { size.width = intrinsic.width }
+    if intrinsic.height != NSView.noIntrinsicMetric { size.height = intrinsic.height }
+    if size.width <= 0 || size.height <= 0 {
+        let fitting = view.fittingSize
+        if size.width <= 0 { size.width = fitting.width }
+        if size.height <= 0 { size.height = fitting.height }
+    }
+    // NSTextField's intrinsic width runs a point or two short of the width its
+    // cell actually draws into, and a label held at the shorter one loses its
+    // last glyph. `fittingSize` goes through the cell and is the number
+    // NSStackView used before this.
+    if view is NSTextField {
+        let fitting = view.fittingSize
+        size.width = max(size.width, fitting.width)
+        size.height = max(size.height, fitting.height)
+    }
+    if let scroll = view as? NSScrollView {
+        let content = ndScrollNaturalSize(scroll)
+        size.width = max(size.width, content.width)
+        size.height = max(size.height, content.height)
+    }
+    if let floor = ndNaturalLengthFloors[ndWidgetKinds[ObjectIdentifier(view)] ?? ""] {
+        if (view as? NDSliderView)?.vertical == true {
+            size.height = max(size.height, floor)
+        } else {
+            size.width = max(size.width, floor)
+        }
+    }
+    return NSSize(width: max(0, size.width), height: max(0, size.height))
+}
+
+/// The size below which a child must not be squeezed. Separate from the
+/// natural size on purpose (the GTK model): a wrapping label's minimum is a
+/// floor, its natural is the width of its text, and only the floor may reach a
+/// window or split-pane minimum.
+///
+/// The per-axis answer comes from whether AppKit reports an intrinsic size on
+/// that axis at all: a control that describes its own size must not be
+/// squashed below it, while a container or a scroll shape has no content size
+/// to defend and is the right thing to take space back from.
+func ndMinimumChildSize(_ view: NSView) -> NSSize {
+    if let box = view as? NDBoxView { return box.ndMinimumSize() }
+    let natural = ndNaturalChildSize(view)
+    let intrinsic = view.intrinsicContentSize
+    var floor = NSSize.zero
+    if intrinsic.width != NSView.noIntrinsicMetric { floor.width = natural.width }
+    if intrinsic.height != NSView.noIntrinsicMetric { floor.height = natural.height }
+    let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
+    if kind == "Label" {
+        floor.width = min(floor.width, ndLabelMinimumWidth)
+    } else if ndNaturalLengthFloors[kind] != nil {
+        // The length these carry is a preference, not a requirement: an entry
+        // or a track is as long as it is given.
+        if (view as? NDSliderView)?.vertical == true { floor.height = 0 } else { floor.width = 0 }
+    }
+    return floor
+}
+
+/// An `NSTabView`'s content height is whatever the SELECTED page needs, so
+/// measuring it live moved every sibling below the tab strip on each switch
+/// (68 nodes by up to 456pt in the gallery). GTK stacks are homogeneous by
+/// default; measure the same way, as the maximum over all pages.
+private func ndTabViewNaturalSize(_ tabs: NSTabView, host: NSView) -> NSSize {
+    var content = NSSize.zero
+    for item in tabs.tabViewItems {
+        guard let page = item.viewController?.view else { continue }
+        let size = ndNaturalChildSize(page)
+        content.width = max(content.width, size.width)
+        content.height = max(content.height, size.height)
+    }
+    // Chrome is the tab strip plus the content border, read off live geometry
+    // when there is any so a control-size or style change tracks. Before the
+    // first pass there is none, and the fallback is what keeps a tab view from
+    // measuring as its strip alone.
+    var chrome = NSSize(width: 0, height: 40)
+    if host.bounds.width > 0, host.bounds.height > 0 {
+        let rect = tabs.contentRect
+        chrome = NSSize(width: max(0, host.bounds.width - rect.width),
+                        height: max(0, host.bounds.height - rect.height))
+    }
+    let floor = tabs.minimumSize
+    return NSSize(width: max(content.width + chrome.width, floor.width),
+                  height: max(content.height + chrome.height, floor.height))
+}
+
+/// GTK's `propagate-natural-height` for the scroll-shaped data widgets. An
+/// NSScrollView's own fitting height is its scroller metrics and no content at
+/// all, which measured a populated `<table>` as 0pt tall and let its header
+/// paint over the next sibling.
+private func ndScrollNaturalSize(_ scroll: NSScrollView) -> NSSize {
+    guard let doc = scroll.documentView else { return .zero }
+    if let table = doc as? NSTableView {
+        let rows = max(1, min(table.numberOfRows, ndScrollNaturalRowCap))
+        var height = CGFloat(rows) * (table.rowHeight + table.intercellSpacing.height)
+        if table.headerView != nil { height += max(table.headerView?.frame.height ?? 0, table.rowHeight) }
+        return NSSize(width: 0, height: height + scroll.contentInsets.top + scroll.contentInsets.bottom)
+    }
+    return NSSize(width: 0, height: max(doc.fittingSize.height, ndScrollNaturalMinHeight))
+}
+
+/// The view behind every `<box>` (nested boxes included): a deterministic
+/// manual-layout container rather than an `NSStackView`.
+///
+/// An NSStackView sizes its children through content-hugging and compression
+/// -resistance priority fights, and those priorities had to be rewritten on
+/// every style apply. Two consequences the constraint model could not be
+/// talked out of: the leftover space along the main axis went to ONE view
+/// (`.fill` hands it to the lowest-hugging arranged subview) where GTK splits
+/// it evenly among expanding children, and the cross-axis default was
+/// re-decided from a LIVE `intrinsicContentSize` read, so a colour change
+/// could flip a child between natural and fill depending on whether a SwiftUI
+/// leaf had measured yet.
+///
+/// Here the box owns the arithmetic: children are frame-placed from a cached
+/// bottom-up measurement, expanding children split leftover space equally, and
+/// the cross-axis default is resolved from the create-time widget kind
+/// (`ndSelfSizedOnAxis`). A child that must stay constraint-driven internally
+/// (a split view, a scroll view, a hosted SwiftUI leaf) still gets its frame
+/// set from out here; only what is INSIDE it is Auto Layout's business.
+final class NDBoxView: NSView {
+    // nonisolated: every coordinate conversion reads this, and a MainActor
+    // -isolated getter puts an executor check on each one.
+    override nonisolated var isFlipped: Bool { true }
+
+    var ndOrientation: NSUserInterfaceLayoutOrientation = .vertical {
+        didSet { if ndOrientation != oldValue { ndInvalidateBoxChain(from: self) } }
+    }
+
+    var ndSpacing: CGFloat = ndStandardSpacing {
+        didSet { if ndSpacing != oldValue { ndInvalidateBoxChain(from: self) } }
+    }
+
+    var ndPadding = NSEdgeInsets() {
+        didSet { if !ndEdgeInsetsEqual(ndPadding, oldValue) { ndInvalidateBoxChain(from: self) } }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Below NSWindow's own windowSizeStayPut (500): a box reports what its
+        // content wants, and a window that cannot grant it shrinks the content
+        // rather than resizing itself. At the AppKit default (750) a tall page
+        // inside a homogeneous tab view stretched the window to 1426pt tall.
+        setContentCompressionResistancePriority(NSLayoutConstraint.Priority(400), for: .horizontal)
+        setContentCompressionResistancePriority(NSLayoutConstraint.Priority(400), for: .vertical)
+        // GTK boxes clip. Without this a page that does not fit its slot draws
+        // over whatever is next to it instead of being cut off at the edge.
+        clipsToBounds = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("NDBoxView is not NSCoding-decodable") }
+
+    /// The React child list in document order. Decoration subviews (a card
+    /// backing, the source-list table, the hover overlay) are ordinary
+    /// constraint-pinned subviews and are deliberately not in here.
+    private(set) var ndChildren: [NSView] = []
+
+    /// Membership index beside `ndChildren`. React never re-appends a child
+    /// that is already here, so the identity scan that would answer this is
+    /// pure O(n) overhead on the one path a 10k-node mount runs 10k times.
+    private var childKeys: Set<ObjectIdentifier> = []
+
+    private var naturalCache: NSSize? = nil
+    private var minimumCache: NSSize? = nil
+    private var lastLaidOutSize = NSSize(width: -1, height: -1)
+    private var childNaturals: [ObjectIdentifier: NSSize] = [:]
+    private var childMinimums: [ObjectIdentifier: NSSize] = [:]
+
+    // MARK: children
+
+    func ndAppend(_ child: NSView) {
+        let key = ObjectIdentifier(child)
+        if childKeys.contains(key) { detachFromList(child) }
+        ndChildren.append(child)
+        childKeys.insert(key)
+        ndAdopt(child)
+    }
+
+    func ndInsert(_ child: NSView, before sibling: NSView) {
+        let key = ObjectIdentifier(child)
+        if childKeys.contains(key) { detachFromList(child) }
+        let index = ndChildren.firstIndex { $0 === sibling } ?? ndChildren.count
+        ndChildren.insert(child, at: index)
+        childKeys.insert(key)
+        ndAdopt(child)
+    }
+
+    func ndRemove(_ child: NSView) {
+        detachFromList(child)
+        if child.superview === self { child.removeFromSuperview() }
+        ndInvalidateChildMeasure(child)
+        ndBoxChildDetached(self, child)
+        ndInvalidateBoxChain(from: self)
+    }
+
+    private func detachFromList(_ child: NSView) {
+        guard childKeys.remove(ObjectIdentifier(child)) != nil else { return }
+        if let index = ndChildren.firstIndex(where: { $0 === child }) { ndChildren.remove(at: index) }
+    }
+
+    private func ndAdopt(_ child: NSView) {
+        child.translatesAutoresizingMaskIntoConstraints = true
+        if child.superview !== self { addSubview(child) }
+        ndInvalidateBoxChain(from: self)
+        ndBoxChildAttached(self, child)
+    }
+
+    // MARK: measurement
+
+    /// Drops only the totals; the per-child measurements stay, since a
+    /// sibling's size did not change. Recomputed lazily in the next layout or
+    /// measurement, so a batch of appends costs one pass, not one per append.
+    func ndMarkLayoutDirty() {
+        naturalCache = nil
+        minimumCache = nil
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    func ndInvalidateChildMeasure(_ child: NSView) {
+        let key = ObjectIdentifier(child)
+        childNaturals[key] = nil
+        childMinimums[key] = nil
+    }
+
+    private func naturalSize(of child: NSView) -> NSSize {
+        let key = ObjectIdentifier(child)
+        if let cached = childNaturals[key] { return cached }
+        var size = ndNaturalChildSize(child)
+        let flags = ndLayoutFlags[key] ?? NDLayoutFlags()
+        size.width = max(size.width, flags.minWidth)
+        size.height = max(size.height, flags.minHeight)
+        childNaturals[key] = size
+        return size
+    }
+
+    private func minimumSize(of child: NSView) -> NSSize {
+        let key = ObjectIdentifier(child)
+        if let cached = childMinimums[key] { return cached }
+        var size = ndMinimumChildSize(child)
+        let flags = ndLayoutFlags[key] ?? NDLayoutFlags()
+        size.width = max(size.width, flags.minWidth)
+        size.height = max(size.height, flags.minHeight)
+        childMinimums[key] = size
+        return size
+    }
+
+    /// The box's own natural size: children at their natural sizes, plus
+    /// spacing, margins and padding.
+    func ndNaturalSize() -> NSSize {
+        if let cached = naturalCache { return cached }
+        let size = aggregate { naturalSize(of: $0) }
+        naturalCache = size
+        return size
+    }
+
+    /// The box's own minimum size, aggregated from its children's minimums.
+    /// Read by the split-pane slots so a pane cannot be squeezed past what its
+    /// content needs, and used as the shrink floor below.
+    func ndMinimumSize() -> NSSize {
+        if let cached = minimumCache { return cached }
+        let size = aggregate { minimumSize(of: $0) }
+        minimumCache = size
+        return size
+    }
+
+    private func aggregate(_ sizeOf: (NSView) -> NSSize) -> NSSize {
+        let horizontal = ndOrientation == .horizontal
+        var main: CGFloat = 0
+        var cross: CGFloat = 0
+        var count = 0
+        for child in ndChildren where !child.isHidden {
+            let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
+            let size = sizeOf(child)
+            let outerWidth = size.width + flags.margin.left + flags.margin.right
+            let outerHeight = size.height + flags.margin.top + flags.margin.bottom
+            main += horizontal ? outerWidth : outerHeight
+            cross = max(cross, horizontal ? outerHeight : outerWidth)
+            count += 1
+        }
+        if count > 1 { main += ndSpacing * CGFloat(count - 1) }
+        let own = ndLayoutFlags[ObjectIdentifier(self)] ?? NDLayoutFlags()
+        let width = (horizontal ? main : cross) + ndPadding.left + ndPadding.right
+        let height = (horizontal ? cross : main) + ndPadding.top + ndPadding.bottom
+        return NSSize(width: max(width, own.minWidth), height: max(height, own.minHeight))
+    }
+
     override var intrinsicContentSize: NSSize {
-        let visible = arrangedSubviews.filter { !$0.isHidden }
-        guard !visible.isEmpty else { return NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
-        let sizes = visible.map { $0.fittingSize }
-        let horizontal = orientation == .horizontal
-        let mainTotal = sizes.reduce(CGFloat(0)) { $0 + (horizontal ? $1.width : $1.height) }
-            + spacing * CGFloat(visible.count - 1)
-            + (horizontal ? edgeInsets.left + edgeInsets.right : edgeInsets.top + edgeInsets.bottom)
-        let crossMax = (sizes.map { horizontal ? $0.height : $0.width }.max() ?? 0)
-            + (horizontal ? edgeInsets.top + edgeInsets.bottom : edgeInsets.left + edgeInsets.right)
-        return horizontal ? NSSize(width: mainTotal, height: crossMax) : NSSize(width: crossMax, height: mainTotal)
+        guard ndChildren.contains(where: { !$0.isHidden }) else {
+            return NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+        }
+        return ndNaturalSize()
+    }
+
+    // MARK: layout
+
+    override func layout() {
+        super.layout()
+        ndPlaceChildren()
+    }
+
+    private func ndPlaceChildren() {
+        let visible = ndChildren.filter { !$0.isHidden }
+        guard !visible.isEmpty else { return }
+        // A box with no size of its own yet (created, not installed) has
+        // nothing meaningful to place, and handing children a zero frame is
+        // not free: a hosted SwiftUI body collapses and does not come back
+        // when the real size arrives.
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        ndBoxLayoutDepth += 1
+        defer { ndBoxLayoutDepth -= 1 }
+
+        // A child that reflows is measured against the cross size it is being
+        // given, so every cached measurement is only valid for the bounds it
+        // was taken at. Nothing in the tree changes on a resize, so no
+        // invalidation reaches here otherwise, and a box first laid out at
+        // zero width kept a zero measurement.
+        if !NSEqualSizes(bounds.size, lastLaidOutSize) {
+            lastLaidOutSize = bounds.size
+            childNaturals.removeAll(keepingCapacity: true)
+            childMinimums.removeAll(keepingCapacity: true)
+            naturalCache = nil
+            minimumCache = nil
+        }
+
+        let horizontal = ndOrientation == .horizontal
+        let crossAxis: NSLayoutConstraint.Orientation = horizontal ? .vertical : .horizontal
+        let rightToLeft = userInterfaceLayoutDirection == .rightToLeft
+        let innerWidth = max(0, bounds.width - ndPadding.left - ndPadding.right)
+        let innerHeight = max(0, bounds.height - ndPadding.top - ndPadding.bottom)
+        let crossAvailable = horizontal ? innerHeight : innerWidth
+        let mainAvailable = horizontal ? innerWidth : innerHeight
+
+        var crossSizes: [CGFloat] = []
+        var crossOffsets: [CGFloat] = []
+        var mainSizes: [CGFloat] = []
+        var mainFloors: [CGFloat] = []
+        var mainLeads: [CGFloat] = []
+        var mainTrails: [CGFloat] = []
+        var expanding: [Bool] = []
+        var unmeasurable: [Bool] = []
+
+        for child in visible {
+            let key = ObjectIdentifier(child)
+            let flags = ndLayoutFlags[key] ?? NDLayoutFlags()
+            let divider = ndBoxedListDividers.contains(key)
+            let crossLead = horizontal ? flags.margin.top : flags.margin.left
+            let crossTrail = horizontal ? flags.margin.bottom : flags.margin.right
+            let slot = max(0, crossAvailable - crossLead - crossTrail)
+
+            // GTK's default is "fill" for every child; here it is resolved per
+            // child, because a stretched AppKit control is never native. GTK's
+            // expand implies fill on the same axis, so a child that expands
+            // across the box still fills it.
+            let crossExpands = horizontal ? flags.vexpand : flags.hexpand
+            var align = (horizontal ? flags.valign : flags.halign)
+                ?? ((crossExpands || !ndSelfSizedOnAxis(child, crossAxis)) ? "fill" : "natural")
+            if !["fill", "natural", "start", "center", "end"].contains(align) {
+                FileHandle.standardError.write(
+                    "ND_WARN halign/valign \"\(align)\" is not a recognized alignment value (expected fill/start/center/end)\n".data(using: .utf8)!)
+                align = "fill"
+            }
+
+            var natural = naturalSize(of: child)
+            var crossSize = align == "fill" ? slot : min(horizontal ? natural.height : natural.width, slot)
+            var crossOffset: CGFloat
+            switch align {
+            case "fill", "start":
+                crossOffset = crossLead
+            case "center":
+                crossOffset = crossLead + (slot - crossSize) / 2
+            case "end":
+                crossOffset = crossLead + (slot - crossSize)
+            default:
+                // The resolved default for a control whose own cross size is
+                // the right one: a vertical box places it at the leading edge
+                // (GTK "start"), a horizontal one centers it across the row,
+                // which is how AppKit places a control in a row.
+                crossOffset = horizontal ? crossLead + (slot - crossSize) / 2 : crossLead
+            }
+            if divider {
+                crossSize = max(0, slot - ndBoxedListDividerInset)
+                crossOffset = crossLead + ndBoxedListDividerInset
+            }
+            // A vertical box's cross axis is the writing axis, so start/end
+            // and the natural default follow the layout direction.
+            if !horizontal && rightToLeft && align != "fill" {
+                crossOffset = max(0, crossAvailable - crossSize - crossOffset)
+            }
+
+            // Main axis follows cross axis for anything that reflows: a
+            // wrapping label, and a SwiftUI body, whose unconstrained ideal
+            // size is not the size it settles at once it has a width (a hosted
+            // slider measures 48pt tall unasked and 16pt once placed). Hand
+            // the child the cross size it is about to get, then re-ask.
+            if crossSize > 0, ndReflows(child, given: crossSize, horizontal: horizontal, natural: natural) {
+                let current = horizontal ? child.frame.height : child.frame.width
+                if abs(current - crossSize) > 0.5 {
+                    if !horizontal, let field = child as? NSTextField {
+                        field.preferredMaxLayoutWidth = crossSize
+                        field.invalidateIntrinsicContentSize()
+                    }
+                    child.setFrameSize(horizontal
+                        ? NSSize(width: child.frame.width, height: crossSize)
+                        : NSSize(width: crossSize, height: child.frame.height))
+                    childNaturals[key] = nil
+                    natural = naturalSize(of: child)
+                }
+            }
+
+            let mainNatural = divider ? 1 : (horizontal ? natural.width : natural.height)
+            let minimum = minimumSize(of: child)
+            crossSizes.append(crossSize)
+            crossOffsets.append(crossOffset)
+            mainSizes.append(mainNatural)
+            mainFloors.append(divider ? 1 : (horizontal ? minimum.width : minimum.height))
+            mainLeads.append(horizontal ? flags.margin.left : flags.margin.top)
+            mainTrails.append(horizontal ? flags.margin.right : flags.margin.bottom)
+            expanding.append(horizontal ? flags.hexpand : flags.vexpand)
+            // A container reports `noIntrinsicMetric`: a split view, a scroll
+            // view or a tab view has no content size of its own and filling is
+            // its native form. GTK never has this case (every widget there has
+            // a natural size), so there is no expand flag in the tree to carry
+            // it, and a box whose only child is one of these would otherwise
+            // pack it at the synthesized natural size and leave the rest blank.
+            let hostIntrinsic = child.intrinsicContentSize
+            let intrinsicMain = horizontal ? hostIntrinsic.width : hostIntrinsic.height
+            // A tab view reports the size of its tallest page, which is a
+            // measurement, not a request: the pages are meant to run to the
+            // slot's edge the way they do on every other platform.
+            unmeasurable.append(intrinsicMain == NSView.noIntrinsicMetric || ndTabViewController(for: child) != nil)
+        }
+
+        ndDistributeMainAxis(&mainSizes, floors: mainFloors, leads: mainLeads, trails: mainTrails,
+                             expanding: expanding, unmeasurable: unmeasurable, available: mainAvailable)
+
+        var cursor = horizontal ? ndPadding.left : ndPadding.top
+        let order = (horizontal && rightToLeft) ? Array(visible.indices).reversed().map { $0 } : Array(visible.indices)
+        for i in order {
+            cursor += mainLeads[i]
+            let rect: NSRect
+            if horizontal {
+                rect = NSRect(x: cursor, y: ndPadding.top + crossOffsets[i],
+                              width: mainSizes[i], height: crossSizes[i])
+            } else {
+                rect = NSRect(x: ndPadding.left + crossOffsets[i], y: cursor,
+                              width: crossSizes[i], height: mainSizes[i])
+            }
+            // Backing-aligned, or a run of equal rows lands on alternating
+            // 30/31pt pitches and the text in them renders soft. Sizes round
+            // OUTWARD, not to nearest: a label rounded down by a third of a
+            // point loses its last glyph.
+            let placed = backingAlignedRect(rect, options: [.alignMinXNearest, .alignMinYNearest,
+                                                            .alignWidthOutward, .alignHeightOutward])
+            // Re-asserted every pass, not just at attach: a view controller's
+            // view turns it back off when the controller loads (NSTabView
+            // then sized itself from its tallest page instead of the slot).
+            if !visible[i].translatesAutoresizingMaskIntoConstraints {
+                visible[i].translatesAutoresizingMaskIntoConstraints = true
+            }
+            if !NSEqualRects(visible[i].frame, placed) { visible[i].frame = placed }
+            cursor += mainSizes[i] + mainTrails[i] + ndSpacing
+        }
+    }
+
+    /// GTK hands leftover main-axis space to the expanding children in equal
+    /// shares (NSStackView's `.fill` gave it all to one). An overflow is taken
+    /// back from the expanding children first, then from everyone down to
+    /// their own minimum, so nothing is placed on top of a sibling.
+    private func ndDistributeMainAxis(_ sizes: inout [CGFloat], floors: [CGFloat],
+                                      leads: [CGFloat], trails: [CGFloat],
+                                      expanding: [Bool], unmeasurable: [Bool],
+                                      available: CGFloat) {
+        guard !sizes.isEmpty else { return }
+        var used = ndSpacing * CGFloat(sizes.count - 1)
+        for i in sizes.indices { used += sizes[i] + leads[i] + trails[i] }
+        let slack = available - used
+        if slack > 0 {
+            // Children that asked for the space first; a child with no size of
+            // its own only gets it when nothing else claimed it, so an
+            // unflagged scroll view next to a real vexpand child stays put.
+            var takers = sizes.indices.filter { expanding[$0] }
+            if takers.isEmpty { takers = sizes.indices.filter { unmeasurable[$0] } }
+            guard !takers.isEmpty else { return }
+            let share = slack / CGFloat(takers.count)
+            for i in takers { sizes[i] += share }
+            return
+        }
+        var deficit = -slack
+        for pass in 0..<2 {
+            guard deficit > 0.5 else { break }
+            let victims = sizes.indices.filter { pass == 0 ? expanding[$0] : true }
+                .filter { sizes[$0] > floors[$0] }
+            guard !victims.isEmpty else { continue }
+            let headroom = victims.reduce(CGFloat(0)) { $0 + sizes[$1] - floors[$1] }
+            guard headroom > 0 else { continue }
+            let take = min(deficit, headroom)
+            for i in victims {
+                sizes[i] -= (sizes[i] - floors[i]) / headroom * take
+            }
+            deficit -= take
+        }
     }
 }
 
-/// Reconciles one arranged subview's expand/align style against its parent
-/// stack — called when the child attaches (Box append/insertBefore arms) and
-/// again whenever its style changes while already attached (`ndApplyStyle`).
-///
-/// Main axis: GTK's expand means "this child absorbs leftover space along the
-/// box's orientation". NSStackView has no per-child expand flag, only
-/// content-hugging priority plus a `.fill` distribution that hands leftover
-/// space to the lowest-hugging arranged subview — so an expanding child gets
-/// a low hugging priority and flips the stack to `.fill` (stacks are created
-/// with `.gravityAreas`, GTK's non-expand default).
-///
-/// Cross axis: NSStackView alignment doesn't stretch arranged subviews, so
-/// "fill" is approximated with an explicit cross-axis anchor constraint
-/// against the stack, inset by the stack's own edgeInsets so it doesn't fight
-/// the padding those insets represent. GTK's default is "fill" for every
-/// child; here it is resolved per child, because a stretched AppKit control is
-/// never native (`ndHasIntrinsicCrossSize`, and the "natural" arm below).
-///
-/// "start"/"center"/"end" all need a per-child leading/top/centerX/centerY/
-/// trailing/bottom pin against the stack — but a bare pin alone doesn't
-/// work: NSStackView installs its OWN low-priority (~260) alignment
-/// constraint on every arranged subview PLUS an even-weaker (~250) "fill"
-/// wish pulling the far edge toward the stack's own far edge. A
-/// single-anchor pin at priority 999 doesn't outright beat or lose to that
-/// pair — the solver satisfies all three simultaneously by stretching the
-/// child to span the full cross axis (which trivially satisfies a
-/// centerX/trailing pin too, since a fully stretched view's center and
-/// trailing edge already coincide with the stack's), so the child never
-/// actually MOVES, it balloons instead (confirmed empirically: a probe pin
-/// alone always produced a full-width/height stretch, regardless of
-/// priority 999 or 1000). Fixing the child's cross-axis size first
-/// (raising contentHuggingPriority AND contentCompressionResistancePriority
-/// to `.required` for that axis, so its intrinsic size becomes
-/// non-negotiable) removes that degree of freedom; with size pinned, the
-/// 999 pin is the only thing left that can move the child, and it cleanly
-/// wins over the stack's own ~260 pin (confirmed empirically: same setup
-/// with hugging fixed first reliably produced the intended
-/// start/centered/trailing-aligned frame, stable across repeated layout
-/// passes and coexisting correctly with fill siblings in the same stack).
-///
-/// "start" used to be a no-op (relying on the stack's own create-time
-/// alignment, Widgets.swift ~46-51: `.leading` for vertical stacks,
-/// `.centerY` for horizontal) — that coincidentally matched GTK's "start"
-/// for vertical boxes (`.leading` IS "start"), but was silently wrong for
-/// horizontal ones: GTK's valign="start" always means top, never centered.
-/// Now all three non-fill cases share one recipe, and "fill" resets
-/// hugging/compression back to the AppKit defaults (250/750) on every call
-/// so a child that previously held "start"/"center"/"end" doesn't leave a
-/// stale required-priority behind when its align later changes — this
-/// function must be idempotent regardless of entry path (direct attach from
-/// the generated Box arms, restyle via `ndApplyStyle`, or
-/// `ndBoxReconcileChildren`'s padding-change replay). The resolved "natural"
-/// default installs no pin, only a low-priority hug that rides the same
-/// tracked-constraint teardown above.
-func ndBoxChildAttached(_ stack: NSStackView, _ child: NSView) {
-    let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
-    let vertical = stack.orientation == .vertical
-
-    let expands = vertical ? flags.vexpand : flags.hexpand
-    child.setContentHuggingPriority(expands ? NSLayoutConstraint.Priority(1) : NSLayoutConstraint.Priority(250),
-                                     for: vertical ? .vertical : .horizontal)
-    if expands {
-        stack.distribution = .fill
-    }
-
-    if let existing = ndCrossAxisConstraints[ObjectIdentifier(child)] {
-        existing.isActive = false
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = nil
-    }
-
-    let crossAxis: NSLayoutConstraint.Orientation = vertical ? .horizontal : .vertical
-    // The default is resolved per child rather than fixed at GTK's "fill";
-    // see `ndHasIntrinsicCrossSize` for which shapes take their natural size
-    // and why. GTK's expand implies fill on the same axis, so a child that
-    // expands across the box still fills it.
-    let crossExpands = vertical ? flags.hexpand : flags.vexpand
-    let align = (vertical ? flags.halign : flags.valign)
-        ?? ((crossExpands || !ndHasIntrinsicCrossSize(child, crossAxis)) ? "fill" : "natural")
-    switch align {
-    case "fill":
-        child.setContentHuggingPriority(NSLayoutConstraint.Priority(250), for: crossAxis)
-        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(750), for: crossAxis)
-        let constraint: NSLayoutConstraint
-        if vertical {
-            constraint = child.widthAnchor.constraint(equalTo: stack.widthAnchor,
-                                                        constant: -(stack.edgeInsets.left + stack.edgeInsets.right))
-        } else {
-            constraint = child.heightAnchor.constraint(equalTo: stack.heightAnchor,
-                                                         constant: -(stack.edgeInsets.top + stack.edgeInsets.bottom))
+/// Whether measuring `child` again against the cross size it is about to get
+/// can produce a different main-axis size. Asked per child on every pass, so
+/// the cheap "no" comes first: re-measuring a label that already fits, or a
+/// control AppKit sizes on its own, costs a text-layout pass and answers with
+/// the number already in hand.
+private func ndReflows(_ child: NSView, given crossSize: CGFloat, horizontal: Bool, natural: NSSize) -> Bool {
+    if let field = child as? NSTextField {
+        // Only a wrapping label reflows, and only when the text does not fit.
+        // `ellipsize` sets truncation instead, and such a label must be
+        // truncated by the box rather than grow it.
+        guard !field.isEditable, !horizontal else { return false }
+        switch field.lineBreakMode {
+        case .byWordWrapping, .byCharWrapping: return natural.width > crossSize + 0.5
+        default: return false
         }
-        constraint.priority = NSLayoutConstraint.Priority(999)
-        constraint.isActive = true
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
-    case "natural":
-        // Never an app-supplied value (the schema's halign/valign enum is
-        // fill/start/end/center), but the resolved default for a control whose
-        // own cross-axis size is the right one. Required hugging defeats the
-        // stack's own ~250 "fill" wish, which is what was ballooning the
-        // child, and no pin of ours leaves the stack's create-time alignment
-        // to do the placing (Widgets.swift ~73: `.leading` for a vertical
-        // stack, which is GTK "start"; `.centerY` for a horizontal one, which
-        // is how AppKit centers a control in a row). Compression resistance is
-        // deliberately left alone: `ellipsize` lowers it at create time so the
-        // control truncates instead of forcing the box wider, and the "fill"
-        // arm's blanket reset to 750 undoes that.
-        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        // The STACK still has to hug this child, which is the second half of
-        // the job the "fill" equality used to do from the other side: tying
-        // the child's cross size to the stack's made the child's own hugging
-        // (250) the stack's resistance to growing. With the child pinned to
-        // its natural size instead, that resistance disappeared and a box of
-        // naturally-sized children stretched to whatever it was given (a
-        // two-row sidebar split 50/50 down the pane). The same equality at
-        // `.defaultLow` restores it, pulling the stack DOWN onto the child
-        // rather than the child out to the stack. NSStackView's own required
-        // fits-inside pair floors that at the largest child, so a row of
-        // mixed heights lands on the tallest, and a stack sized from outside
-        // (a window root pinned to its frame) simply breaks the wish.
-        let hugStack: NSLayoutConstraint
-        if vertical {
-            hugStack = child.widthAnchor.constraint(equalTo: stack.widthAnchor,
-                                                      constant: -(stack.edgeInsets.left + stack.edgeInsets.right))
-        } else {
-            hugStack = child.heightAnchor.constraint(equalTo: stack.heightAnchor,
-                                                       constant: -(stack.edgeInsets.top + stack.edgeInsets.bottom))
-        }
-        hugStack.priority = NSLayoutConstraint.Priority(250)
-        hugStack.isActive = true
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = hugStack
-    case "start":
-        // An explicit pin, not "no constraint": that was only ever correct
-        // for vertical stacks, whose OWN create-time alignment happens to be
-        // `.leading` (Widgets.swift ~46-51) — the same GTK "start" position.
-        // Horizontal stacks are created `.centerY`, so a horizontal box's
-        // "start" silently rendered as vertically CENTERED, not top-aligned
-        // (GTK's valign="start" always means top, independent of the
-        // .leading/.trailing text-direction axis that halign="start" rides
-        // on). Pinning explicitly (same hugging-fix recipe as center/end)
-        // fixes that mismatch and costs nothing for vertical boxes, whose
-        // `.leading` stack default already puts the pin's target exactly
-        // where the old free-ride landed.
-        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        let constraint: NSLayoutConstraint
-        if vertical {
-            constraint = child.leadingAnchor.constraint(equalTo: stack.leadingAnchor,
-                                                          constant: stack.edgeInsets.left)
-        } else {
-            constraint = child.topAnchor.constraint(equalTo: stack.topAnchor,
-                                                      constant: stack.edgeInsets.top)
-        }
-        constraint.priority = NSLayoutConstraint.Priority(999)
-        constraint.isActive = true
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
-    case "center":
-        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        let constraint: NSLayoutConstraint
-        if vertical {
-            constraint = child.centerXAnchor.constraint(equalTo: stack.centerXAnchor,
-                                                          constant: (stack.edgeInsets.left - stack.edgeInsets.right) / 2)
-        } else {
-            constraint = child.centerYAnchor.constraint(equalTo: stack.centerYAnchor,
-                                                          constant: (stack.edgeInsets.top - stack.edgeInsets.bottom) / 2)
-        }
-        constraint.priority = NSLayoutConstraint.Priority(999)
-        constraint.isActive = true
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
-    case "end":
-        child.setContentHuggingPriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        child.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1000), for: crossAxis)
-        let constraint: NSLayoutConstraint
-        if vertical {
-            constraint = child.trailingAnchor.constraint(equalTo: stack.trailingAnchor,
-                                                           constant: -stack.edgeInsets.right)
-        } else {
-            constraint = child.bottomAnchor.constraint(equalTo: stack.bottomAnchor,
-                                                         constant: -stack.edgeInsets.bottom)
-        }
-        constraint.priority = NSLayoutConstraint.Priority(999)
-        constraint.isActive = true
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = constraint
-    default:
-        FileHandle.standardError.write(
-            "ND_WARN halign/valign \"\(align)\" is not a recognized alignment value (expected fill/start/center/end)\n".data(using: .utf8)!)
     }
-
-    // A subtree attaching somewhere inside a sidebar box changes that
-    // sidebar's shape, and its shape is what decides whether the source-list
-    // table takes the box over at all (SidebarTable.swift's
-    // `ndReconcileSidebarTable`). The box is still empty when its cssClasses
-    // land, so this attach hook is where that decision actually gets made.
-    // `stack` need not be the classed box itself — a real app nests row
-    // buttons inside structural wrapper boxes (a host/project section), so
-    // this walks UP to find the enclosing sidebar, not just an exact match.
-    if let sidebar = ndEnclosingSidebar(stack) {
-        ndReconcileSidebarTable(sidebar)
-    }
-
-    // A separator inside a `boxed-list` card renders as an inset hairline row
-    // divider (vs a standalone separator's full-bleed line). Same both-orders
-    // rationale as the sidebar promote above.
-    if let sep = child as? NSBox, ndBoxedLists.contains(ObjectIdentifier(stack)) {
-        ndStyleBoxedListDivider(sep, in: stack)
-    }
+    if child is NDBoxView || child is NSStackView { return true }
+    if ndTabViewController(for: child) != nil { return true }
+    return ndIsSwiftUIHosted(type(of: child))
 }
 
-/// The leading/trailing inset pins installed on a `boxed-list` separator (see
-/// `ndStyleBoxedListDivider`), tracked so a reconcile (padding change) or a
-/// class drop can replace/deactivate them rather than stacking duplicates.
-nonisolated(unsafe) private var ndBoxedListDividerPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+/// Whether a class is an `NSHostingView` of some body. SwiftUI reports an
+/// unconstrained ideal size until it has a width, so a hosted leaf has to be
+/// measured again once the box has given it one (a hosted slider answers 48pt
+/// tall unasked and 16pt placed). NSHostingView is generic, so there is no
+/// single type to cast to; the walk is done once per class.
+nonisolated(unsafe) private var ndSwiftUIHostedClasses: [ObjectIdentifier: Bool] = [:]
+
+private func ndIsSwiftUIHosted(_ cls: AnyClass) -> Bool {
+    let key = ObjectIdentifier(cls)
+    if let known = ndSwiftUIHostedClasses[key] { return known }
+    var answer = false
+    var cursor: AnyClass? = cls
+    while let current = cursor {
+        if NSStringFromClass(current).contains("NSHostingView") { answer = true; break }
+        cursor = class_getSuperclass(current)
+    }
+    ndSwiftUIHostedClasses[key] = answer
+    return answer
+}
 
 /// Turns a `boxed-list` separator into a faint, leading-inset hairline row
 /// divider (vs a standalone separator's full-bleed system line): a 1pt
-/// `.separatorColor` fill, inset ~12pt on the leading edge (under the row
-/// text) and flush to the trailing card edge. Uses a `.custom` NSBox so the
-/// line is a true hairline — `NSBox.fillColor` takes the dynamic
-/// `.separatorColor` directly, so it tracks dark mode without a CALayer color.
-/// Replaces the default cross-axis fill constraint with fully-pinned
-/// leading/trailing + a 1pt height (both edges pinned fully determine the
-/// width, so no ballooning). Idempotent: re-pins on reconcile.
-func ndStyleBoxedListDivider(_ sep: NSBox, in stack: NSStackView) {
-    let id = ObjectIdentifier(sep)
+/// `.separatorColor` fill, inset under the row text on the leading edge and
+/// flush to the trailing card edge. Uses a `.custom` NSBox so the line is a
+/// true hairline (`NSBox.fillColor` takes the dynamic `.separatorColor`
+/// directly, so it tracks dark mode without a CALayer color). The geometry is
+/// the box's (`ndBoxedListDividers`), so it survives a padding change with no
+/// constraint to replay. Idempotent.
+func ndStyleBoxedListDivider(_ sep: NSBox, in box: NDBoxView) {
     sep.boxType = .custom
     sep.borderWidth = 0
     sep.borderColor = .clear
     sep.fillColor = .separatorColor
     sep.titlePosition = .noTitle
     sep.contentViewMargins = .zero
-
-    if let fill = ndCrossAxisConstraints[id] {
-        fill.isActive = false
-        ndCrossAxisConstraints[id] = nil
-    }
-    for pin in ndBoxedListDividerPins[id] ?? [] { pin.isActive = false }
-    let lead = sep.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: stack.edgeInsets.left + 12)
-    let trail = sep.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -stack.edgeInsets.right)
-    let height = sep.heightAnchor.constraint(equalToConstant: 1)
-    for c in [lead, trail, height] { c.priority = NSLayoutConstraint.Priority(999) }
-    NSLayoutConstraint.activate([lead, trail, height])
-    ndBoxedListDividerPins[id] = [lead, trail, height]
+    ndBoxedListDividers.insert(ObjectIdentifier(sep))
+    ndInvalidateBoxChain(from: box)
 }
 
 /// Restores a separator to a full-bleed system line when its box drops
-/// `boxed-list` (set-replace) — reverts the box type and lets
-/// `ndBoxChildAttached` reinstall the default fill constraint.
-func ndUnstyleBoxedListDivider(_ sep: NSBox, in stack: NSStackView) {
-    let id = ObjectIdentifier(sep)
-    for pin in ndBoxedListDividerPins[id] ?? [] { pin.isActive = false }
-    ndBoxedListDividerPins[id] = nil
+/// `boxed-list` (set-replace).
+func ndUnstyleBoxedListDivider(_ sep: NSBox, in box: NDBoxView) {
+    ndBoxedListDividers.remove(ObjectIdentifier(sep))
     sep.boxType = .separator
     sep.fillColor = .clear
-    ndBoxChildAttached(stack, sep)
+    ndInvalidateBoxChain(from: box)
 }
 
-/// Undoes `ndBoxChildAttached`'s cross-axis constraint and, if no remaining
-/// arranged subview still expands along the stack's main axis, restores the
-/// `.gravityAreas` distribution the stack was created with.
-func ndBoxChildDetached(_ stack: NSStackView, _ child: NSView) {
-    if let existing = ndCrossAxisConstraints[ObjectIdentifier(child)] {
-        existing.isActive = false
-        ndCrossAxisConstraints[ObjectIdentifier(child)] = nil
+/// Structural bookkeeping for a child that just joined `box`.
+///
+/// A subtree attaching somewhere inside a sidebar box changes that sidebar's
+/// shape, and its shape is what decides whether the source-list table takes
+/// the box over at all (SidebarTable.swift's `ndReconcileSidebarTable`). The
+/// box is still empty when its cssClasses land, so this attach hook is where
+/// that decision actually gets made. `box` need not be the classed box itself
+/// (a real app nests row buttons inside structural wrapper boxes, say a host
+/// or project section), so this walks UP to find the enclosing sidebar.
+func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
+    if let sidebar = ndEnclosingSidebar(box) {
+        ndReconcileSidebarTable(sidebar)
     }
+    if let sep = child as? NSBox, ndBoxedLists.contains(ObjectIdentifier(box)) {
+        ndStyleBoxedListDivider(sep, in: box)
+    }
+}
 
-    // A row (or a wrapper box carrying rows) removed from somewhere inside a
-    // sidebar box: drop the direct child from both row sets and re-decide the
-    // takeover against the shape that is left (SidebarTable.swift), using the
-    // same enclosing-sidebar walk as the attach arm above, since `stack` need not
-    // be the classed box itself. AppKit has already taken `child` out of
-    // `arrangedSubviews` by now (the generated Box remove arm calls
-    // removeArrangedSubview first), so the reconcile sees the post-removal
-    // shape.
-    if let sidebar = ndEnclosingSidebar(stack) {
+/// Mirror of `ndBoxChildAttached`. AppKit has already taken `child` out of the
+/// box's child list by now, so the reconcile sees the post-removal shape.
+func ndBoxChildDetached(_ box: NDBoxView, _ child: NSView) {
+    ndBoxedListDividers.remove(ObjectIdentifier(child))
+    if let sidebar = ndEnclosingSidebar(box) {
         ndSidebarRowButtons.remove(ObjectIdentifier(child))
         ndSidebarFallbackRows.remove(ObjectIdentifier(child))
         ndReconcileSidebarTable(sidebar)
-    }
-
-    let vertical = stack.orientation == .vertical
-    let stillExpanding = stack.arrangedSubviews.contains { view in
-        let flags = ndLayoutFlags[ObjectIdentifier(view)] ?? NDLayoutFlags()
-        return vertical ? flags.vexpand : flags.hexpand
-    }
-    if !stillExpanding {
-        stack.distribution = .gravityAreas
-    }
-}
-
-/// Re-runs `ndBoxChildAttached` for every arranged subview — used when the
-/// stack's own `edgeInsets` change (padding re-applied), since the "fill"
-/// cross-axis constraint's constant bakes those insets in.
-func ndBoxReconcileChildren(_ stack: NSStackView) {
-    for child in stack.arrangedSubviews {
-        ndBoxChildAttached(stack, child)
     }
 }

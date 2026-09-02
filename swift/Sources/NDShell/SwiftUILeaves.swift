@@ -99,10 +99,12 @@ class NDHostedLeaf: NSHostingView<AnyView>, NDLeafChromeHosting {
         // Height comes from the SwiftUI body, width from whatever lays the
         // leaf out (a Form row, a box). Low hugging is what lets the second
         // half happen: with the default the ideal width would win and a row
-        // would refuse to fill its card.
+        // would refuse to fill its card. Compression resistance stays at the
+        // AppKit default, not low: a low one let a Form row's siblings squash
+        // the control down to nothing.
         sizingOptions = [.intrinsicContentSize]
         setContentHuggingPriority(.defaultLow, for: .horizontal)
-        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     }
 
     @available(*, unavailable)
@@ -118,6 +120,12 @@ class NDHostedLeaf: NSHostingView<AnyView>, NDLeafChromeHosting {
     final func refreshLeaf() {
         rootView = AnyView(NDLeafChrome(state: leafState, content: leafContent()))
         invalidateIntrinsicContentSize()
+        // The enclosing boxes measure this leaf once per dirty cycle, so a
+        // body that resized itself has to say so. Hooked here rather than in
+        // invalidateIntrinsicContentSize: NSHostingView calls that from inside
+        // its own layout, and dirtying the chain from there schedules a fresh
+        // pass on every pass.
+        ndInvalidateBoxChain(from: self)
     }
 
     /// `a11y` value for this leaf, as a JSON fragment. Widgets backed by a

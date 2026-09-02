@@ -20,7 +20,7 @@ import AppKit
 // Selection is driven off which button carries `suggested-action` (the app's
 // selection signal); a user row click is routed back to that button's wired
 // `clicked` action, so the SAME app tree drives navigation with no per-row
-// styling. The tracked handle stays the box (NSStackView); the table's
+// styling. The tracked handle stays the box (NDBoxView); the table's
 // NSScrollView is a background subview pinned to it.
 
 /// Per-box table controller, keyed by the box's identity. NOT private — read
@@ -54,10 +54,10 @@ private let ndSidebarColumnID = NSUserInterfaceItemIdentifier("nd-sidebar-col")
 /// wrapper boxes below the classed box itself (a host/project section around
 /// each run row), so attach/detach hooks (`ndBoxChildAttached`/
 /// `ndBoxChildDetached`, Layout.swift) can't assume `view` IS the tracked box.
-func ndEnclosingSidebar(_ view: NSView) -> NSStackView? {
+func ndEnclosingSidebar(_ view: NSView) -> NDBoxView? {
     var v: NSView? = view
     while let cur = v {
-        if let stack = cur as? NSStackView, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
+        if let stack = cur as? NDBoxView, ndNavigationSidebars.contains(ObjectIdentifier(stack)) {
             return stack
         }
         v = cur.superview
@@ -115,14 +115,14 @@ final class NDSidebarCell: NSTableCellView {
 }
 
 final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    weak var box: NSStackView?
+    weak var box: NDBoxView?
     let scrollView: NSScrollView
     let tableView: NSTableView
     /// Guards native row activation while selection is being synchronized from
     /// the app's `suggested-action` state.
     private var updatingSelection = false
 
-    init(box: NSStackView) {
+    init(box: NDBoxView) {
         self.scrollView = NSScrollView()
         self.tableView = NSTableView()
         self.box = box
@@ -161,9 +161,9 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     }
 
     static func collectRowButtons(_ view: NSView) -> [NDButton] {
-        guard let stack = view as? NSStackView else { return [] }
+        guard let box = view as? NDBoxView else { return [] }
         var out: [NDButton] = []
-        for child in stack.arrangedSubviews {
+        for child in box.ndChildren {
             if let btn = child as? NDButton {
                 out.append(btn)
             } else if !ndNavigationSidebars.contains(ObjectIdentifier(child)) {
@@ -247,7 +247,7 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
 /// the existing button children as rows and pins the table's scroll view to
 /// fill the box. Reached through `ndReconcileSidebarTable`, never directly,
 /// since that is where the row-shape gate lives.
-func ndInstallSidebarTable(_ box: NSStackView) {
+func ndInstallSidebarTable(_ box: NDBoxView) {
     let id = ObjectIdentifier(box)
     if ndSidebarTables[id] != nil { return }
     let table = NDSidebarTable(box: box)
@@ -267,7 +267,7 @@ func ndInstallSidebarTable(_ box: NSStackView) {
 /// Reverses `ndInstallSidebarTable` when a box drops its sidebar class, or
 /// when its rows stop being row-shaped (set-replace): removes the table and
 /// un-hides the button children.
-func ndRemoveSidebarTable(_ box: NSStackView) {
+func ndRemoveSidebarTable(_ box: NDBoxView) {
     let id = ObjectIdentifier(box)
     guard let table = ndSidebarTables[id] else { return }
     table.scrollView.removeFromSuperview()
@@ -284,7 +284,7 @@ func ndRemoveSidebarTable(_ box: NSStackView) {
 /// handles the row; the backing button remains mounted only so semantic
 /// automation can target its testID and dispatch its existing onClick action.
 /// It is explicitly excluded from AppKit hit testing and accessibility because
-/// its padded NSStackView frame differs from the table's native row geometry;
+/// its padded box frame differs from the table's native row geometry;
 /// alpha alone does not make an NSView non-interactive.
 func ndMarkSidebarRowButton(_ btn: NDButton) {
     let id = ObjectIdentifier(btn)
@@ -304,14 +304,14 @@ func ndMarkSidebarRowButton(_ btn: NDButton) {
 /// the composite libadwaita row) would be silently covered by it. Those boxes
 /// keep the per-row fallback rendering instead of losing content to the
 /// takeover.
-func ndIsSourceListShaped(_ box: NSStackView) -> Bool {
+func ndIsSourceListShaped(_ box: NDBoxView) -> Bool {
     var buttons = 0
-    func walk(_ stack: NSStackView) -> Bool {
-        for child in stack.arrangedSubviews {
+    func walk(_ stack: NDBoxView) -> Bool {
+        for child in stack.ndChildren {
             if let btn = child as? NDButton {
                 guard !btn.title.isEmpty else { return false }
                 buttons += 1
-            } else if let nested = child as? NSStackView {
+            } else if let nested = child as? NDBoxView {
                 // A nested sidebar owns its own rows (same stop as
                 // `collectRowButtons`), so it does not vote on this one.
                 if ndNavigationSidebars.contains(ObjectIdentifier(nested)) { continue }
@@ -331,12 +331,12 @@ func ndIsSourceListShaped(_ box: NSStackView) -> Bool {
 /// later shape change, so a box that only becomes row-shaped once React has
 /// appended its rows still gets the takeover, and one that stops being
 /// row-shaped gives it back.
-func ndReconcileSidebarTable(_ box: NSStackView) {
+func ndReconcileSidebarTable(_ box: NDBoxView) {
     // An empty box is "not populated yet", not "not row-shaped": the class
     // lands before React appends anything (src/tree.zig applies props before
     // append), and replacing every row at once momentarily empties the box.
     // Neither should install a table or tear a live one down.
-    if box.arrangedSubviews.isEmpty { return }
+    if box.ndChildren.isEmpty { return }
     let id = ObjectIdentifier(box)
     if ndForcedSidebars.contains(id) || ndIsSourceListShaped(box) {
         ndClearSidebarRowFallback(box)
@@ -377,7 +377,7 @@ func ndApplySidebarRowStyle(_ btn: NDButton, selected: Bool) {
 /// Reverses `ndApplySidebarRowStyle` when the takeover arrives after all, or
 /// when the sidebar class drops: each row goes back to whatever its own
 /// cssClasses say, replayed from the set `ndApplyCssClasses` recorded.
-func ndClearSidebarRowFallback(_ box: NSStackView) {
+func ndClearSidebarRowFallback(_ box: NDBoxView) {
     for btn in NDSidebarTable.collectRowButtons(box) {
         guard ndSidebarFallbackRows.remove(ObjectIdentifier(btn)) != nil else { continue }
         btn.contentTintColor = nil

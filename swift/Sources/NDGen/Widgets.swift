@@ -20,7 +20,9 @@ func propIntArray(_ p: [String: Any], _ k: String) -> [Int]? { (p[k] as? [Any])?
 func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
-final class FlippedView: NSView { override var isFlipped: Bool { true } }
+// nonisolated: coordinate conversion reads isFlipped constantly, and a
+// MainActor-isolated getter puts an executor check on every one of them.
+final class FlippedView: NSView { override nonisolated var isFlipped: Bool { true } }
 
 // SplitView's `sidebarWidth`/`collapsed` (create-time props on the
 // NSSplitView itself) are read again when the sidebar child later appends
@@ -80,9 +82,9 @@ let ndWindowContentMargin: CGFloat = 20
 /// area, and the chrome above and below it carries its own padding.
 func ndWindowRootInset(_ child: NSView) -> CGFloat {
     if ndIsScrollShaped(child) || ndIsListShaped(child) { return 0 }
-    if let stack = child as? NSStackView {
-        let e = stack.edgeInsets
-        if e.top != 0 || e.left != 0 || e.bottom != 0 || e.right != 0 { return 0 }
+    if let box = child as? NDBoxView {
+        let p = box.ndPadding
+        if p.top != 0 || p.left != 0 || p.bottom != 0 || p.right != 0 { return 0 }
     }
     return ndWindowContentMargin
 }
@@ -1480,6 +1482,9 @@ func ndMakeSkeleton(_ props: [String: Any]) -> NSView {
     if let tip = propStr(universal, "tooltip") { ndApplyTooltip(view, tip) }
     if let on = propBool(universal, "enabled") { ndApplyEnabled(view, on) }
     ndDragDropApply(view, universal)
+    // The cross-axis default a box gives this child is resolved from the
+    // KIND, once, here (Layout.swift's ndSelfSizedOnAxis).
+    ndRecordWidgetKind(view, kind)
     return view
 }
 
@@ -1517,16 +1522,14 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }
         return content
     } else if kind == "Box" {
-        let stack = NDBoxStackView()
+        let box = NDBoxView()
         let vertical = (propStr(props, "orientation") ?? "vertical") == "vertical"
-        stack.orientation = vertical ? .vertical : .horizontal
+        box.ndOrientation = vertical ? .vertical : .horizontal
         // -1 is the "platform standard" sentinel (schema default):
         // ndStandardSpacing (8) here, 6 on the GTK peer.
         let spacingRaw = propInt(props, "spacing") ?? -1
-        stack.spacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)
-        stack.alignment = vertical ? .leading : .centerY
-        stack.distribution = .gravityAreas
-        return stack
+        box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)
+        return box
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
         let label = NDTextField(labelWithString: text)
@@ -1890,9 +1893,9 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     if kind == "Window" {
         if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }
     } else if kind == "Box" {
-        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {
+        if let sp = propInt(props, "spacing"), let box = view as? NDBoxView {
             // -1 sentinel = platform standard, same as the create arm.
-            stack.spacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
+            box.ndSpacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
     } else if kind == "Button" {
         if let l = propStr(props, "label"), let b = view as? NSButton {
@@ -2213,6 +2216,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         // "tabWidth" handled by ndCodeEditorApply above (merged).
         // "diagnostics" handled by ndCodeEditorApply above (merged).
     }
+    ndInvalidateBoxChain(from: view)
 }
 
 func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
@@ -2341,6 +2345,11 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
 }
 
 func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ attachedJson: String) {
+    // A child arriving or leaving changes what every enclosing box has to
+    // place, whatever kind of container took it (a tab page and a split
+    // pane count too). `defer` so the cross-cutting early returns below
+    // still report it.
+    defer { ndInvalidateBoxChain(from: parent) }
     // Cross-cutting (M15): a Popover child anchors on its tree parent
     // (never box-packed); a TrayItem is menu-bar chrome, never content;
     // a Dialog/Sheet handle records the parent it presents against.
@@ -2401,17 +2410,18 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             child.translatesAutoresizingMaskIntoConstraints = false
             let inset = ndWindowRootInset(child)
             let guide = parent.safeAreaLayoutGuide
-            NSLayoutConstraint.activate([
+            let pins = [
                 child.topAnchor.constraint(equalTo: guide.topAnchor, constant: inset),
                 child.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),
                 child.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),
                 child.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -inset),
-            ])
+            ]
+            NSLayoutConstraint.activate(pins)
+            ndRegisterWindowRootPins(child, pins)
         }
     } else if parentKind == "Box" {
-        let stack = parent as! NSStackView
-        stack.addArrangedSubview(child)
-        ndBoxChildAttached(stack, child)
+        let box = parent as! NDBoxView
+        box.ndAppend(child)
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
         let doc = sv.documentView!
@@ -2531,6 +2541,11 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
 func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ before: NSView?, _ attachedJson: String) {
     // nil `before` degenerates to append everywhere (matches the M4 hand-written contract).
     guard let before = before else { return ndAppendChild(parent, parentKind, child, attachedJson) }
+    // A child arriving or leaving changes what every enclosing box has to
+    // place, whatever kind of container took it (a tab page and a split
+    // pane count too). `defer` so the cross-cutting early returns below
+    // still report it.
+    defer { ndInvalidateBoxChain(from: parent) }
     // Cross-cutting (M15): Popover/TrayItem/overlay children are position-independent.
     if ndPopoverStructuralAttach(child, parent) { return }
     if ndTrayItemStructuralAttach(child) { return }
@@ -2544,11 +2559,8 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     let attachedGridColumnSpan = propInt(attached, "gridColumnSpan") ?? 1
     let attachedSlot = propStr(attached, "slot") ?? "content"
     if parentKind == "Box" {
-        let stack = parent as! NSStackView
-        if stack.arrangedSubviews.contains(child) { stack.removeArrangedSubview(child) }
-        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count
-        stack.insertArrangedSubview(child, at: idx)
-        ndBoxChildAttached(stack, child)
+        let box = parent as! NDBoxView
+        box.ndInsert(child, before: before)
     } else if parentKind == "TabView" {
         guard let tabs = ndTabViewController(for: parent) else { return }
         let item = ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon)
@@ -2646,6 +2658,11 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
 }
 
 func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
+    // A child arriving or leaving changes what every enclosing box has to
+    // place, whatever kind of container took it (a tab page and a split
+    // pane count too). `defer` so the cross-cutting early returns below
+    // still report it.
+    defer { ndInvalidateBoxChain(from: parent) }
     // Cross-cutting (M15): detach an anchored Popover / tear down a
     // TrayItem's NSStatusItem / close an unmounted overlay — none of the
     // three was ever a layout child.
@@ -2679,10 +2696,8 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
             child.removeFromSuperview()
         }
     } else if parentKind == "Box" {
-        let stack = parent as! NSStackView
-        stack.removeArrangedSubview(child)
-        ndBoxChildDetached(stack, child)
-        child.removeFromSuperview()
+        let box = parent as! NDBoxView
+        box.ndRemove(child)
     } else if parentKind == "ScrollView" {
         let sv = parent as! NSScrollView
         if child.superview === sv.documentView { child.removeFromSuperview() }

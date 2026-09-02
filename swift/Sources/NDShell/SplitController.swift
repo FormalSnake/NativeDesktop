@@ -353,8 +353,8 @@ final class NDPaneViewController: NSViewController {
 /// the generated Window append arm (`ndWindowRootInset`).
 func ndIsScrollShaped(_ view: NSView) -> Bool {
     if view is NSScrollView { return true }
-    if let stack = view as? NSStackView, stack.arrangedSubviews.count == 1,
-       stack.arrangedSubviews[0] is NSScrollView {
+    if let box = view as? NDBoxView, box.ndChildren.count == 1,
+       box.ndChildren[0] is NSScrollView {
         return true
     }
     return false
@@ -367,12 +367,12 @@ func ndIsScrollShaped(_ view: NSView) -> Bool {
 /// siblings have no content-inset channel of their own. Read by the generated
 /// Window append arm (`ndWindowRootInset`) as well.
 func ndIsListShaped(_ view: NSView) -> Bool {
-    guard let stack = view as? NSStackView, stack.orientation == .vertical else { return false }
+    guard let box = view as? NDBoxView, box.ndOrientation == .vertical else { return false }
     // The vexpanding child (Layout.swift's ndLayoutFlags) is the one that
     // absorbs the leftover height, so it is the one that reaches the edges: a
     // list pane with a search box above it still reads as scrolling even
-    // though the stack around it does not.
-    let expanding = stack.arrangedSubviews.filter { ndLayoutFlags[ObjectIdentifier($0)]?.vexpand == true }
+    // though the box around it does not.
+    let expanding = box.ndChildren.filter { ndLayoutFlags[ObjectIdentifier($0)]?.vexpand == true }
     return expanding.count == 1 && expanding[0] is NSScrollView
 }
 

@@ -5408,7 +5408,9 @@ func propIntArray(_ p: [String: Any], _ k: String) -> [Int]? { (p[k] as? [Any])?
 func propObjArray(_ p: [String: Any], _ k: String) -> [[String: Any]]? { (p[k] as? [Any])?.compactMap { $0 as? [String: Any] } }
 
 // Every container view class is flipped (top-left y-down) — GLOBAL CONSTRAINT.
-final class FlippedView: NSView { override var isFlipped: Bool { true } }
+// nonisolated: coordinate conversion reads isFlipped constantly, and a
+// MainActor-isolated getter puts an executor check on every one of them.
+final class FlippedView: NSView { override nonisolated var isFlipped: Bool { true } }
 
 // SplitView's \`sidebarWidth\`/\`collapsed\` (create-time props on the
 // NSSplitView itself) are read again when the sidebar child later appends
@@ -5468,9 +5470,9 @@ let ndWindowContentMargin: CGFloat = 20
 /// area, and the chrome above and below it carries its own padding.
 func ndWindowRootInset(_ child: NSView) -> CGFloat {
     if ndIsScrollShaped(child) || ndIsListShaped(child) { return 0 }
-    if let stack = child as? NSStackView {
-        let e = stack.edgeInsets
-        if e.top != 0 || e.left != 0 || e.bottom != 0 || e.right != 0 { return 0 }
+    if let box = child as? NDBoxView {
+        let p = box.ndPadding
+        if p.top != 0 || p.left != 0 || p.bottom != 0 || p.right != 0 { return 0 }
     }
     return ndWindowContentMargin
 }
@@ -6902,6 +6904,9 @@ function genSwift(s: Schema): string {
   out += '    if let tip = propStr(universal, "tooltip") { ndApplyTooltip(view, tip) }\n';
   out += '    if let on = propBool(universal, "enabled") { ndApplyEnabled(view, on) }\n';
   out += "    ndDragDropApply(view, universal)\n";
+  out += "    // The cross-axis default a box gives this child is resolved from the\n";
+  out += "    // KIND, once, here (Layout.swift's ndSelfSizedOnAxis).\n";
+  out += "    ndRecordWidgetKind(view, kind)\n";
   out += "    return view\n";
   out += "}\n\n";
   out += "func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {\n";
@@ -6965,20 +6970,17 @@ function genSwiftCreateBody(w: Widget): string {
     out += '        if let fan = propStr(props, "frameAutosaveName") { win.setFrameAutosaveName(fan) }\n';
     out += "        return content\n";
   } else if (w.name === "Box") {
-    // NDBoxStackView (Layout.swift): a plain NSStackView reports no
-    // intrinsic size on either axis, so a nested box aligned start/center/
-    // end inside another box has nothing for the hugging/compression-
-    // resistance recipe to pin, and stretches to the parent's full width.
-    out += "        let stack = NDBoxStackView()\n";
+    // NDBoxView (Layout.swift): a deterministic manual-layout container, not
+    // an NSStackView. See that class for why the constraint model could not
+    // express GTK's expand/align semantics.
+    out += "        let box = NDBoxView()\n";
     out += '        let vertical = (propStr(props, "orientation") ?? "vertical") == "vertical"\n';
-    out += "        stack.orientation = vertical ? .vertical : .horizontal\n";
+    out += "        box.ndOrientation = vertical ? .vertical : .horizontal\n";
     out += "        // -1 is the \"platform standard\" sentinel (schema default):\n";
     out += "        // ndStandardSpacing (8) here, 6 on the GTK peer.\n";
     out += `        let spacingRaw = propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")}\n`;
-    out += "        stack.spacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)\n";
-    out += "        stack.alignment = vertical ? .leading : .centerY\n";
-    out += "        stack.distribution = .gravityAreas\n";
-    out += "        return stack\n";
+    out += "        box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)\n";
+    out += "        return box\n";
   } else if (w.name === "Paned") {
     // Bare NSSplitView (not NSSplitViewController-based — see SplitView's
     // create arm for that heavier item/sidebar-glass path). isVertical
@@ -7454,6 +7456,10 @@ function genSwiftApplyProps(s: Schema): string {
     out += genSwiftApplyBody(w, updProps);
   }
   if (!first) out += "    }\n";
+  // A prop update can change what a widget measures (a label's text, a
+  // button's title, an icon), and every enclosing box caches its measurement
+  // until something says otherwise (Layout.swift).
+  out += "    ndInvalidateBoxChain(from: view)\n";
   out += "}\n\n";
   return out;
 }
@@ -7469,9 +7475,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       // nil from then on (title updates silently dropped).
       out += '        if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }\n';
     } else if (w.name === "Box" && p.name === "spacing") {
-      out += '        if let sp = propInt(props, "spacing"), let stack = view as? NSStackView {\n';
+      out += '        if let sp = propInt(props, "spacing"), let box = view as? NDBoxView {\n';
       out += "            // -1 sentinel = platform standard, same as the create arm.\n";
-      out += "            stack.spacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)\n";
+      out += "            box.ndSpacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)\n";
       out += "        }\n";
     } else if (w.name === "SettingsGroup" && p.name === "title") {
       out += "        ndSettingsGroupApply(view, props)  // title/description merged\n";
@@ -8387,12 +8393,17 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "            child.translatesAutoresizingMaskIntoConstraints = false\n" +
       "            let inset = ndWindowRootInset(child)\n" +
       "            let guide = parent.safeAreaLayoutGuide\n" +
-      "            NSLayoutConstraint.activate([\n" +
+      // Registered, not just activated: the inset depends on the root's SHAPE,
+      // which a box only settles once its children have landed
+      // (ndRefreshWindowRootInset, Layout.swift).
+      "            let pins = [\n" +
       "                child.topAnchor.constraint(equalTo: guide.topAnchor, constant: inset),\n" +
       "                child.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: inset),\n" +
       "                child.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -inset),\n" +
       "                child.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -inset),\n" +
-      "            ])\n" +
+      "            ]\n" +
+      "            NSLayoutConstraint.activate(pins)\n" +
+      "            ndRegisterWindowRootPins(child, pins)\n" +
       "        }\n",
     // A registered split currently installed as contentViewController has no
     // superview to remove from (removeFromSuperview() would no-op or, worse,
@@ -8457,22 +8468,14 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
     remove: () => "        (parent as! NDOverlayView).removeOverlayChild(child)\n",
   },
   Box: {
-    // Cross-axis "fill" + main-axis expand are both handled by
-    // ndBoxChildAttached (Layout.swift), driven off the hexpand/vexpand/
-    // halign/valign flags ndApplyStyle records per child.
-    append: () => "        let stack = parent as! NSStackView\n        stack.addArrangedSubview(child)\n        ndBoxChildAttached(stack, child)\n",
-    // The index must be computed on the child-less list: insertArrangedSubview(_:at:)
-    // implicitly removes `child` first if it's already arranged, which shifts
-    // `before`'s index down by one whenever child currently sits above it —
-    // so detach child from its stale slot BEFORE finding `before`'s index
-    // (mirrors src/tree.zig:156 recordInsertBefore's detach-first model).
-    insertBefore: () =>
-      "        let stack = parent as! NSStackView\n" +
-      "        if stack.arrangedSubviews.contains(child) { stack.removeArrangedSubview(child) }\n" +
-      "        let idx = stack.arrangedSubviews.firstIndex(of: before) ?? stack.arrangedSubviews.count\n" +
-      "        stack.insertArrangedSubview(child, at: idx)\n" +
-      "        ndBoxChildAttached(stack, child)\n",
-    remove: () => "        let stack = parent as! NSStackView\n        stack.removeArrangedSubview(child)\n        ndBoxChildDetached(stack, child)\n        child.removeFromSuperview()\n",
+    // Expand, align, margin and padding are all resolved by NDBoxView's own
+    // layout pass (Layout.swift), off the flags ndApplyStyle records per
+    // child. The list is kept detach-first, mirroring src/tree.zig:156
+    // recordInsertBefore, so a child moving up the list does not shift
+    // `before`'s index out from under the insert.
+    append: () => "        let box = parent as! NDBoxView\n        box.ndAppend(child)\n",
+    insertBefore: () => "        let box = parent as! NDBoxView\n        box.ndInsert(child, before: before)\n",
+    remove: () => "        let box = parent as! NDBoxView\n        box.ndRemove(child)\n",
   },
   ScrollView: {
     // childModel is "single" (schema/widgets.json): documentView itself is
@@ -8709,6 +8712,11 @@ function genSwiftStructural(s: Schema): string {
     '    let attachedSlot = propStr(attached, "slot") ?? "content"\n';
 
   let out = "func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ attachedJson: String) {\n";
+  out += "    // A child arriving or leaving changes what every enclosing box has to\n";
+  out += "    // place, whatever kind of container took it (a tab page and a split\n";
+  out += "    // pane count too). `defer` so the cross-cutting early returns below\n";
+  out += "    // still report it.\n";
+  out += "    defer { ndInvalidateBoxChain(from: parent) }\n";
   out += "    // Cross-cutting (M15): a Popover child anchors on its tree parent\n";
   out += "    // (never box-packed); a TrayItem is menu-bar chrome, never content;\n";
   out += "    // a Dialog/Sheet handle records the parent it presents against.\n";
@@ -8731,6 +8739,11 @@ function genSwiftStructural(s: Schema): string {
   out += "func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ before: NSView?, _ attachedJson: String) {\n";
   out += "    // nil `before` degenerates to append everywhere (matches the M4 hand-written contract).\n";
   out += "    guard let before = before else { return ndAppendChild(parent, parentKind, child, attachedJson) }\n";
+  out += "    // A child arriving or leaving changes what every enclosing box has to\n";
+  out += "    // place, whatever kind of container took it (a tab page and a split\n";
+  out += "    // pane count too). `defer` so the cross-cutting early returns below\n";
+  out += "    // still report it.\n";
+  out += "    defer { ndInvalidateBoxChain(from: parent) }\n";
   out += "    // Cross-cutting (M15): Popover/TrayItem/overlay children are position-independent.\n";
   out += "    if ndPopoverStructuralAttach(child, parent) { return }\n";
   out += "    if ndTrayItemStructuralAttach(child) { return }\n";
@@ -8751,6 +8764,11 @@ function genSwiftStructural(s: Schema): string {
   out += "}\n\n";
 
   out += "func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {\n";
+  out += "    // A child arriving or leaving changes what every enclosing box has to\n";
+  out += "    // place, whatever kind of container took it (a tab page and a split\n";
+  out += "    // pane count too). `defer` so the cross-cutting early returns below\n";
+  out += "    // still report it.\n";
+  out += "    defer { ndInvalidateBoxChain(from: parent) }\n";
   out += "    // Cross-cutting (M15): detach an anchored Popover / tear down a\n";
   out += "    // TrayItem's NSStatusItem / close an unmounted overlay — none of the\n";
   out += "    // three was ever a layout child.\n";

@@ -104,7 +104,10 @@ func buildVTable() -> nd_backend {
         let textStr = cstr(text)
         MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
-            if let f = viewFrom(widgetPtr) as? NSTextField { f.stringValue = textStr }
+            let view = viewFrom(widgetPtr)
+            guard let f = view as? NSTextField, f.stringValue != textStr else { return }
+            f.stringValue = textStr
+            ndInvalidateBoxChain(from: view)
         }
     }
 
@@ -112,7 +115,10 @@ func buildVTable() -> nd_backend {
         let widgetBits = Int(bitPattern: w)
         MainActor.assumeIsolated {
             guard let widgetPtr = UnsafeMutableRawPointer(bitPattern: widgetBits) else { return }
-            viewFrom(widgetPtr).isHidden = !visible
+            let view = viewFrom(widgetPtr)
+            guard view.isHidden == visible else { return }
+            view.isHidden = !visible
+            ndInvalidateBoxChain(from: view)
         }
     }
 
@@ -431,7 +437,7 @@ private struct NDTypography {
 }
 nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypography] = [:]
 
-/// Box views (`NSStackView`) carrying a sidebar structural class, either
+/// Box views (`NDBoxView`) carrying a sidebar structural class, either
 /// `navigation-sidebar` (the portable contract) or `nd-native-sidebar` (the
 /// unconditional opt-in). On the Mac each is backed by a real source-list
 /// `NSTableView` (SidebarTable.swift), whose row model is the box's own child
@@ -443,7 +449,7 @@ nonisolated(unsafe) private var ndNodeTypography: [ObjectIdentifier: NDTypograph
 /// (bounded by live widget count).
 nonisolated(unsafe) var ndNavigationSidebars: Set<ObjectIdentifier> = []
 
-/// Box views (`NSStackView`) carrying the `boxed-list` structural class. They
+/// Box views (`NDBoxView`) carrying the `boxed-list` structural class. They
 /// render as iOS-style grouped inset cards on the Mac (a rounded, elevated
 /// rounded-rect over the pane) and their `<separator>` children become inset
 /// hairline row dividers — see `ndApplyBoxedListCard` / `ndStyleBoxedListDivider`.
@@ -465,7 +471,7 @@ nonisolated(unsafe) private var ndBoxedListBackings: [ObjectIdentifier: NSBox] =
 /// its `<separator>` children into inset row dividers. See `ndApplySurfaceCard`.
 nonisolated(unsafe) private var ndSurfaceCardBackings: [ObjectIdentifier: NSBox] = [:]
 
-/// Box views (`NSStackView`) carrying the `toolbar` structural class. They
+/// Box views (`NDBoxView`) carrying the `toolbar` structural class. They
 /// render as a native header strip on the Mac: an `NSVisualEffectView`
 /// `.headerView` backing plus a 1 pt bottom hairline — see
 /// `ndApplyToolbarStrip`. Set-replace like `ndBoxedLists`.
@@ -482,7 +488,7 @@ nonisolated(unsafe) private var ndToolbarBackings: [ObjectIdentifier: NDToolbarS
 /// Belongs in Metrics.swift once that file settles.
 private let ndToolbarStripInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
 
-private func ndEdgeInsetsEqual(_ a: NSEdgeInsets, _ b: NSEdgeInsets) -> Bool {
+func ndEdgeInsetsEqual(_ a: NSEdgeInsets, _ b: NSEdgeInsets) -> Bool {
     a.top == b.top && a.left == b.left && a.bottom == b.bottom && a.right == b.right
 }
 
@@ -642,7 +648,7 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // The gate is evaluated on child attach, not here: the box is normally
     // still empty when its classes land (src/tree.zig applies props before
     // append), so `ndBoxChildAttached` re-runs the reconcile as rows arrive.
-    if let stack = view as? NSStackView {
+    if let stack = view as? NDBoxView {
         let id = ObjectIdentifier(stack)
         let forced = classes.contains("nd-native-sidebar")
         if forced || classes.contains("navigation-sidebar") {
@@ -677,44 +683,44 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // Record `boxed-list` (set-replace) and apply the grouped-card treatment,
     // retro-styling any `<separator>` children that already attached before
     // the class landed (either create order — see Layout.swift's header).
-    if let stack = view as? NSStackView {
-        let id = ObjectIdentifier(stack)
+    if let box = view as? NDBoxView {
+        let id = ObjectIdentifier(box)
         if classes.contains("boxed-list") {
             ndBoxedLists.insert(id)
-            ndApplyBoxedListCard(stack, enabled: true)
-            for sub in stack.arrangedSubviews {
-                if let sep = sub as? NSBox { ndStyleBoxedListDivider(sep, in: stack) }
+            ndApplyBoxedListCard(box, enabled: true)
+            for sub in box.ndChildren {
+                if let sep = sub as? NSBox { ndStyleBoxedListDivider(sep, in: box) }
             }
         } else if ndBoxedLists.remove(id) != nil {
-            ndApplyBoxedListCard(stack, enabled: false)
-            for sub in stack.arrangedSubviews {
-                if let sep = sub as? NSBox { ndUnstyleBoxedListDivider(sep, in: stack) }
+            ndApplyBoxedListCard(box, enabled: false)
+            for sub in box.ndChildren {
+                if let sep = sub as? NSBox { ndUnstyleBoxedListDivider(sep, in: box) }
             }
         }
     }
 
     // Record `toolbar` (set-replace) and apply the native header-strip
     // treatment (mirror of the boxed-list block above).
-    if let stack = view as? NSStackView {
-        let id = ObjectIdentifier(stack)
+    if let box = view as? NDBoxView {
+        let id = ObjectIdentifier(box)
         if classes.contains("toolbar") {
             ndToolbarStrips.insert(id)
-            ndApplyToolbarStrip(stack, enabled: true)
+            ndApplyToolbarStrip(box, enabled: true)
         } else if ndToolbarStrips.remove(id) != nil {
-            ndApplyToolbarStrip(stack, enabled: false)
+            ndApplyToolbarStrip(box, enabled: false)
         }
     }
 
     // `card`: the raised surface (same block shape as `boxed-list`). A box
     // carrying BOTH gets the grouped-list treatment only — that one already
     // draws a surface, and two stacked backings would double the fill.
-    if let stack = view as? NSStackView {
-        let id = ObjectIdentifier(stack)
+    if let box = view as? NDBoxView {
+        let id = ObjectIdentifier(box)
         let want = classes.contains("card") && !classes.contains("boxed-list")
         if want {
-            ndApplySurfaceCard(stack, enabled: true)
+            ndApplySurfaceCard(box, enabled: true)
         } else if ndSurfaceCardBackings[id] != nil {
-            ndApplySurfaceCard(stack, enabled: false)
+            ndApplySurfaceCard(box, enabled: false)
         }
     }
 
@@ -733,14 +739,16 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
     // `activatable` on a box row: native hover feedback (set-replace; the
     // teardown lives HERE, the reset path, so a dropped class removes the
     // live tracking area rather than leaking it).
-    if let stack = view as? NSStackView {
-        ndApplyActivatable(stack, enabled: classes.contains("activatable"))
+    if let box = view as? NDBoxView {
+        ndApplyActivatable(box, enabled: classes.contains("activatable"))
     }
 
     var typography = ndNodeTypography[ObjectIdentifier(view)] ?? NDTypography()
     typography.classes = classes
     ndNodeTypography[ObjectIdentifier(view)] = typography
     ndRecomputeTypography(view)
+    // Typography classes resize the text (`title-1`, `caption`, `numeric`).
+    ndInvalidateBoxChain(from: view)
 }
 
 /// The standing `cssClasses` recorded for a node's text target (read by
@@ -759,7 +767,7 @@ func ndCssClasses(of view: NSView) -> [String] {
 /// cgColor to hand-resolve. `enabled` false removes the backing NSBox
 /// (set-replace when the class drops).
 func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
-    guard let stack = box as? NSStackView else { return }
+    guard let stack = box as? NDBoxView else { return }
     let id = ObjectIdentifier(stack)
     guard enabled else {
         if let backing = ndBoxedListBackings[id] {
@@ -804,7 +812,7 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
 /// colours are dynamic semantic `NSColor`s, so light/dark tracks without a
 /// `cgColor` to re-resolve on an appearance change.
 func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
-    guard let stack = box as? NSStackView else { return }
+    guard let stack = box as? NDBoxView else { return }
     let id = ObjectIdentifier(stack)
     guard enabled else {
         if let backing = ndSurfaceCardBackings[id] {
@@ -841,27 +849,23 @@ func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
 /// (set-replace when the class drops). Modeled line-for-line on
 /// `ndApplyBoxedListCard` above.
 func ndApplyToolbarStrip(_ box: NSView, enabled: Bool) {
-    guard let stack = box as? NSStackView else { return }
+    guard let stack = box as? NDBoxView else { return }
     let id = ObjectIdentifier(stack)
     guard enabled else {
         if let backing = ndToolbarBackings[id] {
             backing.removeFromSuperview()
             ndToolbarBackings[id] = nil
         }
-        if ndEdgeInsetsEqual(stack.edgeInsets, ndToolbarStripInsets) {
-            stack.edgeInsets = NSEdgeInsets()
-            ndBoxReconcileChildren(stack)
+        if ndEdgeInsetsEqual(stack.ndPadding, ndToolbarStripInsets) {
+            stack.ndPadding = NSEdgeInsets()
         }
         return
     }
     // The strip inset, unless the app declared a `padding` of its own.
     // `applyPadding` owns that case, and re-asserts this default whenever the
     // padding is absent (every styled node sends an all-zero baseline).
-    if ndEdgeInsetsEqual(stack.edgeInsets, NSEdgeInsets()) {
-        stack.edgeInsets = ndToolbarStripInsets
-        // The cross-axis constraints bake the stack's insets into their
-        // constant, so they have to be replayed (Layout.swift).
-        ndBoxReconcileChildren(stack)
+    if ndEdgeInsetsEqual(stack.ndPadding, NSEdgeInsets()) {
+        stack.ndPadding = ndToolbarStripInsets
     }
     if ndToolbarBackings[id] != nil { return }
     let backing = NDToolbarStripBacking()
@@ -941,7 +945,7 @@ final class NDActivatableHighlighter: NSObject {
 
 nonisolated(unsafe) private var ndActivatableState: [ObjectIdentifier: (highlighter: NDActivatableHighlighter, overlay: NSBox)] = [:]
 
-func ndApplyActivatable(_ stack: NSStackView, enabled: Bool) {
+func ndApplyActivatable(_ stack: NDBoxView, enabled: Bool) {
     let id = ObjectIdentifier(stack)
     if let state = ndActivatableState[id] {
         state.highlighter.enabled = enabled
@@ -1094,15 +1098,13 @@ private func applyCssTextColor(_ view: NSView, _ color: NSColor) {
 ///    fontFamily/fontWeight).
 ///  - `border` -> `layer.borderWidth`/`borderColor`/`cornerRadius`.
 ///  - `padding` -> dispatched by view type; see `applyPadding`.
-///  - `margin` -> silently ignored on AppKit v1. GTK widget margins are a
-///    per-child gap the PARENT leaves around this widget; NSStackView has no
-///    per-arranged-subview margin equivalent (only the stack's own
-///    `edgeInsets`, which is `padding`'s job). A prior version approximated
-///    this by mutating the view's frame post-layout, which fought Auto
-///    Layout on every subsequent pass — removed rather than kept as a lie.
-///  - `hexpand`/`vexpand`/`halign`/`valign` -> recorded into `ndLayoutFlags`
-///    (Layout.swift) and reconciled against the parent NSStackView, if any,
-///    via `ndBoxChildAttached`.
+///  - `margin` -> recorded into `ndLayoutFlags` as the per-child gap the
+///    PARENT box leaves around this widget, which is what GTK widget margins
+///    are. Outside a box there is nothing to leave the gap in, so it is
+///    dropped there.
+///  - `hexpand`/`vexpand`/`halign`/`valign`/`minWidth`/`minHeight` -> recorded
+///    into `ndLayoutFlags` (Layout.swift) and read by the enclosing
+///    `NDBoxView` on its next layout.
 func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     let style = parseProps(styleJson)
 
@@ -1161,33 +1163,38 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     // pre-existing one-way behavior, left as-is here.)
     let insets = style["padding"].flatMap(parseEdgeInsets) ?? NSEdgeInsets()
     applyPadding(view, insets)
-    // `margin`: silently ignored on AppKit v1 (see doc comment above).
 
-    if style["hexpand"] != nil || style["vexpand"] != nil || style["halign"] != nil || style["valign"] != nil {
-        var flags = ndLayoutFlags[ObjectIdentifier(view)] ?? NDLayoutFlags()
-        if let h = (style["hexpand"] as? NSNumber)?.boolValue { flags.hexpand = h }
-        if let v = (style["vexpand"] as? NSNumber)?.boolValue { flags.vexpand = v }
-        if let ha = style["halign"] as? String { flags.halign = ha }
-        if let va = style["valign"] as? String { flags.valign = va }
-        ndLayoutFlags[ObjectIdentifier(view)] = flags
-
-        view.setContentHuggingPriority(flags.hexpand ? NSLayoutConstraint.Priority(1) : NSLayoutConstraint.Priority(250), for: .horizontal)
-        view.setContentHuggingPriority(flags.vexpand ? NSLayoutConstraint.Priority(1) : NSLayoutConstraint.Priority(250), for: .vertical)
-
-        if let stack = view.superview as? NSStackView {
-            ndBoxChildAttached(stack, view)
-        }
-    }
+    // Set-replace, like background/border/padding above: an absent key resets
+    // to the default rather than leaving the last value standing. Expand and
+    // align were additive before, so a child that expanded once expanded for
+    // the rest of the session.
+    var flags = ndLayoutFlags[ObjectIdentifier(view)] ?? NDLayoutFlags()
+    flags.hexpand = (style["hexpand"] as? NSNumber)?.boolValue ?? false
+    flags.vexpand = (style["vexpand"] as? NSNumber)?.boolValue ?? false
+    flags.halign = style["halign"] as? String
+    flags.valign = style["valign"] as? String
+    flags.margin = style["margin"].flatMap(parseEdgeInsets) ?? NSEdgeInsets()
+    flags.minWidth = CGFloat((style["minWidth"] as? NSNumber)?.doubleValue ?? 0)
+    flags.minHeight = CGFloat((style["minHeight"] as? NSNumber)?.doubleValue ?? 0)
+    ndLayoutFlags[ObjectIdentifier(view)] = flags
 
     ndApplyMinSize(view, style)
+    // Unconditional: `font` and `padding` change what the widget measures, not
+    // just where it sits, and a box caches its children's measurements until
+    // something says otherwise. A bold label placed at the size it had in the
+    // system font loses its last glyph.
+    ndInvalidateBoxChain(from: view)
 }
 
 /// One >= constraint per axis per view, the AppKit peer of GTK's
-/// gtk_widget_set_size_request. Set-replace like the rest of the style
-/// surface: a key dropping out of the style object deactivates its
-/// constraint. Priority 999, not required, so a frame-based parent's
-/// translated autoresizing constraints win a conflict instead of throwing
-/// an unsatisfiable-constraint exception.
+/// gtk_widget_set_size_request, for the views a constraint still reaches: a
+/// pane root, a scroll document, a clamp child. A box child is frame-placed,
+/// so its minimum is honoured by the box's own measurement instead
+/// (`NDLayoutFlags.minWidth`/`minHeight`, written alongside this in
+/// `ndApplyStyle`). Set-replace like the rest of the style surface: a key
+/// dropping out of the style object deactivates its constraint. Priority 999,
+/// not required, so a frame-based parent's translated autoresizing constraints
+/// win a conflict instead of throwing an unsatisfiable-constraint exception.
 nonisolated(unsafe) private var ndMinSizeConstraints: [ObjectIdentifier: (width: NSLayoutConstraint?, height: NSLayoutConstraint?)] = [:]
 
 private func ndApplyMinSize(_ view: NSView, _ style: [String: Any]) {
@@ -1253,8 +1260,7 @@ private func parseEdgeInsets(_ value: Any) -> NSEdgeInsets? {
 /// Dispatches `padding` by view type — AppKit has no single "content inset"
 /// API, so each widget shape gets its own real mapping instead of the old
 /// one-shot frame mutation:
-///  - NSStackView -> the stack's own `edgeInsets`, then reconcile children
-///    (their cross-axis "fill" constraint bakes the insets into its constant).
+///  - NDBoxView -> the box's own `ndPadding`.
 ///  - NDButton/NDTextField -> `ndPadding` (Layout.swift; inflates
 ///    intrinsicContentSize instead of touching the frame directly).
 ///  - NSScrollView wrapping an NSTextView (TextArea) -> `textContainerInset`.
@@ -1280,20 +1286,20 @@ private func parseEdgeInsets(_ value: Any) -> NSEdgeInsets? {
 /// changes, not changes to this dispatch.
 private func applyPadding(_ view: NSView, _ insets: NSEdgeInsets) {
     if ndUsesNativeSettingsInsets(view) {
-        if let stack = view as? NSStackView {
-            stack.edgeInsets = .init()
-            ndBoxReconcileChildren(stack)
-        }
-    } else if let stack = view as? NSStackView {
+        if let box = view as? NDBoxView { box.ndPadding = .init() }
+    } else if let box = view as? NDBoxView {
         // A `toolbar` strip carries its own content inset (`ndApplyToolbarStrip`).
         // An app-declared `padding` still wins; the all-zero baseline every
         // styled node sends does not, or the strip would lose its inset on the
         // first style apply after the class landed.
         let declared = !ndEdgeInsetsEqual(insets, NSEdgeInsets())
-        stack.edgeInsets = (declared || !ndToolbarStrips.contains(ObjectIdentifier(stack)))
+        box.ndPadding = (declared || !ndToolbarStrips.contains(ObjectIdentifier(box)))
             ? insets
             : ndToolbarStripInsets
-        ndBoxReconcileChildren(stack)
+    } else if let stack = view as? NSStackView {
+        // NDNumberInputView and NDSettingsGroupView are the only remaining
+        // stacks the core tracks; neither reconciles box children.
+        stack.edgeInsets = insets
     } else if let button = view as? NDButton {
         button.ndPadding = insets
     } else if let field = view as? NDTextField {

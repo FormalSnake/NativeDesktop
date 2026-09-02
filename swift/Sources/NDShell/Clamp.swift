@@ -7,7 +7,7 @@ import AppKit
 /// (`tighteningThreshold`'s gradual easing has no constraint-system
 /// equivalent; the cap+center behavior is the part apps depend on.)
 final class NDClampView: NSView {
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     var maximumSize: CGFloat = 600
     private var child: NSView?
 

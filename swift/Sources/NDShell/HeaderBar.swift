@@ -939,9 +939,9 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// like NDPopoverHandleView). A box with more than one button, or with
     /// real content, keeps its custom-view item.
     private func ndAnchorBoxButton(_ view: NSView) -> NDButton? {
-        guard let stack = view as? NSStackView else { return nil }
+        guard let box = view as? NDBoxView else { return nil }
         var found: NDButton? = nil
-        for sub in stack.arrangedSubviews {
+        for sub in box.ndChildren {
             if let b = sub as? NDButton {
                 if found != nil || !ndPromotable(b) { return nil }
                 found = b
@@ -1108,14 +1108,14 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             return promotedItem(for: b, identifier: itemIdentifier)
         }
         // A Box child (e.g. a popover's anchor wrapping its trigger button)
-        // is an NSStackView: Auto Layout on the item's root view removes it
-        // from the toolbar's frame-based item layout, and a stack has no
-        // intrinsic width for the toolbar to size the item from at insertion.
-        // Freeze its fitting size into a frame the item can own.
-        if let stack = view as? NSStackView {
-            stack.translatesAutoresizingMaskIntoConstraints = true
-            let size = stack.fittingSize
-            stack.setFrameSize(NSSize(width: max(size.width, 1), height: max(size.height, 1)))
+        // has no width for the toolbar to size the item from at insertion, and
+        // the item's layout is frame-based. Freeze the box's own measurement
+        // into a frame the item can own.
+        if let box = view as? NDBoxView {
+            box.translatesAutoresizingMaskIntoConstraints = true
+            let size = box.ndNaturalSize()
+            box.setFrameSize(NSSize(width: max(size.width, 1), height: max(size.height, 1)))
+            box.layoutSubtreeIfNeeded()
         }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.view = view
