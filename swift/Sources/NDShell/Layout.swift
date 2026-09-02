@@ -308,6 +308,15 @@ private let ndScrollNaturalRowCap = 10
 /// CodeEditor, a plain ScrollView with unconstrained content).
 private let ndScrollNaturalMinHeight: CGFloat = 60
 
+/// Cap for the same shape. A document with no row model answers its WHOLE
+/// height, so a forty-label log asked for more than the window is tall and
+/// took the space its siblings needed (the gallery's Controls page lost its
+/// last row that way). GtkScrolledWindow has no such appetite: without
+/// `propagate-natural-height` its natural height is small and it grows only
+/// where something expands. This is that ceiling, and `vexpand` still claims
+/// whatever is left over.
+private let ndScrollNaturalMaxHeight: CGFloat = 240
+
 /// Leading inset of a `boxed-list` separator, drawn under the row text rather
 /// than full-bleed (`ndStyleBoxedListDivider`).
 private let ndBoxedListDividerInset: CGFloat = 12
@@ -502,7 +511,8 @@ private func ndScrollNaturalSize(_ scroll: NSScrollView) -> NSSize {
         if table.headerView != nil { height += max(table.headerView?.frame.height ?? 0, table.rowHeight) }
         return NSSize(width: 0, height: height + scroll.contentInsets.top + scroll.contentInsets.bottom)
     }
-    return NSSize(width: 0, height: max(doc.fittingSize.height, ndScrollNaturalMinHeight))
+    let content = max(doc.fittingSize.height, ndScrollNaturalMinHeight)
+    return NSSize(width: 0, height: min(content, ndScrollNaturalMaxHeight))
 }
 
 /// The view behind every `<box>` (nested boxes included): a deterministic
