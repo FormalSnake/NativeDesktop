@@ -887,6 +887,17 @@ func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
     if let sep = child as? NSBox, ndBoxedLists.contains(ObjectIdentifier(box)) {
         ndStyleBoxedListDivider(sep, in: box)
     }
+    // A source list only learns whether it is standing in for a sidebar pane
+    // once it has a parent (SidebarTable.swift's surface rule).
+    if let scroll = child as? NSScrollView, ndIsSourceListKind(child) {
+        ndRefreshSourceListMaterial(scroll)
+    }
+}
+
+/// The widget kinds whose native form is a source-list surface.
+func ndIsSourceListKind(_ view: NSView) -> Bool {
+    let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
+    return kind == "SourceList" || kind == "SourceTree"
 }
 
 /// Mirror of `ndBoxChildAttached`. AppKit has already taken `child` out of the

@@ -487,9 +487,6 @@ func makeSourceTree(_ props: [String: Any]) -> NSView {
     outlineView.outlineTableColumn = column
     outlineView.headerView = nil
     outlineView.autoresizesOutlineColumn = false
-    // `style = .sourceList` alone: `selectionHighlightStyle = .sourceList` is
-    // deprecated in favour of exactly this property.
-    outlineView.style = .sourceList
     outlineView.floatsGroupRows = false
     outlineView.indentationPerLevel = CGFloat(propInt(props, "indentationPerLevel") ?? 14)
     outlineView.autoresizingMask = [.width]
@@ -510,7 +507,10 @@ func makeSourceTree(_ props: [String: Any]) -> NSView {
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
     scrollView.documentView = outlineView
-    scrollView.drawsBackground = false // glass sidebar shows through
+    // Without this the outline view kept its opaque control background, which
+    // painted the tree as a lighter slab inside the window (SidebarTable.swift
+    // carries the rule the three source-list surfaces share).
+    ndApplySourceListSurface(scrollView, list: outlineView)
     outlineView.sizeLastColumnToFit()
     source.scrollView = scrollView
     sourceTreeDataSources[ObjectIdentifier(scrollView)] = source
