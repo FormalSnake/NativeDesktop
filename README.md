@@ -71,7 +71,7 @@ cd ../my-app && bun install && bun run dev
 
 ## What's in the box
 
-- **57 widgets** generated from one schema: layout, forms, `<headerbar>`/`<splitview>` chrome,
+- **71 widgets** generated from one schema: layout, forms, `<headerbar>`/`<splitview>` chrome,
   `<table>` and `<treeview>` data views, a `<sourcetree>` sidebar, `<paned>` splits, a
   `<commandpalette>`, a `<terminal>` backed by libghostty-vt, and a `<webview>` (WKWebView,
   WebKitGTK) with navigation events, downloads, popup handling, and `executeJavaScript`.
@@ -116,7 +116,7 @@ dynamically at run time. Details and per-distro package names:
 
 ## Status
 
-v0.1.1, early. Prebuilt hosts cover macOS arm64 and Linux x64. Linux has a blocking CI gate (unit
+v0.4.1, early. Prebuilt hosts cover macOS arm64 and Linux x64. Linux has a blocking CI gate (unit
 tests, codegen freshness, headless drive scripts under Weston); macOS runs its drive scripts as a
 non-blocking job. Windows is designed but not implemented, and `nd package` rejects it as a target.
 Mobile is out of scope. See

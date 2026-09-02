@@ -32,28 +32,44 @@ no explicit alignment is fill. `hexpand`/`vexpand` on a child that is already fi
 by default do nothing extra there; they only matter on the main axis, or on the cross axis if you
 deliberately set `halign`/`valign` away from fill and want the child sized wider than that would allow.
 
-**AppKit fills by default only for shapes that don't have a native "correct" size.** Stretching an
-`NSButton`, popup, switch, checkbox, segmented control, stepper, or date/color picker to the box's
-full width is never how those controls look on macOS, so `swift/Sources/NDShell/Layout.swift`'s
-`ndHasIntrinsicCrossSize` keeps them at their natural cross size unless the app explicitly asks for
-`"fill"` (or sets the cross-axis expand flag). Everything else fills by default:
+**AppKit fills by default only for shapes that don't have a native "correct" size.** Stretching a
+button, switch, checkbox, segmented control, date/color picker, spinner, or a handful of other
+controls to the box's full width is never how those controls look on macOS, so
+`swift/Sources/NDShell/Layout.swift`'s `ndSelfSizedOnAxis` (backed by the `ndSelfSizedKinds` table)
+keeps them at their natural cross size unless the app explicitly asks for `"fill"` (or sets the
+cross-axis expand flag). The decision comes from the widget's create-time kind, never from a live
+`intrinsicContentSize` read, so a color change can't flip a child between natural and fill depending
+on whether a SwiftUI leaf has measured yet. `ndSelfSizedKinds` today: `Label`, `Button`,
+`ToggleButton`, `Radio`, `Checkbox`, `Select`, `Switch`, `SegmentedControl`, `DatePicker`,
+`ColorPicker`, `MenuButton`, `SplitButton`, `FontPicker`, `ShareButton`, `LinkButton`, `Spinner`,
+`ProgressCircle`, `NumberInput`, `Avatar`, `Badge`, `Tag`, `Kbd`, plus `Slider` and `ProgressBar`
+(self-sized on their thickness axis only, natural on their length axis). Everything else fills by
+default:
 
 - every container and scroll shape (`<box>`, `<splitview>`, `<scrollview>`, `<tabview>`, `<grid>`,
   `<table>`, `<treeview>`, `<sourcelist>`, `<sourcetree>`, `<listview>`, `<toolbarview>`,
   `<headerbar>`, `<terminal>`, `<webview>`, `<video>`, and a few more internal ones): these exist to
   fill whatever they're given
-- an editable or bezeled text field (`<textinput>`, `<searchinput>`): an empty field's natural width
-  is a few points, so holding it there would render an unusable stub
+- an editable or bezeled text field (`<textinput>`, `<searchinput>`, `<combobox>`): an empty field's
+  natural width is a few points, so holding it there would render an unusable stub
+- `<image>` (one photo would dictate the window width), `<levelindicator>`, `<chart>` (a capacity bar
+  or plot spanning its container), and `<breadcrumb>`
 - a non-editable, non-bezeled `<label>`: sized by its text on both axes either way, so "fill" and
   "natural" agree
 - `<slider>` and a determinate `<progressbar>` fill their *length* axis and stay natural on their
   *thickness* axis (a horizontal slider doesn't stretch to a row's full height, but it does stretch
   along the row)
 
-A `<box>` nested inside another box always falls into the "fill" case on AppKit too: `NSStackView`
-reports no intrinsic size on either axis, so there's nothing for `ndHasIntrinsicCrossSize` to hold it
-at. Setting `hexpand`/`vexpand` on a nested `<box>` for cross-axis fill is therefore redundant on
-both backends: it was already going to fill without them.
+A `<box>` nested inside another box always falls into the "fill" case on AppKit too: `Box` isn't in
+`ndSelfSizedKinds`, so it resolves through the same rule as any other container. Setting
+`hexpand`/`vexpand` on a nested `<box>` for cross-axis fill is therefore redundant on both backends:
+it was already going to fill without them.
+
+`<grid>` and `<scrollview>` place their own children through their own AppKit mechanism (`NSGridView`
+cell placement, `NSScrollView` constraint pins) rather than the box cross-axis resolution above, but
+both now honour `halign`/`valign`/`hexpand`/`vexpand` the same way: only an axis the tree actually
+declares is written, an axis the tree leaves out keeps whatever placement AppKit already inherits, and
+a `<scrollview>`'s child still fills by default.
 
 ## Spacing, padding, margin
 
@@ -90,11 +106,18 @@ shrinking (a scroll view, an ellipsized label, a compressible text field). `defa
 `defaultHeight` only seed `gtk_window_set_default_size`, the *initial* size; the resize floor is
 whatever the content tree computes underneath it.
 
-AppKit windows in this framework don't run that negotiation: the window is created directly at
-`defaultWidth`x`defaultHeight` (schema defaults 480x320 when unset) with no constraint tying its
-minimum size back to content, so it can be resized down as far as the OS allows and content
-compresses, scrolls, or clips accordingly, the same way any of its individual leaf controls would
-without a `minWidth`/`minHeight` floor of their own.
+AppKit windows now run a version of that negotiation too. `defaultWidth`/`defaultHeight` (schema
+defaults 480x320) still win when the app names both, but any axis the app leaves out opens at the
+root content's natural size instead, clamped to the screen's visible frame, the same "size from
+content" rule GTK applies. This is an opening size, not a constraint: once the window has opened, the
+user's own resize owns it, and a later content change never yanks it back. On every settling pass
+(not just the first), AppKit also sets `contentMinSize` from the root's minimum size, clamped to the
+screen, a real resize floor, the same role GTK's aggregate content minimum plays. Because
+`contentMinSize` is a floor AppKit itself enforces, a window can grow past a declared
+`defaultWidth`/`defaultHeight` too, when the content's minimum is larger than the declared default:
+the declared size is what the window opens at, not a ceiling on what its content can force it to
+become. A `ToastOverlay` root is a logical wrapper that draws nothing (`Toasts.swift`), so sizing
+measures the view it holds rather than the overlay itself.
 
 ## Wrapping and ellipsize
 
@@ -114,6 +137,19 @@ which measures every page and sizes itself from the largest one (`homogeneous`, 
 not just whichever page happens to be visible. AppKit's `<tabview>` is an `NSTabViewController`
 holding one container view that each page is embedded into in turn, so the container's size comes
 from the box the `<tabview>` sits in, not from the page's own content.
+
+`NSTabViewController` draws its segmented tab strip as a sibling of the tab view, so neither the tab
+view's own measurement nor any page accounts for it: a `<tabview>` measured from its pages alone used
+to come out narrower than the strip needed, and AppKit truncated the labels. The strip's own width is
+now both a natural and a minimum width floor for the whole `<tabview>`.
+
+## Scroll-shaped data widgets cap their natural height
+
+`<table>`, `<listview>`, and `<treeview>` sit inside an AppKit scroll view whose own fitting size is
+just its scroller metrics, no content, so a populated one used to measure 0pt tall. They now measure
+their natural height as their row height times row count, capped at 10 rows, GTK's own
+`propagate-natural-height` default for the same widgets, so a long list doesn't try to open a window
+tall enough to show every row.
 
 ## Before/after: a wrapper that isn't needed
 

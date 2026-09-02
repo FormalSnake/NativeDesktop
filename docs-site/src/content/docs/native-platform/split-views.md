@@ -41,6 +41,13 @@ slot is additive: a `<splitview>` with only `sidebar` and `content` children beh
 proportion; `collapsed` remains live-updatable. See the [Widget Reference](/components/widget-reference/)
 for the full prop table.
 
+`breakpoint` (int, pixels, create-only, `0` means off) collapses the sidebar automatically once the
+split's own width drops below it, independent of `collapsed`, then restores whatever `collapsed` last
+said once the width climbs back past it: GTK via an `AdwBreakpoint` on the split's max-width
+condition, AppKit via `NDSplitViewController.applyBreakpoint`, which adds an 8pt hysteresis band
+around the threshold so a divider drag or a live resize can't toggle the sidebar on every pixel at
+the boundary.
+
 ## Platform rendering
 
 ### macOS: NSSplitViewController with three items

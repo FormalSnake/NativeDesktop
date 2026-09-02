@@ -14,7 +14,9 @@ change. It never reorders or re-nests the data itself.
 ## Table (`<table>`)
 
 A multi-column list. `GtkColumnView` on GTK, `NSTableView` on macOS. Columns and rows are separate
-arrays, so a column resize or reorder never has to touch every row.
+arrays, so a column resize or reorder never has to touch every row. On macOS the table draws in the
+system's inset style (rounded corners, no alternating row background), matching the macOS 26 Files
+and Mail list chrome.
 
 ![A sorted Table with three columns on macOS (AppKit)](../../../assets/screens/appkit/parity-table.png)
 
@@ -81,7 +83,8 @@ for what's highlighted; keep it in state and read `e.data.indexes` in `onSelecti
 ## TreeView (`<treeview>`)
 
 A hierarchical outline. `GtkTreeListView`/`GtkColumnView` on GTK, `NSOutlineView` on macOS. Nodes
-are a flat array keyed by `id`/`parentId`, not nested objects. Root nodes omit `parentId`.
+are a flat array keyed by `id`/`parentId`, not nested objects. Root nodes omit `parentId`. Draws in
+the same inset style as `<table>` on macOS.
 
 ```tsx
 import type { TreeNode } from "@nativedesktop/react";
