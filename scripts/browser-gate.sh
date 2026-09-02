@@ -18,7 +18,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+ROOT="$PWD"
 APP_DIR="${ND_BROWSER_APP_DIR:-$HOME/Developer/nativebrowser}"
+# What the app's drives must run: the host `zig build` just produced here, and
+# this checkout's theme scripts. Left alone, the app resolves its own npm
+# prebuilt, which is whatever version it last installed and is a generic-Linux
+# binary besides, so on NixOS its WebKitGTK reaches a GStreamer plugin through
+# nix-ld and dies on `gst_state_get_name` before the ready markers. Neither the
+# version nor the loader path is what this gate certifies.
+HOST_BIN="$ROOT/zig-out/bin/nd-hello"
 FAILED=()
 APP_FAILED=()
 SKIPPED=()
@@ -127,7 +135,7 @@ step "sourcetree drive" check_sourcetree
 app_step() {
   local name="$1"; shift
   printf '\n=== app %s ===\n' "$name"
-  if (cd "$APP_DIR" && "$@"); then
+  if (cd "$APP_DIR" && ND_HOST_BINARY="$HOST_BIN" ND_FRAMEWORK_DIR="$ROOT" "$@"); then
     echo "ND_GATE_STEP_OK app $name"
   elif [ "${ND_BROWSER_APP_STRICT:-0}" = "1" ]; then
     echo "ND_GATE_STEP_FAIL app $name"
@@ -140,6 +148,8 @@ app_step() {
 
 if [ ! -d "$APP_DIR" ]; then
   SKIPPED+=("app drives: no app repo at $APP_DIR (set ND_BROWSER_APP_DIR)")
+elif [ ! -x "$HOST_BIN" ]; then
+  SKIPPED+=("app drives: no host at $HOST_BIN, so there is nothing of this checkout to run them against")
 else
   for drive in smoke browser extensions; do
     wrapper="$APP_DIR/scripts/headless-$drive.sh"
