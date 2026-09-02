@@ -1033,6 +1033,11 @@ pub fn menuSemanticClick(node_id: u32) bool {
 
 const ND_POPOVER_PENDING_OPEN = "nd-popover-pending-open";
 const ND_POPOVER_ANCHOR_ID = "nd-popover-anchor-id";
+/// The popover's parent in the APP's tree, kept as a node id rather than a
+/// widget pointer: once an anchor has moved the popover elsewhere, the tree
+/// parent can be destroyed without the popover going with it, and a stale id
+/// simply fails to resolve where a stale pointer would be dereferenced.
+const ND_POPOVER_TREE_PARENT = "nd-popover-tree-parent";
 /// Set on every widget by connectEvents, the one op the core hands a node id
 /// to. Nothing else needs it; a Popover's `anchor` prop names another node by
 /// wire id, and the apply arm holds a widget pointer and a props object, never
@@ -1067,20 +1072,44 @@ fn ndPopoverAnchorId(child: *gtk.Widget) u32 {
     return @truncate(@intFromPtr(data));
 }
 
-/// Re-parents an anchored popover onto the widget its `anchor` prop names, if
-/// that widget is reachable yet. GtkPopover needs a parent to pop up at all,
-/// so the tree parent stays the fallback and the search runs from the window
-/// the popover already sits in: an anchor created later in the same batch is
-/// found on the next call rather than never.
+fn ndPopoverTreeParentId(child: *gtk.Widget) u32 {
+    const data = gobject.Object.getData(asObject(child), ND_POPOVER_TREE_PARENT) orelse return 0;
+    return @truncate(@intFromPtr(data));
+}
+
+/// The widget a node id names, searched across every open toplevel. A popover
+/// rendered through a portal into the pool has no parent, so there is no
+/// ancestor window to root the search at, and the fallback tree parent is
+/// itself only known as an id.
+fn ndPopoverFindNode(want: u32) ?*gtk.Widget {
+    if (want == 0) return null;
+    const tops = gtk.Window.getToplevels();
+    const n = gio.ListModel.getNItems(tops);
+    var i: c_uint = 0;
+    while (i < n) : (i += 1) {
+        const obj = gio.ListModel.getObject(tops, i) orelse continue;
+        defer gobject.Object.unref(obj);
+        if (ndFindNode(@ptrCast(@alignCast(obj)), want)) |hit| return hit;
+    }
+    return null;
+}
+
+/// Re-parents an anchored popover onto the widget its `anchor` prop names.
+/// GtkPopover needs a parent to pop up at all, so the tree parent recorded at
+/// attach stays the fallback; a popover with neither is unparented, which is
+/// the only state that says "nowhere to open" for one the app portaled into
+/// the pool. An anchor created later in the same batch is not found yet, so
+/// the current parent is kept and the next call resolves it.
 fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
     const want = ndPopoverAnchorId(child);
-    if (want == 0) return;
-    const parent = gtk.Widget.getParent(child) orelse return;
-    const root = gtk.Widget.getAncestor(parent, gtk.Window.getGObjectType()) orelse parent;
-    const anchor = ndFindNode(root, want) orelse return;
-    if (anchor == parent) return;
-    gtk.Widget.unparent(child);
-    gtk.Widget.setParent(child, anchor);
+    const current = gtk.Widget.getParent(child);
+    const desired = if (want == 0)
+        ndPopoverFindNode(ndPopoverTreeParentId(child))
+    else
+        ndPopoverFindNode(want) orelse return;
+    if (desired == current) return;
+    if (current != null) gtk.Widget.unparent(child);
+    if (desired) |d| gtk.Widget.setParent(child, d);
 }
 
 /// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
@@ -1091,7 +1120,7 @@ fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
     const up = gtk.Widget.getVisible(child) != 0;
     if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
     ndPopoverEnsureAnchor(child);
-    if (up) gtk.Popover.popup(@ptrCast(@alignCast(child)));
+    if (up and gtk.Widget.getParent(child) != null) gtk.Popover.popup(@ptrCast(@alignCast(child)));
 }
 
 /// Cross-cutting structural rule: a GtkPopover child attaches to its tree
@@ -1100,6 +1129,8 @@ fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
 /// honors a create-time open=true that had to wait for a parent to anchor on.
 fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
     if (!gobject.ext.isA(parent, gtk.Widget)) return; // menu-node parent: nowhere to anchor
+    const tree_parent_id = ndNodeIdOf(parent);
+    gobject.Object.setData(asObject(child), ND_POPOVER_TREE_PARENT, if (tree_parent_id == 0) null else @ptrFromInt(tree_parent_id));
     if (gtk.Widget.getParent(child)) |cur| {
         if (cur == parent) return;
         gtk.Widget.unparent(child);
