@@ -194,7 +194,9 @@ final class NDToastOverlayView: NSView {
         stack.addArrangedSubview(label)
         if let buttonLabel = request.buttonLabel, !buttonLabel.isEmpty {
             let button = NSButton(title: buttonLabel, target: self, action: #selector(toastButtonPressed(_:)))
-            button.bezelStyle = .rounded
+            // Borderless: a bezel on top of the glass card reads as a
+            // separate control instead of part of the card.
+            button.isBordered = false
             button.controlSize = .small
             stack.addArrangedSubview(button)
         }
