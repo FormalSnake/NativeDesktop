@@ -427,11 +427,21 @@ try {
     );
   }
   // The run before the action button is the rightmost glyph of a title or a
-  // caption.
+  // caption, and it has to reach the action rather than stop well short of it.
+  // What "reach" is measured FROM differs by backend, because the chrome
+  // between the last glyph and the tree's own edge does. An AppKit source-list
+  // cell spends about 26pt there, so the tree's right edge is a fair mark. A
+  // libadwaita row spends 60 before a glyph is possible at all: a 34px
+  // `.circular` chip, plus the 26px its header box is inset from the list edge
+  // (6px row margin, 20px row inset), both read off the live allocations. GTK
+  // takes the same 48pt reach from the action's leading ink instead, which
+  // still catches the regression this leg exists for: a suffix holding width
+  // out of the title's share moves the text about 20pt left.
   const text = row[row.length - 2]!;
-  if (text[1] < right - 48) {
+  const reach = longProbe.backend === "appkit" ? right : last[0];
+  if (text[1] < reach - 48) {
     throw new Error(
-      `rightmost text ends at ${text[1]}, ${(right - text[1]).toFixed(1)}pt short of the tree's ${right}` +
+      `rightmost text ends at ${text[1]}, ${(reach - text[1]).toFixed(1)}pt short of ${reach}` +
         ` (row runs: ${row.map(fmtRun).join(" ")})`,
     );
   }
