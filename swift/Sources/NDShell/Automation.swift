@@ -1182,6 +1182,7 @@ private let ndCheckableKinds: Set<String> = ["Checkbox", "Radio", "Switch", "Swi
         return host.leafState.tooltip
     }
     if let tip = view.toolTip, !tip.isEmpty { return tip }
+    if let leaf = view as? NDHostedLeaf, let name = leaf.ndA11yLabel, !name.isEmpty { return name }
     if view is NSImageView || (view as? NSButton)?.title.isEmpty == true {
         return view.accessibilityLabel()
     }
@@ -1191,6 +1192,7 @@ private let ndCheckableKinds: Set<String> = ["Checkbox", "Radio", "Switch", "Swi
 /// The choices a Select-shaped node offers, in index order, so `setValue`'s
 /// integer index can be aimed by name.
 @MainActor private func ndA11yOptions(_ view: NSView) -> [String]? {
+    if let leaf = view as? NDHostedLeaf, let options = leaf.ndA11yOptions { return options }
     if let popUp = view as? NSPopUpButton { return popUp.itemTitles }
     if let combo = view as? NSComboBox { return combo.objectValues.compactMap { $0 as? String } }
     if let segmented = view as? NSSegmentedControl {

@@ -6771,6 +6771,10 @@ final class NDSegmentedControlView: NDHostedLeaf {
     }
 
     override var ndA11yValueJSON: String { "\\(selectedIndex)" }
+
+    // The Picker's segment titles live in the SwiftUI body, so there is no
+    // NSSegmentedControl for the probe to read them off.
+    override var ndA11yOptions: [String]? { options }
 }
 
 func ndSegmentedControlConnect(_ view: NSView, nodeID: UInt32) {
@@ -7125,9 +7129,13 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        group.ndDescription = propStr(props, "description") ?? ""\n`;
     out += "        return group\n";
   } else if (w.name === "Row") {
-    out += "        return makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)\n";
+    out += "        let row = makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)\n";
+    out += "        ndHostedLeafSetA11yLabel(row, propStr(props, \"title\"))\n";
+    out += "        return row\n";
   } else if (w.name === "SwitchRow") {
-    out += "        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
+    out += "        let row = makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)\n";
+    out += "        ndHostedLeafSetA11yLabel(row, propStr(props, \"title\"))\n";
+    out += "        return row\n";
   } else if (w.name === "Clamp") {
     out += "        return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)\n";
   } else if (w.name === "Overlay") {
@@ -7615,10 +7623,12 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += `        // "${p.name}" handled by ndSettingsGroupApply above (merged).\n`;
     } else if (w.name === "Row" && p.name === "title") {
       out += "        ndRowApply(view, props)  // title/subtitle/iconData merged\n";
+      out += "        ndHostedLeafSetA11yLabel(view, propStr(props, \"title\"))\n";
     } else if (w.name === "Row") {
       out += `        // "${p.name}" handled by ndRowApply above (merged).\n`;
     } else if (w.name === "SwitchRow" && p.name === "title") {
       out += "        ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)\n";
+      out += "        ndHostedLeafSetA11yLabel(view, propStr(props, \"title\"))\n";
     } else if (w.name === "SwitchRow") {
       out += `        // "${p.name}" handled by ndSwitchRowApply above (merged).\n`;
     } else if (w.name === "Chart" && p.name === "type") {

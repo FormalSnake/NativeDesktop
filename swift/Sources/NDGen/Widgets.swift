@@ -1230,6 +1230,10 @@ final class NDSegmentedControlView: NDHostedLeaf {
     }
 
     override var ndA11yValueJSON: String { "\(selectedIndex)" }
+
+    // The Picker's segment titles live in the SwiftUI body, so there is no
+    // NSSegmentedControl for the probe to read them off.
+    override var ndA11yOptions: [String]? { options }
 }
 
 func ndSegmentedControlConnect(_ view: NSView, nodeID: UInt32) {
@@ -1753,9 +1757,13 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         group.ndDescription = propStr(props, "description") ?? ""
         return group
     } else if kind == "Row" {
-        return makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)
+        let row = makeRow(props)  // grouped form row: title/subtitle + prefix/suffix slots (NDShell/Rows.swift)
+        ndHostedLeafSetA11yLabel(row, propStr(props, "title"))
+        return row
     } else if kind == "SwitchRow" {
-        return makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)
+        let row = makeSwitchRow(props)  // form row with a trailing NSSwitch (NDShell/Rows.swift)
+        ndHostedLeafSetA11yLabel(row, propStr(props, "title"))
+        return row
     } else if kind == "Clamp" {
         return makeClamp(props)  // centered max-width content column (NDShell/Clamp.swift)
     } else if kind == "Overlay" {
@@ -2139,10 +2147,12 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         // "description" handled by ndSettingsGroupApply above (merged).
     } else if kind == "Row" {
         ndRowApply(view, props)  // title/subtitle/iconData merged
+        ndHostedLeafSetA11yLabel(view, propStr(props, "title"))
         // "subtitle" handled by ndRowApply above (merged).
         // "iconData" handled by ndRowApply above (merged).
     } else if kind == "SwitchRow" {
         ndSwitchRowApply(view, props)  // title/subtitle/checked merged (checked is echo-suppressed inside)
+        ndHostedLeafSetA11yLabel(view, propStr(props, "title"))
         // "subtitle" handled by ndSwitchRowApply above (merged).
         // "checked" handled by ndSwitchRowApply above (merged).
     } else if kind == "Switch" {

@@ -110,13 +110,13 @@ apart from "not that kind of thing":
 | `selected` | a node drawn as a row of a list, table or outline | whether that row is selected (the state lives on the row, not on the app's own widget) |
 | `expanded` | `Expander` | whether the disclosure is open |
 | `placeholder` | `TextInput`, `SearchInput` | the empty-field prompt |
-| `label` | icon-only controls, images, boxed-list rows | the spoken label where it says something `text` does not: a tooltip, an accessibility label, or (GTK) the row title |
-| `options` | `Select`, `ComboBox` | the choices in index order, so `setValue`'s integer index can be aimed by name |
+| `label` | icon-only controls, images, boxed-list rows | the spoken label where it says something `text` does not: a tooltip, an accessibility label, or the row title |
+| `options` | `Select`, `ComboBox`, `SegmentedControl` | the choices in index order, so `setValue`'s integer index can be aimed by name |
 
-Two platform differences: macOS reports `options` for `SegmentedControl` only when it is a real
-`NSSegmentedControl` (the SwiftUI-hosted one publishes no titles), and `label` on macOS never
-carries a `Row`/`SwitchRow` title, because the title lives inside the SwiftUI body and is not
-readable back.
+A widget whose content is drawn by a SwiftUI body publishes nothing AppKit can read back, so on
+macOS `Row`/`SwitchRow` titles and `SegmentedControl` option titles are recorded on the hosted leaf
+as the props are applied (`ndA11yLabel` / `ndA11yOptions`, NDShell/SwiftUILeaves.swift) rather than
+read out of the view. GTK answers both from the widgets themselves.
 
 `visible` intersects the node's frame with every clip between it and the window: each enclosing
 scroll viewport, then the window itself. A row scrolled out of its list is `visible: false` (and so
