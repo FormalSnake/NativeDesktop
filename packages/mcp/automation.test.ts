@@ -125,7 +125,8 @@ test("partial-frame reassembly: a JSON-RPC response split across multiple socket
 
   const client = await AutomationClient.connect(sockPath);
   const result = await client.call("waitFor", { condition: { textContains: "Clicks: 3" }, timeoutMs: 2000 });
-  expect(result).toEqual({ matched: true });
+  // The mock host answers a partial waitFor result — widen past the typed call.
+  expect(result as unknown).toEqual({ matched: true });
 });
 
 test("tool-call -> JSON-RPC mapping: nd_get_tree sends getTree with no params", async () => {
@@ -195,7 +196,8 @@ test("tool-call -> JSON-RPC mapping: nd_wait_for sends waitFor with {condition,t
 
   expect(received.method).toBe("waitFor");
   expect(received.params).toEqual({ condition: { textContains: "Clicks: 3" }, timeoutMs: 3000 });
-  expect(result).toEqual({ matched: true });
+  // The mock host answers a partial waitFor result — widen past the typed call.
+  expect(result as unknown).toEqual({ matched: true });
 });
 
 test("tool-call -> JSON-RPC mapping: nd_wait_for sends waitFor with {condition,timeoutMs} for refVisible", async () => {
@@ -215,7 +217,8 @@ test("tool-call -> JSON-RPC mapping: nd_wait_for sends waitFor with {condition,t
 
   expect(received.method).toBe("waitFor");
   expect(received.params).toEqual({ condition: { refVisible: 16777220 }, timeoutMs: 2000 });
-  expect(result).toEqual({ matched: true });
+  // The mock host answers a partial waitFor result — widen past the typed call.
+  expect(result as unknown).toEqual({ matched: true });
 });
 
 test("connect() throws when ND_AUTOMATION_SOCKET is unset and no path is given", async () => {

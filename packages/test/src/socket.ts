@@ -98,9 +98,15 @@ export class AutomationClient {
     else pending.resolve(msg.result);
   }
 
+  // A method whose params are all optional (getTree) may be called with none
+  // at all, and then sends no params member rather than an empty object.
   call<M extends RpcMethodName>(
     method: M,
-    ...params: RpcParams<M> extends undefined ? [] : [RpcParams<M>]
+    ...params: RpcParams<M> extends undefined
+      ? []
+      : Record<string, never> extends RpcParams<M>
+        ? [RpcParams<M>?]
+        : [RpcParams<M>]
   ): Promise<RpcResult<M>> {
     const id = this.nextId++;
     const json = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id, method, params: params[0] }));
