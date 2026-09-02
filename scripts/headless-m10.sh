@@ -23,7 +23,7 @@ for _ in $(seq 1 100); do grep -q ND_COMMIT_APPLIED "$JLOG" && break; sleep 0.1;
 grep -q ND_COMMIT_APPLIED "$JLOG" || { echo "FAIL: json bench no commit"; cat "$JLOG"; exit 1; }
 grep -q "ND_BENCH_MOUNT encoding=json" "$JLOG" || { echo "FAIL: json encoding not negotiated"; cat "$JLOG"; exit 1; }
 kill "$HP" 2>/dev/null || true; wait "$HP" 2>/dev/null || true
-JMS=$(grep -m1 ND_BENCH_MOUNT "$JLOG" | sed 's/.*ms=//')
+JMS=$(grep -m1 ND_BENCH_MOUNT "$JLOG" | sed -n 's/.*ms=\([0-9.][0-9.]*\).*/\1/p')
 
 BLOG=$(mktemp)
 ND_SCRIPT=scripts/bench-10k.ts ./zig-out/bin/nd-hello >"$BLOG" 2>&1 &
@@ -33,7 +33,7 @@ grep -q ND_COMMIT_APPLIED "$BLOG" || { echo "FAIL: binary bench no commit"; cat 
 grep -q "ND_BENCH_MOUNT encoding=binary" "$BLOG" || { echo "FAIL: binary encoding not negotiated"; cat "$BLOG"; exit 1; }
 kill "$HP" 2>/dev/null || true; wait "$HP" 2>/dev/null || true
 HP=""
-BMS=$(grep -m1 ND_BENCH_MOUNT "$BLOG" | sed 's/.*ms=//')
+BMS=$(grep -m1 ND_BENCH_MOUNT "$BLOG" | sed -n 's/.*ms=\([0-9.][0-9.]*\).*/\1/p')
 echo "M10_BENCH json_ms=$JMS binary_ms=$BMS"
 # Gate: completion within a generous informational bound (architect override:
 # binary is accepted ~2.3x json in practice — 10k bench: json ~2.7ms, binary
