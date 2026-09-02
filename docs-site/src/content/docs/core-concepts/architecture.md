@@ -48,6 +48,14 @@ mutates a widget directly. Each commit is diffed into a `CommitBatch`, a list of
 plain Bun, so the full `process` API is available, which is how `Platform.os` reads
 `process.platform`.
 
+The diff itself compares object props (`style`, `cssClasses`, `rows`/`columns`/`nodes`) by value
+rather than by identity, so a fresh-object-per-render JSX literal with unchanged contents emits no
+update op. A prop the new render dropped is sent as an explicit removal rather than silently vanishing
+from the commit (`null`, except `style`/`cssClasses`, whose empty value already means "reset" on
+their own set-replace path). The binary NDP encoder (`runtime/ndp-binary.ts`) measures faster than
+`JSON.stringify` on a large mount: a single growable buffer with one cached view, reused across
+writes instead of reallocated per primitive.
+
 ## The host: one core, two backends
 
 The native side is a shared Zig core (`src/`) with a pluggable backend seam, embedded by two
@@ -61,6 +69,11 @@ static library (`libnd.a`) and registers its vtable through `nd_register_backend
 
 Both send an identical handshake and speak identical NDP, since handshake and transport live in the
 shared core. Only widget creation and prop application differ.
+
+A `CommitBatch` is decoded and gated on a reader thread; the UI thread only runs `tree.apply` against
+the already-decoded ops, so a large commit does not block the run loop while it parses. Outbound
+frames (events, `changed`, terminal output) go through a writer thread instead of being written
+inline, so a full socket buffer never blocks the run loop either.
 
 ## Which backend is drawing
 

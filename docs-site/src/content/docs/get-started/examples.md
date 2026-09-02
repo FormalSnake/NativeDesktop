@@ -148,3 +148,21 @@ content. [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/example
 ![The inspector example on macOS (AppKit)](../../../assets/screens/appkit/inspector.png)
 
 ![The inspector example on GNOME (GTK)](../../../assets/screens/gtk/inspector.png)
+
+## Automation and layout fixtures
+
+Smaller apps built to gate one specific behavior, without their own screenshot pair:
+
+- **[`locators`](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/locators)**: a
+  deterministic target sheet for the [locator](/automation-testing/locators/) surface, `focus`,
+  `scrollIntoViewIfNeeded`, `selectOption`, node-scoped `screenshot`, and `setWindowSize`.
+- **[`propreset`](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/propreset)**:
+  asserts that a prop an app stops passing resets to its schema default on both backends, instead of
+  sticking at its last value.
+- **[`popoveranchor`](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/popoveranchor)**:
+  a [`<popover>`](/components/menus-and-popovers/#anchoring) anchored by `anchorRef` through a
+  `createPortal` pool, with no tree parent to fall back on.
+- **[`counter/autosize-probe.tsx`](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/counter/autosize-probe.tsx)**:
+  a second entry point in the Counter example that opens with no `defaultWidth`/`defaultHeight`, for
+  the [window-from-content sizing](/core-concepts/layout/#minimum-vs-natural-size-and-the-windows-own-minimum)
+  rule on AppKit.
