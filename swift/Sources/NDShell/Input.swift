@@ -23,7 +23,7 @@ nonisolated(unsafe) private var ndPointerHeldButton: String? = nil
 }
 
 @MainActor private func ndPostMouse(_ win: NSWindow, _ type: NSEvent.EventType, _ windowPoint: NSPoint,
-                                    clickCount: Int, timestamp: TimeInterval) {
+                                    clickCount: Int, timestamp: TimeInterval, delta: CGVector = .zero) {
     ndSyntheticEventNumber += 1
     let pressure: Float = (type == .leftMouseUp || type == .rightMouseUp || type == .mouseMoved) ? 0 : 1
     guard let e = NSEvent.mouseEvent(with: type, location: windowPoint, modifierFlags: [],
@@ -96,19 +96,88 @@ nonisolated(unsafe) private var ndPointerHeldButton: String? = nil
     return true
 }
 
+/// The accessibility element a hosted leaf publishes for its SwiftUI control,
+/// if it has one of `role`. Breadth-first and capped: a hosting view's AX
+/// subtree is SwiftUI's own, and its depth is not this file's to assume.
+@MainActor private func ndAXElement(_ root: NSView, role: NSAccessibility.Role) -> (any NSAccessibilityProtocol)? {
+    var queue: [any NSAccessibilityProtocol] = [root]
+    var visited = 0
+    while !queue.isEmpty, visited < 256 {
+        let node = queue.removeFirst()
+        visited += 1
+        if node !== root, node.accessibilityRole() == role { return node }
+        for child in node.accessibilityChildren() ?? [] {
+            if let element = child as? any NSAccessibilityProtocol { queue.append(element) }
+        }
+    }
+    return nil
+}
+
+private func ndAXDouble(_ value: Any?) -> Double? {
+    return (value as? NSNumber)?.doubleValue
+}
+
+/// A synthesized drag cannot move a SwiftUI-hosted control. Measured on
+/// macOS 26 against `<slider>` (an NSHostingView around SwiftUI's `Slider`,
+/// Widgets.swift's NDSliderView): the posted mouseDown lands and the knob
+/// jumps to it, then every posted leftMouseDragged is ignored, with real
+/// deltaX/deltaY, with a shared event number, batched or one per run-loop
+/// turn alike. SwiftUI reads the live pointer state rather than the event
+/// stream, and pressing the physical button means `CGEvent.post`, which is
+/// exactly the accessibility TCC prompt this file exists to avoid.
+///
+/// So a hosted slider under the press point falls back to the same semantic
+/// write `setValue` performs (`driveValue`, which emits `valueChanged`
+/// exactly as a user drag does), with the drag's END point deciding where it
+/// lands. The range comes from the accessibility element SwiftUI publishes,
+/// which is the only place a hosted leaf's min/max is readable from here.
+/// Writing THROUGH that element (`setAccessibilityValue`) was tried first
+/// and wedges the main thread: the write returns but the next marshaled call
+/// never runs.
+///
+/// Returns false for anything else, which keeps the posted-event path
+/// (correct for every AppKit control that runs a real tracking loop) exactly
+/// as it was.
+@MainActor private func ndSemanticSliderDrag(_ win: NSWindow, _ content: NSView,
+                                             from: NSPoint, toX: Double, toY: Double) -> Bool {
+    guard let hit = win.contentView?.hitTest(from) else { return false }
+    var probe: NSView? = hit
+    while let view = probe, !(view is NDSliderView) { probe = view.superview }
+    guard let slider = probe as? NDSliderView,
+          let element = ndAXElement(slider, role: .slider),
+          let low = ndAXDouble(element.accessibilityMinValue()),
+          let high = ndAXDouble(element.accessibilityMaxValue()),
+          high > low else { return false }
+    let frame = slider.convert(slider.bounds, to: content)
+    guard frame.width > 0, frame.height > 0 else { return false }
+    // logical-window-topleft, so a vertical track's larger y is its low end.
+    let fraction = slider.vertical
+        ? 1 - (toY - frame.minY) / frame.height
+        : (toX - frame.minX) / frame.width
+    slider.driveValue(low + max(0, min(1, fraction)) * (high - low))
+    return true
+}
+
 @MainActor func ndPostDrag(_ handle: NSView, fromX: Double, fromY: Double, toX: Double, toY: Double,
                            steps: Int, durationMs: Int, button: String) -> Bool {
     guard let t = ndInputTarget(handle) else { return false }
+    if button != "right",
+       ndSemanticSliderDrag(t.win, t.content, from: ndWindowPoint(t.content, fromX, fromY), toX: toX, toY: toY) {
+        return true
+    }
     let types = ndMouseTypes(button)
     let n = max(steps, 1)
     let base = ProcessInfo.processInfo.systemUptime
     let dt = (Double(max(durationMs, 0)) / 1000.0) / Double(n + 1)
     ndPostMouse(t.win, types.down, ndWindowPoint(t.content, fromX, fromY), clickCount: 1, timestamp: base)
+    var prev = CGPoint(x: fromX, y: fromY)
     for i in 1...n {
         let f = Double(i) / Double(n)
         let x = fromX + (toX - fromX) * f
         let y = fromY + (toY - fromY) * f
-        ndPostMouse(t.win, types.drag, ndWindowPoint(t.content, x, y), clickCount: 1, timestamp: base + dt * Double(i))
+        ndPostMouse(t.win, types.drag, ndWindowPoint(t.content, x, y), clickCount: 1,
+                    timestamp: base + dt * Double(i), delta: CGVector(dx: x - prev.x, dy: y - prev.y))
+        prev = CGPoint(x: x, y: y)
     }
     ndPostMouse(t.win, types.up, ndWindowPoint(t.content, toX, toY), clickCount: 1, timestamp: base + dt * Double(n + 1))
     return true
@@ -159,14 +228,21 @@ private let ndKeyCodes: [String: UInt16] = [
     "m": 46, ".": 47, "`": 50,
 ]
 
-/// Named non-printable keys; arrow characters are AppKit's function-key
-/// unicode points (NSUpArrowFunctionKey et al).
+/// Named non-printable keys; arrow, navigation and function characters are
+/// AppKit's function-key unicode points (NSUpArrowFunctionKey et al).
 private let ndNamedKeys: [String: (chars: String, code: UInt16)] = [
     "return": ("\r", 36), "enter": ("\r", 36), "tab": ("\t", 48), "space": (" ", 49),
     "escape": ("\u{1b}", 53), "esc": ("\u{1b}", 53),
     "delete": ("\u{7f}", 51), "backspace": ("\u{7f}", 51),
+    "forwarddelete": ("\u{F728}", 117), "insert": ("\u{F727}", 114),
     "left": ("\u{F702}", 123), "right": ("\u{F703}", 124),
     "down": ("\u{F701}", 125), "up": ("\u{F700}", 126),
+    "home": ("\u{F729}", 115), "end": ("\u{F72B}", 119),
+    "pageup": ("\u{F72C}", 116), "pagedown": ("\u{F72D}", 121),
+    "f1": ("\u{F704}", 122), "f2": ("\u{F705}", 120), "f3": ("\u{F706}", 99),
+    "f4": ("\u{F707}", 118), "f5": ("\u{F708}", 96), "f6": ("\u{F709}", 97),
+    "f7": ("\u{F70A}", 98), "f8": ("\u{F70B}", 100), "f9": ("\u{F70C}", 101),
+    "f10": ("\u{F70D}", 109), "f11": ("\u{F70E}", 103), "f12": ("\u{F70F}", 111),
 ]
 
 @MainActor private func ndPostKeyChord(_ win: NSWindow, chars: String, ignoring: String,
