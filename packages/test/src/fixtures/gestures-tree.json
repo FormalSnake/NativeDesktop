@@ -44,7 +44,13 @@
             "role": "slider",
             "enabled": true,
             "focused": false,
-            "value": 20
+            "value": 20,
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 2,
@@ -64,7 +70,13 @@
             "role": "label",
             "enabled": true,
             "focused": false,
-            "value": "Volume: 20"
+            "value": "Volume: 20",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 3,
@@ -84,7 +96,13 @@
             "role": "checkbox",
             "enabled": true,
             "focused": false,
-            "value": false
+            "value": false,
+            "checked": false,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 4,
@@ -104,7 +122,13 @@
             "role": "label",
             "enabled": true,
             "focused": false,
-            "value": "Agreed: no"
+            "value": "Agreed: no",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 5,
@@ -124,7 +148,13 @@
             "role": "textbox",
             "enabled": true,
             "focused": false,
-            "value": ""
+            "value": "",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": "Type here",
+            "label": null,
+            "options": null
           },
           {
             "ref": 6,
@@ -144,7 +174,13 @@
             "role": "label",
             "enabled": true,
             "focused": false,
-            "value": "Echo: "
+            "value": "Echo: ",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 7,
@@ -164,7 +200,13 @@
             "role": "table",
             "enabled": true,
             "focused": false,
-            "value": 3
+            "value": 3,
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 8,
@@ -184,7 +226,13 @@
             "role": "label",
             "enabled": true,
             "focused": false,
-            "value": "Activated: -1"
+            "value": "Activated: -1",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           },
           {
             "ref": 9,
@@ -204,7 +252,13 @@
             "role": "label",
             "enabled": true,
             "focused": false,
-            "value": "Hover / right-click target"
+            "value": "Hover / right-click target",
+            "checked": null,
+            "selected": null,
+            "expanded": null,
+            "placeholder": null,
+            "label": null,
+            "options": null
           }
         ],
         "itemCount": null,
@@ -212,7 +266,13 @@
         "role": "group",
         "enabled": true,
         "focused": false,
-        "value": null
+        "value": null,
+        "checked": null,
+        "selected": null,
+        "expanded": null,
+        "placeholder": null,
+        "label": null,
+        "options": null
       }
     ],
     "itemCount": null,
@@ -220,6 +280,12 @@
     "role": "window",
     "enabled": true,
     "focused": false,
-    "value": null
+    "value": null,
+    "checked": null,
+    "selected": null,
+    "expanded": null,
+    "placeholder": null,
+    "label": null,
+    "options": null
   }
 }

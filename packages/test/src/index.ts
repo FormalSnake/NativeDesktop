@@ -3,7 +3,7 @@
 // packages/mcp and the drive scripts import it from here rather than forking.
 export { AutomationClient, AutomationRpcError } from "./socket.ts";
 export { launchApp, AppHandle, killAll } from "./launch.ts";
-export type { LaunchOptions, NdWindowInfo } from "./launch.ts";
+export type { LaunchOptions } from "./launch.ts";
 
 export { TimedClient } from "./client.ts";
 
@@ -53,9 +53,11 @@ export type { SnapshotOptions } from "./snapshot.ts";
 // Tree types a caller needs to type find()/tree() results, re-exported so
 // nothing outside this package has to import @nativedesktop/react/rpc itself.
 export type {
+  Geometry,
   GetTreeResult,
   JsonNode,
   ScreenshotResult,
+  SetWindowFrameParams,
   WaitCondition,
   WaitForResult,
   WindowInfo,

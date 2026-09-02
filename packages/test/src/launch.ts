@@ -20,6 +20,7 @@ import {
   type ScreenshotResult,
   type ScrollResult,
   type SetValueResult,
+  type SetWindowFrameParams,
   type TypeResult,
   type WaitCondition,
   type WaitForResult,
@@ -178,11 +179,6 @@ interface LiveHost {
   cancelStderr: () => void;
   exitedPromise: Promise<number>;
 }
-
-/** WindowInfo plus the frame setWindowFrame answers with. */
-export type NdWindowInfo = WindowInfo & {
-  geometry?: { x: number; y: number; width: number; height: number };
-};
 
 export class AppHandle implements LocatorClient {
   /** Deadline every locator action, reader and expect matcher inherits. */
@@ -372,9 +368,9 @@ export class AppHandle implements LocatorClient {
 
   // --- locators --------------------------------------------------------------
 
-  /** Untyped RPC entry point, for the methods the generated map does not
-   * cover (focus, scrollIntoView, snapshotNode, setWindowFrame). Typed calls
-   * should keep going through `rpc.call`. */
+  /** Untyped RPC entry point the Locator layer dispatches through, so one
+   * call site serves every action method. Typed calls should keep going
+   * through `rpc.call`. */
   callRpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
     return this.rpc.call(method as "click", params as never);
   }
@@ -430,9 +426,18 @@ export class AppHandle implements LocatorClient {
     return new LocatorFactory(this, info.ref);
   }
 
-  /** Resizes a window in logical units, keeping its origin. */
-  async setWindowSize(width: number, height: number, opts: { window?: number } = {}): Promise<NdWindowInfo> {
-    return (await callHost(this, "setWindowFrame", { window: opts.window, width, height })) as NdWindowInfo;
+  /** Resizes a window in logical units, keeping its origin. The answer is
+   * that window's updated WindowInfo, whose `geometry` is the same w/h
+   * Geometry a node carries. */
+  async setWindowSize(width: number, height: number, opts: { window?: number } = {}): Promise<WindowInfo> {
+    return (await callHost(this, "setWindowFrame", { window: opts.window, width, height })) as WindowInfo;
+  }
+
+  /** Moves and/or resizes a window; omitted components keep their current
+   * value. GTK ignores x/y (client-side placement is not a Wayland
+   * capability). */
+  async setWindowFrame(frame: SetWindowFrameParams): Promise<WindowInfo> {
+    return (await callHost(this, "setWindowFrame", { ...frame })) as WindowInfo;
   }
 
   // --- tree queries ----------------------------------------------------------

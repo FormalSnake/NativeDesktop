@@ -21,6 +21,12 @@ interface NodeSpec {
   visible?: boolean;
   enabled?: boolean;
   focused?: boolean;
+  checked?: boolean;
+  selected?: boolean;
+  expanded?: boolean;
+  placeholder?: string;
+  label?: string;
+  options?: string[];
   w?: number;
   h?: number;
   children?: NodeSpec[];
@@ -41,6 +47,12 @@ function node(spec: NodeSpec): JsonNode {
     enabled: spec.enabled ?? true,
     focused: spec.focused ?? false,
     value: spec.value ?? null,
+    checked: spec.checked ?? null,
+    selected: spec.selected ?? null,
+    expanded: spec.expanded ?? null,
+    placeholder: spec.placeholder ?? null,
+    label: spec.label ?? null,
+    options: spec.options ?? null,
   };
 }
 

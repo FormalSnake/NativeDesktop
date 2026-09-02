@@ -384,7 +384,10 @@ export class Locator {
     );
   }
 
-  async screenshot(path: string, opts: ActionOptions = {}): Promise<ScreenshotResult> {
+  /** Renders this node's own widget to a PNG. `path` is optional: without
+   * one the host writes beside the automation socket and answers where. The
+   * result's width/height are the node's pixels, not the window's. */
+  async screenshot(path?: string, opts: ActionOptions = {}): Promise<ScreenshotResult> {
     const node = await this.resolveOne({ action: "screenshot", timeout: opts.timeout });
     return (await callHost(this.client, "snapshotNode", { ref: node.ref, path })) as ScreenshotResult;
   }

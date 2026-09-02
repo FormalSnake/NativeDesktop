@@ -1,23 +1,17 @@
 // SelectorPart -> predicate over a getTree node, plus the node-field readers
 // every layer above (locator, expect, snapshot) shares.
 //
-// role/text/testID/enabled/visible/value are on the wire today. checked,
-// selected, expanded, label, placeholder and options are optional additions:
-// where the host does not send one, the reader falls back to what the older
-// wire already carried (a boolean `value` is the checked state, `text` is the
-// accessible name), so a selector behaves the same against either host.
+// checked, selected, expanded, label, placeholder and options are null on
+// every node the field does not apply to, and null on a host that predates
+// them, so each reader falls back to what the older wire already carried (a
+// boolean `value` is the checked state, `text` is the accessible name) and a
+// selector behaves the same against either host.
 import type { JsonNode } from "@nativedesktop/react/rpc";
 import type { SelectorPart, TextSpec } from "./selectors.ts";
 
-/** getTree's node plus the optional accessibility fields. */
+/** getTree's node, narrowed so `children` recurses as NdNode. */
 export type NdNode = Omit<JsonNode, "children"> & {
   children: NdNode[];
-  checked?: boolean | null;
-  selected?: boolean | null;
-  expanded?: boolean | null;
-  placeholder?: string | null;
-  label?: string | null;
-  options?: string[] | null;
 };
 
 export function asNdNode(node: JsonNode): NdNode {
