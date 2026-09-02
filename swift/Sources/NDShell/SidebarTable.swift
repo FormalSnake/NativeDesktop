@@ -131,10 +131,7 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        // `style = .sourceList` alone: `selectionHighlightStyle = .sourceList`
-        // is deprecated in favour of exactly this property.
-        tableView.style = .sourceList
-        tableView.backgroundColor = .clear      // vibrancy sidebar shows through
+        ndApplySourceListSurface(scrollView, list: tableView)
         tableView.autoresizingMask = [.width]
         tableView.dataSource = self
         tableView.delegate = self
@@ -146,7 +143,6 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
         tableView.target = self
         tableView.action = #selector(rowClicked(_:))
         scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
         scrollView.documentView = tableView
         tableView.sizeLastColumnToFit()
     }
@@ -261,6 +257,7 @@ func ndInstallSidebarTable(_ box: NDBoxView) {
         sv.topAnchor.constraint(equalTo: box.topAnchor),
         sv.bottomAnchor.constraint(equalTo: box.bottomAnchor),
     ])
+    ndRefreshSourceListMaterial(sv, declaredSidebar: true)
     table.reload()
 }
 
@@ -373,6 +370,87 @@ func ndApplySidebarRowStyle(_ btn: NDButton, selected: Bool) {
     btn.keyEquivalent = ""
     btn.contentTintColor = selected ? .controlAccentColor : .labelColor
 }
+
+// ============================================================================
+// Source-list surface
+// ============================================================================
+
+/// The one place the three source-list surfaces (`<sourcelist>`,
+/// `<sourcetree>` and a `navigation-sidebar` box's table) agree on how they
+/// are drawn. A source list is a surface, never a control in a box: it draws
+/// no border and no fill of its own, runs full-bleed to whatever holds it, and
+/// lets the material behind it through.
+///
+/// Where that material comes from is decided from the tree, in this order:
+///  1. Inside an `NSSplitViewItem` with `.sidebar` behaviour, AppKit supplies
+///     it, together with the macOS 26 floating inset (measured: a bare sidebar
+///     item insets its view controller's root by 8pt on leading, top and
+///     bottom). Nothing is added here, and nothing fights that inset.
+///  2. Outside one, the tree still says "sidebar" two ways: the box carries
+///     `navigation-sidebar`, or the surface is the leading child of a
+///     horizontal box (a sidebar pane the app built by hand). Nothing else is
+///     going to supply the material, so the surface carries it.
+///  3. Anywhere else (a full-window tree, a list inside a content pane) it
+///     stays plain and shows whatever surface it sits on.
+///
+/// A `<paned>` pane is deliberately case 3: an app that splits its own window
+/// with `<paned>` has not said which side is a sidebar, and NSSplitView adds
+/// no behaviour of its own to read that from.
+func ndApplySourceListSurface(_ scrollView: NSScrollView, list: NSTableView) {
+    // A bezel around a source list reads as an inset card rather than a
+    // sidebar, and NSScrollView's border is a bezel in every nib default.
+    scrollView.borderType = .noBorder
+    scrollView.drawsBackground = false
+    list.style = .sourceList
+    list.backgroundColor = .clear
+}
+
+/// Case 2 of `ndApplySourceListSurface`'s rule, which can only be answered
+/// once the surface has a superview. `declaredSidebar` is the
+/// `navigation-sidebar` half of the rule, which the caller already knows.
+func ndRefreshSourceListMaterial(_ scrollView: NSScrollView, declaredSidebar: Bool = false) {
+    let want = ndSourceListWantsOwnMaterial(scrollView, declaredSidebar: declaredSidebar)
+    let existing = ndSourceListBackdrops[ObjectIdentifier(scrollView)]
+    guard want != (existing != nil) else { return }
+    guard want else {
+        existing?.removeFromSuperview()
+        ndSourceListBackdrops[ObjectIdentifier(scrollView)] = nil
+        return
+    }
+    let backdrop = NSVisualEffectView()
+    backdrop.material = .sidebar
+    backdrop.blendingMode = .behindWindow
+    backdrop.state = .followsWindowActiveState
+    backdrop.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.addSubview(backdrop, positioned: .below, relativeTo: nil)
+    NSLayoutConstraint.activate([
+        backdrop.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+        backdrop.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+        backdrop.topAnchor.constraint(equalTo: scrollView.topAnchor),
+        backdrop.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+    ])
+    ndSourceListBackdrops[ObjectIdentifier(scrollView)] = backdrop
+}
+
+private func ndSourceListWantsOwnMaterial(_ view: NSView, declaredSidebar: Bool) -> Bool {
+    // A pane host means a split item is already responsible for the pane's
+    // material, sidebar or not.
+    var cursor: NSView? = view
+    while let current = cursor {
+        if current is NDPaneHostView { return false }
+        cursor = current.superview
+    }
+    if declaredSidebar { return true }
+    guard let box = view.superview as? NDBoxView, box.ndOrientation == .horizontal else { return false }
+    return box.ndChildren.first === view
+}
+
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+func ndSourceListSurfacePurge(_ view: NSView) {
+    ndSourceListBackdrops[ObjectIdentifier(view)] = nil
+}
+
+nonisolated(unsafe) private var ndSourceListBackdrops: [ObjectIdentifier: NSVisualEffectView] = [:]
 
 /// Reverses `ndApplySidebarRowStyle` when the takeover arrives after all, or
 /// when the sidebar class drops: each row goes back to whatever its own

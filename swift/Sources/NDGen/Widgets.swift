@@ -2542,12 +2542,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         doc.subviews.forEach { $0.removeFromSuperview() }
         child.translatesAutoresizingMaskIntoConstraints = false
         doc.addSubview(child)
-        NSLayoutConstraint.activate([
-            child.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
-            child.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
-            child.topAnchor.constraint(equalTo: doc.topAnchor),
-            child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
-        ])
+        ndPinScrollDocumentChild(child, in: doc)
     } else if parentKind == "TabView" {
         guard let tabs = ndTabViewController(for: parent) else { return }
         tabs.addTabViewItem(ndMakeTabViewItem(child, label: attachedTabLabel, icon: attachedTabIcon))

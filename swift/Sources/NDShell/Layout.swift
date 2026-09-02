@@ -256,6 +256,10 @@ func ndInvalidateBoxChain(from view: NSView) {
             if current !== child { box.ndInvalidateChildMeasure(child) }
             box.ndMarkLayoutDirty()
         }
+        // A pane's list shape is derived from its children and their expand
+        // flags, so it is re-derived on the same events, synchronously
+        // (SplitController.swift's `ndRefreshPaneShape`).
+        ndRefreshPaneShape(current)
         ndScheduleShapeRefresh(current)
         child = current
         cursor = current.superview
@@ -344,6 +348,12 @@ func ndMinimumChildSize(_ view: NSView) -> NSSize {
     var floor = NSSize.zero
     if intrinsic.width != NSView.noIntrinsicMetric { floor.width = natural.width }
     if intrinsic.height != NSView.noIntrinsicMetric { floor.height = natural.height }
+    // A tab view's pages can be squeezed; its strip cannot. Below the strip's
+    // own width AppKit truncates every label, so that width is a real minimum
+    // even though the host view reports no intrinsic size at all.
+    if ndTabViewController(for: view) != nil {
+        floor.width = max(floor.width, ndTabStripWidth(view))
+    }
     let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
     if kind == "Label" {
         floor.width = min(floor.width, ndLabelMinimumWidth)
@@ -378,8 +388,24 @@ private func ndTabViewNaturalSize(_ tabs: NSTabView, host: NSView) -> NSSize {
                         height: max(0, host.bounds.height - rect.height))
     }
     let floor = tabs.minimumSize
-    return NSSize(width: max(content.width + chrome.width, floor.width),
+    return NSSize(width: max(max(content.width + chrome.width, floor.width), ndTabStripWidth(host)),
                   height: max(content.height + chrome.height, floor.height))
+}
+
+/// The width an `NSTabViewController`'s segmented tab strip needs to draw its
+/// labels. The controller draws the strip as a SIBLING of the tab view inside
+/// its own view, so neither `NSTabView.minimumSize` (measured: zero) nor any
+/// page knows about it, and a tab view measured from its pages alone came up
+/// narrower than its own strip, which AppKit then truncates to one ellipsis
+/// per label.
+func ndTabStripWidth(_ host: NSView) -> CGFloat {
+    var width: CGFloat = 0
+    for sub in host.subviews {
+        guard let segmented = sub as? NSSegmentedControl else { continue }
+        let intrinsic = segmented.intrinsicContentSize.width
+        width = max(width, intrinsic == NSView.noIntrinsicMetric ? segmented.fittingSize.width : intrinsic)
+    }
+    return width
 }
 
 /// GTK's `propagate-natural-height` for the scroll-shaped data widgets. An
@@ -887,6 +913,56 @@ func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
     if let sep = child as? NSBox, ndBoxedLists.contains(ObjectIdentifier(box)) {
         ndStyleBoxedListDivider(sep, in: box)
     }
+    // A source list only learns whether it is standing in for a sidebar pane
+    // once it has a parent (SidebarTable.swift's surface rule).
+    if let scroll = child as? NSScrollView, ndIsSourceListKind(child) {
+        ndRefreshSourceListMaterial(scroll)
+    }
+    // Strip buttons attach after the class lands (src/tree.zig applies props
+    // before append), so the strip metric is given here too.
+    if let btn = child as? NSButton, ndIsToolbarStrip(box) {
+        ndNormalizeToolbarStripButton(btn)
+    }
+}
+
+/// Pins a `<scrollview>`'s single child inside the document view (the generated
+/// ScrollView append arm).
+///
+/// The contract the scroll view is built on stays: the child's width follows
+/// the clip view (vertical scrolling only, the document view is width-pinned at
+/// create) and its own natural height drives the document's scrollable height,
+/// so top and bottom are always pinned. What the four-edge pin lost was
+/// `halign`: GTK places a child narrower than the viewport at the requested
+/// edge, and here every child was stretched instead. `fill` remains the
+/// default, which is what a `<clamp>` or a page-wide column wants.
+func ndPinScrollDocumentChild(_ child: NSView, in doc: NSView) {
+    let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
+    var pins: [NSLayoutConstraint] = [
+        child.topAnchor.constraint(equalTo: doc.topAnchor),
+        child.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+    ]
+    switch flags.hexpand ? "fill" : (flags.halign ?? "fill") {
+    case "start":
+        pins.append(child.leadingAnchor.constraint(equalTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(lessThanOrEqualTo: doc.trailingAnchor))
+    case "center":
+        pins.append(child.centerXAnchor.constraint(equalTo: doc.centerXAnchor))
+        pins.append(child.leadingAnchor.constraint(greaterThanOrEqualTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(lessThanOrEqualTo: doc.trailingAnchor))
+    case "end":
+        pins.append(child.trailingAnchor.constraint(equalTo: doc.trailingAnchor))
+        pins.append(child.leadingAnchor.constraint(greaterThanOrEqualTo: doc.leadingAnchor))
+    default:
+        pins.append(child.leadingAnchor.constraint(equalTo: doc.leadingAnchor))
+        pins.append(child.trailingAnchor.constraint(equalTo: doc.trailingAnchor))
+    }
+    NSLayoutConstraint.activate(pins)
+}
+
+/// The widget kinds whose native form is a source-list surface.
+func ndIsSourceListKind(_ view: NSView) -> Bool {
+    let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
+    return kind == "SourceList" || kind == "SourceTree"
 }
 
 /// Mirror of `ndBoxChildAttached`. AppKit has already taken `child` out of the
