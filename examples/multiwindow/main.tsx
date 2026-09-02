@@ -47,14 +47,14 @@ function App(): React.ReactNode {
       )}
 
       <window title="Window A" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotA} orientation="vertical" spacing={8} style={{ hexpand: true, vexpand: true }}>
+        <box ref={slotA} orientation="vertical" spacing={8}>
           <button label="Bring tab here" onClick={() => show(slotA.current, "A")} />
           {host !== "A" && <label text="(tab is in Window B)" />}
         </box>
       </window>
 
       <window title="Window B" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotB} orientation="vertical" spacing={8} style={{ hexpand: true, vexpand: true }}>
+        <box ref={slotB} orientation="vertical" spacing={8}>
           <button label="Bring tab here" onClick={() => show(slotB.current, "B")} />
           {host !== "B" && <label text="(tab is in Window A)" />}
         </box>
