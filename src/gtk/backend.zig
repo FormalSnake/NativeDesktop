@@ -1109,18 +1109,30 @@ fn renderWidgetPng(widget: *gtk.Widget, renderer: *gsk.Renderer, png_path: [*:0]
     );
     const node = gtk.Snapshot.freeToNode(snapshot) orelse return false;
     defer gsk.RenderNode.unref(node);
-    // Viewport of the widget's ALLOCATION, not a null viewport. With null the
-    // texture takes the render node's own bounds, which for a widget that
-    // paints no background are the ink extents of what it drew: a label came
-    // out 71x15 inside the 608x28 row getTree reports. A window gets away with
-    // null because its background node already spans the whole surface.
-    const viewport = graphene.Rect{
-        .f_origin = .{ .f_x = 0, .f_y = 0 },
-        .f_size = .{ .f_width = @floatFromInt(width), .f_height = @floatFromInt(height) },
-    };
+    // An explicit viewport, taken from the same compute_bounds rect
+    // `vtNodeBounds` reports, so the PNG's pixel size IS the rect getTree
+    // gives for the node. With a null viewport the texture takes the render
+    // node's own bounds instead: the ink of whatever the widget drew, which
+    // for a label was 71x15 inside its 608x28 row. That rect is the CSS
+    // border box, wider than get_width by the padding, and its origin sits
+    // outside the content origin, so it has to be honoured and not just
+    // measured. A window gets away with null because its own background node
+    // already spans the whole surface.
+    const viewport = nodeViewport(widget, width, height);
     const texture = gsk.Renderer.renderTexture(renderer, node, &viewport);
     defer texture.unref();
     return gdk.Texture.saveToPng(texture, png_path) != 0;
+}
+
+/// The rect `snapshotNode` renders, matched to what `vtNodeBounds` reports.
+fn nodeViewport(widget: *gtk.Widget, width: c_int, height: c_int) graphene.Rect {
+    var rect: graphene.Rect = undefined;
+    if (gtk.Widget.computeBounds(widget, widget, &rect) != 0 and
+        rect.f_size.f_width > 0 and rect.f_size.f_height > 0) return rect;
+    return .{
+        .f_origin = .{ .f_x = 0, .f_y = 0 },
+        .f_size = .{ .f_width = @floatFromInt(width), .f_height = @floatFromInt(height) },
+    };
 }
 
 /// Mallocs a NUL-terminated copy of `json` for a `*_json_out` param (freed
