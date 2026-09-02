@@ -129,6 +129,15 @@ function propsEqual(a: unknown, b: unknown, depth = 0): boolean {
   return true;
 }
 
+/// The two universal props whose removal marker is not null. Both are applied
+/// by a set-replace pass over the whole value (Backend.swift's `ndApplyStyle`,
+/// src/gtk/style.zig's per-node CSS provider and class allowlist), so the empty
+/// value IS the reset; a null would only fall through their type guards.
+const REMOVAL_VALUE: Record<string, unknown> = {
+  style: Object.freeze({}),
+  cssClasses: Object.freeze([]),
+};
+
 export function setPriorityFor(kind: "discrete" | "continuous" | "default"): void {
   currentUpdatePriority = kind === "discrete" ? DiscreteEventPriority : kind === "continuous" ? ContinuousEventPriority : DefaultEventPriority;
 }
@@ -233,13 +242,12 @@ export const hostConfig = {
     // keeps the last value it was given. NDP has no removal tag (an `update`
     // op carries a props object, nothing else), so null is the removal marker:
     // it is the one value that cannot be a legitimate typed prop, and both
-    // encodings carry it (JSON null, binary value tag 0x00). Backends that
-    // type-check the value before applying it treat null as "leave alone",
-    // so full reset-to-default semantics still needs a per-widget default on
-    // the host side; this at least stops the removal from being invisible.
+    // encodings carry it (JSON null, binary value tag 0x00). The generated
+    // appliers turn it back into the prop's schema default
+    // (ndApplyDroppedDefaults, tools/codegen.ts).
     for (const k of Object.keys(oldProps)) {
       if (k in newProps || !wire(k)) continue;
-      changed[k] = null;
+      changed[k] = REMOVAL_VALUE[k] ?? null;
     }
     if (Object.keys(changed).length) activeBatch.push({ op: "update", id: inst.id, props: changed });
     inst.props = newProps;

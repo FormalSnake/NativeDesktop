@@ -2837,8 +2837,10 @@ function genZig(s: Schema): string {
   out += "    std.debug.print(\"ND_WARN unknown widget kind={s}\\n\", .{kind});\n";
   out += "    return error.UnknownWidget;\n";
   out += "}\n\n";
+  out += genZigPropResets(s);
   out += "/// The GTK update dispatcher for createAndUpdate props.\n";
   out += "pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {\n";
+  out += "    ndApplyDroppedDefaults(kind, props);\n";
   out += "    ndApplyTooltip(widget, props, dupeZ);\n";
   out += "    ndApplyEnabled(widget, props);\n";
   out += "    nddnd_gtk.applyProps(widget, props, dupeZ);\n";
@@ -3010,6 +3012,126 @@ function updatableProps(w: Widget): Prop[] {
   return w.props.filter((p) => UNIVERSAL_PROP_OWNERS[p.name] === undefined
     || UNIVERSAL_PROP_OWNERS[p.name] === w.name)
     .filter((p) => p.appliesTo === "createAndUpdate");
+}
+
+// ---- dropped-prop resets ------------------------------------------------
+//
+// A prop that disappears from an app's JSX reaches the host as JSON null
+// (host-config.ts's removal marker; NDP's `update` op carries a props object
+// and nothing else, so there is no removal tag). Every applier arm on both
+// backends type-checks the value before touching the widget, so a null on its
+// own is a no-op and the widget keeps whatever it was last given. The reset
+// table below turns the null back into the value the widget would have had if
+// the prop had never been set: the schema `default` where a prop declares one,
+// otherwise its type's zero value (empty string, 0, false, empty list).
+//
+// The substitution runs once at the top of the apply dispatcher, so the
+// existing per-widget arms need no second null arm each.
+
+/** EVERY createAndUpdate prop, including the ones a universal arm owns
+ *  (`enabled`, `tooltip`, the drag/drop trio): those run above the kind
+ *  dispatch and read the same props object. */
+function resettableProps(w: Widget): Prop[] {
+  return w.props.filter((p) => p.appliesTo === "createAndUpdate");
+}
+
+function floatLit(v: unknown): string {
+  const n = Number(v ?? 0);
+  return Number.isInteger(n) ? `${n}.0` : `${n}`;
+}
+
+function zigResetValue(p: Prop): string {
+  switch (p.type) {
+    case "int": return `.{ .integer = ${Number(p.default ?? 0)} }`;
+    case "float": return `.{ .float = ${floatLit(p.default)} }`;
+    case "bool": return `.{ .bool = ${p.default === true} }`;
+    case "stringList":
+    case "intList":
+    case "objectList": return ".{ .array = nd_empty_json_array }";
+    default: return `.{ .string = ${JSON.stringify(String(p.default ?? ""))} }`;
+  }
+}
+
+function swiftResetValue(p: Prop): string {
+  switch (p.type) {
+    case "int": return String(Number(p.default ?? 0));
+    case "float": return floatLit(p.default);
+    case "bool": return String(p.default === true);
+    case "stringList":
+    case "intList":
+    case "objectList": return "[Any]()";
+    default: return JSON.stringify(String(p.default ?? ""));
+  }
+}
+
+function genZigPropResets(s: Schema): string {
+  let out = "const NdPropReset = struct { key: []const u8, value: std.json.Value };\n";
+  out += "const nd_empty_json_array = std.json.Array{ .items = &[_]std.json.Value{}, .capacity = 0, .allocator = std.heap.page_allocator };\n\n";
+  const kinds: string[] = [];
+  for (const w of s.widgets) {
+    const props = resettableProps(w);
+    if (props.length === 0) continue;
+    kinds.push(w.name);
+    out += `const nd_resets_${w.name} = [_]NdPropReset{\n`;
+    for (const p of props) out += `    .{ .key = ${JSON.stringify(p.name)}, .value = ${zigResetValue(p)} },\n`;
+    out += "};\n";
+  }
+  out += "\nfn ndPropResets(kind: []const u8) []const NdPropReset {\n";
+  for (const k of kinds) out += `    if (std.mem.eql(u8, kind, ${JSON.stringify(k)})) return &nd_resets_${k};\n`;
+  out += "    return &.{};\n";
+  out += "}\n\n";
+  out += "/// Substitutes the schema default for every prop the app dropped, in\n";
+  out += "/// place in the op's own props object. The apply arms below read the\n";
+  out += "/// substituted value, so a prop leaving the JSX resets the widget\n";
+  out += "/// instead of leaving it on its last value. A null under a key with no\n";
+  out += "/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors\n";
+  out += "/// already read it as absent.\n";
+  out += "fn ndApplyDroppedDefaults(kind: []const u8, props: ?std.json.Value) void {\n";
+  out += "    const v = props orelse return;\n";
+  out += "    if (v != .object) return;\n";
+  out += "    var dropped = false;\n";
+  out += "    for (v.object.values()) |val| {\n";
+  out += "        if (val == .null) {\n";
+  out += "            dropped = true;\n";
+  out += "            break;\n";
+  out += "        }\n";
+  out += "    }\n";
+  out += "    if (!dropped) return;\n";
+  out += "    for (ndPropResets(kind)) |reset| {\n";
+  out += "        const slot = v.object.getPtr(reset.key) orelse continue;\n";
+  out += "        if (slot.* != .null) continue;\n";
+  out += "        slot.* = reset.value;\n";
+  out += "    }\n";
+  out += "}\n\n";
+  return out;
+}
+
+function genSwiftPropResets(s: Schema): string {
+  let out = "/// The value each createAndUpdate prop resets to when the app drops it:\n";
+  out += "/// the schema default, or the type's zero value for a prop that declares\n";
+  out += "/// none (empty string, 0, false, empty list).\n";
+  out += "@MainActor let ndPropResets: [String: [String: Any]] = [\n";
+  for (const w of s.widgets) {
+    const props = resettableProps(w);
+    if (props.length === 0) continue;
+    const entries = props.map((p) => `${JSON.stringify(p.name)}: ${swiftResetValue(p)}`).join(", ");
+    out += `    ${JSON.stringify(w.name)}: [${entries}],\n`;
+  }
+  out += "]\n\n";
+  out += "/// A prop the app dropped arrives as JSON null (host-config.ts's removal\n";
+  out += "/// marker); every arm below type-checks before it applies, so without\n";
+  out += "/// this the widget would keep its last value. A null under a key with no\n";
+  out += "/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors\n";
+  out += "/// already read NSNull as absent.\n";
+  out += "@MainActor func ndApplyDroppedDefaults(_ kind: String, _ props: [String: Any]) -> [String: Any] {\n";
+  out += "    guard props.contains(where: { $0.value is NSNull }), let resets = ndPropResets[kind] else { return props }\n";
+  out += "    var out = props\n";
+  out += "    for (key, value) in props where value is NSNull {\n";
+  out += "        if let reset = resets[key] { out[key] = reset }\n";
+  out += "    }\n";
+  out += "    return out\n";
+  out += "}\n\n";
+  return out;
 }
 
 function genZigCreateBody(w: Widget): string {
@@ -7445,8 +7567,9 @@ const SWIFT_SUPPRESSED = new Set([
 ]);
 
 function genSwiftApplyProps(s: Schema): string {
-  let out = "@MainActor func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {\n";
-  out += "    let props = parseProps(propsJson)\n";
+  let out = genSwiftPropResets(s);
+  out += "@MainActor func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {\n";
+  out += "    let props = ndApplyDroppedDefaults(kind, parseProps(propsJson))\n";
   out += "    // `tooltip`/`enabled` have no universal NSView peer — ndApplyTooltip/\n";
   out += "    // ndApplyEnabled route each to NSView, NSControl or a hosted leaf's\n";
   out += "    // SwiftUI state as appropriate (below).\n";

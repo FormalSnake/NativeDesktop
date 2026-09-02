@@ -1889,8 +1889,99 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     return nil
 }
 
+/// The value each createAndUpdate prop resets to when the app drops it:
+/// the schema default, or the type's zero value for a prop that declares
+/// none (empty string, 0, false, empty list).
+@MainActor let ndPropResets: [String: [String: Any]] = [
+    "Window": ["title": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Box": ["spacing": -1, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Label": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "badge": "", "size": "regular"],
+    "TextInput": ["text": "", "placeholder": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "TextArea": ["text": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Checkbox": ["checked": false, "label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Radio": ["checked": false, "label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Select": ["selectedIndex": 0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Slider": ["value": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ProgressBar": ["fraction": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Image": ["path": "", "iconName": "", "pixelSize": 0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ScrollView": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Separator": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Spinner": ["spinning": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "TabView": ["selectedIndex": 0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Grid": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ListView": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "WebView": ["url": "", "contextMenuMode": "native", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "NativeView": ["props": "{}", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SplitView": ["collapsed": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "HeaderBar": ["title": "", "subtitle": "", "canGoBack": false, "canGoForward": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ToolbarView": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SearchInput": ["text": "", "placeholder": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SourceList": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SourceTree": ["nodes": [Any](), "actions": [Any](), "selectedId": "", "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Menubar": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Menu": ["label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "MenuItem": ["label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SettingsGroup": ["title": "", "description": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Row": ["title": "", "subtitle": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SwitchRow": ["title": "", "subtitle": "", "checked": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Clamp": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Overlay": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Switch": ["checked": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ToggleButton": ["label": "", "active": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SegmentedControl": ["selectedIndex": 0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "NumberInput": ["value": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "LinkButton": ["label": "", "uri": "", "visited": false, "openExternal": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "LevelIndicator": ["value": 0.0, "warningValue": 0.0, "criticalValue": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ColorPicker": ["value": "#000000", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Banner": ["title": "", "buttonLabel": "", "revealed": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "MenuButton": ["label": "", "iconName": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SplitButton": ["label": "", "iconName": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Popover": ["open": false, "position": "top", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Expander": ["label": "", "expanded": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "StatusPage": ["iconName": "", "title": "", "description": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ToastOverlay": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "DatePicker": ["value": "", "minDate": "", "maxDate": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Table": ["columns": [Any](), "rows": [Any](), "selectedIndex": -1, "selectedIndexes": [Any](), "columnsReorderable": false, "showRowSeparators": true, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "TreeView": ["nodes": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "FontPicker": ["value": "Sans 12", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Video": ["src": "", "loop": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "TrayItem": ["iconName": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ShareButton": ["label": "", "items": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Terminal": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Paned": ["position": 0.5, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "CommandPalette": ["open": false, "placeholder": "", "query": "", "items": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Avatar": ["text": "", "imagePath": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Badge": ["label": "", "variant": "neutral", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Tag": ["label": "", "variant": "neutral", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Kbd": ["keys": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ComboBox": ["selectedIndex": 0, "text": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Breadcrumb": ["items": [Any](), "selectedIndex": -1, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Dialog": ["open": false, "title": "", "contentWidth": 0, "contentHeight": 0, "closable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Sheet": ["open": false, "edge": "bottom", "size": 320, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "RichText": ["markdown": "", "selectable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ProgressCircle": ["fraction": 0.0, "lineWidth": 3, "showLabel": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Skeleton": ["width": 0, "height": 16, "radius": 6, "animated": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Chart": ["type": "line", "series": [Any](), "xLabel": "", "yLabel": "", "showLegend": true, "showGrid": true, "animated": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "CodeEditor": ["text": "", "language": "", "theme": "", "showLineNumbers": true, "readOnly": false, "tabWidth": 4, "diagnostics": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+]
+
+/// A prop the app dropped arrives as JSON null (host-config.ts's removal
+/// marker); every arm below type-checks before it applies, so without
+/// this the widget would keep its last value. A null under a key with no
+/// reset (`style`, `cssClasses`, `testID`) is left alone: the accessors
+/// already read NSNull as absent.
+@MainActor func ndApplyDroppedDefaults(_ kind: String, _ props: [String: Any]) -> [String: Any] {
+    guard props.contains(where: { $0.value is NSNull }), let resets = ndPropResets[kind] else { return props }
+    var out = props
+    for (key, value) in props where value is NSNull {
+        if let reset = resets[key] { out[key] = reset }
+    }
+    return out
+}
+
 @MainActor func ndApplyProps(_ view: NSView, _ kind: String, _ propsJson: String) {
-    let props = parseProps(propsJson)
+    let props = ndApplyDroppedDefaults(kind, parseProps(propsJson))
     // `tooltip`/`enabled` have no universal NSView peer — ndApplyTooltip/
     // ndApplyEnabled route each to NSView, NSControl or a hosted leaf's
     // SwiftUI state as appropriate (below).

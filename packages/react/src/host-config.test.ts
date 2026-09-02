@@ -53,6 +53,18 @@ test("a prop the new render dropped reaches the host as null", () => {
   ]);
 });
 
+// `style`/`cssClasses` are applied by a set-replace pass over the whole value,
+// so the empty value is what resets them; a null falls through the object/array
+// type guards on both backends and leaves the widget styled.
+test("a dropped style or cssClasses is sent as the empty value, not null", () => {
+  expect(updateOps("box", { style: { padding: 12 } }, {})).toEqual([
+    { op: "update", id: expect.any(Number), props: { style: {} } },
+  ]);
+  expect(updateOps("box", { cssClasses: ["card"] }, {})).toEqual([
+    { op: "update", id: expect.any(Number), props: { cssClasses: [] } },
+  ]);
+});
+
 test("dropped children and handler props are never sent as removals", () => {
   expect(updateOps("button", { label: "Go", onClick: () => {}, children: "Go" }, { label: "Go" })).toEqual([]);
 });
