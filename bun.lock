@@ -188,6 +188,28 @@
         "@types/react": "19.2.17",
       },
     },
+    "examples/popoveranchor": {
+      "name": "popoveranchor-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
+    "examples/propreset": {
+      "name": "propreset-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/react": "workspace:*",
+        "react": "19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "19.2.17",
+      },
+    },
     "examples/remote-terminal": {
       "name": "remote-terminal-example",
       "dependencies": {
@@ -637,6 +659,10 @@
     "path-to-regexp": ["path-to-regexp@8.4.2", "", {}, "sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA=="],
 
     "pkce-challenge": ["pkce-challenge@5.0.1", "", {}, "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="],
+
+    "popoveranchor-example": ["popoveranchor-example@workspace:examples/popoveranchor"],
+
+    "propreset-example": ["propreset-example@workspace:examples/propreset"],
 
     "proxy-addr": ["proxy-addr@2.0.7", "", { "dependencies": { "forwarded": "0.2.0", "ipaddr.js": "1.9.1" } }, "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg=="],
 
