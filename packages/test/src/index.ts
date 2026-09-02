@@ -37,6 +37,7 @@ export type { SelectorPart, TextSpec } from "./selectors.ts";
 export {
   allNodes,
   asNdNode,
+  hasRealSize,
   matchPart,
   nodeChecked,
   nodeName,

@@ -12,7 +12,7 @@
 // reserve, and the row content a hover-visibility action button must not
 // move. Prints ND_SOURCETREE_OK on success.
 import { inflateSync } from "node:zlib";
-import { launchApp } from "../packages/test/src/index.ts";
+import { expect, launchApp, poll } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
 
 const backend = process.argv[2] as Backend | undefined;
@@ -172,7 +172,7 @@ try {
   // the failure looks like a dead widget rather than a typo. Nothing else in
   // this drive exercises a button event, which is what let that read as a
   // sourcetree-specific defect.
-  await app.click("st-toolbar-refresh");
+  await app.getByTestId("st-toolbar-refresh").click();
   await app.waitForText("toolbar refresh", { timeoutMs: T });
   console.log("ND_ST_BUTTON_OK <button> onClick fired next to the tree");
 
@@ -185,9 +185,9 @@ try {
   // The replay frame races the child's FIRST render (under load it lands
   // after commit 0) and the readout only recomputes on a re-render: poke one
   // with a selection round-trip before asserting.
-  await app.setValue("st-tree", "run-1");
+  await app.getByTestId("st-tree").fill("run-1");
   await app.waitForText("replay=yes", { timeoutMs: T });
-  await app.setValue("st-tree", "");
+  await app.getByTestId("st-tree").fill("");
   await app.waitForText("sel (none)", { timeoutMs: T });
   // The live flip needs the process frontmost, which only macOS can be asked
   // for; a headless weston seat never activates a window, so the GTK leg
@@ -206,23 +206,23 @@ try {
   }
 
   // ---- leg 3: selection by node id (setValue -> selectionChanged -> a11y) ---
-  await app.setValue("st-tree", "run-1");
+  await app.getByTestId("st-tree").fill("run-1");
   await app.waitForText("sel run-1", { timeoutMs: T });
-  await app.waitForValue("st-tree", "run-1", { timeoutMs: T });
+  await expect(app.getByTestId("st-tree")).toHaveValue("run-1");
   console.log("ND_ST_SELECT_OK selectionChanged {nodeId} + a11y value by id");
 
   // ---- leg 3b: selectedId "" clears the selection ---------------------------
   // GTK regression: unselectAll is a documented no-op in browse mode, so the
   // clear path goes through selectRow(null). Re-select before leg 4, whose
   // semantic click activates the selected row.
-  await app.setValue("st-tree", "");
+  await app.getByTestId("st-tree").fill("");
   await app.waitForText("sel (none)", { timeoutMs: T });
-  await app.setValue("st-tree", "run-1");
+  await app.getByTestId("st-tree").fill("run-1");
   await app.waitForText("sel run-1", { timeoutMs: T });
   console.log('ND_ST_CLEAR_OK setValue("") deselected; re-select landed');
 
   // ---- leg 4: semantic click activates the selected row ---------------------
-  await app.click("st-tree");
+  await app.getByTestId("st-tree").click();
   await app.waitForText("act run-1", { timeoutMs: T });
   console.log("ND_ST_ACTIVATE_OK rowActivated {nodeId}");
 
@@ -231,24 +231,21 @@ try {
   // an id-addressed setValue must fail loudly rather than select nothing.
   let collapsedRejected = false;
   try {
-    await app.setValue("st-tree", "run-old");
+    await app.getByTestId("st-tree").fill("run-old");
   } catch {
     collapsedRejected = true;
   }
   if (!collapsedRejected) throw new Error("setValue(run-old) inside a collapsed section should have failed");
-  await app.click("st-settled-toggle"); // app state -> expanded flag -> rebuild
-  // The click RPC returns before the toggle's JS round-trip lands the nodes
-  // update, so retry until the revealed row is selectable.
-  const revealDeadline = Date.now() + T;
-  for (;;) {
-    try {
-      await app.setValue("st-tree", "run-old");
-      break;
-    } catch (err) {
-      if (Date.now() >= revealDeadline) throw err;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
+  await app.getByTestId("st-settled-toggle").click(); // app state -> expanded flag -> rebuild
+  // Rows live in the widget's `rows` payload, not as tree nodes, so the
+  // reveal is waited on there. The click RPC returns before the toggle's JS
+  // round-trip lands the nodes update.
+  await poll(
+    () => app.getByTestId("st-tree").node(),
+    (n) => (n.rows ?? []).some((r) => r.testID === "st-run-old"),
+    { timeoutMs: T, intervalMs: 100 },
+  );
+  await app.getByTestId("st-tree").fill("run-old");
   await app.waitForText("sel run-old", { timeoutMs: T });
   console.log("ND_ST_EXPAND_PROP_OK collapsed shelf hides rows; expanding reveals them");
 
@@ -280,9 +277,9 @@ try {
     await app.waitForText("sel proj-nd", { timeoutMs: T });
     console.log("ND_ST_POINTER_SELECT_OK pointer click selected proj-nd");
 
-    await app.keys("left"); // collapse the selected parent
+    await app.keyboard.press("ArrowLeft"); // collapse the selected parent
     await app.waitForText("expand collapsed:proj-nd", { timeoutMs: T });
-    await app.keys("right"); // expand it again
+    await app.keyboard.press("ArrowRight"); // expand it again
     await app.waitForText("expand expanded:proj-nd", { timeoutMs: T });
     console.log("ND_ST_EXPAND_EVENT_OK nodeCollapsed/nodeExpanded from native disclosure keys");
 
@@ -326,7 +323,7 @@ const rowProfile = async (variant: string, hoverFirst = false): Promise<Run[][]>
     const win = (await probe.tree()).root.geometry;
     if (!widget.geometry || !win) throw new Error(`st-geo (${label}) has no geometry`);
     if (hoverFirst) {
-      await probe.rpc.call("hover", { testId: "st-geo" });
+      await probe.getByTestId("st-geo").hover();
       await new Promise((r) => setTimeout(r, 300));
     }
     const shot = await probe.screenshot(`${shotDir}/sourcetree-geo-${label}.png`, { minBytes: 2000 });
