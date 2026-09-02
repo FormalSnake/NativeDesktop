@@ -96,6 +96,20 @@ final class NDSettingsGroupView: NSStackView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// NDBoxView places this view by frame, and an NSStackView reports no
+    /// intrinsic size of its own, so what the box measures is this view's
+    /// `fittingSize`: the hosted Form's ideal height for the width the SwiftUI
+    /// body last laid out at. The host's own width constraint does not catch
+    /// up until the next constraint pass, so without pushing the width through
+    /// here a measurement taken in between answers with the Form wrapped to a
+    /// narrower column, thousands of points tall.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard newSize.width > 0, host.frame.width != newSize.width else { return }
+        host.setFrameSize(NSSize(width: newSize.width, height: host.frame.height))
+        host.layoutSubtreeIfNeeded()
+    }
+
     func appendReactView(_ view: NSView) {
         guard !isStructuralSeparator(view) else { return }
         normalizeNativeRow(view)
