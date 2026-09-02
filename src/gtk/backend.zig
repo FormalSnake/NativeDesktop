@@ -3,6 +3,7 @@ const gtk = @import("gtk");
 const gdk = @import("gdk");
 const gsk = @import("gsk");
 const gobject = @import("gobject");
+const gio = @import("gio");
 const glib = @import("glib");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
@@ -431,7 +432,43 @@ fn vtNodeVisible(_: *abi.NdContext, widget: ?*anyopaque) callconv(.c) bool {
     if (gtk.Widget.getVisible(w) == 0) return false;
     // "mapped" folds into node_visible's contract (documented in
     // automation.zig's checkActionable comment).
-    return gtk.Widget.getMapped(w) != 0;
+    if (gtk.Widget.getMapped(w) == 0) return false;
+    return withinClips(w);
+}
+
+/// Whether `w`'s allocation still intersects every clip between it and its
+/// window: each enclosing GtkScrolledWindow's viewport, then the window
+/// itself. GTK keeps a scrolled-away row mapped and fully allocated, so
+/// `get_mapped` alone reported every row of a long list visible in a window
+/// showing a handful of them. A node the user would have to scroll to reach
+/// is not actionable, and `scrollIntoView` is what makes it so. `vtNodeBounds`
+/// keeps reporting the untransformed allocation, so a caller can still see
+/// where the node would be.
+///
+/// A degenerate allocation is left to the bounds half of the actionability
+/// predicate, which already rejects it.
+fn withinClips(w: *gtk.Widget) bool {
+    var rect: graphene.Rect = undefined;
+    var ancestor = gtk.Widget.getParent(w);
+    while (ancestor) |a| : (ancestor = gtk.Widget.getParent(a)) {
+        if (!gobject.ext.isA(a, gtk.ScrolledWindow)) continue;
+        if (gtk.Widget.computeBounds(w, a, &rect) == 0) continue;
+        if (!intersectsBox(rect, gtk.Widget.getWidth(a), gtk.Widget.getHeight(a))) return false;
+    }
+    const root = gtk.Widget.getRoot(w) orelse return true;
+    const root_widget = root.as(gtk.Widget);
+    if (root_widget == w) return true;
+    if (gtk.Widget.computeBounds(w, root_widget, &rect) == 0) return true;
+    return intersectsBox(rect, gtk.Widget.getWidth(root_widget), gtk.Widget.getHeight(root_widget));
+}
+
+fn intersectsBox(rect: graphene.Rect, width: c_int, height: c_int) bool {
+    if (rect.f_size.f_width <= 0 or rect.f_size.f_height <= 0) return true;
+    const w: f32 = @floatFromInt(width);
+    const h: f32 = @floatFromInt(height);
+    if (w <= 0 or h <= 0) return true;
+    if (rect.f_origin.f_x >= w or rect.f_origin.f_y >= h) return false;
+    return rect.f_origin.f_x + rect.f_size.f_width > 0 and rect.f_origin.f_y + rect.f_size.f_height > 0;
 }
 
 fn vtNodeBounds(_: *abi.NdContext, widget: ?*anyopaque, out: *abi.NdRect) callconv(.c) bool {
@@ -678,6 +715,14 @@ fn vtSemanticAction(
         return semanticA11y(w, node_id, result_json_out);
     } else if (std.mem.eql(u8, action_s, "windowState")) {
         return semanticWindowState(w, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "window.setFrame")) {
+        return semanticWindowSetFrame(w, node_id, args, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "focus")) {
+        return semanticFocus(w, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "scrollIntoView")) {
+        return semanticScrollIntoView(w, result_json_out);
+    } else if (std.mem.eql(u8, action_s, "snapshotNode")) {
+        return semanticSnapshotNode(w, node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "pointer") or std.mem.eql(u8, action_s, "drag") or
         std.mem.eql(u8, action_s, "keys") or std.mem.eql(u8, action_s, "doubleClick") or
         std.mem.eql(u8, action_s, "rightClick") or std.mem.eql(u8, action_s, "hover"))
@@ -755,11 +800,111 @@ fn semanticA11y(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8) i
     }
     defer if (owned) arena.free(@constCast(value_json));
 
-    const json = std.fmt.allocPrint(arena, "{{\"enabled\":{},\"focused\":{},\"value\":{s}}}", .{ enabled, focused, value_json }) catch return -32603;
+    const extras = a11yExtrasJson(widget, kind, value_json);
+    defer arena.free(@constCast(extras));
+    const json = std.fmt.allocPrint(arena, "{{\"enabled\":{},\"focused\":{},\"value\":{s}{s}}}", .{ enabled, focused, value_json, extras }) catch return -32603;
     defer arena.free(json);
     result_json_out.* = mallocZ(json);
     _ = node_id;
     return 0;
+}
+
+/// Kinds whose a11y value IS an on/off state, so `checked` can be read back
+/// off it rather than re-derived per widget class.
+fn isCheckableKind(kind: []const u8) bool {
+    for ([_][]const u8{ "Checkbox", "Radio", "Switch", "SwitchRow", "ToggleButton" }) |k| {
+        if (std.mem.eql(u8, k, kind)) return true;
+    }
+    return false;
+}
+
+/// The kind-shaped half of the a11y probe, appended to the enabled/focused/
+/// value trio. A field the node cannot carry is OMITTED, never reported
+/// false: the core maps a missing key to null, which is what lets a caller
+/// tell "unchecked" apart from "not a checkable thing". Caller frees.
+fn a11yExtrasJson(widget: *gtk.Widget, kind: []const u8, value_json: []const u8) []const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    if (isCheckableKind(kind) and (std.mem.eql(u8, value_json, "true") or std.mem.eql(u8, value_json, "false"))) {
+        out.appendSlice(arena, ",\"checked\":") catch {};
+        out.appendSlice(arena, value_json) catch {};
+    }
+    if (a11ySelected(widget)) |sel| {
+        out.appendSlice(arena, if (sel) ",\"selected\":true" else ",\"selected\":false") catch {};
+    }
+    if (gobject.ext.isA(widget, gtk.Expander)) {
+        const open = gtk.Expander.getExpanded(@ptrCast(@alignCast(widget))) != 0;
+        out.appendSlice(arena, if (open) ",\"expanded\":true" else ",\"expanded\":false") catch {};
+    }
+    if (a11yPlaceholder(widget)) |p| appendJsonField(&out, "placeholder", p);
+    if (a11yLabel(widget)) |l| appendJsonField(&out, "label", l);
+    if (gobject.ext.isA(widget, gtk.DropDown)) appendOptions(&out, @ptrCast(@alignCast(widget)));
+    return out.items;
+}
+
+fn appendJsonField(out: *std.ArrayList(u8), name: []const u8, value: []const u8) void {
+    if (value.len == 0) return;
+    const encoded = std.json.Stringify.valueAlloc(arena, value, .{}) catch return;
+    defer arena.free(encoded);
+    out.appendSlice(arena, ",\"") catch {};
+    out.appendSlice(arena, name) catch {};
+    out.appendSlice(arena, "\":") catch {};
+    out.appendSlice(arena, encoded) catch {};
+}
+
+/// The choices a Select-shaped node offers, in index order, so `setValue`'s
+/// integer index can be aimed by name.
+fn appendOptions(out: *std.ArrayList(u8), dd: *gtk.DropDown) void {
+    const model = gtk.DropDown.getModel(dd) orelse return;
+    const list: *gtk.StringList = @ptrCast(@alignCast(model));
+    const n = gio.ListModel.getNItems(model);
+    out.appendSlice(arena, ",\"options\":[") catch {};
+    var i: c_uint = 0;
+    while (i < n) : (i += 1) {
+        if (i > 0) out.appendSlice(arena, ",") catch {};
+        const s = gtk.StringList.getString(list, i) orelse {
+            out.appendSlice(arena, "\"\"") catch {};
+            continue;
+        };
+        const encoded = std.json.Stringify.valueAlloc(arena, std.mem.span(s), .{}) catch continue;
+        defer arena.free(encoded);
+        out.appendSlice(arena, encoded) catch {};
+    }
+    out.appendSlice(arena, "]") catch {};
+}
+
+/// `selected` for a node drawn as a list row: GTK keeps that state on the
+/// enclosing GtkListBoxRow, never on the app's own widget.
+fn a11ySelected(widget: *gtk.Widget) ?bool {
+    var cur: ?*gtk.Widget = widget;
+    while (cur) |c| : (cur = gtk.Widget.getParent(c)) {
+        if (gobject.ext.isA(c, gtk.ListBoxRow)) {
+            return gtk.ListBoxRow.isSelected(@ptrCast(@alignCast(c))) != 0;
+        }
+    }
+    return null;
+}
+
+fn a11yPlaceholder(widget: *gtk.Widget) ?[]const u8 {
+    if (gobject.ext.isA(widget, gtk.Entry)) {
+        const p = gtk.Entry.getPlaceholderText(@ptrCast(@alignCast(widget))) orelse return null;
+        return std.mem.span(p);
+    }
+    // GtkSearchEntry is not a GtkEntry subclass, so it needs its own arm.
+    if (gobject.ext.isA(widget, gtk.SearchEntry)) {
+        const p = gtk.SearchEntry.getPlaceholderText(@ptrCast(@alignCast(widget))) orelse return null;
+        return std.mem.span(p);
+    }
+    return null;
+}
+
+/// The node's spoken label where it says something `text` does not: a boxed
+/// row's title, or the tooltip an icon-only control carries.
+fn a11yLabel(widget: *gtk.Widget) ?[]const u8 {
+    if (gobject.ext.isA(widget, adw.PreferencesRow)) {
+        return std.mem.span(adw.PreferencesRow.getTitle(@ptrCast(@alignCast(widget))));
+    }
+    const tip = gtk.Widget.getTooltipText(widget) orelse return null;
+    return std.mem.span(tip);
 }
 
 /// "windowState" — the frontmost-window probe behind the automation
@@ -794,10 +939,140 @@ fn semanticWindowState(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
         }
     }
     defer if (owned) arena.free(@constCast(title_json));
-    const json = std.fmt.allocPrint(arena, "{{\"key\":{},\"main\":{},\"visible\":{},\"title\":{s}}}", .{ active, active, visible, title_json }) catch return -32603;
+    const win_widget = win.as(gtk.Widget);
+    const json = std.fmt.allocPrint(
+        arena,
+        "{{\"key\":{},\"main\":{},\"visible\":{},\"title\":{s},\"geometry\":{{\"x\":0,\"y\":0,\"w\":{d},\"h\":{d}}}}}",
+        .{ active, active, visible, title_json, gtk.Widget.getWidth(win_widget), gtk.Widget.getHeight(win_widget) },
+    ) catch return -32603;
     defer arena.free(json);
     result_json_out.* = mallocZ(json);
     return 0;
+}
+
+/// "window.setFrame" (peer of "window.close": the action string carries it,
+/// no new vtable op). GTK4 has no client-side window placement, which is a
+/// Wayland protocol decision rather than a missing binding, so x/y are
+/// accepted and ignored and only the size lands.
+fn semanticWindowSetFrame(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const root = gtk.Widget.getRoot(widget) orelse return invalidValue(err_json_out, node_id);
+    const win: *gtk.Window = @ptrCast(@alignCast(root));
+    const win_widget = win.as(gtk.Widget);
+    const o = objectArg(args);
+    const width = if (o) |obj| intArg(obj.get("width")) else null;
+    const height = if (o) |obj| intArg(obj.get("height")) else null;
+    if (width != null or height != null) {
+        gtk.Window.setDefaultSize(win, width orelse gtk.Widget.getWidth(win_widget), height orelse gtk.Widget.getHeight(win_widget));
+    }
+    setResult(result_json_out, .{ .ok = true });
+    return 0;
+}
+
+fn intArg(v: ?std.json.Value) ?c_int {
+    return switch (v orelse return null) {
+        .integer => |i| @intCast(i),
+        .float => |f| @intFromFloat(f),
+        else => null,
+    };
+}
+
+/// "focus" is the same path the universal `focus` widget command takes
+/// (generated `ndGrabFocus`), mirrored here rather than called: the generated
+/// helper is file-private and dispatch there needs the tracked kind string,
+/// which the vtable call does not carry.
+fn semanticFocus(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
+    if (isRealWidget(widget)) {
+        var target = widget;
+        if (gobject.ext.isA(widget, gtk.ScrolledWindow)) {
+            if (generated.scrolledWindowInner(@ptrCast(@alignCast(widget)))) |inner| target = inner;
+        }
+        _ = gtk.Widget.grabFocus(target);
+    }
+    setResult(result_json_out, .{ .ok = true });
+    return 0;
+}
+
+/// "scrollIntoView" scrolls the nearest GtkScrolledWindow ancestor by the
+/// smallest amount that brings the widget inside the viewport. Computing the
+/// delta from `compute_bounds` (which already carries the viewport's scroll
+/// translation) works for every scrolled widget, unlike the per-widget
+/// scroll-to actions GtkListView and GtkColumnView expose.
+fn semanticScrollIntoView(widget: *gtk.Widget, result_json_out: *?[*:0]u8) i32 {
+    const sw = enclosingScrolledWindow(widget) orelse {
+        setResult(result_json_out, .{ .ok = true, .scrolled = false });
+        return 0;
+    };
+    const sw_widget = sw.as(gtk.Widget);
+    var rect: graphene.Rect = undefined;
+    if (gtk.Widget.computeBounds(widget, sw_widget, &rect) != 0) {
+        scrollAxis(gtk.ScrolledWindow.getHadjustment(sw), rect.f_origin.f_x, rect.f_size.f_width, @floatFromInt(gtk.Widget.getWidth(sw_widget)));
+        scrollAxis(gtk.ScrolledWindow.getVadjustment(sw), rect.f_origin.f_y, rect.f_size.f_height, @floatFromInt(gtk.Widget.getHeight(sw_widget)));
+    }
+    setResult(result_json_out, .{ .ok = true, .scrolled = true });
+    return 0;
+}
+
+fn enclosingScrolledWindow(widget: *gtk.Widget) ?*gtk.ScrolledWindow {
+    var cur = gtk.Widget.getParent(widget);
+    while (cur) |c| : (cur = gtk.Widget.getParent(c)) {
+        if (gobject.ext.isA(c, gtk.ScrolledWindow)) return @ptrCast(@alignCast(c));
+    }
+    return null;
+}
+
+/// One axis of scrollIntoView: `pos`/`size` are the widget's rect in the
+/// viewport's own space and `viewport` its length. Scrolls by the shortfall
+/// at whichever edge the widget overhangs, and not at all when it fits.
+fn scrollAxis(adj: *gtk.Adjustment, pos: f32, size: f32, viewport: f32) void {
+    if (size <= 0 or viewport <= 0) return;
+    const value = gtk.Adjustment.getValue(adj);
+    var delta: f64 = 0;
+    if (pos < 0) {
+        delta = pos;
+    } else if (pos + size > viewport) {
+        delta = @min(pos + size - viewport, pos);
+    }
+    if (delta == 0) return;
+    gtk.Adjustment.setValue(adj, value + delta);
+}
+
+/// "snapshotNode" renders the node's OWN surface to a PNG through the same
+/// WidgetPaintable path `vtSnapshot` uses for a window. Rendering the handle
+/// rather than cropping a window capture ties the PNG's pixel dimensions to
+/// the logical rect `getTree` reports.
+fn semanticSnapshotNode(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const o = objectArg(args) orelse return invalidValue(err_json_out, node_id);
+    const path = switch (o.get("path") orelse return invalidValue(err_json_out, node_id)) {
+        .string => |s| s,
+        else => return invalidValue(err_json_out, node_id),
+    };
+    if (!isRealWidget(widget)) return invalidValue(err_json_out, node_id);
+    if (gtk.Widget.getWidth(widget) <= 0 or gtk.Widget.getHeight(widget) <= 0) return invalidValue(err_json_out, node_id);
+    const native = gtk.Widget.getNative(widget) orelse return invalidValue(err_json_out, node_id);
+    const renderer = gtk.Native.getRenderer(native) orelse return invalidValue(err_json_out, node_id);
+    const path_z = arena.dupeZ(u8, path) catch return -32603;
+    defer arena.free(path_z);
+    if (!renderWidgetPng(widget, renderer, path_z)) return -32603;
+    setResult(result_json_out, .{ .ref = node_id });
+    return 0;
+}
+
+/// One WidgetPaintable render of `widget` alone to `png_path`.
+fn renderWidgetPng(widget: *gtk.Widget, renderer: *gsk.Renderer, png_path: [*:0]const u8) bool {
+    const paintable = gtk.WidgetPaintable.new(widget);
+    defer paintable.unref();
+    const snapshot = gtk.Snapshot.new();
+    gdk.Paintable.snapshot(
+        paintable.as(gdk.Paintable),
+        snapshot.as(gdk.Snapshot),
+        @floatFromInt(gtk.Widget.getWidth(widget)),
+        @floatFromInt(gtk.Widget.getHeight(widget)),
+    );
+    const node = gtk.Snapshot.freeToNode(snapshot) orelse return false;
+    defer gsk.RenderNode.unref(node);
+    const texture = gsk.Renderer.renderTexture(renderer, node, null);
+    defer texture.unref();
+    return gdk.Texture.saveToPng(texture, png_path) != 0;
 }
 
 /// Mallocs a NUL-terminated copy of `json` for a `*_json_out` param (freed

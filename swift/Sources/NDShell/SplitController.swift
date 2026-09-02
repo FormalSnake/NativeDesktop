@@ -66,10 +66,42 @@ final class NDSplitViewController: NSSplitViewController {
     private var landingFractions = false
     private var observingDrags = false
 
+    /// `breakpoint` prop (px, 0 means off): below this content width the
+    /// sidebar collapses regardless of `collapsed`; at or above it,
+    /// `explicitCollapsed` (the app's own last `collapsed` value) is what's
+    /// restored. This mirrors the GTK peer's `AdwBreakpoint`, which unapplies
+    /// to the value it captured before it took over, not to a hardcoded
+    /// `false`.
+    var breakpointPx: CGFloat?
+    /// The app's own `collapsed` value, kept separately from `isCollapsed` so
+    /// the breakpoint has something to restore once the window widens back
+    /// out.
+    var explicitCollapsed = false
+    private var breakpointActive = false
+
     override func viewDidLayout() {
         super.viewDidLayout()
         observeDividerDrags()
         applyFractions()
+        applyBreakpoint()
+    }
+
+    /// A hysteresis band around `breakpointPx`, not a single crossing point,
+    /// so a divider drag or a live window resize can't toggle the sidebar on
+    /// every pixel at the boundary.
+    private func applyBreakpoint() {
+        guard let threshold = breakpointPx, splitView.window != nil else { return }
+        guard let index = splitViewItems.firstIndex(where: { $0.behavior == .sidebar }) else { return }
+        let width = splitView.bounds.width
+        guard width > 1 else { return }
+        let hysteresis: CGFloat = 8
+        if width < threshold - hysteresis {
+            breakpointActive = true
+            splitViewItems[index].isCollapsed = true
+        } else if width > threshold + hysteresis, breakpointActive {
+            breakpointActive = false
+            splitViewItems[index].isCollapsed = explicitCollapsed
+        }
     }
 
     /// Generated SplitView append/insertBefore arms call this once the item

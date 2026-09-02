@@ -137,6 +137,7 @@ func ndTablePurge(_ view: NSView) {
 /// `ndCreate`'s Table arm (generated) calls this.
 func makeTable(_ props: [String: Any]) -> NSView {
     let tableView = NSTableView()
+    tableView.style = .inset
     tableView.usesAlternatingRowBackgroundColors = false
     let mode = propStr(props, "selectionMode") ?? "single"
     tableView.allowsMultipleSelection = mode == "multiple"

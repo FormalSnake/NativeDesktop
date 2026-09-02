@@ -61,6 +61,97 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
 
 // MARK: - node_visible / node_bounds
 
+/// The window a mounted `<headerbar>` hands its children to. The tracked
+/// NDHeaderBarView never joins a view hierarchy (HeaderBar.swift), so its own
+/// `.window` is always nil.
+@MainActor private func ndHeaderBarWindow(_ bar: NDHeaderBarView) -> NSWindow? {
+    if let win = bar.pane?.manager?.ownerWindow() { return win }
+    for child in bar.startViews + bar.endViews {
+        if let btn = child as? NDButton, let win = ndToolbarOwner(of: btn)?.ownerWindow() { return win }
+        if let win = child.window { return win }
+    }
+    return nil
+}
+
+/// A HeaderBar's live rect in its window's content space: the union of what
+/// its own items occupy in the toolbar. Measuring the tracked placeholder
+/// instead reported `0x0` and invisible for a header whose search field was
+/// plainly on screen, because the items are drawn by the window toolbar and
+/// the placeholder knows nothing about where.
+@MainActor private func ndHeaderBarRect(_ bar: NDHeaderBarView) -> (rect: NSRect, window: NSWindow)? {
+    guard let win = ndHeaderBarWindow(bar), let content = ndLiveContentView(ofWindow: win) else { return nil }
+    var union: NSRect?
+    func add(_ r: NSRect?) {
+        guard let r, r.width > 0, r.height > 0 else { return }
+        union = union.map { $0.union(r) } ?? r
+    }
+    for child in bar.startViews + bar.endViews {
+        if let btn = child as? NDButton, ndToolbarPromotedItems[ObjectIdentifier(btn)] != nil {
+            add(ndPromotedControlRect(for: btn))
+        } else if child.window === win {
+            add(child.convert(child.bounds, to: content))
+        }
+    }
+    if let nav = bar.navControl, nav.window === win { add(nav.convert(nav.bounds, to: content)) }
+    if bar.hasTitleContent, bar.titleField.window === win {
+        add(bar.titleField.convert(bar.titleField.bounds, to: content))
+    }
+    // A custom-view toolbar item whose view AppKit has not attached yet
+    // (measured: every item of a freshly shown Settings window reports
+    // `view.window == nil` while the toolbar is already visible) contributes
+    // no rect, and a header of only such items would report 0x0 and invisible
+    // again. Fall back to the band the toolbar itself occupies, which is
+    // where those items are drawn.
+    return (union ?? ndToolbarBandRect(win, content), win)
+}
+
+/// The title-bar plus toolbar band of `win`, in `content`'s coordinate space.
+/// `contentLayoutRect` is the part of the content view NOT covered by that
+/// chrome, so the difference in height is the band.
+@MainActor private func ndToolbarBandRect(_ win: NSWindow, _ content: NSView) -> NSRect {
+    let full = win.contentView?.bounds.height ?? win.frame.height
+    let band = max(full - win.contentLayoutRect.height, 0)
+    let width = content.bounds.width
+    return content.isFlipped
+        ? NSRect(x: 0, y: 0, width: width, height: band)
+        : NSRect(x: 0, y: content.bounds.height - band, width: width, height: band)
+}
+
+/// The view a `<toolbarview>` pane actually installs. The tracked
+/// NDToolbarPaneView is a logical holder that never enters the hierarchy
+/// itself, so it has the same 0x0/invisible problem the header does.
+@MainActor private func ndToolbarPaneLiveView(_ pane: NDToolbarPaneView) -> NSView? {
+    for candidate in [pane.contentView, pane.mainContent] {
+        if let v = candidate, v.window != nil { return v }
+    }
+    return nil
+}
+
+/// Whether `view`'s frame still intersects every clip between it and its
+/// window. AppKit keeps a scrolled-away row in the hierarchy, unhidden and
+/// fully laid out, so `isHiddenOrHasHiddenAncestor` alone reported all forty
+/// rows of a list visible in a window that shows eight, with frames far below
+/// the viewport. A node the user would have to scroll to reach is not
+/// actionable, and `scrollIntoView` is what makes it so. `geometry` stays the
+/// untransformed frame, so a caller can still see where the node would be.
+///
+/// A degenerate frame is left to the bounds half of the actionability
+/// predicate, which already rejects it: intersecting an empty rect would
+/// otherwise turn every zero-size container invisible.
+@MainActor private func ndWithinClips(_ view: NSView) -> Bool {
+    var rect = view.bounds
+    guard rect.width > 0, rect.height > 0 else { return true }
+    var current = view
+    while let parent = current.superview {
+        rect = current.convert(rect, to: parent)
+        // An NSClipView's own bounds IS its visible document rect (its origin
+        // is the scroll offset), and `rect` is now in that same space.
+        if let clip = parent as? NSClipView, !rect.intersects(clip.bounds) { return false }
+        current = parent
+    }
+    return rect.intersects(current.bounds)
+}
+
 /// `visible` folds "mapped" into the same contract GTK's vtNodeVisible
 /// uses: hidden OR not in a window == not visible.
 @MainActor func ndNodeVisible(_ view: NSView) -> Bool {
@@ -89,6 +180,17 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     if let btn = view as? NDButton, let owner = ndToolbarOwner(of: btn) {
         return owner.ownerWindow()?.isVisible ?? false
     }
+    // A HeaderBar's items live in the window toolbar and a ToolbarView's
+    // content is installed somewhere else in the tree; both tracked handles
+    // stay outside the hierarchy, so they report through what they own.
+    if let bar = view as? NDHeaderBarView {
+        guard let hit = ndHeaderBarRect(bar) else { return false }
+        return hit.window.isVisible
+    }
+    if let pane = view as? NDToolbarPaneView {
+        guard let live = ndToolbarPaneLiveView(pane) else { return false }
+        return ndNodeVisible(live)
+    }
     // `view.window != nil` alone isn't enough for a dismissed Dialog/Sheet:
     // the handle's `dismiss()` closes the NDModalSheetWindow but the content
     // stays isReleasedWhenClosed=false and keeps its `window` link, so a
@@ -102,7 +204,7 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
     // geometry it had before the collapse. GTK answers this with
     // `gtk_widget_get_mapped`, which is false for the whole subtree under a
     // hidden pane; the ancestor walk is the same contract.
-    return !view.isHiddenOrHasHiddenAncestor && (view.window?.isVisible ?? false)
+    return !view.isHiddenOrHasHiddenAncestor && (view.window?.isVisible ?? false) && ndWithinClips(view)
 }
 
 /// Frame (in the live content view's flipped space) of the internal control
@@ -183,6 +285,18 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
             out = nd_rect(x: 0, y: 0, w: 1, h: 1)
         }
         return true
+    }
+    // HeaderBar / ToolbarView (see ndNodeVisible): the tracked handle is a
+    // holder outside the hierarchy, so it measures what it owns.
+    if let bar = view as? NDHeaderBarView {
+        guard let hit = ndHeaderBarRect(bar) else { return false }
+        out = nd_rect(x: Int32(hit.rect.origin.x), y: Int32(hit.rect.origin.y),
+                      w: Int32(hit.rect.width), h: Int32(hit.rect.height))
+        return true
+    }
+    if let pane = view as? NDToolbarPaneView {
+        guard let live = ndToolbarPaneLiveView(pane) else { return false }
+        return ndNodeBounds(live, &out)
     }
     // Resolve the LIVE, flipped content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
@@ -740,6 +854,22 @@ private func escapeJSONString(_ s: String) -> String {
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
     }
+    // `performClick` draws the pressed highlight and BLOCKS for its duration:
+    // measured at ~104ms of a 106ms automation round trip. Sending the wired
+    // action delivers the same `clicked` event in ~1.7ms.
+    //
+    // Only a plain push button takes this path. `performClick` also FLIPS the
+    // control's state before it sends the action, which a toggle
+    // (ToggleButton's .pushOnPushOff) and a menu-opening NSPopUpButton both
+    // depend on; `widgetKind == "Button"` already excludes Checkbox / Radio /
+    // Switch / Select, and `ndIsToggle` excludes the rest.
+    if let button = view as? NSButton, widgetKind(view) == "Button",
+       (button as? NDButton)?.ndIsToggle != true,
+       button.isEnabled, let action = button.action {
+        _ = NSApp.sendAction(action, to: button.target, from: button)
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
+        return 0
+    }
     (view as? NSControl)?.performClick(nil)
     setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
     return 0
@@ -997,12 +1127,168 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     default:
         break
     } }
-    setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":\(focused),\"value\":\(valueJson)}")
+    setResultRaw(resultOut, "{\"enabled\":\(enabled),\"focused\":\(focused),\"value\":\(valueJson)"
+        + ndA11yExtrasJSON(view, valueJson) + "}")
     return 0
+}
+
+/// Kinds whose a11y value IS an on/off state, so `checked` can be read back
+/// off it. Deliberately not every NSButton: a momentary Button's `state` is
+/// always `.off`, and reporting `checked: false` there would make an
+/// unrelated button look like an unticked checkbox to a locator.
+private let ndCheckableKinds: Set<String> = ["Checkbox", "Radio", "Switch", "SwitchRow", "ToggleButton"]
+
+/// The kind-shaped half of the a11y probe, appended to the enabled/focused/
+/// value trio as JSON. A field the node cannot carry is OMITTED, never
+/// reported false: the core maps a missing key to null, which is what lets a
+/// caller tell "unchecked" apart from "not a checkable thing".
+@MainActor private func ndA11yExtrasJSON(_ view: NSView, _ valueJson: String) -> String {
+    var out = ""
+    let kind = widgetKind(view)
+    if ndCheckableKinds.contains(kind), valueJson == "true" || valueJson == "false" {
+        out += ",\"checked\":\(valueJson)"
+    }
+    if let selected = ndA11ySelected(view) { out += ",\"selected\":\(selected)" }
+    if let expander = view as? NDExpanderView { out += ",\"expanded\":\(expander.expanded)" }
+    if let field = view as? NSTextField, let placeholder = field.placeholderString, !placeholder.isEmpty {
+        out += ",\"placeholder\":\"\(escapeJSONString(placeholder))\""
+    }
+    if let label = ndA11yLabel(view), !label.isEmpty {
+        out += ",\"label\":\"\(escapeJSONString(label))\""
+    }
+    if let options = ndA11yOptions(view) {
+        out += ",\"options\":[" + options.map { "\"\(escapeJSONString($0))\"" }.joined(separator: ",") + "]"
+    }
+    return out
+}
+
+/// `selected` for a node drawn as a row of a table or outline: AppKit keeps
+/// that state on the enclosing NSTableRowView, never on the app's own view.
+@MainActor private func ndA11ySelected(_ view: NSView) -> Bool? {
+    var current: NSView? = view
+    while let v = current {
+        if let row = v as? NSTableRowView { return row.isSelected }
+        current = v.superview
+    }
+    return nil
+}
+
+/// The node's spoken label where it says something `text` does not: the
+/// tooltip an icon-only control carries, or the accessibility label of a view
+/// that draws no text of its own. An NSControl's accessibilityLabel is just
+/// its displayed string, which the node already reports as `text`.
+@MainActor private func ndA11yLabel(_ view: NSView) -> String? {
+    if let host = view as? NDLeafChromeHosting, !host.leafState.tooltip.isEmpty {
+        return host.leafState.tooltip
+    }
+    if let tip = view.toolTip, !tip.isEmpty { return tip }
+    if view is NSImageView || (view as? NSButton)?.title.isEmpty == true {
+        return view.accessibilityLabel()
+    }
+    return nil
+}
+
+/// The choices a Select-shaped node offers, in index order, so `setValue`'s
+/// integer index can be aimed by name.
+@MainActor private func ndA11yOptions(_ view: NSView) -> [String]? {
+    if let popUp = view as? NSPopUpButton { return popUp.itemTitles }
+    if let combo = view as? NSComboBox { return combo.objectValues.compactMap { $0 as? String } }
+    if let segmented = view as? NSSegmentedControl {
+        return (0..<segmented.segmentCount).map { segmented.label(forSegment: $0) ?? "" }
+    }
+    return nil
 }
 
 private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
     return (args?[key] as? NSNumber)?.doubleValue
+}
+
+/// The top edge of the screen `win` sits on, the reference a top-left-origin
+/// y is measured down from. AppKit screen space is bottom-left.
+@MainActor private func ndScreenTop(_ win: NSWindow) -> CGFloat {
+    return (win.screen ?? NSScreen.screens.first)?.frame.maxY ?? win.frame.maxY
+}
+
+/// The window's frame in the wire's logical, top-left-origin units, the same
+/// space node Geometry uses.
+@MainActor private func ndWindowGeometryJSON(_ win: NSWindow) -> String {
+    let frame = win.frame
+    let y = ndScreenTop(win) - frame.maxY
+    return "{\"x\":\(Int(frame.origin.x)),\"y\":\(Int(y)),\"w\":\(Int(frame.width)),\"h\":\(Int(frame.height))}"
+}
+
+/// `scrollIntoView` on AppKit. A node drawn inside a table or outline row is
+/// scrolled BY INDEX: those rows are laid out lazily, so scrolling the view
+/// reaches one `scrollToVisible` on the view itself cannot. Answers whether
+/// there was anything to scroll at all.
+@MainActor private func ndScrollIntoView(_ view: NSView) -> Bool {
+    var probe: NSView? = view
+    while let v = probe {
+        if let rowView = v as? NSTableRowView, let table = rowView.superview as? NSTableView {
+            let row = table.row(for: rowView)
+            if row >= 0 {
+                table.scrollRowToVisible(row)
+                return true
+            }
+        }
+        probe = v.superview
+    }
+    guard view.enclosingScrollView != nil else { return false }
+    view.scrollToVisible(view.bounds)
+    return true
+}
+
+/// The surface `snapshotNode` renders for a handle that is not itself in the
+/// hierarchy (a Window root once a SplitView took over, a ToolbarView pane).
+@MainActor private func ndSnapshotNodeTarget(_ view: NSView) -> NSView? {
+    if let win = ndContentToWindow[ObjectIdentifier(view)] { return ndLiveContentView(ofWindow: win) }
+    if let pane = view as? NDToolbarPaneView { return ndToolbarPaneLiveView(pane) }
+    if let overlay = view as? NDToastOverlayView, overlay.ndEmbeddedSplit != nil {
+        return ndLiveContentView(ofWindow: overlay.ndHostWindow)
+    }
+    return view
+}
+
+/// `snapshotNode` renders ONE node's own surface. Rendering the handle rather
+/// than cropping a window capture is what ties the PNG's pixel dimensions to
+/// the logical rect `getTree` reports: a window capture comes back at the
+/// display's backing scale, and nothing on the wire says what that scale is.
+@MainActor func ndSnapshotNode(_ view: NSView, _ pngPath: String) -> Bool {
+    guard let target = ndSnapshotNodeTarget(view) else { return false }
+    let bounds = target.bounds
+    guard bounds.width >= 1, bounds.height >= 1 else { return false }
+    target.layoutSubtreeIfNeeded()
+    target.displayIfNeeded()
+    guard let rep = target.bitmapImageRepForCachingDisplay(in: bounds) else { return false }
+    ndZeroRep(rep) // AppKit reuses this rep per view; see ndZeroRep
+    target.cacheDisplay(in: bounds, to: rep)
+    // Same flatten the window ladder needs: the view draws white-on-
+    // TRANSPARENT because the opaque background belongs to the window server.
+    let flat = flattenOntoWindowBackground(rep, target.window)
+    let out = ndResampleToLogical(flat, bounds.size) ?? flat
+    guard let png = out.representation(using: .png, properties: [:]) else { return false }
+    return (try? png.write(to: URL(fileURLWithPath: pngPath))) != nil
+}
+
+/// Resamples a caching rep (sized in DEVICE pixels) down to the node's
+/// logical size, so a caller can compare the PNG's dimensions against the
+/// node's geometry directly. Truncating, not rounding: `nd_rect` truncates
+/// too, and a half-point tall row must not answer one pixel taller here than
+/// the geometry the same snapshot reports. Nil when it already matches.
+@MainActor private func ndResampleToLogical(_ rep: NSBitmapImageRep, _ size: NSSize) -> NSBitmapImageRep? {
+    let width = Int(size.width)
+    let height = Int(size.height)
+    guard width > 0, height > 0, rep.pixelsWide != width || rep.pixelsHigh != height else { return nil }
+    guard let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+          let ctx = NSGraphicsContext(bitmapImageRep: out) else { return nil }
+    out.size = NSSize(width: width, height: height)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = ctx
+    rep.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+    NSGraphicsContext.restoreGraphicsState()
+    return out
 }
 
 /// `semantic_action` — dispatch on `action`, peer of GTK's
@@ -1056,7 +1342,39 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
             return 0
         }
         let title = escapeJSONString(win.title)
-        setResultRaw(resultOut, "{\"key\":\(win.isKeyWindow),\"main\":\(win.isMainWindow),\"visible\":\(win.isVisible),\"title\":\"\(title)\"}")
+        setResultRaw(resultOut, "{\"key\":\(win.isKeyWindow),\"main\":\(win.isMainWindow),\"visible\":\(win.isVisible),"
+            + "\"title\":\"\(title)\",\"geometry\":\(ndWindowGeometryJSON(win))}")
+        return 0
+    case "window.setFrame":
+        guard let win = view.window ?? ndWindow(for: view) else { return invalidValue(errOut, nodeID) }
+        var frame = win.frame
+        if let w = numArg(args, "width") { frame.size.width = w }
+        if let h = numArg(args, "height") { frame.size.height = h }
+        if let x = numArg(args, "x") { frame.origin.x = x }
+        // y arrives measured DOWN from the top of the window's screen (the
+        // wire's top-left origin); AppKit's frame origin is its bottom-left.
+        // Absent, the current top edge is held, so a resize grows downward.
+        let top = ndScreenTop(win)
+        let wantTop = numArg(args, "y") ?? (top - win.frame.maxY)
+        frame.origin.y = top - wantTop - frame.size.height
+        win.setFrame(frame, display: true)
+        ndLiveContentView(ofWindow: win)?.layoutSubtreeIfNeeded()
+        setResultRaw(resultOut, "{\"ok\":true}")
+        return 0
+    case "focus":
+        // The same path the universal `focus` widget command takes, so a
+        // hosted leaf's SwiftUI @FocusState moves too (SwiftUILeaves.swift).
+        ndFocusView(view)
+        setResultRaw(resultOut, "{\"ok\":true}")
+        return 0
+    case "scrollIntoView":
+        setResultRaw(resultOut, "{\"ok\":true,\"scrolled\":\(ndScrollIntoView(view))}")
+        return 0
+    case "snapshotNode":
+        guard let path = args["path"] as? String, !path.isEmpty, ndSnapshotNode(view, path) else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID)}")
         return 0
     case "pointer":
         guard let phase = args["phase"] as? String, let x = numArg(args, "x"), let y = numArg(args, "y"),

@@ -1,41 +1,85 @@
 ---
 title: MCP Tools
-description: packages/mcp bridges the automation socket to MCP tools, each a thin pass-through to the raw RPC method of the same name.
+description: "packages/mcp is a stdio MCP server with three tools: execute runs @nativedesktop/test code against a live app, snapshot reads the accessibility tree, reset relaunches the host."
 ---
 
-`packages/mcp` is a stdio MCP server that bridges an agent's tool calls to the host's
-[automation socket](/automation-testing/automation-socket/). Every tool is a thin pass-through to
-the raw RPC method of the same name:
+`packages/mcp` is a stdio MCP server that hands an agent a live NativeDesktop app. There are three
+tools, not one per RPC: an agent writes `@nativedesktop/test` code, so anything the harness can
+express is reachable without a new tool being added for it.
 
-| MCP tool | RPC method | Notes |
-|---|---|---|
-| `nd_get_tree({window?})` | `getTree` | accessibility-tree snapshot (refs, `testID`s, text, geometry, role, enabled, focused, value); `window` scopes to one window |
-| `nd_screenshot({path})` | `screenshot` | render the window to a PNG at an absolute path |
-| `nd_click({ref})` | `click` | semantic click on a widget by ref |
-| `nd_wait_for({textContains?, refVisible?, testId?, state?, urlContains?, pageTitleContains?, pageTextContains?, timeoutMs?})` | `waitFor` | poll a tree condition until it holds or times out; the page keys need `testId` to name a `WebView` |
-| `nd_set_value({ref, value})` | `setValue` | set a widget's value semantically; fires the native change event |
-| `nd_type({ref, text})` | `type` | semantic text append into a `TextInput` |
-| `nd_scroll({ref, dx?, dy?})` | `scroll` | scroll a `ScrollView` by logical units |
-| `nd_double_click({ref})` | `doubleClick` | real double-click at the widget's center (macOS only) |
-| `nd_right_click({ref})` | `rightClick` | real right-click, auto-dismissing any opened context menu (macOS only) |
-| `nd_hover({ref})` | `hover` | best-effort pointer hover at the widget's center (macOS only) |
-| `nd_webview_info({ref?\|testId?})` | `webviewInfo` | a `<webview>`'s live `{url, title, loading, canGoBack, canGoForward}`, read off the engine |
-| `nd_webview_eval({ref?\|testId?, code, world?, timeoutMs?})` | `webviewEval` | evaluate JavaScript in the page; a thrown exception comes back as `ok: false` |
-| `nd_pointer({phase, x, y, button?, clickCount?, window?})` | `pointer` | low-level pointer phase at window coordinates (macOS only) |
-| `nd_drag({fromRef?/toRef? or coordinates, steps?, durationMs?, window?})` | `drag` | press-move-release gesture for slider thumbs, dividers, and selections (macOS only) |
-| `nd_keys({keys, window?})` | `keys` | chord like `"cmd+n"` (drives menu key equivalents) or plain text typed into the focused widget (macOS only) |
+```
+ND_MCP_ENTRY=examples/counter/main.tsx bun packages/mcp/src/index.ts
+```
 
-The macOS-only tools post real `NSEvent`s through the app's event queue; on GTK they answer
-`-32003` (`input synthesis unsupported on this backend`). See the
-[platform support notes](/automation-testing/automation-socket/#input-synthesis-by-platform).
+## `snapshot({window?, interactiveOnly?})`
+
+The accessibility tree, one line per node, indented by depth. Read it before acting, the way you
+would read a page. Nodes with no role, text or testID collapse into the parent, which removes most
+of a real tree.
+
+```
+- window "NativeDesktop M3 Counter" [ref=e7] [enabled]
+  - group [ref=e6] [enabled]
+    - label "Clicks: 0" [ref=e1] [testid=clicks-label] [enabled]
+    - button "Increment" [ref=e2] [testid=increment-button] [enabled]
+```
+
+`ref=eN` is the wire ref every action targets. `window` scopes to one Window node (from
+`app.windows()`); `interactiveOnly` keeps only the widgets an action can reach.
+
+## `execute({code, timeout?})`
+
+Runs a snippet with `{app, state, expect, launchApp, snapshot}` in scope. Prefer one line, with `;`
+between statements, and call `execute` again rather than writing a script in a single call.
+
+```js
+await app.getByTestId("increment-button").click(); await expect(app.getByTestId("clicks-label")).toContainText("Clicks: 1")
+```
+
+```json
+{ "result": "Clicks: 1", "logs": [] }
+```
+
+`app` is the [locator surface](/automation-testing/locators/). The last expression is the result, a
+`Locator` serializes to its selector string, a tree node to `{ref, type, role, text, testID}`, and a
+cycle to `"[Circular]"`. `console.log` is captured into `logs` (stdout is the MCP transport, so a
+stray log would frame the protocol out of sync). `state` is a plain object that survives across
+calls, for stashing a ref or a window between one-liners.
+
+A rejected RPC comes back with its code and data intact:
+
+```json
+{ "error": "not actionable (-32001)", "code": -32001, "data": { "ref": 12, "reason": "invisible" } }
+```
+
+A dead host answers `{error, stderrTail, hint: "call reset"}`.
+
+## `reset({entry?, backend?})`
+
+Closes the app, launches it again, and clears `state`. Use it after a crash, a wedged dialog, or to
+start a scenario from a known screen. Answers the new `{mode, pid, socket, entry}`.
+
+## Attaching instead of spawning
+
+With `ND_AUTOMATION_SOCKET` set, the server attaches to a host somebody else launched, and `reset`
+reconnects rather than respawning. Without it, the entry comes from `ND_MCP_ENTRY` (and the backend
+from `ND_MCP_BACKEND`), which `reset({entry})` can change at runtime.
+
+## Crash debugging for agents
+
+After a runtime crash or disconnect, the host paints an in-window overlay on every open window and
+registers its chrome in the tree, so `getTree` keeps answering through the crash. `snapshot` shows
+the overlay testIDs (`nd-overlay-panel`, `nd-overlay-title`, `nd-overlay-error`,
+`nd-overlay-restart`), the error text reads off the tree, and in dev mode (`ND_DEV=1`) clicking
+`nd-overlay-restart` respawns the child. See the
+[crash/overlay contract](/automation-testing/automation-socket/#crashoverlay-contract).
 
 ## Talking to the socket directly
 
-`@nativedesktop/test`'s `AutomationClient` (`packages/test/src/socket.ts`) is the client-side pattern
-every `scripts/*-drive.ts` in this repo uses, and a reasonable template for a custom driver.
-`AutomationClient.call` is generic over the method names generated from `schema/rpc.json`, so the
-method name, its params, and its result type are checked at compile time. A typo or a stale param
-shape is a `tsc` error rather than a runtime surprise:
+`@nativedesktop/test`'s `AutomationClient` (`packages/test/src/socket.ts`) is the raw client, and a
+reasonable template for a custom driver. `AutomationClient.call` is generic over the method names
+generated from `schema/rpc.json`, so the method name, its params, and its result type are checked at
+compile time:
 
 ```ts
 import { AutomationClient } from "@nativedesktop/test";
@@ -46,13 +90,4 @@ await client.call("drag", { fromRef: sliderRef, toX: 400, toY: 120 });
 ```
 
 See [Automation Socket](/automation-testing/automation-socket/) for the full method list, error
-codes, and known gaps (actionability rules, `Checkbox`/`Radio` semantics, scroll targeting).
-
-## Crash debugging for agents
-
-After a runtime crash or disconnect, the host paints an in-window overlay on every open window and
-registers its chrome in the tree, so `getTree` keeps answering through the crash. Agents can
-`nd_wait_for` the overlay testIDs (`nd-overlay-panel`, `nd-overlay-title`, `nd-overlay-error`,
-`nd-overlay-restart`), read the error text off the tree, and in dev mode (`ND_DEV=1`) click
-`nd-overlay-restart` to respawn the child. See the
-[crash/overlay contract](/automation-testing/automation-socket/#crashoverlay-contract).
+codes, and the platform gaps (input synthesis answers `-32003` on GTK).

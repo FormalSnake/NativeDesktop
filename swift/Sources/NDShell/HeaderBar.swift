@@ -382,6 +382,7 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
         ndToolbarProminent.remove(ObjectIdentifier(b))
     }
     b.bezelColor = prominent ? .controlAccentColor : nil
+    b.keyEquivalent = prominent ? "\r" : ""
     ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
 
@@ -497,6 +498,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             self.toolbar = NSToolbar(identifier: "nd-toolbar-\(name)")
             super.init()
             toolbar.allowsUserCustomization = true
+            toolbar.allowsDisplayModeCustomization = true
             toolbar.autosavesConfiguration = true
         } else {
             self.toolbar = NSToolbar(identifier: "nd-toolbar-\(ndHeaderBarFreshID())")

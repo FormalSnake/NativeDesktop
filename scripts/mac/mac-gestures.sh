@@ -8,6 +8,10 @@ set -euo pipefail
 #          typing + cmd+a chord, getTree window param) -> ND_GESTURES_OK
 #   leg 2: examples/notes, scripts/keys-menu-drive.ts (cmd+n key equivalent
 #          runs File > New Note) -> ND_KEYS_MENU_OK
+#   leg 3: examples/locators, scripts/locator-drive.ts (focus/press,
+#          scrollIntoView on a clipped row, node-sized snapshotNode,
+#          setWindowFrame, check/uncheck, selectOption by label)
+#          -> ND_LOCATOR_OK
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd -P)"
 export PATH="/etc/profiles/per-user/kyandesutter/bin:/opt/homebrew/bin:$PATH"
@@ -42,5 +46,6 @@ run_leg() {
 
 run_leg examples/gestures/main.tsx scripts/gestures-drive.ts /tmp/nd-gestures.log /tmp/nd-gestures-drive.log ND_GESTURES_OK
 run_leg examples/notes/main.tsx scripts/keys-menu-drive.ts /tmp/nd-keysmenu.log /tmp/nd-keysmenu-drive.log ND_KEYS_MENU_OK
+run_leg examples/locators/main.tsx scripts/locator-drive.ts /tmp/nd-locator.log /tmp/nd-locator-drive.log ND_LOCATOR_OK
 
-echo "MAC_GESTURES_OK agentic input + a11y tree verified"
+echo "MAC_GESTURES_OK agentic input + a11y tree + locators verified"

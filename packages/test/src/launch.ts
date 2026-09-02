@@ -20,15 +20,26 @@ import {
   type ScreenshotResult,
   type ScrollResult,
   type SetValueResult,
+  type SetWindowFrameParams,
   type TypeResult,
   type WaitCondition,
   type WaitForResult,
   type WebViewEvalResult,
   type WebViewInfo,
+  type WindowInfo,
   type WindowsResult,
 } from "@nativedesktop/react/rpc";
 import { TimedClient } from "./client.ts";
 import { type DialogScript, dialogScriptEnv } from "./dialogs.ts";
+import type { Keyboard, Mouse } from "./keyboard.ts";
+import {
+  callHost,
+  Locator,
+  LocatorFactory,
+  type LocatorClient,
+  type RoleOptions,
+  type TextOptions,
+} from "./locator.ts";
 import { findAllNodes, findMatchingNode, findNode, resolveTarget, type Target } from "./query.ts";
 import { registerProcess, unregisterProcess } from "./registry.ts";
 import { type ScreenshotOptions, takeScreenshot } from "./screenshot.ts";
@@ -64,6 +75,7 @@ export interface LaunchOptions {
 const DEFAULT_READY_MARKERS = ["ND_AUTOMATION_LISTENING", "ND_COMMIT_APPLIED"];
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_RPC_TIMEOUT_MS = 8_000;
+const DEFAULT_ACTION_TIMEOUT_MS = 5_000;
 const DEFAULT_RETRIES = 2;
 const MAX_STDERR_LINES = 5000;
 const STDERR_DRAIN_GRACE_MS = 1000;
@@ -168,9 +180,13 @@ interface LiveHost {
   exitedPromise: Promise<number>;
 }
 
-export class AppHandle {
+export class AppHandle implements LocatorClient {
+  /** Deadline every locator action, reader and expect matcher inherits. */
+  actionTimeout = DEFAULT_ACTION_TIMEOUT_MS;
+
   private live?: LiveHost;
   private client?: TimedClient;
+  private factory?: LocatorFactory;
 
   private constructor(private readonly config: ResolvedConfig) {}
 
@@ -344,6 +360,84 @@ export class AppHandle {
 
   stderrTail(n = 40): string {
     return tail(this.live?.stderrLines ?? [], n);
+  }
+
+  isAlive(): boolean {
+    return Boolean(this.live) && !this.live!.exited;
+  }
+
+  // --- locators --------------------------------------------------------------
+
+  /** Untyped RPC entry point the Locator layer dispatches through, so one
+   * call site serves every action method. Typed calls should keep going
+   * through `rpc.call`. */
+  callRpc(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    return this.rpc.call(method as "click", params as never);
+  }
+
+  private get locators(): LocatorFactory {
+    return (this.factory ??= new LocatorFactory(this));
+  }
+
+  get keyboard(): Keyboard {
+    return this.locators.keyboard;
+  }
+
+  get mouse(): Mouse {
+    return this.locators.mouse;
+  }
+
+  locator(selector: string): Locator {
+    return this.locators.locator(selector);
+  }
+
+  getByTestId(testId: string): Locator {
+    return this.locators.getByTestId(testId);
+  }
+
+  getByRole(role: string, opts?: RoleOptions): Locator {
+    return this.locators.getByRole(role, opts);
+  }
+
+  getByText(text: string | RegExp, opts?: TextOptions): Locator {
+    return this.locators.getByText(text, opts);
+  }
+
+  getByLabel(text: string | RegExp, opts?: TextOptions): Locator {
+    return this.locators.getByLabel(text, opts);
+  }
+
+  getByPlaceholder(text: string | RegExp, opts?: TextOptions): Locator {
+    return this.locators.getByPlaceholder(text, opts);
+  }
+
+  /** A locator factory, keyboard and mouse bound to one window: by index in
+   * `windows()` order, or by a substring of its title. */
+  async window(titleOrIndex: string | number): Promise<LocatorFactory> {
+    const { windows } = await this.windows();
+    const info =
+      typeof titleOrIndex === "number"
+        ? windows[titleOrIndex]
+        : windows.find((w) => (w.title ?? "").includes(titleOrIndex));
+    if (!info) {
+      const known = windows.map((w) => JSON.stringify(w.title ?? "")).join(", ") || "(none)";
+      throw new Error(`window(${JSON.stringify(titleOrIndex)}): no such window. Open windows: ${known}`);
+    }
+    return new LocatorFactory(this, info.ref);
+  }
+
+  /** Resizes a window in logical units, keeping its origin. The answer is
+   * that window's updated WindowInfo, whose `geometry` is the same w/h
+   * Geometry a node carries. */
+  async setWindowSize(width: number, height: number, opts: { window?: number } = {}): Promise<WindowInfo> {
+    return (await callHost(this, "setWindowFrame", { window: opts.window, width, height })) as WindowInfo;
+  }
+
+  /** Moves and/or resizes a window; omitted components keep their current
+   * value. GTK ignores x/y (client-side placement is not a Wayland
+   * capability). */
+  async setWindowFrame(frame: SetWindowFrameParams): Promise<WindowInfo> {
+    return (await callHost(this, "setWindowFrame", { ...frame })) as WindowInfo;
   }
 
   // --- tree queries ----------------------------------------------------------

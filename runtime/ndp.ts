@@ -22,9 +22,22 @@ interface PendingRequest {
 
 const TRACE = process.env.NDP_TRACE === "1";
 
+// One decoder for the process: TextDecoder carries no per-frame state, and a
+// fresh one per frame showed up as pure allocation on getTree-sized replies.
+const textDecoder = new TextDecoder();
+const textEncoder = new TextEncoder();
+
 export class Ndp {
   private socket: import("bun").Socket;
-  private inbox = new Uint8Array(0);
+  // Inbound buffer: bytes between `inboxHead` (first unread) and `inboxTail`
+  // (one past the last received) are a partial frame stream. Reading advances
+  // the head rather than reallocating, so a multi-MB reply arriving in 64 KB
+  // chunks costs one copy per chunk instead of the n^2/2 the old
+  // `new Uint8Array(inbox + chunk)` per chunk cost.
+  private inbox = new Uint8Array(64 * 1024);
+  private inboxView = new DataView(this.inbox.buffer);
+  private inboxHead = 0;
+  private inboxTail = 0;
   private eventCb: ((e: EventMsg) => void) | null = null;
   private helloAckResolve: (() => void) | null = null;
   // Outbound backpressure (Bun sockets don't buffer writes themselves —
@@ -120,21 +133,55 @@ export class Ndp {
     }
   }
 
+  /// Makes room for `extra` more bytes after the tail: first by sliding the
+  /// unread bytes down over the consumed head, and only if that is not enough
+  /// by doubling into a larger buffer.
+  private reserveInbox(extra: number): void {
+    const pending = this.inboxTail - this.inboxHead;
+    if (this.inboxTail + extra <= this.inbox.length) return;
+    if (pending + extra <= this.inbox.length) {
+      this.compactInbox();
+      return;
+    }
+    let cap = this.inbox.length * 2;
+    while (cap < pending + extra) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.inbox.subarray(this.inboxHead, this.inboxTail));
+    this.inbox = next;
+    this.inboxView = new DataView(next.buffer);
+    this.inboxHead = 0;
+    this.inboxTail = pending;
+  }
+
+  private compactInbox(): void {
+    if (this.inboxHead === 0) return;
+    this.inbox.copyWithin(0, this.inboxHead, this.inboxTail);
+    this.inboxTail -= this.inboxHead;
+    this.inboxHead = 0;
+  }
+
   private onData(chunk: Uint8Array): void {
-    const merged = new Uint8Array(this.inbox.length + chunk.length);
-    merged.set(this.inbox, 0);
-    merged.set(chunk, this.inbox.length);
-    this.inbox = merged;
+    this.reserveInbox(chunk.length);
+    this.inbox.set(chunk, this.inboxTail);
+    this.inboxTail += chunk.length;
     // Drain complete frames; a chunk may contain zero, one, or many frames,
     // and the last frame may be split across the next read.
-    while (this.inbox.length >= 4) {
-      const view = new DataView(this.inbox.buffer, this.inbox.byteOffset, 4);
-      const len = view.getUint32(0, true);
-      if (this.inbox.length < 4 + len) break;
-      const json = new TextDecoder().decode(this.inbox.subarray(4, 4 + len));
-      this.inbox = this.inbox.subarray(4 + len);
+    while (this.inboxTail - this.inboxHead >= 4) {
+      const len = this.inboxView.getUint32(this.inboxHead, true);
+      if (this.inboxTail - this.inboxHead < 4 + len) break;
+      const start = this.inboxHead + 4;
+      const json = textDecoder.decode(this.inbox.subarray(start, start + len));
+      this.inboxHead = start + len;
       if (TRACE) console.error("<< " + json); // host->runtime = received here
       this.dispatch(JSON.parse(json) as HostToRuntimeMsg);
+    }
+    // Reclaim the consumed head only once it is worth the memmove, so a steady
+    // stream of small frames does not slide the remainder down on every chunk.
+    if (this.inboxHead === this.inboxTail) {
+      this.inboxHead = 0;
+      this.inboxTail = 0;
+    } else if (this.inboxHead * 2 >= this.inbox.length) {
+      this.compactInbox();
     }
   }
 
@@ -167,11 +214,11 @@ export class Ndp {
   }
 
   private send(obj: object): void {
-    const json = new TextEncoder().encode(JSON.stringify(obj));
+    const json = textEncoder.encode(JSON.stringify(obj));
     const frame = new Uint8Array(4 + json.length);
     new DataView(frame.buffer).setUint32(0, json.length, true);
     frame.set(json, 4);
-    if (TRACE) console.error(">> " + new TextDecoder().decode(json)); // runtime->host = sent here
+    if (TRACE) console.error(">> " + textDecoder.decode(json)); // runtime->host = sent here
     const wasEmpty = this.outbox.length === 0;
     this.outbox.push(frame);
     // If nothing was already queued, try to write immediately (the common

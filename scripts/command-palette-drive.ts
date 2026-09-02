@@ -1,87 +1,62 @@
 #!/usr/bin/env bun
-// scripts/command-palette-drive.ts — drives examples/command-palette over the
+// scripts/command-palette-drive.ts: drives examples/command-palette over the
 // automation socket. The palette is mounted beside other content and the app
 // re-renders on a background tick, so this proves the routed palette actions
 // (type/click/setValue string|index|bool -> queryChanged/activate/submit) reach
 // React reliably under the same churn that broke Return/click before the fix.
-import { AutomationClient } from "@nativedesktop/test";
+import { connectApp } from "@nativedesktop/test";
 
-interface TreeNode {
-  ref: number;
-  type: string;
-  testID: string | null;
-  text: string | null;
-  visible: boolean;
-  children: TreeNode[];
-}
-
-function find(node: TreeNode, testID: string): TreeNode | null {
-  if (node.testID === testID) return node;
-  for (const child of node.children) {
-    const found = find(child, testID);
-    if (found) return found;
-  }
-  return null;
-}
-
-const client = await AutomationClient.connect();
-
-const tree = (await client.call("getTree")) as { root: TreeNode };
-function mustFind(testID: string): TreeNode {
-  const n = find(tree.root, testID);
-  if (!n) throw new Error(`${testID} not found in tree`);
-  return n;
-}
+const app = await connectApp();
 
 async function waitText(s: string): Promise<void> {
-  const w = (await client.call("waitFor", { condition: { textContains: s }, timeoutMs: 4000 })) as { matched: boolean };
+  const w = await app.waitForText(s, { timeoutMs: 4000 });
   if (!w.matched) throw new Error(`waitFor ${JSON.stringify(s)} did not match`);
 }
 
-const paletteRef = mustFind("palette").ref;
-const openRef = mustFind("open-button").ref;
+const palette = app.getByTestId("palette");
 
-// 1. Open the palette (real button click), then confirm it presents — the
+// 1. Open the palette (real button click), then confirm it presents: the
 //    palette node reports visible only while presented.
-await client.call("click", { ref: openRef });
-const vis = (await client.call("waitFor", { condition: { refVisible: paletteRef }, timeoutMs: 4000 })) as { matched: boolean };
+await app.getByTestId("open-button").click();
+const paletteRef = await palette.ref();
+const vis = await app.waitFor({ refVisible: paletteRef }, { timeoutMs: 4000 });
 if (!vis.matched) throw new Error("palette did not present");
 
 // 2. type -> queryChanged (append into the real search entry).
-await client.call("type", { ref: paletteRef, text: "Dev" });
+await palette.type("Dev");
 await waitText("Query: Dev");
 
 // 3. click -> activate the highlighted row (the single "Developer" match): a
 //    directory, so the app drills in and keeps the palette open.
-await client.call("click", { ref: paletteRef });
+await palette.click();
 await waitText("Folder: /Users/kyan/Developer");
 
 // 4. setValue string -> replace the query text.
-await client.call("setValue", { ref: paletteRef, value: "NativeDesktop" });
+await palette.fill("NativeDesktop");
 await waitText("Query: NativeDesktop");
 
-// 4b. setValue OVER A NON-EMPTY query — the controlled round trip. Regression
+// 4b. setValue OVER A NON-EMPTY query: the controlled round trip. Regression
 //     guard: GtkEditable.setText is a delete plus an insert, and while the
 //     entry's change signal was GtkSearchEntry's debounced "search-changed",
 //     the delete's synchronous empty reached the app, came back as the `query`
 //     prop, and that programmatic set killed the pending timer carrying the
-//     real value — the field collapsed. Every other setValue here runs against
+//     real value: the field collapsed. Every other setValue here runs against
 //     an empty query (the app clears it on activation), which is exactly why
 //     the collapse went unnoticed.
-await client.call("setValue", { ref: paletteRef, value: "NativeDeskto" });
+await palette.fill("NativeDeskto");
 await waitText("Query: NativeDeskto");
-await client.call("setValue", { ref: paletteRef, value: "NativeDesktop" });
+await palette.fill("NativeDesktop");
 await waitText("Query: NativeDesktop");
 
 // 5. setValue integer -> activate the row at that index (drills again).
-await client.call("setValue", { ref: paletteRef, value: 0 });
+await palette.fill(0);
 await waitText("Folder: /Users/kyan/Developer/NativeDesktop");
 
 // 6. setValue string then bool -> submit the raw query as-is (no matching row).
-await client.call("setValue", { ref: paletteRef, value: "/tmp/typed-path" });
+await palette.fill("/tmp/typed-path");
 await waitText("Query: /tmp/typed-path");
-await client.call("setValue", { ref: paletteRef, value: true });
+await palette.fill(true);
 await waitText("Picked: /tmp/typed-path");
 
 console.log("CP_DRIVE_OK palette driven under churn: type/click/setValue string|index|submit");
-client.close();
+await app.close();

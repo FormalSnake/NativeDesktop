@@ -1568,6 +1568,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         return b
     } else if kind == "TextInput" {
         let field = NDTextField(string: propStr(props, "text") ?? "")
+        field.bezelStyle = .roundedBezel
         if let ph = propStr(props, "placeholder") { field.placeholderString = ph }
         if let e = propBool(props, "editable") { field.isEditable = e }
         return field
@@ -1682,6 +1683,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         return tabController.view
     } else if kind == "Grid" {
         let grid = NSGridView(numberOfColumns: 1, rows: 0)
+        grid.rowSpacing = ndStandardSpacing
+        grid.columnSpacing = ndStandardSpacing
         return grid
     } else if kind == "ListView" {
         return makeListView(props)  // NSScrollView+NSTableView, view-based recycling (M6b-D2)
@@ -1705,8 +1708,12 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let lw = propDouble(props, "listWidth"), lw > 0 {
             splitViewListFraction[ObjectIdentifier(controller.splitView)] = lw
         }
+        controller.explicitCollapsed = propBool(props, "collapsed") ?? false
         if propBool(props, "collapsed") ?? false {
             splitViewCollapsed[ObjectIdentifier(controller.splitView)] = true
+        }
+        if let bp = propInt(props, "breakpoint"), bp > 0 {
+            controller.breakpointPx = CGFloat(bp)
         }
         return controller.splitView
     } else if kind == "HeaderBar" {
@@ -1984,6 +1991,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let c = propBool(props, "collapsed"), let split = view as? NSSplitView,
            let controller = ndSplitViewController(for: split) {
             splitViewCollapsed[ObjectIdentifier(split)] = c
+            controller.explicitCollapsed = c
             if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
                 sidebarItem.isCollapsed = c
             }

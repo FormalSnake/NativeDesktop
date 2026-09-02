@@ -71,12 +71,38 @@ pub fn encodeFrame(gpa: std.mem.Allocator, value: anytype) ![]u8 {
     return encodeFrameOpts(gpa, value, .{});
 }
 
-/// Reads only the "type" field so the reader can route without a full union parse.
-pub fn peekType(gpa: std.mem.Allocator, json_bytes: []const u8) ![]const u8 {
+/// Longest `type` value the fast path accepts. Frame type names are short
+/// identifiers; a longer run of bytes is not one of ours.
+const type_name_max = 32;
+
+/// The frame's `type`, for routing, without parsing the frame.
+///
+/// Every frame the host receives is our own encoder's output
+/// (runtime/ndp.ts), which builds each frame from an object literal whose
+/// first member is `type`, so the value starts at a fixed offset and routing
+/// costs a prefix compare instead of a JSON parse of the whole (possibly
+/// multi-megabyte) frame. A frame shaped any other way falls back to the full
+/// parse, whose result is copied into `scratch` because the parse arena dies
+/// with this call. Null means the frame carries no routable `type`.
+pub fn peekType(gpa: std.mem.Allocator, json_bytes: []const u8, scratch: []u8) ?[]const u8 {
+    const prefix = "{\"type\":\"";
+    if (std.mem.startsWith(u8, json_bytes, prefix)) {
+        const rest = json_bytes[prefix.len..];
+        const head = rest[0..@min(rest.len, type_name_max + 1)];
+        if (std.mem.indexOfScalar(u8, head, '"')) |end| {
+            // A backslash would mean the raw bytes and the decoded string
+            // differ; no frame type contains one, so hand those to the parse
+            // rather than returning something subtly wrong.
+            if (std.mem.indexOfScalar(u8, head[0..end], '\\') == null) return rest[0..end];
+        }
+    }
     const TypeOnly = struct { type: []const u8 };
-    const parsed = try std.json.parseFromSlice(TypeOnly, gpa, json_bytes, .{ .ignore_unknown_fields = true });
+    const parsed = std.json.parseFromSlice(TypeOnly, gpa, json_bytes, .{ .ignore_unknown_fields = true }) catch return null;
     defer parsed.deinit();
-    return gpa.dupe(u8, parsed.value.type);
+    const name = parsed.value.type;
+    if (name.len > scratch.len) return null;
+    @memcpy(scratch[0..name.len], name);
+    return scratch[0..name.len];
 }
 
 test "encodeFrame writes u32 LE length prefix + json, golden bytes" {
@@ -103,13 +129,33 @@ test "encodeFrame writes u32 LE length prefix + json, golden bytes" {
 
 test "peekType routes commitBatch vs hello" {
     const gpa = std.testing.allocator;
-    const t1 = try peekType(gpa, "{\"type\":\"hello\",\"ndpVersion\":1}");
-    defer gpa.free(t1);
-    try std.testing.expectEqualStrings("hello", t1);
+    var scratch: [type_name_max]u8 = undefined;
+    try std.testing.expectEqualStrings("hello", peekType(gpa, "{\"type\":\"hello\",\"ndpVersion\":1}", &scratch).?);
+    try std.testing.expectEqualStrings("commitBatch", peekType(gpa, "{\"type\":\"commitBatch\",\"commitId\":3,\"generation\":0,\"ops\":[]}", &scratch).?);
+}
 
-    const t2 = try peekType(gpa, "{\"type\":\"commitBatch\",\"commitId\":3,\"generation\":0,\"ops\":[]}");
-    defer gpa.free(t2);
-    try std.testing.expectEqualStrings("commitBatch", t2);
+test "peekType falls back to the parse when type is not the first member" {
+    const gpa = std.testing.allocator;
+    var scratch: [type_name_max]u8 = undefined;
+    // Not our encoder's shape: the prefix compare misses and the full parse answers.
+    try std.testing.expectEqualStrings("ping", peekType(gpa, "{\"seq\":4,\"type\":\"ping\"}", &scratch).?);
+    // Whitespace before the member, and an escaped (but legal) type value.
+    try std.testing.expectEqualStrings("pong", peekType(gpa, "{ \"type\": \"pong\" }", &scratch).?);
+    try std.testing.expectEqualStrings("event", peekType(gpa, "{\"type\":\"even\\u0074\"}", &scratch).?);
+    // Nothing routable.
+    try std.testing.expect(peekType(gpa, "{\"commitId\":1}", &scratch) == null);
+    try std.testing.expect(peekType(gpa, "not json", &scratch) == null);
+    try std.testing.expect(peekType(gpa, "", &scratch) == null);
+}
+
+test "peekType fast path does not run past the type-name bound" {
+    const gpa = std.testing.allocator;
+    var scratch: [type_name_max]u8 = undefined;
+    // A frame whose `type` value is longer than any real frame name: the fast
+    // path stops looking, and the fallback parse also refuses to copy a name
+    // that cannot fit the caller's scratch buffer.
+    const long = "{\"type\":\"" ++ ("x" ** (type_name_max + 8)) ++ "\"}";
+    try std.testing.expect(peekType(gpa, long, &scratch) == null);
 }
 
 test "commitBatch with a create op decodes with field names verbatim" {
