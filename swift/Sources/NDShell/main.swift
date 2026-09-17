@@ -119,16 +119,16 @@ final class NDAppDelegate: NSObject, NSApplicationDelegate {
     private var cefClosed = false
 
     /// Chromium's browsers are closed in order BEFORE AppKit unwinds: the
-    /// inspector first, then the pages, each waited for. `.terminateLater`
-    /// exists so the callbacks that finish it can still arrive.
+    /// inspector first, then the pages, each waited for. The wait is a nested
+    /// run loop rather than `.terminateLater`, because CEF owns the outer loop
+    /// and never services the reply.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !cefClosed, NDCefRuntime.isActive else { return .terminateNow }
         cefClosed = true
         if !ndCefCloseBrowsersInOrder() {
             FileHandle.standardError.write("ND_WARN cef browsers did not all close before quit\n".data(using: .utf8)!)
         }
-        DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: true) }
-        return .terminateLater
+        return .terminateNow
     }
     #endif
 

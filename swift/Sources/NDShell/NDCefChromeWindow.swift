@@ -41,6 +41,11 @@ import Foundation
     private var reliftCount = 0
     private var reliftTimer: Timer?
     private var observers: [NSObjectProtocol] = []
+    /// The host window the observers are registered on. A `<webview>` moved
+    /// between windows (`moveNode`) keeps this object, so the notifications
+    /// have to follow it or the anchor stops tracking the new window's own
+    /// resize and move.
+    private weak var observedWindow: NSWindow?
     private var closed = false
 
     /// Every live instance. Chromium's shutdown walks a docked DevTools
@@ -265,6 +270,7 @@ import Foundation
     /// can have changed. The anchor carries no pixels, so this only has to be
     /// correct, not immediate.
     func hostGeometryChanged() {
+        if view?.window !== observedWindow { observeGeometry() }
         syncAnchor()
         liftWebContents()
     }
@@ -309,6 +315,9 @@ import Foundation
 
     private func observeGeometry() {
         let center = NotificationCenter.default
+        for observer in observers { center.removeObserver(observer) }
+        observers = []
+        observedWindow = view?.window
         let sync: @Sendable (Notification) -> Void = { [weak self] _ in
             MainActor.assumeIsolated { self?.syncAnchor() }
         }
@@ -368,19 +377,24 @@ import Foundation
         closeDevTools()
         if let anchor { anchor.parent?.removeChildWindow(anchor) }
         anchor = nil
-        // The window is NOT closed from here. Chrome style's window belongs to
-        // the browser: closing it while the browser is still alive walks a
-        // child view list Chromium is about to rebuild, and the call lands on a
-        // freed vtable. `NDCefWebView.releaseEngine` closes the browser right
-        // after this and the window goes with it.
-        if let cefWindow {
-            self.cefWindow = nil
-            nd_cef_ref_release(cefWindow)
-        }
+        // The Views window outlives this call on purpose: it belongs to the
+        // browser, and closing it while the browser is still alive walks a
+        // child view list Chromium is about to rebuild. `closeWindow` runs it
+        // once the browser has reported `on_before_close`; a window left open
+        // instead is one AppKit closes during app teardown, which reaches a
+        // Chromium observer on state that is already gone.
         if let browserView {
             self.browserView = nil
             nd_cef_ref_release(browserView)
         }
+    }
+
+    /// Closes the Views window, once the browser it belonged to has gone.
+    func closeWindow() {
+        guard let cefWindow else { return }
+        self.cefWindow = nil
+        cefWindow.pointee.close?(cefWindow)
+        nd_cef_ref_release(cefWindow)
     }
 
     /// Whether this view's inspector is still open, for the ordered quit.

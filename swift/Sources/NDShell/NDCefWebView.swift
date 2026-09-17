@@ -133,8 +133,11 @@ final class NDCefWebView: NSView {
     @MainActor func releaseEngine() {
         closeDevToolsForShutdown()
         chrome?.teardown()
-        chrome = nil
-        guard let browser else { return }
+        guard let browser else {
+            chrome?.closeWindow()
+            chrome = nil
+            return
+        }
         self.browser = nil
         if let browserHost = browser.pointee.get_host?(browser) {
             browserHost.pointee.close_browser?(browserHost, 1)
@@ -158,6 +161,7 @@ final class NDCefWebView: NSView {
     /// fixed delay: an inspector that has not reported its `on_before_close`
     /// is one CEF is still unwinding.
     @MainActor var stillInspecting: Bool {
+        if sideBrowsers > 0 { return true }
         guard let browserHost = browserHost() else { return false }
         defer { nd_cef_ref_release(browserHost) }
         return browserHost.pointee.has_dev_tools?(browserHost) != 0
@@ -242,8 +246,14 @@ final class NDCefWebView: NSView {
         }
     }
 
+    /// Browsers on this client that are not the page's: the docked inspector is
+    /// the only one, and the ordered quit waits for it to report its own
+    /// `on_before_close` before the page browser is closed.
+    private var sideBrowsers = 0
+
     fileprivate func adoptBrowser(_ created: UnsafeMutablePointer<cef_browser_t>) {
         guard browser == nil else {
+            sideBrowsers += 1
             nd_cef_ref_release(created)
             return
         }
@@ -272,10 +282,19 @@ final class NDCefWebView: NSView {
         }
     }
 
-    fileprivate func forgetBrowser() {
+    fileprivate func forgetBrowser(identifier: Int32) {
         guard let browser else { return }
+        let mine = browser.pointee.get_identifier?(browser) ?? -1
+        guard mine == identifier else {
+            sideBrowsers = max(0, sideBrowsers - 1)
+            return
+        }
         self.browser = nil
         nd_cef_ref_release(browser)
+        // The Views window is the browser's; it goes now that the browser has
+        // reported itself closed.
+        chrome?.closeWindow()
+        chrome = nil
     }
 
     /// Every view with a live browser, for the ordered quit below.
@@ -302,15 +321,19 @@ final class NDCefWebView: NSView {
     /// descendant. Chromium routes the keystrokes itself once told.
     override var acceptsFirstResponder: Bool { true }
 
-    /// The app's menu gets first refusal on every key equivalent that reaches
-    /// the web contents. `-[NSWindow sendEvent:]` walks the view hierarchy
-    /// before it reaches the main menu, and Chromium answers YES to cmd+W,
-    /// cmd+T and the rest of its own accelerators, so without this the app's
-    /// menu never sees them: the command handler refuses them on Chromium's
-    /// side and the keystroke is simply lost. Anything the app has no item for
-    /// (cmd+C, cmd+Z in a text field) falls through to Chromium unchanged.
+    /// The app's own menu gets first refusal on the key equivalents it
+    /// declared. `-[NSWindow sendEvent:]` walks the view hierarchy before it
+    /// reaches the main menu, and Chromium answers YES to cmd+W, cmd+T and the
+    /// rest of its own accelerators, so without this the app's menu never sees
+    /// them: the command handler refuses them on Chromium's side and the
+    /// keystroke is lost. Only DECLARED chords are taken; the default Edit
+    /// items forward to a responder chain the web contents is not part of, so
+    /// cmd+C, cmd+V, cmd+A and cmd+Z stay Chromium's.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
+        if ndMenuDeclaredChords.contains(ndEventChord(event)),
+           NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
+            return true
+        }
         return super.performKeyEquivalent(with: event)
     }
 
@@ -926,8 +949,9 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(browser)
         }
         lifeSpan.pointee.on_before_close = { selfPointer, browser in
+            let identifier = browser?.pointee.get_identifier?(browser) ?? -1
             nd_cef_ref_release(browser)
-            ndCefDeliver(selfPointer) { $0?.forgetBrowser() }
+            ndCefDeliver(selfPointer) { $0?.forgetBrowser(identifier: identifier) }
         }
     }
 
