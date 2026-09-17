@@ -234,8 +234,8 @@ function toplevelId(): string {
 /// names both windows as it creates them. Deriving them from the tree instead
 /// would have to guess which child of the toplevel is an embedding container,
 /// and that guess breaks the moment devtools docks a second window inside one.
-function embeddedViews(): Map<number, { container: string; cef: string }> {
-  const map = new Map<number, { container: string; cef: string }>();
+function embeddedViews(): Map<number, { container: string; cef: string; target: string }> {
+  const map = new Map<number, { container: string; cef: string; target: string }>();
   if (!hostLog) return map;
   let lines: string[] = [];
   try {
@@ -245,11 +245,22 @@ function embeddedViews(): Map<number, { container: string; cef: string }> {
   }
   for (const line of lines) {
     const e = line.match(/embed node=(\d+) parent=\S+ container=(0x[0-9a-f]+)/);
-    if (e) map.set(Number(e[1]), { container: e[2]!, cef: map.get(Number(e[1]))?.cef ?? "" });
+    if (e) {
+      const prev = map.get(Number(e[1]));
+      map.set(Number(e[1]), { container: e[2]!, cef: prev?.cef ?? "", target: prev?.target ?? "" });
+    }
     const c = line.match(/created node=(\d+) cefWindow=(0x[0-9a-f]+)/);
     if (c) {
       const prev = map.get(Number(c[1]));
       if (prev) prev.cef = c[2]!;
+    }
+    // The main frame's id IS the debugger target id, and this is the host
+    // saying which view it belongs to; matching a session by window size was a
+    // guess that put the drive on a parked tab.
+    const f = line.match(/mainFrame node=(\d+) frame=(\S+)/);
+    if (f) {
+      const prev = map.get(Number(f[1]));
+      if (prev) prev.target = f[2]!;
     }
   }
   for (const [node, v] of [...map]) if (!v.cef || v.cef === "0x0") map.delete(node);
@@ -258,7 +269,7 @@ function embeddedViews(): Map<number, { container: string; cef: string }> {
 
 /// The view the page is showing: its container is on screen rather than parked
 /// off to the side, and CEF's window is inside it.
-function shownView(): { node: number; container: Geom; cef: Geom; ids: { container: string; cef: string } } | null {
+function shownView(): { node: number; container: Geom; cef: Geom; ids: { container: string; cef: string; target: string } } | null {
   for (const [node, ids] of embeddedViews()) {
     const container = geom(ids.container);
     const cef = geom(ids.cef);
@@ -443,27 +454,19 @@ async function focusRouting(label: string): Promise<void> {
 /// The debugger session has to be on the view that is on screen. Switching
 /// tabs moves which of the app's browsers that is, and a session left on a
 /// parked one reports the park size and sees none of the input the legs send.
+let pageTargetId = "";
+
 async function resyncPage(): Promise<void> {
   const view = shownView();
-  if (!view) return;
-  const size = await metrics().catch(() => null);
-  if (size && Math.abs(Math.round(size.w * size.dpr) - view.container.w) <= 1) return;
-  for (const t of await targets(port)) {
-    if (t.type !== "page" || !t.url.startsWith(fixture)) continue;
-    const candidate = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
-    if (!candidate) continue;
-    const m = await candidate.eval<string>("JSON.stringify({w:innerWidth,dpr:devicePixelRatio})").catch(() => "");
-    if (m) {
-      const parsed = JSON.parse(m) as { w: number; dpr: number };
-      if (Math.abs(Math.round(parsed.w * parsed.dpr) - view.container.w) <= 1) {
-        page.close();
-        page = candidate;
-        await page.send("Runtime.enable");
-        return;
-      }
-    }
-    candidate.close();
-  }
+  if (!view || !view.ids.target || view.ids.target === pageTargetId) return;
+  const wanted = (await targets(port)).find((t) => t.id === view.ids.target && t.webSocketDebuggerUrl);
+  if (!wanted) return;
+  const candidate = await Session.open(wanted.webSocketDebuggerUrl!).catch(() => null);
+  if (!candidate) return;
+  page.close();
+  page = candidate;
+  pageTargetId = wanted.id;
+  await page.send("Runtime.enable");
 }
 
 /// Fails the leg if any top-level appeared that was not there before it. A
@@ -482,7 +485,9 @@ function noStray(name: string): void {
 
 const pageTarget = await waitForTarget(port, (t) => t.type === "page" && t.url === fixture, 120000);
 page = await Session.open(pageTarget.webSocketDebuggerUrl!);
+pageTargetId = pageTarget.id;
 await page.send("Runtime.enable");
+await resyncPage();
 
 const top = toplevelId();
 if (!top) { console.error("ND_APP_CHROME_FAIL no nd-hello toplevel on this display"); process.exit(1); }

@@ -20,6 +20,7 @@ const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
 const glib = @import("glib");
+const gio = @import("gio");
 const gobject = @import("gobject");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
@@ -729,6 +730,7 @@ const DialogHandlerObj = ref.Counted(c.cef_dialog_handler_t, *View);
 const ContextMenuObj = ref.Counted(c.cef_context_menu_handler_t, *View);
 const FocusObj = ref.Counted(c.cef_focus_handler_t, *View);
 const CommandObj = ref.Counted(c.cef_command_handler_t, *View);
+const KeyboardObj = ref.Counted(c.cef_keyboard_handler_t, *View);
 const RequestHandlerObj = ref.Counted(c.cef_request_handler_t, *View);
 
 const View = struct {
@@ -746,6 +748,7 @@ const View = struct {
     context_menu_handler: *ContextMenuObj,
     focus_handler: *FocusObj,
     command_handler: *CommandObj,
+    keyboard_handler: *KeyboardObj,
     request_handler: *RequestHandlerObj,
 
     /// The request context this view's browser was created with, or null for
@@ -964,6 +967,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const focus_handler = FocusObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const command_handler = CommandObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const keyboard_handler = KeyboardObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const request_handler = RequestHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
@@ -979,6 +983,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .context_menu_handler = context_menu_handler,
         .focus_handler = focus_handler,
         .command_handler = command_handler,
+        .keyboard_handler = keyboard_handler,
         .request_handler = request_handler,
     };
     view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
@@ -997,6 +1002,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_context_menu_handler = &clientGetContextMenuHandler;
     client.cef.get_focus_handler = &clientGetFocusHandler;
     client.cef.get_command_handler = &clientGetCommandHandler;
+    client.cef.get_keyboard_handler = &clientGetKeyboardHandler;
     client.cef.get_request_handler = &clientGetRequestHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
@@ -1024,6 +1030,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     focus_handler.cef.on_set_focus = &onSetFocus;
     focus_handler.cef.on_take_focus = &onTakeFocus;
     focus_handler.cef.on_got_focus = &onGotFocus;
+    keyboard_handler.cef.on_pre_key_event = &onPreKeyEvent;
     command_handler.cef.on_chrome_command = &onChromeCommand;
     command_handler.cef.is_chrome_app_menu_item_visible = &isChromeAppMenuItemVisible;
     command_handler.cef.is_chrome_page_action_icon_visible = &isChromePageActionIconVisible;
@@ -1399,6 +1406,7 @@ fn createBrowser(view: *View) void {
     view.container_parent = parent;
     view.cover = x11.createCover(parent, start_x, start_y, start_w, start_h);
     connectCoverEvents();
+    armAccelTimer();
     const mapped = gtk.Widget.getMapped(view.widget) != 0;
     if (mapped) {
         x11.show(container);
@@ -1741,6 +1749,10 @@ fn clientGetDownloadHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_dow
     return ClientObj.of(self).payload.download_handler.handOut();
 }
 
+fn clientGetKeyboardHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_keyboard_handler_t {
+    return ClientObj.of(self).payload.keyboard_handler.handOut();
+}
+
 fn clientGetCommandHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_command_handler_t {
     return ClientObj.of(self).payload.command_handler.handOut();
 }
@@ -1864,6 +1876,174 @@ fn executeChromeCommand(host: *c.cef_browser_host_t, command_id: c_int) void {
 fn runChromeCommandTask(self: [*c]c.cef_task_t) callconv(.c) void {
     const call = ChromeCommandObj.of(self).payload;
     if (call.host.execute_chrome_command) |exec| exec(call.host, call.command_id, c.CEF_WOD_CURRENT_TAB);
+}
+
+
+// ============================================================================
+// App accelerators
+// ============================================================================
+
+/// The accelerators the app has declared, as GTK's canonical names, with the
+/// action each one runs. Written on the GTK thread, read on the CEF UI thread
+/// by `onPreKeyEvent`, which has to answer synchronously whether the page gets
+/// the key.
+var accel_lock: SpinLock = .{};
+var accel_actions: std.StringHashMapUnmanaged([]u8) = .empty;
+var accel_timer: c_uint = 0;
+
+fn armAccelTimer() void {
+    if (accel_timer != 0) return;
+    accel_timer = glib.timeoutAdd(500, &onAccelTimer, null);
+}
+
+fn onAccelTimer(_: ?*anyopaque) callconv(.c) c_int {
+    refreshAccels();
+    return 1;
+}
+
+/// GTK thread. `list_action_descriptions` is every action that has an
+/// accelerator, which is exactly what a `<menuitem accelerator=…>` registers.
+fn refreshAccels() void {
+    const app = gio.Application.getDefault() orelse return;
+    const gtk_app = gobject.ext.cast(gtk.Application, app) orelse return;
+    const described = gtk.Application.listActionDescriptions(gtk_app);
+    defer glib.strfreev(@ptrCast(described));
+
+    var next: std.StringHashMapUnmanaged([]u8) = .empty;
+    var i: usize = 0;
+    while (@intFromPtr(described[i]) != 0) : (i += 1) {
+        const detailed = described[i];
+        const accels = gtk.Application.getAccelsForAction(gtk_app, detailed);
+        defer glib.strfreev(@ptrCast(accels));
+        var j: usize = 0;
+        while (@intFromPtr(accels[j]) != 0) : (j += 1) {
+            const canonical = canonicalAccel(std.mem.span(accels[j])) orelse continue;
+            const action = alloc.dupe(u8, std.mem.span(detailed)) catch {
+                alloc.free(canonical);
+                continue;
+            };
+            next.put(alloc, canonical, action) catch {
+                alloc.free(canonical);
+                alloc.free(action);
+            };
+        }
+    }
+
+    accel_lock.lock();
+    var old = accel_actions;
+    accel_actions = next;
+    accel_lock.unlock();
+    var it = old.iterator();
+    while (it.next()) |entry| {
+        alloc.free(entry.key_ptr.*);
+        alloc.free(entry.value_ptr.*);
+    }
+    old.deinit(alloc);
+}
+
+/// GTK's own spelling for an accelerator, so `<Primary>t` as the app writes it
+/// and the `<Control>t` this engine builds from a key event compare equal.
+fn canonicalAccel(spec: []const u8) ?[]u8 {
+    const owned = alloc.dupeZ(u8, spec) catch return null;
+    defer alloc.free(owned);
+    var key: c_uint = 0;
+    var mods: gdk.ModifierType = .{};
+    if (gtk.acceleratorParse(owned, &key, &mods) == 0) return null;
+    const name = gtk.acceleratorName(key, mods);
+    defer glib.free(name);
+    return alloc.dupe(u8, std.mem.span(name)) catch null;
+}
+
+/// The accelerator a key event spells, or null for anything that is not one.
+/// Only what an app declares in a menu is worth building: a letter or digit, or
+/// a function key, with at least one of control or alt held.
+fn accelOf(event: *const c.cef_key_event_t) ?[]u8 {
+    const ctrl = (event.modifiers & c.EVENTFLAG_CONTROL_DOWN) != 0;
+    const alt = (event.modifiers & c.EVENTFLAG_ALT_DOWN) != 0;
+    const shift = (event.modifiers & c.EVENTFLAG_SHIFT_DOWN) != 0;
+    var buf: [64]u8 = undefined;
+    var used: usize = 0;
+    const append = struct {
+        fn f(dst: []u8, at: *usize, text: []const u8) bool {
+            if (at.* + text.len > dst.len) return false;
+            @memcpy(dst[at.*..][0..text.len], text);
+            at.* += text.len;
+            return true;
+        }
+    }.f;
+    const vk = event.windows_key_code;
+    const is_fkey = vk >= 0x70 and vk <= 0x7B; // VK_F1..VK_F12
+    if (!ctrl and !alt and !is_fkey) return null;
+    if (ctrl and !append(&buf, &used, "<Control>")) return null;
+    if (alt and !append(&buf, &used, "<Alt>")) return null;
+    if (shift and !append(&buf, &used, "<Shift>")) return null;
+    if (is_fkey) {
+        var num: [4]u8 = undefined;
+        const text = std.fmt.bufPrint(&num, "F{d}", .{vk - 0x6F}) catch return null;
+        if (!append(&buf, &used, text)) return null;
+    } else if ((vk >= 'A' and vk <= 'Z') or (vk >= '0' and vk <= '9')) {
+        const ch = [_]u8{std.ascii.toLower(@intCast(vk))};
+        if (!append(&buf, &used, &ch)) return null;
+    } else return null;
+    return canonicalAccel(buf[0..used]);
+}
+
+const AccelTask = struct { action: []u8 };
+const AccelObj = ref.Counted(c.cef_task_t, AccelTask);
+
+/// CEF UI thread. The page keeps every key but the ones the app declared as
+/// menu accelerators, which is the rule the AppKit host already follows: a
+/// browser whose page has the keyboard still answers ctrl+t.
+fn onPreKeyEvent(
+    _: [*c]c.cef_keyboard_handler_t,
+    browser: [*c]c.cef_browser_t,
+    event: [*c]const c.cef_key_event_t,
+    _: c.cef_event_handle_t,
+    _: [*c]c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    if (event == null) return 0;
+    if (event.*.type != c.KEYEVENT_RAWKEYDOWN) return 0;
+    const accel = accelOf(event) orelse return 0;
+    defer alloc.free(accel);
+    accel_lock.lock();
+    const action = if (accel_actions.get(accel)) |a| alloc.dupe(u8, a) catch null else null;
+    accel_lock.unlock();
+    const owned = action orelse return 0;
+    const task = AccelObj.create(.{ .action = owned }) orelse {
+        alloc.free(owned);
+        return 0;
+    };
+    task.cef.execute = &runAccelTask;
+    postAccel(task);
+    return 1;
+}
+
+fn postAccel(task: *AccelObj) void {
+    // The activation itself belongs on the GTK thread; `post` is this engine's
+    // only hop onto it, and it carries a view, so the task rides the idle
+    // queue through glib instead.
+    _ = glib.idleAdd(&runAccelIdle, task);
+}
+
+fn runAccelTask(_: [*c]c.cef_task_t) callconv(.c) void {}
+
+fn runAccelIdle(data: ?*anyopaque) callconv(.c) c_int {
+    const task: *AccelObj = @ptrCast(@alignCast(data.?));
+    defer {
+        alloc.free(task.payload.action);
+        task.drop();
+    }
+    const app = gio.Application.getDefault() orelse return 0;
+    // Every accelerator this engine matches came from a menu item, whose
+    // action is "app.nd-menu-<node>" with no target, so the prefix is all
+    // there is to strip.
+    const detailed = task.payload.action;
+    const name = if (std.mem.startsWith(u8, detailed, "app.")) detailed[4..] else detailed;
+    const owned = alloc.dupeZ(u8, name) catch return 0;
+    defer alloc.free(owned);
+    gio.ActionGroup.activateAction(app.as(gio.ActionGroup), owned, null);
+    return 0;
 }
 
 fn onChromeCommand(
