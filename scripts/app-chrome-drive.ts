@@ -21,18 +21,61 @@ const shots = process.env.ND_ACCEPT_SHOTS ?? "/tmp";
 const hostLog = process.env.ND_ACCEPT_HOST_LOG ?? "";
 const scale = Number(process.env.ND_ACCEPT_SCALE ?? "1");
 
+const hostPid = Number(process.env.ND_ACCEPT_HOST_PID ?? "0");
+const legBudgetMs = Number(process.env.ND_ACCEPT_LEG_BUDGET_MS ?? "180000");
+
 const failures: string[] = [];
 const skipped: string[] = [];
+
+let lastProgress = Date.now();
+let lastLeg = "startup";
 
 function check(name: string, ok: boolean, detail: string): void {
   console.log(`  ${name}: ${ok ? "ok" : "FAIL"} (${detail})`);
   if (!ok) failures.push(`${name}: ${detail}`);
+  lastLeg = name;
+  lastProgress = Date.now();
 }
 
 function skip(name: string, why: string): void {
   console.log(`  ${name}: skip (${why})`);
   skipped.push(`${name}: ${why}`);
+  lastLeg = name;
+  lastProgress = Date.now();
 }
+
+function hostLogTail(lines = 25): string {
+  if (!hostLog) return "";
+  try {
+    return readFileSync(hostLog, "utf8").split("\n").slice(-lines).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function die(why: string): never {
+  console.error(`ND_APP_CHROME_FAIL(${rig}) ${why}`);
+  console.error(`  last leg to report: ${lastLeg}`);
+  const tail = hostLogTail();
+  if (tail) console.error(`  host log tail:\n${tail}`);
+  process.exit(1);
+}
+
+/// Nothing in a leg is allowed to wait forever: a browser that dies takes the
+/// debugger socket and the automation socket with it, and a driver parked on
+/// either is a gate that never finishes instead of one that reports a failure.
+setInterval(() => {
+  if (hostPid > 0) {
+    try {
+      process.kill(hostPid, 0);
+    } catch {
+      die(`the host process ${hostPid} is gone`);
+    }
+  }
+  if (Date.now() - lastProgress > legBudgetMs) {
+    die(`no leg reported for ${Math.round((Date.now() - lastProgress) / 1000)}s`);
+  }
+}, 5000);
 
 function sh(...argv: string[]): string {
   const out = Bun.spawnSync(argv, { env: process.env as Record<string, string> });
@@ -45,30 +88,26 @@ function sh(...argv: string[]): string {
 
 const swaymsg = (...args: string[]): string => sh("swaymsg", "-t", "command", "--", ...args);
 
-/// Absolute pointer position. XWarpPointer is refused under XWayland (the
-/// compositor owns the cursor), so the wlroots rig moves the compositor's
-/// cursor through a virtual pointer; buttons and keys go through XTEST on both,
-/// which XWayland does implement.
+/// Absolute pointer position, through XTEST on both rigs. XWayland implements
+/// XTestFakeMotionEvent against its own virtual pointer, so GTK sees an
+/// ordinary crossing sequence; wlrctl's zwlr_virtual_pointer_v1 device is
+/// created and destroyed per invocation, and the leave that its removal
+/// produces takes GTK's crossing state with it, which loses every click on a
+/// native widget.
 function pointerAt(): { x: number; y: number } {
   const m = sh("xdotool", "getmouselocation").match(/x:(-?\d+)\s+y:(-?\d+)/);
   return { x: Number(m?.[1] ?? NaN), y: Number(m?.[2] ?? NaN) };
 }
 
 function pointerTo(x: number, y: number): void {
-  if (rig === "x11") {
+  for (let attempt = 0; attempt < 5; attempt++) {
     sh("xdotool", "mousemove", "--sync", String(x), String(y));
-    return;
-  }
-  // wlrctl only moves relatively, so the cursor is pinned to the top-left
-  // corner first; the compositor clamps it to the output. Each invocation is a
-  // virtual pointer of its own that the compositor may not have bound yet when
-  // the process exits, so the move is checked and retried rather than assumed.
-  for (let attempt = 0; attempt < 6; attempt++) {
-    sh("wlrctl", "pointer", "move", "-10000", "-10000");
-    sh("wlrctl", "pointer", "move", String(x), String(y));
     const at = pointerAt();
     if (Math.abs(at.x - x) <= 1 && Math.abs(at.y - y) <= 1) return;
-    Bun.sleepSync(120);
+    // The wlroots seat has no pointer at all until something binds one, and
+    // XTEST motion has nothing to drive until then.
+    if (rig === "wlr") sh("wlrctl", "pointer", "move", "0", "0");
+    Bun.sleepSync(150);
   }
 }
 
@@ -309,23 +348,11 @@ async function widgetToScreen(testId: string): Promise<{ x: number; y: number } 
   return { x: Math.round(origin.x + (box.x + box.width / 2) * scale), y: Math.round(origin.y + (box.y + box.height / 2) * scale) };
 }
 
-/// Puts the keyboard on the app's own chrome rather than the page: the pointer
-/// goes there, because X delivers a key press to the window it is inside, and
-/// the widget takes focus.
-///
-/// The click that would do the second half is real on X11. On the wlroots rig
-/// it cannot be: the only absolute pointer there is a
-/// zwlr_virtual_pointer_v1 device created per move, and the leave GTK sees when
-/// that device goes takes its crossing state with it, so a synthesized button
-/// press lands on no widget. What the legs using this assert is where the keys
-/// go afterwards, and that stays real on both.
+/// Puts the keyboard on the app's own chrome rather than the page, the way a
+/// user does: the pointer goes to the address field and clicks it.
 async function focusNativeChrome(at: { x: number; y: number }): Promise<void> {
   pointerTo(at.x, at.y);
-  if (rig === "x11") {
-    click(1);
-    return;
-  }
-  await app.getByTestId("omnibox").focus();
+  click(1);
 }
 
 /// Polls until the browser's own window matches the container it sits in and
@@ -349,6 +376,94 @@ async function settled(timeoutMs = 4000): Promise<{ ok: boolean; detail: string 
     await Bun.sleep(100);
   }
   return { ok: false, detail };
+}
+
+
+/// The two directions of keyboard routing, asserted with the pointer parked on
+/// the OTHER half of the window each time: where a key press goes has to
+/// follow the focused widget, and a user who moved the mouse over the page
+/// while typing a URL must still be typing a URL.
+async function focusRouting(label: string): Promise<void> {
+  const field = await widgetToScreen("omnibox");
+  const pageAt = await pageToScreen("probe");
+  if (!field) {
+    skip(`${label}.toField`, "no omnibox bounding box");
+    skip(`${label}.toPage`, "no omnibox bounding box");
+    return;
+  }
+
+  // Each direction starts from a known state: these legs run several times over
+  // one session, and a caret left mid-string turns an exact comparison into
+  // noise.
+  await page.eval("document.getElementById('probe').value=''; document.getElementById('probe').blur(); 'reset'");
+  await app.getByTestId("omnibox").fill("nd").catch(() => {});
+
+  // Address field focused, pointer over the page.
+  pointerTo(field.x, field.y);
+  click(1);
+  await Bun.sleep(700);
+  key("End");
+  const fieldBefore = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageBefore = (await metrics()).probe;
+  pointerTo(pageAt.x, pageAt.y);
+  await Bun.sleep(300);
+  typeText("URLBAR");
+  await Bun.sleep(900);
+  const fieldAfter = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageAfterField = (await metrics()).probe;
+  check(
+    `${label}.toField`,
+    fieldAfter === `${fieldBefore}URLBAR` && pageAfterField === pageBefore,
+    `field ${JSON.stringify(fieldBefore)} -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfterField)}, pointer over the page`,
+  );
+  key("Escape");
+  await Bun.sleep(300);
+
+  // Page focused, pointer over the address field.
+  await page.eval("document.getElementById('probe').value=''; 'reset'");
+  pointerTo(pageAt.x, pageAt.y);
+  click(1);
+  await Bun.sleep(900);
+  key("End");
+  const fieldBefore2 = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageBefore2 = (await metrics()).probe;
+  pointerTo(field.x, field.y);
+  await Bun.sleep(300);
+  typeText("INPAGE");
+  await Bun.sleep(900);
+  const fieldAfter2 = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageAfter2 = (await metrics()).probe;
+  check(
+    `${label}.toPage`,
+    pageAfter2 === `${pageBefore2}INPAGE` && fieldAfter2 === fieldBefore2,
+    `page ${JSON.stringify(pageBefore2)} -> ${JSON.stringify(pageAfter2)}, field ${JSON.stringify(fieldBefore2)} -> ${JSON.stringify(fieldAfter2)}, pointer over the address field`,
+  );
+}
+
+/// The debugger session has to be on the view that is on screen. Switching
+/// tabs moves which of the app's browsers that is, and a session left on a
+/// parked one reports the park size and sees none of the input the legs send.
+async function resyncPage(): Promise<void> {
+  const view = shownView();
+  if (!view) return;
+  const size = await metrics().catch(() => null);
+  if (size && Math.abs(Math.round(size.w * size.dpr) - view.container.w) <= 1) return;
+  for (const t of await targets(port)) {
+    if (t.type !== "page" || !t.url.startsWith(fixture)) continue;
+    const candidate = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+    if (!candidate) continue;
+    const m = await candidate.eval<string>("JSON.stringify({w:innerWidth,dpr:devicePixelRatio})").catch(() => "");
+    if (m) {
+      const parsed = JSON.parse(m) as { w: number; dpr: number };
+      if (Math.abs(Math.round(parsed.w * parsed.dpr) - view.container.w) <= 1) {
+        page.close();
+        page = candidate;
+        await page.send("Runtime.enable");
+        return;
+      }
+    }
+    candidate.close();
+  }
 }
 
 /// Fails the leg if any top-level appeared that was not there before it. A
@@ -494,6 +609,8 @@ if (hasApp) {
   resizeToplevel(top, 1280, 800);
   await Bun.sleep(700);
   await settled();
+  await resyncPage();
+  await focusRouting("focusRoutingAfterTabSwitch");
 } else {
   skip("twoTabsSwitch", "the app under test has one view");
   skip("tabResizedWhileHidden", "the app under test has one view");
@@ -503,10 +620,12 @@ if (hasApp) {
 {
   // Keyboard into the page: a real click to put focus in the field, real keys
   // after it. Nothing here goes through the automation socket.
+  await page.eval("document.getElementById('probe').value=''; '1'");
   const at = await pageToScreen("probe");
   pointerTo(at.x, at.y);
   click(1);
   await Bun.sleep(1200);
+  key("End");
   const clicked = await metrics();
   typeText("chrome-accept");
   await Bun.sleep(1000);
@@ -545,6 +664,42 @@ if (hasApp) {
   skip("addressFieldTyping", "the app under test has no omnibox");
 }
 
+if (hasApp) {
+  await focusRouting("focusRouting");
+  noStray("focusRouting");
+} else {
+  skip("focusRouting.toField", "the app under test has no omnibox");
+  skip("focusRouting.toPage", "the app under test has no omnibox");
+}
+
+if (hasApp) {
+  // An accelerator the app owns, pressed while the page holds the keyboard.
+  const pageAt = await pageToScreen("probe");
+  pointerTo(pageAt.x, pageAt.y);
+  click(1);
+  await Bun.sleep(800);
+  const before = await app.tree();
+  const countTabs = (tree: unknown): number => {
+    let n = 0;
+    const walk = (x: { testID?: string | null; children?: unknown[] }): void => {
+      if (typeof x.testID === "string" && /^tabs-menu-\d+$/.test(x.testID)) n++;
+      for (const child of (x.children ?? []) as never[]) walk(child);
+    };
+    walk((tree as { root: never }).root);
+    return n;
+  };
+  const wasCompact = countTabs(before);
+  key("ctrl+t");
+  await Bun.sleep(2000);
+  const after = await app.tree();
+  const opened = JSON.stringify(after).length !== JSON.stringify(before).length;
+  check("appShortcutWhilePageFocused", opened, `tree changed=${opened} (compact rows before ${wasCompact})`);
+  noStray("appShortcut");
+} else {
+  skip("appShortcutWhilePageFocused", "the app under test has no accelerators");
+}
+
+await resyncPage();
 {
   const at = await pageToScreen("tall");
   pointerTo(at.x, at.y);
@@ -557,6 +712,32 @@ if (hasApp) {
   noStray("wheelScroll");
 }
 
+if (hasApp) {
+  // Tab past the page's last focusable element: the browser reports it is
+  // giving focus up, and the app's own chrome has to be able to take it.
+  const at = await pageToScreen("probe");
+  pointerTo(at.x, at.y);
+  click(1);
+  await Bun.sleep(800);
+  for (let i = 0; i < 8; i++) {
+    key("Tab");
+    await Bun.sleep(250);
+  }
+  await Bun.sleep(700);
+  const focusedNow = await app.tree();
+  let focusedType = "none";
+  const walk = (n: { type?: string; focused?: boolean; children?: unknown[] }): void => {
+    if (n.focused) focusedType = `${n.type}`;
+    for (const child of (n.children ?? []) as never[]) walk(child);
+  };
+  walk((focusedNow as { root: never }).root);
+  check("tabTraversalLeavesThePage", focusedType !== "none" && focusedType !== "WebView", `GTK focus widget is ${focusedType}`);
+  noStray("tabTraversal");
+} else {
+  skip("tabTraversalLeavesThePage", "the app under test has one widget tree");
+}
+
+await resyncPage();
 {
   const r = await rect("sel");
   const view = shownView()!;
@@ -576,6 +757,7 @@ if (hasApp) {
   noStray("textSelectionDrag");
 }
 
+await resyncPage();
 {
   // A <select> popup is an override-redirect Chromium window, the same shape
   // as the context menu, the tooltip and the autofill bubble: if one of them
@@ -606,7 +788,14 @@ if (hasApp) {
   noStray("selectDropdown");
 }
 
+await resyncPage();
 {
+  // Chromium shows a tooltip only for a browser it believes has the keyboard,
+  // so the page is clicked back into focus first.
+  const focusFirst = await pageToScreen("title");
+  pointerTo(focusFirst.x, focusFirst.y);
+  click(1);
+  await Bun.sleep(600);
   const at = await pageToScreen("tip");
   pointerTo(at.x - 20, at.y);
   await Bun.sleep(400);
@@ -631,6 +820,7 @@ if (hasApp) {
   noStray("tooltip");
 }
 
+await resyncPage();
 {
   const at = await pageToScreen("title");
   pointerTo(at.x, at.y);
@@ -656,6 +846,7 @@ if (hasApp) {
   noStray("contextMenu");
 }
 
+await resyncPage();
 {
   const focusFirst = await pageToScreen("title");
   pointerTo(focusFirst.x, focusFirst.y);
@@ -714,6 +905,7 @@ if (hasApp) {
   const s2 = await settled(6000);
   check("secondWindowCloses", s2.ok && toplevelId() === top, `back to ${s2.detail}`);
   noStray("secondWindow");
+  await focusRouting("focusRoutingAfterSecondWindow");
   if (rig === "wlr") {
     resizeToplevel(top, 1280, 800);
     await Bun.sleep(900);
@@ -768,6 +960,7 @@ if (hasApp) {
   pointerTo(back.x, back.y);
   click(1);
   await Bun.sleep(800);
+  if (hasApp) await focusRouting("focusRoutingWithDevTools");
   key("F12");
   await Bun.sleep(4000);
   const leftOver = (await targets(port)).filter((t) => t.url.startsWith("devtools://"));
@@ -781,12 +974,6 @@ if (hasApp) {
 
 capture(`${shots}/final.png`);
 
-// The shell reads this: a browser that still has an inspector open does not
-// come back from SIGTERM (docs/webview.md), so the clean-quit assertion only
-// means something on a run that got the inspector shut again.
-if ((await targets(port)).some((t) => t.url.startsWith("devtools://"))) {
-  console.log("ND_APP_CHROME_DEVTOOLS_OPEN");
-}
 
 if (skipped.length > 0) console.log(`  ${skipped.length} leg(s) skipped`);
 if (failures.length > 0) {

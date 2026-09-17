@@ -21,6 +21,10 @@ FRAMEWORK="$PWD"
 ln -sfn "$ND_CEF_DIST"/Resources/* "$ND_CEF_DIST/Release/"
 export ND_CEF_ROOT="$ND_CEF_DIST/Release"
 [ -x "$FRAMEWORK/zig-out/bin/nd-hello" ] || { echo "FAIL: build the host first (zig build)"; exit 1; }
+# @nativedesktop/test reaches the schema types through @nativedesktop/react's
+# "./rpc" export, which points at built output; a checkout that has never run
+# the package build cannot even import the drive.
+[ -f "$FRAMEWORK/packages/react/dist/generated/rpc.js" ] || bun run --cwd "$FRAMEWORK/packages/react" build >/dev/null
 
 if [ -n "${ND_CEF_LD_LIBRARY_PATH:-}" ]; then
   export LD_LIBRARY_PATH="$ND_CEF_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -33,6 +37,10 @@ if [ -z "$APP_SCRIPT" ]; then
 fi
 [ -f "$APP_DIR/$APP_SCRIPT" ] || { echo "FAIL: no $APP_SCRIPT under $APP_DIR"; exit 1; }
 
+# Which legs to run. The default drive is the browser-app acceptance set; the
+# portal one drives examples/multiwindow instead, for a tab moved between
+# windows.
+DRIVE="${ND_ACCEPT_DRIVE:-scripts/app-chrome-drive.ts}"
 RIGS="${ND_ACCEPT_RIGS:-x11 wlr}"
 SCALE="${ND_ACCEPT_SCALE:-1}"
 DISPLAY_NUM="${ND_ACCEPT_DISPLAY:-:99}"
@@ -93,6 +101,7 @@ launch_host() {
     export ND_WEBVIEW_ENGINE=chromium
     export ND_CEF_STYLE=chrome
     export ND_SCRIPT="$APP_SCRIPT"
+    export ND_DEMO_URL="$FIXTURE"
     export ND_WEBVIEW_TRACE=1
     # A distinct id per rig: both rigs run at once against one session bus, and
     # the second launch would otherwise activate the first app and exit.
@@ -171,22 +180,25 @@ EOF
   local sock
   sock="$(grep -m1 "ND_AUTOMATION_LISTENING" "$log" | sed 's/.*path=//')"
 
+  # Bounded twice over: the drive has a per-leg watchdog of its own, and this
+  # is the backstop for a drive that cannot even reach it.
   ND_ACCEPT_RIG="$rig" ND_AUTOMATION_SOCKET="$sock" ND_CDP_PORT="$CDP_PORT" \
     ND_ACCEPT_FIXTURE="$FIXTURE" ND_ACCEPT_SHOTS="$SHOTS/$rig" ND_ACCEPT_SCALE="$SCALE" \
-    ND_ACCEPT_HOST_LOG="$log" \
-    bun "$FRAMEWORK/scripts/app-chrome-drive.ts" 2>&1 | tee "$WORK/$rig/drive.log" || true
+    ND_ACCEPT_HOST_LOG="$log" ND_ACCEPT_HOST_PID="$HOST_PID" \
+    timeout --signal=KILL "${ND_ACCEPT_DRIVE_TIMEOUT:-1500}" \
+    bun "$FRAMEWORK/$DRIVE" 2>&1 | tee "$WORK/$rig/drive.log" || true
 
-  # Quit last, and asserted, except on a run that could not shut the inspector
-  # again: a Chrome-style browser that has had devtools open does not come back
-  # from SIGTERM at all (docs/webview.md), which is a leg of its own rather
-  # than something the quit assertion should absorb.
-  if grep -q "ND_APP_CHROME_DEVTOOLS_OPEN" "$WORK/$rig/drive.log"; then
-    echo "  quit($rig): skip (the inspector was still open; see the devToolsCloses leg)"
-    kill -KILL "$HOST_PID" 2>/dev/null || true
-    wait "$HOST_PID" 2>/dev/null || true
-    grep -q "ND_APP_CHROME_LEGS_OK($rig)" "$WORK/$rig/drive.log" || { echo "ND_APP_CHROME_FAIL($rig)"; return 1; }
-    return 0
+  if ! kill -0 "$HOST_PID" 2>/dev/null; then
+    echo "  hostAlive($rig): FAIL (the host was gone before the run ended)"
+    tail -30 "$log"
+    echo "ND_APP_CHROME_FAIL($rig)"
+    return 1
   fi
+  echo "  hostAlive($rig): ok"
+
+  # Quit last, and asserted whatever the run did: the ordered shutdown closes
+  # the inspector before the browser it inspects, so a host that has had
+  # devtools open still exits 0.
   kill -TERM "$HOST_PID"
   # Bounded: a Chrome-style browser that still has devtools open does not come
   # back from SIGTERM at all, and an unbounded wait turns that into a gate that

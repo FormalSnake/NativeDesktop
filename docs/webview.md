@@ -354,9 +354,12 @@ it, Chrome's window and toolbar do not.
   and closes before it is presented. Chrome's own accelerators for a new window,
   tab, incognito window, view-source, print, history, downloads and the
   extensions page are refused through `cef_command_handler_t::on_chrome_command`.
-- DevTools is docked inside the view: `openDevTools`, F12 and ctrl+shift+I open
-  Chrome's inspector as a second browser in the right-hand half of the same
-  embedding window, and toggle it off again. Alloy still uses CEF's separate
+- DevTools is docked inside the view: `openDevTools`, `closeDevTools`, F12 and
+  ctrl+shift+I open Chrome's inspector as a second browser in the right-hand
+  half of the same embedding window, and toggle it off again. The shortcut
+  arrives as `IDC_DEV_TOOLS_TOGGLE`, which Chrome would answer with a
+  DevToolsWindow of its own, so `cef_command_handler_t::on_chrome_command`
+  takes it and closes the docked browser instead. Alloy still uses CEF's separate
   devtools window (parenting that into GTK crashes, CEF #3165). Quitting closes
   the devtools browser and waits for its `on_before_close` before closing the
   browser it inspects; left to CEF's own order the inspected browser goes first,
@@ -433,25 +436,34 @@ calls. `ND_APP_DIR` points it at an app checkout; with none it falls back to
 
 Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
 
-- A `<select>` element opens no dropdown on a plain X server with a stacking
-  window manager: the click reaches the page and the element takes DOM focus,
-  but no window appears anywhere in the tree. The same build opens it normally
-  under XWayland, and Alloy behaves the same way on both, so this is the X
-  server the app is on rather than the style.
-- Which half of the window the keyboard reaches follows the POINTER, not the
-  focused widget. X11 delivers a key press to the window the pointer is inside
-  when that window is below the focused one, and the browser has one of its own
-  inside the app's, so a key pressed with the pointer over the page reaches the
-  browser and one pressed over the app's chrome reaches GTK. The engine tells
-  the browser whether the keyboard is its, so a page whose view is not the
-  focused widget ignores what it receives rather than stealing it; what is left
-  is that keys pressed over the page while the address bar has focus are
-  dropped instead of reaching the address bar.
-- F12 and ctrl+shift+I open the docked inspector and cannot close it again.
-  They arrive as `IDC_DEV_TOOLS_TOGGLE`, which only ever opens, because the
-  inspector on this path is a browser of ours in the view's dock rather than
-  the DevToolsWindow Chrome would toggle; `CefBrowserHost::CloseDevTools` on
-  the page browser takes the page browser away instead of the inspector.
+- A `<select>` element opens no dropdown on a plain X server with software
+  compositing. Chromium does create the popup: with `--vmodule` on, the GPU
+  process reports `XGetWindowAttributes failed` for it in
+  `x11_software_bitmap_presenter.cc` and a `CreateGC` DrawableError against the
+  same id, and the popup is torn down before it is mapped. Nothing above it is
+  involved: the window manager, a compositing manager (xcompmgr changes
+  nothing) and Alloy all behave the same, and the same build opens the dropdown
+  normally under XWayland.
+- Under XWayland, a key pressed while the pointer is over the page reaches the
+  browser whatever the app's focused widget is. Xwayland pins X input focus to
+  the toplevel, and X delivers a key press to the window the pointer is inside
+  when that window is below the focused one, so the browser's own child takes
+  it; the engine has told the browser the keyboard is not its, so the key is
+  dropped rather than typed into the page. On a plain X server the window
+  manager's focus proxy takes the key out of the app's window tree and the
+  focused widget gets it, which is why the same leg passes there. Moving X
+  focus to a proxy of the engine's own does not help: GTK4 reads the keyboard
+  through XI2, which delivers to the focus window without propagating to the
+  ancestor GDK selected on, so with focus on any window but the toplevel
+  surface the window stays key and every key press is dropped (measured with a
+  1x1 child of the toplevel and with the one GDK makes for itself).
+
+`scripts/cef-portal-drive.ts`, the gate's other drive
+(`ND_ACCEPT_DRIVE=scripts/cef-portal-drive.ts ND_APP_SCRIPT=examples/multiwindow/main.tsx`),
+covers a tab dragged into another window: `moveNode` relocates the live widget,
+the engine reparents the X child the browser renders into under the window that
+now shows it, and the drive asserts the debugger target, the JS state, the
+scroll offset and the URL are the ones from before the move.
 
 Listing extensions, installing them, and their actions:
 

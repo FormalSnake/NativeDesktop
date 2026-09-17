@@ -44,9 +44,20 @@ export class Session {
   private next = 1;
   private pending = new Map<number, { resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void }>();
   private handlers = new Map<string, Handler[]>();
+  private gone: Error | null = null;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
+    // A browser that dies takes the socket with it, and a call left pending on
+    // a dead socket is a driver that never finishes rather than one that
+    // reports what happened.
+    const drop = (why: string) => {
+      this.gone ??= new Error(why);
+      for (const call of this.pending.values()) call.reject(this.gone);
+      this.pending.clear();
+    };
+    ws.addEventListener("close", () => drop("the debugger socket closed"), { once: true });
+    ws.addEventListener("error", () => drop("the debugger socket failed"), { once: true });
     ws.addEventListener("message", (event) => {
       const msg = JSON.parse(String((event as MessageEvent).data)) as {
         id?: number;
@@ -80,6 +91,7 @@ export class Session {
   }
 
   send(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (this.gone) return Promise.reject(this.gone);
     const id = this.next++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });

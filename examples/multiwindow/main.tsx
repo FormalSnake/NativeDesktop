@@ -13,6 +13,8 @@ import type { NdNodeRef } from "@nativedesktop/react";
 // Set ND_DEMO_AUTOMOVE=1 to have the tab ping-pong A→B→A on its own (used by the
 // runtime proof); otherwise use the per-window "Bring tab here" button.
 const AUTO = typeof process !== "undefined" && process.env?.ND_DEMO_AUTOMOVE === "1";
+// The acceptance gate points this at its own fixture; a demo run keeps the site.
+const URL = (typeof process !== "undefined" && process.env?.ND_DEMO_URL) || "https://formalsnake.dev/";
 
 function App(): React.ReactNode {
   const tab = useRef<NdNodeRef<"webview">>(null);
@@ -43,19 +45,19 @@ function App(): React.ReactNode {
       {/* The tab, pinned in the pool. Its React position never changes, so it is
           never unmounted when it moves between windows. */}
       {createPortal(
-        <webview ref={tab} url="https://formalsnake.dev/" testID="tab" style={{ hexpand: true, vexpand: true }} />,
+        <webview ref={tab} url={URL} testID="tab" style={{ hexpand: true, vexpand: true }} />,
       )}
 
-      <window title="Window A" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotA} orientation="vertical" spacing={8}>
-          <button label="Bring tab here" onClick={() => show(slotA.current, "A")} />
+      <window title="Window A" testID="window-a" defaultWidth={760} defaultHeight={560}>
+        <box ref={slotA} testID="slot-a" orientation="vertical" spacing={8}>
+          <button testID="bring-a" label="Bring tab here" onClick={() => show(slotA.current, "A")} />
           {host !== "A" && <label text="(tab is in Window B)" />}
         </box>
       </window>
 
-      <window title="Window B" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotB} orientation="vertical" spacing={8}>
-          <button label="Bring tab here" onClick={() => show(slotB.current, "B")} />
+      <window title="Window B" testID="window-b" defaultWidth={760} defaultHeight={560}>
+        <box ref={slotB} testID="slot-b" orientation="vertical" spacing={8}>
+          <button testID="bring-b" label="Bring tab here" onClick={() => show(slotB.current, "B")} />
           {host !== "B" && <label text="(tab is in Window A)" />}
         </box>
       </window>
