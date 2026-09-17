@@ -556,6 +556,18 @@ var chrome_style: ?bool = null;
 /// with CEF's extra client callbacks. `webview.cef.style` in the app config
 /// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
 /// because the command line and the browser style have to agree.
+var cover_enabled: ?bool = null;
+
+/// The input cover is on by default; ND_CEF_NO_COVER=1 takes it out for a
+/// comparison run against a build that never had one.
+fn coverEnabled() bool {
+    if (cover_enabled) |v| return v;
+    const raw = std.c.getenv("ND_CEF_NO_COVER");
+    const v = raw == null or std.mem.eql(u8, std.mem.span(raw.?), "0");
+    cover_enabled = v;
+    return v;
+}
+
 pub fn chromeStyle() bool {
     if (chrome_style) |v| return v;
     const raw = std.c.getenv("ND_CEF_STYLE");
@@ -1169,15 +1181,23 @@ fn syncBrowserFocus(view: *View) void {
     if (host.set_focus) |set| set(host, @intFromBool(active and mine));
 }
 
+/// Created on the first hide of the keyboard rather than with the browser, and
+/// never restacked: it is made after the container, so it is already above it,
+/// and a raise is a ConfigureNotify that GTK answers with a layout pass, which
+/// is another raise. Mapping and unmapping is all this needs.
 fn showCover(view: *View, want: bool) void {
-    if (view.cover == 0 or view.cover_shown == want) return;
-    view.cover_shown = want;
-    if (want) {
-        x11.show(view.cover);
-        x11.raise(view.cover);
-    } else {
-        x11.hide(view.cover);
+    if (view.cover_shown == want) return;
+    if (want and view.cover == 0) {
+        if (!coverEnabled()) return;
+        const parent = x11.toplevelXid(view.widget);
+        if (parent == 0) return;
+        view.cover = x11.createCover(parent, view.bounds.x, view.bounds.y, view.bounds.w, view.bounds.h);
+        if (view.cover == 0) return;
+        connectCoverEvents();
     }
+    if (view.cover == 0) return;
+    view.cover_shown = want;
+    if (want) x11.show(view.cover) else x11.hide(view.cover);
 }
 
 /// GDK hands every X event on its connection to this before it looks at it
@@ -1404,8 +1424,6 @@ fn createBrowser(view: *View) void {
     }
     view.container = container;
     view.container_parent = parent;
-    view.cover = x11.createCover(parent, start_x, start_y, start_w, start_h);
-    connectCoverEvents();
     armAccelTimer();
     const mapped = gtk.Widget.getMapped(view.widget) != 0;
     if (mapped) {
@@ -1512,10 +1530,10 @@ fn syncBounds(view: *View) void {
         view.container_parent = parent;
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
-    if (view.cover != 0) {
-        x11.moveResize(view.cover, next.x, next.y, next.w, next.h);
-        if (view.cover_shown) x11.raise(view.cover);
-    }
+    // Moved, never restacked: a raise per layout pass is a ConfigureNotify per
+    // layout pass, and the X traffic that produced starved the server. The
+    // cover is stacked once when it is shown.
+    if (view.cover != 0) x11.moveResize(view.cover, next.x, next.y, next.w, next.h);
     layoutContents(view, next.w, next.h);
 }
 
@@ -1917,7 +1935,7 @@ fn refreshAccels() void {
         defer glib.strfreev(@ptrCast(accels));
         var j: usize = 0;
         while (@intFromPtr(accels[j]) != 0) : (j += 1) {
-            const canonical = canonicalAccel(std.mem.span(accels[j])) orelse continue;
+            const canonical = declaredAccel(std.mem.span(accels[j])) orelse continue;
             const action = alloc.dupe(u8, std.mem.span(detailed)) catch {
                 alloc.free(canonical);
                 continue;
@@ -1941,17 +1959,35 @@ fn refreshAccels() void {
     old.deinit(alloc);
 }
 
-/// GTK's own spelling for an accelerator, so `<Primary>t` as the app writes it
-/// and the `<Control>t` this engine builds from a key event compare equal.
-fn canonicalAccel(spec: []const u8) ?[]u8 {
+/// One spelling both sides can build: "ctrl+shift+t", "f12". The GTK side
+/// converts what the app declared; `onPreKeyEvent` builds the same string from
+/// a key event without touching GTK at all, because it runs on the CEF UI
+/// thread and GTK belongs to the other one.
+fn plainAccel(ctrl: bool, alt: bool, shift: bool, key: []const u8) ?[]u8 {
+    var buf: [48]u8 = undefined;
+    var used: usize = 0;
+    inline for (.{ .{ ctrl, "ctrl+" }, .{ alt, "alt+" }, .{ shift, "shift+" } }) |pair| {
+        if (pair[0]) {
+            if (used + pair[1].len > buf.len) return null;
+            @memcpy(buf[used..][0..pair[1].len], pair[1]);
+            used += pair[1].len;
+        }
+    }
+    if (used + key.len > buf.len) return null;
+    for (key, 0..) |ch, i| buf[used + i] = std.ascii.toLower(ch);
+    used += key.len;
+    return alloc.dupe(u8, buf[0..used]) catch null;
+}
+
+/// GTK thread only: parsing an accelerator and naming a keyval are GTK's.
+fn declaredAccel(spec: []const u8) ?[]u8 {
     const owned = alloc.dupeZ(u8, spec) catch return null;
     defer alloc.free(owned);
     var key: c_uint = 0;
     var mods: gdk.ModifierType = .{};
     if (gtk.acceleratorParse(owned, &key, &mods) == 0) return null;
-    const name = gtk.acceleratorName(key, mods);
-    defer glib.free(name);
-    return alloc.dupe(u8, std.mem.span(name)) catch null;
+    const name = gdk.keyvalName(gdk.keyvalToLower(key)) orelse return null;
+    return plainAccel(mods.control_mask, mods.alt_mask, mods.shift_mask, std.mem.span(name));
 }
 
 /// The accelerator a key event spells, or null for anything that is not one.
@@ -1961,31 +1997,19 @@ fn accelOf(event: *const c.cef_key_event_t) ?[]u8 {
     const ctrl = (event.modifiers & c.EVENTFLAG_CONTROL_DOWN) != 0;
     const alt = (event.modifiers & c.EVENTFLAG_ALT_DOWN) != 0;
     const shift = (event.modifiers & c.EVENTFLAG_SHIFT_DOWN) != 0;
-    var buf: [64]u8 = undefined;
-    var used: usize = 0;
-    const append = struct {
-        fn f(dst: []u8, at: *usize, text: []const u8) bool {
-            if (at.* + text.len > dst.len) return false;
-            @memcpy(dst[at.*..][0..text.len], text);
-            at.* += text.len;
-            return true;
-        }
-    }.f;
     const vk = event.windows_key_code;
     const is_fkey = vk >= 0x70 and vk <= 0x7B; // VK_F1..VK_F12
     if (!ctrl and !alt and !is_fkey) return null;
-    if (ctrl and !append(&buf, &used, "<Control>")) return null;
-    if (alt and !append(&buf, &used, "<Alt>")) return null;
-    if (shift and !append(&buf, &used, "<Shift>")) return null;
     if (is_fkey) {
         var num: [4]u8 = undefined;
-        const text = std.fmt.bufPrint(&num, "F{d}", .{vk - 0x6F}) catch return null;
-        if (!append(&buf, &used, text)) return null;
-    } else if ((vk >= 'A' and vk <= 'Z') or (vk >= '0' and vk <= '9')) {
-        const ch = [_]u8{std.ascii.toLower(@intCast(vk))};
-        if (!append(&buf, &used, &ch)) return null;
-    } else return null;
-    return canonicalAccel(buf[0..used]);
+        const text = std.fmt.bufPrint(&num, "f{d}", .{vk - 0x6F}) catch return null;
+        return plainAccel(ctrl, alt, shift, text);
+    }
+    if ((vk >= 'A' and vk <= 'Z') or (vk >= '0' and vk <= '9')) {
+        const ch = [_]u8{@intCast(vk)};
+        return plainAccel(ctrl, alt, shift, &ch);
+    }
+    return null;
 }
 
 const AccelTask = struct { action: []u8 };

@@ -796,7 +796,8 @@ await resyncPage();
 await resyncPage();
 {
   // Chromium shows a tooltip only for a browser it believes has the keyboard,
-  // so the page is clicked back into focus first.
+  // so the page is clicked back into focus first, and the pointer dwells on the
+  // element with small real moves rather than one jump onto it.
   const focusFirst = await pageToScreen("title");
   pointerTo(focusFirst.x, focusFirst.y);
   click(1);
@@ -804,21 +805,25 @@ await resyncPage();
   const at = await pageToScreen("tip");
   pointerTo(at.x - 20, at.y);
   await Bun.sleep(400);
-  pointerTo(at.x, at.y);
-  await Bun.sleep(400);
-  for (const [dx, dy] of [[4, 2], [-3, 1], [2, -1]] as Array<[number, number]>) {
+  let tip: ({ id: string } & Geom) | undefined;
+  const deadline = Date.now() + 6000;
+  let nudge = 0;
+  while (Date.now() < deadline) {
+    const offsets: Array<[number, number]> = [[0, 0], [3, 1], [-2, 1], [1, -1]];
+    const [dx, dy] = offsets[nudge % offsets.length]!;
+    nudge += 1;
     pointerTo(at.x + dx, at.y + dy);
-    await Bun.sleep(700);
+    await Bun.sleep(600);
+    tip = overrideRedirect(40, 12).find((p) => p.y > at.y - 120 && p.y < at.y + 160 && p.h < 120);
+    if (tip) break;
   }
-  await Bun.sleep(4000);
-  const tip = overrideRedirect(40, 12).find((p) => p.y > at.y - 120 && p.y < at.y + 160 && p.h < 120);
   capture(`${shots}/tooltip.png`);
   check(
     "tooltip",
     !!tip,
     tip
       ? `${tip.id} ${tip.w}x${tip.h}+${tip.x}+${tip.y}`
-      : `pointer at ${at.x},${at.y}; override-redirect windows: ${overrideRedirect(1, 1).map((p) => `${p.w}x${p.h}+${p.x}+${p.y}`).join(", ") || "none"}`,
+      : `pointer at ${at.x},${at.y} for ${Math.round((Date.now() - (deadline - 6000)) / 1000)}s; override-redirect windows: ${overrideRedirect(1, 1).map((p) => `${p.w}x${p.h}+${p.x}+${p.y}`).join(", ") || "none"}`,
   );
   pointerTo(at.x, at.y + 300);
   await Bun.sleep(600);
