@@ -39,6 +39,12 @@ const SetWindowAttributes = extern struct {
     cursor: c_ulong = 0,
 };
 
+const CW_EVENT_MASK: c_ulong = 1 << 11;
+const CW_DONT_PROPAGATE: c_ulong = 1 << 12;
+const INPUT_ONLY: c_uint = 2;
+const BUTTON_PRESS_MASK: c_long = 1 << 2;
+const BUTTON_RELEASE_MASK: c_long = 1 << 3;
+
 const CW_BACK_PIXEL: c_ulong = 1 << 1;
 const CW_BORDER_PIXEL: c_ulong = 1 << 3;
 const CW_COLORMAP: c_ulong = 1 << 13;
@@ -53,6 +59,8 @@ const FnDefaultColormap = *const fn (*Display, c_int) callconv(.c) c_ulong;
 const FnWindowOnly = *const fn (*Display, Window) callconv(.c) c_int;
 const FnMoveResize = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint) callconv(.c) c_int;
 const FnReparent = *const fn (*Display, Window, Window, c_int, c_int) callconv(.c) c_int;
+const FnRaise = *const fn (*Display, Window) callconv(.c) c_int;
+const FnFakeButton = *const fn (*Display, c_uint, c_int, c_ulong) callconv(.c) c_int;
 const FnResize = *const fn (*Display, Window, c_uint, c_uint) callconv(.c) c_int;
 const FnFlush = *const fn (*Display) callconv(.c) c_int;
 const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
@@ -82,6 +90,7 @@ const Api = struct {
     destroy_window: FnWindowOnly,
     move_resize_window: FnMoveResize,
     reparent_window: FnReparent,
+    raise_window: FnRaise,
     resize_window: FnResize,
     flush: FnFlush,
     sync: FnSync,
@@ -136,6 +145,7 @@ fn loadApi() ?*const Api {
         .destroy_window = x.lookup(FnWindowOnly, "XDestroyWindow") orelse return missing(&x, &g, "XDestroyWindow"),
         .move_resize_window = x.lookup(FnMoveResize, "XMoveResizeWindow") orelse return missing(&x, &g, "XMoveResizeWindow"),
         .reparent_window = x.lookup(FnReparent, "XReparentWindow") orelse return missing(&x, &g, "XReparentWindow"),
+        .raise_window = x.lookup(FnRaise, "XRaiseWindow") orelse return missing(&x, &g, "XRaiseWindow"),
         .resize_window = x.lookup(FnResize, "XResizeWindow") orelse return missing(&x, &g, "XResizeWindow"),
         .flush = x.lookup(FnFlush, "XFlush") orelse return missing(&x, &g, "XFlush"),
         .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
@@ -282,6 +292,82 @@ pub fn resize(window: Window, w: c_uint, h: c_uint) void {
     const c = conn() orelse return;
     c.push();
     _ = c.api.resize_window(c.x, window, @max(w, 1), @max(h, 1));
+    _ = c.api.flush(c.x);
+    c.pop();
+}
+
+/// The input cover: an InputOnly child of the toplevel, the size of a view's
+/// embedding container and stacked above it, mapped while the keyboard belongs
+/// to the app's own widgets.
+///
+/// X delivers a key press to the window the pointer is inside when that window
+/// is below the focused one, so with the pointer over the page the browser's
+/// own child takes every key whatever GTK's focus widget is; under XWayland
+/// there is no focus to move it off, because Xwayland pins input focus to the
+/// toplevel. A window that selects no key events and propagates them takes the
+/// browser out of that path: the press walks up to the toplevel, where GDK
+/// selected, and the focused widget gets it. Button and scroll presses are
+/// selected so the cover can hand the view back the keyboard and replay the
+/// click into the page.
+pub fn createCover(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Window {
+    const c = conn() orelse return 0;
+    if (parent == 0) return 0;
+    var attrs: SetWindowAttributes = .{
+        .event_mask = BUTTON_PRESS_MASK | BUTTON_RELEASE_MASK,
+        .do_not_propagate_mask = 0,
+    };
+    c.push();
+    const cover = c.api.create_window(
+        c.x,
+        parent,
+        x,
+        y,
+        @max(w, 1),
+        @max(h, 1),
+        0,
+        0,
+        INPUT_ONLY,
+        null,
+        CW_EVENT_MASK | CW_DONT_PROPAGATE,
+        &attrs,
+    );
+    c.pop();
+    return cover;
+}
+
+pub fn raise(window: Window) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.raise_window(c.x, window);
+    c.pop();
+}
+
+var xtst: ?std.DynLib = null;
+var fake_button: ?FnFakeButton = null;
+var xtst_attempted = false;
+
+/// Replays a button the cover swallowed into whatever is under the pointer now
+/// that the cover is gone. XTEST rather than XSendEvent: Chromium ignores a
+/// synthetic event, and the cover's own press is already spent.
+pub fn replayButton(button: c_uint, press: bool) void {
+    const c = conn() orelse return;
+    if (!xtst_attempted) {
+        xtst_attempted = true;
+        var lib = std.DynLib.open("libXtst.so.6") catch std.DynLib.open("libXtst.so") catch {
+            std.debug.print("ND_WARN CEF: libXtst not found; a click on an unfocused view only focuses it\n", .{});
+            return;
+        };
+        fake_button = lib.lookup(FnFakeButton, "XTestFakeButtonEvent");
+        if (fake_button == null) {
+            lib.close();
+            return;
+        }
+        xtst = lib;
+    }
+    const fake = fake_button orelse return;
+    c.push();
+    _ = fake(c.x, button, @intFromBool(press), 0);
     _ = c.api.flush(c.x);
     c.pop();
 }
