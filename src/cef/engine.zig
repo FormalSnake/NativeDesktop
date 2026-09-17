@@ -1445,7 +1445,21 @@ fn layoutContents(view: *View, w: c_uint, h: c_uint) void {
         plan.dock_w = dock_w;
         plan.inner = view.devtools_window.load(.acquire);
     }
-    applyLayoutOnUi(plan);
+    if (onGtkThread()) {
+        applyLayout(plan);
+        return;
+    }
+    // A browser created or closed on the CEF UI thread lays its view out from
+    // there; the requests belong on the GTK one.
+    post(.{ .view = view, .name = "", .relayout = true });
+}
+
+/// True on the thread that owns GTK and GDK's connection. CEF's UI thread is
+/// its own (`multi_threaded_message_loop`), and the IO and renderer threads
+/// never reach any of this.
+fn onGtkThread() bool {
+    const api = loader.loaded() orelse return true;
+    return api.currently_on(c.TID_UI) == 0;
 }
 
 /// Chrome's own right-dock default, clamped so a narrow view keeps a page.
@@ -1472,38 +1486,20 @@ const Layout = struct {
     h: c_uint = 0,
 };
 
-const LayoutObj = ref.Counted(c.cef_task_t, Layout);
-
-/// cef_get_xdisplay answers null anywhere but the CEF UI thread (see
-/// cef_types_linux.h: the display is shared with Chromium and is only to be
-/// touched there), and this engine gives CEF a UI thread of its own, so every
-/// request issued from a GTK layout pass went nowhere and the browser stayed
-/// at the size it was created with.
-fn applyLayoutOnUi(plan: Layout) void {
-    if (shutting_down) return;
-    const api = loader.loaded() orelse return;
-    if (api.currently_on(c.TID_UI) != 0) {
-        applyLayout(plan);
-        return;
-    }
-    const task = LayoutObj.create(plan) orelse return;
-    task.cef.execute = &runLayoutTask;
-    if (api.post_task(c.TID_UI, task.handOut()) == 0) task.drop();
-    task.drop();
-}
-
-fn runLayoutTask(self: [*c]c.cef_task_t) callconv(.c) void {
-    applyLayout(LayoutObj.of(self).payload);
-}
-
+/// GDK's connection, from the GTK thread, for every one of these windows,
+/// including the two Chromium owns: XSetInputFocus and ConfigureWindow are not
+/// restricted to a window's owner, and the alternative is worse. CEF's own
+/// connection is only reachable through `cef_get_xdisplay`, which answers null
+/// anywhere but the CEF UI thread, and issuing from there means pushing GDK's
+/// error trap off the GTK thread. That trap list is per display and not thread
+/// safe: doing it took the host down inside
+/// `delete_outdated_error_traps` from `gdk_x11_display_error_trap_push`.
 fn applyLayout(plan: Layout) void {
     if (shutting_down) return;
-    const api = loader.loaded() orelse return;
-    const dpy = api.get_xdisplay() orelse return;
-    if (plan.page != 0) x11.resizeOn(@ptrCast(dpy), @intCast(plan.page), plan.page_w, plan.h);
+    if (plan.page != 0) x11.resize(@intCast(plan.page), plan.page_w, plan.h);
     if (plan.dock == 0) return;
-    x11.moveResizeOn(@ptrCast(dpy), @intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
-    if (plan.inner != 0) x11.resizeOn(@ptrCast(dpy), @intCast(plan.inner), plan.dock_w, plan.h);
+    x11.moveResize(@intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
+    if (plan.inner != 0) x11.resize(@intCast(plan.inner), plan.dock_w, plan.h);
 }
 
 // ============================================================================
@@ -2162,6 +2158,7 @@ const Emission = struct {
     /// back; the GTK-side hop returns X input focus to the toplevel.
     take_focus: bool = false,
     grab_focus: bool = false,
+    relayout: bool = false,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -2254,6 +2251,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
             alloc.free(p);
             view.pending_url = null;
         }
+        return 0;
+    }
+
+    if (box.relayout) {
+        layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
         return 0;
     }
 

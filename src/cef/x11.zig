@@ -274,47 +274,30 @@ pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Win
     return child;
 }
 
+/// Resizes a window on GDK's connection. Used for the two windows Chromium
+/// owns as well as our own: see `applyLayout` for why they are not issued on
+/// CEF's connection.
+pub fn resize(window: Window, w: c_uint, h: c_uint) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.resize_window(c.x, window, @max(w, 1), @max(h, 1));
+    _ = c.api.flush(c.x);
+    c.pop();
+}
+
 pub fn moveResize(window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void {
     if (window == 0) return;
     const c = conn() orelse return;
     c.push();
     _ = c.api.move_resize_window(c.x, window, x, y, @max(w, 1), @max(h, 1));
-    // Flushed because the caller's next request is CEF resizing its inner
-    // window on ITS OWN connection (resizeOn flushes immediately). Left in
-    // GDK's buffer, the outer clip window's resize can reach the server after
-    // the inner one, and the server holds mismatched geometry until GTK's
-    // next flush: visible as tearing or a stuck size during a live resize.
+    // Flushed because the caller's next request is the inner window's own
+    // resize. Left in GDK's buffer, the outer clip window's resize can reach
+    // the server after the inner one, and the server holds mismatched geometry
+    // until GTK's next flush: visible as tearing or a stuck size during a live
+    // resize.
     _ = c.api.flush(c.x);
     c.pop();
-}
-
-/// CEF's own window is a child of the container and does not follow it: the
-/// Linux platform delegate sizes it once at creation from window_info.bounds.
-/// `dpy` is CEF's connection, not GDK's: the window belongs to CEF, and a
-/// BadWindow raised on GDK's connection takes the whole host down.
-pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
-    if (window == 0) return;
-    const a = loadApi() orelse return;
-    // Trapped on GDK's display even though the request goes out on CEF's:
-    // Xlib's error handler is per PROCESS, so GDK's fatal one sees errors from
-    // either connection.
-    const gdk_display = gdk.Display.getDefault();
-    if (gdk_display) |g| a.error_trap_push(g);
-    _ = a.resize_window(dpy, window, @max(w, 1), @max(h, 1));
-    _ = a.flush(dpy);
-    if (gdk_display) |g| a.error_trap_pop_ignored(g);
-}
-
-/// Same connection rule as `resizeOn`, for a window this engine created but
-/// lays out from the CEF UI thread (the docked devtools container).
-pub fn moveResizeOn(dpy: *Display, window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void {
-    if (window == 0) return;
-    const a = loadApi() orelse return;
-    const gdk_display = gdk.Display.getDefault();
-    if (gdk_display) |g| a.error_trap_push(g);
-    _ = a.move_resize_window(dpy, window, x, y, @max(w, 1), @max(h, 1));
-    _ = a.flush(dpy);
-    if (gdk_display) |g| a.error_trap_pop_ignored(g);
 }
 
 /// Xlib RevertToParent: focus falls back to the parent window if the target
