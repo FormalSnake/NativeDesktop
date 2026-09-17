@@ -734,6 +734,7 @@ final class NDCefHandlerBox {
     fileprivate(set) var dialog: UnsafeMutablePointer<cef_dialog_handler_t>?
     fileprivate(set) var contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>?
     fileprivate(set) var focus: UnsafeMutablePointer<cef_focus_handler_t>?
+    fileprivate(set) var keyboard: UnsafeMutablePointer<cef_keyboard_handler_t>?
     fileprivate(set) var request: UnsafeMutablePointer<cef_request_handler_t>?
     fileprivate(set) var resourceRequest: UnsafeMutablePointer<cef_resource_request_handler_t>?
     fileprivate(set) var devToolsObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
@@ -757,6 +758,7 @@ final class NDCefHandlerBox {
         dialog = ndCefAlloc(cef_dialog_handler_t.self, self)
         contextMenu = ndCefAlloc(cef_context_menu_handler_t.self, self)
         focus = ndCefAlloc(cef_focus_handler_t.self, self)
+        keyboard = ndCefAlloc(cef_keyboard_handler_t.self, self)
         request = ndCefAlloc(cef_request_handler_t.self, self)
         resourceRequest = ndCefAlloc(cef_resource_request_handler_t.self, self)
         devToolsObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
@@ -771,6 +773,7 @@ final class NDCefHandlerBox {
         wireDialog()
         wireContextMenu()
         wireFocus()
+        wireKeyboard()
         wireRequest()
         wireDevTools()
         wireClient()
@@ -791,6 +794,7 @@ final class NDCefHandlerBox {
             dialog.map(UnsafeMutableRawPointer.init),
             contextMenu.map(UnsafeMutableRawPointer.init),
             focus.map(UnsafeMutableRawPointer.init),
+            keyboard.map(UnsafeMutableRawPointer.init),
             request.map(UnsafeMutableRawPointer.init),
             resourceRequest.map(UnsafeMutableRawPointer.init),
             devToolsObserver.map(UnsafeMutableRawPointer.init),
@@ -811,6 +815,7 @@ final class NDCefHandlerBox {
         dialog = nil
         contextMenu = nil
         focus = nil
+        keyboard = nil
         request = nil
         resourceRequest = nil
         devToolsObserver = nil
@@ -856,6 +861,9 @@ final class NDCefHandlerBox {
         }
         client.pointee.get_focus_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.focus)
+        }
+        client.pointee.get_keyboard_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.keyboard)
         }
         client.pointee.get_request_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.request)
@@ -1156,6 +1164,26 @@ final class NDCefHandlerBox {
         }
     }
 
+    /// The Edit menu's own chords reach the page here, not through
+    /// `performKeyEquivalent`. Chromium's RenderWidgetHostViewCocoa is the first
+    /// responder and answers YES to every command chord while it is, so the main
+    /// menu never sees one; this is the callback CEF makes once the renderer and
+    /// the page's own JavaScript have declined it, which is the same order
+    /// Chrome's CommandDispatcher redispatches in. The menu item then runs
+    /// `copy:`/`paste:`/`selectAll:`/`undo:` against that same first responder.
+    private func wireKeyboard() {
+        guard let keyboard else { return }
+        keyboard.pointee.on_key_event = { _, browser, event, osEvent in
+            nd_cef_ref_release(browser)
+            guard let event, event.pointee.type == KEYEVENT_RAWKEYDOWN, let osEvent,
+                  Thread.isMainThread else { return 0 }
+            // The NSEvent crosses the isolation boundary as a bit pattern, the
+            // same way every other pointer in this file does.
+            let token = UInt(bitPattern: osEvent)
+            return MainActor.assumeIsolated { ndCefMenuKeyEquivalent(token) }
+        }
+    }
+
     /// A registered scheme is served from here rather than from its handler
     /// factory. Chromium owns some scheme names outright (chrome-extension is
     /// the one that matters: its own loader answers ERR_BLOCKED_BY_CLIENT for
@@ -1229,6 +1257,14 @@ final class NDCefHandlerBox {
             }
         }
     }
+}
+
+/// Runs one key-down NSEvent against the app's main menu.
+@MainActor private func ndCefMenuKeyEquivalent(_ token: UInt) -> Int32 {
+    guard let raw = UnsafeMutableRawPointer(bitPattern: token) else { return 0 }
+    let event = Unmanaged<NSEvent>.fromOpaque(raw).takeUnretainedValue()
+    guard event.type == .keyDown, event.modifierFlags.contains(.command) else { return 0 }
+    return NSApp.mainMenu?.performKeyEquivalent(with: event) == true ? 1 : 0
 }
 
 /// Hands a handler struct to CEF with the reference the caller is owed.

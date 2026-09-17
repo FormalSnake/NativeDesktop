@@ -716,6 +716,117 @@ const legs: Leg[] = [
         (v) => v === "copyme",
         10000,
       );
+
+      await main.keyboard.press("Meta+Shift+z");
+      await until(
+        "cmd+shift+Z redoes inside the page",
+        () => pageEval(app, page, "document.getElementById('text').value"),
+        (v) => v === "pasted-in",
+        10000,
+      );
+
+      await main.keyboard.press("Meta+a");
+      pasteboard("nd-not-cut-yet");
+      await main.keyboard.press("Meta+x");
+      await until(
+        "cmd+X takes the page's selection to the pasteboard",
+        async () => pasteboard(),
+        (v) => v === "pasted-in",
+        10000,
+      );
+      await until(
+        "cmd+X empties the page's field",
+        () => pageEval(app, page, "document.getElementById('text').value"),
+        (v) => v === "",
+        10000,
+      );
+    },
+  },
+  {
+    name: "editingKeysInAContentEditable",
+    run: async () => {
+      // A contenteditable is a different editing path in Blink from a text
+      // input, and the Edit menu has to reach it the same way.
+      const page = await activePage();
+      await pageEval(app, page, "scrollTo(0,0); document.getElementById('edit').textContent=''");
+      const region = JSON.parse(
+        (await pageEval(app, page, "JSON.stringify(document.getElementById('edit').getBoundingClientRect())")) ?? "{}",
+      );
+      const box = await viewBox(page);
+      await main.mouse.click(box.x + region.x + 8, box.y + region.y + region.height / 2);
+      await until(
+        "the contenteditable takes focus",
+        () => pageEval(app, page, "String(document.activeElement.id)"),
+        (v) => v === "edit",
+        10000,
+      );
+      await main.keyboard.type("richtext");
+
+      await main.keyboard.press("Meta+a");
+      pasteboard("nd-not-copied-yet");
+      await main.keyboard.press("Meta+c");
+      await until(
+        "cmd+C copies out of the contenteditable",
+        async () => pasteboard(),
+        (v) => v.trim() === "richtext",
+        10000,
+      );
+
+      pasteboard("replacement");
+      await main.keyboard.press("Meta+a");
+      await main.keyboard.press("Meta+v");
+      await until(
+        "cmd+V pastes into the contenteditable",
+        () => pageEval(app, page, "document.getElementById('edit').textContent"),
+        (v) => String(v).trim() === "replacement",
+        10000,
+      );
+
+      await main.keyboard.press("Meta+z");
+      await until(
+        "cmd+Z undoes inside the contenteditable",
+        () => pageEval(app, page, "document.getElementById('edit').textContent"),
+        (v) => String(v).trim() === "richtext",
+        10000,
+      );
+    },
+  },
+  {
+    name: "editingKeysInTheAddressField",
+    run: async () => {
+      // The same chords with a NATIVE field focused have to act on the field,
+      // not on the page. The field's own text is unreadable (a SearchInput in a
+      // HeaderBar reports no geometry to automation), so the pasteboard and the
+      // address that ends up loading are what prove it.
+      const page = await activePage();
+      const here = await pageEval(app, page, "location.href");
+      await main.keyboard.press("Meta+l");
+      await Bun.sleep(500);
+      await main.keyboard.press("Meta+a");
+      pasteboard("nd-not-copied-yet");
+      await main.keyboard.press("Meta+c");
+      const copied = await until(
+        "cmd+C copies the address out of the app's own field",
+        async () => pasteboard(),
+        (v) => v.includes(`127.0.0.1:${FIXTURE_PORT}`),
+        10000,
+      );
+      assert(
+        copied !== "nd-not-copied-yet" && String(here).includes(copied.trim().replace(/^https?:\/\//, "").split("/")[0]!),
+        `the field copied ${JSON.stringify(copied)}, which is not where the page is (${here})`,
+      );
+
+      pasteboard(`${FIXTURE_ORIGIN}/page2.html`);
+      await main.keyboard.press("Meta+a");
+      await main.keyboard.press("Meta+v");
+      await main.keyboard.press("Enter");
+      await until(
+        "cmd+V pastes into the app's own field and that address loads",
+        async () => await pageEval(app, await activePage(), "location.href"),
+        (href) => String(href).startsWith(`${FIXTURE_ORIGIN}/page2.html`),
+        15000,
+      );
+      mainPage = await loadFixture();
     },
   },
   {
