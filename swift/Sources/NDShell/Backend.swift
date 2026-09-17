@@ -1007,8 +1007,10 @@ final class NDActivatableHighlighter: NSObject {
     weak var overlay: NSBox?
     var enabled = true
     init(overlay: NSBox) { self.overlay = overlay }
-    @objc func mouseEntered(with event: NSEvent) { if enabled { overlay?.isHidden = false } }
-    @objc func mouseExited(with event: NSEvent) { overlay?.isHidden = true }
+    // The selector NSTrackingArea sends, not the `mouseEnteredWith:` Swift
+    // derives for a class that does not inherit NSResponder's own.
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) { if enabled { overlay?.isHidden = false } }
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) { overlay?.isHidden = true }
 }
 
 nonisolated(unsafe) private var ndActivatableState: [ObjectIdentifier: (highlighter: NDActivatableHighlighter, overlay: NSBox)] = [:]

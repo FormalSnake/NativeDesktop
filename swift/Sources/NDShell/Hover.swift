@@ -9,10 +9,14 @@ private final class NDHoverTracker: NSObject {
     let nodeID: UInt32
     init(nodeID: UInt32) { self.nodeID = nodeID }
 
-    func mouseEntered(with event: NSEvent) {
+    // Spelled out because Swift's own selector for `mouseEntered(with:)` is
+    // `mouseEnteredWith:` on a class that does not inherit it, and the one
+    // NSTrackingArea sends is `mouseEntered:`. A mismatch is an unrecognized
+    // selector raised out of the run loop the first time the pointer enters.
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {
         ndEmitEvent(nodeID, "hoverChanged", "{\"checked\":true}")
     }
-    func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) {
         ndEmitEvent(nodeID, "hoverChanged", "{\"checked\":false}")
     }
 }
