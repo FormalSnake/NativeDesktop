@@ -252,10 +252,9 @@ if (pass === "store") {
   }
   const store = installed.find((e) => e.id === item);
   check("storeInstalled", store?.state === "ENABLED", store ? `${store.name} ${store.state}` : `not among ${installed.length} extensions`);
-  // Chromium commits the profile on a timer, and a Chrome-style host that has
-  // run an install can die on the way out before that lands (see the gate's
-  // known exit crash), which would take the install with it.
-  await Bun.sleep(12000);
+  // Chromium commits the profile on a timer, and the restart leg reads what
+  // landed on disk rather than what this process still has in memory.
+  await Bun.sleep(4000);
 }
 
 // The proof the install is real rather than a running-process artefact: same

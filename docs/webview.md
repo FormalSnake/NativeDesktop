@@ -402,14 +402,16 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
   CEF callback is consulted about them, and they arrive as top-level windows on
   the X server. Chrome style watches the root for top-levels carrying this
-  process's `_NET_WM_PID` that are neither GTK's nor the kept browser, moves each
-  one over the view that has focus, and reports it to the app as `chromeDialog`
+  process's `_NET_WM_PID` that GDK does not know (which is what tells them from
+  the app's own windows, its popovers and the page's GTK context menu) and that
+  are not the kept browser, moves each one over the view that has focus, and
+  reports it to the app as `chromeDialog`
   with `{x, y, width, height}`. The dialog is still Chrome's, drawn by Views, but
   it lands on the app's content instead of wherever Views put it.
-- A host that has completed a Web Store install can die on the way out of the
-  process (SIGSEGV during Chromium's own shutdown). Chromium commits the profile on a timer well before that,
-  so the install itself survives; the gate's store legs do not make the
-  clean-quit assertion the other passes do.
+- The kept browser is closed first by `closeBrowsersInOrder`, before the views
+  and before `cef_shutdown`. Left for CEF's own teardown to unwind, with the
+  post-install dialog still anchored to it, it took the host down on the way out
+  of the process after an install.
 - `ND_CEF_VERBOSE=1` puts CEF's log severity at verbose, which is what makes
   Chromium's own `--vmodule` output reachable; without it `cef_settings_t`
   pins the severity at warning and every VLOG is dropped.

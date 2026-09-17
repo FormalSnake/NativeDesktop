@@ -109,6 +109,10 @@ const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme",
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
 const CHROME_STYLE = (process.env.ND_CEF_STYLE ?? "") === "chrome";
+
+/// The gate pass whose driver clicks Chrome's "Remove …?" confirmation. Unset
+/// outside the gate, where there is one run and somebody is watching it.
+const REGISTRY_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -525,10 +529,18 @@ async function run(ctx: {
   // the live profile with no relaunch, its action is reported, it disables and
   // enables again, and it uninstalls.
   await step("runtimeExtensions", async () => {
-    if (!CHROME_STYLE) {
-      ctx.setResult("uninstallExtension", "skip: alloy style has no extension registry");
-      ctx.setResult("chromeDialog", "skip: alloy style raises none of Chrome's dialogs");
-      return "skip: alloy style has no extension registry";
+    // The uninstall leg ends at Chrome's own confirmation, which only this
+    // pass's driver answers; leaving it up for a later pass would put a dialog
+    // over the view before that pass had done anything.
+    const why = !CHROME_STYLE
+      ? "skip: alloy style has no extension registry"
+      : REGISTRY_PASS
+        ? ""
+        : "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    if (why) {
+      ctx.setResult("uninstallExtension", why);
+      ctx.setResult("chromeDialog", why);
+      return why;
     }
     const view = ctx.extensions.current;
     if (!view) throw new Error("no extensions view ref");

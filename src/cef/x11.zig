@@ -59,6 +59,7 @@ const FnSetInputFocus = *const fn (*Display, Window, c_int, c_ulong) callconv(.c
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
+const FnSurfaceLookup = *const fn (*gdk.Display, Window) callconv(.c) ?*gdk.Surface;
 const FnRootWindow = *const fn (*Display) callconv(.c) Window;
 const FnQueryTree = *const fn (*Display, Window, *Window, *Window, *[*]Window, *c_uint) callconv(.c) c_int;
 const FnTranslate = *const fn (*Display, Window, Window, c_int, c_int, *c_int, *c_int, *Window) callconv(.c) c_int;
@@ -91,6 +92,7 @@ const Api = struct {
     get_window_property: FnGetProperty,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
+    surface_lookup: FnSurfaceLookup,
     /// GDK aborts the process on any untrapped X error from its own
     /// connection, and the windows this file touches can die underneath it.
     error_trap_push: FnTrap,
@@ -142,6 +144,7 @@ fn loadApi() ?*const Api {
         .get_window_property = x.lookup(FnGetProperty, "XGetWindowProperty") orelse return missing(&x, &g, "XGetWindowProperty"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
+        .surface_lookup = g.lookup(FnSurfaceLookup, "gdk_x11_surface_lookup_for_display") orelse return missing(&x, &g, "gdk_x11_surface_lookup_for_display"),
         .error_trap_push = g.lookup(FnTrap, "gdk_x11_display_error_trap_push") orelse return missing(&x, &g, "gdk_x11_display_error_trap_push"),
         .error_trap_pop_ignored = g.lookup(FnTrap, "gdk_x11_display_error_trap_pop_ignored") orelse return missing(&x, &g, "gdk_x11_display_error_trap_pop_ignored"),
     };
@@ -392,6 +395,18 @@ pub fn toplevelOf(window: Window) Window {
         current = parent;
     }
     return current;
+}
+
+/// True for a window GDK made: a toplevel, but also a popover or a menu, which
+/// get X windows of their own without being GtkWindows. Chromium's browser
+/// process is this process, so `_NET_WM_PID` does not tell its windows from the
+/// app's; this does, because GDK only knows the ones it created itself.
+pub fn isGdkSurface(window: Window) bool {
+    const c = conn() orelse return false;
+    c.push();
+    const surface = c.api.surface_lookup(c.gdk, window);
+    c.pop();
+    return surface != null;
 }
 
 pub const Geometry = struct { x: c_int, y: c_int, w: c_uint, h: c_uint };

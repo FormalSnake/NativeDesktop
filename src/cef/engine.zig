@@ -148,6 +148,16 @@ pub fn shutdown() void {
 /// that will not quit. Asking in this order and waiting for each
 /// `on_before_close` costs about 25ms and both go away.
 fn closeBrowsersInOrder() void {
+    // Chrome's own browser first: the install and post-install dialogs are
+    // anchored to it, and leaving it for cef_shutdown to unwind is the SIGSEGV
+    // a host takes on the way out after a Web Store install.
+    if (kept_host) |host| {
+        if (host.*.close_browser) |close| close(host, 1);
+        var waited: u32 = 0;
+        while (kept_host != null and waited < 3000) : (waited += 5) glib.usleep(5 * 1000);
+        tr("shutdown chrome browser closed after {d}ms", .{waited});
+    }
+
     var devtools = false;
     var it = live_views.keyIterator();
     while (it.next()) |key| {
@@ -255,6 +265,7 @@ fn getDefaultClient(_: [*c]c.cef_browser_process_handler_t) callconv(.c) [*c]c.c
     if (sink_client == null) {
         const life = SinkLifeObj.create({}) orelse return null;
         life.cef.on_after_created = &onSinkBrowserCreated;
+        life.cef.on_before_close = &onSinkBrowserClosed;
         const client = SinkClientObj.create({}) orelse {
             life.drop();
             return null;
@@ -290,6 +301,10 @@ fn sinkGetLifeSpanHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_spa
 /// the browser it picked every time it is used, so one unmap at creation does
 /// not hold and the window watcher below unmaps it on every tick.
 var kept_window: usize = 0;
+/// The kept browser's host, held so the ordered shutdown can close it. Cleared
+/// when CEF reports the browser closed.
+var kept_host: ?[*c]c.cef_browser_host_t = null;
+var kept_browser_id: c_int = 0;
 
 fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
@@ -307,7 +322,12 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
         if (window != 0) x11.hide(window);
     }
     const keep = kept_window == 0 and window != 0;
-    if (keep) kept_window = window;
+    if (keep) {
+        kept_window = window;
+        ref.addRefParam(host);
+        kept_host = host;
+        if (browser.*.get_identifier) |get_id| kept_browser_id = get_id(browser);
+    }
 
     var url: ?[]u8 = null;
     if (browser.*.get_main_frame) |get_frame| {
@@ -358,21 +378,6 @@ fn startChromeWindowWatch() void {
     chrome_watch_timer = glib.timeoutAdd(chrome_watch_interval_ms, &onChromeWindowWatch, null);
 }
 
-/// True for a window GTK owns. Chromium's browser process is this process, so
-/// `_NET_WM_PID` alone does not tell the two apart, and moving one of the app's
-/// own windows would be a good deal worse than leaving a dialog where it is.
-fn isGtkToplevel(window: usize) bool {
-    const list = gtk.Window.listToplevels();
-    defer glib.List.free(list);
-    var node: ?*glib.List = list;
-    while (node) |n| : (node = n.f_next) {
-        const data = n.f_data orelse continue;
-        const widget: *gtk.Widget = @ptrCast(@alignCast(data));
-        if (x11.toplevelXid(widget) == window) return true;
-    }
-    return false;
-}
-
 fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     if (kept_window != 0) x11.hide(kept_window);
     var buf: [128]x11.Window = undefined;
@@ -390,7 +395,11 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         if (w == 0 or w == kept_window) continue;
         if (adopted_windows.contains(w)) continue;
         if (x11.windowPid(w) != self_pid) continue;
-        if (isGtkToplevel(w)) continue;
+        // GDK knows every window it made, which is the app's toplevels and the
+        // override-redirect ones a popover or the page's GTK context menu puts
+        // on the root; moving one of those would be a good deal worse than
+        // leaving a Chrome dialog where Views put it.
+        if (x11.isGdkSurface(w)) continue;
         // Chromium keeps a handful of small parked top-levels of its own (the
         // omnibox popup host, the drag proxy) that are never presented; moving
         // one onto the view would drag scaffolding into the page.
@@ -445,6 +454,18 @@ fn adoptChromeWindow(window: usize) void {
     payload.put(alloc, "width", .{ .integer = geo.w }) catch return;
     payload.put(alloc, "height", .{ .integer = geo.h }) catch return;
     f(view.node_id, "chromeDialog", .{ .data = .{ .object = payload } });
+}
+
+/// Every browser Chrome made for itself reports here, including the ones this
+/// engine closed on the spot, so the kept one is told apart by its identifier.
+fn onSinkBrowserClosed(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const host = kept_host orelse return;
+    const get_id = browser.*.get_identifier orelse return;
+    if (get_id(browser) != kept_browser_id) return;
+    kept_host = null;
+    kept_window = 0;
+    ref.releaseParam(host);
 }
 
 fn onBeforeChildProcessLaunch(
