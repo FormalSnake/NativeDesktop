@@ -17,8 +17,20 @@ export {
   setContextMenuItems,
   listExtensions,
   onExtensionsList,
+  listExtensionActions,
+  onExtensionActions,
+  installExtension,
+  uninstallExtension,
+  setExtensionEnabled,
 } from "./webview.ts";
-export type { Cookie, ContextMenuContext, ContextMenuItem, ContextMenuItemClick, InstalledExtension } from "./webview.ts";
+export type {
+  Cookie,
+  ContextMenuContext,
+  ContextMenuItem,
+  ContextMenuItemClick,
+  ExtensionAction,
+  InstalledExtension,
+} from "./webview.ts";
 export {
   showAlert,
   openFile,

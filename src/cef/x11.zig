@@ -59,6 +59,13 @@ const FnSetInputFocus = *const fn (*Display, Window, c_int, c_ulong) callconv(.c
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
+const FnRootWindow = *const fn (*Display) callconv(.c) Window;
+const FnQueryTree = *const fn (*Display, Window, *Window, *Window, *[*]Window, *c_uint) callconv(.c) c_int;
+const FnTranslate = *const fn (*Display, Window, Window, c_int, c_int, *c_int, *c_int, *Window) callconv(.c) c_int;
+const FnFree = *const fn (?*anyopaque) callconv(.c) c_int;
+const FnGeometry = *const fn (*Display, Window, *Window, *c_int, *c_int, *c_uint, *c_uint, *c_uint, *c_uint) callconv(.c) c_int;
+const FnInternAtom = *const fn (*Display, [*:0]const u8, c_int) callconv(.c) c_ulong;
+const FnGetProperty = *const fn (*Display, Window, c_ulong, c_long, c_long, c_int, c_ulong, *c_ulong, *c_int, *c_ulong, *c_ulong, *[*]u8) callconv(.c) c_int;
 
 const Api = struct {
     init_threads: FnInitThreads,
@@ -75,6 +82,13 @@ const Api = struct {
     flush: FnFlush,
     sync: FnSync,
     set_input_focus: FnSetInputFocus,
+    default_root_window: FnRootWindow,
+    query_tree: FnQueryTree,
+    translate_coordinates: FnTranslate,
+    free: FnFree,
+    get_geometry: FnGeometry,
+    intern_atom: FnInternAtom,
+    get_window_property: FnGetProperty,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
     /// GDK aborts the process on any untrapped X error from its own
@@ -119,6 +133,13 @@ fn loadApi() ?*const Api {
         .flush = x.lookup(FnFlush, "XFlush") orelse return missing(&x, &g, "XFlush"),
         .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
         .set_input_focus = x.lookup(FnSetInputFocus, "XSetInputFocus") orelse return missing(&x, &g, "XSetInputFocus"),
+        .default_root_window = x.lookup(FnRootWindow, "XDefaultRootWindow") orelse return missing(&x, &g, "XDefaultRootWindow"),
+        .query_tree = x.lookup(FnQueryTree, "XQueryTree") orelse return missing(&x, &g, "XQueryTree"),
+        .translate_coordinates = x.lookup(FnTranslate, "XTranslateCoordinates") orelse return missing(&x, &g, "XTranslateCoordinates"),
+        .free = x.lookup(FnFree, "XFree") orelse return missing(&x, &g, "XFree"),
+        .get_geometry = x.lookup(FnGeometry, "XGetGeometry") orelse return missing(&x, &g, "XGetGeometry"),
+        .intern_atom = x.lookup(FnInternAtom, "XInternAtom") orelse return missing(&x, &g, "XInternAtom"),
+        .get_window_property = x.lookup(FnGetProperty, "XGetWindowProperty") orelse return missing(&x, &g, "XGetWindowProperty"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
         .error_trap_push = g.lookup(FnTrap, "gdk_x11_display_error_trap_push") orelse return missing(&x, &g, "gdk_x11_display_error_trap_push"),
@@ -324,6 +345,110 @@ pub fn hide(window: Window) void {
     c.push();
     _ = c.api.unmap_window(c.x, window);
     c.pop();
+}
+
+/// The root's direct children, oldest first, copied into `out`. The answer is
+/// the whole set of top-level windows on this display, which is what makes a
+/// window Chrome put up on its own findable: it belongs to no CEF browser and
+/// has no callback, but it is a child of the root and this process did not
+/// create it.
+pub fn rootChildren(out: []Window) []Window {
+    const c = conn() orelse return out[0..0];
+    const root = c.api.default_root_window(c.x);
+    var parent: Window = 0;
+    var got_root: Window = 0;
+    var kids: [*]Window = undefined;
+    var count: c_uint = 0;
+    c.push();
+    const ok = c.api.query_tree(c.x, root, &got_root, &parent, &kids, &count);
+    c.pop();
+    if (ok == 0) return out[0..0];
+    defer _ = c.api.free(@ptrCast(kids));
+    const n = @min(out.len, @as(usize, count));
+    for (0..n) |i| out[i] = kids[i];
+    return out[0..n];
+}
+
+/// The top-level a window sits under: CEF answers `get_window_handle` with the
+/// browser's own window, which for a window Chrome owns is a child of the
+/// Widget's top-level, and unmapping the child leaves the frame on screen.
+pub fn toplevelOf(window: Window) Window {
+    if (window == 0) return 0;
+    const c = conn() orelse return window;
+    const root = c.api.default_root_window(c.x);
+    var current = window;
+    // Bounded rather than while(true): a broken tree would otherwise spin.
+    for (0..16) |_| {
+        var parent: Window = 0;
+        var got_root: Window = 0;
+        var kids: [*]Window = undefined;
+        var count: c_uint = 0;
+        c.push();
+        const ok = c.api.query_tree(c.x, current, &got_root, &parent, &kids, &count);
+        c.pop();
+        if (ok == 0) return current;
+        _ = c.api.free(@ptrCast(kids));
+        if (parent == root or parent == 0) return current;
+        current = parent;
+    }
+    return current;
+}
+
+pub const Geometry = struct { x: c_int, y: c_int, w: c_uint, h: c_uint };
+
+pub fn geometry(window: Window) ?Geometry {
+    const c = conn() orelse return null;
+    var root: Window = 0;
+    var gx: c_int = 0;
+    var gy: c_int = 0;
+    var gw: c_uint = 0;
+    var gh: c_uint = 0;
+    var border: c_uint = 0;
+    var depth: c_uint = 0;
+    c.push();
+    const ok = c.api.get_geometry(c.x, window, &root, &gx, &gy, &gw, &gh, &border, &depth);
+    c.pop();
+    if (ok == 0) return null;
+    return .{ .x = gx, .y = gy, .w = gw, .h = gh };
+}
+
+/// `_NET_WM_PID`, or 0 when the window does not carry it. This is what tells a
+/// window Chromium put up from every other client's window on the same display:
+/// Chromium's browser process is this process, so its top-levels carry this
+/// pid, and a window without the property is never touched.
+pub fn windowPid(window: Window) u32 {
+    const c = conn() orelse return 0;
+    const atom = c.api.intern_atom(c.x, "_NET_WM_PID", 1);
+    if (atom == 0) return 0;
+    const XA_CARDINAL: c_ulong = 6;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, window, atom, 0, 1, 0, XA_CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or nitems == 0 or actual_format != 32) return 0;
+    defer _ = c.api.free(@ptrCast(data));
+    // Format 32 means "long", not "32 bits", on a 64-bit server connection.
+    const value = @as(*const c_ulong, @ptrCast(@alignCast(data))).*;
+    return @truncate(value);
+}
+
+pub const Origin = struct { x: c_int, y: c_int };
+
+/// A window's origin in root coordinates.
+pub fn originOnRoot(window: Window) Origin {
+    const c = conn() orelse return .{ .x = 0, .y = 0 };
+    const root = c.api.default_root_window(c.x);
+    var rx: c_int = 0;
+    var ry: c_int = 0;
+    var child: Window = 0;
+    c.push();
+    _ = c.api.translate_coordinates(c.x, window, root, 0, 0, &rx, &ry, &child);
+    c.pop();
+    return .{ .x = rx, .y = ry };
 }
 
 /// Destroying the container is the one call that is EXPECTED to fail: closing

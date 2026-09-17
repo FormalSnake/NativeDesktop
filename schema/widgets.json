@@ -643,6 +643,8 @@
         { "name": "sessionSaved", "ndpName": "onSessionSaved", "payload": "data" },
         { "name": "audioStateChanged", "ndpName": "onAudioStateChanged", "payload": "data" },
         { "name": "extensionsList", "ndpName": "onExtensionsList", "payload": "data" },
+        { "name": "extensionActions", "ndpName": "onExtensionActions", "payload": "data" },
+        { "name": "chromeDialog", "ndpName": "onChromeDialog", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
@@ -657,7 +659,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
-        "listExtensions",
+        "listExtensions", "listExtensionActions", "installExtension", "uninstallExtension", "setExtensionEnabled",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

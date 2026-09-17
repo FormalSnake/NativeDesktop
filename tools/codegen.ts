@@ -4563,6 +4563,8 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.sessionSaved":        { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.audioStateChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.extensionsList":      { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.extensionActions":    { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.chromeDialog":        { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
   // thread inside src/gtk/terminal.zig — connectEvents hands it node id + emit once.
   "Terminal.titleChanged":       { signal: "",              target: "terminal", cb: "", suppress: false },
@@ -8208,6 +8210,8 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.sessionSaved":        { selector: "webview", payload: "data" },
   "WebView.audioStateChanged":   { selector: "webview", payload: "data" },
   "WebView.extensionsList":      { selector: "webview", payload: "data" },
+  "WebView.extensionActions":    { selector: "webview", payload: "data" },
+  "WebView.chromeDialog":        { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader
   // thread inside NDShell/NDTerminalView.swift — connectEvents records the id once.
   "Terminal.titleChanged":       { selector: "terminal", payload: "text" },

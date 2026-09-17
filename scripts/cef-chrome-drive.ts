@@ -43,6 +43,24 @@ function census(): string[] {
   return rows;
 }
 
+/// The top-levels Chromium put up that are not browsers: its install prompt and
+/// its post-install dialog, which the engine moves over the view. They sit
+/// under the 200x200 floor `census` uses, and they carry no window name until
+/// long after they are mapped, so they are found by size alone.
+function chromeDialogs(): number[][] {
+  const out: number[][] = [];
+  for (const line of sh("xwininfo", "-root", "-children").split("\n")) {
+    if (line.includes("ND CEF Probe")) continue;
+    const m = line.match(/^\s*0x[0-9a-f]+.*?\s(\d+)x(\d+)\+(-?\d+)\+(-?\d+)/);
+    if (!m) continue;
+    const [, w, h, x, y] = m.map(Number);
+    if (w < 200 || h < 80) continue;
+    if (!sh("xwininfo", "-id", line.trim().split(/\s+/)[0]).includes("Map State: IsViewable")) continue;
+    out.push([x, y, w, h]);
+  }
+  return out;
+}
+
 let baseline = census();
 
 /// Runs one route that could open a window and reports what the X server says
@@ -148,6 +166,117 @@ if (pass !== "devtools") {
   const mine = listed.find((e) => e.id === extId);
   check("extensionRegistered", !!mine, mine ? `${mine.name} ${mine.state} icon=${mine.icon}` : `not among ${listed.length} extensions`);
   check("extensionEnabled", mine?.state === "ENABLED", mine?.state ?? "missing");
+}
+
+// The Chrome Web Store, opt-in because it needs the network and Google's
+// consent interstitial. Chromium's own "Add <name>?" prompt is a Views window
+// with no CEF callback: the engine moves it over the view and reports it, and
+// the click that accepts it is a real X one.
+if (pass === "store") {
+  const item = process.env.ND_CEF_STORE_ITEM ?? "ddkjiahejlhfcafbddmgiahcphecmpfh";
+  await page.send("Page.navigate", { url: `https://chromewebstore.google.com/detail/${item}` });
+  await Bun.sleep(9000);
+  const consent = await page.eval<string>(`(() => {
+    const hit = [...document.querySelectorAll("button, [role=button]")].find((e) => /reject all|accept all/i.test(e.innerText || ""));
+    if (!hit) return "none";
+    hit.scrollIntoView();
+    hit.click();
+    return hit.innerText.trim();
+  })()`);
+  if (consent !== "none") await Bun.sleep(9000);
+  check("storeDetailPage", (await page.eval<string>("location.href")).includes(item), consent);
+  check("webstorePrivate", (await page.eval<string>("typeof chrome !== 'undefined' && typeof chrome.webstorePrivate")) === "object", "the store page's own install API");
+
+  // What the store page's own install API answered, which is the only place an
+  // install that goes wrong says so.
+  await page.eval(`(() => {
+    window.__ndStore = [];
+    const wp = chrome.webstorePrivate;
+    for (const name of Object.keys(wp)) {
+      const original = wp[name];
+      if (typeof original !== "function") continue;
+      wp[name] = function (...args) {
+        const cb = typeof args[args.length - 1] === "function" ? args.pop() : null;
+        return original.call(wp, ...args, function (...answer) {
+          window.__ndStore.push(name + " " + JSON.stringify(answer).slice(0, 120) +
+            (chrome.runtime.lastError ? " lastError=" + chrome.runtime.lastError.message : ""));
+          if (cb) cb(...answer);
+        });
+      };
+    }
+  })()`);
+  const dialogsBefore = chromeDialogs().map(String);
+  // The page's own button, clicked with a transient activation rather than a
+  // synthetic pointer: the store's layout shifts while its images land, and a
+  // click aimed at a rectangle read a moment earlier misses.
+  const clicked = await page.eval<string>(`(() => {
+    const b = [...document.querySelectorAll("button, [role=button]")].find((e) => /add to chrome/i.test(e.innerText || ""));
+    if (!b) return "no Add to Chrome button";
+    b.scrollIntoView({ block: "center" });
+    b.click();
+    return "clicked";
+  })()`, true);
+  check("storeAddToChrome", clicked === "clicked", clicked);
+
+  // Chromium's own prompt, found on the X server: it is a Views widget, so no
+  // CEF callback names it, and it carries no WM_NAME until well after it is up.
+  // The engine has already moved it over the view by the time it is findable.
+  let prompt: number[] | null = null;
+  for (let i = 0; i < 40; i++) {
+    prompt = chromeDialogs().find((d) => !dialogsBefore.includes(String(d))) ?? null;
+    if (prompt) break;
+    await Bun.sleep(500);
+  }
+  check("storeInstallPrompt", !!prompt, prompt ? `${prompt[2]}x${prompt[3]} at ${prompt[0]},${prompt[1]}` : "Chromium never raised the Add prompt");
+  if (prompt) {
+    const [x, y, w, h] = prompt;
+    // The prompt was moved onto the view a moment ago, and Views takes a click
+    // only once it has laid out at the new place.
+    await Bun.sleep(4000);
+    // "Add extension" is the wider of the prompt's two buttons.
+    if (shotPath) sh("import", "-window", "root", shotPath);
+    sh("xdotool", "mousemove", String(x + w - 80), String(y + h - 39), "click", "1");
+  }
+
+  await Bun.sleep(6000);
+  const answers = (await page.eval<string[]>("window.__ndStore")) ?? [];
+  check("storeInstallAnswered", answers.some((a) => a.startsWith("completeInstall")), answers.join(" | ") || "the store page's API said nothing");
+
+  await page.send("Page.navigate", { url: "chrome://extensions/" });
+  await Bun.sleep(3000);
+  let installed: Array<{ id: string; name: string; state: string }> = [];
+  for (let i = 0; i < 30; i++) {
+    installed = JSON.parse(await page.eval<string>(extensionsInfo));
+    if (installed.some((e) => e.id === item)) break;
+    await Bun.sleep(1000);
+  }
+  const store = installed.find((e) => e.id === item);
+  check("storeInstalled", store?.state === "ENABLED", store ? `${store.name} ${store.state}` : `not among ${installed.length} extensions`);
+  // Chromium commits the profile on a timer, and a Chrome-style host that has
+  // run an install can die on the way out before that lands (see the gate's
+  // known exit crash), which would take the install with it.
+  await Bun.sleep(12000);
+}
+
+// The proof the install is real rather than a running-process artefact: same
+// profile, a restart, and no --load-extension for it anywhere.
+if (pass === "storeRestart") {
+  const item = process.env.ND_CEF_STORE_ITEM ?? "ddkjiahejlhfcafbddmgiahcphecmpfh";
+  const installed = JSON.parse(await page.eval<string>(extensionsInfo)) as Array<{ id: string; name: string; state: string }>;
+  const store = installed.find((e) => e.id === item);
+  check("storeSurvivedRestart", store?.state === "ENABLED", store ? `${store.name} ${store.state}` : `not among ${installed.length} extensions`);
+  // An MV3 worker is only a target while it runs, and one that has nothing to
+  // do after a restart is asleep, so it is woken the way Chrome's own
+  // "service worker (inactive)" link does.
+  await page.eval(`new Promise((r) => chrome.developerPrivate.openDevTools(
+    { extensionId: ${JSON.stringify(item)}, renderViewId: -1, renderProcessId: -1, isServiceWorker: true }, () => r(0)))`);
+  let worker;
+  for (let i = 0; i < 40; i++) {
+    worker = (await targets(port)).find((t) => t.type === "service_worker" && t.url.startsWith(`chrome-extension://${item}/`));
+    if (worker) break;
+    await Bun.sleep(500);
+  }
+  check("storeServiceWorker", !!worker, worker?.url ?? "no service worker target for the store extension");
 }
 
 if (pass === "second") {

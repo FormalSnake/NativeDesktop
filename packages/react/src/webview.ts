@@ -15,6 +15,7 @@ const pendingEvals = new Map<string, Pending<string>>();
 const pendingCookies = new Map<string, Pending<Cookie[]>>();
 const pendingSessions = new Map<string, Pending<string>>();
 const pendingExtensions = new Map<string, Pending<InstalledExtension[]>>();
+const pendingActions = new Map<string, Pending<ExtensionAction[]>>();
 let seq = 0;
 
 function nextId(prefix: string): string {
@@ -135,6 +136,75 @@ export function onExtensionsList(e: { data: unknown }): void {
   pendingExtensions.delete(result.id);
   if (result.ok) call.resolve(result.extensions ?? []);
   else call.reject(new Error(result.error ?? "listExtensions failed"));
+}
+
+/// Loads an unpacked extension from a local directory into the live profile,
+/// with no relaunch and no `--load-extension`. `node` is the same
+/// `chrome://extensions` view `listExtensions` uses; the answer is the registry
+/// as it now stands, so it settles through `onExtensionsList`.
+export function installExtension(node: NdNodeRef<"webview">, path: string): Promise<InstalledExtension[]> {
+  return extensionMutation(node, "installExtension", { path });
+}
+
+export function uninstallExtension(node: NdNodeRef<"webview">, extensionId: string): Promise<InstalledExtension[]> {
+  return extensionMutation(node, "uninstallExtension", { extensionId });
+}
+
+export function setExtensionEnabled(
+  node: NdNodeRef<"webview">,
+  extensionId: string,
+  enabled: boolean,
+): Promise<InstalledExtension[]> {
+  return extensionMutation(node, "setExtensionEnabled", { extensionId, enabled });
+}
+
+function extensionMutation(
+  node: NdNodeRef<"webview">,
+  command: string,
+  args: Record<string, unknown>,
+): Promise<InstalledExtension[]> {
+  const id = nextId("ext");
+  return new Promise<InstalledExtension[]>((resolve, reject) => {
+    pendingExtensions.set(id, { resolve, reject });
+    sendCommand(node, command, { id, ...args });
+  });
+}
+
+export interface ExtensionAction {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** `action.default_title`, falling back to the extension's name. */
+  title: string;
+  /** `chrome-extension://…` icon from `action.default_icon`, or the registry icon. */
+  iconUrl: string;
+  /** `chrome-extension://…` popup page, or "" for an action that fires `onClicked`. */
+  popupUrl: string;
+  /** Always "": Chromium answers `chrome.action.getBadgeText` to the extension alone. */
+  badgeText: string;
+}
+
+/// The actions the installed extensions declare, for an app that draws its own
+/// toolbar. Same view as `listExtensions`; requires the `onExtensionActions`
+/// prop. Clicking one means mounting a `<webview>` created at `popupUrl`: there
+/// is no toolbar button for Chromium to consider clicked, so `onClicked` never
+/// fires and no `activeTab` grant is issued.
+export function listExtensionActions(node: NdNodeRef<"webview">): Promise<ExtensionAction[]> {
+  const id = nextId("ext");
+  return new Promise<ExtensionAction[]>((resolve, reject) => {
+    pendingActions.set(id, { resolve, reject });
+    sendCommand(node, "listExtensionActions", { id });
+  });
+}
+
+/// Pass as a <webview>'s `onExtensionActions` prop.
+export function onExtensionActions(e: { data: unknown }): void {
+  const result = e.data as { id: string; ok: boolean; actions?: ExtensionAction[]; error?: string };
+  const call = pendingActions.get(result.id);
+  if (!call) return;
+  pendingActions.delete(result.id);
+  if (result.ok) call.resolve(result.actions ?? []);
+  else call.reject(new Error(result.error ?? "listExtensionActions failed"));
 }
 
 /// Where an item may appear. `page` means the click landed on nothing more

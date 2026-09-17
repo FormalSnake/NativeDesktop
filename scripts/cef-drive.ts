@@ -8,13 +8,42 @@
 // so this script only reads the accessibility tree.
 import { connectApp } from "@nativedesktop/test";
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 const app = await connectApp();
 
 // Chromium's first browser costs a process launch, a GPU probe and a
 // SwiftShader fallback on this rig, so the ceiling is generous.
 await app.waitForText("phase=done", { timeoutMs: 180000 });
+
+// Chrome asks before it removes an extension, in a dialog of its own that the
+// engine moves over the view and reports as `chromeDialog`. Nothing in the app
+// can answer a Views dialog, so the click is a real X one, aimed at the
+// bottom-right button using the geometry the probe wrote down.
+let dialog = "";
+for (let i = 0; i < 80; i++) {
+  dialog = (await app.getByTestId("chk-chromeDialog").textContent()) ?? "";
+  if (/=(ok|skip|fail)/.test(dialog)) break;
+  await Bun.sleep(250);
+}
+const box = dialog.match(/\((-?\d+),(-?\d+) (\d+)x(\d+)\)/);
+if (box) {
+  const [, x, y, w, h] = box.map(Number);
+  // Bottom-right of Chrome's two-button row, measured against the 448x137
+  // "Remove …?" dialog.
+  // The dialog was moved onto the view a moment ago and Views does not take a
+  // click until it has laid out at the new place.
+  await Bun.sleep(1500);
+  Bun.spawnSync(["xdotool", "mousemove", String(x + w - 62), String(y + h - 39), "click", "1"], {
+    env: { ...process.env, DISPLAY: process.env.DISPLAY ?? ":96" },
+  });
+  console.log(`  chromeDialogClick: ${x + w - 62},${y + h - 39}`);
+  try {
+    await app.waitForText("uninstallExtension=ok", { timeoutMs: 20000 });
+  } catch {
+    // Reported as a failed check below, with the label's own text.
+  }
+}
 
 const failures: string[] = [];
 for (const name of CHECKS) {

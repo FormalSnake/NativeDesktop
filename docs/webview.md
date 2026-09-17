@@ -382,45 +382,130 @@ it, Chrome's window and toolbar do not.
 - The app menu, the page action icons and the toolbar buttons are all reported
   invisible, so no Chrome UI is created for the browser.
 
-Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
+Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
+151.0.7922.170):
 
-- A Chrome Web Store install stops at Chromium's own confirmation prompt. The
-  detail page loads, `chrome.webstorePrivate` is there, and "Add to Chrome"
-  raises the "Add <name>?" bubble, which arrives as a 448x197 Chromium
-  top-level at the screen origin rather than anchored to the app. Accepting it
-  dismisses the bubble and installs nothing, with no error in the log, so a
-  Chrome-style app installs extensions through `--load-extension` for now.
+- A **Chrome Web Store install works end to end**. "Add to Chrome" raises
+  Chromium's own "Add <name>?" prompt, accepting it downloads and installs the
+  CRX, and the extension is enabled, has its service worker, and is still there
+  after a restart with no `--load-extension` anywhere. It used to take the host
+  down the moment the install landed: `ExtensionInstallUIDesktop::OnInstallSuccess`
+  asks `ScopedTabbedBrowserDisplayer` for a tabbed browser and holds a raw
+  `BrowserWindowInterface*` to it across the asynchronous wait in
+  `extensions::TriggerPostInstallDialog`. CEF makes every BrowserView-hosted
+  browser a `TYPE_POPUP` (`chrome_browser_host_impl.cc`), so Chrome never finds
+  one of this engine's, builds its own, and this engine closed that one inside
+  `on_after_created`; the dialog then dereferenced freed memory. The first
+  browser Chrome makes for itself is now kept, unmapped, as the tabbed browser
+  every later lookup finds, and everything after it is closed as before.
+- Chrome's dialogs that belong to no browser (the install prompt, the
+  post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
+  CEF callback is consulted about them, and they arrive as top-level windows on
+  the X server. Chrome style watches the root for top-levels carrying this
+  process's `_NET_WM_PID` that are neither GTK's nor the kept browser, moves each
+  one over the view that has focus, and reports it to the app as `chromeDialog`
+  with `{x, y, width, height}`. The dialog is still Chrome's, drawn by Views, but
+  it lands on the app's content instead of wherever Views put it.
+- A host that has completed a Web Store install can die on the way out of the
+  process (SIGSEGV during Chromium's own shutdown). Chromium commits the profile on a timer well before that,
+  so the install itself survives; the gate's store legs do not make the
+  clean-quit assertion the other passes do.
+- `ND_CEF_VERBOSE=1` puts CEF's log severity at verbose, which is what makes
+  Chromium's own `--vmodule` output reachable; without it `cef_settings_t`
+  pins the severity at warning and every VLOG is dropped.
 
-Listing extensions, and their popups:
+Listing extensions, installing them, and their actions:
 
 ```tsx
-import { listExtensions, onExtensionsList } from "@nativedesktop/react";
+import {
+  installExtension, listExtensionActions, listExtensions, onExtensionActions,
+  onExtensionsList, setExtensionEnabled, uninstallExtension,
+} from "@nativedesktop/react";
 
 // Chromium exposes its extension registry to chrome://extensions and nowhere
-// else, so the command is sent to a view showing that page. A hidden one does.
-<webview ref={registry} engine="chromium" url="chrome://extensions" onExtensionsList={onExtensionsList} />;
+// else, so every one of these is sent to a view showing that page. A hidden
+// one does.
+<webview
+  ref={registry}
+  engine="chromium"
+  url="chrome://extensions"
+  onExtensionsList={onExtensionsList}
+  onExtensionActions={onExtensionActions}
+  onChromeDialog={(e) => setDialog(e.data)}
+/>;
 
 const installed = await listExtensions(registry.current!);
 // [{ id, name, version, enabled, iconUrl: "data:image/png;…", optionsUrl }]
+
+await installExtension(registry.current!, "/path/to/unpacked");
+await setExtensionEnabled(registry.current!, id, false);
+await uninstallExtension(registry.current!, id);
+// each answers with the registry as it now stands, same shape as listExtensions
+
+const actions = await listExtensionActions(registry.current!);
+// [{ id, name, enabled, title, iconUrl, popupUrl, badgeText }]
 ```
+
+`installExtension` takes an unpacked directory and loads it into the live
+profile, with no relaunch and no `--load-extension`. There is no API that takes
+a path: `chrome.developerPrivate.loadUnpacked` opens a directory chooser, so the
+path is parked on the view and the engine's `cef_dialog_handler_t` answers the
+chooser with it. `uninstallExtension` goes through `chrome.management.uninstall`,
+which always draws Chrome's own "Remove <name>?" confirmation when the caller is
+not the extension being removed (`developerPrivate` has no `uninstall`, and its
+`removeMultipleExtensions` refuses its own documented signature on 151), so the
+promise settles when that is answered and the dialog arrives as `chromeDialog`.
+
+`listExtensionActions` reports what an extension's manifest declares, read off
+disk by the host: `chrome://extensions` cannot fetch
+`chrome-extension://<id>/manifest.json` (not a web-accessible resource, and the
+WebUI origin is not the extension's) and `developerPrivate` reports commands and
+pinning but not the action's popup, title or icon.
 
 An extension's action popup and its options page are ordinary pages: put one in
 a `<webview>` sized to the popover the app draws, with the `chrome-extension://`
 URL set at create time. Chromium refuses a renderer-initiated navigation to an
 extension page, so setting `url` on a view that already exists does not work;
-mount a new view instead. `listExtensions` reports `optionsUrl`; the action
-popup's path is the extension's `action.default_popup`, which the app reads by
-mounting a view at `chrome-extension://<id>/manifest.json` and calling
-`executeJavaScript(view, "document.body.textContent")`.
+mount a new view instead.
 
-Against real Chrome, this differs in four ways. There is no toolbar button, so
-`chrome.action.onClicked` never fires and the app decides what a click on its
-own button does. `chrome.action.setPopup`, `setBadgeText`, `setIcon` and
-`setTitle` are recorded by Chromium but not reported back, so a popup URL
-changed at runtime is not seen. A popup in an app-owned view does not close on
-blur and is not sized by the popup document, so the app owns both. And an
-`activeTab` grant that Chrome issues when its own toolbar button is clicked is
-never issued, so an extension that relies on it sees no permission.
+Against real Chrome, extension actions still differ. There is no toolbar button,
+so `chrome.action.onClicked` never fires and the app decides what a click on its
+own button does; an app with a popup opens it, and an extension whose action has
+no popup cannot be triggered at all. `chrome.action.setPopup`, `setBadgeText`,
+`setIcon` and `setTitle` are recorded by Chromium but answered only to the
+extension itself, so `badgeText` is always empty and a popup URL changed at
+runtime is not seen. A popup in an app-owned view does not close on blur and is
+not sized by the popup document, so the app owns both. And the `activeTab` grant
+Chrome issues when its own toolbar button is clicked is never issued.
+
+Two paths that would close that gap are blocked in CEF 151, both on the same
+missing piece:
+
+- `cef_browser_view_t::get_chrome_toolbar` is unreachable. A browser created
+  with a native `parent_window` under Chrome style goes through
+  `chrome_child_window::MaybeCreateChildBrowser`, which builds the
+  `CefBrowserView` with CEF's own internal `ChildBrowserViewDelegate`; that
+  delegate does not override `GetChromeToolbarType`, so the toolbar is
+  `CEF_CTT_NONE` and there is no embedder seam to change it.
+- The `Extensions.triggerAction` CDP command, which is the genuine "user clicked
+  the action" path (`ToolbarActionViewModel::ExecuteUserAction` with
+  `InvocationSource::kCdp`), segfaults the browser process:
+  `chrome/browser/devtools/protocol/extensions_handler.cc:195` dereferences
+  `ExtensionsContainer::From(*browser)`, which is null for a browser with no
+  toolbar. It is also a browser-target command, and `CefBrowserHost::
+  ExecuteDevToolsMethod` reaches only page targets, where the whole `Extensions`
+  domain answers "Method not available."
+
+The smallest CEF patch that would fix both: give `CefBrowserViewDelegate` a way
+to ask for a toolbar on a child-window browser, by having
+`ChildBrowserViewDelegate::GetChromeToolbarType` answer from the
+`CefWindowInfo`/`CefBrowserSettings` instead of the default, and let the
+embedder hide the toolbar view afterwards through `GetChromeToolbar`. That is
+`cef/libcef/browser/chrome/views/chrome_child_window.cc` plus a field in
+`cef/include/internal/cef_types.h`, on the order of 60 lines, no
+`patch/patches/` change. It would make `ExtensionsContainer::From` non-null,
+which is what both the real action click and Chrome's post-install "pinned by
+default" UI need.
 
 The opt-in is structural rather than a runtime flag:
 
@@ -447,6 +532,15 @@ The opt-in is structural rather than a runtime flag:
   lands, embedded CEF on Wayland means off-screen rendering or XWayland.
 
 ## Verification
+
+`scripts/headless-webview-cef-chrome.sh` is the Chrome-style gate (marker
+`ND_CEF_CHROME_OK`): the extension runtime, every route that would open a
+Chromium window, docked devtools, the registry commands (install an unpacked
+directory, list its action, disable, enable, uninstall through Chrome's
+confirmation), and the extension and its storage across a restart. The top-level
+census holds through every leg. `ND_CEF_CHROME_STORE=1` adds the Web Store legs
+(`ND_CEF_CHROME_STORE_OK`), which are opt-in because they need the network and
+Google's consent interstitial.
 
 `scripts/headless-webview.sh` runs `examples/webview-probe` under weston and
 drives it with `scripts/webview-drive.ts` (marker `ND_WEBVIEW2_OK`). The probe

@@ -270,6 +270,27 @@ fn sinkGetLifeSpanHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_spa
     return (sink_life orelse return null).handOut();
 }
 
+/// The one Chrome-created browser this engine does not close, and the timer
+/// that keeps it off screen.
+///
+/// An extension install asks for a tabbed browser through
+/// `ScopedTabbedBrowserDisplayer` and holds a raw `BrowserWindowInterface*` to
+/// it across the asynchronous wait in `extensions::TriggerPostInstallDialog`,
+/// so a browser closed inside on_after_created is dereferenced after it is
+/// freed and the process dies the moment the install lands. Chrome never picks
+/// one of this engine's browsers for that: CEF makes every BrowserView-hosted
+/// browser a TYPE_POPUP (libcef chrome_browser_host_impl.cc), and the lookup
+/// wants a tabbed one. So the first browser Chrome makes for itself is kept as
+/// the tabbed browser every later lookup finds, and every one after it is
+/// closed as before.
+/// The top-level, not the browser's own window: CEF answers
+/// `get_window_handle` with the window the web contents draw into, which for a
+/// browser Chrome owns is a child of the Widget's frame, and unmapping the
+/// child leaves the frame on screen. `ScopedTabbedBrowserDisplayer` also shows
+/// the browser it picked every time it is used, so one unmap at creation does
+/// not hold and the window watcher below unmaps it on every tick.
+var kept_window: usize = 0;
+
 fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
     if (browser == null) return;
@@ -280,10 +301,13 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
 
     // Unmapped before anything else: closing a browser is asynchronous and the
     // window would otherwise be on screen for the length of the teardown.
+    var window: usize = 0;
     if (host.*.get_window_handle) |get_window| {
-        const window = get_window(host);
-        if (window != 0) x11.hide(@intCast(window));
+        window = x11.toplevelOf(@intCast(get_window(host)));
+        if (window != 0) x11.hide(window);
     }
+    const keep = kept_window == 0 and window != 0;
+    if (keep) kept_window = window;
 
     var url: ?[]u8 = null;
     if (browser.*.get_main_frame) |get_frame| {
@@ -304,7 +328,123 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
     } else if (url) |u| {
         alloc.free(u);
     }
+    if (keep) return;
     if (host.*.close_browser) |close| close(host, 1);
+}
+
+// ============================================================================
+// Windows Chrome puts up that belong to no browser
+// ============================================================================
+//
+// The extension install prompt and the post-install dialog are Views widgets
+// rather than browsers, so no CEF callback is consulted about them: they arrive
+// as top-level windows on the X server and nowhere else. Chrome style watches
+// the root for top-levels that carry this process's `_NET_WM_PID`, are not one
+// of GTK's own windows and are not the kept browser, moves each one over the
+// view that has focus and reports it to the app as `chromeDialog`. Chrome's own
+// dialog is still Chrome's, but it is drawn on the app's content instead of
+// wherever Views decided to put it.
+
+const chrome_watch_interval_ms: c_uint = 200;
+const chrome_dialog_min_w: c_uint = 200;
+const chrome_dialog_min_h: c_uint = 80;
+var chrome_watch_timer: c_uint = 0;
+var adopted_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
+var self_pid: u32 = 0;
+
+fn startChromeWindowWatch() void {
+    if (!chromeStyle() or chrome_watch_timer != 0) return;
+    self_pid = @intCast(std.c.getpid());
+    chrome_watch_timer = glib.timeoutAdd(chrome_watch_interval_ms, &onChromeWindowWatch, null);
+}
+
+/// True for a window GTK owns. Chromium's browser process is this process, so
+/// `_NET_WM_PID` alone does not tell the two apart, and moving one of the app's
+/// own windows would be a good deal worse than leaving a dialog where it is.
+fn isGtkToplevel(window: usize) bool {
+    const list = gtk.Window.listToplevels();
+    defer glib.List.free(list);
+    var node: ?*glib.List = list;
+    while (node) |n| : (node = n.f_next) {
+        const data = n.f_data orelse continue;
+        const widget: *gtk.Widget = @ptrCast(@alignCast(data));
+        if (x11.toplevelXid(widget) == window) return true;
+    }
+    return false;
+}
+
+fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
+    if (kept_window != 0) x11.hide(kept_window);
+    var buf: [128]x11.Window = undefined;
+    const children = x11.rootChildren(&buf);
+    // The X server reuses window ids, so a dialog that is gone has to be
+    // forgotten or the next window to land on its id is never adopted.
+    var gone: std.ArrayList(usize) = .empty;
+    defer gone.deinit(alloc);
+    var it = adopted_windows.keyIterator();
+    while (it.next()) |key| {
+        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
+    }
+    for (gone.items) |w| _ = adopted_windows.remove(w);
+    for (children) |w| {
+        if (w == 0 or w == kept_window) continue;
+        if (adopted_windows.contains(w)) continue;
+        if (x11.windowPid(w) != self_pid) continue;
+        if (isGtkToplevel(w)) continue;
+        // Chromium keeps a handful of small parked top-levels of its own (the
+        // omnibox popup host, the drag proxy) that are never presented; moving
+        // one onto the view would drag scaffolding into the page.
+        const geo = x11.geometry(w) orelse continue;
+        if (geo.w < chrome_dialog_min_w or geo.h < chrome_dialog_min_h) continue;
+        adoptChromeWindow(w);
+    }
+    return 1;
+}
+
+/// The view a Chrome dialog is drawn over. A view that is not mapped sits at
+/// the park origin far off-screen (see `parkContainer`), and centring a dialog
+/// on one of those would hide it rather than place it, so an on-screen view
+/// wins over the focused one.
+fn anchorView() ?struct { view: *View, origin: x11.Origin } {
+    if (focused_view) |view| {
+        const origin = x11.originOnRoot(view.container);
+        if (origin.x >= 0 and origin.y >= 0) return .{ .view = view, .origin = origin };
+    }
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (view.container == 0) continue;
+        const origin = x11.originOnRoot(view.container);
+        if (origin.x >= 0 and origin.y >= 0 and view.size_w.load(.acquire) > 0) {
+            return .{ .view = view, .origin = origin };
+        }
+    }
+    return null;
+}
+
+fn adoptChromeWindow(window: usize) void {
+    adopted_windows.put(alloc, window, {}) catch return;
+    const anchor = anchorView() orelse return;
+    const view = anchor.view;
+    const geo = x11.geometry(window) orelse return;
+    const origin = anchor.origin;
+    const vw = view.size_w.load(.acquire);
+    const vh = view.size_h.load(.acquire);
+    var x = origin.x;
+    var y = origin.y;
+    if (vw > geo.w) x += @intCast((vw - geo.w) / 2);
+    if (vh > geo.h) y += @intCast((vh - geo.h) / 2);
+    x11.moveResize(window, x, y, geo.w, geo.h);
+    tr("chromeDialog node={d} window={x} {d}x{d} at {d},{d}", .{ view.node_id, window, geo.w, geo.h, x, y });
+
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "x", .{ .integer = x }) catch return;
+    payload.put(alloc, "y", .{ .integer = y }) catch return;
+    payload.put(alloc, "width", .{ .integer = geo.w }) catch return;
+    payload.put(alloc, "height", .{ .integer = geo.h }) catch return;
+    f(view.node_id, "chromeDialog", .{ .data = .{ .object = payload } });
 }
 
 fn onBeforeChildProcessLaunch(
@@ -415,7 +555,10 @@ fn ensureInitialized() bool {
     // the host's GTK4 loop never has to pump it. external_message_pump is not
     // an option here: it breaks text input (CEF #2002, #3782).
     settings.multi_threaded_message_loop = 1;
-    settings.log_severity = @intCast(c.LOGSEVERITY_WARNING);
+    settings.log_severity = if (std.c.getenv("ND_CEF_VERBOSE") != null)
+        @intCast(c.LOGSEVERITY_VERBOSE)
+    else
+        @intCast(c.LOGSEVERITY_WARNING);
 
     var resources: ?[:0]u8 = null;
     var locales: ?[:0]u8 = null;
@@ -553,6 +696,7 @@ const LifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
 const FindObj = ref.Counted(c.cef_find_handler_t, *View);
 const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
 const JsDialogHandlerObj = ref.Counted(c.cef_jsdialog_handler_t, *View);
+const DialogHandlerObj = ref.Counted(c.cef_dialog_handler_t, *View);
 const ContextMenuObj = ref.Counted(c.cef_context_menu_handler_t, *View);
 const FocusObj = ref.Counted(c.cef_focus_handler_t, *View);
 const CommandObj = ref.Counted(c.cef_command_handler_t, *View);
@@ -569,6 +713,7 @@ const View = struct {
     find_handler: *FindObj,
     download_handler: *DownloadObj,
     jsdialog_handler: *JsDialogHandlerObj,
+    dialog_handler: *DialogHandlerObj,
     context_menu_handler: *ContextMenuObj,
     focus_handler: *FocusObj,
     command_handler: *CommandObj,
@@ -590,6 +735,11 @@ const View = struct {
     /// allowed only when the app asked for it, never conjured by the page.
     devtools_requested: std.atomic.Value(bool) = .init(false),
     menu_lock: SpinLock = .{},
+    /// The answer `installExtension` parks for the directory chooser that
+    /// `chrome.developerPrivate.loadUnpacked` opens. Written on the GTK thread
+    /// by the command, read on the CEF UI thread by `on_file_dialog`.
+    dialog_lock: SpinLock = .{},
+    pending_dialog_path: ?[]u8 = null,
     menu_items: []ctxmenu.Item = &.{},
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
     next_menu_command: c_int = menu_command_first,
@@ -769,6 +919,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const find_handler = FindObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const download_handler = DownloadObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const dialog_handler = DialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const focus_handler = FocusObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const command_handler = CommandObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
@@ -783,6 +934,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .find_handler = find_handler,
         .download_handler = download_handler,
         .jsdialog_handler = jsdialog_handler,
+        .dialog_handler = dialog_handler,
         .context_menu_handler = context_menu_handler,
         .focus_handler = focus_handler,
         .command_handler = command_handler,
@@ -800,6 +952,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_find_handler = &clientGetFindHandler;
     client.cef.get_download_handler = &clientGetDownloadHandler;
     client.cef.get_jsdialog_handler = &clientGetJsDialogHandler;
+    client.cef.get_dialog_handler = &clientGetDialogHandler;
     client.cef.get_context_menu_handler = &clientGetContextMenuHandler;
     client.cef.get_focus_handler = &clientGetFocusHandler;
     client.cef.get_command_handler = &clientGetCommandHandler;
@@ -823,6 +976,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     download_handler.cef.can_download = &onCanDownload;
     jsdialog_handler.cef.on_jsdialog = &onJsDialog;
     jsdialog_handler.cef.on_before_unload_dialog = &onBeforeUnloadDialog;
+    dialog_handler.cef.on_file_dialog = &onFileDialog;
     context_menu_handler.cef.on_before_context_menu = &onBeforeContextMenu;
     context_menu_handler.cef.run_context_menu = &onRunContextMenu;
     context_menu_handler.cef.on_context_menu_command = &onContextMenuCommand;
@@ -835,6 +989,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     request_handler.cef.on_open_urlfrom_tab = &onOpenUrlFromTab;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
+    startChromeWindowWatch();
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
     gobject.Object.setData(widget.as(gobject.Object), VIEW_KEY, view);
     gtk.Widget.setHexpand(widget, 1);
@@ -1238,6 +1393,10 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
+    if (std.mem.eql(u8, cmd, "listExtensionActions")) return cmdListExtensionActions(view, arg);
+    if (std.mem.eql(u8, cmd, "installExtension")) return cmdInstallExtension(view, arg);
+    if (std.mem.eql(u8, cmd, "uninstallExtension")) return cmdUninstallExtension(view, arg);
+    if (std.mem.eql(u8, cmd, "setExtensionEnabled")) return cmdSetExtensionEnabled(view, arg);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -2055,6 +2214,9 @@ const Deferred = union(enum) {
 /// feature being dead: an extension's background page reported exactly that.
 const world_wait_us: i64 = 5 * std.time.us_per_s;
 
+/// `event` and `key` are static strings; only `id` is owned.
+const JsonResult = struct { id: []u8, event: []const u8, key: []const u8 };
+
 /// Where the string form of one evaluation goes.
 const EvalSink = union(enum) {
     /// `executeJavaScript`: emits `javaScriptResult` with this correlation id.
@@ -2065,6 +2227,12 @@ const EvalSink = union(enum) {
     page_text: u32,
     /// `listExtensions`: emits `extensionsList` with this correlation id.
     extensions: []u8,
+    /// The three commands that mutate the registry and answer with the list it
+    /// became.
+    json_result: JsonResult,
+    /// `listExtensionActions`: emits `extensionActions` with this correlation
+    /// id, after the manifests are read.
+    extension_actions: []u8,
     /// Fire and forget: the result is not wanted, only the side effect.
     discard,
 };
@@ -2121,6 +2289,9 @@ const PendingCall = struct { view: *View, call: Call, deadline_us: i64 };
 /// registration whose only failure mode is a wedged agent.
 const eval_call_timeout_us: i64 = 4 * std.time.us_per_s;
 const other_call_timeout_us: i64 = 15 * std.time.us_per_s;
+/// `uninstallExtension` waits on Chrome's own "Remove …?" confirmation, so its
+/// deadline is a person's, not a round trip's.
+const confirmed_call_timeout_us: i64 = 5 * std.time.us_per_min;
 
 var pending_sweep_timer: c_uint = 0;
 
@@ -2153,6 +2324,9 @@ var pending_calls: std.AutoHashMapUnmanaged(c_int, PendingCall) = .empty;
 fn sinkFree(sink: EvalSink) void {
     switch (sink) {
         .app => |id| alloc.free(id),
+        .extensions => |id| alloc.free(id),
+        .extension_actions => |id| alloc.free(id),
+        .json_result => |r| alloc.free(r.id),
         else => {},
     }
 }
@@ -2198,7 +2372,8 @@ fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Ca
     tr("cdp -> node={d} id={d} {s} {s}", .{ view.node_id, id, method, params_json });
     if (std.meta.activeTag(call) == .ignore) return true;
     const budget: i64 = switch (call) {
-        .eval, .stringify => eval_call_timeout_us,
+        .eval => |e| if (e.sink == .json_result) confirmed_call_timeout_us else eval_call_timeout_us,
+        .stringify => eval_call_timeout_us,
         else => other_call_timeout_us,
     };
     pending_calls.put(alloc, id, .{
@@ -2464,11 +2639,15 @@ fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8, r
     // returnByValue stays false so an object comes back as a handle this can
     // stringify in the page; awaitPromise stays false because WebKitGTK's
     // evaluate_javascript does not await either, and a Promise has to
-    // stringify as "[object Promise]" on both engines. listExtensions is the
-    // exception: its query is Chromium's own callback API and there is no app
-    // code on the other side of it to be consistent with.
+    // stringify as "[object Promise]" on both engines. The extension commands
+    // are the exception: they query Chromium's own callback APIs and there is
+    // no app code on the other side of them to be consistent with.
     params.appendSlice(alloc, ",\"returnByValue\":false,\"awaitPromise\":") catch return false;
-    params.appendSlice(alloc, if (sink == .extensions) "true" else "false") catch return false;
+    const await_promise = sink == .extensions or sink == .json_result or sink == .extension_actions;
+    params.appendSlice(alloc, if (await_promise) "true" else "false") catch return false;
+    // `chrome.management.uninstall` refuses without one, and the gesture that
+    // stands behind these commands is the app's own button.
+    if (sink == .json_result) params.appendSlice(alloc, ",\"userGesture\":true") catch return false;
     params.appendSlice(alloc, ",\"objectGroup\":\"nd\"") catch return false;
     const context_id = worldContextId(view, world);
     if (context_id != 0) {
@@ -2634,6 +2813,52 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
             defer parsed.deinit();
             payload.put(alloc, "extensions", parsed.value) catch return;
             f(view.node_id, "extensionsList", .{ .data = .{ .object = payload } });
+        },
+        .extension_actions => |id| {
+            defer alloc.free(id);
+            const f = emit orelse return;
+            var payload: std.json.ObjectMap = .empty;
+            defer payload.deinit(alloc);
+            payload.put(alloc, "id", .{ .string = id }) catch return;
+            payload.put(alloc, "ok", .{ .bool = ok }) catch return;
+            if (!ok) {
+                payload.put(alloc, "error", .{ .string = text }) catch return;
+                f(view.node_id, "extensionActions", .{ .data = .{ .object = payload } });
+                return;
+            }
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch {
+                payload.put(alloc, "ok", .{ .bool = false }) catch return;
+                payload.put(alloc, "error", .{ .string = "listExtensionActions: unreadable answer" }) catch return;
+                f(view.node_id, "extensionActions", .{ .data = .{ .object = payload } });
+                return;
+            };
+            defer parsed.deinit();
+            var actions = buildExtensionActions(parsed.value) orelse return;
+            defer actions.deinit();
+            payload.put(alloc, "actions", .{ .array = actions.items }) catch return;
+            f(view.node_id, "extensionActions", .{ .data = .{ .object = payload } });
+        },
+        .json_result => |result| {
+            defer alloc.free(result.id);
+            const f = emit orelse return;
+            var payload: std.json.ObjectMap = .empty;
+            defer payload.deinit(alloc);
+            payload.put(alloc, "id", .{ .string = result.id }) catch return;
+            payload.put(alloc, "ok", .{ .bool = ok }) catch return;
+            if (!ok) {
+                payload.put(alloc, "error", .{ .string = text }) catch return;
+                f(view.node_id, result.event, .{ .data = .{ .object = payload } });
+                return;
+            }
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch {
+                payload.put(alloc, "ok", .{ .bool = false }) catch return;
+                payload.put(alloc, "error", .{ .string = "unreadable answer" }) catch return;
+                f(view.node_id, result.event, .{ .data = .{ .object = payload } });
+                return;
+            };
+            defer parsed.deinit();
+            payload.put(alloc, result.key, parsed.value) catch return;
+            f(view.node_id, result.event, .{ .data = .{ .object = payload } });
         },
         .auto => |eval_id| {
             const entry = pending_evals.get(eval_id) orelse return;
@@ -3329,6 +3554,345 @@ fn cmdListExtensions(view: *View, arg: ?std.json.Value) void {
     if (!startEval(view, .{ .extensions = id_copy }, list_extensions_js, "")) alloc.free(id_copy);
 }
 
+/// The registry rows an action is built from. The action itself is declared in
+/// the manifest and nowhere Chromium will hand it over: chrome://extensions
+/// cannot fetch `chrome-extension://<id>/manifest.json` (it is not a
+/// web-accessible resource and the WebUI origin is not the extension's), and
+/// `developerPrivate` reports commands and pinning but not the action's popup,
+/// title or icon. So the page answers with where each extension lives and the
+/// host reads the manifest off disk.
+const list_extension_actions_js =
+    \\(async () => {
+    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
+    \\    throw new Error("listExtensionActions needs a view showing chrome://extensions");
+    \\  }
+    \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
+    \\    { includeDisabled: true, includeTerminated: true }, resolve));
+    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\    id: e.id,
+    \\    name: e.name,
+    \\    version: e.version,
+    \\    enabled: e.state === "ENABLED",
+    \\    iconUrl: e.iconUrl || "",
+    \\    path: e.path || "",
+    \\  })));
+    \\})()
+;
+
+fn cmdListExtensionActions(view: *View, arg: ?std.json.Value) void {
+    const id = extensionCommandId(arg, "listExtensionActions") orelse return;
+    const id_copy = alloc.dupe(u8, id) catch return;
+    if (!startEval(view, .{ .extension_actions = id_copy }, list_extension_actions_js, "")) {
+        alloc.free(id_copy);
+    }
+}
+
+const manifest_limit: usize = 1 << 20;
+
+/// An extension's manifest.json. `developerPrivate` reports `path` for an
+/// unpacked extension and nothing for one from the store, which lives under the
+/// profile at `Extensions/<id>/<version>_<n>`; `n` counts reinstalls of the
+/// same version in place, so the first few are tried rather than the directory
+/// being listed.
+fn readExtensionManifest(id: []const u8, version: []const u8, path: []const u8) ?[]u8 {
+    if (path.len > 0) return readFileUnder(path, "manifest.json");
+    const root = defaultCacheRoot() orelse return null;
+    defer alloc.free(root);
+    for (0..4) |n| {
+        const dir = std.fmt.allocPrint(alloc, "{s}/Default/Extensions/{s}/{s}_{d}", .{ root, id, version, n }) catch return null;
+        defer alloc.free(dir);
+        if (readFileUnder(dir, "manifest.json")) |manifest| return manifest;
+    }
+    return null;
+}
+
+fn readFileUnder(dir: []const u8, name: []const u8) ?[]u8 {
+    const path = std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0) catch return null;
+    defer alloc.free(path);
+    const file = std.c.fopen(path.ptr, "rb") orelse return null;
+    defer _ = std.c.fclose(file);
+    const buf = alloc.alloc(u8, manifest_limit) catch return null;
+    const n = std.c.fread(buf.ptr, 1, buf.len, file);
+    if (n == 0) {
+        alloc.free(buf);
+        return null;
+    }
+    return alloc.realloc(buf, n) catch buf[0..n];
+}
+
+/// The manifest's action block, whatever key it is under. MV2 spells it
+/// `browser_action` or `page_action`; both still load.
+fn manifestAction(manifest: std.json.Value) ?std.json.ObjectMap {
+    const root = switch (manifest) {
+        .object => |o| o,
+        else => return null,
+    };
+    for ([_][]const u8{ "action", "browser_action", "page_action" }) |key| {
+        const value = root.get(key) orelse continue;
+        if (value == .object) return value.object;
+    }
+    return null;
+}
+
+/// The `extensionActions` payload plus everything allocated to build it. The
+/// strings in the answer come out of manifests that are parsed and freed one at
+/// a time, so they are copied here rather than borrowed.
+const ActionList = struct {
+    /// Managed, unlike the unmanaged list beside it: std.json.Array carries its
+    /// own allocator.
+    items: std.json.Array,
+    strings: std.ArrayList([]u8) = .empty,
+
+    fn own(self: *ActionList, value: []const u8) ?[]const u8 {
+        const copy = alloc.dupe(u8, value) catch return null;
+        return self.adopt(copy);
+    }
+
+    fn adopt(self: *ActionList, value: []u8) ?[]const u8 {
+        self.strings.append(alloc, value) catch {
+            alloc.free(value);
+            return null;
+        };
+        return value;
+    }
+
+    fn deinit(self: *ActionList) void {
+        for (self.items.items) |value| {
+            if (value == .object) {
+                var obj = value.object;
+                obj.deinit(alloc);
+            }
+        }
+        self.items.deinit();
+        for (self.strings.items) |s| alloc.free(s);
+        self.strings.deinit(alloc);
+    }
+};
+
+fn buildExtensionActions(list: std.json.Value) ?ActionList {
+    var out: ActionList = .{ .items = .init(alloc) };
+    const rows = switch (list) {
+        .array => |a| a,
+        else => return out,
+    };
+    for (rows.items) |row| {
+        const obj = switch (row) {
+            .object => |o| o,
+            else => continue,
+        };
+        const id = objStr(obj, "id") orelse continue;
+        const manifest_text = readExtensionManifest(id, objStr(obj, "version") orelse "", objStr(obj, "path") orelse "") orelse continue;
+        defer alloc.free(manifest_text);
+        var manifest = std.json.parseFromSlice(std.json.Value, alloc, manifest_text, .{}) catch continue;
+        defer manifest.deinit();
+        const action = manifestAction(manifest.value) orelse continue;
+
+        const name = objStr(obj, "name") orelse "";
+        const title = out.own(objStr(action, "default_title") orelse name) orelse continue;
+        var icon_url: []const u8 = objStr(obj, "iconUrl") orelse "";
+        if (actionIcon(action)) |icon| {
+            icon_url = out.adopt(std.fmt.allocPrint(alloc, "chrome-extension://{s}/{s}", .{ id, icon }) catch continue) orelse continue;
+        }
+        var popup_url: []const u8 = "";
+        if (objStr(action, "default_popup")) |popup| {
+            popup_url = out.adopt(std.fmt.allocPrint(alloc, "chrome-extension://{s}/{s}", .{ id, popup }) catch continue) orelse continue;
+        }
+
+        var entry: std.json.ObjectMap = .empty;
+        entry.put(alloc, "id", .{ .string = id }) catch continue;
+        entry.put(alloc, "name", .{ .string = name }) catch continue;
+        entry.put(alloc, "enabled", .{ .bool = objBool(obj, "enabled") orelse false }) catch continue;
+        entry.put(alloc, "title", .{ .string = title }) catch continue;
+        entry.put(alloc, "iconUrl", .{ .string = icon_url }) catch continue;
+        entry.put(alloc, "popupUrl", .{ .string = popup_url }) catch continue;
+        entry.put(alloc, "badgeText", .{ .string = "" }) catch continue;
+        out.items.append(.{ .object = entry }) catch {
+            entry.deinit(alloc);
+            continue;
+        };
+    }
+    return out;
+}
+
+/// `default_icon` is either one path or a size-keyed map; the largest size wins,
+/// which is what a toolbar wants on a HiDPI display.
+fn actionIcon(action: std.json.ObjectMap) ?[]const u8 {
+    const value = action.get("default_icon") orelse return null;
+    switch (value) {
+        .string => |s| return s,
+        .object => |sizes| {
+            var best: ?[]const u8 = null;
+            var best_size: i64 = -1;
+            var it = sizes.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.* != .string) continue;
+                const size = std.fmt.parseInt(i64, entry.key_ptr.*, 10) catch 0;
+                if (size > best_size) {
+                    best_size = size;
+                    best = entry.value_ptr.string;
+                }
+            }
+            return best;
+        },
+        else => return null,
+    }
+}
+
+/// The three commands that change the registry share a body: they run against
+/// chrome://extensions, do their one thing, and answer with the list the
+/// registry became, which is the document `listExtensions` produces. One
+/// function expression, because Runtime.evaluate leaves a top-level `const` in
+/// the page's global scope and the second call would redeclare it.
+const extension_mutation_prefix =
+    \\(async () => {
+    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
+    \\    throw new Error("this command needs a view showing chrome://extensions");
+    \\  }
+    \\  const listed = async () => {
+    \\    const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
+    \\      { includeDisabled: true, includeTerminated: true }, resolve));
+    \\    return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\      id: e.id,
+    \\      name: e.name,
+    \\      version: e.version,
+    \\      enabled: e.state === "ENABLED",
+    \\      iconUrl: e.iconUrl || "",
+    \\      optionsUrl: (e.optionsPage && e.optionsPage.url) || "",
+    \\    })));
+    \\  };
+    \\
+;
+
+const extension_mutation_suffix =
+    \\
+    \\  return await listed();
+    \\})()
+;
+
+/// chrome://extensions has no way to load an unpacked extension from a path it
+/// was handed: `developerPrivate.loadUnpacked` opens a directory chooser and
+/// uses what comes back. The chooser is a CEF file dialog, so the path the app
+/// asked for is parked on the view and `on_file_dialog` answers with it.
+const install_extension_body =
+    \\  await new Promise((resolve) => chrome.developerPrivate.updateProfileConfiguration(
+    \\    { inDeveloperMode: true }, resolve));
+    \\  const loaded = await new Promise((resolve, reject) => chrome.developerPrivate.loadUnpacked(
+    \\    { failQuietly: true, populateError: true },
+    \\    (result) => chrome.runtime.lastError
+    \\      ? reject(new Error(chrome.runtime.lastError.message))
+    \\      : resolve(result)));
+    \\  if (loaded && loaded.error) throw new Error(loaded.error);
+;
+
+fn extensionCommandId(arg: ?std.json.Value, comptime name: []const u8) ?[]const u8 {
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView " ++ name ++ ": malformed arg (expected {{id}})\n", .{});
+        return null;
+    };
+    return objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView " ++ name ++ ": malformed arg (expected {{id}})\n", .{});
+        return null;
+    };
+}
+
+fn startJsonCommand(view: *View, id: []const u8, event: []const u8, key: []const u8, code: []const u8) void {
+    const id_copy = alloc.dupe(u8, id) catch return;
+    if (!startEval(view, .{ .json_result = .{ .id = id_copy, .event = event, .key = key } }, code, "")) {
+        alloc.free(id_copy);
+    }
+}
+
+fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView installExtension: malformed arg (expected {{id, path}})\n", .{});
+        return;
+    };
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView installExtension: malformed arg (expected {{id, path}})\n", .{});
+        return;
+    };
+    const path = objStr(obj, "path") orelse {
+        std.debug.print("ND_WARN WebView installExtension: malformed arg (expected {{id, path}})\n", .{});
+        return;
+    };
+    const parked = alloc.dupe(u8, path) catch return;
+    view.dialog_lock.lock();
+    if (view.pending_dialog_path) |old| alloc.free(old);
+    view.pending_dialog_path = parked;
+    view.dialog_lock.unlock();
+
+    var code: std.ArrayList(u8) = .empty;
+    defer code.deinit(alloc);
+    code.appendSlice(alloc, extension_mutation_prefix) catch return;
+    code.appendSlice(alloc, install_extension_body) catch return;
+    code.appendSlice(alloc, extension_mutation_suffix) catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+}
+
+fn cmdUninstallExtension(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse return;
+    const target = objStr(obj, "extensionId") orelse {
+        std.debug.print("ND_WARN WebView uninstallExtension: malformed arg (expected {{id, extensionId}})\n", .{});
+        return;
+    };
+    var code: std.ArrayList(u8) = .empty;
+    defer code.deinit(alloc);
+    code.appendSlice(alloc, extension_mutation_prefix) catch return;
+    // chrome.management.uninstall always draws Chrome's own "Remove …?"
+    // confirmation when the caller is not the extension being removed, and
+    // there is no API that skips it: developerPrivate has no uninstall, and its
+    // removeMultipleExtensions refuses its own documented signature on 151. So
+    // the dialog is part of the contract, and the promise settles when the
+    // person answers it.
+    code.appendSlice(alloc, "  await new Promise((resolve, reject) => chrome.management.uninstall(") catch return;
+    appendJsString(&code, target) catch return;
+    code.appendSlice(alloc,
+        \\, { showConfirmDialog: false },
+        \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
+    ) catch return;
+    code.appendSlice(alloc, extension_mutation_suffix) catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+}
+
+fn cmdSetExtensionEnabled(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse return;
+    const id = objStr(obj, "id") orelse return;
+    const target = objStr(obj, "extensionId") orelse {
+        std.debug.print("ND_WARN WebView setExtensionEnabled: malformed arg (expected {{id, extensionId, enabled}})\n", .{});
+        return;
+    };
+    const enabled = objBool(obj, "enabled") orelse true;
+    var code: std.ArrayList(u8) = .empty;
+    defer code.deinit(alloc);
+    code.appendSlice(alloc, extension_mutation_prefix) catch return;
+    code.appendSlice(alloc, "  await new Promise((resolve, reject) => chrome.management.setEnabled(") catch return;
+    appendJsString(&code, target) catch return;
+    code.appendSlice(alloc, if (enabled) ", true," else ", false,") catch return;
+    code.appendSlice(alloc,
+        \\
+        \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
+    ) catch return;
+    code.appendSlice(alloc, extension_mutation_suffix) catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+}
+
+fn appendJsString(out: *std.ArrayList(u8), value: []const u8) !void {
+    try out.append(alloc, '"');
+    for (value) |ch| {
+        switch (ch) {
+            '"', '\\' => {
+                try out.append(alloc, '\\');
+                try out.append(alloc, ch);
+            },
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            else => try out.append(alloc, ch),
+        }
+    }
+    try out.append(alloc, '"');
+}
+
 // ============================================================================
 // Automation: webviewEval and the pageText cache
 // ============================================================================
@@ -3883,6 +4447,45 @@ const JSDIALOGTYPE_PROMPT: c_uint = 2;
 
 fn clientGetJsDialogHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_jsdialog_handler_t {
     return ClientObj.of(self).payload.jsdialog_handler.handOut();
+}
+
+fn clientGetDialogHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_dialog_handler_t {
+    return ClientObj.of(self).payload.dialog_handler.handOut();
+}
+
+/// Only the chooser `installExtension` armed is answered here. Everything else
+/// (a file input on a page, a save dialog) is left to CEF's own, which is the
+/// platform's: returning 0 means "not handled".
+fn onFileDialog(
+    self: [*c]c.cef_dialog_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: c.cef_file_dialog_mode_t,
+    _: [*c]const c.cef_string_t,
+    _: [*c]const c.cef_string_t,
+    _: c.cef_string_list_t,
+    _: c.cef_string_list_t,
+    _: c.cef_string_list_t,
+    callback: [*c]c.cef_file_dialog_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(callback);
+    const view = DialogHandlerObj.of(self).payload;
+    view.dialog_lock.lock();
+    const path = view.pending_dialog_path;
+    view.pending_dialog_path = null;
+    view.dialog_lock.unlock();
+    const answer = path orelse return 0;
+    defer alloc.free(answer);
+
+    const api = loader.loaded() orelse return 0;
+    const list = api.string_list_alloc();
+    defer api.string_list_free(list);
+    var entry = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&entry);
+    if (!setStr(&entry, answer)) return 0;
+    api.string_list_append(list, &entry);
+    if (callback.*.cont) |cont| cont(callback, list);
+    return 1;
 }
 
 fn answerJsDialog(callback: [*c]c.cef_jsdialog_callback_t, accepted: bool, text: ?[]const u8) void {

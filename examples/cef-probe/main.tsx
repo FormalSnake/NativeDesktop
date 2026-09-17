@@ -1,7 +1,12 @@
 import {
   executeJavaScript,
+  installExtension,
+  listExtensionActions,
   listExtensions,
+  onExtensionActions,
   onExtensionsList,
+  setExtensionEnabled,
+  uninstallExtension,
   onJavaScriptResult,
   render,
   sendCommand,
@@ -99,7 +104,7 @@ const BASE = `http://127.0.0.1:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -141,6 +146,13 @@ function App(): React.ReactNode {
 
   const setResult = (name: CheckName, value: string): void =>
     setResults((prev) => ({ ...prev, [name]: value }));
+
+  // Reported on whichever view the dialog was drawn over, which is the one on
+  // screen rather than the hidden registry view the command was sent to.
+  const onChromeDialogSeen = (e: { data: unknown }): void => {
+    const d = e.data as { x: number; y: number; width: number; height: number };
+    setResult("chromeDialog", `ok (${d.x},${d.y} ${d.width}x${d.height})`);
+  };
 
   useEffect(() => {
     if (started.current) return;
@@ -198,6 +210,7 @@ function App(): React.ReactNode {
           onForwardAvailable={(e) => record("forward", e.checked)}
           onNewWindow={(e) => record("newWindow", e.text)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
+          onChromeDialog={onChromeDialogSeen}
           onJavaScriptResult={onJavaScriptResult}
         />
         {/* A background tab, which is the shape the bug was found in twice: an
@@ -247,6 +260,8 @@ function App(): React.ReactNode {
               engine="chromium"
               url={CHROME_STYLE ? "chrome://extensions" : ""}
               onExtensionsList={onExtensionsList}
+              onExtensionActions={onExtensionActions}
+              onChromeDialog={onChromeDialogSeen}
             />
           </box>
         </tabview>
@@ -504,6 +519,46 @@ async function run(ctx: {
     );
     const named = list.map((e) => `${e.name} ${e.enabled ? "enabled" : "disabled"} ${e.iconUrl ? "icon" : "no-icon"}`);
     return `ok (${named.join("; ")})`;
+  });
+
+  // The registry is writable at runtime: an unpacked directory installs into
+  // the live profile with no relaunch, its action is reported, it disables and
+  // enables again, and it uninstalls.
+  await step("runtimeExtensions", async () => {
+    if (!CHROME_STYLE) {
+      ctx.setResult("uninstallExtension", "skip: alloy style has no extension registry");
+      ctx.setResult("chromeDialog", "skip: alloy style raises none of Chrome's dialogs");
+      return "skip: alloy style has no extension registry";
+    }
+    const view = ctx.extensions.current;
+    if (!view) throw new Error("no extensions view ref");
+    const path = `${process.cwd()}/scripts/fixtures/chrome-ext-runtime`;
+    const installed = await installExtension(view, path);
+    const mine = installed.find((e) => e.name === "ND Runtime Extension");
+    if (!mine) throw new Error(`installExtension did not register it: ${installed.map((e) => e.name).join(", ")}`);
+
+    const actions = await listExtensionActions(view);
+    const action = actions.find((a) => a.id === mine.id);
+    if (!action) throw new Error(`no action for ${mine.id} among ${actions.length}`);
+    if (action.title !== "ND Runtime") throw new Error(`action title ${action.title}`);
+    if (!action.popupUrl.endsWith("/popup.html")) throw new Error(`action popup ${action.popupUrl}`);
+    if (!action.iconUrl.endsWith("/icon16.png")) throw new Error(`action icon ${action.iconUrl}`);
+
+    const disabled = await setExtensionEnabled(view, mine.id, false);
+    if (disabled.find((e) => e.id === mine.id)?.enabled !== false) throw new Error("setExtensionEnabled(false) did not take");
+    const enabled = await setExtensionEnabled(view, mine.id, true);
+    if (enabled.find((e) => e.id === mine.id)?.enabled !== true) throw new Error("setExtensionEnabled(true) did not take");
+
+    // Not awaited: Chrome puts its own "Remove …?" confirmation up and the
+    // promise settles when that is answered, which is somebody else's click.
+    uninstallExtension(view, mine.id).then(
+      (left) => ctx.setResult(
+        "uninstallExtension",
+        left.some((e) => e.id === mine.id) ? "fail: still installed" : `ok (${mine.id} removed)`,
+      ),
+      (error: Error) => ctx.setResult("uninstallExtension", `fail: ${error.message}`),
+    );
+    return `ok (installed ${mine.id}, action ${action.title}, disabled, enabled, uninstall asked)`;
   });
 
   // The app's own items, which the engine appends to Chromium's model after a
