@@ -7,7 +7,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { join, resolve } from "node:path";
 import { resolveHostBinary } from "@nativedesktop/host";
 import { cefPlatformKey } from "@nativedesktop/host/cef";
-import { type NativeDesktopConfig, resolveCefSchemes, resolveWebViewEngine } from "../config.ts";
+import { type NativeDesktopConfig, resolveCefSchemes, resolveCefStyle, resolveWebViewEngine } from "../config.ts";
 import {
   applyCefMacPlan,
   type CefMacPlan,
@@ -80,6 +80,7 @@ export async function packageMacApp(
     appRoot: join(c, "Resources", "app"),
     engine,
     schemes: resolveCefSchemes(config),
+    style: resolveCefStyle(config),
     entry: options.entry,
     compile: options.compile,
   });

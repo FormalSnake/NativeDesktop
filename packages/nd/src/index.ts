@@ -13,6 +13,7 @@ import {
   loadConfig,
   type NativeDesktopConfig,
   resolveCefSchemes,
+  resolveCefStyle,
   resolveWebViewEngine,
 } from "./config.ts";
 import { packageApp, type PackageOptions } from "./package/index.ts";
@@ -24,15 +25,16 @@ async function nativeEnv(config: NativeDesktopConfig): Promise<Record<string, st
   return paths.length ? { ND_PLUGINS: "1", ND_PLUGIN_PATHS: paths.join(":") } : {};
 }
 
-/** The host reads the engine and its launch-declared schemes off its
- * environment, so both config decisions have to be made here and handed down.
- * Windows has no engine target yet. */
+/** The host reads the engine, its launch-declared schemes and the browser style
+ * off its environment, so those config decisions have to be made here and
+ * handed down. Windows has no engine target yet. */
 function engineEnv(config: NativeDesktopConfig): Record<string, string> {
   const target = engineTargetFor();
   if (!target) return {};
   const schemes = resolveCefSchemes(config);
   return {
     ND_WEBVIEW_ENGINE: resolveWebViewEngine(config, target),
+    ND_CEF_STYLE: resolveCefStyle(config),
     ...(schemes.length ? { ND_CEF_SCHEMES: schemes.join(",") } : {}),
   };
 }

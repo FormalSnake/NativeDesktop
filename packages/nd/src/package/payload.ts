@@ -4,7 +4,7 @@
 // workspace-relative path and relative imports keep resolving packaged.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
-import { buildNativePlugins, type NativeDesktopConfig, type PackageConfig, type WebViewEngine } from "../config.ts";
+import { buildNativePlugins, type CefStyle, type NativeDesktopConfig, type PackageConfig, type WebViewEngine } from "../config.ts";
 import type { ResolvedIdentity } from "./identity.ts";
 import { assertResolvableEntries, flattenRuntimeModules } from "./modules.ts";
 
@@ -46,6 +46,8 @@ export interface PayloadOptions {
   engine: WebViewEngine;
   /** Launch-declared CEF schemes, recorded for the same reason. */
   schemes: string[];
+  /** CEF browser style, recorded for the same reason. */
+  style: CefStyle;
   /** CLI --entry override (app-relative source entry). */
   entry?: string;
   /** false forces raw source (--no-compile). */
@@ -170,6 +172,7 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
     pluginPaths,
     engine: o.engine,
     schemes: o.schemes,
+    style: o.style,
   }, null, 2)}\n`);
 
   return { entry: appEntry, cwd, pluginPaths };

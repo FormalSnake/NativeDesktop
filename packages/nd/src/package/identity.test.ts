@@ -208,7 +208,7 @@ describe("buildDesktopEntry / appRunTemplate", () => {
     expect(script).not.toContain("ND_WEBVIEW_ENGINE");
   });
 
-  test("AppRun exports the engine and its schemes, behind an override", () => {
+  test("AppRun exports the engine, its schemes and the style, behind an override", () => {
     const script = appRunTemplate({
       entry: "src/main.tsx",
       cwd: ".",
@@ -216,8 +216,10 @@ describe("buildDesktopEntry / appRunTemplate", () => {
       pluginPaths: [],
       engine: "chromium",
       schemes: ["nbext", "nbint"],
+      style: "chrome",
     });
     expect(script).toContain('export ND_WEBVIEW_ENGINE="${ND_WEBVIEW_ENGINE:-chromium}"');
     expect(script).toContain('export ND_CEF_SCHEMES="${ND_CEF_SCHEMES:-nbext,nbint}"');
+    expect(script).toContain('export ND_CEF_STYLE="${ND_CEF_STYLE:-chrome}"');
   });
 });

@@ -145,6 +145,9 @@ export interface PackageConfig {
 /** `<webview>` engine: the platform's own WebKit, or Chromium via CEF. */
 export type WebViewEngine = "system" | "chromium";
 
+/** CEF browser style, per `cef_runtime_style_t`. */
+export type CefStyle = "alloy" | "chrome";
+
 export interface CefConfig {
   /** Pinned CEF release, matched against cef-builds.spotifycdn.com/index.json.
    * Default: DEFAULT_CEF_VERSION from @nativedesktop/host/cef. */
@@ -156,6 +159,11 @@ export interface CefConfig {
    * cef_initialize, which is long before app code runs, so the list has to come
    * from config rather than a runtime call. */
   schemes?: string[];
+  /** Browser style. Default "alloy". "chrome" gives the embedded browser
+   * Chromium's own browser runtime, which is the only way to run Chrome
+   * extensions; it costs Chromium's own handling of some UI that Alloy leaves
+   * to the embedder. See docs/webview.md. */
+  style?: CefStyle;
 }
 
 export interface WebViewConfig {
@@ -233,6 +241,29 @@ export function resolveCefSchemes(
       .map((name) => expectScheme(name, "ND_CEF_SCHEMES"))
     : (config.webview?.cef?.schemes ?? []).map((name) => expectScheme(name, "webview.cef.schemes"));
   return [...new Set(declared)];
+}
+
+const CEF_STYLES: readonly CefStyle[] = ["alloy", "chrome"];
+
+function expectStyle(value: string, source: string): CefStyle {
+  if (!CEF_STYLES.includes(value as CefStyle)) {
+    throw new Error(`nd: ${source} must be "alloy" or "chrome" (got "${value}")`);
+  }
+  return value as CefStyle;
+}
+
+/**
+ * The browser style a launch declares. ND_CEF_STYLE wins outright, the same way
+ * ND_WEBVIEW_ENGINE and ND_CEF_SCHEMES do, and takes the name the host reads.
+ */
+export function resolveCefStyle(
+  config: NativeDesktopConfig,
+  env: Record<string, string | undefined> = process.env,
+): CefStyle {
+  const override = env.ND_CEF_STYLE;
+  if (override) return expectStyle(override, "ND_CEF_STYLE");
+  const declared = config.webview?.cef?.style;
+  return declared ? expectStyle(declared, "webview.cef.style") : "alloy";
 }
 
 export function defineConfig(config: NativeDesktopConfig): NativeDesktopConfig { return config; }

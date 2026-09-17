@@ -10,6 +10,7 @@ import {
   loadConfig,
   type NativeDesktopConfig,
   resolveCefSchemes,
+  resolveCefStyle,
   resolveWebViewEngine,
   type WebViewEngine,
 } from "../config.ts";
@@ -78,9 +79,11 @@ export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[]
   if (!target) return [];
   let engine: WebViewEngine;
   let schemes: string[];
+  let style: string;
   try {
     engine = resolveWebViewEngine(config, target);
     schemes = resolveCefSchemes(config);
+    style = resolveCefStyle(config);
   } catch (err) {
     return [{ name: "webview", status: "error", detail: String(err) }];
   }
@@ -88,7 +91,8 @@ export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[]
     name: "webview",
     status: "ok",
     detail: `engine=${engine} (${target})${process.env.ND_WEBVIEW_ENGINE ? " from ND_WEBVIEW_ENGINE" : ""}` +
-      (schemes.length ? ` schemes=${schemes.join(",")}` : ""),
+      (schemes.length ? ` schemes=${schemes.join(",")}` : "") +
+      (engine === "chromium" ? ` style=${style}` : ""),
   }];
 
   const version = cefVersionFor(config.webview?.cef);

@@ -1,8 +1,14 @@
-// Webview engine and scheme resolution: the decisions `nd dev`, `nd package`
-// and `nd doctor` all make from the same config, and the values `nd dev` hands
-// the host as ND_WEBVIEW_ENGINE and ND_CEF_SCHEMES.
+// Webview engine, scheme and style resolution: the decisions `nd dev`,
+// `nd package` and `nd doctor` all make from the same config, and the values
+// `nd dev` hands the host as ND_WEBVIEW_ENGINE, ND_CEF_SCHEMES and ND_CEF_STYLE.
 import { describe, expect, test } from "bun:test";
-import { engineTargetFor, type NativeDesktopConfig, resolveCefSchemes, resolveWebViewEngine } from "./config.ts";
+import {
+  engineTargetFor,
+  type NativeDesktopConfig,
+  resolveCefSchemes,
+  resolveCefStyle,
+  resolveWebViewEngine,
+} from "./config.ts";
 
 const chromiumOnMac: NativeDesktopConfig = { webview: { engine: { mac: "chromium" } } };
 
@@ -50,5 +56,25 @@ describe("resolveCefSchemes", () => {
     expect(() => resolveCefSchemes({}, { ND_CEF_SCHEMES: "NBExt" })).toThrow("ND_CEF_SCHEMES");
     const bad = { webview: { cef: { schemes: ["nb ext"] } } };
     expect(() => resolveCefSchemes(bad, {})).toThrow("webview.cef.schemes");
+  });
+});
+
+describe("resolveCefStyle", () => {
+  const chrome: NativeDesktopConfig = { webview: { cef: { style: "chrome" } } };
+
+  test("defaults to alloy", () => {
+    expect(resolveCefStyle({}, {})).toBe("alloy");
+    expect(resolveCefStyle(chrome, {})).toBe("chrome");
+  });
+
+  test("ND_CEF_STYLE overrides the config in both directions", () => {
+    expect(resolveCefStyle({}, { ND_CEF_STYLE: "chrome" })).toBe("chrome");
+    expect(resolveCefStyle(chrome, { ND_CEF_STYLE: "alloy" })).toBe("alloy");
+  });
+
+  test("an unknown style names where it came from", () => {
+    expect(() => resolveCefStyle({}, { ND_CEF_STYLE: "views" })).toThrow("ND_CEF_STYLE");
+    const bad = { webview: { cef: { style: "blink" } } } as unknown as NativeDesktopConfig;
+    expect(() => resolveCefStyle(bad, {})).toThrow("webview.cef.style");
   });
 });

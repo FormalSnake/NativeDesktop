@@ -7,7 +7,7 @@ import { chmodSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveHostBinary } from "@nativedesktop/host";
 import { cefPlatformKey } from "@nativedesktop/host/cef";
-import { type NativeDesktopConfig, resolveCefSchemes, resolveWebViewEngine } from "../config.ts";
+import { type NativeDesktopConfig, resolveCefSchemes, resolveCefStyle, resolveWebViewEngine } from "../config.ts";
 import { applyCefLinuxPlan, cefVersionFor, ensureCefDist, planCefLinux } from "./cef.ts";
 import { installLinuxIcon } from "./icons.ts";
 import { buildAppRun, buildDesktopEntry, buildMimeInfoXml, type ResolvedIdentity } from "./identity.ts";
@@ -32,6 +32,7 @@ export async function packageLinuxApp(
 
   const engine = resolveWebViewEngine(config, "linux");
   const schemes = resolveCefSchemes(config);
+  const style = resolveCefStyle(config);
   const payload = await assemblePayload({
     appDir,
     config,
@@ -39,6 +40,7 @@ export async function packageLinuxApp(
     appRoot: join(appdir, "app"),
     engine,
     schemes,
+    style,
     entry: options.entry,
     compile: options.compile,
   });
@@ -51,6 +53,7 @@ export async function packageLinuxApp(
     pluginPaths: payload.pluginPaths,
     engine,
     schemes,
+    style,
   }));
   chmodSync(join(appdir, "AppRun"), 0o755);
   writeFileSync(join(appdir, `${identity.slug}.desktop`), buildDesktopEntry(identity, linux));
