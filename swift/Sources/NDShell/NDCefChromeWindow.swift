@@ -30,6 +30,7 @@ import ObjectiveC
     private unowned let view: NDCefWebView
     private var cefWindow: UnsafeMutablePointer<cef_window_t>?
     private var browserView: UnsafeMutablePointer<cef_browser_view_t>?
+    private var devToolsView: UnsafeMutablePointer<cef_browser_view_t>?
     private weak var anchor: NSWindow?
     /// The Chromium subtree now living in `view`, and the superview it came
     /// from. Chromium re-attaches its own native view host on some layout and
@@ -138,6 +139,51 @@ import ObjectiveC
             MainActor.assumeIsolated { self?.liftWebContents() }
         }
     }
+
+    // MARK: - DevTools
+
+    /// Docks the DevTools BrowserView beside the page inside the same Views
+    /// window, which is what puts its web contents under the NSView already
+    /// lifted into the host. Chrome's own dock is a WebContents split inside
+    /// the browser window; this is the same shape, drawn by CEF's box layout.
+    func dockDevTools(_ popup: UnsafeMutablePointer<cef_browser_view_t>) -> Bool {
+        guard !closed, let cefWindow, let browserView else { return false }
+        if let devToolsView {
+            nd_cef_ref_release(devToolsView)
+            self.devToolsView = nil
+        }
+        let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
+        var settings = cef_box_layout_settings_t()
+        settings.size = MemoryLayout<cef_box_layout_settings_t>.size
+        settings.horizontal = 1
+        // The split ratio comes from the two delegates' get_preferred_size,
+        // which always add up to the window width, rather than from per-view
+        // flex: cef_box_layout_t::set_flex_for_view segfaults on a BrowserView
+        // passed through its cef_view_t base.
+        settings.default_flex = 0
+        guard let layout = panel.pointee.set_to_box_layout?(panel, &settings) else { return false }
+        defer { nd_cef_ref_release(UnsafeMutableRawPointer(layout)) }
+        let tools = UnsafeMutableRawPointer(popup).assumingMemoryBound(to: cef_view_t.self)
+        panel.pointee.add_child_view?(panel, tools)
+        devToolsView = popup
+        view.ndTrace("chrome devtools docked")
+        return true
+    }
+
+    /// Chrome docks DevTools to the right at about a third of the contents
+    /// width; the page takes what is left, so the two always add up to the
+    /// window and the box layout leaves no gap.
+    func dockedSize(devTools: Bool) -> cef_size_t {
+        let width = Int32(view.bounds.width.rounded())
+        let height = Int32(view.bounds.height.rounded())
+        guard devToolsView != nil else {
+            return cef_size_t(width: devTools ? 0 : max(1, width), height: max(1, height))
+        }
+        let tools = max(1, width / 3)
+        return cef_size_t(width: devTools ? tools : max(1, width - tools), height: max(1, height))
+    }
+
+    var hasDockedDevTools: Bool { devToolsView != nil }
 
     // MARK: - Lifting the web contents
 
@@ -286,6 +332,10 @@ import ObjectiveC
             cefWindow.pointee.close?(cefWindow)
             nd_cef_ref_release(cefWindow)
         }
+        if let devToolsView {
+            self.devToolsView = nil
+            nd_cef_ref_release(devToolsView)
+        }
         if let browserView {
             self.browserView = nil
             nd_cef_ref_release(browserView)
@@ -305,10 +355,28 @@ extension NDCefHandlerBox {
     func buildChrome() {
         windowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
         browserViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
+        devToolsViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
         command = ndCefAlloc(cef_command_handler_t.self, self)
         wireWindowDelegate()
         wireBrowserViewDelegate()
+        wireDevToolsViewDelegate()
         wireCommand()
+    }
+
+    /// A Chrome style Window hosts at most one Chrome style BrowserView but any
+    /// number of Alloy style ones (include/internal/cef_types_runtime.h), and
+    /// the docked DevTools is the second BrowserView in the page's window.
+    private func wireDevToolsViewDelegate() {
+        guard let devToolsViewDelegate else { return }
+        devToolsViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_ALLOY }
+        devToolsViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
+            nd_cef_ref_release(browserView)
+            return CEF_CTT_NONE
+        }
+        devToolsViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
+            nd_cef_ref_release(cefView)
+            return ndCefPreferredSize(selfPointer, devTools: true)
+        }
     }
 
     private func wireWindowDelegate() {
@@ -367,6 +435,10 @@ extension NDCefHandlerBox {
     private func wireBrowserViewDelegate() {
         guard let browserViewDelegate else { return }
         browserViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
+        browserViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
+            nd_cef_ref_release(cefView)
+            return ndCefPreferredSize(selfPointer, devTools: false)
+        }
         browserViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
             nd_cef_ref_release(browserView)
             return CEF_CTT_NONE
@@ -385,6 +457,38 @@ extension NDCefHandlerBox {
             _, browserView in
             nd_cef_ref_release(browserView)
             return 0
+        }
+        // DevTools is the one popup BrowserView that is allowed to exist, and
+        // it is taken into the page's own window rather than given one.
+        browserViewDelegate.pointee.get_delegate_for_popup_browser_view = {
+            selfPointer, browserView, _, client, isDevTools in
+            nd_cef_ref_release(browserView)
+            nd_cef_ref_release(client)
+            guard isDevTools != 0 else { return nil }
+            return ndCefHandOut(ndCefBox(selfPointer)?.devToolsViewDelegate)
+        }
+        browserViewDelegate.pointee.on_popup_browser_view_created = {
+            selfPointer, browserView, popup, isDevTools in
+            nd_cef_ref_release(browserView)
+            guard isDevTools != 0, let popup else {
+                nd_cef_ref_release(popup)
+                return 0
+            }
+            nd_cef_ref_add(popup)
+            let kept = UInt(bitPattern: popup)
+            var docked: Int32 = 0
+            ndCefDeliver(selfPointer) { view in
+                guard let created = UnsafeMutableRawPointer(bitPattern: kept)?
+                    .assumingMemoryBound(to: cef_browser_view_t.self) else { return }
+                if view?.chrome?.dockDevTools(created) == true {
+                    docked = 1
+                } else {
+                    nd_cef_ref_release(created)
+                }
+            }
+            nd_cef_ref_release(popup)
+            // Returning 0 would hand the BrowserView a cef_window_t of its own.
+            return docked
         }
     }
 
@@ -423,6 +527,16 @@ let ndCefBlockedChromeCommands: Set<Int32> = {
     }
     return blocked
 }()
+
+/// The size one of the window's two BrowserViews asks the box layout for.
+private func ndCefPreferredSize(_ handler: UnsafeMutableRawPointer?, devTools: Bool) -> cef_size_t {
+    var size = cef_size_t(width: 0, height: 0)
+    ndCefDeliver(handler) { view in
+        guard let chrome = view?.chrome else { return }
+        size = chrome.dockedSize(devTools: devTools)
+    }
+    return size
+}
 
 /// AppKit screen coordinates to the DIP screen rectangle CEF's Views layer
 /// uses: same unit on this platform, but Chromium's origin is the top-left of

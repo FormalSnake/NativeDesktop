@@ -633,6 +633,7 @@ final class NDCefHandlerBox {
     var command: UnsafeMutablePointer<cef_command_handler_t>?
     var windowDelegate: UnsafeMutablePointer<cef_window_delegate_t>?
     var browserViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
+    var devToolsViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
     /// Kept for as long as the observer should stay attached: destroying the
     /// registration is what detaches it.
     fileprivate(set) var devToolsRegistration: UnsafeMutablePointer<cef_registration_t>?
@@ -687,6 +688,7 @@ final class NDCefHandlerBox {
             command.map(UnsafeMutableRawPointer.init),
             windowDelegate.map(UnsafeMutableRawPointer.init),
             browserViewDelegate.map(UnsafeMutableRawPointer.init),
+            devToolsViewDelegate.map(UnsafeMutableRawPointer.init),
         ] {
             nd_cef_ref_release(object)
         }
@@ -707,6 +709,7 @@ final class NDCefHandlerBox {
         command = nil
         windowDelegate = nil
         browserViewDelegate = nil
+        devToolsViewDelegate = nil
     }
 
     fileprivate func attachDevTools(_ registration: UnsafeMutablePointer<cef_registration_t>?) {
@@ -836,7 +839,12 @@ final class NDCefHandlerBox {
             ndCefDeliver(selfPointer) { view in
                 if let view { wanted = view.takeDevToolsRequest() }
             }
-            useDefaultWindow?.pointee = wanted ? 1 : 0
+            // Chrome style takes the Views-hosted route unconditionally, which
+            // is what routes the devtools BrowserView through
+            // on_popup_browser_view_created and into the page's own window as a
+            // docked split. A default window there would be the stray Chromium
+            // window this whole file exists to prevent.
+            useDefaultWindow?.pointee = (wanted && !NDCefRuntime.isChromeStyle) ? 1 : 0
         }
         lifeSpan.pointee.on_after_created = { selfPointer, browser in
             guard let browser else { return }
@@ -1098,7 +1106,7 @@ final class NDCefHandlerBox {
 }
 
 /// Hands a handler struct to CEF with the reference the caller is owed.
-private func ndCefHandOut<T>(_ handler: UnsafeMutablePointer<T>?) -> UnsafeMutablePointer<T>? {
+func ndCefHandOut<T>(_ handler: UnsafeMutablePointer<T>?) -> UnsafeMutablePointer<T>? {
     guard let handler else { return nil }
     nd_cef_ref_add(handler)
     return handler

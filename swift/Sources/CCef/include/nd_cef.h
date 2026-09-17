@@ -42,6 +42,7 @@
 #include "include/capi/cef_resource_handler_capi.h"
 #include "include/capi/cef_scheme_capi.h"
 #include "include/capi/cef_values_capi.h"
+#include "include/capi/views/cef_box_layout_capi.h"
 #include "include/capi/views/cef_browser_view_capi.h"
 #include "include/capi/views/cef_browser_view_delegate_capi.h"
 #include "include/capi/views/cef_window_capi.h"
