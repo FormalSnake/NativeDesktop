@@ -1,5 +1,7 @@
 import {
   executeJavaScript,
+  listExtensions,
+  onExtensionsList,
   onJavaScriptResult,
   render,
   sendCommand,
@@ -72,7 +74,11 @@ const BASE = `http://127.0.0.1:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions"] as const;
+
+/// Chrome style is the only one with an extension registry to list, and the
+/// launch path sets the same variable the host reads.
+const CHROME_STYLE = (process.env.ND_CEF_STYLE ?? "") === "chrome";
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -100,6 +106,7 @@ function App(): React.ReactNode {
   const hidden2 = useRef<NdNodeRef<"webview">>(null);
   const hidden3 = useRef<NdNodeRef<"webview">>(null);
   const second = useRef<NdNodeRef<"webview">>(null);
+  const extensions = useRef<NdNodeRef<"webview">>(null);
   const [secondOpen, setSecondOpen] = useState(false);
   const [lateReady, setLateReady] = useState(false);
   const [url, setUrl] = useState(`${BASE}/one`);
@@ -120,6 +127,7 @@ function App(): React.ReactNode {
       hidden2,
       hidden3,
       second,
+      extensions,
       setUrl,
       setResult,
       setPhase,
@@ -204,6 +212,17 @@ function App(): React.ReactNode {
               url={`${BASE}/popup`}
               onJavaScriptResult={onJavaScriptResult}
             />
+            {/* The extension registry lives on chrome://extensions and nowhere
+                else, so listExtensions is sent to a view showing it. Created
+                with that address rather than navigated to it: Chromium refuses
+                a renderer-initiated navigation to a chrome:// page. */}
+            <webview
+              testID="wv-extensions"
+              ref={extensions}
+              engine="chromium"
+              url={CHROME_STYLE ? "chrome://extensions" : ""}
+              onExtensionsList={onExtensionsList}
+            />
           </box>
         </tabview>
         {lateReady ? (
@@ -239,6 +258,7 @@ async function run(ctx: {
   hidden2: React.RefObject<NdNodeRef<"webview"> | null>;
   hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
   second: React.RefObject<NdNodeRef<"webview"> | null>;
+  extensions: React.RefObject<NdNodeRef<"webview"> | null>;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
@@ -444,6 +464,21 @@ async function run(ctx: {
       "the host survives closing a window that held a webview",
     );
     return `ok (host alive after the window closed, eval ${alive})`;
+  });
+
+  // Chromium's own extension runtime, which only Chrome style has: the gate
+  // launches with --load-extension, so the fixture has to come back named,
+  // enabled and with the icon the manifest declares.
+  await step("extensions", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!ctx.extensions.current) throw new Error("no extensions view ref");
+    const list = await pollValue(
+      () => listExtensions(ctx.extensions.current!),
+      (l) => l.length > 0,
+      "chrome://extensions reports at least one extension",
+    );
+    const named = list.map((e) => `${e.name} ${e.enabled ? "enabled" : "disabled"} ${e.iconUrl ? "icon" : "no-icon"}`);
+    return `ok (${named.join("; ")})`;
   });
 
   ctx.setPhase("done");

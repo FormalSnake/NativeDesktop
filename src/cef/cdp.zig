@@ -1,11 +1,11 @@
 // The DevTools-protocol substrate the whole <webview> contract sits on when
 // the engine is Chromium.
 //
-// Alloy-style CEF has no user-script API, no isolated-world API and no script
-// message channel: every one of those is a CDP call. This file owns the
-// mechanism (one observer per browser, one message-id space, JSON in and JSON
-// out) and knows nothing about what the messages mean; engine.zig registers a
-// sink and does the interpreting.
+// CEF has no user-script API, no isolated-world API and no script message
+// channel under either browser style: every one of those is a CDP call. This
+// file owns the mechanism (one observer per browser, one message-id space, JSON
+// in and JSON out) and knows nothing about what the messages mean; engine.zig
+// registers a sink and does the interpreting.
 //
 // Two threading rules shape the code:
 //   - ExecuteDevToolsMethod only submits from the CEF UI thread, so a call made

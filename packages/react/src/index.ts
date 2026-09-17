@@ -15,8 +15,10 @@ export {
   saveSession,
   onSessionSaved,
   setContextMenuItems,
+  listExtensions,
+  onExtensionsList,
 } from "./webview.ts";
-export type { Cookie, ContextMenuContext, ContextMenuItem, ContextMenuItemClick } from "./webview.ts";
+export type { Cookie, ContextMenuContext, ContextMenuItem, ContextMenuItemClick, InstalledExtension } from "./webview.ts";
 export {
   showAlert,
   openFile,

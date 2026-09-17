@@ -642,6 +642,7 @@
         { "name": "contextMenuItemClicked", "ndpName": "onContextMenuItemClicked", "payload": "data" },
         { "name": "sessionSaved", "ndpName": "onSessionSaved", "payload": "data" },
         { "name": "audioStateChanged", "ndpName": "onAudioStateChanged", "payload": "data" },
+        { "name": "extensionsList", "ndpName": "onExtensionsList", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
@@ -656,6 +657,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
+        "listExtensions",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

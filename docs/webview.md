@@ -301,7 +301,7 @@ The config surface, and the create-only `engine` prop it feeds:
 export default defineConfig({
   webview: {
     engine: { mac: "system", linux: "chromium" },
-    cef: { version: "151.3.23", locales: ["en-US", "de"], schemes: ["myapp"] },
+    cef: { version: "151.3.23", locales: ["en-US", "de"], schemes: ["myapp"], style: "alloy" },
   },
 });
 ```
@@ -320,9 +320,77 @@ exported as `ND_CEF_SCHEMES` (comma separated, and the same dev override);
 engine and schemes itself: macOS reads them out of `nd-app.json` at startup,
 Linux out of the generated `AppRun`.
 
-`nd doctor` reports the resolved engine, fails when a chromium config has no CEF
-dist to resolve, and audits the last packaged bundle: an `engine: "system"` build
-containing Chromium bytes is an error, not a warning.
+`cef.style` picks CEF's browser style, `"alloy"` (default) or `"chrome"`, and
+reaches the host as `ND_CEF_STYLE` with the same dev override. Alloy is the
+Chromium content layer with CEF's extra client callbacks. Chrome style is
+Chrome's own browser layer, which is what runs Chromium's extension system:
+with it, `--load-extension=<dir>` on the app's command line loads an unpacked
+Chrome extension, service worker and all, and `chrome://extensions` lists it.
+The framework keeps the no-top-level invariant on both styles, so Chrome style
+brings no toolbar and no window of its own; what it costs is listed under
+[Chrome style](#chrome-style) below.
+
+`nd doctor` reports the resolved engine and, for a chromium one, the style;
+fails when a chromium config has no CEF dist to resolve; and audits the last
+packaged bundle: an `engine: "system"` build containing Chromium bytes is an
+error, not a warning.
+
+### Chrome style
+
+Linux only for now. The browser is still embedded in the host's own window: the
+extension runtime, the docked inspector and Chrome's command handling come with
+it, Chrome's window and toolbar do not.
+
+- Extensions load from the command line (`--load-extension=<dir>`, repeatable,
+  comma separated), which Chromium applies on every launch: the unpacked
+  directories are the app's to re-declare, while everything the extension stores
+  (`chrome.storage`, its settings, its granted permissions) lives in the
+  profile and survives a restart.
+- Every route that would put a Chromium window on screen is intercepted.
+  `window.open`, `target=_blank`, middle- and ctrl-click and the context menu's
+  "open link in …" items reach the app as `newWindow`; so do
+  `chrome.windows.create`, `chrome.tabs.create` and `chrome.runtime.openOptionsPage`,
+  which Chrome answers with a browser window of its own that this engine unmaps
+  and closes before it is presented. Chrome's own accelerators for a new window,
+  tab, incognito window, view-source, print, history, downloads and the
+  extensions page are refused through `cef_command_handler_t::on_chrome_command`.
+- DevTools is docked inside the view: `openDevTools`, F12 and ctrl+shift+I open
+  Chrome's inspector as a second browser in the right-hand half of the same
+  embedding window, and toggle it off again. Alloy still uses CEF's separate
+  devtools window (parenting that into GTK crashes, CEF #3165).
+- The app menu, the page action icons and the toolbar buttons are all reported
+  invisible, so no Chrome UI is created for the browser.
+
+Listing extensions, and their popups:
+
+```tsx
+import { listExtensions, onExtensionsList } from "@nativedesktop/react";
+
+// Chromium exposes its extension registry to chrome://extensions and nowhere
+// else, so the command is sent to a view showing that page. A hidden one does.
+<webview ref={registry} engine="chromium" url="chrome://extensions" onExtensionsList={onExtensionsList} />;
+
+const installed = await listExtensions(registry.current!);
+// [{ id, name, version, enabled, iconUrl: "data:image/png;…", optionsUrl }]
+```
+
+An extension's action popup and its options page are ordinary pages: put one in
+a `<webview>` sized to the popover the app draws, with the `chrome-extension://`
+URL set at create time. Chromium refuses a renderer-initiated navigation to an
+extension page, so setting `url` on a view that already exists does not work;
+mount a new view instead. `listExtensions` reports `optionsUrl`; the action
+popup's path is the extension's `action.default_popup`, which the app reads by
+mounting a view at `chrome-extension://<id>/manifest.json` and calling
+`executeJavaScript(view, "document.body.textContent")`.
+
+Against real Chrome, this differs in four ways. There is no toolbar button, so
+`chrome.action.onClicked` never fires and the app decides what a click on its
+own button does. `chrome.action.setPopup`, `setBadgeText`, `setIcon` and
+`setTitle` are recorded by Chromium but not reported back, so a popup URL
+changed at runtime is not seen. A popup in an app-owned view does not close on
+blur and is not sized by the popup document, so the app owns both. And an
+`activeTab` grant that Chrome issues when its own toolbar button is clicked is
+never issued, so an extension that relies on it sees no permission.
 
 The opt-in is structural rather than a runtime flag:
 

@@ -215,6 +215,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.restoreSession",
     "webview.setMuted",
     "webview.setContextMenuItems",
+    "webview.listExtensions",
     "webview.focus",
     "searchinput.focus",
     "switch.focus",

@@ -14,25 +14,28 @@ app's config asks for it. App code does not change with the engine; the schema
 contract (props `url`/`profile`/`contextMenuMode` plus the new `engine`, 21
 events, 26 commands) is the parity bar, and the webview drive is the gate.
 
-## The style decision (settled, do not relitigate per lane)
+## The style decision
 
-CEF has two browser styles. Chrome style carries Chrome's UI subsystems and the
-native extension runtime, but only inside CEF Views windows that CEF owns.
-Alloy style is what you get the moment a browser is parented into a caller's
-view (`parent_view` on macOS, an X11 XID on Linux), and it cannot run Chrome's
-extension runtime (removed in M128; loading is `--load-extension` only, Chrome
-style only, forum-confirmed 2024-10).
+CEF has two browser styles, and `webview.cef.style` picks one per app
+(`"alloy"` default, `"chrome"`; `ND_CEF_STYLE` is the dev override and the
+variable every launch path exports).
 
-We embed Alloy-style, windowed, into the host's own widgets:
+Alloy style is the Chromium content layer plus CEF's extra client callbacks.
+It is the default and the only style on macOS, where `cef_types_mac.h` forces
+Alloy whenever `parent_view` is set. It cannot run Chrome's extension runtime
+(removed in M128).
 
-- The native-UI premise of the framework is non-negotiable; CEF Views owning
-  the window would replace AppKit/GTK chrome with CEF's widget set.
-- Extension support in this ecosystem comes from the app-side broker (the
-  NativeBrowser extension host), which runs on user scripts, isolated worlds,
-  script messages, and custom schemes. On CEF those primitives are rebuilt on
-  the DevTools protocol (below); the broker itself does not change.
-- A Chrome-style/Views spike (native `--load-extension`) stays on the backlog
-  as a separate experiment. It is a bet, not a plan.
+Chrome style is Chrome's own browser layer. On Linux only windowless rendering
+forces Alloy (`cef_types_linux.h`), so a Chrome-style browser parents into the
+host's X11 child window exactly like an Alloy one, and brings Chromium's
+extension system with it: `--load-extension=<dir>` loads an unpacked MV3
+extension with its service worker, and `chrome://extensions` lists it. It costs
+the Chrome paths listed under "no CEF-created window" below, all of which the
+GTK engine now intercepts, and it is what an app aiming at 1:1 Chrome extension
+compatibility needs.
+
+The native-UI premise is unchanged either way: CEF Views never owns a window,
+because the browser is parented into the host's own widget.
 
 ## Hard invariant: no CEF-created window, ever
 
@@ -41,14 +44,27 @@ single fastest way this integration falls apart. Every CEF path that can create
 a native window is intercepted:
 
 - Popups (`window.open`, `target=_blank`): `on_before_popup` returns 1 and
-  emits the existing `newWindow` event; the app opens a tab. Same for
-  `on_before_dev_tools_popup`.
-- DevTools: `openDevTools` uses `show_dev_tools` into a window we create and
-  own (top-level is acceptable there, it is a tool window we parent and title),
-  never CEF's default. On Linux, parenting devtools into a raw GTK/X11 window
-  crashes (issue #3165), so the devtools window is CEF-created but wrapped:
-  frameless, sized and closed by us. If that cannot be made clean, M1 ships
-  `executeDevToolsMethod` plumbing and no devtools window.
+  emits the existing `newWindow` event; the app opens a tab. Chrome style adds
+  `on_open_urlfrom_tab` (middle-click, ctrl-click, some cross-origin hops),
+  answered the same way.
+- Browsers Chrome makes itself (`chrome.windows.create`, `chrome.tabs.create`,
+  `chrome.runtime.openOptionsPage`) go through none of those hooks. The seam is
+  `cef_browser_process_handler_t::get_default_client`, which Chrome style calls
+  for exactly those browsers: the client it gets unmaps the window before it can
+  be presented, emits `newWindow` with the URL and closes it.
+- Chrome's own commands (new window, new tab, incognito, view-source, print,
+  history, downloads, extensions page, task manager, the "open link in …"
+  context items) are refused in `cef_command_handler_t::on_chrome_command`, and
+  the app menu, page action icons and toolbar buttons all report invisible.
+- DevTools, Alloy: `openDevTools` uses `show_dev_tools` into CEF's own window.
+  On Linux, parenting devtools into a raw GTK/X11 window crashes (issue #3165),
+  so the devtools window is CEF-created but wrapped.
+- DevTools, Chrome style: docked inside the view. `openDevTools` runs
+  `IDC_DEV_TOOLS` through `execute_chrome_command`, and
+  `on_before_dev_tools_popup` parents the devtools browser into a second X11
+  child of the same container, on the right, with the page browser narrowed to
+  match. F12, ctrl+shift+I and the context menu's Inspect take the same path and
+  toggle it off again.
 - JS dialogs (`alert`/`confirm`/`prompt`, onbeforeunload): `cef_jsdialog_handler`
   suppresses Chrome's dialog and routes into the same host-native sheet path
   WebKit uses today.

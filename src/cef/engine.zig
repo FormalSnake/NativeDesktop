@@ -549,8 +549,10 @@ const View = struct {
     /// GTK-owned bounds.
     devtools_container: std.atomic.Value(usize) = .init(0),
     devtools_window: std.atomic.Value(usize) = .init(0),
-    devtools_client: ?*DevToolsClientObj = null,
-    devtools_life: ?*DevToolsLifeObj = null,
+    /// The dock container, kept from the first docking to the view's end.
+    /// `devtools_container` is the same window while devtools is up and 0 when
+    /// it is not, which is what the layout reads.
+    dock_container: x11.Window = 0,
     size_w: std.atomic.Value(u32) = .init(0),
     size_h: std.atomic.Value(u32) = .init(0),
     /// The view's own long-lived host reference, taken with the browser and
@@ -1152,6 +1154,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "setUserAgent")) return cmdSetUserAgent(view, arg);
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
+    if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
 
     const browser = browserOf(view) orelse return;
     if (std.mem.eql(u8, cmd, "goBack")) {
@@ -1548,15 +1551,19 @@ fn onBeforeDevToolsPopup(
     }
     if (use_default_window != null) use_default_window.* = 0;
     if (window_info == null or view.container == 0) return;
-    // A second F12 toggles the existing one off through Chrome's own command
-    // handling, so reaching here with a dock already up means the first one is
-    // gone and its container with it.
     const w = view.size_w.load(.acquire);
     const h = view.size_h.load(.acquire);
     if (w == 0 or h == 0) return;
     const dock_w = dockWidth(w);
-    const dock = x11.createChild(view.container, @intCast(w - dock_w), 0, dock_w, h);
-    if (dock == 0) return;
+    // The dock container outlives every devtools browser that sits in it.
+    // Destroying it when devtools closes takes CEF's own window with it while
+    // CEF is still tearing that window down, and the host dies on the way out.
+    var dock = view.dock_container;
+    if (dock == 0) {
+        dock = x11.createChild(view.container, @intCast(w - dock_w), 0, dock_w, h);
+        if (dock == 0) return;
+        view.dock_container = dock;
+    }
     x11.show(dock);
     view.devtools_container.store(dock, .release);
     layoutContents(view, w, h);
@@ -1564,58 +1571,15 @@ fn onBeforeDevToolsPopup(
     window_info.*.size = @sizeOf(c.cef_window_info_t);
     window_info.*.parent_window = dock;
     window_info.*.bounds = .{ .x = 0, .y = 0, .width = @intCast(dock_w), .height = @intCast(h) };
-    window_info.*.runtime_style = @intCast(c.CEF_RUNTIME_STYLE_CHROME);
-    // Its own client: the view's would take the devtools browser for the page
-    // browser in on_after_created and lose track of both.
-    if (client != null) {
-        if (devToolsClient(view)) |obj| client.* = obj.handOut();
-    }
-}
-
-const DevToolsClientObj = ref.Counted(c.cef_client_t, *View);
-const DevToolsLifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
-
-fn devToolsClient(view: *View) ?*DevToolsClientObj {
-    if (view.devtools_client) |obj| return obj;
-    const life = DevToolsLifeObj.create(view) orelse return null;
-    life.cef.on_after_created = &onDevToolsCreated;
-    life.cef.on_before_close = &onDevToolsClosed;
-    const obj = DevToolsClientObj.create(view) orelse {
-        life.drop();
-        return null;
-    };
-    obj.cef.get_life_span_handler = &devToolsGetLifeSpanHandler;
-    view.devtools_life = life;
-    view.devtools_client = obj;
-    return obj;
-}
-
-fn devToolsGetLifeSpanHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_span_handler_t {
-    const view = DevToolsClientObj.of(self).payload;
-    return (view.devtools_life orelse return null).handOut();
-}
-
-fn onDevToolsCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
-    defer ref.releaseParam(browser);
-    if (browser == null) return;
-    const view = DevToolsLifeObj.of(self).payload;
-    const get_host = browser.*.get_host orelse return;
-    const host = get_host(browser);
-    if (host == null) return;
-    defer ref.releaseParam(host);
-    if (host.*.get_window_handle) |get_window| {
-        view.devtools_window.store(@intCast(get_window(host)), .release);
-    }
-    layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
-}
-
-fn onDevToolsClosed(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
-    defer ref.releaseParam(browser);
-    const view = DevToolsLifeObj.of(self).payload;
-    view.devtools_window.store(0, .release);
-    const dock = view.devtools_container.swap(0, .acq_rel);
-    if (dock != 0) x11.destroy(@intCast(dock));
-    layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+    // Alloy, not Chrome: a Chrome-style devtools browser comes with a Chrome
+    // Browser and its tab strip, and the pair are torn down after the browser
+    // they belonged to, which crashes on the way out of the process.
+    window_info.*.runtime_style = @intCast(c.CEF_RUNTIME_STYLE_ALLOY);
+    // The client is left at CEF's default, which is the source browser's own:
+    // handing the devtools popup a second client of ours leaves CEF's browser
+    // bookkeeping inconsistent and the process dies on the way out. The view's
+    // handlers tell the two browsers apart by which one arrived first.
+    _ = client;
 }
 
 /// The reference this parameter arrives with is deliberately kept: it is the
@@ -1623,6 +1587,21 @@ fn onDevToolsClosed(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_brow
 fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     if (browser == null) return;
     const view = LifeObj.of(self).payload;
+    // The docked devtools browser shares this client, and it is always the
+    // second to arrive: the page browser keeps the view.
+    if (view.browser.load(.acquire) != 0) {
+        if (browser.*.get_host) |get_host| {
+            const host = get_host(browser);
+            if (host != null) {
+                defer ref.releaseParam(host);
+                if (host.*.get_window_handle) |get_window| {
+                    view.devtools_window.store(@intCast(get_window(host)), .release);
+                }
+            }
+        }
+        layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+        return;
+    }
     view.browser.store(@intFromPtr(browser), .release);
     if (focused_view == null) focused_view = view;
     if (browser.*.get_identifier) |get_id| {
@@ -1654,6 +1633,28 @@ fn onDoClose(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) cal
 
 fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     const view = LifeObj.of(self).payload;
+    // The docked devtools browser rides the same client. Closing it undocks
+    // the panel and leaves the page browser alone; the container itself is
+    // kept, because destroying it takes CEF's window with it mid-teardown.
+    const devtools = view.devtools_window.load(.acquire);
+    if (devtools != 0 and browser != null) {
+        if (browser.*.get_host) |get_host| {
+            const host = get_host(browser);
+            if (host != null) {
+                defer ref.releaseParam(host);
+                if (host.*.get_window_handle) |get_window| {
+                    if (@as(usize, @intCast(get_window(host))) == devtools) {
+                        view.devtools_window.store(0, .release);
+                        const dock = view.devtools_container.swap(0, .acq_rel);
+                        if (dock != 0) x11.hide(@intCast(dock));
+                        layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+                        ref.releaseParam(browser);
+                        return;
+                    }
+                }
+            }
+        }
+    }
     view.cef_window.store(0, .release);
     cdp.detach(&view.session);
     const host = view.host.swap(0, .acq_rel);
@@ -1956,6 +1957,8 @@ const EvalSink = union(enum) {
     auto: u64,
     /// The `pageTextContains` cache.
     page_text: u32,
+    /// `listExtensions`: emits `extensionsList` with this correlation id.
+    extensions: []u8,
     /// Fire and forget: the result is not wanted, only the side effect.
     discard,
 };
@@ -2355,8 +2358,12 @@ fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8, r
     // returnByValue stays false so an object comes back as a handle this can
     // stringify in the page; awaitPromise stays false because WebKitGTK's
     // evaluate_javascript does not await either, and a Promise has to
-    // stringify as "[object Promise]" on both engines.
-    params.appendSlice(alloc, ",\"returnByValue\":false,\"awaitPromise\":false,\"objectGroup\":\"nd\"") catch return false;
+    // stringify as "[object Promise]" on both engines. listExtensions is the
+    // exception: its query is Chromium's own callback API and there is no app
+    // code on the other side of it to be consistent with.
+    params.appendSlice(alloc, ",\"returnByValue\":false,\"awaitPromise\":") catch return false;
+    params.appendSlice(alloc, if (sink == .extensions) "true" else "false") catch return false;
+    params.appendSlice(alloc, ",\"objectGroup\":\"nd\"") catch return false;
     const context_id = worldContextId(view, world);
     if (context_id != 0) {
         var buf: [32]u8 = undefined;
@@ -2499,6 +2506,28 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
             payload.put(alloc, "ok", .{ .bool = ok }) catch return;
             payload.put(alloc, if (ok) "value" else "error", .{ .string = text }) catch return;
             f(view.node_id, "javaScriptResult", .{ .data = .{ .object = payload } });
+        },
+        .extensions => |id| {
+            defer alloc.free(id);
+            const f = emit orelse return;
+            var payload: std.json.ObjectMap = .empty;
+            defer payload.deinit(alloc);
+            payload.put(alloc, "id", .{ .string = id }) catch return;
+            payload.put(alloc, "ok", .{ .bool = ok }) catch return;
+            if (!ok) {
+                payload.put(alloc, "error", .{ .string = text }) catch return;
+                f(view.node_id, "extensionsList", .{ .data = .{ .object = payload } });
+                return;
+            }
+            var parsed = std.json.parseFromSlice(std.json.Value, alloc, text, .{}) catch {
+                payload.put(alloc, "ok", .{ .bool = false }) catch return;
+                payload.put(alloc, "error", .{ .string = "listExtensions: unreadable answer" }) catch return;
+                f(view.node_id, "extensionsList", .{ .data = .{ .object = payload } });
+                return;
+            };
+            defer parsed.deinit();
+            payload.put(alloc, "extensions", parsed.value) catch return;
+            f(view.node_id, "extensionsList", .{ .data = .{ .object = payload } });
         },
         .auto => |eval_id| {
             const entry = pending_evals.get(eval_id) orelse return;
@@ -3156,6 +3185,42 @@ fn cmdExecuteJavaScript(view: *View, arg: ?std.json.Value) void {
     const world = objStr(obj, "world") orelse "";
     const id_copy = alloc.dupe(u8, id) catch return;
     if (!startEval(view, .{ .app = id_copy }, code, world)) alloc.free(id_copy);
+}
+
+/// Chromium keeps its extension registry behind chrome.developerPrivate, which
+/// only chrome://extensions has, so this runs there: an app lists extensions by
+/// pointing a view (a hidden one will do) at chrome://extensions and sending
+/// this command to it. Anywhere else the answer is an error rather than a
+/// silent empty list.
+const list_extensions_js =
+    \\(async () => {
+    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
+    \\    throw new Error("listExtensions needs a view showing chrome://extensions");
+    \\  }
+    \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
+    \\    { includeDisabled: true, includeTerminated: true }, resolve));
+    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\    id: e.id,
+    \\    name: e.name,
+    \\    version: e.version,
+    \\    enabled: e.state === "ENABLED",
+    \\    iconUrl: e.iconUrl || "",
+    \\    optionsUrl: (e.optionsPage && e.optionsPage.url) || "",
+    \\  })));
+    \\})()
+;
+
+fn cmdListExtensions(view: *View, arg: ?std.json.Value) void {
+    const obj = argObject(arg) orelse {
+        std.debug.print("ND_WARN WebView listExtensions: malformed arg (expected {{id}})\n", .{});
+        return;
+    };
+    const id = objStr(obj, "id") orelse {
+        std.debug.print("ND_WARN WebView listExtensions: malformed arg (expected {{id}})\n", .{});
+        return;
+    };
+    const id_copy = alloc.dupe(u8, id) catch return;
+    if (!startEval(view, .{ .extensions = id_copy }, list_extensions_js, "")) alloc.free(id_copy);
 }
 
 // ============================================================================
@@ -4490,6 +4555,42 @@ fn appendMenuItems(
     }
 }
 
+/// One trace line per item of the model the engine was handed, submenus
+/// included. Chrome style's model is Chrome's own, extension items and
+/// spell-check suggestions among them, and the only way to see what an app
+/// would have to render is to read it here.
+fn traceMenuModel(model: [*c]c.cef_menu_model_t, depth: u32) void {
+    if (model == null or depth > 4) return;
+    const get_count = model.*.get_count orelse return;
+    const count = get_count(model);
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        var label: []u8 = &.{};
+        defer alloc.free(label);
+        if (model.*.get_label_at) |get_label| {
+            const raw = get_label(model, i);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                label = dupeStr(raw) orelse &.{};
+            }
+        }
+        const kind: c_int = if (model.*.get_type_at) |f| @intCast(f(model, i)) else -1;
+        const command_id: c_int = if (model.*.get_command_id_at) |f| f(model, i) else -1;
+        const enabled: c_int = if (model.*.is_enabled_at) |f| f(model, i) else -1;
+        const checked: c_int = if (model.*.is_checked_at) |f| f(model, i) else -1;
+        tr("menuItem depth={d} index={d} id={d} type={d} enabled={d} checked={d} label={s}", .{
+            depth, i, command_id, kind, enabled, checked, label,
+        });
+        if (model.*.get_sub_menu_at) |get_sub| {
+            const sub = get_sub(model, i);
+            if (sub != null) {
+                defer ref.releaseOwned(sub);
+                traceMenuModel(sub, depth + 1);
+            }
+        }
+    }
+}
+
 fn nextMenuCommand(view: *View) ?c_int {
     if (view.next_menu_command >= menu_command_last) return null;
     const id = view.next_menu_command;
@@ -4523,6 +4624,7 @@ fn onRunContextMenu(
     boxed.* = hit;
     post(.{ .view = view, .name = "contextMenu", .menu_hit = boxed });
 
+    traceMenuModel(model, 0);
     if (!view.suppress_menu.load(.acquire)) return 0;
     if (callback != null) {
         if (callback.*.cancel) |cancel| cancel(callback);

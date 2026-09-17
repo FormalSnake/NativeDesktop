@@ -14,6 +14,7 @@ interface Pending<T> {
 const pendingEvals = new Map<string, Pending<string>>();
 const pendingCookies = new Map<string, Pending<Cookie[]>>();
 const pendingSessions = new Map<string, Pending<string>>();
+const pendingExtensions = new Map<string, Pending<InstalledExtension[]>>();
 let seq = 0;
 
 function nextId(prefix: string): string {
@@ -96,6 +97,44 @@ export function onSessionSaved(e: { data: unknown }): void {
   if (!call) return;
   pendingSessions.delete(result.id);
   call.resolve(result.state ?? "");
+}
+
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  /** A `data:` URI, ready for an `<image>` src. Empty when the extension has no icon. */
+  iconUrl: string;
+  /** `chrome-extension://…` options page, or "" when the extension declares none. */
+  optionsUrl: string;
+}
+
+/// Lists the Chrome extensions this profile has installed. Chromium exposes its
+/// extension registry to `chrome://extensions` and nowhere else, so `node` has
+/// to be a `<webview>` showing that page (a hidden one is the usual shape), on
+/// the Chromium engine with `webview.cef.style: "chrome"`. Requires the
+/// `onExtensionsList` prop. An extension's action popup and options page open
+/// by pointing another `<webview>` at the URL: create it with that `url`, since
+/// Chromium refuses a renderer-initiated navigation to a `chrome-extension://`
+/// page.
+export function listExtensions(node: NdNodeRef<"webview">): Promise<InstalledExtension[]> {
+  const id = nextId("ext");
+  return new Promise<InstalledExtension[]>((resolve, reject) => {
+    pendingExtensions.set(id, { resolve, reject });
+    sendCommand(node, "listExtensions", { id });
+  });
+}
+
+/// Pass as a <webview>'s `onExtensionsList` prop, which settles the
+/// listExtensions() call whose `id` matches this event's payload.
+export function onExtensionsList(e: { data: unknown }): void {
+  const result = e.data as { id: string; ok: boolean; extensions?: InstalledExtension[]; error?: string };
+  const call = pendingExtensions.get(result.id);
+  if (!call) return;
+  pendingExtensions.delete(result.id);
+  if (result.ok) call.resolve(result.extensions ?? []);
+  else call.reject(new Error(result.error ?? "listExtensions failed"));
 }
 
 /// Where an item may appear. `page` means the click landed on nothing more
