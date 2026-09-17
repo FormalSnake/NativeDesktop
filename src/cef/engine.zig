@@ -1087,7 +1087,7 @@ fn parkContainer(view: *View) void {
     if (view.container == 0) return;
     x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
     x11.show(view.container);
-    resizeCefWindow(view, park_w, park_h);
+    layoutContents(view, park_w, park_h);
 }
 
 /// A mapped view waits for its first real allocation: GTK4 maps before it has
@@ -1316,21 +1316,24 @@ fn syncBounds(view: *View) void {
 }
 
 /// The view's inner windows: the page browser, and the docked devtools beside
-/// it when it is open. Runs on either thread; every request goes out on CEF's
-/// own X connection because both windows belong to CEF.
+/// it when it is open. Reads the XIDs on the calling thread and hands the X
+/// requests to `applyLayoutOnUi`, which is where they are allowed to run.
 fn layoutContents(view: *View, w: c_uint, h: c_uint) void {
     const dock = view.devtools_container.load(.acquire);
-    if (dock == 0) {
-        resizeCefWindow(view, w, h);
-        return;
+    var plan: Layout = .{
+        .page = view.cef_window.load(.acquire),
+        .page_w = w,
+        .h = h,
+    };
+    if (dock != 0) {
+        const dock_w = dockWidth(w);
+        plan.page_w = w - dock_w;
+        plan.dock = dock;
+        plan.dock_x = @intCast(w - dock_w);
+        plan.dock_w = dock_w;
+        plan.inner = view.devtools_window.load(.acquire);
     }
-    const dock_w = dockWidth(w);
-    resizeCefWindow(view, w - dock_w, h);
-    const api = loader.loaded() orelse return;
-    const dpy = api.get_xdisplay() orelse return;
-    x11.moveResizeOn(@ptrCast(dpy), @intCast(dock), @intCast(w - dock_w), 0, dock_w, h);
-    const inner = view.devtools_window.load(.acquire);
-    if (inner != 0) x11.resizeOn(@ptrCast(dpy), @intCast(inner), dock_w, h);
+    applyLayoutOnUi(plan);
 }
 
 /// Chrome's own right-dock default, clamped so a narrow view keeps a page.
@@ -1339,14 +1342,54 @@ fn dockWidth(w: c_uint) c_uint {
     return @min(@max(wanted, 200), if (w > 240) w - 240 else w / 2);
 }
 
-/// CEF's Linux platform delegate sizes its window once, from
-/// window_info.bounds, and does not follow the parent afterwards.
-fn resizeCefWindow(view: *View, w: c_uint, h: c_uint) void {
-    const window = view.cef_window.load(.acquire);
-    if (window == 0) return;
+/// One pass of the view's inner geometry, as window ids rather than a *View:
+/// the plan is read on the GTK thread and applied on the CEF one, and a view
+/// whose tab closed in between must not be dereferenced there. An id that has
+/// since been destroyed raises BadWindow, which the trap in `x11` swallows.
+const Layout = struct {
+    /// CEF's own window, whose Linux platform delegate sizes it once from
+    /// window_info.bounds and never follows the parent afterwards.
+    page: usize = 0,
+    page_w: c_uint = 0,
+    /// The docked devtools, Chrome style only: our X child on the right, and
+    /// CEF's devtools window inside it. Both 0 while the inspector is closed.
+    dock: usize = 0,
+    dock_x: c_int = 0,
+    dock_w: c_uint = 0,
+    inner: usize = 0,
+    h: c_uint = 0,
+};
+
+const LayoutObj = ref.Counted(c.cef_task_t, Layout);
+
+/// cef_get_xdisplay answers null anywhere but the CEF UI thread (see
+/// cef_types_linux.h: the display is shared with Chromium and is only to be
+/// touched there), and this engine gives CEF a UI thread of its own, so every
+/// request issued from a GTK layout pass went nowhere and the browser stayed
+/// at the size it was created with.
+fn applyLayoutOnUi(plan: Layout) void {
+    const api = loader.loaded() orelse return;
+    if (api.currently_on(c.TID_UI) != 0) {
+        applyLayout(plan);
+        return;
+    }
+    const task = LayoutObj.create(plan) orelse return;
+    task.cef.execute = &runLayoutTask;
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) task.drop();
+    task.drop();
+}
+
+fn runLayoutTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    applyLayout(LayoutObj.of(self).payload);
+}
+
+fn applyLayout(plan: Layout) void {
     const api = loader.loaded() orelse return;
     const dpy = api.get_xdisplay() orelse return;
-    x11.resizeOn(@ptrCast(dpy), @intCast(window), w, h);
+    if (plan.page != 0) x11.resizeOn(@ptrCast(dpy), @intCast(plan.page), plan.page_w, plan.h);
+    if (plan.dock == 0) return;
+    x11.moveResizeOn(@ptrCast(dpy), @intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
+    if (plan.inner != 0) x11.resizeOn(@ptrCast(dpy), @intCast(plan.inner), plan.dock_w, plan.h);
 }
 
 // ============================================================================
@@ -2042,7 +2085,6 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         // and Page.enable is idempotent.
         enableDomains(view);
         syncBounds(view);
-        resizeCefWindow(view, view.bounds.w, view.bounds.h);
         tr("settle node={d} pending={?s} created={s}", .{ view.node_id, view.pending_url, view.created_url });
         // Adoption: the address the app last asked for wins over the one the
         // browser happened to be created with.
