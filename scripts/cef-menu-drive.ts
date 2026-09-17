@@ -7,7 +7,7 @@
 // the host's own ND_WEBVIEW_TRACE output (`menuItem` is the model Chromium
 // handed the engine, `menuShown` what survived the filter and was drawn), and
 // the X server is asked what it has on the root before and after.
-import { Session, targets } from "./cdp.ts";
+import { Session, targets, waitForTarget } from "./cdp.ts";
 
 const port = Number(process.env.ND_CDP_PORT ?? "9334");
 const display = process.env.DISPLAY ?? ":96";
@@ -108,6 +108,13 @@ async function dismiss(): Promise<string> {
 
 // ------------------------------------------------------------------ setup ----
 
+// The probe registers its setContextMenuItems tree as the last thing its run
+// does, so that trace line is also "the app is up and its views have loaded".
+const ready = Date.now() + 120000;
+while (Date.now() < ready && !(await logText()).includes("setContextMenuItems")) {
+  await Bun.sleep(500);
+}
+await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"), 60000);
 const pages = (await targets(port)).filter((t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"));
 if (pages.length === 0) {
   console.error("ND_CEF_MENU_FAIL no fixture page target");
@@ -306,6 +313,24 @@ check(
 const after = census();
 const strays = after.filter((w) => !baseline.includes(w));
 check("censusRestored", strays.length === 0, strays.length ? strays.join(" | ") : `${after.length} top-level(s), unchanged`);
+
+// Inspect, last: it docks the inspector in the right half of the view, which
+// every check above would otherwise have to account for.
+const inspect = await openMenu(700, 100);
+const inspectRows = inspect.shown.filter((s) => s.depth === 0 && s.kind !== "separator" && s.enabled);
+const inspectAt = inspectRows.findIndex((s) => s.label === "Inspect");
+sh("xdotool", "mousemove", "1200", "860");
+await Bun.sleep(400);
+for (let i = 0; i < inspectAt; i += 1) {
+  sh("xdotool", "key", "--clearmodifiers", "Down");
+  await Bun.sleep(150);
+}
+sh("xdotool", "key", "--clearmodifiers", "Return");
+await Bun.sleep(5000);
+const devtools = (await targets(port)).filter((t) => t.url.startsWith("devtools://"));
+check("inspectOpensDevTools", devtools.length > 0, `${devtools.length} devtools target(s)`);
+const onRoot = sh("xwininfo", "-root", "-children").split("\n").filter((l) => /DevTools/.test(l));
+check("devToolsStaysInside", onRoot.length === 0, `${onRoot.length} devtools window(s) on the root`);
 
 for (const session of sessions) session.close();
 sw.close();

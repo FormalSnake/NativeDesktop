@@ -114,11 +114,9 @@ if (pass === "first") {
   check("storageWritten", true, token);
 }
 
-// Its own pass because a Chrome-style browser that has had devtools open dies
-// on the way out of the process, docked or not (CefBrowserInfo::RemoveFrame on
-// a TabStripModel teardown; the same crash with CEF's own devtools window). The
-// pass that runs it is killed rather than asked to quit, so the clean-quit
-// assertion the other passes make stays strict.
+// Its own pass so the other two never navigate under an open inspector. It
+// quits like they do, which is the assertion that the engine closes the
+// devtools browser before the one it inspects.
 if (pass === "devtools") {
   // The pointer clicks into the view first: a real X key event only reaches
   // Chrome's accelerators through the window that has X input focus.

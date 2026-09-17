@@ -137,8 +137,11 @@ quit_host() {
   local status=0
   wait "$HOST_PID" 2>/dev/null || status=$?
   HOST_PID=""
-  if [ "$status" -ge 128 ] && [ "$status" -ne 143 ]; then
-    echo "FAIL($pass): the host died on signal $((status - 128)) while quitting with live views"
+  # Strictly zero: the host turns SIGTERM into the same teardown a window close
+  # takes, so a 143 means that handler never ran and anything above 128 means it
+  # died on the way out.
+  if [ "$status" -ne 0 ]; then
+    echo "FAIL($pass): the host exited $status while quitting with live views"
     tail -30 "$LOG"
     exit 1
   fi
@@ -171,14 +174,10 @@ quit_host second
 run_pass menu
 quit_host menu
 
-# DevTools last, and killed rather than asked to quit. A Chrome-style browser
-# that has had devtools open dies on the way out of the process whether the
-# inspector is docked in the view or in CEF's own window
-# (CefBrowserInfo::RemoveFrame under a TabStripModel teardown), so the pass that
-# opens it cannot make the clean-quit assertion the other two do.
+# DevTools last, and asked to quit like the others: the engine closes the
+# devtools browser before the one it inspects, which is what the clean exit
+# below depends on.
 run_pass devtools
-kill -KILL "$HOST_PID" 2>/dev/null
-wait "$HOST_PID" 2>/dev/null || true
-HOST_PID=""
+quit_host devtools
 
 echo "ND_CEF_CHROME_OK chrome style: extension runtime, no window of its own, docked devtools, state across a restart"

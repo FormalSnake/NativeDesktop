@@ -128,8 +128,71 @@ pub fn pinDisplayBackend() void {
 pub fn shutdown() void {
     if (!initialized) return;
     const api = loader.loaded() orelse return;
+    closeBrowsersInOrder();
     initialized = false;
     api.shutdown();
+}
+
+/// Closes every browser still open, devtools first, before `cef_shutdown`.
+///
+/// Quitting the host tears the node tree down without destroying the webview
+/// widgets, so `onDestroy` never runs for a live view: nothing has asked CEF
+/// to close anything by the time `cef_shutdown` starts, and CEF then unwinds
+/// the browsers in whatever order its own teardown reaches them. With a
+/// devtools browser attached that order is wrong twice over. The inspected
+/// browser goes first and its frames are deleted from a task that runs after
+/// its `CefBrowserContentsDelegate` is gone, which is the SIGSEGV in
+/// `CefBrowserInfo::RemoveFrame` under
+/// `BackForwardCacheImpl::DestroyEvictedFrames`; and the devtools browser,
+/// left behind, never reports closed, so `CefUIThread::Stop` joins a run loop
+/// that will not quit. Asking in this order and waiting for each
+/// `on_before_close` costs about 25ms and both go away.
+fn closeBrowsersInOrder() void {
+    var devtools = false;
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        const host = hostPtr(view) orelse continue;
+        if (view.devtools_window.load(.acquire) == 0) continue;
+        if (host.*.close_dev_tools) |close_dev_tools| close_dev_tools(host);
+        devtools = true;
+    }
+    if (devtools) _ = waitForViews(&View.devtoolsOpen, 3000);
+
+    it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        const host = hostPtr(view) orelse continue;
+        if (host.*.close_browser) |close| close(host, 1);
+    }
+    const waited = waitForViews(&View.browserOpen, 5000);
+    tr("shutdown browsers closed after {d}ms", .{waited});
+}
+
+fn hostPtr(view: *View) ?[*c]c.cef_browser_host_t {
+    const raw = view.host.load(.acquire);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Blocks the quitting thread until no live view answers `open`, or until the
+/// deadline; returns how long it waited. The CEF UI thread has its own loop, so
+/// this thread has nothing left to serve. std.Thread.sleep is gone in Zig 0.16
+/// and there is no Io here to sleep against, so the wait goes through glib.
+fn waitForViews(open: *const fn (*View) bool, timeout_ms: u32) u32 {
+    const step_ms: u32 = 5;
+    var waited: u32 = 0;
+    while (waited < timeout_ms) : (waited += step_ms) {
+        var any = false;
+        var it = live_views.keyIterator();
+        while (it.next()) |key| {
+            const view: *View = @ptrFromInt(key.*);
+            if (open(view)) any = true;
+        }
+        if (!any) return waited;
+        glib.usleep(step_ms * 1000);
+    }
+    return waited;
 }
 
 // ============================================================================
@@ -629,6 +692,14 @@ const View = struct {
     loading: bool = false,
     can_go_back: bool = false,
     can_go_forward: bool = false,
+
+    fn browserOpen(self: *View) bool {
+        return self.browser.load(.acquire) != 0;
+    }
+
+    fn devtoolsOpen(self: *View) bool {
+        return self.devtools_window.load(.acquire) != 0;
+    }
 };
 
 const Bounds = struct {
@@ -927,6 +998,11 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
             const host = get_host(browser);
             if (host != null) {
                 defer ref.releaseOwned(host);
+                // Devtools first, for the ordering `closeBrowsersInOrder`
+                // documents: its browser cannot outlive the one it inspects.
+                if (view.devtools_window.load(.acquire) != 0) {
+                    if (host.*.close_dev_tools) |close_dev_tools| close_dev_tools(host);
+                }
                 if (host.*.close_browser) |close| close(host, 1);
             }
         }

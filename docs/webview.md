@@ -357,22 +357,13 @@ it, Chrome's window and toolbar do not.
 - DevTools is docked inside the view: `openDevTools`, F12 and ctrl+shift+I open
   Chrome's inspector as a second browser in the right-hand half of the same
   embedding window, and toggle it off again. Alloy still uses CEF's separate
-  devtools window (parenting that into GTK crashes, CEF #3165).
-- The app menu, the page action icons and the toolbar buttons are all reported
-  invisible, so no Chrome UI is created for the browser.
-
-Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
-
-- A Chrome Web Store install stops at Chromium's own confirmation prompt. The
-  detail page loads, `chrome.webstorePrivate` is there, and "Add to Chrome"
-  raises the "Add <name>?" bubble, which arrives as a 448x197 Chromium
-  top-level at the screen origin rather than anchored to the app. Accepting it
-  dismisses the bubble and installs nothing, with no error in the log, so a
-  Chrome-style app installs extensions through `--load-extension` for now.
-- A browser that has had devtools open kills the host on the way out of the
-  process, docked or in CEF's own window: `CefBrowserInfo::RemoveFrame` runs
-  against a freed browser info under a `TabStripModel` teardown. The gate keeps
-  its devtools leg in a pass of its own for that reason.
+  devtools window (parenting that into GTK crashes, CEF #3165). Quitting closes
+  the devtools browser and waits for its `on_before_close` before closing the
+  browser it inspects; left to CEF's own order the inspected browser goes first,
+  its frames are then deleted through a freed `CefBrowserContentsDelegate`
+  (SIGSEGV in `CefBrowserInfo::RemoveFrame`), and the devtools browser that is
+  left behind never reports closed, so `cef_shutdown` hangs joining the UI
+  thread.
 - The page context menu is a GTK one. `run_context_menu` returns 1, Chromium's
   `cef_menu_model_t` is copied and drawn as a GtkPopoverMenu parented to the
   `<webview>` widget at the click, and the pick is handed back through
@@ -388,6 +379,17 @@ Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
   Two differences from Chrome's own menu: a submenu slides the popover to its
   own pane rather than flying out, and accelerators are drawn for the keys
   Chromium reports in the model.
+- The app menu, the page action icons and the toolbar buttons are all reported
+  invisible, so no Chrome UI is created for the browser.
+
+Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
+
+- A Chrome Web Store install stops at Chromium's own confirmation prompt. The
+  detail page loads, `chrome.webstorePrivate` is there, and "Add to Chrome"
+  raises the "Add <name>?" bubble, which arrives as a 448x197 Chromium
+  top-level at the screen origin rather than anchored to the app. Accepting it
+  dismisses the bubble and installs nothing, with no error in the log, so a
+  Chrome-style app installs extensions through `--load-extension` for now.
 
 Listing extensions, and their popups:
 
