@@ -249,6 +249,25 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
             }
         }
 
+        // A declared accelerator wins over the default item carrying the same
+        // chord. NSMenu.performKeyEquivalent fires the first match in menu
+        // order and the defaults are built first, so without this an app that
+        // binds cmd+W to "Close Tab" gets the framework's own Close, and the
+        // window goes instead of the tab.
+        if useDefaults {
+            var claimed: Set<String> = []
+            walkMenu(mainMenu) { item in
+                guard itemNodes[ObjectIdentifier(item)] != nil, !item.keyEquivalent.isEmpty else { return }
+                claimed.insert(ndMenuChord(item))
+            }
+            walkMenu(mainMenu) { item in
+                guard itemNodes[ObjectIdentifier(item)] == nil, !item.keyEquivalent.isEmpty,
+                      claimed.contains(ndMenuChord(item)) else { return }
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+            }
+        }
+
         NSApp.mainMenu = mainMenu
         if useDefaults {
             NSApp.windowsMenu = windowMenu
@@ -340,6 +359,13 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         m.addItem(item("Zoom", #selector(NSWindow.performZoom(_:)), "", []))
         m.addItem(.separator())
         m.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), "", [], target: NSApp))
+    }
+
+    private func walkMenu(_ menu: NSMenu, _ visit: (NSMenuItem) -> Void) {
+        for item in menu.items {
+            visit(item)
+            if let submenu = item.submenu { walkMenu(submenu, visit) }
+        }
     }
 
     // MARK: declared items
@@ -486,4 +512,10 @@ private func ndKeyEquivalent(_ k: String) -> String {
         }
         return k  // single printable char
     }
+}
+
+/// One menu item's key equivalent as a comparable chord. Case matters to
+/// AppKit (an uppercase key equivalent implies shift), so it is kept.
+func ndMenuChord(_ item: NSMenuItem) -> String {
+    return "\(item.keyEquivalentModifierMask.rawValue):\(item.keyEquivalent)"
 }
