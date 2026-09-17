@@ -23,6 +23,7 @@ import {
   KEY_RETURN,
   KEY_RIGHT_ARROW,
   LegFailure,
+  LegSkipped,
   SHOTS,
   activateApp,
   anchors,
@@ -303,10 +304,36 @@ async function captureViewRect(name: string, testId: string) {
 }
 
 
+/// A real click goes to the topmost window under the cursor, and this machine
+/// carries other windows, some of them at layers the app cannot be raised above
+/// (a system alert sits at the modal-panel layer). The window is moved until the
+/// rectangle the leg is about to click in is the app's.
+async function clearForRealPointer(testId: string): Promise<void> {
+  const origins = [null, { x: 1080, y: 120 }, { x: 120, y: 120 }, { x: 1080, y: 620 }, { x: 120, y: 620 }];
+  let blocked: string[] = [];
+  for (const origin of origins) {
+    if (origin) {
+      await app.setWindowFrame(origin);
+      await Bun.sleep(600);
+    }
+    const [box, win] = await Promise.all([viewBox(testId), appWindowRect()]);
+    blocked = [
+      [box.width / 2, box.height / 2],
+      [30, 30],
+      [box.width - 30, box.height - 30],
+    ].flatMap(([dx, dy]) => obstructions(win.x + box.x + dx!, win.y + box.y + dy!));
+    if (blocked.length === 0) return;
+  }
+  throw new LegFailure(
+    `no position on this screen leaves the webview clickable: ${[...new Set(blocked)].join(" ")}`,
+  );
+}
+
 /// Opens the engine's context menu over the page and leaves it tracking. The
 /// menu blocks the host's main thread for as long as it is up, so everything
 /// between this and the pick has to stay off the automation socket.
 async function openPageMenu(page: string, atY?: number): Promise<ShownMenuItem[]> {
+  await clearForRealPointer(page);
   const box = await viewBox(page);
   const spot = await globalPoint(page, box.width / 2, atY ?? box.height / 2);
   realPointer(spot.x, spot.y, "right");
@@ -467,26 +494,29 @@ const legs: Leg[] = [
     },
   },
   {
-    name: "zoomButton",
+    name: "windowZoom",
     run: async () => {
-      // A full-size content window's three title-bar buttons are close,
-      // minimize and fullscreen; the green one enters fullscreen and only an
-      // option-click zooms it, so a window with no AXZoomButton has no zoom
-      // button to press.
-      const zoom = osaWindow('get subrole of every button').toLowerCase();
-      assert(zoom.includes("axzoombutton"), `the window publishes no zoom button (buttons: ${zoom})`);
+      // The green title-bar button enters fullscreen on a full-size content
+      // window and publishes itself as AXFullScreenButton, so the window is
+      // zoomed the other way a user reaches it: the Window menu's Zoom item,
+      // which is `zoom:` down the responder chain.
+      const buttons = osaWindow("get subrole of every button").toLowerCase();
+      assert(
+        buttons.includes("axfullscreenbutton") || buttons.includes("axzoombutton"),
+        `the window publishes no green button at all (buttons: ${buttons})`,
+      );
       const before = await appWindowRect();
-      osaWindow('perform action "AXPress" of (first button whose subrole is "AXZoomButton")');
+      osaProcess('click menu item "Zoom" of menu 1 of menu bar item "Window" of menu bar 1');
       await until(
-        "the zoom button changes the frame",
+        "Zoom changes the frame",
         async () => (await appWindowRect()).height,
         (h) => Math.abs(h - before.height) > 8,
         10000,
       );
       await viewportMatchesView(mainPage, "zoomed");
-      osaWindow('perform action "AXPress" of (first button whose subrole is "AXZoomButton")');
+      osaProcess('click menu item "Zoom" of menu 1 of menu bar item "Window" of menu bar 1');
       await until(
-        "the zoom button restores the frame",
+        "Zoom restores the frame",
         async () => (await appWindowRect()).height,
         (h) => Math.abs(h - before.height) <= 8,
         10000,
@@ -599,8 +629,12 @@ const legs: Leg[] = [
   {
     name: "closeWindowWithTabs",
     run: async () => {
+      // Its own second window: the runner's precondition closes every extra
+      // window before each leg, so one left open by the leg before is gone.
+      await main.getByTestId("menu-private-window").click();
+      await until("a second app window", async () => (await app.windows()).windows.length, (n) => n === 2, 10000);
       const windows = (await app.windows()).windows;
-      assert(windows.length >= 2, `expected the private window to still be open, saw ${windows.length}`);
+      assert(windows.length >= 2, `the private window did not open, saw ${windows.length}`);
       // The app's cmd+W is one menu item acting on the main window's active
       // tab, so the private window goes out through its own close button.
       osaWindow('perform action "AXPress" of (first button whose subrole is "AXCloseButton")');
@@ -987,6 +1021,7 @@ const legs: Leg[] = [
     name: "tooltip",
     run: async () => {
       const page = await activePage();
+      await clearForRealPointer(page);
       const tip = JSON.parse(
         (await pageEval(app, page, "JSON.stringify(document.getElementById('tip').getBoundingClientRect())")) ?? "{}",
       );
@@ -1035,6 +1070,7 @@ const legs: Leg[] = [
     name: "contextMenuOnALinkImageSelectionAndEditable",
     run: async () => {
       const page = await activePage();
+      await clearForRealPointer(page);
       const box = await viewBox(page);
       async function menuOver(selector: string, what: string, expected: string[]): Promise<void> {
         const rect = JSON.parse(
@@ -1312,6 +1348,7 @@ if (prep) {
 
 const only = (process.env.ND_APP_CHROME_LEGS ?? "").split(",").filter((name) => name.length > 0);
 const failures: string[] = [];
+const skipped: string[] = [];
 let passed = 0;
 
 /// Each leg starts on a loaded fixture page in the app's first window. A leg
@@ -1336,8 +1373,11 @@ async function ensureFixturePage(): Promise<void> {
     ).catch(() => null);
     if (closed === null) break;
   }
+  // The fixture page every leg is written against, not merely a page from the
+  // fixture server: a leg that inherited page2.html from the leg before it
+  // reports a missing element rather than its own result.
   const page = await activePage().catch(() => null);
-  if (page !== null && (await pageEval(app, page, "location.host").catch(() => null)) === `127.0.0.1:${FIXTURE_PORT}`) {
+  if (page !== null && (await pageEval(app, page, "location.href").catch(() => null)) === `${FIXTURE_ORIGIN}/index.html`) {
     return;
   }
   mainPage = await loadFixture();
@@ -1356,13 +1396,18 @@ for (const leg of legs) {
     console.log(`ND_APP_CHROME_LEG ${leg.name}: ok (${Date.now() - started}ms)`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof LegSkipped) {
+      skipped.push(`${leg.name}: ${message}`);
+      console.log(`ND_APP_CHROME_LEG ${leg.name}: skip (${message})`);
+      continue;
+    }
     failures.push(`${leg.name}: ${message}`);
     console.log(`ND_APP_CHROME_LEG ${leg.name}: FAIL ${message}`);
   }
 }
 
 fixtures.stop();
-console.log(`ND_APP_CHROME_LEGS ${passed} passed, ${failures.length} failed`);
+console.log(`ND_APP_CHROME_LEGS ${passed} passed, ${failures.length} failed, ${skipped.length} skipped`);
 if (failures.length > 0) {
   for (const failure of failures) console.error(`ND_APP_CHROME_FAIL ${failure}`);
   process.exit(1);

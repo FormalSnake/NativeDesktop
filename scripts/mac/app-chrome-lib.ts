@@ -32,6 +32,12 @@ export interface Leg {
 
 export class LegFailure extends Error {}
 
+/// A leg the machine cannot run at all, as opposed to one that ran and was
+/// wrong. Screen Recording is the only such gate here: it is granted to a
+/// binary by the machine's owner through System Settings and no script can
+/// obtain it. A leg that never ran is reported as skipped, never as passed.
+export class LegSkipped extends Error {}
+
 export function assert(ok: boolean, detail: string): void {
   if (!ok) throw new LegFailure(detail);
 }
@@ -271,10 +277,19 @@ export function capture(name: string, windowNumber?: number): string {
   if (windowNumber !== undefined) args.push("--window-id", String(windowNumber));
   else args.push("--pid", String(HOST_PID));
   const shot = Bun.spawnSync(args);
-  if (shot.exitCode !== 0) {
-    throw new LegFailure(`ndshot capture ${name} failed (${shot.exitCode}): ${shot.stderr.toString().trim()}`);
+  if (shot.exitCode === 0) return out;
+  // ndshot's exit 2 is "no Screen Recording access for this binary", which is
+  // the machine owner's to grant. `screencapture -l` is the one other path to a
+  // window's pixels, and it needs the same grant for the calling terminal, so
+  // it is tried before the leg gives up.
+  if (shot.exitCode === 2) {
+    if (windowNumber !== undefined) {
+      const fallback = Bun.spawnSync(["screencapture", "-x", "-o", "-l", String(windowNumber), out]);
+      if (fallback.exitCode === 0) return out;
+    }
+    throw new LegSkipped("no screen recording permission");
   }
-  return out;
+  throw new LegFailure(`ndshot capture ${name} failed (${shot.exitCode}): ${shot.stderr.toString().trim()}`);
 }
 
 export interface PngReport {

@@ -14,6 +14,7 @@ import {
   censusHolds,
   colourDistance,
   hostAlive,
+  LegSkipped,
   pageEval,
   pageNumber,
   probePng,
@@ -47,6 +48,13 @@ async function leg(name: string, startSlot: "a" | "b", run: () => Promise<void>)
     await censusHolds(app, name);
     console.log(`ND_CEF_REPARENT_LEG ${name}: ok`);
   } catch (error) {
+    // A leg the machine cannot run is reported as skipped, never as passed:
+    // Screen Recording is granted to a binary by the machine's owner and no
+    // script can obtain it.
+    if (error instanceof LegSkipped) {
+      console.log(`ND_CEF_REPARENT_LEG ${name}: skip (${error.message})`);
+      return;
+    }
     failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
     console.log(`ND_CEF_REPARENT_LEG ${name}: FAIL ${failures[failures.length - 1]}`);
   }

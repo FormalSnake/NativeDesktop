@@ -12,7 +12,7 @@
 #
 # ND_APP_DIR points at the app checkout (default ~/Developer/nativebrowser).
 # ND_NDSHOT points at a copy of tools/ndshot/bin/ndshot that holds the Screen
-# Recording grant; without one the capture legs fail rather than being skipped.
+# Recording grant; without one the capture legs report skip rather than a result.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
@@ -46,8 +46,8 @@ new_crash_reports() {
 # ScreenCaptureKit through the signed `ndshot` binary is the only capture path
 # that works here: `screencapture` runs as the calling terminal and a terminal
 # cannot be granted Screen Recording. Build it if the tree has no copy, and say
-# what the grant looks like, because a capture leg that fails on TCC has to name
-# that rather than the picture.
+# what the grant looks like, because a capture leg the machine cannot run has to name
+# that rather than report a picture it never took.
 ensure_ndshot() {
   NDSHOT="${ND_NDSHOT:-$ROOT/tools/ndshot/bin/ndshot}"
   if [ ! -x "$NDSHOT" ]; then
@@ -59,7 +59,7 @@ ensure_ndshot() {
   fi
   export ND_NDSHOT="$NDSHOT"
   if ! "$NDSHOT" doctor >/dev/null 2>&1; then
-    echo "ND_WARN no Screen Recording grant for $NDSHOT; the capture legs will fail until it is granted"
+    echo "ND_WARN no Screen Recording grant for $NDSHOT; the capture legs report skip until it is granted"
     echo "       (System Settings > Privacy & Security > Screen Recording, then re-run)"
   fi
 }
