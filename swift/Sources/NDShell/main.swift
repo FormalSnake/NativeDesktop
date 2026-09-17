@@ -115,10 +115,24 @@ let ndCefRunning = ndCefEngine && NDCefRuntime.initialize()
 // hierarchy is still alive, so plugin deinit() and native-view destroy()
 // callbacks receive live NSViews.
 final class NDAppDelegate: NSObject, NSApplicationDelegate {
+    #if canImport(CCef)
+    private var cefClosed = false
+
+    /// Chromium's browsers are closed in order BEFORE AppKit unwinds: the
+    /// inspector first, then the pages, each waited for. `.terminateLater`
+    /// exists so the callbacks that finish it can still arrive.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !cefClosed, NDCefRuntime.isActive else { return .terminateNow }
+        cefClosed = true
+        if !ndCefCloseBrowsersInOrder() {
+            FileHandle.standardError.write("ND_WARN cef browsers did not all close before quit\n".data(using: .utf8)!)
+        }
+        DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+    #endif
+
     func applicationWillTerminate(_ notification: Notification) {
-        #if canImport(CCef)
-        NDCefChromeWindow.closeDockedDevTools()
-        #endif
         if let ctx = gCtx { nd_shutdown(ctx) }
     }
 
@@ -163,6 +177,18 @@ final class NDAppDelegate: NSObject, NSApplicationDelegate {
 // NSApplication.delegate does not retain; this top-level `let` keeps it alive.
 let appDelegate = NDAppDelegate()
 app.delegate = appDelegate
+
+// SIGTERM is the harness's quit. The default disposition kills the process
+// where it stands, which skips the ordered CEF close and leaves Chromium's
+// helpers behind; routing it through terminate() takes the same path cmd+Q
+// does. The default has to be ignored or the source never fires.
+signal(SIGTERM, SIG_IGN)
+let ndTermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+ndTermSource.setEventHandler {
+    FileHandle.standardError.write("ND_TERMINATE_SIGNAL\n".data(using: .utf8)!)
+    NSApp.terminate(nil)
+}
+ndTermSource.resume()
 #if canImport(CCef)
 // CEF owns the loop when it is running: its mac pump drives [NSApp run]
 // itself, so the delegate, the menu bar and terminate behave as they do on the

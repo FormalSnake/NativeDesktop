@@ -111,16 +111,59 @@ final class NDCefWebView: NSView {
     required init?(coder: NSCoder) { fatalError("NDCefWebView is not NSCoding-decodable") }
 
     deinit {
-        MainActor.assumeIsolated { chrome?.teardown() }
-        if let browser {
-            if let browserHost = browser.pointee.get_host?(browser) {
-                browserHost.pointee.close_browser?(browserHost, 1)
-                nd_cef_ref_release(browserHost)
-            }
-            nd_cef_ref_release(browser)
-        }
+        // The CEF teardown is NOT done here. Closing a Views window and handing
+        // Chromium its own content view back both reach into a view hierarchy
+        // that has to still exist, and a `deinit` runs from an autorelease pool
+        // pop with this object already destroyed: the same sequence faults
+        // inside CEF. `ndCefPurge` runs it at release_node instead, while
+        // everything is alive.
+        MainActor.assumeIsolated { releaseEngine() }
         box.teardown()
     }
+
+    /// Closes the browser and, under Chrome style, the window it was born in.
+    /// Idempotent: the release_node seam calls it, and `deinit` calls it again
+    /// for a view that was dropped without one.
+    ///
+    /// Ordering, the same one the Linux engine takes: the inspector's browser
+    /// goes first, then the lifted subtree goes home, then the page browser.
+    /// Closing the page browser while the inspector is still attached leaves
+    /// CEF unwinding the inspected browser first, which is the
+    /// `CefBrowserInfo::RemoveFrame` fault.
+    @MainActor func releaseEngine() {
+        closeDevToolsForShutdown()
+        chrome?.teardown()
+        chrome = nil
+        guard let browser else { return }
+        self.browser = nil
+        if let browserHost = browser.pointee.get_host?(browser) {
+            browserHost.pointee.close_browser?(browserHost, 1)
+            nd_cef_ref_release(browserHost)
+        }
+        nd_cef_ref_release(browser)
+        ndTrace("engine released")
+    }
+
+    /// `close_dev_tools` on this view, whichever style it runs.
+    @MainActor func closeDevToolsForShutdown() {
+        chrome?.closeDevTools()
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        if browserHost.pointee.has_dev_tools?(browserHost) != 0 {
+            browserHost.pointee.close_dev_tools?(browserHost)
+        }
+    }
+
+    /// Still inspecting. The quit sequence waits on this rather than on a
+    /// fixed delay: an inspector that has not reported its `on_before_close`
+    /// is one CEF is still unwinding.
+    @MainActor var stillInspecting: Bool {
+        guard let browserHost = browserHost() else { return false }
+        defer { nd_cef_ref_release(browserHost) }
+        return browserHost.pointee.has_dev_tools?(browserHost) != 0
+    }
+
+    @MainActor var stillOpen: Bool { browser != nil }
 
     // MARK: - Browser lifetime
 
@@ -205,6 +248,7 @@ final class NDCefWebView: NSView {
             return
         }
         browser = created
+        NDCefWebView.liveViews.add(self)
         guard let browserHost = created.pointee.get_host?(created) else { return }
         defer { nd_cef_ref_release(browserHost) }
         // The observer has to be attached before the first method call, or the
@@ -234,6 +278,9 @@ final class NDCefWebView: NSView {
         nd_cef_ref_release(browser)
     }
 
+    /// Every view with a live browser, for the ordered quit below.
+    nonisolated(unsafe) static let liveViews = NSHashTable<NDCefWebView>.weakObjects()
+
     private func setBrowserHidden(_ hidden: Bool) {
         guard let browserHost = browserHost() else { return }
         defer { nd_cef_ref_release(browserHost) }
@@ -254,6 +301,18 @@ final class NDCefWebView: NSView {
     /// which forwards here, and the a11y probe reports focus for any
     /// descendant. Chromium routes the keystrokes itself once told.
     override var acceptsFirstResponder: Bool { true }
+
+    /// The app's menu gets first refusal on every key equivalent that reaches
+    /// the web contents. `-[NSWindow sendEvent:]` walks the view hierarchy
+    /// before it reaches the main menu, and Chromium answers YES to cmd+W,
+    /// cmd+T and the rest of its own accelerators, so without this the app's
+    /// menu never sees them: the command handler refuses them on Chromium's
+    /// side and the keystroke is simply lost. Anything the app has no item for
+    /// (cmd+C, cmd+Z in a text field) falls through to Chromium unchanged.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func becomeFirstResponder() -> Bool {
         if let target = chrome?.focusTarget, target !== self {
@@ -1190,4 +1249,41 @@ func ndCefParseJSONText(_ raw: String) -> [String: Any]? {
     guard let data = raw.data(using: .utf8) else { return nil }
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 }
+/// The ordered shutdown the Chromium engine needs before `nd_shutdown` runs
+/// `cef_shutdown`. Quitting without it leaves CEF to unwind by itself: it
+/// closes the inspected browser first, faults in `CefBrowserInfo::RemoveFrame`,
+/// and the inspector's browser is still there when `cef_shutdown` tries to join
+/// the UI thread. Each phase waits for CEF's own callbacks, never a fixed
+/// delay; the whole run is a few tens of milliseconds.
+///
+/// It runs a nested run loop because the caller is `applicationShouldTerminate`,
+/// which has to answer before the callbacks it is waiting on can arrive.
+@MainActor func ndCefCloseBrowsersInOrder(timeout: TimeInterval = 5) -> Bool {
+    let views = NDCefWebView.liveViews.allObjects
+    guard !views.isEmpty else { return true }
+
+    func pump(until done: @MainActor () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !done() {
+            if Date() >= deadline { return false }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        return true
+    }
+
+    for view in views { view.closeDevToolsForShutdown() }
+    let inspectorsClosed = pump { !views.contains { $0.stillInspecting } }
+
+    for view in views { view.releaseEngine() }
+    let browsersClosed = pump { !views.contains { $0.stillOpen } }
+
+    return inspectorsClosed && browsersClosed
+}
+
+/// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
+@MainActor func ndCefPurge(_ view: NSView) {
+    let engine = (view as? NDCefWebView) ?? (view as? NDWebView)?.cefEngine
+    engine?.releaseEngine()
+}
+
 #endif

@@ -400,6 +400,9 @@ func buildVTable() -> nd_backend {
     ndCodeEditorPurge(view)
     ndPaneInstallPurge(view)
     ndPanedTeardown(view)
+    #if canImport(CCef)
+    ndCefPurge(view)
+    #endif
 }
 
 /// testIDs: mirrors the tracked `testID` prop onto AppKit's own
