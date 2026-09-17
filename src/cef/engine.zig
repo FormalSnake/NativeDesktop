@@ -30,6 +30,7 @@ const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const cdp = @import("cdp.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
+const gtkmenu = @import("gtkmenu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
 
@@ -530,6 +531,11 @@ const View = struct {
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
     next_menu_command: c_int = menu_command_first,
     menu_page_url_slot: ?[]u8 = null,
+    /// The GTK menu currently on screen for this view, GTK thread only. One at
+    /// a time: a second right-click dismisses the first, which answers its
+    /// callback before the new one takes the slot.
+    menu_popup: ?*gtkmenu.Popup = null,
+    menu_request: ?*MenuRequest = null,
 
     /// The last `findStart` text, so findNext/findPrevious can re-issue it:
     /// CEF's find takes the search text on every call.
@@ -909,6 +915,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
     if (focused_view == view) focused_view = null;
+    closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
         _ = glib.Source.remove(view.deferred_timer);
@@ -1261,6 +1268,9 @@ fn clientGetRequestHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_requ
 /// are deliberately absent: Chrome style docks the inspector inside the
 /// browser's own contents container, so they open no window, and IDC_DEV_TOOLS
 /// is how `openDevTools` itself is served.
+///
+/// The native context menu drops every item on this list that is not also an
+/// open-link one, so the menu never offers an entry that does nothing.
 const blocked_chrome_commands = [_][*:0]const u8{
     "IDC_NEW_WINDOW",
     "IDC_NEW_INCOGNITO_WINDOW",
@@ -1288,6 +1298,12 @@ const blocked_chrome_commands = [_][*:0]const u8{
     "IDC_CONTENT_CONTEXT_OPENAVNEWTAB",
     "IDC_CONTENT_CONTEXT_PICTUREINPICTURE",
     "IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE",
+    // Chrome answers these with a bubble anchored to browser chrome this
+    // engine does not have, so they raise nothing at all when they run.
+    "IDC_ROUTE_MEDIA",
+    "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
+    "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE",
+    "IDC_CONTENT_CONTEXT_TRANSLATE",
 };
 
 /// Resolved once on the CEF UI thread, which is the only thread that asks.
@@ -1697,6 +1713,9 @@ const Emission = struct {
     /// were read from are gone by the time the GTK loop runs.
     menu_hit: ?*MenuHit = null,
     menu_click: ?*MenuClick = null,
+    /// A native menu waiting to be drawn. It holds the run_context_menu
+    /// callback, so the GTK side owns answering it from here on.
+    menu_request: ?*MenuRequest = null,
 };
 
 fn post(e: Emission) void {
@@ -1734,8 +1753,16 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
     // The tab this came from can have been closed while the event was in
     // flight; the widget, and with it the container window, is already gone.
-    if (!live_views.contains(@intFromPtr(box.view))) return 0;
+    if (!live_views.contains(@intFromPtr(box.view))) {
+        if (box.menu_request) |req| cancelMenuRequest(req);
+        return 0;
+    }
     const view = box.view;
+
+    if (box.menu_request) |req| {
+        openNativeMenu(view, req);
+        return 0;
+    }
 
     if (box.cdp_result) {
         onCdpResult(view, box.message_id, box.ok, if (box.text) |t| t else "");
@@ -1788,6 +1815,9 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     const f = emit orelse return 0;
     if (std.mem.eql(u8, box.name, "navigate")) {
         const text = box.text orelse return 0;
+        // The page the menu was opened over is gone, and so are the commands
+        // Chromium queued against it.
+        closeNativeMenu(view);
         remember(&view.url, text);
         // The menu handlers read this from the CEF UI thread.
         view.menu_lock.lock();
@@ -4610,26 +4640,312 @@ fn onRunContextMenu(
     defer ref.releaseParam(frame);
     defer ref.releaseParam(params);
     defer ref.releaseParam(model);
-    defer ref.releaseParam(callback);
     const view = ContextMenuObj.of(self).payload;
 
     // Emitted in both modes, exactly as the WebKitGTK backend does: an app that
     // wants to decorate the native menu and an app that wants to replace it
     // both need to know where the click landed.
     var hit = readMenuHit(params);
+    const at_x = hit.x;
+    const at_y = hit.y;
     const boxed = alloc.create(MenuHit) catch {
         hit.deinit();
+        ref.releaseParam(callback);
         return 0;
     };
     boxed.* = hit;
     post(.{ .view = view, .name = "contextMenu", .menu_hit = boxed });
 
     traceMenuModel(model, 0);
-    if (!view.suppress_menu.load(.acquire)) return 0;
-    if (callback != null) {
-        if (callback.*.cancel) |cancel| cancel(callback);
+    if (view.suppress_menu.load(.acquire)) {
+        if (callback != null) {
+            if (callback.*.cancel) |cancel| cancel(callback);
+        }
+        ref.releaseParam(callback);
+        return 1;
     }
+    if (callback == null) return 0;
+
+    // Chromium's model is copied here because it may not be referenced once
+    // this returns, and the menu it becomes is drawn on the GTK thread.
+    const items = copyMenuModel(model, 0);
+    if (items.len == 0) {
+        gtkmenu.freeItems(items);
+        ref.releaseParam(callback);
+        return 0;
+    }
+    const req = alloc.create(MenuRequest) catch {
+        gtkmenu.freeItems(items);
+        ref.releaseParam(callback);
+        return 0;
+    };
+    // The callback parameter's reference is deliberately kept: it is what
+    // `answerMenu` consumes when the user picks or dismisses.
+    req.* = .{ .callback = callback, .items = items, .x = at_x, .y = at_y };
+    post(.{ .view = view, .name = "", .menu_request = req });
     return 1;
+}
+
+/// One native menu in flight, from `run_context_menu` to the pick or the
+/// dismissal that answers it.
+const MenuRequest = struct {
+    callback: [*c]c.cef_run_context_menu_callback_t,
+    items: []gtkmenu.Item,
+    x: c_int,
+    y: c_int,
+};
+
+fn cancelMenuRequest(req: *MenuRequest) void {
+    answerMenu(req.callback, 0);
+    gtkmenu.freeItems(req.items);
+    alloc.destroy(req);
+}
+
+fn openNativeMenu(view: *View, req: *MenuRequest) void {
+    closeNativeMenu(view);
+    // The popover takes a keyboard grab, and X input focus is on CEF's own
+    // window after any interaction with the page; without this the menu opens
+    // with no keyboard.
+    x11.focusToplevel(view.widget);
+    const popup = gtkmenu.open(view.widget, req.items, req.x, req.y, &onNativeMenuAnswer, view) orelse {
+        cancelMenuRequest(req);
+        return;
+    };
+    view.menu_popup = popup;
+    view.menu_request = req;
+    traceRenderedMenu(req.items, 0);
+    tr("menuOpen node={d} at={d},{d} items={d}", .{ view.node_id, req.x, req.y, req.items.len });
+}
+
+fn closeNativeMenu(view: *View) void {
+    const popup = view.menu_popup orelse return;
+    gtkmenu.close(popup);
+}
+
+fn onNativeMenuAnswer(ctx: ?*anyopaque, command_id: c_int) void {
+    const view: *View = @ptrCast(@alignCast(ctx orelse return));
+    view.menu_popup = null;
+    const req = view.menu_request orelse return;
+    view.menu_request = null;
+    tr("menuAnswer node={d} command={d}", .{ view.node_id, command_id });
+    answerMenu(req.callback, command_id);
+    gtkmenu.freeItems(req.items);
+    alloc.destroy(req);
+}
+
+const MenuAnswer = struct {
+    callback: [*c]c.cef_run_context_menu_callback_t,
+    command_id: c_int,
+};
+const MenuAnswerObj = ref.Counted(c.cef_task_t, MenuAnswer);
+
+/// Answers the menu callback exactly once and gives back the reference
+/// `run_context_menu` kept. `command_id` 0 is the dismissal.
+fn answerMenu(callback: [*c]c.cef_run_context_menu_callback_t, command_id: c_int) void {
+    if (callback == null) return;
+    const api = loader.loaded() orelse return ref.releaseOwned(callback);
+    if (api.currently_on(c.TID_UI) != 0) return finishMenu(callback, command_id);
+    const task = MenuAnswerObj.create(.{ .callback = callback, .command_id = command_id }) orelse
+        return ref.releaseOwned(callback);
+    task.cef.execute = &runMenuAnswerTask;
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) {
+        task.drop();
+        task.drop();
+        // CEF is on its way down; leaving the menu unanswered is nothing the
+        // process will still be around to notice, and the reference is not.
+        ref.releaseOwned(callback);
+        return;
+    }
+    task.drop();
+}
+
+fn runMenuAnswerTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const answer = MenuAnswerObj.of(self).payload;
+    finishMenu(answer.callback, answer.command_id);
+}
+
+fn finishMenu(callback: [*c]c.cef_run_context_menu_callback_t, command_id: c_int) void {
+    if (command_id == 0) {
+        if (callback.*.cancel) |cancel| cancel(callback);
+    } else if (callback.*.cont) |cont| {
+        cont(callback, command_id, c.EVENTFLAG_NONE);
+    }
+    ref.releaseOwned(callback);
+}
+
+/// Items whose command the engine refuses are dropped rather than drawn: an
+/// entry that does nothing when picked is worse than no entry. The open-link
+/// commands stay, because `on_context_menu_command` reroutes them to the app's
+/// `newWindow` before the deny list is consulted.
+fn menuItemDenied(command_id: c_int) bool {
+    if (command_id < 0) return false;
+    if (!chromeStyle()) return false;
+    if (openLinkCommand(command_id)) return false;
+    return chromeCommandBlocked(command_id);
+}
+
+/// Chromium's model, copied into the owned tree the GTK side draws. Runs on the
+/// CEF UI thread, where the model is only valid for the length of the callback.
+fn copyMenuModel(model: [*c]c.cef_menu_model_t, depth: u32) []gtkmenu.Item {
+    if (model == null or depth > 6) return &.{};
+    const get_count = model.*.get_count orelse return &.{};
+    const count = get_count(model);
+    var out: std.ArrayList(gtkmenu.Item) = .empty;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        if (model.*.is_visible_at) |visible| {
+            if (visible(model, i) == 0) continue;
+        }
+        const raw_type: c.cef_menu_item_type_t = if (model.*.get_type_at) |f| f(model, i) else c.MENUITEMTYPE_COMMAND;
+        if (raw_type == c.MENUITEMTYPE_SEPARATOR) {
+            // Filtering leaves rules with nothing on one side of them, so one
+            // is only kept when something drawable precedes it.
+            if (out.items.len == 0 or out.items[out.items.len - 1].kind == .separator) continue;
+            const rule = alloc.dupeZ(u8, "") catch break;
+            out.append(alloc, .{ .label = rule, .kind = .separator }) catch {
+                gtkmenu.freeLabel(rule);
+                break;
+            };
+            continue;
+        }
+        const command_id: c_int = if (model.*.get_command_id_at) |f| f(model, i) else -1;
+        if (menuItemDenied(command_id)) continue;
+
+        var children: []gtkmenu.Item = &.{};
+        if (raw_type == c.MENUITEMTYPE_SUBMENU) {
+            const get_sub = model.*.get_sub_menu_at orelse continue;
+            const sub = get_sub(model, i);
+            if (sub == null) continue;
+            defer ref.releaseOwned(sub);
+            children = copyMenuModel(sub, depth + 1);
+            // A submenu whose every child was denied is a dead label.
+            if (!anyDrawable(children)) {
+                gtkmenu.freeItems(children);
+                continue;
+            }
+        }
+
+        const label = menuLabelAt(model, i) orelse continue;
+        const item: gtkmenu.Item = .{
+            .label = label,
+            .command_id = command_id,
+            .kind = switch (raw_type) {
+                c.MENUITEMTYPE_SUBMENU => .submenu,
+                c.MENUITEMTYPE_CHECK => .check,
+                c.MENUITEMTYPE_RADIO => .radio,
+                else => .command,
+            },
+            .enabled = if (model.*.is_enabled_at) |f| f(model, i) != 0 else true,
+            .checked = if (model.*.is_checked_at) |f| f(model, i) != 0 else false,
+            .group_id = if (model.*.get_group_id_at) |f| f(model, i) else -1,
+            .children = children,
+            .accel = menuAccelAt(model, i),
+        };
+        out.append(alloc, item) catch {
+            gtkmenu.freeItems(item.children);
+            gtkmenu.freeLabel(item.label);
+            if (item.accel) |a| gtkmenu.freeLabel(a);
+            break;
+        };
+    }
+    while (out.items.len > 0 and out.items[out.items.len - 1].kind == .separator) {
+        if (out.pop()) |last| gtkmenu.freeLabel(last.label);
+    }
+    return out.toOwnedSlice(alloc) catch &.{};
+}
+
+fn anyDrawable(items: []const gtkmenu.Item) bool {
+    for (items) |item| {
+        if (item.kind != .separator) return true;
+    }
+    return false;
+}
+
+/// Chromium's labels carry Windows-style `&` mnemonics, which GTK4's menu
+/// models do not draw at all. `&&` is the escaped ampersand.
+fn menuLabelAt(model: [*c]c.cef_menu_model_t, index: usize) ?[:0]u8 {
+    const get_label = model.*.get_label_at orelse return null;
+    const raw = get_label(model, index);
+    if (raw == null) return alloc.dupeZ(u8, "") catch null;
+    defer freeUserfree(raw);
+    const text = dupeStr(raw) orelse return null;
+    defer alloc.free(text);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == '&') {
+            if (i + 1 < text.len and text[i + 1] == '&') i += 1 else continue;
+        }
+        out.append(alloc, text[i]) catch return null;
+    }
+    return alloc.dupeZ(u8, out.items) catch null;
+}
+
+/// The accelerator as gtk_accelerator_parse spells it, which is what a menu
+/// model's "accel" attribute takes. Key codes Chromium reports are Windows
+/// virtual keys; anything outside the set a context menu actually uses is
+/// reported as no accelerator rather than guessed at.
+fn menuAccelAt(model: [*c]c.cef_menu_model_t, index: usize) ?[:0]u8 {
+    const has = model.*.has_accelerator_at orelse return null;
+    if (has(model, index) == 0) return null;
+    const get = model.*.get_accelerator_at orelse return null;
+    var key_code: c_int = 0;
+    var shift: c_int = 0;
+    var ctrl: c_int = 0;
+    var alt: c_int = 0;
+    if (get(model, index, &key_code, &shift, &ctrl, &alt) == 0) return null;
+
+    var key_buf: [8]u8 = undefined;
+    const key: []const u8 = switch (key_code) {
+        0x08 => "BackSpace",
+        0x0D => "Return",
+        0x1B => "Escape",
+        0x20 => "space",
+        0x25 => "Left",
+        0x26 => "Up",
+        0x27 => "Right",
+        0x28 => "Down",
+        0x2E => "Delete",
+        0x30...0x39 => blk: {
+            key_buf[0] = @intCast(key_code);
+            break :blk key_buf[0..1];
+        },
+        0x41...0x5A => blk: {
+            key_buf[0] = std.ascii.toLower(@intCast(key_code));
+            break :blk key_buf[0..1];
+        },
+        0x70...0x7B => std.fmt.bufPrint(&key_buf, "F{d}", .{key_code - 0x6F}) catch return null,
+        else => return null,
+    };
+    var out: [48]u8 = undefined;
+    const text = std.fmt.bufPrintZ(&out, "{s}{s}{s}{s}", .{
+        if (ctrl != 0) "<Control>" else "",
+        if (alt != 0) "<Alt>" else "",
+        if (shift != 0) "<Shift>" else "",
+        key,
+    }) catch return null;
+    return alloc.dupeZ(u8, text) catch null;
+}
+
+/// One trace line per item of the menu the user is actually looking at, which
+/// is what the gate asserts against: `menuItem` is the model the engine was
+/// handed, this is what survived the filter.
+fn traceRenderedMenu(items: []const gtkmenu.Item, depth: u32) void {
+    for (items, 0..) |item, i| {
+        const accel: []const u8 = if (item.accel) |a| a else "";
+        tr("menuShown depth={d} index={d} id={d} kind={s} enabled={d} checked={d} accel={s} label={s}", .{
+            depth,
+            i,
+            item.command_id,
+            @tagName(item.kind),
+            @intFromBool(item.enabled),
+            @intFromBool(item.checked),
+            accel,
+            item.label,
+        });
+        if (item.children.len > 0) traceRenderedMenu(item.children, depth + 1);
+    }
 }
 
 fn onContextMenuCommand(

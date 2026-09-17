@@ -107,6 +107,19 @@ run_pass() {
     echo "ND_CEF_CHROME_M1_OK($pass) the alloy gate's own drive passes under chrome style"
   fi
 
+  # The native context menu is driven with real right-clicks and read back from
+  # the host's own trace, so it gets a pass and a script of its own.
+  if [ "$pass" = "menu" ]; then
+    ND_HOST_LOG="$LOG" ND_MENU_SHOT_PATH="${ND_CEF_MENU_SHOT_PATH:-$XDG_RUNTIME_DIR/cef-chrome-menu.png}" \
+      bun scripts/cef-menu-drive.ts 2>&1 | tee "$XDG_RUNTIME_DIR/chrome-menu.log" || true
+    grep -q "ND_CEF_MENU_OK" "$XDG_RUNTIME_DIR/chrome-menu.log" || {
+      echo "FAIL($pass): context-menu driver"
+      tail -60 "$LOG"
+      exit 1
+    }
+    return
+  fi
+
   ND_CHROME_PASS="$pass" ND_CHROME_SHOT_PATH="${ND_CEF_SHOT_PATH:-$XDG_RUNTIME_DIR/cef-chrome-devtools.png}" \
     bun scripts/cef-chrome-drive.ts 2>&1 | tee "$XDG_RUNTIME_DIR/chrome-legs-$pass.log" || true
   grep -q "ND_CEF_CHROME_LEGS_OK($pass)" "$XDG_RUNTIME_DIR/chrome-legs-$pass.log" || {
@@ -154,6 +167,9 @@ echo "ND_CEF_CHROME_NO_STRAY_WINDOW_OK toplevels $BEFORE_X11 -> $AFTER_X11 acros
 # extension has to be back with the storage the first pass wrote.
 run_pass second
 quit_host second
+
+run_pass menu
+quit_host menu
 
 # DevTools last, and killed rather than asked to quit. A Chrome-style browser
 # that has had devtools open dies on the way out of the process whether the

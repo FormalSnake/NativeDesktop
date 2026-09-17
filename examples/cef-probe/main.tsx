@@ -29,6 +29,11 @@ const PAGE = (title: string, body: string): string =>
   `<body style="font:16px sans-serif;background:#101014;color:#e8e8ef;margin:0">` +
   `<div style="padding:40px">${body}</div></body></html>`;
 
+/// A 1x1 PNG, scaled by the tag: the context-menu gate needs an image that
+/// really decoded, and it has no network.
+const PIXEL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 const fixture = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -55,6 +60,26 @@ const fixture = Bun.serve({
     }
     if (path === "/opened") {
       return html(PAGE("ND CEF Opened", "<h1>should never render here</h1>"));
+    }
+    if (path === "/menu") {
+      // Absolutely positioned so the context-menu gate can aim at a link, an
+      // image, a selection and an editable field by coordinate. The image is
+      // an inline PNG: the gate serves no network and an image the renderer
+      // failed to load is not an image context.
+      return html(
+        `<!doctype html><html><head><meta charset="utf-8"><title>ND CEF Menu</title></head>` +
+          `<body style="font:16px sans-serif;background:#101014;color:#e8e8ef;margin:0;overflow:hidden">` +
+          `<a id="lnk" href="/one" style="position:absolute;left:20px;top:16px">a link</a>` +
+          `<img id="img" src="${PIXEL}" width="48" height="48" style="position:absolute;left:150px;top:10px">` +
+          `<span id="sel" style="position:absolute;left:250px;top:16px">selected words</span>` +
+          `<input id="inp" value="teh wrold" spellcheck="true" style="position:absolute;left:430px;top:12px;width:160px">` +
+          `<script>` +
+          `window.ndSelect=function(){var r=document.createRange();` +
+          `r.selectNodeContents(document.getElementById('sel'));` +
+          `var s=getSelection();s.removeAllRanges();s.addRange(r);return 'selected'};` +
+          `ndSelect();` +
+          `</script></body></html>`,
+      );
     }
     return html(PAGE("ND CEF One", "<h1>ND Chromium engine</h1><p>page one</p>"));
   },
@@ -479,6 +504,25 @@ async function run(ctx: {
     );
     const named = list.map((e) => `${e.name} ${e.enabled ? "enabled" : "disabled"} ${e.iconUrl ? "icon" : "no-icon"}`);
     return `ok (${named.join("; ")})`;
+  });
+
+  // The app's own items, which the engine appends to Chromium's model after a
+  // separator. Left in place for the rest of the run so the context-menu gate
+  // can right-click and read them back.
+  sendCommand(ctx.view.current, "setContextMenuItems", {
+    items: [
+      { id: "probe-any", label: "Probe Item", contexts: ["all"] },
+      { id: "probe-link", label: "Probe Link Item", contexts: ["link"] },
+      {
+        id: "probe-group",
+        label: "Probe Submenu",
+        contexts: ["all"],
+        children: [
+          { id: "probe-alpha", label: "Probe Alpha" },
+          { id: "probe-beta", label: "Probe Beta", type: "checkbox", checked: true },
+        ],
+      },
+    ],
   });
 
   ctx.setPhase("done");

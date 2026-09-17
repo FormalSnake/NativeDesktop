@@ -373,10 +373,21 @@ Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
   process, docked or in CEF's own window: `CefBrowserInfo::RemoveFrame` runs
   against a freed browser info under a `TabStripModel` teardown. The gate keeps
   its devtools leg in a pass of its own for that reason.
-- The page context menu is Chromium's, drawn by Views.
-  `cef_context_menu_handler_t::run_context_menu` is consulted, so
-  `contextMenuMode="suppress"` and `setContextMenuItems` work as they do under
-  Alloy, but the native-mode menu is not a GTK one.
+- The page context menu is a GTK one. `run_context_menu` returns 1, Chromium's
+  `cef_menu_model_t` is copied and drawn as a GtkPopoverMenu parented to the
+  `<webview>` widget at the click, and the pick is handed back through
+  `cef_run_context_menu_callback_t`. Everything Chromium puts in the model is
+  there: Back/Forward/Reload, the link, image, selection and editable variants,
+  spell-check languages and writing direction as radio and check items, an
+  extension's `chrome.contextMenus` items with their submenus, and Inspect.
+  Items whose command `cef_command_handler_t` refuses are dropped rather than
+  drawn (Print, View page source, Cast, Create QR code); the "open link in …"
+  items stay, because they reach the app as `newWindow`. The app's own
+  `setContextMenuItems` tree is appended after a separator as it is under
+  Alloy, and `contextMenuMode="suppress"` still shows nothing.
+  Two differences from Chrome's own menu: a submenu slides the popover to its
+  own pane rather than flying out, and accelerators are drawn for the keys
+  Chromium reports in the model.
 
 Listing extensions, and their popups:
 
@@ -453,6 +464,17 @@ hit-test matching are unit-tested (`src/gtk/context_menu.zig`, run by `zig build
 test`), the command round trip is asserted from the host's own
 `ND_WEBVIEW_TRACE` output by `scripts/headless-webview.sh`, and the menu the
 user actually sees is verified by hand.
+
+Under Chrome style the menu is driven for real. `scripts/cef-menu-drive.ts`,
+the gate's `menu` pass, right-clicks a link, an image, a selection and an input
+with real X11 events, reads back what the host drew (`ND_CEF menuShown`, one
+line per rendered item, against `ND_CEF menuItem` for the model it came from),
+walks the extension's submenu with the keyboard and checks the extension's own
+handler wrote to `chrome.storage`, and asserts that Escape, a click away and a
+navigation each answer the callback exactly once. Spelling *suggestions* are
+not covered: Chromium downloads its hunspell dictionary on first use and the
+gate has no network, so a misspelled word offers the Spell check submenu
+without the corrections.
 
 Status: the extended `<webview>` API above is implemented and runtime-verified
 on both backends. CEF integration exists as a macOS proof-of-concept via the
