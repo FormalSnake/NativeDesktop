@@ -30,7 +30,18 @@ const app = await connectApp();
 await until("the probe's windows", async () => (await app.windows()).windows.length, (n) => n === 2, 45000);
 
 const failures: string[] = [];
-async function leg(name: string, run: () => Promise<void>): Promise<void> {
+
+/// Every leg names the slot it has to start in, and the runner puts the probe
+/// there before running it: no inspector docked, the view in that slot. A leg
+/// that fails halfway then costs one leg instead of every leg after it.
+async function leg(name: string, startSlot: "a" | "b", run: () => Promise<void>): Promise<void> {
+  try {
+    await prepare(startSlot);
+  } catch (error) {
+    failures.push(`${name}: could not reach its starting state: ${String(error)}`);
+    console.log(`ND_CEF_REPARENT_LEG ${name}: FAIL ${failures[failures.length - 1]}`);
+    return;
+  }
   try {
     await run();
     await censusHolds(app, name);
@@ -39,6 +50,33 @@ async function leg(name: string, run: () => Promise<void>): Promise<void> {
     failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
     console.log(`ND_CEF_REPARENT_LEG ${name}: FAIL ${failures[failures.length - 1]}`);
   }
+}
+
+async function prepare(slot: "a" | "b"): Promise<void> {
+  const windows = (await app.windows()).windows;
+  if (windows.length === 0) throw new Error("the probe has no windows left");
+  const a = await app.window(0);
+  if (await inspectorIsDocked()) {
+    await a.getByTestId("r-devtools").click();
+    await until("the inspector closes", inspectorIsDocked, (open) => !open, 15000);
+  }
+  if (slot === "b" && windows.length < 2) throw new Error("window B is gone");
+  if ((await slotOfView()) === slot) return;
+  await a.getByTestId(slot === "a" ? "r-to-a" : "r-to-b").click();
+  await until(`the view moves to slot ${slot}`, slotOfView, (where) => where === slot, 15000);
+}
+
+/// The page's own viewport against the view it sits in: a docked inspector is
+/// the only thing that makes the two differ.
+async function inspectorIsDocked(): Promise<boolean> {
+  const slot = await slotOfView();
+  if (slot === "none") return false;
+  const windows = (await app.windows()).windows;
+  const window = slot === "a" ? windows[0]?.ref : windows[1]?.ref;
+  if (window === undefined) return false;
+  const { box } = await viewBox(window);
+  const width = await pageNumber(app, "r-view", "innerWidth");
+  return width < box.width - 40;
 }
 
 const debugPort = process.env.ND_CEF_DEBUG_PORT ?? "9337";
@@ -114,7 +152,7 @@ let target = "";
 let counter = 0;
 let scroll = 0;
 
-await leg("placedInWindowA", async () => {
+await leg("placedInWindowA", "a", async () => {
   await until("the page loads", () => pageEval(app, "r-view", "document.readyState"), (v) => v === "complete", 30000);
   assert((await slotOfView()) === "a", "the view did not start in window A's slot");
   const windows = (await app.windows()).windows;
@@ -125,7 +163,7 @@ await leg("placedInWindowA", async () => {
   target = await pageTargetId();
 });
 
-await leg("movedToWindowB", async () => {
+await leg("movedToWindowB", "a", async () => {
   await pageEval(app, "r-view", "scrollTo(0, 900)");
   await until("the page scrolls", () => pageNumber(app, "r-view", "Math.round(scrollY)"), (y) => y > 800, 8000);
   counter = await pageNumber(app, "r-view", "window.__ndCounter");
@@ -152,7 +190,7 @@ await leg("movedToWindowB", async () => {
   );
 });
 
-await leg("paintsInWindowB", async () => {
+await leg("paintsInWindowB", "b", async () => {
   await viewportMatchesView(windowB, "in B");
   await anchorTracks(windowB, "in B");
   const frames = await pageNumber(app, "r-view", "window.__ndFrames");
@@ -179,7 +217,7 @@ await leg("paintsInWindowB", async () => {
   );
 });
 
-await leg("windowAIsEmptyAfterTheMove", async () => {
+await leg("windowAIsEmptyAfterTheMove", "b", async () => {
   const rect = await windowRect(windowA);
   const shot = capture("reparent-a-empty", (await onScreen(rect)).number);
   const report = probePng(shot);
@@ -189,7 +227,7 @@ await leg("windowAIsEmptyAfterTheMove", async () => {
   );
 });
 
-await leg("windowBResizeAndMove", async () => {
+await leg("windowBResizeAndMove", "b", async () => {
   await app.setWindowFrame({ window: windowB, width: 900, height: 640 });
   await viewportMatchesView(windowB, "B resized");
   await anchorTracks(windowB, "B resized");
@@ -198,7 +236,7 @@ await leg("windowBResizeAndMove", async () => {
   await anchorTracks(windowB, "B moved");
 });
 
-await leg("inputReachesThePageInWindowB", async () => {
+await leg("inputReachesThePageInWindowB", "b", async () => {
   const { box, factory } = await viewBox(windowB);
   await pageEval(app, "r-view", "scrollTo(0,0); document.getElementById('text').value=''");
   const field = JSON.parse(
@@ -220,7 +258,7 @@ await leg("inputReachesThePageInWindowB", async () => {
   );
 });
 
-await leg("chromiumSurfacesOpenInWindowB", async () => {
+await leg("chromiumSurfacesOpenInWindowB", "b", async () => {
   const { box, factory } = await viewBox(windowB);
   const select = JSON.parse(
     (await pageEval(app, "r-view", "JSON.stringify(document.getElementById('sel').getBoundingClientRect())")) ?? "{}",
@@ -241,7 +279,7 @@ await leg("chromiumSurfacesOpenInWindowB", async () => {
   await factory.keyboard.press("Escape");
 });
 
-await leg("dockedDevToolsSurvivesTheMove", async () => {
+await leg("dockedDevToolsSurvivesTheMove", "b", async () => {
   // Chrome style docks the inspector as a second BrowserView inside the same
   // Views window, so the move has to take it along with the page. Alloy gives
   // it a window of its own and has nothing to carry.
@@ -267,7 +305,21 @@ await leg("dockedDevToolsSurvivesTheMove", async () => {
   assert((await pageTargetId()) === target, "the move with the dock open created a new browser");
   await a.getByTestId("r-devtools").click();
   await until(
-    "the dock closes",
+    "the dock closes and the page gets its width back",
+    () => pageNumber(app, "r-view", "innerWidth"),
+    (w) => w > inA - 40,
+    20000,
+  );
+  await a.getByTestId("r-devtools").click();
+  await until(
+    "the dock reopens after being closed",
+    () => pageNumber(app, "r-view", "innerWidth"),
+    (w) => w < inA - 40,
+    20000,
+  );
+  await a.getByTestId("r-devtools").click();
+  await until(
+    "the dock closes again",
     () => pageNumber(app, "r-view", "innerWidth"),
     (w) => w > inA - 40,
     20000,
@@ -275,7 +327,7 @@ await leg("dockedDevToolsSurvivesTheMove", async () => {
   await anchorTracks(windowA, "after the dock closed");
 });
 
-await leg("movedBackToWindowA", async () => {
+await leg("movedBackToWindowA", "b", async () => {
   const b = await app.window((await app.windows()).windows.findIndex((w) => w.ref === windowB));
   void b;
   const a = await app.window((await app.windows()).windows.findIndex((w) => w.ref === windowA));
@@ -286,7 +338,7 @@ await leg("movedBackToWindowA", async () => {
   await anchorTracks(windowA, "back in A");
 });
 
-await leg("closingTheOtherWindowLeavesTheBrowser", async () => {
+await leg("closingTheOtherWindowLeavesTheBrowser", "a", async () => {
   const a = await app.window((await app.windows()).windows.findIndex((w) => w.ref === windowA));
   await a.getByTestId("r-close-b").click();
   await until("window B goes", async () => (await app.windows()).windows.length, (n) => n === 1, 15000);

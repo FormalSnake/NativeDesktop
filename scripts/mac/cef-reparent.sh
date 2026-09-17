@@ -16,6 +16,27 @@ REPORTS="$HOME/Library/Logs/DiagnosticReports"
 crash_reports() { ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort; }
 BASELINE_REPORTS="$(crash_reports)"
 
+# ScreenCaptureKit through the signed `ndshot` binary is the only capture path
+# that works here: `screencapture` runs as the calling terminal and a terminal
+# cannot be granted Screen Recording. Build it if the tree has no copy, and say
+# what the grant looks like, because a capture leg that fails on TCC has to name
+# that rather than the picture.
+ensure_ndshot() {
+  NDSHOT="${ND_NDSHOT:-$ROOT/tools/ndshot/bin/ndshot}"
+  if [ ! -x "$NDSHOT" ]; then
+    echo "building ndshot (no copy at $NDSHOT)"
+    ( cd "$ROOT/tools/ndshot" && ./build.sh >/dev/null ) || {
+      echo "FAIL: tools/ndshot/build.sh failed; the capture legs cannot run"; return 1
+    }
+    NDSHOT="$ROOT/tools/ndshot/bin/ndshot"
+  fi
+  export ND_NDSHOT="$NDSHOT"
+  if ! "$NDSHOT" doctor >/dev/null 2>&1; then
+    echo "ND_WARN no Screen Recording grant for $NDSHOT; the capture legs will fail until it is granted"
+    echo "       (System Settings > Privacy & Security > Screen Recording, then re-run)"
+  fi
+}
+
 HOST_PID=""
 cleanup() {
   [ -n "${HOST_PID:-}" ] && kill -9 "$HOST_PID" 2>/dev/null
@@ -31,6 +52,8 @@ settle() {
     sleep 0.1
   done
 }
+
+ensure_ndshot || exit 1
 
 FAILED=0
 run_style() {

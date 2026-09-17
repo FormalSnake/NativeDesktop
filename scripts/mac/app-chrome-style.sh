@@ -43,6 +43,27 @@ new_crash_reports() {
   comm -13 <(printf '%s\n' "$BASELINE_REPORTS") <(crash_reports) | grep -v '^$' || true
 }
 
+# ScreenCaptureKit through the signed `ndshot` binary is the only capture path
+# that works here: `screencapture` runs as the calling terminal and a terminal
+# cannot be granted Screen Recording. Build it if the tree has no copy, and say
+# what the grant looks like, because a capture leg that fails on TCC has to name
+# that rather than the picture.
+ensure_ndshot() {
+  NDSHOT="${ND_NDSHOT:-$ROOT/tools/ndshot/bin/ndshot}"
+  if [ ! -x "$NDSHOT" ]; then
+    echo "building ndshot (no copy at $NDSHOT)"
+    ( cd "$ROOT/tools/ndshot" && ./build.sh >/dev/null ) || {
+      echo "FAIL: tools/ndshot/build.sh failed; the capture legs cannot run"; return 1
+    }
+    NDSHOT="$ROOT/tools/ndshot/bin/ndshot"
+  fi
+  export ND_NDSHOT="$NDSHOT"
+  if ! "$NDSHOT" doctor >/dev/null 2>&1; then
+    echo "ND_WARN no Screen Recording grant for $NDSHOT; the capture legs will fail until it is granted"
+    echo "       (System Settings > Privacy & Security > Screen Recording, then re-run)"
+  fi
+}
+
 HOST_PID=""
 cleanup() {
   [ -n "${HOST_PID:-}" ] && kill -9 "$HOST_PID" 2>/dev/null
@@ -135,6 +156,8 @@ expect_clean_exit() {
   echo "ND_APP_CHROME_QUIT $what: ok"
 }
 
+ensure_ndshot || exit 1
+
 FAILED=0
 
 launch legs
@@ -165,13 +188,13 @@ quit_leg() {
 quit_leg "sigterm-plain" plain sigterm
 quit_leg "cmdq-plain" plain cmdq
 
-# Quitting with the inspector docked still segfaults inside Chromium's own
-# window teardown (docs/webview.md, "Chrome style"). The ordered close is in
-# place and the plain quits are clean; these two are killed outright instead,
-# so a run leaves no "quit unexpectedly" dialog behind, and reported as the
-# open legs they are.
-echo "ND_APP_CHROME_QUIT sigterm-devtools: FAILING (killed; the docked quit segfaults)"
-echo "ND_APP_CHROME_QUIT cmdq-devtools: FAILING (killed; the docked quit segfaults)"
+# Quitting after the inspector has been docked still faults inside Chromium's
+# own activation path (`-[NSWindow becomeKeyWindow]` reaching a Chromium
+# observer), with the ordered close in place and the inspector long closed. The
+# pass is killed rather than quit, so a run leaves the machine owner no "quit
+# unexpectedly" dialog, and both legs stay reported as failing.
+echo "ND_APP_CHROME_QUIT sigterm-devtools: FAILING (killed; a quit after the inspector segfaults)"
+echo "ND_APP_CHROME_QUIT cmdq-devtools: FAILING (killed; a quit after the inspector segfaults)"
 launch "devtools-open"
 ND_APP_CHROME_PREP=devtools drive >/dev/null || echo "FAIL: the docked quit leg could not reach its state"
 kill -9 "$HOST_PID" 2>/dev/null || true

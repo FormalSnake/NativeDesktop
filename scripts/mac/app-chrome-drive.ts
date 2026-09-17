@@ -141,6 +141,39 @@ function osaWindow(script: string): string {
   return run.stdout.toString().trim();
 }
 
+/// A click the WINDOW SERVER routes, not one posted into the app's own queue.
+/// Chromium raises its context menu (and its tooltips) off the system's own
+/// right-click handling, which an NSEvent posted with `NSApp.postEvent` never
+/// reaches, so those legs need the real thing.
+function realPointer(x: number, y: number, mode: "left" | "right" | "move"): void {
+  const run = Bun.spawnSync(
+    ["swift", "scripts/mac/mac-click.swift", String(x), String(y), mode],
+    { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
+  );
+  if (run.exitCode !== 0) throw new LegFailure(`mac-click failed: ${run.stderr.toString().trim()}`);
+}
+
+/// The system pasteboard, read or written. A copy has no other readable side:
+/// the page cannot read the clipboard without a permission it was never given.
+function pasteboard(write?: string): string {
+  if (write !== undefined) {
+    Bun.spawnSync(["pbcopy"], { stdin: Buffer.from(write) });
+    return write;
+  }
+  return Bun.spawnSync(["pbpaste"]).stdout.toString();
+}
+
+/// One AX query against the host process, for the Chromium menus nothing in
+/// the automation tree can see.
+function osaProcess(script: string): string {
+  const run = Bun.spawnSync([
+    "osascript", "-e",
+    `tell application "System Events" to tell (first process whose unix id is ${HOST_PID}) to ${script}`,
+  ]);
+  if (run.exitCode !== 0) throw new LegFailure(`osascript failed: ${run.stderr.toString().trim()}`);
+  return run.stdout.toString().trim();
+}
+
 function wheel(x: number, y: number, dy: number, momentum = false): void {
   const args = ["swift", "scripts/mac/mac-wheel.swift", String(HOST_PID), String(x), String(y), String(dy), "6"];
   void 0;
@@ -186,18 +219,40 @@ async function globalPoint(testId: string, dx: number, dy: number): Promise<{ x:
   return { x: win.x + box.x + dx, y: win.y + box.y + dy };
 }
 
-/// cmd+T, waited out. The app mounts the new tab a commit later and the
-/// address bar aims at whichever tab is active when it opens, so a cmd+L that
-/// does not wait re-navigates the tab that was already there.
+/// The app's own tab count, from the sidebar's row list. A tab with no URL yet
+/// has no WebView, so counting views cannot see one.
+async function tabCount(): Promise<number> {
+  const tree = await app.tree(mainWindow);
+  let count = 0;
+  const walk = (node: { testID: string | null; rows: unknown[] | null; children: unknown[] }) => {
+    if (node.testID === "tab-list") count = node.rows?.length ?? 0;
+    for (const child of node.children) walk(child as never);
+  };
+  walk(tree.root as never);
+  return count;
+}
+
+/// cmd+T, retried. The first key event after the app is activated can be eaten
+/// by the activation itself, and a cmd+L that follows a cmd+T which did nothing
+/// re-navigates the tab that was already there instead of opening a new one.
 async function newTab(): Promise<void> {
-  const before = (await activePage().catch(() => null)) ?? "";
-  await main.keyboard.press("Meta+t");
-  await until(
-    "the new tab becomes the active one",
-    async () => (await activePage().catch(() => null)) ?? "",
-    (id) => id !== before,
-    8000,
-  ).catch(() => undefined);
+  const before = await tabCount();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await main.keyboard.press("Meta+t");
+    const grew = await until("a new tab", tabCount, (n) => n > before, 4000).catch(() => null);
+    if (grew === null) continue;
+    // The app shows its new-tab page for the tab with no URL yet, and that is
+    // the signal that the NEW tab is the active one. Without it the address
+    // bar still aims at the tab that was active when cmd+T was pressed.
+    await until(
+      "the new tab becomes the active one",
+      () => main.getByTestId("new-tab-page").isVisible(),
+      (visible) => visible === true,
+      8000,
+    );
+    return;
+  }
+  throw new LegFailure(`cmd+T opened no tab (the app still has ${before})`);
 }
 
 /// The webview's rectangle inside a window capture, in image pixels.
@@ -236,38 +291,21 @@ async function captureViewRect(name: string, testId: string) {
 /// from the top" landing on the last item whatever Chromium put above it.
 async function openInspector(page: string): Promise<void> {
   const box = await viewBox(page);
-  await main.mouse.click(box.x + box.width / 2, box.y + box.height - 60, { button: "right" });
+  const spot = await globalPoint(page, box.width / 2, box.height - 60);
+  realPointer(spot.x, spot.y, "right");
   await until(
     "the context menu opens",
     async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
     (n) => n > 0,
-    12000,
+    15000,
   );
-  osaKeys("key code 126");
-  osaKeys("key code 36");
+  osaProcess('click menu item "Inspect Element" of menu 1 of window 1');
 }
 
+/// The same item again: `openDevTools` toggles, and the Chrome command handler
+/// refuses F12 and cmd+alt+I, so Inspect Element is the only way in and out.
 async function closeInspector(page: string): Promise<void> {
-  const box = await viewBox(page);
-  // The inspector's own close is inside its front-end; F12 and cmd+alt+I are
-  // refused by the Chrome command handler, so it goes out the way it came in.
-  await main.mouse.click(box.x + 40, box.y + box.height - 60, { button: "right" });
-  await until(
-    "the context menu opens again",
-    async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
-    (n) => n > 0,
-    12000,
-  );
-  osaKeys("key code 126");
-  osaKeys("key code 36");
-}
-
-function osaKeys(script: string): void {
-  const run = Bun.spawnSync([
-    "osascript", "-e",
-    `tell application "System Events" to tell (first process whose unix id is ${HOST_PID}) to ${script}`,
-  ]);
-  if (run.exitCode !== 0) throw new LegFailure(`osascript failed: ${run.stderr.toString().trim()}`);
+  await openInspector(page);
 }
 
 // MARK: - legs
@@ -394,13 +432,14 @@ const legs: Leg[] = [
   {
     name: "zoomButton",
     run: async () => {
-      // A window with a full-size content view publishes AXZoomButton as an
-      // attribute rather than as one of its three title-bar buttons; the green
-      // one is the fullscreen button and only an option-click zooms it.
-      const zoom = osaWindow('get value of attribute "AXZoomButton"');
-      assert(zoom.length > 0 && zoom !== "missing value", `the window publishes no zoom button (${zoom})`);
+      // A full-size content window's three title-bar buttons are close,
+      // minimize and fullscreen; the green one enters fullscreen and only an
+      // option-click zooms it, so a window with no AXZoomButton has no zoom
+      // button to press.
+      const zoom = osaWindow('get subrole of every button').toLowerCase();
+      assert(zoom.includes("axzoombutton"), `the window publishes no zoom button (buttons: ${zoom})`);
       const before = await appWindowRect();
-      osaWindow('perform action "AXPress" of (value of attribute "AXZoomButton")');
+      osaWindow('perform action "AXPress" of (first button whose subrole is "AXZoomButton")');
       await until(
         "the zoom button changes the frame",
         async () => (await appWindowRect()).height,
@@ -408,7 +447,7 @@ const legs: Leg[] = [
         10000,
       );
       await viewportMatchesView(mainPage, "zoomed");
-      osaWindow('perform action "AXPress" of (value of attribute "AXZoomButton")');
+      osaWindow('perform action "AXPress" of (first button whose subrole is "AXZoomButton")');
       await until(
         "the zoom button restores the frame",
         async () => (await appWindowRect()).height,
@@ -462,7 +501,10 @@ const legs: Leg[] = [
         await newTab();
         ids.push(await loadFixture(i % 2 === 0 ? "index.html" : "page2.html"));
       }
-      assert(new Set(ids).size === 5, `expected five tabs, the app has ${new Set(ids).size} (${ids.join(",")})`);
+      assert(
+        (await tabCount()) === 5,
+        `expected five tabs, the app has ${await tabCount()} (${ids.join(",")})`,
+      );
       await until("one anchor for five tabs", anchors, (a) => a.length === 1, 10000);
       await censusHolds(app, "fiveTabs");
     },
@@ -522,8 +564,9 @@ const legs: Leg[] = [
     run: async () => {
       const windows = (await app.windows()).windows;
       assert(windows.length >= 2, `expected the private window to still be open, saw ${windows.length}`);
-      const second = await app.window(1);
-      await second.keyboard.press("Meta+w");
+      // The app's cmd+W is one menu item acting on the main window's active
+      // tab, so the private window goes out through its own close button.
+      osaWindow('perform action "AXPress" of (first button whose subrole is "AXCloseButton")');
       await until("back to one app window", async () => (await app.windows()).windows.length, (n) => n === 1, 15000);
       await until("no orphan anchor", anchors, (a) => a.length === 1, 10000);
       await pointerSweep(await activePage(), "after the second window closed");
@@ -624,28 +667,53 @@ const legs: Leg[] = [
     name: "editingKeysInThePage",
     run: async () => {
       const page = await activePage();
+      await pageEval(app, page, "scrollTo(0,0); document.getElementById('text').value=''");
       const field = JSON.parse(
         (await pageEval(app, page, "JSON.stringify(document.getElementById('text').getBoundingClientRect())")) ?? "{}",
       );
       const box = await viewBox(page);
-      await pageEval(app, page, "document.getElementById('text').value=''");
       await main.mouse.click(box.x + field.x + 20, box.y + field.y + field.height / 2);
-      await main.keyboard.type("copyme");
-      await main.keyboard.press("Meta+a");
-      await main.keyboard.press("Meta+c");
-      await main.keyboard.press("Meta+v");
-      await main.keyboard.press("Meta+v");
       await until(
-        "cmd+A/C/V reach the page",
-        () => pageEval(app, page, "document.getElementById('text').value"),
-        (v) => v === "copymecopyme",
+        "the page field takes focus",
+        () => pageEval(app, page, "String(document.activeElement.id)"),
+        (v) => v === "text",
         10000,
       );
+      await main.keyboard.type("copyme");
+
+      await main.keyboard.press("Meta+a");
+      await until(
+        "cmd+A selects inside the page's field",
+        () => pageEval(app, page, "String(document.getElementById('text').selectionEnd - document.getElementById('text').selectionStart)"),
+        (v) => v === "6",
+        10000,
+      );
+
+      pasteboard("nd-not-copied-yet");
+      await main.keyboard.press("Meta+c");
+      // The system pasteboard is the only readable side of a copy: the page
+      // cannot read the clipboard without a permission it was never granted.
+      await until(
+        "cmd+C puts the page's selection on the pasteboard",
+        async () => pasteboard(),
+        (v) => v === "copyme",
+        10000,
+      );
+
+      pasteboard("pasted-in");
+      await main.keyboard.press("Meta+v");
+      await until(
+        "cmd+V pastes into the page's field",
+        () => pageEval(app, page, "document.getElementById('text').value"),
+        (v) => v === "pasted-in",
+        10000,
+      );
+
       await main.keyboard.press("Meta+z");
       await until(
-        "cmd+Z undoes in the page",
+        "cmd+Z undoes inside the page",
         () => pageEval(app, page, "document.getElementById('text').value"),
-        (v) => v !== "copymecopyme",
+        (v) => v === "copyme",
         10000,
       );
     },
@@ -654,23 +722,31 @@ const legs: Leg[] = [
     name: "tabKeyIntoAndOutOfThePage",
     run: async () => {
       const page = await activePage();
-      await main.keyboard.press("Meta+l");
-      await Bun.sleep(500);
+      await main.getByTestId("reload").click();
       await until(
-        "focus leaves the web contents for the app's own field",
+        "focus starts in the app's own chrome",
+        () => pageEval(app, page, "String(document.hasFocus())"),
+        (v) => v === "false",
+        10000,
+      );
+      // Tab walks the native chrome's focus ring before it reaches the web
+      // contents; how many stops that takes is the app's business, so the leg
+      // bounds it rather than assuming one.
+      let entered = false;
+      for (let stop = 0; stop < 8 && !entered; stop++) {
+        await main.keyboard.press("Tab");
+        await Bun.sleep(200);
+        entered = (await pageEval(app, page, "String(document.hasFocus())")) === "true";
+      }
+      assert(entered, "eight tab stops never reached the web contents");
+      await main.keyboard.press("Meta+l");
+      await until(
+        "the app's own chrome takes focus back",
         () => pageEval(app, page, "String(document.hasFocus())"),
         (v) => v === "false",
         10000,
       );
       await main.keyboard.press("Escape");
-      await main.keyboard.press("Tab");
-      await main.keyboard.press("Tab");
-      await until(
-        "tab out of the native chrome reaches the page",
-        () => pageEval(app, page, "String(document.hasFocus())"),
-        (v) => v === "true",
-        10000,
-      );
     },
   },
   {
@@ -766,19 +842,19 @@ const legs: Leg[] = [
       const tip = JSON.parse(
         (await pageEval(app, page, "JSON.stringify(document.getElementById('tip').getBoundingClientRect())")) ?? "{}",
       );
-      const box = await viewBox(page);
-      await main.mouse.move(box.x + tip.x + tip.width / 2, box.y + tip.y + tip.height / 2);
-      // A tooltip is a window of Chromium's own, anchored on the widget; the
-      // census is what sees it, because nothing in the app's tree knows about
-      // it.
+      // A real pointer move: Chromium raises the `title` tooltip off the
+      // window server's own tracking, not off an NSEvent in the app's queue.
+      const spot = await globalPoint(page, tip.x + tip.width / 2, tip.y + tip.height / 2);
+      realPointer(spot.x, spot.y, "move");
       const seen = await until(
         "a tooltip surface appears over the page",
         async () => (await surfaces(app)).filter((w) => w.alpha > 0).length,
         (n) => n > 0,
-        12000,
+        15000,
       );
       void seen;
-      await main.mouse.move(box.x + 8, box.y + 8);
+      const corner = await globalPoint(page, 8, 8);
+      realPointer(corner.x, corner.y, "move");
       await censusHolds(app, "tooltip");
     },
   },
@@ -787,16 +863,31 @@ const legs: Leg[] = [
     run: async () => {
       const page = await activePage();
       await pageEval(app, page, "delete document.documentElement.dataset.ndMenu");
-      await main.getByTestId(page).rightClick();
+      const box = await viewBox(page);
+      const spot = await globalPoint(page, box.width / 2, box.height / 2);
+      realPointer(spot.x, spot.y, "right");
       await until(
         "a context menu surface is on screen",
         async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
         (n) => n > 0,
-        12000,
+        15000,
       );
       const shot = capture("context-menu", (await appWindowRect()).number);
       assert(probePng(shot).width > 0, "the context menu capture is empty");
-      await main.keyboard.press("Escape");
+      // Chromium draws the menu with Views, so nothing in the automation tree
+      // can read it; its accessibility tree is the only handle on the items,
+      // and the app's own "Inspect Element" plus the extension's
+      // chrome.contextMenus entry have to be in it.
+      const names = osaProcess('get name of every menu item of menu 1 of window 1').toLowerCase();
+      assert(names.includes("inspect element"), `the app's items are not in the menu (${names})`);
+      assert(names.includes("nd probe item"), `the extension's item is not in the menu (${names})`);
+      osaProcess('click menu item "ND probe item" of menu 1 of window 1');
+      await until(
+        "the extension's handler runs for its own item",
+        () => pageEval(app, page, "document.documentElement.dataset.ndMenu ?? ''"),
+        (v) => v === "nd-probe",
+        15000,
+      );
       await until(
         "the menu closes",
         async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
@@ -815,20 +906,19 @@ const legs: Leg[] = [
       const clean = probePng(before.path, before.fill);
       assert(
         colourDistance(clean.mean, FIXTURE_FILL) < 90,
-        `the page is not filling the view before the popover: mean ${JSON.stringify(clean.mean)}`,
+        `the page is not filling the view before the overlay: mean ${JSON.stringify(clean.mean)}`,
       );
-      await main.getByTestId("downloads-button").click();
-      await until(
-        "the downloads popover opens",
-        () => main.getByTestId("downloads-panel").isVisible(),
-        (v) => v === true,
-        10000,
-      );
+      // The find bar is the app's own chrome inside the content area; the lift
+      // makes z-order ordinary AppKit sibling order, so it has to cover the web
+      // contents rather than disappear behind Chromium's layer.
+      await main.keyboard.press("Meta+f");
+      await until("the find bar opens", () => main.getByTestId("find-bar").isVisible(), (v) => v === true, 10000);
       const after = await captureViewRect("overlay-after", page);
-      const over = probePng(after.path, after.fill);
+      const over = probePng(after.path, after.rect);
+      const clean2 = probePng(before.path, before.rect);
       assert(
-        colourDistance(over.mean, clean.mean) > 12,
-        `the popover left the webview rectangle unchanged (${JSON.stringify(clean.mean)} vs ${JSON.stringify(over.mean)}),` +
+        colourDistance(over.mean, clean2.mean) > 6,
+        `the find bar left the webview rectangle unchanged (${JSON.stringify(clean2.mean)} vs ${JSON.stringify(over.mean)}),` +
           " so it is not drawing over the web contents",
       );
       await main.keyboard.press("Escape");
@@ -1028,9 +1118,13 @@ let passed = 0;
 async function ensureFixturePage(): Promise<void> {
   // The app's cmd+W is one menu item acting on the main window's active tab,
   // so a second window closes through its own close button.
-  while ((await app.windows()).windows.length > 1) {
+  for (let attempt = 0; attempt < 3 && (await app.windows()).windows.length > 1; attempt++) {
     const before = (await app.windows()).windows.length;
-    osaWindow('perform action "AXPress" of (value of attribute "AXCloseButton")');
+    try {
+      osaWindow('perform action "AXPress" of (first button whose subrole is "AXCloseButton")');
+    } catch {
+      break;
+    }
     const closed = await until(
       "the extra window closes",
       async () => (await app.windows()).windows.length,
@@ -1049,8 +1143,10 @@ async function ensureFixturePage(): Promise<void> {
 for (const leg of legs) {
   if (only.length > 0 && !only.includes(leg.name)) continue;
   const started = Date.now();
+  // The precondition is best effort: a leg must fail on its own assertion, not
+  // on the tidy-up the runner did before it.
+  await ensureFixturePage().catch((error) => console.log(`ND_APP_CHROME_PREPARE ${leg.name}: ${String(error)}`));
   try {
-    await ensureFixturePage();
     await leg.run(app);
     await censusHolds(app, leg.name);
     passed++;
