@@ -260,6 +260,7 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
                 guard itemNodes[ObjectIdentifier(item)] != nil, !item.keyEquivalent.isEmpty else { return }
                 claimed.insert(ndMenuChord(item))
             }
+            ndMenuDeclaredChords = claimed
             walkMenu(mainMenu) { item in
                 guard itemNodes[ObjectIdentifier(item)] == nil, !item.keyEquivalent.isEmpty,
                       claimed.contains(ndMenuChord(item)) else { return }
@@ -514,8 +515,26 @@ private func ndKeyEquivalent(_ k: String) -> String {
     }
 }
 
-/// One menu item's key equivalent as a comparable chord. Case matters to
-/// AppKit (an uppercase key equivalent implies shift), so it is kept.
+/// The chords the app declared itself, as opposed to the defaults that only
+/// forward to the responder chain. The Chromium engine asks before it lets the
+/// menu pre-empt a key equivalent: cmd+C and cmd+A belong to the page.
+nonisolated(unsafe) var ndMenuDeclaredChords: Set<String> = []
+
+/// One menu item's key equivalent as a comparable chord. Lowercased, because
+/// AppKit lets an uppercase key equivalent stand in for an explicit shift and
+/// the two spellings have to compare equal here.
 func ndMenuChord(_ item: NSMenuItem) -> String {
-    return "\(item.keyEquivalentModifierMask.rawValue):\(item.keyEquivalent)"
+    let shift: NSEvent.ModifierFlags = item.keyEquivalent.count == 1
+        && item.keyEquivalent != item.keyEquivalent.lowercased() ? .shift : []
+    let mods = item.keyEquivalentModifierMask.union(shift)
+    return "\(mods.rawValue):\(item.keyEquivalent.lowercased())"
+}
+
+/// A key-down event as the same chord string `ndMenuChord` builds, so a menu
+/// item and an event can be compared. AppKit compares a key equivalent against
+/// `charactersIgnoringModifiers` with the device-independent flags masked.
+func ndEventChord(_ event: NSEvent) -> String {
+    let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        .subtracting([.capsLock, .function, .numericPad])
+    return "\(mods.rawValue):\((event.charactersIgnoringModifiers ?? "").lowercased())"
 }
