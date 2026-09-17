@@ -256,6 +256,9 @@ final class NDCefWebView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func becomeFirstResponder() -> Bool {
+        if let target = chrome?.focusTarget, target !== self {
+            return window?.makeFirstResponder(target) ?? false
+        }
         if let browserHost = browserHost() {
             browserHost.pointee.set_focus?(browserHost, 1)
             nd_cef_ref_release(browserHost)

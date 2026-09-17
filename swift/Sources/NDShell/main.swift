@@ -116,6 +116,9 @@ let ndCefRunning = ndCefEngine && NDCefRuntime.initialize()
 // callbacks receive live NSViews.
 final class NDAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
+        #if canImport(CCef)
+        NDCefChromeWindow.closeDockedDevTools()
+        #endif
         if let ctx = gCtx { nd_shutdown(ctx) }
     }
 

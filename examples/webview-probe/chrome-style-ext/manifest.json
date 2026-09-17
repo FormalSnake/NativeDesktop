@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "ND chrome style probe",
+  "version": "1.0",
+  "description": "Gate fixture: proves Chromium's own extension runtime is live under ND_CEF_STYLE=chrome.",
+  "permissions": ["contextMenus", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_end" }]
+}

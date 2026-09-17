@@ -2,7 +2,6 @@
 import AppKit
 import CCef
 import Foundation
-import ObjectiveC
 
 /// Chrome style embedding for one `<webview>`, opted into with
 /// `ND_CEF_STYLE=chrome`.
@@ -41,8 +40,18 @@ import ObjectiveC
     private var observers: [NSObjectProtocol] = []
     private var closed = false
 
+    /// Every live instance. Chromium's shutdown walks a docked DevTools
+    /// BrowserView whose web contents now lives in the host's window and dies
+    /// on a bad access, so every quit path closes the dock first.
+    nonisolated(unsafe) private static let live = NSHashTable<NDCefChromeWindow>.weakObjects()
+
+    static func closeDockedDevTools() {
+        for window in live.allObjects { window.closeDevTools() }
+    }
+
     init(view: NDCefWebView) {
         self.view = view
+        NDCefChromeWindow.live.add(self)
     }
 
     /// Separate from `init` because `cef_window_create_top_level` calls
@@ -170,6 +179,19 @@ import ObjectiveC
         return true
     }
 
+    /// Closed through the page's browser host, which is the owner of the
+    /// DevTools browser; the BrowserView goes away with it.
+    func closeDevTools() {
+        guard let docked = devToolsView else { return }
+        devToolsView = nil
+        if let browserHost = view.browserHost() {
+            browserHost.pointee.close_dev_tools?(browserHost)
+            nd_cef_ref_release(browserHost)
+        }
+        nd_cef_ref_release(docked)
+        view.ndTrace("chrome devtools closed")
+    }
+
     /// Chrome docks DevTools to the right at about a third of the contents
     /// width; the page takes what is left, so the two always add up to the
     /// window and the box layout leaves no gap.
@@ -182,8 +204,6 @@ import ObjectiveC
         let tools = max(1, width / 3)
         return cef_size_t(width: devTools ? tools : max(1, width - tools), height: max(1, height))
     }
-
-    var hasDockedDevTools: Bool { devToolsView != nil }
 
     // MARK: - Lifting the web contents
 
@@ -219,6 +239,12 @@ import ObjectiveC
         content.autoresizingMask = [.width, .height]
         view.addSubview(content)
     }
+
+    /// Chromium's keyboard target. It is an ordinary subview of the host window
+    /// now, so focus is an AppKit first-responder change. Routing focus through
+    /// cef_browser_host_t::set_focus instead activates the anchor window, and
+    /// the host takes key straight back, which leaves the page unfocused.
+    var focusTarget: NSView? { lifted }
 
     // MARK: - Anchor geometry
 
@@ -318,23 +344,21 @@ import ObjectiveC
         reliftTimer = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers = []
+        // The lifted subtree goes back first: it is the Views window's content
+        // view, and closing the window while it is parented into another one
+        // takes Chromium's teardown through a hierarchy that no longer exists.
         if let lifted, let anchor, lifted.superview === view {
             lifted.removeFromSuperview()
             anchor.contentView = lifted
         }
         lifted = nil
-        if let anchor {
-            anchor.parent?.removeChildWindow(anchor)
-        }
+        closeDevTools()
+        if let anchor { anchor.parent?.removeChildWindow(anchor) }
         anchor = nil
         if let cefWindow {
             self.cefWindow = nil
             cefWindow.pointee.close?(cefWindow)
             nd_cef_ref_release(cefWindow)
-        }
-        if let devToolsView {
-            self.devToolsView = nil
-            nd_cef_ref_release(devToolsView)
         }
         if let browserView {
             self.browserView = nil

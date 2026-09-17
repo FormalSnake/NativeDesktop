@@ -1,4 +1,4 @@
-import { render, sendCommand, useEffect, useRef, useState } from "@nativedesktop/react";
+import { render, sendCommand, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
 
 // Chrome style gate (ND_CEF_STYLE=chrome), driven by scripts/cef-chrome-drive.ts.
@@ -43,7 +43,14 @@ function App() {
   const [wide, setWide] = useState(false);
   const [devtools, setDevtools] = useState("closed");
   useEffect(() => {
-    if (view.current) sendCommand(view.current, "setContextMenuItems", []);
+    if (!view.current) return;
+    // Merged into Chromium's own menu; the host trace reports what the model
+    // received and whether it received it while the callback was still running.
+    setContextMenuItems(view.current, [
+      { id: "c-alpha", label: "Alpha", contexts: ["all"] },
+      { id: "c-beta", label: "Beta", contexts: ["all"] },
+      { id: "c-gamma", label: "Gamma", contexts: ["all"] },
+    ]);
   }, []);
   return (
     <window title="ND CEF chrome" defaultWidth={1000} defaultHeight={700}>
