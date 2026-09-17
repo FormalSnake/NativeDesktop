@@ -423,6 +423,36 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   Chromium's own `--vmodule` output reachable; without it `cef_settings_t`
   pins the severity at warning and every VLOG is dropped.
 
+`scripts/headless-app-chrome.sh` is the gate for this path, marker
+`ND_APP_CHROME_OK`: it runs a real app twice, once on Xvfb under a reparenting
+window manager and once on headless sway under XWayland, and drives resizing,
+tiling, maximize and fullscreen, tab switching, docked devtools, keyboard focus
+and the page popups with real X and compositor input rather than automation
+calls. `ND_APP_DIR` points it at an app checkout; with none it falls back to
+`examples/cef-probe` and reports the app-level legs as skips.
+
+Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
+
+- A `<select>` element opens no dropdown on a plain X server with a stacking
+  window manager: the click reaches the page and the element takes DOM focus,
+  but no window appears anywhere in the tree. The same build opens it normally
+  under XWayland, and Alloy behaves the same way on both, so this is the X
+  server the app is on rather than the style.
+- Which half of the window the keyboard reaches follows the POINTER, not the
+  focused widget. X11 delivers a key press to the window the pointer is inside
+  when that window is below the focused one, and the browser has one of its own
+  inside the app's, so a key pressed with the pointer over the page reaches the
+  browser and one pressed over the app's chrome reaches GTK. The engine tells
+  the browser whether the keyboard is its, so a page whose view is not the
+  focused widget ignores what it receives rather than stealing it; what is left
+  is that keys pressed over the page while the address bar has focus are
+  dropped instead of reaching the address bar.
+- F12 and ctrl+shift+I open the docked inspector and cannot close it again.
+  They arrive as `IDC_DEV_TOOLS_TOGGLE`, which only ever opens, because the
+  inspector on this path is a browser of ours in the view's dock rather than
+  the DevToolsWindow Chrome would toggle; `CefBrowserHost::CloseDevTools` on
+  the page browser takes the page browser away instead of the inspector.
+
 Listing extensions, installing them, and their actions:
 
 ```tsx

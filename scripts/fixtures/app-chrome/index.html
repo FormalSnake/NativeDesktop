@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ND chrome acceptance fixture</title>
+<style>
+  html, body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #ffffff; color: #101010; }
+  #head { padding: 12px; }
+  #probe { width: 240px; font-size: 16px; }
+  #picker { font-size: 16px; }
+  #tip { display: inline-block; padding: 6px 10px; background: #e6e6e6; }
+  /* A long page, so a wheel event has somewhere to go. */
+  #tall { height: 4000px; background: linear-gradient(#ffffff, #cfd8ff); }
+  #stage { width: 320px; height: 200px; background: #204080; color: #ffffff; }
+  #sel { user-select: text; }
+</style>
+<div id="head">
+  <h1 id="title">ND chrome acceptance fixture</h1>
+  <input id="probe" placeholder="type here">
+  <select id="picker">
+    <option value="alpha">alpha</option>
+    <option value="beta">beta</option>
+    <option value="gamma">gamma</option>
+    <option value="delta">delta</option>
+  </select>
+  <span id="tip" title="fixture tooltip text">hover for a tooltip</span>
+  <div id="stage">fullscreen stage</div>
+  <p id="sel">selectable selectable selectable selectable selectable selectable</p>
+</div>
+<div id="tall"></div>
+<script>
+  // Every assertion in the drive reads one of these; nothing here reacts to
+  // anything but real input, so a leg that passes did so on a real event.
+  window.nd = {
+    metrics: () => ({
+      w: innerWidth,
+      h: innerHeight,
+      dpr: devicePixelRatio,
+      focus: document.hasFocus(),
+      probe: document.getElementById("probe").value,
+      active: document.activeElement ? document.activeElement.id : "",
+      scrollY: Math.round(scrollY),
+      picked: document.getElementById("picker").value,
+      selection: String(getSelection()),
+      fullscreen: document.fullscreenElement ? document.fullscreenElement.id : "",
+      events: window.__ev.slice(-12),
+    }),
+    reset: () => { window.__ev = []; scrollTo(0, 0); getSelection().removeAllRanges(); },
+    rect: (id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+    },
+  };
+  window.__ev = [];
+  for (const kind of ["mousedown", "mouseup", "contextmenu", "keydown", "wheel", "change", "fullscreenchange"]) {
+    addEventListener(kind, (e) => window.__ev.push(kind + (e.key ? ":" + e.key : "")), true);
+  }
+  // requestFullscreen needs a user gesture, so the click on the stage is what
+  // asks for it rather than a script the drive evaluates.
+  document.getElementById("stage").addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.getElementById("stage").requestFullscreen();
+  });
+</script>

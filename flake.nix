@@ -108,6 +108,12 @@
               xwininfo         # the no-stray-window census: `xwininfo -root -children` before and after a popup
               imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
               xdotool          # real X11 clicks and keystrokes: Chrome's own accelerators and a consent page's gesture check never see CDP-injected input
+              openbox          # a reparenting window manager for the Xvfb rig: without one nothing ever resizes a toplevel, which is the class of bug the bare-Xvfb gates miss
+              wmctrl           # EWMH maximize/fullscreen requests, which xdotool cannot send
+              sway             # headless wlroots compositor + XWayland: the shape of session the owner runs, and the only rig where an override-redirect Chromium window is tested
+              grim             # capture on the wlroots rig; `import -window root` has no X root to read there
+              wtype            # real key events into the wayland seat
+              wlrctl           # real pointer events into it: wlroots' headless backend creates no input devices, so the seat has no pointer capability until something binds zwlr_virtual_pointer_v1
             ] ++ cefRuntimeLibs;
             # build.zig's test roots import the gobject binding modules
             # unconditionally, so `zig build test` needs pkg-config to resolve
