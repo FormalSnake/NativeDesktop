@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ND app chrome fixture</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; }
+      /* Solid edge-to-edge fill: a capture of the webview rectangle is all
+         this colour unless the compositor left a band unpainted. */
+      body { background: rgb(0, 96, 208); color: #fff; font: 14px system-ui; }
+      #panel { position: fixed; left: 0; top: 0; padding: 8px; background: rgba(0,0,0,.35); }
+      #tall { height: 4000px; }
+      input, select, button { font: 13px system-ui; margin: 2px; }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <span id="vp">vp=?</span>
+      <input id="text" value="" />
+      <select id="sel">
+        <option value="a">alpha</option>
+        <option value="b">bravo</option>
+        <option value="c">charlie</option>
+      </select>
+      <span id="tip" title="nd tooltip">hover me</span>
+      <a id="blank" href="/page2.html" target="_blank">blank</a>
+      <button id="openwin">openwin</button>
+      <button id="alert">alert</button>
+      <button id="confirm">confirm</button>
+      <button id="prompt">prompt</button>
+      <input id="file" type="file" />
+      <a id="dl" href="/download.bin" download="nd-fixture.bin">download</a>
+      <button id="fs">fullscreen</button>
+      <video id="vid" width="160" height="90" muted playsinline></video>
+      <p id="prose">selectable prose one two three four five six seven eight nine ten</p>
+      <span id="dlg">dlg=</span>
+    </div>
+    <div id="tall"></div>
+    <script>
+      window.__ndFrames = 0;
+      const tick = () => {
+        window.__ndFrames++;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+
+      const vp = document.getElementById("vp");
+      const report = () => {
+        vp.textContent = `vp=${innerWidth}x${innerHeight}`;
+      };
+      report();
+      addEventListener("resize", report);
+
+      window.__ndResizes = 0;
+      addEventListener("resize", () => window.__ndResizes++);
+
+      window.__ndScrollY = 0;
+      addEventListener("scroll", () => {
+        window.__ndScrollY = Math.round(scrollY);
+      });
+
+      const dlg = document.getElementById("dlg");
+      document.getElementById("alert").onclick = () => {
+        alert("nd alert");
+        dlg.textContent = "dlg=alert";
+      };
+      document.getElementById("confirm").onclick = () => {
+        dlg.textContent = `dlg=confirm:${confirm("nd confirm")}`;
+      };
+      document.getElementById("prompt").onclick = () => {
+        dlg.textContent = `dlg=prompt:${prompt("nd prompt", "seed")}`;
+      };
+      document.getElementById("openwin").onclick = () => window.open("/page2.html", "_blank");
+      document.getElementById("sel").onchange = (e) => {
+        document.documentElement.dataset.ndSelect = e.target.value;
+      };
+      document.getElementById("fs").onclick = () => {
+        document.getElementById("vid").requestFullscreen();
+      };
+      document.addEventListener("fullscreenchange", () => {
+        document.documentElement.dataset.ndFullscreen = document.fullscreenElement ? "on" : "off";
+      });
+      document.getElementById("file").onchange = (e) => {
+        document.documentElement.dataset.ndFile = e.target.files.length ? e.target.files[0].name : "";
+      };
+      document.addEventListener("selectionchange", () => {
+        document.documentElement.dataset.ndSelection = String(getSelection());
+      });
+    </script>
+  </body>
+</html>
