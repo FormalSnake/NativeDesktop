@@ -361,6 +361,23 @@ it, Chrome's window and toolbar do not.
 - The app menu, the page action icons and the toolbar buttons are all reported
   invisible, so no Chrome UI is created for the browser.
 
+Open on this path, measured on CEF 151.3.23 (Chromium 151.0.7922.170):
+
+- A Chrome Web Store install stops at Chromium's own confirmation prompt. The
+  detail page loads, `chrome.webstorePrivate` is there, and "Add to Chrome"
+  raises the "Add <name>?" bubble, which arrives as a 448x197 Chromium
+  top-level at the screen origin rather than anchored to the app. Accepting it
+  dismisses the bubble and installs nothing, with no error in the log, so a
+  Chrome-style app installs extensions through `--load-extension` for now.
+- A browser that has had devtools open kills the host on the way out of the
+  process, docked or in CEF's own window: `CefBrowserInfo::RemoveFrame` runs
+  against a freed browser info under a `TabStripModel` teardown. The gate keeps
+  its devtools leg in a pass of its own for that reason.
+- The page context menu is Chromium's, drawn by Views.
+  `cef_context_menu_handler_t::run_context_menu` is consulted, so
+  `contextMenuMode="suppress"` and `setContextMenuItems` work as they do under
+  Alloy, but the native-mode menu is not a GTK one.
+
 Listing extensions, and their popups:
 
 ```tsx
