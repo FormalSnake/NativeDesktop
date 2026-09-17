@@ -37,6 +37,23 @@ compatibility needs.
 The native-UI premise is unchanged either way: CEF Views never owns a window,
 because the browser is parented into the host's own widget.
 
+## Chrome style opt-in (`ND_CEF_STYLE=chrome`)
+
+The Chrome-style spike above is no longer a backlog item on either platform. On
+macOS it cannot be created in a caller's NSView at all: `parent_view` forces
+Alloy (`include/internal/cef_types_mac.h`). The browser is therefore born in a
+frameless CEF Views window with no Chrome toolbar, and that window's content
+view (BridgedContentView, holding the compositor superview and every
+WebContents a views::NativeViewHost attached) is moved into the `NDCefWebView`
+as an autoresizing subview. Pixels and input then live in the host's own window;
+the Views window stays as an alpha-0, click-through, cycling-excluded child
+window glued to the webview's screen rectangle, which is where Chromium takes
+the coordinates for its select popups, bubbles and context menus. DevTools docks
+as a second BrowserView in the same window (Alloy style, since a Chrome style
+window hosts at most one Chrome style BrowserView) and rides the same lift.
+`swift/Sources/NDShell/NDCefChromeWindow.swift`, gate
+`scripts/mac/cef-chrome-style.sh`.
+
 ## Hard invariant: no CEF-created window, ever
 
 Prior art from the field: a stray Chromium window appearing over the app is the

@@ -138,6 +138,21 @@ await app.getByTestId("c-view").rightClick();
 await Bun.sleep(900);
 await strays("contextMenu");
 
+// A background tab: the page's own view is hidden by the tab view, so the
+// lifted subtree goes with it, the browser is told it is hidden, and the anchor
+// leaves the screen. Switching back has to bring animation frames with it.
+const framesBefore = Number(await evaluate("window.__ndFrames"));
+await app.getByTestId("c-background").click();
+await Bun.sleep(1200);
+const hiddenAnchors = (await census()).filter((w) => w.alpha === 0);
+check("hiddenTabAnchorGone", hiddenAnchors.length === 0, `${hiddenAnchors.length} anchor(s) still on screen`);
+await strays("backgroundTab");
+await app.getByTestId("c-background").click();
+await Bun.sleep(1200);
+const framesAfter = Number(await evaluate("window.__ndFrames"));
+check("foregroundTabRepaints", framesAfter > framesBefore, `rAF ${framesBefore} -> ${framesAfter}`);
+await strays("foregroundTab");
+
 // The host window resizing is the case that matters: the lifted subtree
 // autoresizes with no work at all, and the anchor has to land on the webview's
 // new rectangle because Chromium places its popups and bubbles against it.

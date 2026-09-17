@@ -40,7 +40,7 @@ function App() {
   const view = useRef<NdNodeRef<"webview"> | null>(null);
   const [title, setTitle] = useState("");
   const [popup, setPopup] = useState("none");
-  const [wide, setWide] = useState(false);
+  const [tab, setTab] = useState(0);
   const [devtools, setDevtools] = useState("closed");
   useEffect(() => {
     if (!view.current) return;
@@ -68,19 +68,24 @@ function App() {
               setDevtools("requested");
             }}
           />
-          <button testID="c-resize" label="Resize" onClick={() => setWide((w) => !w)} />
+          <button testID="c-background" label="Background" onClick={() => setTab((t) => (t === 0 ? 1 : 0))} />
           <textinput testID="c-field" value="native" />
         </box>
-        <box orientation="horizontal" style={{ vexpand: true }}>
-          <webview
-            ref={view}
-            testID="c-view"
-            url={BASE}
-            style={{ hexpand: true, minWidth: wide ? 700 : 400 }}
-            onTitleChanged={(e) => setTitle(e.text)}
-            onNewWindow={(e) => setPopup(e.text)}
-          />
-        </box>
+        <tabview testID="c-tabs" selectedIndex={tab} style={{ vexpand: true }}>
+          <box tabLabel="Page" orientation="horizontal" style={{ vexpand: true }}>
+            <webview
+              ref={view}
+              testID="c-view"
+              url={BASE}
+              style={{ hexpand: true, vexpand: true }}
+              onTitleChanged={(e) => setTitle(e.text)}
+              onNewWindow={(e) => setPopup(e.text)}
+            />
+          </box>
+          <box tabLabel="Other" orientation="vertical">
+            <label testID="c-other" text="background tab" />
+          </box>
+        </tabview>
       </box>
     </window>
   );
