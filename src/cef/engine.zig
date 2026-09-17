@@ -556,18 +556,6 @@ var chrome_style: ?bool = null;
 /// with CEF's extra client callbacks. `webview.cef.style` in the app config
 /// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
 /// because the command line and the browser style have to agree.
-var cover_enabled: ?bool = null;
-
-/// The input cover is on by default; ND_CEF_NO_COVER=1 takes it out for a
-/// comparison run against a build that never had one.
-fn coverEnabled() bool {
-    if (cover_enabled) |v| return v;
-    const raw = std.c.getenv("ND_CEF_NO_COVER");
-    const v = raw == null or std.mem.eql(u8, std.mem.span(raw.?), "0");
-    cover_enabled = v;
-    return v;
-}
-
 pub fn chromeStyle() bool {
     if (chrome_style) |v| return v;
     const raw = std.c.getenv("ND_CEF_STYLE");
@@ -828,10 +816,6 @@ const View = struct {
     /// The toplevel the container is a child of. A view moved into another
     /// window by `moveNode` has to take its X child with it.
     container_parent: x11.Window = 0,
-    /// The input cover that keeps the browser out of the keyboard's path while
-    /// the app's own widgets have the focus. See `x11.createCover`.
-    cover: x11.Window = 0,
-    cover_shown: bool = false,
     created: bool = false,
     /// What the browser was actually created with. A `url` prop applied while
     /// the browser was still being created lands in `pending_url` alone, so
@@ -1159,7 +1143,6 @@ fn syncBrowserFocus(view: *View) void {
     const mine = if (gtk.Window.getFocus(window)) |focused| focused == view.widget else false;
     const active = gtk.Window.isActive(window) != 0;
     const cef_window = view.cef_window.load(.acquire);
-    showCover(view, !(mine and active));
     if (mine and active) {
         if (cef_window != 0) x11.focus(@intCast(cef_window));
     } else if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) {
@@ -1179,84 +1162,6 @@ fn syncBrowserFocus(view: *View) void {
     }
     const host = hostOf(view) orelse return;
     if (host.set_focus) |set| set(host, @intFromBool(active and mine));
-}
-
-/// Created on the first hide of the keyboard rather than with the browser, and
-/// never restacked: it is made after the container, so it is already above it,
-/// and a raise is a ConfigureNotify that GTK answers with a layout pass, which
-/// is another raise. Mapping and unmapping is all this needs.
-fn showCover(view: *View, want: bool) void {
-    if (view.cover_shown == want) return;
-    if (want and view.cover == 0) {
-        if (!coverEnabled()) return;
-        const parent = x11.toplevelXid(view.widget);
-        if (parent == 0) return;
-        view.cover = x11.createCover(parent, view.bounds.x, view.bounds.y, view.bounds.w, view.bounds.h);
-        if (view.cover == 0) return;
-        connectCoverEvents();
-    }
-    if (view.cover == 0) return;
-    view.cover_shown = want;
-    if (want) x11.show(view.cover) else x11.hide(view.cover);
-}
-
-/// GDK hands every X event on its connection to this before it looks at it
-/// itself, which is the only way to hear about a window GTK knows nothing of.
-/// A press on a cover means the user wants the page back: the cover goes, the
-/// view takes GTK focus (which gives the browser the keyboard through
-/// `syncBrowserFocus`), and the press is replayed so the click is not eaten.
-var cover_handler: c_ulong = 0;
-
-fn connectCoverEvents() void {
-    if (cover_handler != 0) return;
-    const display = gdk.Display.getDefault() orelse return;
-    cover_handler = gobject.signalConnectData(
-        display.as(gobject.Object),
-        "xevent",
-        @ptrCast(&onDisplayXEvent),
-        null,
-        null,
-        .{},
-    );
-}
-
-/// Xlib's XButtonEvent, laid out for LP64. Only the first fields up to
-/// `button` are read, but the prefix has to match byte for byte.
-const XButtonEvent = extern struct {
-    type: c_int,
-    serial: c_ulong,
-    send_event: c_int,
-    display: ?*anyopaque,
-    window: x11.Window,
-    root: x11.Window,
-    subwindow: x11.Window,
-    time: c_ulong,
-    x: c_int,
-    y: c_int,
-    x_root: c_int,
-    y_root: c_int,
-    state: c_uint,
-    button: c_uint,
-    same_screen: c_int,
-};
-
-const x_button_press: c_int = 4;
-
-fn onDisplayXEvent(_: *gobject.Object, event: *anyopaque, _: ?*anyopaque) callconv(.c) c_int {
-    const button: *const XButtonEvent = @ptrCast(@alignCast(event));
-    if (button.type != x_button_press) return 0;
-    var it = live_views.keyIterator();
-    while (it.next()) |key| {
-        const view: *View = @ptrFromInt(key.*);
-        if (view.cover == 0 or view.cover != button.window) continue;
-        showCover(view, false);
-        _ = gtk.Widget.grabFocus(view.widget);
-        syncBrowserFocus(view);
-        x11.replayButton(button.button, true);
-        x11.replayButton(button.button, false);
-        return 1; // handled: GDK has no surface for this window anyway
-    }
-    return 0;
 }
 
 fn disconnectLayout(view: *View) void {
@@ -1388,8 +1293,6 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
             }
         }
     }
-    x11.destroy(view.cover);
-    view.cover = 0;
     x11.destroy(view.container);
     view.container = 0;
     // The View itself outlives the widget on purpose: CEF still holds the
@@ -1526,14 +1429,9 @@ fn syncBounds(view: *View) void {
     const parent = x11.toplevelXid(view.widget);
     if (parent != 0 and parent != view.container_parent) {
         x11.reparent(view.container, parent, next.x, next.y);
-        if (view.cover != 0) x11.reparent(view.cover, parent, next.x, next.y);
         view.container_parent = parent;
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
-    // Moved, never restacked: a raise per layout pass is a ConfigureNotify per
-    // layout pass, and the X traffic that produced starved the server. The
-    // cover is stacked once when it is shown.
-    if (view.cover != 0) x11.moveResize(view.cover, next.x, next.y, next.w, next.h);
     layoutContents(view, next.w, next.h);
 }
 
@@ -1911,11 +1809,22 @@ var accel_timer: c_uint = 0;
 
 fn armAccelTimer() void {
     if (accel_timer != 0) return;
-    accel_timer = glib.timeoutAdd(500, &onAccelTimer, null);
+    accel_timer = glib.timeoutAdd(500, &onEngineTick, null);
 }
 
-fn onAccelTimer(_: ?*anyopaque) callconv(.c) c_int {
+/// GTK's focus-widget notification is an edge, and the state it describes can
+/// be reached without one: clicking a widget that already has focus moves
+/// nothing, while the browser has taken X input focus for itself in the
+/// meantime and keeps every key. Re-asserting here is what makes the routing
+/// hold whatever the user clicked last.
+fn onEngineTick(_: ?*anyopaque) callconv(.c) c_int {
     refreshAccels();
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (gtk.Widget.getMapped(view.widget) == 0) continue;
+        syncBrowserFocus(view);
+    }
     return 1;
 }
 

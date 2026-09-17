@@ -312,7 +312,13 @@ async function rect(id: string): Promise<{ x: number; y: number; w: number; h: n
 /// Page CSS pixels to root-window pixels. The container's origin is already in
 /// device pixels, which is the space the X server and every capture speak.
 async function pageToScreen(id: string): Promise<{ x: number; y: number }> {
-  const view = shownView();
+  let view = shownView();
+  // A leg that has just changed the app's tabs can be ahead of the view coming
+  // back; waiting beats throwing and taking the rest of the run with it.
+  for (let i = 0; i < 40 && !view; i++) {
+    await Bun.sleep(150);
+    view = shownView();
+  }
   if (!view) throw new Error("no shown view");
   const r = await rect(id);
   const m = await metrics();
@@ -699,6 +705,12 @@ if (hasApp) {
   const after = await app.tree();
   const opened = JSON.stringify(after).length !== JSON.stringify(before).length;
   check("appShortcutWhilePageFocused", opened, `tree changed=${opened} (compact rows before ${wasCompact})`);
+  // ctrl+t leaves a tab with no page in it, and every leg below needs a view
+  // on screen; the app's own close-tab accelerator puts it back.
+  key("ctrl+w");
+  await Bun.sleep(2500);
+  const restored = await settled(8000);
+  check("appShortcutUndone", restored.ok, restored.detail);
   noStray("appShortcut");
 } else {
   skip("appShortcutWhilePageFocused", "the app under test has no accelerators");

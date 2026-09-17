@@ -108,7 +108,6 @@
               xwininfo         # the no-stray-window census: `xwininfo -root -children` before and after a popup
               imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
               xdotool          # real X11 clicks and keystrokes: Chrome's own accelerators and a consent page's gesture check never see CDP-injected input
-              xcompmgr         # a compositing manager for the Xvfb rig: Chromium asks for a translucent ARGB window for a <select> dropdown and opens none without one
               openbox          # a reparenting window manager for the Xvfb rig: without one nothing ever resizes a toplevel, which is the class of bug the bare-Xvfb gates miss
               wmctrl           # EWMH maximize/fullscreen requests, which xdotool cannot send
               sway             # headless wlroots compositor + XWayland: the shape of session the owner runs, and the only rig where an override-redirect Chromium window is tested
