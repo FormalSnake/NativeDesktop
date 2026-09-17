@@ -147,7 +147,15 @@ pub fn shutdown() void {
 /// left behind, never reports closed, so `CefUIThread::Stop` joins a run loop
 /// that will not quit. Asking in this order and waiting for each
 /// `on_before_close` costs about 25ms and both go away.
+/// Set for the rest of the process's life by `closeBrowsersInOrder`. A layout
+/// pass that reaches the server after a browser's window is gone raises
+/// BadWindow on CEF's connection, where GDK's error trap cannot see it (the
+/// trap matches request sequences on GDK's own connection), and GDK's handler
+/// aborts the host on the way out.
+var shutting_down = false;
+
 fn closeBrowsersInOrder() void {
+    shutting_down = true;
     // Chrome's own browser first: the install and post-install dialogs are
     // anchored to it, and leaving it for cef_shutdown to unwind is the SIGSEGV
     // a host takes on the way out after a Web Store install.
@@ -802,6 +810,9 @@ const View = struct {
 
     // GTK thread only from here down.
     container: x11.Window = 0,
+    /// The toplevel the container is a child of. A view moved into another
+    /// window by `moveNode` has to take its X child with it.
+    container_parent: x11.Window = 0,
     created: bool = false,
     /// What the browser was actually created with. A `url` prop applied while
     /// the browser was still being created lands in `pending_url` alone, so
@@ -1063,19 +1074,20 @@ fn connectLayout(view: *View) void {
     );
 }
 
-/// The embedder half of keyboard focus, and the only half there is.
+/// Keyboard routing between the app's own widgets and the page.
 ///
-/// The browser's own X window can never hold X input focus: a window manager
-/// keeps it on the toplevel, and XWayland refuses to move it off the toplevel
-/// at all. Until the embedder tells the browser its window has the keyboard,
-/// the web contents have no logical focus and every key press is dropped, so
-/// on a real desktop nothing could be typed into a page at all. This is the
-/// same call cefclient's GTK sample makes from RootWindowGtk::WindowFocusIn.
+/// Two things have to agree. X input focus decides which window the server
+/// delivers a key press to, and Chromium moves it onto its own child as soon
+/// as the page is clicked, so nothing the app does with GTK focus afterwards
+/// gets the keyboard back: typing a URL went into the page. CEF's own
+/// `SetFocus` decides whether the web contents act on what they receive, and
+/// without it a page could not be typed into at all, which is the call
+/// cefclient's GTK sample makes from RootWindowGtk::WindowFocusIn.
 ///
-/// Which of the two halves of the app the keyboard belongs to is GTK's focus
-/// widget: the page holds it while the view is the focused widget (which
-/// `on_got_focus` arranges when the user clicks into the page), the native
-/// chrome holds it otherwise, and the browser is told either way.
+/// GTK's focus widget is what both follow: the view holds the keyboard while
+/// it is the focused widget (which `on_got_focus` arranges when the user
+/// clicks into the page), and the focus proxy holds it otherwise, so a key
+/// press reaches GTK wherever the pointer is.
 ///
 /// Only a mapped view is connected, so a parked background tab never takes the
 /// keyboard from the one on screen.
@@ -1122,8 +1134,27 @@ fn syncBrowserFocus(view: *View) void {
     const root = gtk.Widget.getRoot(view.widget) orelse return;
     const window = gobject.ext.cast(gtk.Window, root) orelse return;
     const mine = if (gtk.Window.getFocus(window)) |focused| focused == view.widget else false;
+    const active = gtk.Window.isActive(window) != 0;
+    const cef_window = view.cef_window.load(.acquire);
+    if (mine and active) {
+        if (cef_window != 0) x11.focus(@intCast(cef_window));
+    } else if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) {
+        // Back to the toplevel, and only from the view that is holding the
+        // keyboard: the others share this toplevel and would take it off
+        // whichever one has it.
+        //
+        // The toplevel and not a focus proxy beside it, though a proxy is what
+        // would keep the browser from taking a key pressed over the page: GTK4
+        // reads the keyboard through XI2, which delivers a key event to the
+        // focus window with no propagation to the ancestor GDK selected on, so
+        // focus anywhere but the toplevel surface itself leaves GTK with
+        // nothing. Measured both ways: with focus on a 1x1 child of the
+        // toplevel, and on the one GDK makes for itself, the window stays key
+        // and every key press is dropped.
+        x11.focusToplevel(view.widget);
+    }
     const host = hostOf(view) orelse return;
-    if (host.set_focus) |set| set(host, @intFromBool(gtk.Window.isActive(window) != 0 and mine));
+    if (host.set_focus) |set| set(host, @intFromBool(active and mine));
 }
 
 fn disconnectLayout(view: *View) void {
@@ -1288,6 +1319,7 @@ fn createBrowser(view: *View) void {
         return;
     }
     view.container = container;
+    view.container_parent = parent;
     const mapped = gtk.Widget.getMapped(view.widget) != 0;
     if (mapped) {
         x11.show(container);
@@ -1383,6 +1415,14 @@ fn syncBounds(view: *View) void {
     view.size_w.store(next.w, .release);
     view.size_h.store(next.h, .release);
     if (view.container == 0) return;
+    // The widget can have been relocated into another window since the last
+    // pass (`moveNode`); GTK moves its own hierarchy and knows nothing about
+    // the X child the browser lives in.
+    const parent = x11.toplevelXid(view.widget);
+    if (parent != 0 and parent != view.container_parent) {
+        x11.reparent(view.container, parent, next.x, next.y);
+        view.container_parent = parent;
+    }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
     layoutContents(view, next.w, next.h);
 }
@@ -1440,6 +1480,7 @@ const LayoutObj = ref.Counted(c.cef_task_t, Layout);
 /// request issued from a GTK layout pass went nowhere and the browser stayed
 /// at the size it was created with.
 fn applyLayoutOnUi(plan: Layout) void {
+    if (shutting_down) return;
     const api = loader.loaded() orelse return;
     if (api.currently_on(c.TID_UI) != 0) {
         applyLayout(plan);
@@ -1456,6 +1497,7 @@ fn runLayoutTask(self: [*c]c.cef_task_t) callconv(.c) void {
 }
 
 fn applyLayout(plan: Layout) void {
+    if (shutting_down) return;
     const api = loader.loaded() orelse return;
     const dpy = api.get_xdisplay() orelse return;
     if (plan.page != 0) x11.resizeOn(@ptrCast(dpy), @intCast(plan.page), plan.page_w, plan.h);
@@ -1567,6 +1609,8 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdFocus(view);
     } else if (std.mem.eql(u8, cmd, "openDevTools")) {
         cmdOpenDevTools(view, arg);
+    } else if (std.mem.eql(u8, cmd, "closeDevTools")) {
+        cmdCloseDevTools(view);
     } else if (std.mem.eql(u8, cmd, "saveSession")) {
         cmdSaveSession(view, arg);
     } else if (std.mem.eql(u8, cmd, "restoreSession")) {
@@ -1743,13 +1787,37 @@ fn runChromeCommandTask(self: [*c]c.cef_task_t) callconv(.c) void {
 }
 
 fn onChromeCommand(
-    _: [*c]c.cef_command_handler_t,
+    self: [*c]c.cef_command_handler_t,
     browser: [*c]c.cef_browser_t,
     command_id: c_int,
     _: c.cef_window_open_disposition_t,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
+    // F12 and ctrl+shift+I arrive as IDC_DEV_TOOLS_TOGGLE, which only ever
+    // opens: Chrome toggles a DevToolsWindow of its own, and the inspector on
+    // this path is a second browser docked in the view instead. Closing it is
+    // this engine's to do, and doing it here is what makes the shortcut the
+    // toggle the docs describe.
+    const view = CommandObj.of(self).payload;
+    if (isDevToolsToggle(command_id) and view.devtools_window.load(.acquire) != 0) {
+        closeDockedDevTools(view);
+        return 1;
+    }
     return @intFromBool(chromeCommandBlocked(command_id));
+}
+
+fn isDevToolsToggle(command_id: c_int) bool {
+    const api = loader.loaded() orelse return false;
+    return command_id == api.id_for_command_id_name("IDC_DEV_TOOLS") or
+        command_id == api.id_for_command_id_name("IDC_DEV_TOOLS_TOGGLE");
+}
+
+/// CEF UI thread only. `close_dev_tools` on the PAGE browser's host is what
+/// takes the docked inspector away; it is the same call `closeBrowsersInOrder`
+/// makes at quit, and on_before_close then undocks the panel.
+fn closeDockedDevTools(view: *View) void {
+    const host = hostOf(view) orelse return;
+    if (host.close_dev_tools) |close| close(host);
 }
 
 /// The app menu, the page action icons and the toolbar buttons all belong to
@@ -1805,6 +1873,21 @@ fn onOpenUrlFromTab(
 // cef_display_handler_t
 // ============================================================================
 
+/// True for the docked inspector, which shares this view's handlers: its
+/// address and title are its own, and reporting them as the view's is what put
+/// a devtools:// URL in the app's address bar and "DevTools" in the window
+/// title.
+fn isDevToolsBrowser(view: *View, browser: [*c]c.cef_browser_t) bool {
+    const devtools = view.devtools_window.load(.acquire);
+    if (devtools == 0 or browser == null) return false;
+    const get_host = browser.*.get_host orelse return false;
+    const host = get_host(browser);
+    if (host == null) return false;
+    defer ref.releaseParam(host);
+    const get_window = host.*.get_window_handle orelse return false;
+    return @as(usize, @intCast(get_window(host))) == devtools;
+}
+
 fn onAddressChange(
     self: [*c]c.cef_display_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -1813,6 +1896,7 @@ fn onAddressChange(
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    if (isDevToolsBrowser(DisplayObj.of(self).payload, browser)) return;
     // Subframe navigations are not the view's address.
     if (frame != null) {
         if (frame.*.is_main) |is_main| {
@@ -1831,6 +1915,7 @@ fn onTitleChange(
     title: [*c]const c.cef_string_t,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
+    if (isDevToolsBrowser(DisplayObj.of(self).payload, browser)) return;
     post(.{ .view = DisplayObj.of(self).payload, .name = "titleChanged", .text = dupeStr(title) });
 }
 
@@ -2184,13 +2269,20 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.take_focus) {
         // GTK's focus widget and X input focus both come home: grabFocus
-        // alone leaves the keyboard on CEF's X window, and the toplevel
+        // alone leaves the keyboard on CEF's X window, and the app
         // (accelerators included) stays deaf until something else moves it.
         if (gtk.Widget.getRoot(view.widget)) |root| {
             const root_widget: *gtk.Widget = @ptrCast(@alignCast(root));
-            _ = gtk.Widget.grabFocus(root_widget);
+            // childFocus, not grabFocus: grabbing on the root hands focus
+            // straight back to the window's default widget, which is this view
+            // again, and tabbing out of the page never leaves it. It can take
+            // nothing, though, and a window with no focus widget at all is
+            // worse than one focused on the view.
+            if (gtk.Widget.childFocus(root_widget, if (box.flag) .tab_forward else .tab_backward) == 0) {
+                _ = gtk.Widget.grabFocus(view.widget);
+            }
         }
-        x11.focusToplevel(view.widget);
+        syncBrowserFocus(view);
         return 0;
     }
 
@@ -4381,6 +4473,27 @@ fn cmdSetContextMenuItems(view: *View, arg: ?std.json.Value) void {
     tr("setContextMenuItems node={d} items={d}", .{ view.node_id, items.len });
 }
 
+/// The app's half of the toggle. Posted to the CEF UI thread because that is
+/// where a browser host may be asked to close anything.
+fn cmdCloseDevTools(view: *View) void {
+    if (view.devtools_window.load(.acquire) == 0) return;
+    const api = loader.loaded() orelse return;
+    if (api.currently_on(c.TID_UI) != 0) {
+        closeDockedDevTools(view);
+        return;
+    }
+    const host = hostOf(view) orelse return;
+    const task = ChromeCommandObj.create(.{ .host = host, .command_id = 0 }) orelse return;
+    task.cef.execute = &runCloseDevToolsTask;
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) task.drop();
+    task.drop();
+}
+
+fn runCloseDevToolsTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const call = ChromeCommandObj.of(self).payload;
+    if (call.host.close_dev_tools) |close| close(call.host);
+}
+
 fn cmdFocus(view: *View) void {
     _ = gtk.Widget.grabFocus(view.widget);
     const host = hostOf(view) orelse return;
@@ -5308,9 +5421,8 @@ fn onGotFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t) cal
 }
 
 fn onTakeFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, next: c_int) callconv(.c) void {
-    _ = next;
     defer ref.releaseParam(browser);
-    post(.{ .view = FocusObj.of(self).payload, .name = "", .take_focus = true });
+    post(.{ .view = FocusObj.of(self).payload, .name = "", .take_focus = true, .flag = next != 0 });
 }
 
 fn clearMenuCommands(view: *View) void {

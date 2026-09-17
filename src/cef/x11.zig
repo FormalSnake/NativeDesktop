@@ -52,10 +52,12 @@ const FnDefaultVisual = *const fn (*Display, c_int) callconv(.c) ?*Visual;
 const FnDefaultColormap = *const fn (*Display, c_int) callconv(.c) c_ulong;
 const FnWindowOnly = *const fn (*Display, Window) callconv(.c) c_int;
 const FnMoveResize = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint) callconv(.c) c_int;
+const FnReparent = *const fn (*Display, Window, Window, c_int, c_int) callconv(.c) c_int;
 const FnResize = *const fn (*Display, Window, c_uint, c_uint) callconv(.c) c_int;
 const FnFlush = *const fn (*Display) callconv(.c) c_int;
 const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
 const FnSetInputFocus = *const fn (*Display, Window, c_int, c_ulong) callconv(.c) c_int;
+const FnGetInputFocus = *const fn (*Display, *Window, *c_int) callconv(.c) c_int;
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
@@ -79,10 +81,12 @@ const Api = struct {
     unmap_window: FnWindowOnly,
     destroy_window: FnWindowOnly,
     move_resize_window: FnMoveResize,
+    reparent_window: FnReparent,
     resize_window: FnResize,
     flush: FnFlush,
     sync: FnSync,
     set_input_focus: FnSetInputFocus,
+    get_input_focus: FnGetInputFocus,
     default_root_window: FnRootWindow,
     query_tree: FnQueryTree,
     translate_coordinates: FnTranslate,
@@ -131,10 +135,12 @@ fn loadApi() ?*const Api {
         .unmap_window = x.lookup(FnWindowOnly, "XUnmapWindow") orelse return missing(&x, &g, "XUnmapWindow"),
         .destroy_window = x.lookup(FnWindowOnly, "XDestroyWindow") orelse return missing(&x, &g, "XDestroyWindow"),
         .move_resize_window = x.lookup(FnMoveResize, "XMoveResizeWindow") orelse return missing(&x, &g, "XMoveResizeWindow"),
+        .reparent_window = x.lookup(FnReparent, "XReparentWindow") orelse return missing(&x, &g, "XReparentWindow"),
         .resize_window = x.lookup(FnResize, "XResizeWindow") orelse return missing(&x, &g, "XResizeWindow"),
         .flush = x.lookup(FnFlush, "XFlush") orelse return missing(&x, &g, "XFlush"),
         .sync = x.lookup(FnSync, "XSync") orelse return missing(&x, &g, "XSync"),
         .set_input_focus = x.lookup(FnSetInputFocus, "XSetInputFocus") orelse return missing(&x, &g, "XSetInputFocus"),
+        .get_input_focus = x.lookup(FnGetInputFocus, "XGetInputFocus") orelse return missing(&x, &g, "XGetInputFocus"),
         .default_root_window = x.lookup(FnRootWindow, "XDefaultRootWindow") orelse return missing(&x, &g, "XDefaultRootWindow"),
         .query_tree = x.lookup(FnQueryTree, "XQueryTree") orelse return missing(&x, &g, "XQueryTree"),
         .translate_coordinates = x.lookup(FnTranslate, "XTranslateCoordinates") orelse return missing(&x, &g, "XTranslateCoordinates"),
@@ -322,12 +328,49 @@ const CURRENT_TIME: c_ulong = 0;
 /// it comes back, the toplevel sees no key events and every accelerator in
 /// the app is dead.
 pub fn focusToplevel(widget: *gtk.Widget) void {
-    const xid = toplevelXid(widget);
-    if (xid == 0) return;
+    focus(toplevelXid(widget));
+}
+
+/// Moves X input focus to `window`. Issued on GDK's connection even for a
+/// window Chromium owns: XSetInputFocus is not restricted to the owner, and
+/// this has to be ordered with the focus-widget change that provoked it.
+pub fn focus(window: Window) void {
+    if (window == 0) return;
     const c = conn() orelse return;
     c.push();
-    _ = c.api.set_input_focus(c.x, xid, REVERT_TO_PARENT, CURRENT_TIME);
+    _ = c.api.set_input_focus(c.x, window, REVERT_TO_PARENT, CURRENT_TIME);
     _ = c.api.flush(c.x);
+    c.pop();
+}
+
+/// The window the X server currently reports as holding input focus, or 0.
+/// PointerRoot and None both read as 0: neither is a window this engine set.
+/// Untrapped on purpose: XGetInputFocus names no window, so it cannot raise a
+/// window error, and it is a round trip. GDK's trap bookkeeping records the
+/// request sequence a trap ends at, and a round trip inside one lets GDK end
+/// that trap underneath us; popping it afterwards aborts the process on
+/// `trap->end_sequence == 0`.
+pub fn focused() Window {
+    const c = conn() orelse return 0;
+    var window: Window = 0;
+    var revert: c_int = 0;
+    _ = c.api.get_input_focus(c.x, &window, &revert);
+    return if (window <= 1) 0 else window;
+}
+
+/// Moves an embedding container under a different toplevel, which is what a
+/// tab dragged into another window needs: GTK relocates the widget, and the X
+/// child holding the browser is GTK's to know nothing about. Remapped
+/// afterwards because the server unmaps a mapped window it reparents, and
+/// synced for the same reason creation is: CEF paints only into a viewable
+/// window and reads that state on its own connection.
+pub fn reparent(window: Window, parent: Window, x: c_int, y: c_int) void {
+    if (window == 0 or parent == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.reparent_window(c.x, window, parent, x, y);
+    _ = c.api.map_window(c.x, window);
+    _ = c.api.sync(c.x, 0);
     c.pop();
 }
 
