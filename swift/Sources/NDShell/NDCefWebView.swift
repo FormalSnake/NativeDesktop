@@ -169,6 +169,13 @@ final class NDCefWebView: NSView {
 
     @MainActor var stillOpen: Bool { browser != nil }
 
+    /// Whether a callback's browser is this view's page browser rather than the
+    /// inspector's, which shares the client.
+    @MainActor func ownsBrowser(_ identifier: Int32) -> Bool {
+        guard let browser else { return false }
+        return browser.pointee.get_identifier?(browser) == identifier
+    }
+
     // MARK: - Browser lifetime
 
     override func viewDidMoveToWindow() {
@@ -287,6 +294,7 @@ final class NDCefWebView: NSView {
         let mine = browser.pointee.get_identifier?(browser) ?? -1
         guard mine == identifier else {
             sideBrowsers = max(0, sideBrowsers - 1)
+            chrome?.devToolsBrowserClosed()
             return
         }
         self.browser = nil
@@ -482,9 +490,25 @@ final class NDCefWebView: NSView {
     /// Chromium's devtools in its own top-level window, the same shape the
     /// GTK engine ships. Optional x/y (view-relative CSS pixels, the
     /// contextMenu event's coordinates) starts with that element inspected.
+    ///
+    /// The command toggles, which is what `openDevTools`, F12 and the app's own
+    /// Inspect Element all rely on; asking for an inspector that is already
+    /// there otherwise leaves the page stuck at the docked width.
     private func openDevTools(_ obj: [String: Any]) {
         guard let browserHost = browserHost() else { return }
         defer { nd_cef_ref_release(browserHost) }
+        // Chrome style's inspector is a BrowserView this object docked, and
+        // `has_dev_tools` keeps answering 1 for a while after it is closed, so
+        // the dock's own state is what the toggle reads there.
+        if let chrome {
+            if chrome.hasDockedDevTools {
+                chrome.closeDevTools()
+                return
+            }
+        } else if browserHost.pointee.has_dev_tools?(browserHost) != 0 {
+            browserHost.pointee.close_dev_tools?(browserHost)
+            return
+        }
         devToolsRequested = true
         var windowInfo = cef_window_info_t()
         if let x = (obj["x"] as? NSNumber)?.int32Value, let y = (obj["y"] as? NSNumber)?.int32Value {
@@ -843,20 +867,36 @@ final class NDCefHandlerBox {
 
     private func wireDisplay() {
         guard let display else { return }
+        // Every one of these is keyed on the browser: the inspector is a second
+        // browser on this same client, and without the check its address and
+        // title are reported as the view's, which puts `devtools://…` in the
+        // app's address bar, its session store and its window title.
         display.pointee.on_address_change = { selfPointer, browser, frame, url in
             let value = ndCefString(url)
+            let identifier = browser?.pointee.get_identifier?(browser) ?? -1
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
-            ndCefDeliver(selfPointer) { $0?.emitAddress(value) }
+            ndCefDeliver(selfPointer) { view in
+                guard view?.ownsBrowser(identifier) == true else { return }
+                view?.emitAddress(value)
+            }
         }
         display.pointee.on_title_change = { selfPointer, browser, title in
             let value = ndCefString(title)
+            let identifier = browser?.pointee.get_identifier?(browser) ?? -1
             nd_cef_ref_release(browser)
-            ndCefDeliver(selfPointer) { $0?.emitTitle(value) }
+            ndCefDeliver(selfPointer) { view in
+                guard view?.ownsBrowser(identifier) == true else { return }
+                view?.emitTitle(value)
+            }
         }
         display.pointee.on_loading_progress_change = { selfPointer, browser, progress in
+            let identifier = browser?.pointee.get_identifier?(browser) ?? -1
             nd_cef_ref_release(browser)
-            ndCefDeliver(selfPointer) { $0?.emitProgress(progress) }
+            ndCefDeliver(selfPointer) { view in
+                guard view?.ownsBrowser(identifier) == true else { return }
+                view?.emitProgress(progress)
+            }
         }
         display.pointee.on_favicon_urlchange = { selfPointer, browser, iconUrls in
             nd_cef_ref_release(browser)
@@ -1300,8 +1340,9 @@ func ndCefParseJSONText(_ raw: String) -> [String: Any]? {
 
     for view in views { view.releaseEngine() }
     let browsersClosed = pump { !views.contains { $0.stillOpen } }
+    let windowsClosed = pump { !NDCefChromeWindow.anyWindowOpen }
 
-    return inspectorsClosed && browsersClosed
+    return inspectorsClosed && browsersClosed && windowsClosed
 }
 
 /// release_node purge seam (Backend.swift's `ndPurgeNodeRegistries`).
