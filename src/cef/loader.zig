@@ -50,6 +50,10 @@ pub const Api = struct {
     request_context_create_context: *const fn (settings: [*c]const c.cef_request_context_settings_t, handler: [*c]c.cef_request_context_handler_t) callconv(.c) [*c]c.cef_request_context_t,
     register_scheme_handler_factory: *const fn (scheme: [*c]const c.cef_string_t, domain: [*c]const c.cef_string_t, factory: [*c]c.cef_scheme_handler_factory_t) callconv(.c) c_int,
     command_line_get_global: *const fn () callconv(.c) [*c]c.cef_command_line_t,
+    /// IDC command names map to different numbers in different Chromium builds,
+    /// so the Chrome-style command deny list resolves its ids through this
+    /// rather than through cef_command_ids.h's build-time constants.
+    id_for_command_id_name: *const fn (name: [*c]const u8) callconv(.c) c_int,
 };
 
 var api: ?Api = null;
@@ -135,6 +139,7 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .request_context_create_context = l.lookup(@FieldType(Api, "request_context_create_context"), "cef_request_context_create_context") orelse return null,
         .register_scheme_handler_factory = l.lookup(@FieldType(Api, "register_scheme_handler_factory"), "cef_register_scheme_handler_factory") orelse return null,
         .command_line_get_global = l.lookup(@FieldType(Api, "command_line_get_global"), "cef_command_line_get_global") orelse return null,
+        .id_for_command_id_name = l.lookup(@FieldType(Api, "id_for_command_id_name"), "cef_id_for_command_id_name") orelse return null,
     };
 }
 

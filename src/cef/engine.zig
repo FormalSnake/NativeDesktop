@@ -158,9 +158,89 @@ fn appGetBrowserProcessHandler(_: [*c]c.cef_app_t) callconv(.c) [*c]c.cef_browse
     if (browser_process_obj == null) {
         const h = BrowserProcessObj.create({}) orelse return null;
         h.cef.on_before_child_process_launch = &onBeforeChildProcessLaunch;
+        h.cef.get_default_client = &getDefaultClient;
         browser_process_obj = h;
     }
     return browser_process_obj.?.handOut();
+}
+
+// ============================================================================
+// Browsers Chrome creates on its own
+// ============================================================================
+//
+// Chrome style answers `chrome.windows.create`, `chrome.tabs.create` and
+// `chrome.runtime.openOptionsPage` by building a Chrome browser window, which
+// goes through none of the hooks a renderer-initiated popup does: no
+// on_before_popup, no on_open_urlfrom_tab, no command id. The one seam CEF
+// leaves is get_default_client, called for exactly those browsers. The client
+// it gets unmaps the window before it can be presented, hands the app the URL
+// as `newWindow` (the same contract every other route uses) and closes it.
+
+const SinkClientObj = ref.Counted(c.cef_client_t, void);
+const SinkLifeObj = ref.Counted(c.cef_life_span_handler_t, void);
+var sink_client: ?*SinkClientObj = null;
+var sink_life: ?*SinkLifeObj = null;
+
+/// The view the app hears a Chrome-created browser about. Chrome's own window
+/// belongs to no `<webview>`, and the app's tab-opening handler is per view, so
+/// the one that last took focus is the one that stands in for "this window".
+var focused_view: ?*View = null;
+
+fn getDefaultClient(_: [*c]c.cef_browser_process_handler_t) callconv(.c) [*c]c.cef_client_t {
+    if (!chromeStyle()) return null;
+    if (sink_client == null) {
+        const life = SinkLifeObj.create({}) orelse return null;
+        life.cef.on_after_created = &onSinkBrowserCreated;
+        const client = SinkClientObj.create({}) orelse {
+            life.drop();
+            return null;
+        };
+        client.cef.get_life_span_handler = &sinkGetLifeSpanHandler;
+        sink_life = life;
+        sink_client = client;
+    }
+    return sink_client.?.handOut();
+}
+
+fn sinkGetLifeSpanHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_span_handler_t {
+    return (sink_life orelse return null).handOut();
+}
+
+fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    if (browser == null) return;
+    const get_host = browser.*.get_host orelse return;
+    const host = get_host(browser);
+    if (host == null) return;
+    defer ref.releaseParam(host);
+
+    // Unmapped before anything else: closing a browser is asynchronous and the
+    // window would otherwise be on screen for the length of the teardown.
+    if (host.*.get_window_handle) |get_window| {
+        const window = get_window(host);
+        if (window != 0) x11.hide(@intCast(window));
+    }
+
+    var url: ?[]u8 = null;
+    if (browser.*.get_main_frame) |get_frame| {
+        const frame = get_frame(browser);
+        if (frame != null) {
+            defer ref.releaseParam(frame);
+            if (frame.*.get_url) |get_url| {
+                const raw = get_url(frame);
+                if (raw != null) {
+                    defer freeUserfree(raw);
+                    url = dupeStr(raw);
+                }
+            }
+        }
+    }
+    if (focused_view) |view| {
+        post(.{ .view = view, .name = "newWindow", .text = url });
+    } else if (url) |u| {
+        alloc.free(u);
+    }
+    if (host.*.close_browser) |close| close(host, 1);
 }
 
 fn onBeforeChildProcessLaunch(
@@ -229,6 +309,25 @@ fn appendFlag(
     defer clearStr(&n);
     if (!setStr(&n, name)) return;
     append(cl, &n);
+}
+
+// ============================================================================
+// Browser style
+// ============================================================================
+
+var chrome_style: ?bool = null;
+
+/// Chrome style gives the embedded browser Chromium's own browser runtime,
+/// which is what runs the extension system; Alloy style is the content layer
+/// with CEF's extra client callbacks. `webview.cef.style` in the app config
+/// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
+/// because the command line and the browser style have to agree.
+pub fn chromeStyle() bool {
+    if (chrome_style) |v| return v;
+    const raw = std.c.getenv("ND_CEF_STYLE");
+    const v = raw != null and std.mem.eql(u8, std.mem.span(raw.?), "chrome");
+    chrome_style = v;
+    return v;
 }
 
 // ============================================================================
@@ -392,6 +491,8 @@ const DownloadObj = ref.Counted(c.cef_download_handler_t, *View);
 const JsDialogHandlerObj = ref.Counted(c.cef_jsdialog_handler_t, *View);
 const ContextMenuObj = ref.Counted(c.cef_context_menu_handler_t, *View);
 const FocusObj = ref.Counted(c.cef_focus_handler_t, *View);
+const CommandObj = ref.Counted(c.cef_command_handler_t, *View);
+const RequestHandlerObj = ref.Counted(c.cef_request_handler_t, *View);
 
 const View = struct {
     widget: *gtk.Widget,
@@ -406,6 +507,8 @@ const View = struct {
     jsdialog_handler: *JsDialogHandlerObj,
     context_menu_handler: *ContextMenuObj,
     focus_handler: *FocusObj,
+    command_handler: *CommandObj,
+    request_handler: *RequestHandlerObj,
 
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
@@ -440,6 +543,16 @@ const View = struct {
     browser: std.atomic.Value(usize) = .init(0),
     /// The window CEF made inside our container, for tracking the allocation.
     cef_window: std.atomic.Value(usize) = .init(0),
+    /// The docked devtools, Chrome style only: our own X child inside the
+    /// container, CEF's devtools window inside that, and the view's last known
+    /// size so the CEF UI thread can lay the split out without reading the
+    /// GTK-owned bounds.
+    devtools_container: std.atomic.Value(usize) = .init(0),
+    devtools_window: std.atomic.Value(usize) = .init(0),
+    devtools_client: ?*DevToolsClientObj = null,
+    devtools_life: ?*DevToolsLifeObj = null,
+    size_w: std.atomic.Value(u32) = .init(0),
+    size_h: std.atomic.Value(u32) = .init(0),
     /// The view's own long-lived host reference, taken with the browser and
     /// released with it. Every CDP call goes through it, and re-deriving it per
     /// call would churn a reference on whichever thread happened to ask.
@@ -579,6 +692,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const jsdialog_handler = JsDialogHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const context_menu_handler = ContextMenuObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const focus_handler = FocusObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const command_handler = CommandObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    const request_handler = RequestHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
 
     view.* = .{
         .widget = widget,
@@ -591,6 +706,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
         .jsdialog_handler = jsdialog_handler,
         .context_menu_handler = context_menu_handler,
         .focus_handler = focus_handler,
+        .command_handler = command_handler,
+        .request_handler = request_handler,
     };
     view.suppress_menu.store(std.mem.eql(u8, context_menu_mode, "suppress"), .release);
     view.context = requestContext(profile);
@@ -606,6 +723,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     client.cef.get_jsdialog_handler = &clientGetJsDialogHandler;
     client.cef.get_context_menu_handler = &clientGetContextMenuHandler;
     client.cef.get_focus_handler = &clientGetFocusHandler;
+    client.cef.get_command_handler = &clientGetCommandHandler;
+    client.cef.get_request_handler = &clientGetRequestHandler;
 
     display_handler.cef.on_address_change = &onAddressChange;
     display_handler.cef.on_title_change = &onTitleChange;
@@ -630,6 +749,11 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     context_menu_handler.cef.on_context_menu_command = &onContextMenuCommand;
     focus_handler.cef.on_set_focus = &onSetFocus;
     focus_handler.cef.on_take_focus = &onTakeFocus;
+    command_handler.cef.on_chrome_command = &onChromeCommand;
+    command_handler.cef.is_chrome_app_menu_item_visible = &isChromeAppMenuItemVisible;
+    command_handler.cef.is_chrome_page_action_icon_visible = &isChromePageActionIconVisible;
+    command_handler.cef.is_chrome_toolbar_button_visible = &isChromeToolbarButtonVisible;
+    request_handler.cef.on_open_urlfrom_tab = &onOpenUrlFromTab;
 
     live_views.put(alloc, @intFromPtr(view), {}) catch {};
     gobject.Object.setData(widget.as(gobject.Object), MARKER_KEY, @ptrFromInt(1));
@@ -782,6 +906,7 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
+    if (focused_view == view) focused_view = null;
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
         _ = glib.Source.remove(view.deferred_timer);
@@ -850,9 +975,12 @@ fn createBrowser(view: *View) void {
         .width = @intCast(@max(start_w, 1)),
         .height = @intCast(@max(start_h, 1)),
     };
-    // Explicit rather than inferred: Chrome style would bring Chrome's own
-    // window and toolbar with it, which is the thing this engine must not do.
-    window_info.runtime_style = @intCast(c.CEF_RUNTIME_STYLE_ALLOY);
+    // Explicit rather than inferred: the default depends on how the browser is
+    // hosted, and this engine always hosts it the same way.
+    window_info.runtime_style = if (chromeStyle())
+        @intCast(c.CEF_RUNTIME_STYLE_CHROME)
+    else
+        @intCast(c.CEF_RUNTIME_STYLE_ALLOY);
 
     var browser_settings = std.mem.zeroes(c.cef_browser_settings_t);
     browser_settings.size = @sizeOf(c.cef_browser_settings_t);
@@ -919,9 +1047,35 @@ fn syncBounds(view: *View) void {
     // layout signal only fires on frames GTK actually laid the toplevel out,
     // so re-asserting costs one request per real layout, not one per tick.
     view.bounds = next;
+    view.size_w.store(next.w, .release);
+    view.size_h.store(next.h, .release);
     if (view.container == 0) return;
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
-    resizeCefWindow(view, next.w, next.h);
+    layoutContents(view, next.w, next.h);
+}
+
+/// The view's inner windows: the page browser, and the docked devtools beside
+/// it when it is open. Runs on either thread; every request goes out on CEF's
+/// own X connection because both windows belong to CEF.
+fn layoutContents(view: *View, w: c_uint, h: c_uint) void {
+    const dock = view.devtools_container.load(.acquire);
+    if (dock == 0) {
+        resizeCefWindow(view, w, h);
+        return;
+    }
+    const dock_w = dockWidth(w);
+    resizeCefWindow(view, w - dock_w, h);
+    const api = loader.loaded() orelse return;
+    const dpy = api.get_xdisplay() orelse return;
+    x11.moveResizeOn(@ptrCast(dpy), @intCast(dock), @intCast(w - dock_w), 0, dock_w, h);
+    const inner = view.devtools_window.load(.acquire);
+    if (inner != 0) x11.resizeOn(@ptrCast(dpy), @intCast(inner), dock_w, h);
+}
+
+/// Chrome's own right-dock default, clamped so a narrow view keeps a page.
+fn dockWidth(w: c_uint) c_uint {
+    const wanted = w * 45 / 100;
+    return @min(@max(wanted, 200), if (w > 240) w - 240 else w / 2);
 }
 
 /// CEF's Linux platform delegate sizes its window once, from
@@ -1082,6 +1236,181 @@ fn clientGetDownloadHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_dow
     return ClientObj.of(self).payload.download_handler.handOut();
 }
 
+fn clientGetCommandHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_command_handler_t {
+    return ClientObj.of(self).payload.command_handler.handOut();
+}
+
+fn clientGetRequestHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_request_handler_t {
+    return ClientObj.of(self).payload.request_handler.handOut();
+}
+
+// ============================================================================
+// cef_command_handler_t: no Chrome window and no Chrome UI
+// ============================================================================
+
+/// Commands Chrome answers by opening a window, a tab or a Chrome UI surface.
+/// Only Chrome style routes anything through them, and this engine owns the
+/// window it was embedded in and nothing else, so each one is refused here.
+/// The ones that carry a URL reach the app as `newWindow` first
+/// (on_before_popup, on_open_urlfrom_tab, on_context_menu_command); this list
+/// is what catches a keyboard shortcut or a menu item that reaches Chrome's
+/// command handling without going through any of those. The devtools commands
+/// are deliberately absent: Chrome style docks the inspector inside the
+/// browser's own contents container, so they open no window, and IDC_DEV_TOOLS
+/// is how `openDevTools` itself is served.
+const blocked_chrome_commands = [_][*:0]const u8{
+    "IDC_NEW_WINDOW",
+    "IDC_NEW_INCOGNITO_WINDOW",
+    "IDC_NEW_TAB",
+    "IDC_RESTORE_TAB",
+    "IDC_CLOSE_WINDOW",
+    "IDC_VIEW_SOURCE",
+    "IDC_PRINT",
+    "IDC_BASIC_PRINT",
+    "IDC_TASK_MANAGER",
+    "IDC_SHOW_HISTORY",
+    "IDC_SHOW_DOWNLOADS",
+    "IDC_SHOW_BOOKMARK_MANAGER",
+    "IDC_CLEAR_BROWSING_DATA",
+    "IDC_OPTIONS",
+    "IDC_ABOUT",
+    "IDC_MANAGE_EXTENSIONS",
+    "IDC_OPEN_FILE",
+    "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB",
+    "IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW",
+    "IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD",
+    "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE",
+    "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
+    "IDC_CONTENT_CONTEXT_OPENIMAGENEWTAB",
+    "IDC_CONTENT_CONTEXT_OPENAVNEWTAB",
+    "IDC_CONTENT_CONTEXT_PICTUREINPICTURE",
+    "IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE",
+};
+
+/// Resolved once on the CEF UI thread, which is the only thread that asks.
+/// -1 is what cef_id_for_command_id_name answers for a name this Chromium
+/// build does not have, and it can never equal a real command id.
+var blocked_chrome_ids: ?[blocked_chrome_commands.len]c_int = null;
+
+fn chromeCommandBlocked(command_id: c_int) bool {
+    if (blocked_chrome_ids == null) {
+        const api = loader.loaded() orelse return false;
+        var ids: [blocked_chrome_commands.len]c_int = undefined;
+        for (blocked_chrome_commands, 0..) |name, i| ids[i] = api.id_for_command_id_name(name);
+        blocked_chrome_ids = ids;
+    }
+    for (blocked_chrome_ids.?) |id| {
+        if (id >= 0 and id == command_id) return true;
+    }
+    return false;
+}
+
+/// The subset of the list above that Chrome's own context menu offers for a
+/// link, and that the app gets as `newWindow` with the link's URL.
+const open_link_commands = [_][*:0]const u8{
+    "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB",
+    "IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW",
+    "IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD",
+    "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE",
+    "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
+};
+
+var open_link_ids: ?[open_link_commands.len]c_int = null;
+
+fn openLinkCommand(command_id: c_int) bool {
+    if (open_link_ids == null) {
+        const api = loader.loaded() orelse return false;
+        var ids: [open_link_commands.len]c_int = undefined;
+        for (open_link_commands, 0..) |name, i| ids[i] = api.id_for_command_id_name(name);
+        open_link_ids = ids;
+    }
+    for (open_link_ids.?) |id| {
+        if (id >= 0 and id == command_id) return true;
+    }
+    return false;
+}
+
+const ChromeCommandTask = struct { host: *c.cef_browser_host_t, command_id: c_int };
+const ChromeCommandObj = ref.Counted(c.cef_task_t, ChromeCommandTask);
+
+/// execute_chrome_command only runs on the CEF UI thread, and every webview
+/// command arrives on the GTK one.
+fn executeChromeCommand(host: *c.cef_browser_host_t, command_id: c_int) void {
+    const api = loader.loaded() orelse return;
+    if (api.currently_on(c.TID_UI) != 0) {
+        if (host.execute_chrome_command) |exec| exec(host, command_id, c.CEF_WOD_CURRENT_TAB);
+        return;
+    }
+    const task = ChromeCommandObj.create(.{ .host = host, .command_id = command_id }) orelse return;
+    task.cef.execute = &runChromeCommandTask;
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) task.drop();
+    task.drop();
+}
+
+fn runChromeCommandTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const call = ChromeCommandObj.of(self).payload;
+    if (call.host.execute_chrome_command) |exec| exec(call.host, call.command_id, c.CEF_WOD_CURRENT_TAB);
+}
+
+fn onChromeCommand(
+    _: [*c]c.cef_command_handler_t,
+    browser: [*c]c.cef_browser_t,
+    command_id: c_int,
+    _: c.cef_window_open_disposition_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    return @intFromBool(chromeCommandBlocked(command_id));
+}
+
+/// The app menu, the page action icons and the toolbar buttons all belong to
+/// chrome the app never asked for: this engine's browser is a widget inside the
+/// host's own window, and the host draws its own chrome.
+fn isChromeAppMenuItemVisible(
+    _: [*c]c.cef_command_handler_t,
+    browser: [*c]c.cef_browser_t,
+    _: c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    return 0;
+}
+
+fn isChromePageActionIconVisible(
+    _: [*c]c.cef_command_handler_t,
+    _: c.cef_chrome_page_action_icon_type_t,
+) callconv(.c) c_int {
+    return 0;
+}
+
+fn isChromeToolbarButtonVisible(
+    _: [*c]c.cef_command_handler_t,
+    _: c.cef_chrome_toolbar_button_type_t,
+) callconv(.c) c_int {
+    return 0;
+}
+
+// ============================================================================
+// cef_request_handler_t
+// ============================================================================
+
+/// The navigations Chromium would answer by putting the page in a different
+/// browser: a middle-click, a ctrl-click, a cross-origin file:// hop. Alloy
+/// never reaches this for a windowed embed, Chrome style does, and the answer
+/// is the same one on_before_popup gives: the app decides, this engine opens
+/// nothing.
+fn onOpenUrlFromTab(
+    self: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    target_url: [*c]const c.cef_string_t,
+    _: c.cef_window_open_disposition_t,
+    _: c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    post(.{ .view = RequestHandlerObj.of(self).payload, .name = "newWindow", .text = dupeStr(target_url) });
+    return 1;
+}
+
 // ============================================================================
 // cef_display_handler_t
 // ============================================================================
@@ -1190,23 +1519,103 @@ fn onBeforePopup(
     return 1;
 }
 
-/// Devtools opens as CEF's own top-level window, and only when the app asked
-/// for it through the openDevTools command; anything else (a page trying to
-/// conjure one) is refused. Parenting the window into GTK instead is not an
-/// option: CEF #3165 makes that a crash, which is why the default standalone
-/// window is the shipped shape.
+/// Under Alloy, devtools opens as CEF's own top-level window and only when the
+/// app asked for it through the openDevTools command; anything else (a page
+/// trying to conjure one) is refused. Parenting the window into GTK instead is
+/// not an option there: CEF #3165 makes that a crash.
+///
+/// Under Chrome style there is no separate window at all. Chrome's devtools is
+/// still a browser of its own (CEF has no docked inspector for a browser it did
+/// not put in a Views window), so it is docked by hand: a second X child inside
+/// this view's container, on the right, with the page browser narrowed to make
+/// room. That is the shape a user reads as docked, and it keeps the
+/// no-top-level invariant that F12 would otherwise break.
 fn onBeforeDevToolsPopup(
     self: [*c]c.cef_life_span_handler_t,
     browser: [*c]c.cef_browser_t,
-    _: [*c]c.cef_window_info_t,
-    _: [*c][*c]c.cef_client_t,
+    window_info: [*c]c.cef_window_info_t,
+    client: [*c][*c]c.cef_client_t,
     _: [*c]c.cef_browser_settings_t,
     _: [*c][*c]c.cef_dictionary_value_t,
     use_default_window: [*c]c_int,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
-    const wanted = LifeObj.of(self).payload.devtools_requested.swap(false, .acq_rel);
-    if (use_default_window != null) use_default_window.* = @intFromBool(wanted);
+    const view = LifeObj.of(self).payload;
+    const wanted = view.devtools_requested.swap(false, .acq_rel);
+    if (!chromeStyle()) {
+        if (use_default_window != null) use_default_window.* = @intFromBool(wanted);
+        return;
+    }
+    if (use_default_window != null) use_default_window.* = 0;
+    if (window_info == null or view.container == 0) return;
+    // A second F12 toggles the existing one off through Chrome's own command
+    // handling, so reaching here with a dock already up means the first one is
+    // gone and its container with it.
+    const w = view.size_w.load(.acquire);
+    const h = view.size_h.load(.acquire);
+    if (w == 0 or h == 0) return;
+    const dock_w = dockWidth(w);
+    const dock = x11.createChild(view.container, @intCast(w - dock_w), 0, dock_w, h);
+    if (dock == 0) return;
+    x11.show(dock);
+    view.devtools_container.store(dock, .release);
+    layoutContents(view, w, h);
+
+    window_info.*.size = @sizeOf(c.cef_window_info_t);
+    window_info.*.parent_window = dock;
+    window_info.*.bounds = .{ .x = 0, .y = 0, .width = @intCast(dock_w), .height = @intCast(h) };
+    window_info.*.runtime_style = @intCast(c.CEF_RUNTIME_STYLE_CHROME);
+    // Its own client: the view's would take the devtools browser for the page
+    // browser in on_after_created and lose track of both.
+    if (client != null) {
+        if (devToolsClient(view)) |obj| client.* = obj.handOut();
+    }
+}
+
+const DevToolsClientObj = ref.Counted(c.cef_client_t, *View);
+const DevToolsLifeObj = ref.Counted(c.cef_life_span_handler_t, *View);
+
+fn devToolsClient(view: *View) ?*DevToolsClientObj {
+    if (view.devtools_client) |obj| return obj;
+    const life = DevToolsLifeObj.create(view) orelse return null;
+    life.cef.on_after_created = &onDevToolsCreated;
+    life.cef.on_before_close = &onDevToolsClosed;
+    const obj = DevToolsClientObj.create(view) orelse {
+        life.drop();
+        return null;
+    };
+    obj.cef.get_life_span_handler = &devToolsGetLifeSpanHandler;
+    view.devtools_life = life;
+    view.devtools_client = obj;
+    return obj;
+}
+
+fn devToolsGetLifeSpanHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_span_handler_t {
+    const view = DevToolsClientObj.of(self).payload;
+    return (view.devtools_life orelse return null).handOut();
+}
+
+fn onDevToolsCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    if (browser == null) return;
+    const view = DevToolsLifeObj.of(self).payload;
+    const get_host = browser.*.get_host orelse return;
+    const host = get_host(browser);
+    if (host == null) return;
+    defer ref.releaseParam(host);
+    if (host.*.get_window_handle) |get_window| {
+        view.devtools_window.store(@intCast(get_window(host)), .release);
+    }
+    layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+}
+
+fn onDevToolsClosed(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    const view = DevToolsLifeObj.of(self).payload;
+    view.devtools_window.store(0, .release);
+    const dock = view.devtools_container.swap(0, .acq_rel);
+    if (dock != 0) x11.destroy(@intCast(dock));
+    layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
 }
 
 /// The reference this parameter arrives with is deliberately kept: it is the
@@ -1215,6 +1624,7 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
     if (browser == null) return;
     const view = LifeObj.of(self).payload;
     view.browser.store(@intFromPtr(browser), .release);
+    if (focused_view == null) focused_view = view;
     if (browser.*.get_identifier) |get_id| {
         post(.{ .view = view, .name = "", .settle = false, .cdp_result = false, .browser_id = get_id(browser) });
     }
@@ -3103,12 +3513,21 @@ fn jsonToInt(v: std.json.Value) i64 {
     };
 }
 
-/// Opens Chromium's devtools in its own top-level window. Optional arg
-/// `{x, y}` (view-relative CSS pixels, the contextMenu event's coordinates)
-/// starts it with that element inspected, which is what an app's
-/// "Inspect Element" menu item wants.
+/// Opens Chromium's devtools. Under Chrome style that is Chrome's own docked
+/// inspector inside the browser's contents container, which is both what the
+/// user expects and the only devtools this engine can have without a top-level
+/// window. Under Alloy it is CEF's separate devtools window (parenting it into
+/// a GTK window crashes, CEF #3165). Optional arg `{x, y}` (view-relative CSS
+/// pixels, the contextMenu event's coordinates) starts it with that element
+/// inspected, which is what an app's "Inspect Element" menu item wants.
 fn cmdOpenDevTools(view: *View, arg: ?std.json.Value) void {
     const host = hostOf(view) orelse return;
+    if (chromeStyle()) {
+        const api = loader.loaded() orelse return;
+        const id = api.id_for_command_id_name("IDC_DEV_TOOLS");
+        if (id >= 0) executeChromeCommand(host, id);
+        return;
+    }
     const show = host.show_dev_tools orelse return;
     var point: c.cef_point_t = .{ .x = 0, .y = 0 };
     var have_point = false;
@@ -3954,8 +4373,8 @@ fn clientGetFocusHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_focus_
 /// navigation-sourced focus is what Chrome's own browser UI does: the page
 /// only gets the keyboard when the user gives it (FOCUS_SOURCE_SYSTEM).
 fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, source: c.cef_focus_source_t) callconv(.c) c_int {
-    _ = self;
     defer ref.releaseParam(browser);
+    focused_view = FocusObj.of(self).payload;
     return @intFromBool(source == c.FOCUS_SOURCE_NAVIGATION);
 }
 
@@ -4126,6 +4545,16 @@ fn onContextMenuCommand(
 
     var hit = readMenuHit(params);
     defer hit.deinit();
+
+    // Chrome style's default menu carries the "open link in …" items, which
+    // Chrome answers with a window of its own. They run before
+    // cef_command_handler_t sees them and they are the only place the link URL
+    // is still in hand, so the routing to `newWindow` happens here and the
+    // command deny list is only the backstop.
+    if (chromeStyle() and hit.link.len > 0 and openLinkCommand(command_id)) {
+        post(.{ .view = view, .name = "newWindow", .text = dupeOwned(hit.link) });
+        return 1;
+    }
 
     view.menu_lock.lock();
     const entry = view.menu_commands.get(command_id);

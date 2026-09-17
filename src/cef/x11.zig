@@ -275,6 +275,18 @@ pub fn resizeOn(dpy: *Display, window: Window, w: c_uint, h: c_uint) void {
     if (gdk_display) |g| a.error_trap_pop_ignored(g);
 }
 
+/// Same connection rule as `resizeOn`, for a window this engine created but
+/// lays out from the CEF UI thread (the docked devtools container).
+pub fn moveResizeOn(dpy: *Display, window: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) void {
+    if (window == 0) return;
+    const a = loadApi() orelse return;
+    const gdk_display = gdk.Display.getDefault();
+    if (gdk_display) |g| a.error_trap_push(g);
+    _ = a.move_resize_window(dpy, window, x, y, @max(w, 1), @max(h, 1));
+    _ = a.flush(dpy);
+    if (gdk_display) |g| a.error_trap_pop_ignored(g);
+}
+
 /// Xlib RevertToParent: focus falls back to the parent window if the target
 /// is unmapped later, never to PointerRoot (focus-follows-mouse surprises).
 const REVERT_TO_PARENT: c_int = 2;

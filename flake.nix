@@ -107,6 +107,7 @@
               xorg-server      # Xvfb: the CEF gate needs a real X11 root window (windowed embedding is X11-only, and an XWayland root paints nothing to screenshot)
               xwininfo         # the no-stray-window census: `xwininfo -root -children` before and after a popup
               imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
+              xdotool          # real X11 clicks and keystrokes: Chrome's own accelerators and a consent page's gesture check never see CDP-injected input
             ] ++ cefRuntimeLibs;
             # build.zig's test roots import the gobject binding modules
             # unconditionally, so `zig build test` needs pkg-config to resolve
