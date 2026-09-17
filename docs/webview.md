@@ -382,6 +382,13 @@ it, Chrome's window and toolbar do not.
 - The app menu, the page action icons and the toolbar buttons are all reported
   invisible, so no Chrome UI is created for the browser.
 
+On macOS the same style is driven against the real browser app by
+`scripts/mac/app-chrome-style.sh` (marker `ND_APP_CHROME_MAC_OK`), which covers
+window resize, fullscreen, tabs, the app's own accelerators, its popovers over
+the web contents and the quit paths; `scripts/mac/cef-reparent.sh` (marker
+`ND_CEF_REPARENT_MAC_OK`) moves one live `<webview>` between two host windows
+with `moveNode` and asserts the page survives it on both styles.
+
 Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
 151.0.7922.170):
 
