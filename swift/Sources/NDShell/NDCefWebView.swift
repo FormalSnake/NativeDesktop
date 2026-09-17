@@ -61,6 +61,10 @@ final class NDCefWebView: NSView {
 
     lazy var devTools = NDCefDevTools(view: self)
 
+    /// Non-nil under `ND_CEF_STYLE=chrome`: the Views window the browser was
+    /// born in, and the lift of its web contents into this view.
+    var chrome: NDCefChromeWindow?
+
     // Last-emitted navigation state; events fire only on change, matching the
     // WKWebView surface. It doubles as the answer to the automation
     // `webviewInfo` RPC, which has no engine-side property to read here.
@@ -107,6 +111,7 @@ final class NDCefWebView: NSView {
     required init?(coder: NSCoder) { fatalError("NDCefWebView is not NSCoding-decodable") }
 
     deinit {
+        MainActor.assumeIsolated { chrome?.teardown() }
         if let browser {
             if let browserHost = browser.pointee.get_host?(browser) {
                 browserHost.pointee.close_browser?(browserHost, 1)
@@ -122,6 +127,7 @@ final class NDCefWebView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         createBrowserIfNeeded()
+        chrome?.hostGeometryChanged()
     }
 
     /// The autoresizing pass, deliberately NOT `layout()`. Setting a subview's
@@ -134,22 +140,33 @@ final class NDCefWebView: NSView {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
         for child in subviews where child.frame != bounds { child.frame = bounds }
+        chrome?.hostGeometryChanged()
     }
 
     override func viewDidHide() {
         super.viewDidHide()
         setBrowserHidden(true)
+        chrome?.hostGeometryChanged()
     }
 
     override func viewDidUnhide() {
         super.viewDidUnhide()
         setBrowserHidden(false)
+        chrome?.hostGeometryChanged()
     }
 
     private func createBrowserIfNeeded() {
         guard !createRequested, NDCefRuntime.isActive else { return }
         guard window != nil else { return }
         createRequested = true
+
+        createdURL = requestedURL.isEmpty ? "about:blank" : requestedURL
+        if NDCefRuntime.isChromeStyle {
+            let window = NDCefChromeWindow(view: self)
+            chrome = window
+            window.start(url: createdURL, profile: profile)
+            return
+        }
 
         var info = cef_window_info_t()
         info.size = MemoryLayout<cef_window_info_t>.size
@@ -168,7 +185,6 @@ final class NDCefWebView: NSView {
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.size
 
-        createdURL = requestedURL.isEmpty ? "about:blank" : requestedURL
         var url = cef_string_t()
         ndCefSetString(createdURL, &url)
         defer { nd_cef_string_clear(&url) }
@@ -199,6 +215,10 @@ final class NDCefWebView: NSView {
         ndInstallScripts()
         NDCefSchemeRouter.register(self, browser: created)
         if !requestedURL.isEmpty, requestedURL != createdURL { loadInMainFrame(requestedURL) }
+        if let chrome {
+            chrome.browserCreated(host: browserHost)
+            return
+        }
         guard let handle = browserHost.pointee.get_window_handle?(browserHost) else { return }
         let view = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
         view.frame = bounds
@@ -608,6 +628,11 @@ final class NDCefHandlerBox {
     fileprivate(set) var request: UnsafeMutablePointer<cef_request_handler_t>?
     fileprivate(set) var resourceRequest: UnsafeMutablePointer<cef_resource_request_handler_t>?
     fileprivate(set) var devToolsObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
+    /// Chrome style only (NDCefChromeWindow.swift). Alloy has no Chrome command
+    /// surface and is never born in a Views window, so these stay nil there.
+    var command: UnsafeMutablePointer<cef_command_handler_t>?
+    var windowDelegate: UnsafeMutablePointer<cef_window_delegate_t>?
+    var browserViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
     /// Kept for as long as the observer should stay attached: destroying the
     /// registration is what detaches it.
     fileprivate(set) var devToolsRegistration: UnsafeMutablePointer<cef_registration_t>?
@@ -625,6 +650,7 @@ final class NDCefHandlerBox {
         request = ndCefAlloc(cef_request_handler_t.self, self)
         resourceRequest = ndCefAlloc(cef_resource_request_handler_t.self, self)
         devToolsObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
+        if NDCefRuntime.isChromeStyle { buildChrome() }
         client = ndCefAlloc(cef_client_t.self, self)
         wireDisplay()
         wireLoad()
@@ -658,6 +684,9 @@ final class NDCefHandlerBox {
             request.map(UnsafeMutableRawPointer.init),
             resourceRequest.map(UnsafeMutableRawPointer.init),
             devToolsObserver.map(UnsafeMutableRawPointer.init),
+            command.map(UnsafeMutableRawPointer.init),
+            windowDelegate.map(UnsafeMutableRawPointer.init),
+            browserViewDelegate.map(UnsafeMutableRawPointer.init),
         ] {
             nd_cef_ref_release(object)
         }
@@ -675,6 +704,9 @@ final class NDCefHandlerBox {
         resourceRequest = nil
         devToolsObserver = nil
         devToolsRegistration = nil
+        command = nil
+        windowDelegate = nil
+        browserViewDelegate = nil
     }
 
     fileprivate func attachDevTools(_ registration: UnsafeMutablePointer<cef_registration_t>?) {
@@ -715,6 +747,9 @@ final class NDCefHandlerBox {
         }
         client.pointee.get_request_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.request)
+        }
+        client.pointee.get_command_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.command)
         }
     }
 
@@ -995,6 +1030,17 @@ final class NDCefHandlerBox {
     /// take a request away from the default loader before it runs.
     private func wireRequest() {
         guard let request else { return }
+        // Middle-click, cmd-click and the engine's own "open in new tab" reach
+        // here rather than on_before_popup. Under Chrome style an allowed one
+        // would become a Chromium tab in a window the user is not supposed to
+        // have; the app gets the same `newWindow` event a popup produces.
+        request.pointee.on_open_urlfrom_tab = { selfPointer, browser, frame, targetUrl, _, _ in
+            let url = ndCefString(targetUrl)
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
+            return 1
+        }
         request.pointee.get_resource_request_handler = {
             selfPointer, browser, frame, request, _, _, _, disableDefaultHandling in
             var url = ""

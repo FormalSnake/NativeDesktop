@@ -21,6 +21,7 @@
 
 #include "include/capi/cef_app_capi.h"
 #include "include/capi/cef_browser_capi.h"
+#include "include/capi/cef_command_handler_capi.h"
 #include "include/capi/cef_command_line_capi.h"
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
@@ -41,6 +42,10 @@
 #include "include/capi/cef_resource_handler_capi.h"
 #include "include/capi/cef_scheme_capi.h"
 #include "include/capi/cef_values_capi.h"
+#include "include/capi/views/cef_browser_view_capi.h"
+#include "include/capi/views/cef_browser_view_delegate_capi.h"
+#include "include/capi/views/cef_window_capi.h"
+#include "include/capi/views/cef_window_delegate_capi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -79,6 +84,23 @@ int nd_cef_create_browser(const cef_window_info_t *window_info,
                           cef_dictionary_value_t *extra_info,
                           cef_request_context_t *request_context);
 const char *nd_cef_api_hash(int version, int entry);
+
+/// The Views half, used only under ND_CEF_STYLE=chrome. Chrome style is
+/// unreachable through cef_browser_host_create_browser on macOS: a non-NULL
+/// |parent_view| forces Alloy (include/internal/cef_types_mac.h), so a browser
+/// that needs Chromium's own extension runtime has to be born in a CEF Views
+/// window.
+cef_browser_view_t *nd_cef_browser_view_create(cef_client_t *client,
+                                               const cef_string_t *url,
+                                               const cef_browser_settings_t *settings,
+                                               cef_dictionary_value_t *extra_info,
+                                               cef_request_context_t *request_context,
+                                               cef_browser_view_delegate_t *delegate);
+cef_window_t *nd_cef_window_create_top_level(cef_window_delegate_t *delegate);
+
+/// Numeric IDC value for a command name from cef_command_ids.h, or -1. The
+/// numbers move between Chromium versions; the names do not.
+int nd_cef_command_id(const char *name);
 
 /// CEF_API_VERSION and the platform hash these headers were compiled against.
 /// The loaded framework must agree, or its structs are laid out differently

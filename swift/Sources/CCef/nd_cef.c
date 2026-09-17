@@ -34,6 +34,14 @@ static struct {
   int (*register_scheme_handler_factory)(const cef_string_t *,
                                          const cef_string_t *,
                                          cef_scheme_handler_factory_t *);
+  cef_browser_view_t *(*browser_view_create)(cef_client_t *,
+                                             const cef_string_t *,
+                                             const cef_browser_settings_t *,
+                                             cef_dictionary_value_t *,
+                                             cef_request_context_t *,
+                                             cef_browser_view_delegate_t *);
+  cef_window_t *(*window_create_top_level)(cef_window_delegate_t *);
+  int (*id_for_command_id_name)(const char *);
 } g;
 
 static void *g_handle = NULL;
@@ -89,6 +97,9 @@ int nd_cef_load(const char *framework_binary_path) {
   g.dict_create = bind_symbol("cef_dictionary_value_create");
   g.request_context_create = bind_symbol("cef_request_context_create_context");
   g.register_scheme_handler_factory = bind_symbol("cef_register_scheme_handler_factory");
+  g.browser_view_create = bind_symbol("cef_browser_view_create");
+  g.window_create_top_level = bind_symbol("cef_window_create_top_level");
+  g.id_for_command_id_name = bind_symbol("cef_id_for_command_id_name");
 
   if (!g.api_hash || !g.execute_process || !g.initialize || !g.shutdown ||
       !g.run_message_loop || !g.quit_message_loop || !g.create_browser ||
@@ -147,6 +158,25 @@ int nd_cef_create_browser(const cef_window_info_t *window_info,
 
 const char *nd_cef_api_hash(int version, int entry) {
   return g.api_hash ? g.api_hash(version, entry) : NULL;
+}
+
+cef_browser_view_t *nd_cef_browser_view_create(cef_client_t *client,
+                                               const cef_string_t *url,
+                                               const cef_browser_settings_t *settings,
+                                               cef_dictionary_value_t *extra_info,
+                                               cef_request_context_t *request_context,
+                                               cef_browser_view_delegate_t *delegate) {
+  return g.browser_view_create ? g.browser_view_create(client, url, settings, extra_info,
+                                                       request_context, delegate)
+                               : NULL;
+}
+
+cef_window_t *nd_cef_window_create_top_level(cef_window_delegate_t *delegate) {
+  return g.window_create_top_level ? g.window_create_top_level(delegate) : NULL;
+}
+
+int nd_cef_command_id(const char *name) {
+  return (name && g.id_for_command_id_name) ? g.id_for_command_id_name(name) : -1;
 }
 
 int nd_cef_compiled_api_version(void) {
@@ -257,6 +287,14 @@ static void CEF_CALLBACK app_register_schemes(cef_app_t *self, cef_scheme_regist
   }
 }
 
+static void append_switch(cef_command_line_t *command_line, const char *name) {
+  cef_string_t value = {0};
+  if (nd_cef_string_set(name, strlen(name), &value)) {
+    command_line->append_switch(command_line, &value);
+    nd_cef_string_clear(&value);
+  }
+}
+
 static void CEF_CALLBACK app_command_line(cef_app_t *self,
                                           const cef_string_t *process_type,
                                           cef_command_line_t *command_line) {
@@ -264,10 +302,16 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
   // Browser process only: a child's command line is Chromium's to build.
   int is_browser = process_type == NULL || process_type->length == 0;
   if (is_browser && command_line && command_line->append_switch) {
-    cef_string_t name = {0};
-    if (nd_cef_string_set("disable-popup-blocking", 22, &name)) {
-      command_line->append_switch(command_line, &name);
-      nd_cef_string_clear(&name);
+    append_switch(command_line, "disable-popup-blocking");
+    const char *style = getenv("ND_CEF_STYLE");
+    if (style && strcmp(style, "chrome") == 0) {
+      // Chrome style carries Chrome's own browser UI, and several of its
+      // startup and print surfaces open a top-level window of their own. None
+      // of them has a client callback to answer; the switch is the only hook.
+      append_switch(command_line, "no-first-run");
+      append_switch(command_line, "no-default-browser-check");
+      append_switch(command_line, "disable-session-crashed-bubble");
+      append_switch(command_line, "disable-print-preview");
     }
   }
   nd_cef_ref_release(command_line);

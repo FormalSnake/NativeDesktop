@@ -1,0 +1,439 @@
+#if canImport(CCef)
+import AppKit
+import CCef
+import Foundation
+import ObjectiveC
+
+/// Chrome style embedding for one `<webview>`, opted into with
+/// `ND_CEF_STYLE=chrome`.
+///
+/// Chrome style is what carries Chromium's own extension runtime,
+/// `--load-extension` and `chrome://extensions`. It is unreachable through the
+/// Alloy path this engine otherwise uses: on macOS a non-NULL `parent_view`
+/// forces Alloy ("Alloy style will always be used if |windowless_rendering_
+/// enabled| is true or if |parent_view| is provided",
+/// include/internal/cef_types_mac.h), so the browser has to be born in a CEF
+/// Views window CEF owns.
+///
+/// The window is never the thing the user sees. It is created frameless, with
+/// no Chrome toolbar, so the BrowserView fills it at the origin, and then the
+/// web contents NSView is lifted out of it into the NDCefWebView. Pixels and
+/// input then live in the host's own window and there is no frame tracking to
+/// lag: the web contents is an ordinary autoresizing subview.
+///
+/// The window itself stays alive as an anchor, transparent and click-through,
+/// glued over the webview in screen coordinates. Chromium positions everything
+/// it draws outside the web contents (select popups, autofill, permission and
+/// extension bubbles, Chromium's own context menu) against the widget's screen
+/// bounds, and those come from this window.
+@MainActor final class NDCefChromeWindow {
+    private unowned let view: NDCefWebView
+    private var cefWindow: UnsafeMutablePointer<cef_window_t>?
+    private var browserView: UnsafeMutablePointer<cef_browser_view_t>?
+    private weak var anchor: NSWindow?
+    /// The Chromium subtree now living in `view`, and the superview it came
+    /// from. Chromium re-attaches its own native view host on some layout and
+    /// navigation paths, which puts the subtree back; `relift` is what notices.
+    private weak var lifted: NSView?
+    private var reliftCount = 0
+    private var reliftTimer: Timer?
+    private var observers: [NSObjectProtocol] = []
+    private var closed = false
+
+    init(view: NDCefWebView) {
+        self.view = view
+    }
+
+    /// Separate from `init` because `cef_window_create_top_level` calls
+    /// `on_window_created` before it returns, and that callback resolves back
+    /// through the view, which cannot be holding this object yet.
+    func start(url: String, profile: String) {
+        let box = view.box
+        guard let client = box.client,
+              let browserViewDelegate = box.browserViewDelegate,
+              let windowDelegate = box.windowDelegate else { return }
+
+        var settings = cef_browser_settings_t()
+        settings.size = MemoryLayout<cef_browser_settings_t>.size
+        var target = cef_string_t()
+        ndCefSetString(url, &target)
+        defer { nd_cef_string_clear(&target) }
+
+        // Handed over, same contract as the Alloy create: the library owns
+        // what it is passed and this view keeps its own reference.
+        let context = NDCefProfiles.context(for: profile)
+        nd_cef_ref_add(client)
+        nd_cef_ref_add(context)
+        nd_cef_ref_add(browserViewDelegate)
+        browserView = nd_cef_browser_view_create(
+            client, &target, &settings, nil, context, browserViewDelegate)
+        guard browserView != nil else {
+            ndCefWarn("cef_browser_view_create failed")
+            return
+        }
+        nd_cef_ref_add(windowDelegate)
+        if nd_cef_window_create_top_level(windowDelegate) == nil {
+            ndCefWarn("cef_window_create_top_level failed")
+        }
+    }
+
+    // MARK: - Window
+
+    /// `on_window_created`. The reference on |window| is this object's.
+    func windowCreated(_ window: UnsafeMutablePointer<cef_window_t>) {
+        cefWindow = window
+        let panel = UnsafeMutableRawPointer(window).assumingMemoryBound(to: cef_panel_t.self)
+        // Fill layout plus a frameless window with no Chrome toolbar is what
+        // puts the web contents at the window origin at the window's size, so
+        // the lifted NSView needs no offset of its own.
+        if let layout = panel.pointee.set_to_fill_layout?(panel) {
+            nd_cef_ref_release(UnsafeMutableRawPointer(layout))
+        }
+        if let browserView {
+            let child = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
+            panel.pointee.add_child_view?(panel, child)
+        }
+
+        guard let handle = window.pointee.get_window_handle?(window) else {
+            ndCefWarn("chrome style: the Views window reported no native handle")
+            return
+        }
+        let content = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
+        guard let anchorWindow = content.window else {
+            ndCefWarn("chrome style: the Views window has no NSWindow")
+            return
+        }
+        anchor = anchorWindow
+        anchorWindow.alphaValue = 0
+        anchorWindow.hasShadow = false
+        anchorWindow.ignoresMouseEvents = true
+        anchorWindow.isExcludedFromWindowsMenu = true
+        anchorWindow.animationBehavior = .none
+        anchorWindow.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+        // Chromium's views hierarchy only produces frames for a widget it
+        // believes is showing, so the window is shown for real and made
+        // imperceptible instead of being left hidden.
+        let wasKey = view.window?.isKeyWindow ?? false
+        window.pointee.show?(window)
+        if wasKey { view.window?.makeKey() }
+        syncAnchor()
+        observeGeometry()
+        view.ndTrace("chrome anchored \(anchorWindow.frame) target=\(targetScreenFrame().map(\.debugDescription) ?? "none")")
+        if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
+    }
+
+    /// `on_after_created`, once the browser behind the BrowserView exists.
+    func browserCreated(host browserHost: UnsafeMutablePointer<cef_browser_host_t>) {
+        liftWebContents()
+        if view.isHiddenOrHasHiddenAncestor || view.window == nil {
+            browserHost.pointee.was_hidden?(browserHost, 1)
+        }
+        reliftTimer?.invalidate()
+        // Chromium re-attaches its native view host on paths that have no
+        // client callback (a cross-process navigation swaps the render widget
+        // view, a renderer crash rebuilds it). The poll is what puts the new
+        // subtree back in the host view; `ND_WEBVIEW_TRACE=1` reports how often
+        // it fires.
+        reliftTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.liftWebContents() }
+        }
+    }
+
+    // MARK: - Lifting the web contents
+
+    /// Moves Chromium's whole widget surface into the host view, or puts it
+    /// back after Chromium re-attached it to the anchor.
+    ///
+    /// The lift is the anchor's content view, not the page's own
+    /// WebContentsViewCocoa. Chromium's views are not NSViews: the only NSViews
+    /// under a Views window are the compositor superview and whatever a
+    /// views::NativeViewHost attaches, so the content view is the one node that
+    /// holds all of them. Docked DevTools is a second WebContents in the same
+    /// container, and lifting the container is what brings it along instead of
+    /// leaving it drawing into a window nobody can see.
+    private func liftWebContents() {
+        guard !closed, let anchor else { return }
+        if let lifted {
+            guard lifted.superview !== view else { return }
+            reliftCount += 1
+            view.ndTrace("chrome relift #\(reliftCount)")
+            lifted.removeFromSuperview()
+            lifted.frame = view.bounds
+            view.addSubview(lifted)
+            return
+        }
+        if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
+        guard let content = anchor.contentView else { return }
+        view.ndTrace("chrome lift \(NSStringFromClass(type(of: content)))")
+        lifted = content
+        // AppKit keeps a content view either way, so the anchor is handed an
+        // empty one rather than left pointing at a view in another window.
+        anchor.contentView = NSView(frame: content.frame)
+        content.frame = view.bounds
+        content.autoresizingMask = [.width, .height]
+        view.addSubview(content)
+    }
+
+    // MARK: - Anchor geometry
+
+    /// Called from the host view whenever its screen rectangle or visibility
+    /// can have changed. The anchor carries no pixels, so this only has to be
+    /// correct, not immediate.
+    func hostGeometryChanged() {
+        syncAnchor()
+        liftWebContents()
+    }
+
+    /// The webview's own rectangle in AppKit screen coordinates, or nil when
+    /// the view is not on screen.
+    private func targetScreenFrame() -> NSRect? {
+        guard let host = view.window, !view.isHiddenOrHasHiddenAncestor else { return nil }
+        let rect = host.convertToScreen(view.convert(view.bounds, to: nil))
+        return (rect.width >= 1 && rect.height >= 1) ? rect : nil
+    }
+
+    private func syncAnchor() {
+        guard !closed, let anchor, let cefWindow else { return }
+        guard let host = view.window, let rect = targetScreenFrame() else {
+            if anchor.isVisible { cefWindow.pointee.hide?(cefWindow) }
+            return
+        }
+        if anchor.parent !== host {
+            anchor.parent?.removeChildWindow(anchor)
+            host.addChildWindow(anchor, ordered: .above)
+        }
+        if anchor.frame != rect {
+            anchor.setFrame(rect, display: false)
+            if anchor.frame != rect { view.ndTrace("chrome anchor clamped want=\(rect) got=\(anchor.frame)") }
+        }
+        if !anchor.isVisible { cefWindow.pointee.show?(cefWindow) }
+    }
+
+    /// `ND_CEF_DUMP_VIEWS=1`. Chromium's views are not NSViews, so the only
+    /// NSViews under the anchor are the ones a views::NativeViewHost attaches;
+    /// which of them to lift is a question about this tree.
+    private func dumpViews() {
+        func walk(_ node: NSView, _ depth: Int) {
+            let pad = String(repeating: "  ", count: depth)
+            view.ndTrace("views \(pad)\(NSStringFromClass(type(of: node))) \(node.frame)")
+            for child in node.subviews { walk(child, depth + 1) }
+        }
+        guard let content = anchor?.contentView else { return }
+        walk(content, 0)
+    }
+
+    private func observeGeometry() {
+        let center = NotificationCenter.default
+        let sync: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncAnchor() }
+        }
+        guard let host = view.window else { return }
+        // The anchor is alpha 0 and click-through, so the only thing that can
+        // make it key is Chromium activating its own widget. Key would take the
+        // host window's title bar out of its active look for a window nobody
+        // can see, and the web contents is in the host's responder chain now,
+        // so it needs no key window of its own. Refusing key through the
+        // NSWindow subclass is not an option: Chromium's activation path
+        // segfaults on a window whose canBecomeKeyWindow is NO.
+        if let anchorWindow = anchor {
+            observers.append(
+                center.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification, object: anchorWindow, queue: nil
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self, let host = self.view.window else { return }
+                        host.makeKey()
+                    }
+                })
+        }
+        for name in [
+            NSWindow.didResizeNotification,
+            NSWindow.didMoveNotification,
+            NSWindow.didEndLiveResizeNotification,
+            NSWindow.didEnterFullScreenNotification,
+            NSWindow.didExitFullScreenNotification,
+            NSWindow.didChangeScreenNotification,
+            NSWindow.didDeminiaturizeNotification,
+        ] {
+            observers.append(center.addObserver(forName: name, object: host, queue: nil, using: sync))
+        }
+    }
+
+    // MARK: - Teardown
+
+    /// Ordering matters: the lifted subtree belongs to Chromium's view
+    /// hierarchy, so it goes home before the browser is closed. Closing with
+    /// the subtree still in a foreign window leaves Chromium removing a view
+    /// from a superview it does not expect.
+    func teardown() {
+        guard !closed else { return }
+        closed = true
+        reliftTimer?.invalidate()
+        reliftTimer = nil
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        observers = []
+        if let lifted, let anchor, lifted.superview === view {
+            lifted.removeFromSuperview()
+            anchor.contentView = lifted
+        }
+        lifted = nil
+        if let anchor {
+            anchor.parent?.removeChildWindow(anchor)
+        }
+        anchor = nil
+        if let cefWindow {
+            self.cefWindow = nil
+            cefWindow.pointee.close?(cefWindow)
+            nd_cef_ref_release(cefWindow)
+        }
+        if let browserView {
+            self.browserView = nil
+            nd_cef_ref_release(browserView)
+        }
+    }
+
+}
+
+// MARK: - Delegates
+
+extension NDCefHandlerBox {
+    /// The three capi structs Chrome style adds: a window delegate that pins
+    /// the window to Chrome style and strips its frame, a browser view delegate
+    /// that pins the browser to Chrome style with no toolbar, and the Chrome
+    /// command handler, which is the only hook for the commands Chromium's own
+    /// menus and accelerators would otherwise run.
+    func buildChrome() {
+        windowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
+        browserViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
+        command = ndCefAlloc(cef_command_handler_t.self, self)
+        wireWindowDelegate()
+        wireBrowserViewDelegate()
+        wireCommand()
+    }
+
+    private func wireWindowDelegate() {
+        guard let windowDelegate else { return }
+        windowDelegate.pointee.get_window_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
+        windowDelegate.pointee.is_frameless = { _, window in
+            nd_cef_ref_release(window)
+            return 1
+        }
+        windowDelegate.pointee.with_standard_window_buttons = { _, window in
+            nd_cef_ref_release(window)
+            return 0
+        }
+        windowDelegate.pointee.can_resize = { _, window in
+            nd_cef_ref_release(window)
+            return 0
+        }
+        windowDelegate.pointee.can_maximize = { _, window in
+            nd_cef_ref_release(window)
+            return 0
+        }
+        windowDelegate.pointee.can_minimize = { _, window in
+            nd_cef_ref_release(window)
+            return 0
+        }
+        // Placed where the webview already is, so the anchor never appears at
+        // the screen origin before the first sync.
+        windowDelegate.pointee.get_initial_bounds = { selfPointer, window in
+            nd_cef_ref_release(window)
+            var bounds = cef_rect_t(x: 0, y: 0, width: 800, height: 600)
+            ndCefDeliver(selfPointer) { view in
+                guard let view, let host = view.window else { return }
+                let rect = host.convertToScreen(view.convert(view.bounds, to: nil))
+                guard rect.width >= 1, rect.height >= 1 else { return }
+                bounds = ndCefDipRect(rect)
+            }
+            return bounds
+        }
+        windowDelegate.pointee.on_window_created = { selfPointer, window in
+            guard let window else { return }
+            nd_cef_ref_add(window)
+            let kept = UInt(bitPattern: window)
+            ndCefDeliver(selfPointer) { view in
+                guard let created = UnsafeMutableRawPointer(bitPattern: kept)?
+                    .assumingMemoryBound(to: cef_window_t.self) else { return }
+                if let chrome = view?.chrome {
+                    chrome.windowCreated(created)
+                } else {
+                    nd_cef_ref_release(created)
+                }
+            }
+            nd_cef_ref_release(window)
+        }
+    }
+
+    private func wireBrowserViewDelegate() {
+        guard let browserViewDelegate else { return }
+        browserViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
+        browserViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
+            nd_cef_ref_release(browserView)
+            return CEF_CTT_NONE
+        }
+        // Document picture-in-picture is a Chromium-owned top-level window with
+        // no other way to refuse it.
+        browserViewDelegate.pointee.use_frameless_window_for_picture_in_picture = { _, browserView in
+            nd_cef_ref_release(browserView)
+            return 0
+        }
+        browserViewDelegate.pointee.allow_move_for_picture_in_picture = { _, browserView in
+            nd_cef_ref_release(browserView)
+            return 0
+        }
+        browserViewDelegate.pointee.allow_picture_in_picture_without_user_activation = {
+            _, browserView in
+            nd_cef_ref_release(browserView)
+            return 0
+        }
+    }
+
+    /// Every Chrome command that would open a window of its own, refused. The
+    /// numbers move between Chromium versions, so the set is resolved from
+    /// cef_command_ids.h names at load.
+    private func wireCommand() {
+        guard let command else { return }
+        command.pointee.on_chrome_command = { _, browser, commandID, _ in
+            nd_cef_ref_release(browser)
+            return ndCefBlockedChromeCommands.contains(commandID) ? 1 : 0
+        }
+    }
+}
+
+/// Resolved once: `cef_id_for_command_id_name` answers -1 for a name this
+/// build does not know, which is a name that cannot be triggered either.
+let ndCefBlockedChromeCommands: Set<Int32> = {
+    let names = [
+        "IDC_NEW_WINDOW", "IDC_NEW_INCOGNITO_WINDOW", "IDC_NEW_TAB", "IDC_NEW_TAB_TO_RIGHT",
+        "IDC_RESTORE_TAB", "IDC_MOVE_TAB_TO_NEW_WINDOW", "IDC_WINDOW_CLOSE",
+        "IDC_OPEN_IN_CHROME", "IDC_TASK_MANAGER", "IDC_VIEW_SOURCE",
+        "IDC_DEV_TOOLS", "IDC_DEV_TOOLS_CONSOLE", "IDC_DEV_TOOLS_DEVICES",
+        "IDC_DEV_TOOLS_INSPECT", "IDC_DEV_TOOLS_TOGGLE",
+        "IDC_PRINT", "IDC_BASIC_PRINT", "IDC_SHOW_DOWNLOADS", "IDC_SHOW_HISTORY",
+        "IDC_SHOW_BOOKMARK_MANAGER", "IDC_BOOKMARK_THIS_TAB", "IDC_OPTIONS", "IDC_ABOUT",
+        "IDC_MANAGE_EXTENSIONS", "IDC_CLEAR_BROWSING_DATA", "IDC_FEEDBACK",
+        "IDC_HELP_PAGE_VIA_MENU", "IDC_SHOW_SIGNIN", "IDC_UPGRADE_DIALOG",
+        "IDC_SHOW_APP_MENU", "IDC_WINDOW_MENU_NEW_TAB", "IDC_WINDOW_MENU_NEW_WINDOW",
+        "IDC_WINDOW_MENU_NEW_INCOGNITO_WINDOW",
+    ]
+    var blocked: Set<Int32> = []
+    for name in names {
+        let id = name.withCString { nd_cef_command_id($0) }
+        if id >= 0 { blocked.insert(id) }
+    }
+    return blocked
+}()
+
+/// AppKit screen coordinates to the DIP screen rectangle CEF's Views layer
+/// uses: same unit on this platform, but Chromium's origin is the top-left of
+/// the primary display and AppKit's is its bottom-left.
+func ndCefDipRect(_ rect: NSRect) -> cef_rect_t {
+    let primaryHeight = NSScreen.screens.first?.frame.height ?? rect.maxY
+    return cef_rect_t(
+        x: Int32(rect.minX.rounded()),
+        y: Int32((primaryHeight - rect.maxY).rounded()),
+        width: Int32(max(1, rect.width.rounded())),
+        height: Int32(max(1, rect.height.rounded()))
+    )
+}
+#endif

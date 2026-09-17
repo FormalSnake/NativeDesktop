@@ -26,6 +26,15 @@ enum NDCefRuntime {
         ProcessInfo.processInfo.environment["ND_WEBVIEW_ENGINE"] == "chromium"
     }
 
+    /// `webview.cef.style` in the app config, which `nd dev` re-exports. Chrome
+    /// style is the only style that carries Chromium's extension runtime,
+    /// `--load-extension` and chrome://extensions; it is also the only one that
+    /// cannot be created inside a caller's NSView, which is what
+    /// NDCefChromeWindow.swift exists to work around.
+    static var isChromeStyle: Bool {
+        ProcessInfo.processInfo.environment["ND_CEF_STYLE"] == "chrome"
+    }
+
     /// Whether one view gets the Chromium surface, given its create-only
     /// `engine` prop.
     ///
