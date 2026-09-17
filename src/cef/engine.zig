@@ -2477,8 +2477,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
             // again, and tabbing out of the page never leaves it. It can take
             // nothing, though, and a window with no focus widget at all is
             // worse than one focused on the view.
-            if (gtk.Widget.childFocus(root_widget, if (box.flag) .tab_forward else .tab_backward) == 0) {
-                _ = gtk.Widget.grabFocus(view.widget);
+            _ = gtk.Widget.childFocus(root_widget, if (box.flag) .tab_forward else .tab_backward);
+            // childFocus can report success and leave the window with no focus
+            // widget at all, which is worse than leaving it on the view: a
+            // window with none drops every key.
+            if (gobject.ext.cast(gtk.Window, root)) |window| {
+                if (gtk.Window.getFocus(window) == null) _ = gtk.Widget.grabFocus(view.widget);
             }
         }
         syncBrowserFocus(view);

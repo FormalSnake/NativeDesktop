@@ -301,12 +301,25 @@ interface Metrics {
 const app = await connectApp();
 let page: Session;
 
+/// Reads the fixture through whichever session is current, re-pinning once if
+/// that session is no longer the view on screen. A leg that moved the app's
+/// tabs must fail on its own assertion, not by throwing here.
+async function fixtureEval<T>(expression: string): Promise<T> {
+  try {
+    return JSON.parse(await page.eval<string>(expression)) as T;
+  } catch (error) {
+    await resyncPage();
+    void error;
+    return JSON.parse(await page.eval<string>(expression)) as T;
+  }
+}
+
 async function metrics(): Promise<Metrics> {
-  return JSON.parse(await page.eval<string>("JSON.stringify(nd.metrics())"));
+  return fixtureEval<Metrics>("JSON.stringify(nd.metrics())");
 }
 
 async function rect(id: string): Promise<{ x: number; y: number; w: number; h: number }> {
-  return JSON.parse(await page.eval<string>(`JSON.stringify(nd.rect(${JSON.stringify(id)}))`));
+  return fixtureEval(`JSON.stringify(nd.rect(${JSON.stringify(id)}))`);
 }
 
 /// Page CSS pixels to root-window pixels. The container's origin is already in
@@ -685,32 +698,21 @@ if (hasApp) {
 
 if (hasApp) {
   // An accelerator the app owns, pressed while the page holds the keyboard.
+  // Find in Page rather than New Tab: it proves the same routing and leaves
+  // the tab set alone, so the legs below still have a view to act on.
   const pageAt = await pageToScreen("probe");
   pointerTo(pageAt.x, pageAt.y);
   click(1);
+  await Bun.sleep(900);
+  const findBefore = await app.getByTestId("find-bar").isVisible().catch(() => false);
+  key("ctrl+f");
+  await Bun.sleep(1500);
+  const findAfter = await app.getByTestId("find-bar").isVisible().catch(() => false);
+  check("appShortcutWhilePageFocused", !findBefore && findAfter, `find bar visible ${findBefore} -> ${findAfter}`);
+  key("Escape");
   await Bun.sleep(800);
-  const before = await app.tree();
-  const countTabs = (tree: unknown): number => {
-    let n = 0;
-    const walk = (x: { testID?: string | null; children?: unknown[] }): void => {
-      if (typeof x.testID === "string" && /^tabs-menu-\d+$/.test(x.testID)) n++;
-      for (const child of (x.children ?? []) as never[]) walk(child);
-    };
-    walk((tree as { root: never }).root);
-    return n;
-  };
-  const wasCompact = countTabs(before);
-  key("ctrl+t");
-  await Bun.sleep(2000);
-  const after = await app.tree();
-  const opened = JSON.stringify(after).length !== JSON.stringify(before).length;
-  check("appShortcutWhilePageFocused", opened, `tree changed=${opened} (compact rows before ${wasCompact})`);
-  // ctrl+t leaves a tab with no page in it, and every leg below needs a view
-  // on screen; the app's own close-tab accelerator puts it back.
-  key("ctrl+w");
-  await Bun.sleep(2500);
-  const restored = await settled(8000);
-  check("appShortcutUndone", restored.ok, restored.detail);
+  const s = await settled(6000);
+  check("appShortcutLeftTheViewAlone", s.ok, s.detail);
   noStray("appShortcut");
 } else {
   skip("appShortcutWhilePageFocused", "the app under test has no accelerators");
@@ -729,30 +731,7 @@ await resyncPage();
   noStray("wheelScroll");
 }
 
-if (hasApp) {
-  // Tab past the page's last focusable element: the browser reports it is
-  // giving focus up, and the app's own chrome has to be able to take it.
-  const at = await pageToScreen("probe");
-  pointerTo(at.x, at.y);
-  click(1);
-  await Bun.sleep(800);
-  for (let i = 0; i < 8; i++) {
-    key("Tab");
-    await Bun.sleep(250);
-  }
-  await Bun.sleep(700);
-  const focusedNow = await app.tree();
-  let focusedType = "none";
-  const walk = (n: { type?: string; focused?: boolean; children?: unknown[] }): void => {
-    if (n.focused) focusedType = `${n.type}`;
-    for (const child of (n.children ?? []) as never[]) walk(child);
-  };
-  walk((focusedNow as { root: never }).root);
-  check("tabTraversalLeavesThePage", focusedType !== "none" && focusedType !== "WebView", `GTK focus widget is ${focusedType}`);
-  noStray("tabTraversal");
-} else {
-  skip("tabTraversalLeavesThePage", "the app under test has one widget tree");
-}
+
 
 await resyncPage();
 {
@@ -992,6 +971,49 @@ if (hasApp) {
   const s = await settled(8000);
   check("afterDevToolsLayout", s.ok, s.detail);
   noStray("devTools");
+}
+
+// Last: once focus walks off the page it walks into the app's own chrome, and
+// what it lands on there is the app's business, not something the legs above
+// should have to survive.
+if (hasApp) {
+  // Tab past the page's last focusable element: the browser reports it is
+  // giving focus up, and the app's own chrome has to be able to take it.
+  const at = await pageToScreen("probe");
+  pointerTo(at.x, at.y);
+  click(1);
+  await Bun.sleep(800);
+  for (let i = 0; i < 8; i++) {
+    key("Tab");
+    await Bun.sleep(250);
+  }
+  await Bun.sleep(700);
+  const focusedNow = await app.tree();
+  let focusedType = "none";
+  const walk = (n: { type?: string; focused?: boolean; children?: unknown[] }): void => {
+    if (n.focused) focusedType = `${n.type}`;
+    for (const child of (n.children ?? []) as never[]) walk(child);
+  };
+  walk((focusedNow as { root: never }).root);
+  check("tabTraversalLeavesThePage", focusedType !== "none" && focusedType !== "WebView", `GTK focus widget is ${focusedType}`);
+  // Tab walks through the app's own chrome once it leaves the page, and a
+  // later key can activate whatever it landed on; put the page back in front
+  // before the next leg reads it.
+  key("Escape");
+  await Bun.sleep(400);
+  try {
+    await resyncPage();
+    const back = await pageToScreen("title");
+    pointerTo(back.x, back.y);
+    click(1);
+    await Bun.sleep(800);
+  } catch (error) {
+    // The restore is courtesy, not an assertion: this is the last leg.
+    console.log(`  tabTraversal restore: ${(error as Error).message.slice(0, 80)}`);
+  }
+  noStray("tabTraversal");
+} else {
+  skip("tabTraversalLeavesThePage", "the app under test has one widget tree");
 }
 
 capture(`${shots}/final.png`);
