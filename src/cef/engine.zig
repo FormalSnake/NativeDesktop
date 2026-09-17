@@ -824,6 +824,11 @@ const View = struct {
     /// is re-read. See `onSurfaceLayout`.
     layout_handler: c_ulong = 0,
     layout_surface: ?*gdk.Surface = null,
+    /// The toplevel's `is-active` and `focus-widget` handlers, and the window
+    /// they are on. See `connectActive`.
+    active_handler: c_ulong = 0,
+    focus_widget_handler: c_ulong = 0,
+    active_window: ?*gtk.Window = null,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
 
@@ -1003,6 +1008,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     context_menu_handler.cef.on_context_menu_command = &onContextMenuCommand;
     focus_handler.cef.on_set_focus = &onSetFocus;
     focus_handler.cef.on_take_focus = &onTakeFocus;
+    focus_handler.cef.on_got_focus = &onGotFocus;
     command_handler.cef.on_chrome_command = &onChromeCommand;
     command_handler.cef.is_chrome_app_menu_item_visible = &isChromeAppMenuItemVisible;
     command_handler.cef.is_chrome_page_action_icon_visible = &isChromePageActionIconVisible;
@@ -1030,6 +1036,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     connectLayout(view);
+    connectActive(view);
     syncBounds(view);
     maybeCreateBrowser(view);
     x11.show(view.container);
@@ -1054,6 +1061,69 @@ fn connectLayout(view: *View) void {
         null,
         .{},
     );
+}
+
+/// The embedder half of keyboard focus, and the only half there is.
+///
+/// The browser's own X window can never hold X input focus: a window manager
+/// keeps it on the toplevel, and XWayland refuses to move it off the toplevel
+/// at all. Until the embedder tells the browser its window has the keyboard,
+/// the web contents have no logical focus and every key press is dropped, so
+/// on a real desktop nothing could be typed into a page at all. This is the
+/// same call cefclient's GTK sample makes from RootWindowGtk::WindowFocusIn.
+///
+/// Which of the two halves of the app the keyboard belongs to is GTK's focus
+/// widget: the page holds it while the view is the focused widget (which
+/// `on_got_focus` arranges when the user clicks into the page), the native
+/// chrome holds it otherwise, and the browser is told either way.
+///
+/// Only a mapped view is connected, so a parked background tab never takes the
+/// keyboard from the one on screen.
+fn connectActive(view: *View) void {
+    if (view.active_handler != 0) return;
+    const root = gtk.Widget.getRoot(view.widget) orelse return;
+    const window = gobject.ext.cast(gtk.Window, root) orelse return;
+    view.active_window = window;
+    view.active_handler = gobject.signalConnectData(
+        window.as(gobject.Object),
+        "notify::is-active",
+        @ptrCast(&onToplevelFocusChanged),
+        view,
+        null,
+        .{},
+    );
+    view.focus_widget_handler = gobject.signalConnectData(
+        window.as(gobject.Object),
+        "notify::focus-widget",
+        @ptrCast(&onToplevelFocusChanged),
+        view,
+        null,
+        .{},
+    );
+    syncBrowserFocus(view);
+}
+
+fn disconnectActive(view: *View) void {
+    if (view.active_window) |window| {
+        if (view.active_handler != 0) gobject.signalHandlerDisconnect(window.as(gobject.Object), view.active_handler);
+        if (view.focus_widget_handler != 0) gobject.signalHandlerDisconnect(window.as(gobject.Object), view.focus_widget_handler);
+    }
+    view.active_handler = 0;
+    view.focus_widget_handler = 0;
+    view.active_window = null;
+}
+
+fn onToplevelFocusChanged(_: *gobject.Object, _: *gobject.ParamSpec, data: ?*anyopaque) callconv(.c) void {
+    syncBrowserFocus(@ptrCast(@alignCast(data.?)));
+}
+
+fn syncBrowserFocus(view: *View) void {
+    if (gtk.Widget.getMapped(view.widget) == 0) return;
+    const root = gtk.Widget.getRoot(view.widget) orelse return;
+    const window = gobject.ext.cast(gtk.Window, root) orelse return;
+    const mine = if (gtk.Window.getFocus(window)) |focused| focused == view.widget else false;
+    const host = hostOf(view) orelse return;
+    if (host.set_focus) |set| set(host, @intFromBool(gtk.Window.isActive(window) != 0 and mine));
 }
 
 fn disconnectLayout(view: *View) void {
@@ -1152,6 +1222,7 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     disconnectLayout(view);
+    disconnectActive(view);
     // Parked, not hidden: a background tab whose window is unmapped stops
     // running, and a tab the user comes back to has to still be the page they
     // left. `onMap` puts it back where it belongs.
@@ -1169,6 +1240,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
         view.deferred_timer = 0;
     }
     disconnectLayout(view);
+    disconnectActive(view);
     if (browserOf(view)) |browser| {
         if (browser.get_host) |get_host| {
             const host = get_host(browser);
@@ -2004,6 +2076,7 @@ const Emission = struct {
     /// Chromium tabbed past its last focusable and is handing the keyboard
     /// back; the GTK-side hop returns X input focus to the toplevel.
     take_focus: bool = false,
+    grab_focus: bool = false,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -2085,6 +2158,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         // and Page.enable is idempotent.
         enableDomains(view);
         syncBounds(view);
+        syncBrowserFocus(view);
         tr("settle node={d} pending={?s} created={s}", .{ view.node_id, view.pending_url, view.created_url });
         // Adoption: the address the app last asked for wins over the one the
         // browser happened to be created with.
@@ -2095,6 +2169,16 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
             alloc.free(p);
             view.pending_url = null;
         }
+        return 0;
+    }
+
+    if (box.grab_focus) {
+        // Re-asserted rather than left to the property notification: the
+        // widget can already BE the focus widget (a tab coming back from
+        // hidden brings its own focus with it), and then nothing would tell
+        // the browser that the keyboard is its again.
+        _ = gtk.Widget.grabFocus(view.widget);
+        syncBrowserFocus(view);
         return 0;
     }
 
@@ -5213,6 +5297,14 @@ fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, sou
     defer ref.releaseParam(browser);
     focused_view = FocusObj.of(self).payload;
     return @intFromBool(source == c.FOCUS_SOURCE_NAVIGATION);
+}
+
+/// A click inside the page never reaches GTK: the browser's X window swallows
+/// it. This is the only notice that the user moved the keyboard from the app's
+/// native chrome to the page, so it is what moves GTK's focus widget to match.
+fn onGotFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    post(.{ .view = FocusObj.of(self).payload, .name = "", .grab_focus = true });
 }
 
 fn onTakeFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, next: c_int) callconv(.c) void {
