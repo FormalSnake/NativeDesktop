@@ -91,6 +91,75 @@ export async function surfaces(app: AttachedApp): Promise<CensusWindow[]> {
   return windows.filter((w) => w.alpha > 0 && w.layer >= 0 && !frames.some((f) => coversWindow(f, w)));
 }
 
+/// The engine's context menu as the window server sees it. Deliberately census
+/// only: an NSMenu blocks the host's main thread for as long as it is tracking,
+/// so every check taken while one is open has to stay out of the automation
+/// socket, which cannot answer until the menu closes.
+export async function menuWindows(): Promise<CensusWindow[]> {
+  return (await census()).filter((w) => w.alpha > 0 && w.layer >= 100);
+}
+
+export interface ShownMenuItem {
+  depth: number;
+  index: number;
+  id: number;
+  kind: string;
+  enabled: boolean;
+  checked: boolean;
+  label: string;
+}
+
+/// What the host drew for the most recent menu, read off its own trace. AppKit
+/// publishes no accessibility element for a contextual menu, so this is the only
+/// handle on the items; the peer of the Linux gate's `ND_CEF menuShown`.
+export function shownMenu(): ShownMenuItem[] {
+  const path = process.env.ND_APP_HOST_LOG;
+  if (!path) return [];
+  const text = Bun.spawnSync(["rg", "-N", "chrome menuShown ", path]).stdout.toString();
+  const lines = text.split("\n").filter((line) => line.includes("chrome menuShown "));
+  // One open menu is traced as a run of lines; the last run is the live one,
+  // which starts at the last depth=0 index=0.
+  const start = lines.findLastIndex((line) => line.includes("depth=0 index=0 "));
+  return (start < 0 ? lines : lines.slice(start)).map((line) => {
+    const fields = /depth=(\d+) index=(\d+) id=(-?\d+) kind=(\w+) enabled=(\d) checked=(\d) label=(.*)$/.exec(line)!;
+    return {
+      depth: Number(fields[1]),
+      index: Number(fields[2]),
+      id: Number(fields[3]),
+      kind: fields[4]!,
+      enabled: fields[5] === "1",
+      checked: fields[6] === "1",
+      label: fields[7]!,
+    };
+  });
+}
+
+/// Real key events through the window server, which is what an NSMenu's own
+/// tracking loop reads. An NSEvent posted into the app's queue is not.
+export function systemKey(code: number, times = 1): void {
+  for (let i = 0; i < times; i++) {
+    const run = Bun.spawnSync(["osascript", "-e", `tell application "System Events" to key code ${code}`]);
+    if (run.exitCode !== 0) throw new LegFailure(`key code ${code} failed: ${run.stderr.toString().trim()}`);
+  }
+}
+
+export const KEY_DOWN_ARROW = 125;
+export const KEY_RIGHT_ARROW = 124;
+export const KEY_RETURN = 36;
+export const KEY_ESCAPE = 53;
+
+/// How many Down presses reach `label` from the top of the open menu. NSMenu
+/// navigation skips separators and disabled items, so the count is over what it
+/// would actually stop on.
+export function menuStopsTo(items: ShownMenuItem[], label: string): number {
+  const top = items.filter((item) => item.depth === 0);
+  const target = top.findIndex((item) => item.label.toLowerCase() === label.toLowerCase());
+  if (target < 0) {
+    throw new LegFailure(`the menu has no "${label}" (${top.map((i) => i.label).join(" | ")})`);
+  }
+  return top.slice(0, target + 1).filter((item) => item.kind !== "separator" && item.enabled).length;
+}
+
 export async function anchors(): Promise<CensusWindow[]> {
   return (await census()).filter((w) => w.alpha === 0);
 }
@@ -103,6 +172,41 @@ export async function appWindowRect(): Promise<CensusWindow> {
     .sort((a, b) => b.width * b.height - a.width * a.height);
   assert(visible.length > 0, "the app has no on-screen window");
   return visible[0]!;
+}
+
+/// Brings the host forward. A click the window server routes goes to whatever
+/// window is topmost under the cursor, so every real-pointer leg needs the app
+/// in front first; the machine this runs on has other windows on it.
+export function activateApp(): void {
+  Bun.spawnSync([
+    "osascript", "-e",
+    `tell application "System Events" to set frontmost of (first process whose unix id is ${HOST_PID}) to true`,
+  ]);
+}
+
+/// Foreign windows sitting in front of the app's own at one point, front first.
+/// A real click lands on the first of these rather than on the app, and a leg
+/// that never sees its click has to name that instead of blaming the feature.
+export function obstructions(x: number, y: number): string[] {
+  const run = Bun.spawnSync(
+    ["swift", "scripts/mac/window-stack.swift", String(Math.round(x)), String(Math.round(y))],
+    { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
+  );
+  const stack = run.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as { owner: string; pid: number; layer: number });
+  const ours = stack.findIndex((w) => w.pid === HOST_PID);
+  if (ours < 0) return stack.map((w) => `${w.owner}(layer ${w.layer})`);
+  // The window server's own cursor and shield windows sit at the extreme
+  // layers and take no clicks, and Notification Center's full-screen backdrop
+  // is always in front and always click-through. What is left is the ordinary,
+  // floating and modal-panel layers, which do take one.
+  return stack
+    .slice(0, ours)
+    .filter((w) => w.pid !== HOST_PID && w.layer >= 0 && w.layer <= 101 && w.owner !== "Notification Center")
+    .map((w) => `${w.owner}(layer ${w.layer})`);
 }
 
 /// The host process still being there. A tracking area whose owner does not

@@ -18,23 +18,34 @@ import {
   FIXTURE_ORIGIN,
   FIXTURE_PORT,
   HOST_PID,
+  KEY_DOWN_ARROW,
+  KEY_ESCAPE,
+  KEY_RETURN,
+  KEY_RIGHT_ARROW,
   LegFailure,
   SHOTS,
+  activateApp,
   anchors,
   appWindowRect,
   assert,
+  obstructions,
   capture,
   census,
   hostAlive,
   surfaces,
   censusHolds,
   colourDistance,
+  menuStopsTo,
+  menuWindows,
   pageEval,
   pageNumber,
   probePng,
+  shownMenu,
   startFixtureServer,
+  systemKey,
   until,
   type Leg,
+  type ShownMenuItem,
 } from "./app-chrome-lib.ts";
 
 const app = await connectApp();
@@ -146,6 +157,14 @@ function osaWindow(script: string): string {
 /// right-click handling, which an NSEvent posted with `NSApp.postEvent` never
 /// reaches, so those legs need the real thing.
 function realPointer(x: number, y: number, mode: "left" | "right" | "move"): void {
+  // The window server routes by cursor, so the app has to be the window under
+  // it; this machine has other windows, and one in front takes the click.
+  activateApp();
+  const blocked = obstructions(x, y);
+  assert(
+    blocked.length === 0,
+    `a window in front of the app covers ${Math.round(x)},${Math.round(y)}: ${blocked.join(" ")}`,
+  );
   const run = Bun.spawnSync(
     ["swift", "scripts/mac/mac-click.swift", String(x), String(y), mode],
     { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
@@ -284,22 +303,40 @@ async function captureViewRect(name: string, testId: string) {
 }
 
 
-/// The app puts Inspect Element last in the page context menu, and Chromium's
-/// own accelerators for the inspector are refused by the command handler, so
-/// this is the only way in. The menu is Chromium's, drawn by Views: nothing in
-/// the automation tree can read it, so it is driven by arrow keys, with "up
-/// from the top" landing on the last item whatever Chromium put above it.
-async function openInspector(page: string): Promise<void> {
+/// Opens the engine's context menu over the page and leaves it tracking. The
+/// menu blocks the host's main thread for as long as it is up, so everything
+/// between this and the pick has to stay off the automation socket.
+async function openPageMenu(page: string, atY?: number): Promise<ShownMenuItem[]> {
   const box = await viewBox(page);
-  const spot = await globalPoint(page, box.width / 2, box.height - 60);
+  const spot = await globalPoint(page, box.width / 2, atY ?? box.height / 2);
   realPointer(spot.x, spot.y, "right");
   await until(
     "the context menu opens",
-    async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
-    (n) => n > 0,
+    menuWindows,
+    (windows) => windows.length > 0,
     15000,
   );
-  osaProcess('click menu item "Inspect Element" of menu 1 of window 1');
+  const items = shownMenu();
+  assert(items.length > 0, "the host drew a menu window but reported no items");
+  return items;
+}
+
+/// Picks one top-level item of the open menu with real key events. AppKit
+/// publishes no accessibility element for a contextual menu, so the keyboard is
+/// the only way in, exactly as on the Linux gate.
+async function pickMenuItem(items: ShownMenuItem[], label: string): Promise<void> {
+  systemKey(KEY_DOWN_ARROW, menuStopsTo(items, label));
+  systemKey(KEY_RETURN);
+  await until("the menu closes", menuWindows, (windows) => windows.length === 0, 10000);
+}
+
+/// The app puts Inspect Element in the page context menu, and Chromium's own
+/// accelerators for the inspector are refused by the command handler, so this is
+/// the only way in.
+async function openInspector(page: string): Promise<void> {
+  const box = await viewBox(page);
+  const items = await openPageMenu(page, box.height - 60);
+  await pickMenuItem(items, "Inspect Element");
 }
 
 /// The same item again: `openDevTools` toggles, and the Chrome command handler
@@ -970,40 +1007,86 @@ const legs: Leg[] = [
     },
   },
   {
+    name: "contextMenuOnAPage",
+    run: async () => {
+      // Chromium's own page menu, drawn by the host. What has to be there is
+      // what Chrome offers for a click on nothing in particular, and what has
+      // to be gone is every command the engine refuses.
+      const page = await activePage();
+      const items = await openPageMenu(page);
+      const labels = items.filter((i) => i.depth === 0).map((i) => i.label.toLowerCase());
+      systemKey(KEY_ESCAPE);
+      await until("the menu closes", menuWindows, (windows) => windows.length === 0, 10000);
+      for (const wanted of ["back", "forward", "reload"]) {
+        assert(labels.some((l) => l.startsWith(wanted)), `the page menu has no "${wanted}" (${labels.join(" | ")})`);
+      }
+      for (const refused of ["view page source", "print", "cast", "create qr code"]) {
+        assert(!labels.some((l) => l.includes(refused)), `the page menu still offers "${refused}"`);
+      }
+      // Escape answers the callback, and a page that never got its answer
+      // cannot open a second menu.
+      const again = await openPageMenu(page);
+      assert(again.length > 0, "a second right-click drew no menu, so the first was never answered");
+      systemKey(KEY_ESCAPE);
+      await until("the second menu closes", menuWindows, (windows) => windows.length === 0, 10000);
+    },
+  },
+  {
+    name: "contextMenuOnALinkImageSelectionAndEditable",
+    run: async () => {
+      const page = await activePage();
+      const box = await viewBox(page);
+      async function menuOver(selector: string, what: string, expected: string[]): Promise<void> {
+        const rect = JSON.parse(
+          (await pageEval(app, page, `JSON.stringify(document.querySelector('${selector}').getBoundingClientRect())`)) ??
+            "{}",
+        );
+        const spot = await globalPoint(page, rect.x + rect.width / 2, rect.y + rect.height / 2);
+        realPointer(spot.x, spot.y, "right");
+        await until(`the ${what} menu opens`, menuWindows, (windows) => windows.length > 0, 15000);
+        const labels = shownMenu().filter((i) => i.depth === 0).map((i) => i.label.toLowerCase());
+        systemKey(KEY_ESCAPE);
+        await until(`the ${what} menu closes`, menuWindows, (windows) => windows.length === 0, 10000);
+        for (const wanted of expected) {
+          assert(labels.some((l) => l.includes(wanted)), `the ${what} menu has no "${wanted}" (${labels.join(" | ")})`);
+        }
+      }
+      void box;
+      await menuOver("#blank", "link", ["open link in new tab", "copy link address"]);
+      await menuOver("#logo", "image", ["copy image", "save image as"]);
+      await pageEval(app, page, "const r=document.createRange();r.selectNodeContents(document.getElementById('prose'));getSelection().removeAllRanges();getSelection().addRange(r);1");
+      await menuOver("#prose", "selection", ["copy"]);
+      await menuOver("#text", "editable", ["paste"]);
+    },
+  },
+  {
     name: "contextMenuWithExtensionItem",
     run: async () => {
       const page = await activePage();
       await pageEval(app, page, "delete document.documentElement.dataset.ndMenu");
-      const box = await viewBox(page);
-      const spot = await globalPoint(page, box.width / 2, box.height / 2);
-      realPointer(spot.x, spot.y, "right");
-      await until(
-        "a context menu surface is on screen",
-        async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
-        (n) => n > 0,
-        15000,
+      const items = await openPageMenu(page);
+      const labels = items.filter((i) => i.depth === 0).map((i) => i.label.toLowerCase());
+      // The app's own "Inspect Element" and the extension's chrome.contextMenus
+      // entry, with its submenu, both have to be in the menu the user sees.
+      assert(labels.includes("inspect element"), `the app's items are not in the menu (${labels.join(" | ")})`);
+      assert(labels.includes("nd probe item"), `the extension's item is not in the menu (${labels.join(" | ")})`);
+      // The extension declares a child under its item, so Chromium renders it
+      // as a submenu and the handler only fires for the child.
+      const submenu = items.filter((i) => i.depth > 0).map((i) => i.label);
+      assert(
+        submenu.includes("ND probe child"),
+        `the extension's submenu is not in the menu (${submenu.join(" | ") || "nothing nested"})`,
       );
-      const shot = capture("context-menu", (await appWindowRect()).number);
-      assert(probePng(shot).width > 0, "the context menu capture is empty");
-      // Chromium draws the menu with Views, so nothing in the automation tree
-      // can read it; its accessibility tree is the only handle on the items,
-      // and the app's own "Inspect Element" plus the extension's
-      // chrome.contextMenus entry have to be in it.
-      const names = osaProcess('get name of every menu item of menu 1 of window 1').toLowerCase();
-      assert(names.includes("inspect element"), `the app's items are not in the menu (${names})`);
-      assert(names.includes("nd probe item"), `the extension's item is not in the menu (${names})`);
-      osaProcess('click menu item "ND probe item" of menu 1 of window 1');
+      systemKey(KEY_DOWN_ARROW, menuStopsTo(items, "ND probe item"));
+      systemKey(KEY_RIGHT_ARROW);
+      systemKey(KEY_DOWN_ARROW);
+      systemKey(KEY_RETURN);
+      await until("the menu closes", menuWindows, (windows) => windows.length === 0, 10000);
       await until(
         "the extension's handler runs for its own item",
         () => pageEval(app, page, "document.documentElement.dataset.ndMenu ?? ''"),
-        (v) => v === "nd-probe",
+        (v) => v === "nd-probe-sub",
         15000,
-      );
-      await until(
-        "the menu closes",
-        async () => (await surfaces(app)).filter((w) => w.alpha > 0 && w.height > 60).length,
-        (n) => n === 0,
-        8000,
       );
       await censusHolds(app, "contextMenu");
     },
@@ -1152,10 +1235,19 @@ const legs: Leg[] = [
       );
       void docked;
       await app.setWindowSize(1140, 860);
+      // The dock is a split INSIDE the webview rectangle, so what the page gets
+      // back is the view's own width, not the window's: the app's sidebar is
+      // between the two.
+      const full = (await until(
+        "the view follows the window",
+        async () => (await viewBox(page)).width,
+        (w) => w > 200,
+        15000,
+      )) as number;
       await until(
         "the dock survives a resize",
         () => pageNumber(app, page, "innerWidth"),
-        (w) => w > 0 && w < 1140 - 40,
+        (w) => w > 0 && w < full - 40,
         20000,
       );
       await pointerSweep(page, "with the dock open", 2);
@@ -1163,21 +1255,21 @@ const legs: Leg[] = [
       await until(
         "closing the dock gives the viewport back",
         () => pageNumber(app, page, "innerWidth"),
-        (w) => w > 1140 - 80,
+        (w) => Math.abs(w - full) <= 6,
         20000,
       );
       await openInspector(page);
       await until(
         "the dock reopens",
         () => pageNumber(app, page, "innerWidth"),
-        (w) => w < 1140 - 80,
+        (w) => w < full - 40,
         25000,
       );
       await closeInspector(page);
       await until(
         "the dock closes again",
         () => pageNumber(app, page, "innerWidth"),
-        (w) => w > 1140 - 80,
+        (w) => Math.abs(w - full) <= 6,
         20000,
       );
       await pointerSweep(page, "after the dock closed", 2);

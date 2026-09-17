@@ -23,6 +23,8 @@
         <option value="c">charlie</option>
       </select>
       <span id="tip" title="nd tooltip">hover me</span>
+      <img id="logo" width="24" height="24" alt="nd"
+        src="data:image/gif;base64,R0lGODlhEAAQAIAAAP8AAAAAACH5BAAAAAAALAAAAAAQABAAAAIdhI+py+0Po5y02ouz3rz7D4biSJbmiabqyrbuWwAAOw==" />
       <a id="blank" href="/page2.html" target="_blank">blank</a>
       <button id="openwin">openwin</button>
       <button id="alert">alert</button>
@@ -51,6 +53,9 @@
       };
       report();
       addEventListener("resize", report);
+
+      window.__ndContextMenus = 0;
+      addEventListener("contextmenu", () => window.__ndContextMenus++);
 
       window.__ndResizes = 0;
       addEventListener("resize", () => window.__ndResizes++);

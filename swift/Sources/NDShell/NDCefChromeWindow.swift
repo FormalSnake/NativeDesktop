@@ -660,29 +660,30 @@ extension NDCefHandlerBox {
     }
 }
 
-/// Resolved once: `cef_id_for_command_id_name` answers -1 for a name this
-/// build does not know, which is a name that cannot be triggered either.
-let ndCefBlockedChromeCommands: Set<Int32> = {
-    let names = [
-        "IDC_NEW_WINDOW", "IDC_NEW_INCOGNITO_WINDOW", "IDC_NEW_TAB", "IDC_NEW_TAB_TO_RIGHT",
-        "IDC_RESTORE_TAB", "IDC_MOVE_TAB_TO_NEW_WINDOW", "IDC_WINDOW_CLOSE",
-        "IDC_OPEN_IN_CHROME", "IDC_TASK_MANAGER", "IDC_VIEW_SOURCE",
-        "IDC_DEV_TOOLS", "IDC_DEV_TOOLS_CONSOLE", "IDC_DEV_TOOLS_DEVICES",
-        "IDC_DEV_TOOLS_INSPECT", "IDC_DEV_TOOLS_TOGGLE",
-        "IDC_PRINT", "IDC_BASIC_PRINT", "IDC_SHOW_DOWNLOADS", "IDC_SHOW_HISTORY",
-        "IDC_SHOW_BOOKMARK_MANAGER", "IDC_BOOKMARK_THIS_TAB", "IDC_OPTIONS", "IDC_ABOUT",
-        "IDC_MANAGE_EXTENSIONS", "IDC_CLEAR_BROWSING_DATA", "IDC_FEEDBACK",
-        "IDC_HELP_PAGE_VIA_MENU", "IDC_SHOW_SIGNIN", "IDC_UPGRADE_DIALOG",
-        "IDC_SHOW_APP_MENU", "IDC_WINDOW_MENU_NEW_TAB", "IDC_WINDOW_MENU_NEW_WINDOW",
-        "IDC_WINDOW_MENU_NEW_INCOGNITO_WINDOW",
-    ]
-    var blocked: Set<Int32> = []
-    for name in names {
-        let id = name.withCString { nd_cef_command_id($0) }
-        if id >= 0 { blocked.insert(id) }
-    }
-    return blocked
-}()
+/// Every Chrome command that would open a window of its own, or answer with a
+/// bubble anchored to browser chrome this engine does not have. The context menu
+/// drops every item carrying one of these (`ndCefMenuItemDenied`), except the
+/// open-link ones, which are rerouted to the app's `newWindow`.
+let ndCefBlockedChromeCommands: Set<Int32> = ndCefCommandIDs([
+    "IDC_NEW_WINDOW", "IDC_NEW_INCOGNITO_WINDOW", "IDC_NEW_TAB", "IDC_NEW_TAB_TO_RIGHT",
+    "IDC_RESTORE_TAB", "IDC_MOVE_TAB_TO_NEW_WINDOW", "IDC_WINDOW_CLOSE",
+    "IDC_OPEN_IN_CHROME", "IDC_TASK_MANAGER", "IDC_VIEW_SOURCE",
+    "IDC_DEV_TOOLS", "IDC_DEV_TOOLS_CONSOLE", "IDC_DEV_TOOLS_DEVICES",
+    "IDC_DEV_TOOLS_INSPECT", "IDC_DEV_TOOLS_TOGGLE",
+    "IDC_PRINT", "IDC_BASIC_PRINT", "IDC_SHOW_DOWNLOADS", "IDC_SHOW_HISTORY",
+    "IDC_SHOW_BOOKMARK_MANAGER", "IDC_BOOKMARK_THIS_TAB", "IDC_OPTIONS", "IDC_ABOUT",
+    "IDC_MANAGE_EXTENSIONS", "IDC_CLEAR_BROWSING_DATA", "IDC_FEEDBACK",
+    "IDC_HELP_PAGE_VIA_MENU", "IDC_SHOW_SIGNIN", "IDC_UPGRADE_DIALOG",
+    "IDC_SHOW_APP_MENU", "IDC_WINDOW_MENU_NEW_TAB", "IDC_WINDOW_MENU_NEW_WINDOW",
+    "IDC_WINDOW_MENU_NEW_INCOGNITO_WINDOW", "IDC_OPEN_FILE",
+    "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB", "IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW",
+    "IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD", "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE",
+    "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP", "IDC_CONTENT_CONTEXT_OPENIMAGENEWTAB",
+    "IDC_CONTENT_CONTEXT_OPENAVNEWTAB", "IDC_CONTENT_CONTEXT_PICTUREINPICTURE",
+    "IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE", "IDC_CONTENT_CONTEXT_VIEWPAGESOURCE",
+    "IDC_CONTENT_CONTEXT_PRINT", "IDC_ROUTE_MEDIA", "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
+    "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE", "IDC_CONTENT_CONTEXT_TRANSLATE",
+])
 
 /// The size one of the window's two BrowserViews asks the box layout for.
 private func ndCefPreferredSize(

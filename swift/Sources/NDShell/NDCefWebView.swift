@@ -93,6 +93,11 @@ final class NDCefWebView: NSView {
     /// can collide with Chromium's own commands.
     var contextMenuCommands: [Int32: NDContextMenuItem] = [:]
     var nextContextMenuCommand: Int32 = 26500
+    /// The menu this view is showing, and the link the click that raised it
+    /// landed on. Chrome's "open link in …" items are answered with the app's
+    /// `newWindow`, and this is the only place that URL is still in hand.
+    private var menuRun: NDCefContextMenuRun?
+    private var menuLinkURL = ""
     /// Newest `Page.captureScreenshot` PNG, kept because the automation
     /// snapshot ladder is synchronous and Chromium's content lives in a remote
     /// layer that AppKit's own render paths cannot draw.
@@ -131,6 +136,7 @@ final class NDCefWebView: NSView {
     /// CEF unwinding the inspected browser first, which is the
     /// `CefBrowserInfo::RemoveFrame` fault.
     @MainActor func releaseEngine() {
+        cancelContextMenu()
         closeDevToolsForShutdown()
         chrome?.teardown()
         guard let browser else {
@@ -519,6 +525,50 @@ final class NDCefWebView: NSView {
         }
     }
 
+    // MARK: - Context menu
+
+    /// Builds and pops up the NSMenu for Chromium's model. `point` is in the
+    /// page's own CSS pixels from the top-left of the web contents, which is
+    /// this view's rectangle; AppKit measures from the bottom.
+    @MainActor func showContextMenu(model: UInt, callback: UInt, at point: NSPoint, link: String) -> Bool {
+        guard let modelPointer = UnsafeMutableRawPointer(bitPattern: model)?
+            .assumingMemoryBound(to: cef_menu_model_t.self),
+            let callback = UnsafeMutableRawPointer(bitPattern: callback)?
+                .assumingMemoryBound(to: cef_run_context_menu_callback_t.self) else { return false }
+        cancelContextMenu()
+        menuLinkURL = link
+        let entries = ndCefCopyMenuModel(modelPointer)
+        guard let run = NDCefContextMenuRun(entries: entries, callback: callback, view: self) else { return false }
+        menuRun = run
+        let spot = NSPoint(x: point.x, y: isFlipped ? point.y : bounds.height - point.y)
+        ndTrace("chrome menu items=\(entries.count) at=\(Int(spot.x)),\(Int(spot.y))")
+        run.trace(entries)
+        run.present(at: spot)
+        return true
+    }
+
+    /// Dismisses a menu nobody answered: the view is going away, the page
+    /// navigated, or the host is quitting.
+    @MainActor func cancelContextMenu() {
+        guard let run = menuRun else { return }
+        menuRun = nil
+        run.cancel()
+    }
+
+    @MainActor func forgetContextMenu(_ run: NDCefContextMenuRun) {
+        if menuRun === run { menuRun = nil }
+    }
+
+    /// Chrome's own "open link in …" items run before `cef_command_handler_t`
+    /// sees them, and they are answered with a browser window of its own, so the
+    /// reroute to the app happens here and the command deny list is only the
+    /// backstop.
+    @MainActor func ndRerouteOpenLink(_ commandID: Int32) -> Bool {
+        guard !menuLinkURL.isEmpty, ndCefOpenLinkCommands.contains(commandID) else { return false }
+        emitText("newWindow", menuLinkURL)
+        return true
+    }
+
     /// CEF zoom is a log scale around 1.0; the widget's factor is linear.
     private func setZoom(_ factor: Double) {
         guard factor > 0, let browserHost = browserHost() else { return }
@@ -629,6 +679,8 @@ final class NDCefWebView: NSView {
         // so the app is free to ask for its own again later.
         if value != requestedURL { requestedURL = "" }
         committedURL = value
+        // A menu still up belongs to the page that has just been replaced.
+        cancelContextMenu()
         emitText("navigate", value)
     }
 
@@ -1103,18 +1155,57 @@ final class NDCefHandlerBox {
         // "suppress" mode answers the menu itself and shows nothing, so the
         // app's `contextMenu` event is the only outcome. "native" keeps
         // Chromium's menu and appends the app's matching items.
-        contextMenu.pointee.run_context_menu = { selfPointer, browser, frame, _, model, callback in
+        // Chrome style draws the menu itself (NDCefContextMenu.swift): the
+        // browser's widget is laid out against the anchor window, so the Views
+        // menu Chromium would raise never sees a click the window server routed
+        // to the host's own window. Alloy keeps CEF's menu runner, which builds
+        // an NSMenu on the browser's own view and works as it stands.
+        contextMenu.pointee.run_context_menu = { selfPointer, browser, frame, params, model, callback in
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
-            nd_cef_ref_release(model)
-            let suppress = ndCefBox(selfPointer)?.view?.suppressContextMenu ?? false
-            if suppress {
-                callback?.pointee.cancel?(callback)
-                nd_cef_ref_release(callback)
-                return 1
+            var point = NSPoint.zero
+            var link = ""
+            if let params {
+                point = NSPoint(
+                    x: CGFloat(params.pointee.get_xcoord?(params) ?? 0),
+                    y: CGFloat(params.pointee.get_ycoord?(params) ?? 0))
+                if let raw = params.pointee.get_link_url?(params) {
+                    link = ndCefString(raw)
+                    nd_cef_string_free(raw)
+                }
             }
-            nd_cef_ref_release(callback)
-            return 0
+            nd_cef_ref_release(params)
+            let suppress = ndCefBox(selfPointer)?.view?.suppressContextMenu ?? false
+            if suppress || !NDCefRuntime.isChromeStyle {
+                nd_cef_ref_release(model)
+                if suppress {
+                    callback?.pointee.cancel?(callback)
+                    nd_cef_ref_release(callback)
+                    return 1
+                }
+                nd_cef_ref_release(callback)
+                return 0
+            }
+            guard let model, let callback else {
+                nd_cef_ref_release(model)
+                nd_cef_ref_release(callback)
+                return 0
+            }
+            // The model is only valid while this call is on the stack, so the
+            // copy has to finish here. Both pointers cross the isolation
+            // boundary as bit patterns, the same way every other one here does.
+            let modelToken = UInt(bitPattern: model)
+            let callbackToken = UInt(bitPattern: callback)
+            var shown: Int32 = 0
+            ndCefDeliver(selfPointer) { view in
+                // The callback's own reference is what the run keeps and gives
+                // back when it answers.
+                shown = view?.showContextMenu(
+                    model: modelToken, callback: callbackToken, at: point, link: link) == true ? 1 : 0
+            }
+            nd_cef_ref_release(model)
+            if shown == 0 { nd_cef_ref_release(callback) }
+            return shown
         }
         // The model is only valid while this call is on the stack: CEF shows
         // the menu the moment it returns, so population has to finish here.
@@ -1145,7 +1236,8 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(params)
             var handled: Int32 = 0
             ndCefDeliver(selfPointer) { view in
-                handled = (view?.ndContextMenuCommand(commandID) ?? false) ? 1 : 0
+                guard let view else { return }
+                handled = (view.ndRerouteOpenLink(commandID) || view.ndContextMenuCommand(commandID)) ? 1 : 0
             }
             return handled
         }
