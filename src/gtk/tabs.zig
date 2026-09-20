@@ -37,6 +37,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ndbasecss = @import("basecss.zig");
+const nddecoration = @import("decoration.zig");
 const ndwebview = @import("webview.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
@@ -172,6 +173,7 @@ pub fn createWindow(
     dupeZ: *const fn ([]const u8) [:0]const u8,
 ) !*gtk.Widget {
     ndbasecss.ensureBaseCss(); // display is live here; badge/size/density classes need it
+    nddecoration.ensureLayoutFromPortal();
     const as_sheet = if (presentation) |p| std.mem.eql(u8, p, "sheet") else false;
     const group_name = tab_group orelse {
         const window = adw.ApplicationWindow.new(app);

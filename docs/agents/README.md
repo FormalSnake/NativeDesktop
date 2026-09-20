@@ -55,6 +55,7 @@ grep for in the host's stderr (all `ND_*` markers print to stderr; capture `2>&1
 | `ND_GC_SWEEP gen=… removed=…` | generation GC swept orphaned widgets after a reload | landed |
 | `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported a fatal error before dying | landed |
 | `ND_RUNTIME_ERROR_NONFATAL …` | the runtime reported a survived error; the app keeps running | landed |
+| `ND_DECORATION_LAYOUT source=… value=…` | which source answered for the window-button layout (`display` = the GDK backend's own, `portal` = the settings portal read on x11 where XSettings had none, `builtin` = GTK's compiled-in default) | landed |
 
 `NDP_TRACE=1` (env var on the host) enables verbose per-frame NDP tracing, useful when a
 commit isn't showing up as expected.

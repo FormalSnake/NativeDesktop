@@ -180,6 +180,19 @@ pub fn build(b: *std.Build) void {
     const style_tests = b.addTest(.{ .root_module = style_tests_mod });
     test_step.dependOn(&b.addRunArtifact(style_tests).step);
 
+    // Same rule as style.zig above: decoration.zig's token rewrite needs its
+    // own root or `zig build test` never sees it. Nothing under src/generated/
+    // imports it, so it takes gtk_imports unchanged.
+    const decoration_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/gtk/decoration.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &gtk_imports,
+    });
+    linkTerminalDeps(decoration_tests_mod, ghostty_vt_lib, target);
+    const decoration_tests = b.addTest(.{ .root_module = decoration_tests_mod });
+    test_step.dependOn(&b.addRunArtifact(decoration_tests).step);
+
     // `@embedFile` cannot cross a module's package-path boundary (the directory
     // of its root_source_file), so schema/widgets.json — a sibling of src/, not
     // a descendant — can't be embedded directly from src/conformance.zig. Read
