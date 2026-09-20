@@ -38,10 +38,13 @@ ensure_ndshot() {
 }
 
 HOST_PID=""
+# Every line guarded: the trap runs under `set -e`, so a test that is merely
+# false (no host left to kill, no helper left to sweep) aborts the trap there
+# and that status becomes the script's own. The gate then reports a failure
+# after printing its OK marker.
 cleanup() {
-  [ -n "${HOST_PID:-}" ] && kill -9 "$HOST_PID" 2>/dev/null
-  pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null
-  true
+  if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi
+  pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null || true
 }
 trap cleanup EXIT
 

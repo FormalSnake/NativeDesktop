@@ -65,12 +65,15 @@ ensure_ndshot() {
 }
 
 HOST_PID=""
+# Every line guarded: the trap runs under `set -e`, so a test that is merely
+# false (no host left to kill) aborts the trap there and that status becomes
+# the script's own. The gate then reports a failure after printing its OK
+# marker.
 cleanup() {
-  [ -n "${HOST_PID:-}" ] && kill -9 "$HOST_PID" 2>/dev/null
+  if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi
   # Chromium's helpers outlive a -9'd host; they are children of this run and
   # nobody else's, so they go with it.
-  pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null
-  true
+  pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null || true
 }
 trap cleanup EXIT
 

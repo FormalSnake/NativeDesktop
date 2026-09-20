@@ -157,6 +157,16 @@ function osaWindow(script: string): string {
 /// Chromium raises its context menu (and its tooltips) off the system's own
 /// right-click handling, which an NSEvent posted with `NSApp.postEvent` never
 /// reaches, so those legs need the real thing.
+/// Puts the cursor somewhere without clicking and without asserting anything,
+/// so an obstruction check can be taken with the pointer where the click will
+/// land rather than wherever the leg before left it.
+function warpPointer(x: number, y: number): void {
+  Bun.spawnSync(
+    ["swift", "scripts/mac/mac-click.swift", String(Math.round(x)), String(Math.round(y)), "move"],
+    { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
+  );
+}
+
 function realPointer(x: number, y: number, mode: "left" | "right" | "move"): void {
   // The window server routes by cursor, so the app has to be the window under
   // it; this machine has other windows, and one in front takes the click.
@@ -323,11 +333,17 @@ async function clearForRealPointer(testId: string): Promise<void> {
       await Bun.sleep(600);
     }
     const [box, win] = await Promise.all([viewBox(testId), appWindowRect()]);
-    blocked = [
+    const spots = [
       [box.width / 2, box.height / 2],
       [30, 30],
       [box.width - 30, box.height - 30],
-    ].flatMap(([dx, dy]) => obstructions(win.x + box.x + dx!, win.y + box.y + dy!));
+    ].map(([dx, dy]) => [win.x + box.x + dx!, win.y + box.y + dy!] as [number, number]);
+    // The cursor goes to each point before the check: the Dock only comes out
+    // when the pointer reaches the screen edge, so a census taken with the
+    // cursor elsewhere does not see the window that will take the click.
+    for (const [x, y] of spots) warpPointer(x, y);
+    await Bun.sleep(500);
+    blocked = spots.flatMap(([x, y]) => obstructions(x, y));
     if (blocked.length === 0) return;
   }
   throw new LegFailure(
@@ -750,12 +766,19 @@ const legs: Leg[] = [
       );
       await clearForRealPointer(page);
       const spot = await globalPoint(page, field.x + 20, field.y + field.height / 2);
-      realPointer(spot.x, spot.y, "left");
+      // Retried, the way cmd+T is above: the leg before this one reloads the
+      // page, and a click that lands in the second after a reload is swallowed
+      // before the page sees it. One click that never arrived reads exactly
+      // like a field that refuses focus.
       await until(
         "the page field takes focus",
-        () => pageEval(app, page, "String(document.activeElement.id)"),
+        async () => {
+          realPointer(spot.x, spot.y, "left");
+          await Bun.sleep(700);
+          return await pageEval(app, page, "String(document.activeElement.id)");
+        },
         (v) => v === "text",
-        10000,
+        12000,
       );
       await main.keyboard.type("copyme");
 
@@ -911,6 +934,12 @@ const legs: Leg[] = [
     name: "tabKeyIntoAndOutOfThePage",
     run: async () => {
       const page = await activePage();
+      // An AppKit button does not take first responder when it is clicked, so
+      // this only clears page focus for a page that never had it. Starting from
+      // the address bar instead does not work: with Full Keyboard Access off
+      // (the default) Tab walks the chrome's text fields and never leaves them,
+      // so a page that has held focus cannot be tabbed back into at all. That
+      // is the open "tab into the page" work, not this leg's to paper over.
       await main.getByTestId("reload").click();
       await until(
         "focus starts in the app's own chrome",

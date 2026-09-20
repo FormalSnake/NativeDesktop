@@ -19,7 +19,9 @@ PORT="${ND_CEF_DEBUG_PORT:-9334}"
 EXTENSION="$(pwd)/examples/webview-probe/chrome-style-ext"
 HOST="$(./scripts/mac/dev-cef-bundle.sh | tail -1)"
 HOST_PID=""
-trap '[ -n "${HOST_PID:-}" ] && kill -9 "$HOST_PID" 2>/dev/null; true' EXIT
+# Guarded, not `&& … ; true`: the trap runs under `set -e`, so a test that is
+# merely false ends the trap there and that status becomes the script's own.
+trap 'if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi' EXIT
 
 launch() {
   LOG=$(mktemp)
