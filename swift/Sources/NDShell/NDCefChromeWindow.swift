@@ -63,10 +63,11 @@ import Foundation
     /// on a bad access, so every quit path closes the dock first.
     nonisolated(unsafe) private static let live = NSHashTable<NDCefChromeWindow>.weakObjects()
 
-    /// Any Views window still open. The quit waits on this after the browsers
-    /// have gone: `cef_window_t::close` is asynchronous, and a window still
-    /// unwinding when `cef_shutdown` runs takes the process out through its own
-    /// activation path.
+    /// Any Views window this host has not handed back to CEF. The anchor
+    /// NSWindow outlives it either way: `cef_window_t::close` is asynchronous
+    /// and, measured on 151.3.23, the window is never deallocated before the
+    /// process goes, on the quit that succeeds as much as on the one that
+    /// faults, so waiting on the NSWindow itself buys nothing.
     static var anyWindowOpen: Bool {
         live.allObjects.contains { $0.cefWindow != nil }
     }

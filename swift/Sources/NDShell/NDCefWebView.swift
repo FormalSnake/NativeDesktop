@@ -175,6 +175,16 @@ final class NDCefWebView: NSView {
 
     @MainActor var stillOpen: Bool { browser != nil }
 
+    /// What each phase of the ordered quit is waiting on, for the warning a
+    /// phase that ran out of time prints.
+    @MainActor var shutdownState: String {
+        let host = browserHost()
+        defer { if let host { nd_cef_ref_release(host) } }
+        let devTools = host.map { $0.pointee.has_dev_tools?($0) != 0 } ?? false
+        return "node=\(self.host?.ndNodeID ?? 0) browser=\(browser != nil) side=\(sideBrowsers) devtools=\(devTools)"
+            + " docked=\(chrome?.hasDockedDevTools ?? false)"
+    }
+
     /// Whether a callback's browser is this view's page browser rather than the
     /// inspector's, which shares the client.
     @MainActor func ownsBrowser(_ identifier: Int32) -> Bool {
@@ -1454,21 +1464,50 @@ func ndCefParseJSONText(_ raw: String) -> [String: Any]? {
     let views = NDCefWebView.liveViews.allObjects
     guard !views.isEmpty else { return true }
 
+    // Each turn in its own pool: what the phases wait on is objects going away,
+    // and an NSWindow released by Chromium's close task stays alive until the
+    // pool that autoreleased it drains.
     func pump(until done: @MainActor () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while !done() {
             if Date() >= deadline { return false }
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            autoreleasepool {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
         }
         return true
     }
 
+    // A phase that runs out of time says which one and what it was still
+    // waiting on: every later phase then runs against state the one before it
+    // never reached, and "did not all close" on its own names neither.
+    func phase(_ what: String, state: @MainActor () -> String, until done: @MainActor () -> Bool) -> Bool {
+        let ok = pump(until: done)
+        if !ok { ndCefWarn("quit: \(what) did not finish in \(Int(timeout))s (\(state()))") }
+        if ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" {
+            FileHandle.standardError.write("ND_WV quit \(what): \(ok ? "done" : "timed out")\n".data(using: .utf8)!)
+        }
+        return ok
+    }
+
     for view in views { view.closeDevToolsForShutdown() }
-    let inspectorsClosed = pump { !views.contains { $0.stillInspecting } }
+    let inspectorsClosed = phase(
+        "the inspectors closing",
+        state: { views.map(\.shutdownState).joined(separator: " ") },
+        until: { !views.contains { $0.stillInspecting } })
 
     for view in views { view.releaseEngine() }
-    let browsersClosed = pump { !views.contains { $0.stillOpen } }
-    let windowsClosed = pump { !NDCefChromeWindow.anyWindowOpen }
+    let browsersClosed = phase(
+        "the browsers closing",
+        state: { views.map(\.shutdownState).joined(separator: " ") },
+        until: { !views.contains { $0.stillOpen } })
+    // This one times out on every quit, sound or not: it clears when the page
+    // browser reports `on_before_close`, and that callback does not arrive once
+    // the browsers have been closed from inside `applicationShouldTerminate`.
+    let windowsClosed = phase(
+        "the Views windows closing",
+        state: { "a browser has not reported on_before_close" },
+        until: { !NDCefChromeWindow.anyWindowOpen })
 
     return inspectorsClosed && browsersClosed && windowsClosed
 }
