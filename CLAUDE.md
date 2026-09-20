@@ -460,6 +460,12 @@ band around the threshold).
   predates, so v0.1.1 published eleven 0.1.1 packages that each depended on
   0.1.0 siblings — consumers resolved 0.1.1 TypeScript onto 0.1.0 host
   binaries. `scripts/release/check-versions.ts` fails on that now.
+  **Every confirmed framework fix ships to npm.** A fix counts as confirmed
+  once its gates were rerun green on `main` after the merge. Before cutting a
+  release, check the open worktree branches (`git worktree list`) for fixes
+  that are ready, merge those first, and release once with all of them in. A
+  fix that lands after a release gets its own patch release the same day; it
+  does not sit on `main` waiting for a reason to publish.
 - **Codegen per-widget template protocol** — every widget needs a
   create/applyProps/signal template on both Zig and Swift (containers also
   need a structural attach/detach template); one missing makes
