@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // The legs scripts/headless-app-chrome.sh runs against a real app under
 // ND_CEF_STYLE=chrome, once per rig (ND_ACCEPT_RIG: "x11" for Xvfb plus a
-// reparenting window manager, "wlr" for headless sway plus XWayland).
+// reparenting window manager, "wlr" for headless sway plus XWayland, "hypr"
+// for headless Hyprland plus XWayland on a fractionally scaled output).
 //
 // Three sources have to agree before a leg passes: the X window tree (the
 // embedding container's geometry against CEF's own window inside it), CDP
@@ -14,12 +15,17 @@ import { readFileSync } from "node:fs";
 import { connectApp } from "@nativedesktop/test";
 import { Session, targets, waitForTarget } from "./cdp.ts";
 
-const rig = (process.env.ND_ACCEPT_RIG ?? "x11") as "x11" | "wlr";
+const rig = (process.env.ND_ACCEPT_RIG ?? "x11") as "x11" | "wlr" | "hypr";
+/// Everything a wlroots session and a Hyprland session share: XWayland, a
+/// compositor that tiles by default, and no window to move with xdotool.
+const wayland = rig === "wlr" || rig === "hypr";
 const port = Number(process.env.ND_CDP_PORT ?? "9555");
 const fixture = process.env.ND_ACCEPT_FIXTURE ?? "http://127.0.0.1:9557/";
 const shots = process.env.ND_ACCEPT_SHOTS ?? "/tmp";
 const hostLog = process.env.ND_ACCEPT_HOST_LOG ?? "";
 const scale = Number(process.env.ND_ACCEPT_SCALE ?? "1");
+/// Which leg sets this rig runs: everything, or the context menu on its own.
+const legs = process.env.ND_ACCEPT_LEGS ?? "all";
 
 const hostPid = Number(process.env.ND_ACCEPT_HOST_PID ?? "0");
 const legBudgetMs = Number(process.env.ND_ACCEPT_LEG_BUDGET_MS ?? "180000");
@@ -42,6 +48,19 @@ function skip(name: string, why: string): void {
   skipped.push(`${name}: ${why}`);
   lastLeg = name;
   lastProgress = Date.now();
+}
+
+/// Reports what the run found and ends it. Called from two places: the end of
+/// the full set, and the early return a menu-only rig takes.
+function finish(): never {
+  if (skipped.length > 0) console.log(`  ${skipped.length} leg(s) skipped`);
+  if (failures.length > 0) {
+    console.error(`ND_APP_CHROME_FAIL(${rig}) ${failures.length} leg(s) failed:`);
+    for (const f of failures) console.error(`  - ${f}`);
+    process.exit(1);
+  }
+  console.log(`ND_APP_CHROME_LEGS_OK(${rig})`);
+  process.exit(0);
 }
 
 function hostLogTail(lines = 25): string {
@@ -83,12 +102,28 @@ function sh(...argv: string[]): string {
 }
 
 // ============================================================================
-// The rig: everything the two environments do differently
+// The rig: everything the three environments do differently
 // ============================================================================
 
 const swaymsg = (...args: string[]): string => sh("swaymsg", "-t", "command", "--", ...args);
+const hyprctl = (...args: string[]): string => sh("hyprctl", ...args);
+const hyprDispatch = (...args: string[]): string => hyprctl("dispatch", ...args);
 
-/// Absolute pointer position, through XTEST on both rigs. XWayland implements
+/// True while the focused Hyprland window is floating. The tiled and floating
+/// paths take different dispatchers for every geometry change below.
+function hyprFloating(): boolean {
+  try {
+    return JSON.parse(hyprctl("-j", "activewindow")).floating === true;
+  } catch {
+    return false;
+  }
+}
+
+function hyprSetFloating(on: boolean): void {
+  if (hyprFloating() !== on) hyprDispatch("togglefloating", "active");
+}
+
+/// Absolute pointer position, through XTEST on every rig. XWayland implements
 /// XTestFakeMotionEvent against its own virtual pointer, so GTK sees an
 /// ordinary crossing sequence; wlrctl's zwlr_virtual_pointer_v1 device is
 /// created and destroyed per invocation, and the leave that its removal
@@ -127,12 +162,18 @@ function resizeToplevel(id: string, w: number, h: number): void {
     sh("xdotool", "windowsize", id, String(w), String(h));
     return;
   }
+  if (rig === "hypr") {
+    hyprSetFloating(true);
+    hyprDispatch("resizeactive", "exact", String(w), String(h));
+    return;
+  }
   swaymsg("floating", "enable");
   swaymsg("resize", "set", "width", `${w}px`, "height", `${h}px`);
 }
 
 function moveToplevel(id: string, x: number, y: number): void {
   if (rig === "x11") sh("xdotool", "windowmove", id, String(x), String(y));
+  else if (rig === "hypr") hyprDispatch("moveactive", "exact", String(x), String(y));
   else swaymsg("move", "position", String(x), String(y));
 }
 
@@ -141,17 +182,20 @@ function maximize(id: string, on: boolean): void {
     sh("wmctrl", "-i", "-r", id, "-b", `${on ? "add" : "remove"},maximized_vert,maximized_horz`);
     return;
   }
-  // Tiled to the workspace is what a wlroots session calls maximized.
-  swaymsg("floating", on ? "disable" : "enable");
+  // Tiled to the workspace is what a tiling compositor calls maximized.
+  if (rig === "hypr") hyprSetFloating(!on);
+  else swaymsg("floating", on ? "disable" : "enable");
 }
 
 function fullscreen(id: string, on: boolean): void {
   if (rig === "x11") sh("wmctrl", "-i", "-r", id, "-b", `${on ? "add" : "remove"},fullscreen`);
+  else if (rig === "hypr") hyprDispatch("fullscreenstate", on ? "2" : "0", "-1");
   else swaymsg("fullscreen", on ? "enable" : "disable");
 }
 
 function closeFocusedWindow(id: string): void {
   if (rig === "x11") sh("wmctrl", "-i", "-c", id);
+  else if (rig === "hypr") hyprDispatch("killactive");
   else swaymsg("kill");
 }
 
@@ -498,6 +542,94 @@ function noStray(name: string): void {
   if (added.length > 0) check(`${name}.census`, false, `stray top-level ${added.join(" | ")}`);
 }
 
+/// Everything the native context menu has to do, as one set: a rig can run
+/// this alone (ND_ACCEPT_LEGS=menu).
+async function menuLegs(): Promise<void> {
+  await resyncPage();
+  /// A right click as a user makes one: the button stays down while Chromium
+  /// raises the menu, which is what a synthetic click's twelve milliseconds step
+  /// straight over. Every menu leg below opens the menu this way.
+  async function rightClick(at: { x: number; y: number }): Promise<void> {
+    pointerTo(at.x, at.y);
+    press(3);
+    await Bun.sleep(250);
+    release(3);
+    await Bun.sleep(1500);
+  }
+  const menuWindow = () => overrideRedirect(120, 80).find((p) => p.w < 700 && p.h < 900);
+  {
+    const at = await pageToScreen("title");
+    await page.eval("nd.reset()");
+    await rightClick(at);
+    const menu = menuWindow();
+    capture(`${shots}/context-menu.png`);
+    const m = await metrics();
+    check(
+      "contextMenu",
+      !!menu && m.events.includes("contextmenu") && Math.abs((menu?.x ?? 0) - at.x) < 600 && Math.abs((menu?.y ?? 0) - at.y) < 600,
+      menu ? `${menu.id} ${menu.w}x${menu.h}+${menu.x}+${menu.y} for a click at ${at.x},${at.y}, page saw ${m.events.join(",")}` : `no menu window; page saw ${m.events.join(",")}`,
+    );
+    key("Escape");
+    await Bun.sleep(1500);
+    const left = overrideRedirect(120, 80);
+    check(
+      "contextMenuDismisses",
+      left.length === 0,
+      left.length === 0 ? "escape closed it" : left.map((p) => `${p.id} ${p.w}x${p.h}+${p.x}+${p.y}`).join(" | "),
+    );
+    noStray("contextMenu");
+  }
+
+  await resyncPage();
+  {
+    // The keyboard, and the command behind the item it picks. Opening the menu
+    // puts the focus on its first sensitive item, which on a page with no
+    // history is Reload: Back and Forward above it are insensitive. A reload is
+    // what clears the mark this leg leaves on the document.
+    const at = await pageToScreen("title");
+    await page.eval("window.__menuMark = 'here'");
+    await rightClick(at);
+    const opened = !!menuWindow();
+    key("Return");
+    await Bun.sleep(4000);
+    await resyncPage();
+    const mark = await page.eval<string>("String(window.__menuMark)").catch(() => "gone");
+    check(
+      "contextMenuKeyboardPicks",
+      opened && mark === "undefined",
+      opened ? `mark after the pick: ${mark}` : "the menu never opened",
+    );
+    check("contextMenuPickClosesIt", overrideRedirect(120, 80).length === 0, `${overrideRedirect(120, 80).length} popup(s) left`);
+    noStray("contextMenuKeyboard");
+  }
+
+  await resyncPage();
+  {
+    // The pointer: a click away from an open menu must dismiss it, and the page
+    // under that click must never see the press. Both only hold while the menu
+    // owns the pointer grab.
+    const at = await pageToScreen("title");
+    await page.eval("nd.reset()");
+    await rightClick(at);
+    const opened = !!menuWindow();
+    // The bottom-left of the view: page, never menu, whichever way the menu had
+    // to flip to fit on the monitor.
+    const view = shownView()!;
+    pointerTo(view.container.x + 30, view.container.y + view.container.h - 30);
+    click(1);
+    await Bun.sleep(1500);
+    const left = overrideRedirect(120, 80);
+    const m = await metrics();
+    const after = m.events.slice(m.events.lastIndexOf("contextmenu") + 1);
+    check(
+      "contextMenuClickAway",
+      opened && left.length === 0 && !after.includes("mousedown"),
+      opened ? `${left.length} popup(s) left, page saw ${after.join(",") || "nothing"} after the menu opened` : "the menu never opened",
+    );
+    noStray("contextMenuClickAway");
+  }
+}
+
 // ============================================================================
 // Legs
 // ============================================================================
@@ -510,8 +642,8 @@ await resyncPage();
 
 const top = toplevelId();
 if (!top) { console.error("ND_APP_CHROME_FAIL no nd-hello toplevel on this display"); process.exit(1); }
-// Start from a known shape on both rigs: floating and 1280x800.
-if (rig === "wlr") swaymsg("floating", "enable");
+// Start from a known shape on every rig: floating and 1280x800.
+if (wayland) maximize(top, false);
 resizeToplevel(top, 1280, 800);
 moveToplevel(top, 40, 40);
 await Bun.sleep(1500);
@@ -523,6 +655,11 @@ const hasApp = (await app.getByTestId("omnibox").isVisible().catch(() => false))
   const s = await settled();
   check("initialSize", s.ok, s.detail);
   noStray("initialSize");
+}
+
+if (legs === "menu") {
+  await menuLegs();
+  finish();
 }
 
 for (const [w, h] of [[1500, 950], [820, 620], [1760, 1080], [700, 520]] as Array<[number, number]>) {
@@ -559,7 +696,7 @@ for (const [w, h] of [[1500, 950], [820, 620], [1760, 1080], [700, 520]] as Arra
   check("maximize", s1.ok && big.w >= 1900, `${big.w}x${big.h}; ${s1.detail}`);
   maximize(top, false);
   await Bun.sleep(900);
-  if (rig === "wlr") resizeToplevel(top, 1280, 800);
+  if (wayland) resizeToplevel(top, 1280, 800);
   const s2 = await settled();
   check("unmaximize", s2.ok, s2.detail);
   noStray("maximize");
@@ -573,7 +710,7 @@ for (const [w, h] of [[1500, 950], [820, 620], [1760, 1080], [700, 520]] as Arra
   check("fullscreen", s1.ok && full.w >= 1900 && full.h >= 1190, `${full.w}x${full.h}; ${s1.detail}`);
   fullscreen(top, false);
   await Bun.sleep(1200);
-  if (rig === "wlr") resizeToplevel(top, 1280, 800);
+  if (wayland) resizeToplevel(top, 1280, 800);
   const s2 = await settled();
   check("unfullscreen", s2.ok, s2.detail);
   noStray("fullscreen");
@@ -821,31 +958,7 @@ await resyncPage();
   noStray("tooltip");
 }
 
-await resyncPage();
-{
-  const at = await pageToScreen("title");
-  pointerTo(at.x, at.y);
-  await page.eval("nd.reset()");
-  click(3);
-  await Bun.sleep(1500);
-  const menu = overrideRedirect(120, 80).find((p) => Math.abs(p.x - at.x) < 600 && Math.abs(p.y - at.y) < 600);
-  capture(`${shots}/context-menu.png`);
-  const m = await metrics();
-  check(
-    "contextMenu",
-    !!menu && m.events.includes("contextmenu"),
-    menu ? `${menu.id} ${menu.w}x${menu.h}+${menu.x}+${menu.y}, page saw ${m.events.join(",")}` : `no menu window; page saw ${m.events.join(",")}`,
-  );
-  key("Escape");
-  await Bun.sleep(1500);
-  const left = overrideRedirect(120, 80);
-  check(
-    "contextMenuDismisses",
-    left.length === 0,
-    left.length === 0 ? "escape closed it" : left.map((p) => `${p.id} ${p.w}x${p.h}+${p.x}+${p.y}`).join(" | "),
-  );
-  noStray("contextMenu");
-}
+await menuLegs();
 
 await resyncPage();
 {
@@ -878,8 +991,8 @@ if (hasApp) {
   // A second toplevel of the app itself. On a tiling compositor the first
   // window is resized by the compositor when it opens and again when it goes,
   // which is the resize path no window-manager-less gate can reach.
-  if (rig === "wlr") {
-    swaymsg("floating", "disable");
+  if (wayland) {
+    maximize(top, true);
     await Bun.sleep(1200);
     await settled(6000);
   }
@@ -907,7 +1020,7 @@ if (hasApp) {
   check("secondWindowCloses", s2.ok && toplevelId() === top, `back to ${s2.detail}`);
   noStray("secondWindow");
   await focusRouting("focusRoutingAfterSecondWindow");
-  if (rig === "wlr") {
+  if (wayland) {
     resizeToplevel(top, 1280, 800);
     await Bun.sleep(900);
     await settled(6000);
@@ -1019,11 +1132,4 @@ if (hasApp) {
 capture(`${shots}/final.png`);
 
 
-if (skipped.length > 0) console.log(`  ${skipped.length} leg(s) skipped`);
-if (failures.length > 0) {
-  console.error(`ND_APP_CHROME_FAIL(${rig}) ${failures.length} leg(s) failed:`);
-  for (const f of failures) console.error(`  - ${f}`);
-  process.exit(1);
-}
-console.log(`ND_APP_CHROME_LEGS_OK(${rig})`);
-process.exit(0);
+finish();

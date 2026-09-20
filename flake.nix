@@ -111,6 +111,9 @@
               openbox          # a reparenting window manager for the Xvfb rig: without one nothing ever resizes a toplevel, which is the class of bug the bare-Xvfb gates miss
               wmctrl           # EWMH maximize/fullscreen requests, which xdotool cannot send
               sway             # headless wlroots compositor + XWayland: the shape of session the owner runs, and the only rig where an override-redirect Chromium window is tested
+              hyprland         # the third app-chrome rig: Hyprland + XWayland on a fractionally scaled output, where a GTK popover's grab behaves differently than it does under sway
+              mutter           # Hyprland's backend builds its allocator from a DRM render node its headless backend cannot supply, so the rig nests Hyprland in a headless mutter that can
+              bubblewrap       # hides a discrete NVIDIA render node from that parent: aquamarine's GBM allocations fail on it outright
               grim             # capture on the wlroots rig; `import -window root` has no X root to read there
               wtype            # real key events into the wayland seat
               wlrctl           # real pointer events into it: wlroots' headless backend creates no input devices, so the seat has no pointer capability until something binds zwlr_virtual_pointer_v1
