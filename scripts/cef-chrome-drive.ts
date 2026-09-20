@@ -26,6 +26,127 @@ function sh(...argv: string[]): string {
   return Bun.spawnSync(argv, { env: { ...process.env, DISPLAY: display } }).stdout.toString().trim();
 }
 
+interface Geometry {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /// Position on the root, which is what a browser reports as `screenX`.
+  rootX: number;
+  rootY: number;
+}
+
+function geometryOf(id: string): Geometry | null {
+  const out = sh("xwininfo", "-id", id);
+  const w = out.match(/^\s*Width:\s+(\d+)/m);
+  const h = out.match(/^\s*Height:\s+(\d+)/m);
+  const x = out.match(/^\s*Relative upper-left X:\s+(-?\d+)/m);
+  const y = out.match(/^\s*Relative upper-left Y:\s+(-?\d+)/m);
+  const ax = out.match(/^\s*Absolute upper-left X:\s+(-?\d+)/m);
+  const ay = out.match(/^\s*Absolute upper-left Y:\s+(-?\d+)/m);
+  if (!w || !h || !x || !y || !ax || !ay) return null;
+  return {
+    id,
+    x: Number(x[1]), y: Number(y[1]), w: Number(w[1]), h: Number(h[1]),
+    rootX: Number(ax[1]), rootY: Number(ay[1]),
+  };
+}
+
+function childrenOf(id: string): Geometry[] {
+  const rows: Geometry[] = [];
+  for (const line of sh("xwininfo", "-id", id, "-children").split("\n")) {
+    const m = line.match(/^\s*(0x[0-9a-f]+).*?\s(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+\+(-?\d+)\+(-?\d+)/);
+    if (!m) continue;
+    if (!sh("xwininfo", "-id", m[1]!).includes("Map State: IsViewable")) continue;
+    rows.push({
+      id: m[1]!, w: Number(m[2]), h: Number(m[3]), x: Number(m[4]), y: Number(m[5]),
+      rootX: Number(m[6]), rootY: Number(m[7]),
+    });
+  }
+  return rows;
+}
+
+/// The containers the engine embedded a `<webview>` into, newest first, from
+/// the host's own trace. There is one per view in the app, and only the one
+/// holding the inspector has a second mapped child.
+async function embedContainers(): Promise<string[]> {
+  const path = process.env.ND_HOST_LOG ?? "";
+  if (!path) return [];
+  const text = await Bun.file(path).text().catch(() => "");
+  const ids: string[] = [];
+  for (const m of text.matchAll(/ND_CEF embed node=\d+ parent=0x[0-9a-f]+ container=(0x[0-9a-f]+)/g)) {
+    if (!ids.includes(m[1]!)) ids.push(m[1]!);
+  }
+  return ids;
+}
+
+/// The docked view's inner tiling as the X server holds it: the container the
+/// engine embeds into, CEF's page window and the dock inside it, and the
+/// inspector's own window inside the dock. The docked view is the one with two
+/// mapped children; every other `<webview>` has only its page.
+async function dockLayout(): Promise<{ view: Geometry; page: Geometry; dock: Geometry; inner: Geometry | null } | null> {
+  for (const id of await embedContainers()) {
+    const view = geometryOf(id);
+    if (!view) continue;
+    const kids = childrenOf(id);
+    if (kids.length < 2) continue;
+    const sorted = [...kids].sort((a, b) => a.x - b.x);
+    const page = sorted[0]!;
+    const dock = sorted[sorted.length - 1]!;
+    return { view, page, dock, inner: childrenOf(dock.id)[0] ?? null };
+  }
+  return null;
+}
+
+/// The page session for one browser, found by where it sits on the root: the
+/// app holds several `<webview>`s on the same origin, the unmapped ones are
+/// parked off screen and keep Chromium's default 1024-wide viewport for ever,
+/// and `screenX`/`screenY` is the only thing that joins a CDP target to the X
+/// window the engine laid out.
+async function pageAt(rootX: number, rootY: number): Promise<Session | null> {
+  for (const target of await targets(port)) {
+    if (target.type !== "page") continue;
+    const session = await Session.open(target.webSocketDebuggerUrl!);
+    const where = JSON.parse(await session.eval<string>("JSON.stringify([screenX, screenY])")) as number[];
+    if (where[0] === rootX && where[1] === rootY) return session;
+    session.close();
+  }
+  return null;
+}
+
+/// The three windows have to tile the view with no seam, and the page has to
+/// be laid out at the width its window was given: a renderer still painting at
+/// an older width leaves bare background between the page and the inspector.
+async function checkTiling(phase: string): Promise<void> {
+  const layout = await dockLayout();
+  if (!layout) {
+    check(`dockTiling/${phase}`, false, "no docked view: the container has no second mapped child");
+    return;
+  }
+  const { view, page: paper, dock, inner } = layout;
+  check(
+    `dockTiling/${phase}`,
+    paper.x === 0 && paper.x + paper.w === dock.x && dock.x + dock.w === view.w && paper.h === view.h && dock.h === view.h,
+    `view ${view.w}x${view.h}, page ${paper.w}x${paper.h}+${paper.x}, dock ${dock.w}x${dock.h}+${dock.x}`,
+  );
+  check(
+    `dockInner/${phase}`,
+    inner !== null && inner.x === 0 && inner.w === dock.w && inner.h === dock.h,
+    inner ? `inner ${inner.w}x${inner.h}+${inner.x} in dock ${dock.w}x${dock.h}` : "the dock has no mapped child",
+  );
+  const shown = await pageAt(paper.rootX, paper.rootY);
+  const size = shown
+    ? (JSON.parse(await shown.eval<string>("JSON.stringify([innerWidth, innerHeight])")) as number[])
+    : [-1, -1];
+  shown?.close();
+  check(
+    `dockPageViewport/${phase}`,
+    size[0] === paper.w && size[1] === paper.h,
+    `page lays out ${size[0]}x${size[1]} in a ${paper.w}x${paper.h} window`,
+  );
+}
+
 /// How many times the engine has reported the dock going away. The count, not
 /// the presence: the same marker fires for every close, so only a fresh one
 /// says the button that was just clicked is what closed it.
@@ -166,6 +287,28 @@ if (pass === "devtools") {
   });
   const onRoot = sh("xwininfo", "-root", "-children").split("\n").filter((l) => /DevTools/.test(l));
   check("devToolsInsideView", onRoot.length === 0, `no devtools window among the root's children (${onRoot.length} found)`);
+
+  // The page and the inspector have to meet with no seam, at the open, across
+  // a resize of the window they are in, and after the dock has been taken down
+  // and put back. A strip of bare background between them is what a page
+  // window that does not fill what it was given looks like.
+  await checkTiling("open");
+  // Growing is the direction that shows: a page whose window grew but whose
+  // layout did not leaves bare background where the two used to meet, while
+  // one that failed to shrink is merely clipped by its own window.
+  // The last size is the one the close-button legs below run at: the inspector
+  // draws its toolbar only in a pane tall enough for it.
+  for (const [phase, w, h] of [["grown", 1420, 900], ["shrunk", 1120, 700], ["restored", 1240, 860]] as const) {
+    sh("xdotool", "search", "--name", "ND CEF Probe", "windowsize", String(w), String(h));
+    await Bun.sleep(3000);
+    baseline = census();
+    await checkTiling(phase);
+  }
+  sh("xdotool", "key", "--clearmodifiers", "F12");
+  await Bun.sleep(2500);
+  sh("xdotool", "key", "--clearmodifiers", "F12");
+  await Bun.sleep(4000);
+  await checkTiling("reopened");
 
   // The inspector's own close button. It is drawn only when the frontend was
   // told it can dock, and clicking it has to take the dock down through the
