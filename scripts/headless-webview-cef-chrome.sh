@@ -124,6 +124,7 @@ run_pass() {
   fi
 
   ND_CHROME_PASS="$pass" ND_CHROME_SHOT_PATH="${ND_CEF_SHOT_PATH:-$XDG_RUNTIME_DIR/cef-chrome-devtools.png}" \
+    ND_HOST_LOG="$LOG" \
     bun scripts/cef-chrome-drive.ts 2>&1 | tee "$XDG_RUNTIME_DIR/chrome-legs-$pass.log" || true
   grep -q "ND_CEF_CHROME_LEGS_OK($pass)" "$XDG_RUNTIME_DIR/chrome-legs-$pass.log" || {
     echo "FAIL($pass): chrome-style driver"

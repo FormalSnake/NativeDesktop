@@ -1006,6 +1006,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     display_handler.cef.on_loading_progress_change = &onLoadingProgressChange;
     display_handler.cef.on_favicon_urlchange = &onFaviconUrlChange;
 
+    load_handler.cef.on_load_start = &onLoadStart;
     load_handler.cef.on_loading_state_change = &onLoadingStateChange;
     load_handler.cef.on_load_error = &onLoadError;
 
@@ -1470,10 +1471,13 @@ fn onGtkThread() bool {
     return api.currently_on(c.TID_UI) == 0;
 }
 
-/// Chrome's own right-dock default, clamped so a narrow view keeps a page.
+/// Chrome's own right-dock default, floored at the width the frontend's toolbar
+/// needs: below that the toolbar overflows to the right and takes the close
+/// button off screen with it (397px on 151.3.23). The upper clamp leaves a
+/// narrow view a page.
 fn dockWidth(w: c_uint) c_uint {
     const wanted = w * 45 / 100;
-    return @min(@max(wanted, 200), if (w > 240) w - 240 else w / 2);
+    return @min(@max(wanted, 400), if (w > 240) w - 240 else w / 2);
 }
 
 /// One pass of the view's inner geometry, as window ids rather than a *View:
@@ -2125,6 +2129,47 @@ fn onLoadingProgressChange(
 // cef_load_handler_t
 // ============================================================================
 
+/// The inspector's own close button and dock-side menu are drawn only when the
+/// frontend was told it can dock, and that is `can_dock` on the frontend URL.
+/// CEF builds that URL inside `show_dev_tools` and takes no argument for it, so
+/// the flag is added by re-pointing the frontend at its own address once the
+/// document is up. Clicking the button then reaches CEF as `closeWindow`, which
+/// closes the devtools browser: the end state `closeDockedDevTools` reaches,
+/// through `onBeforeClose`.
+fn dockFrontend(frame: [*c]c.cef_frame_t) void {
+    if (!chromeStyle() or frame == null) return;
+    if (frame.*.is_main) |is_main| {
+        if (is_main(frame) == 0) return;
+    }
+    const get_url = frame.*.get_url orelse return;
+    const raw = get_url(frame);
+    if (raw == null) return;
+    defer freeUserfree(raw);
+    const url = dupeStr(raw) orelse return;
+    defer alloc.free(url);
+    if (!std.mem.startsWith(u8, url, "devtools://")) return;
+    if (std.mem.indexOf(u8, url, "can_dock=") != null) return;
+    const sep: []const u8 = if (std.mem.indexOfScalar(u8, url, '?') == null) "?" else "&";
+    const docked = std.fmt.allocPrint(alloc, "{s}{s}can_dock=true", .{ url, sep }) catch return;
+    defer alloc.free(docked);
+    const load = frame.*.load_url orelse return;
+    var s = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&s);
+    if (!setStr(&s, docked)) return;
+    load(frame, &s);
+}
+
+fn onLoadStart(
+    _: [*c]c.cef_load_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    _: c.cef_transition_type_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    dockFrontend(frame);
+}
+
 fn onLoadingStateChange(
     self: [*c]c.cef_load_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -2313,6 +2358,7 @@ fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser
                         const dock = view.devtools_container.swap(0, .acq_rel);
                         if (dock != 0) x11.hide(@intCast(dock));
                         layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+                        tr("devtoolsClosed node={d}", .{view.node_id});
                         ref.releaseParam(browser);
                         return;
                     }

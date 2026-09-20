@@ -1369,6 +1369,30 @@ final class NDCefHandlerBox {
     return NSApp.mainMenu?.performKeyEquivalent(with: event) == true ? 1 : 0
 }
 
+/// The inspector's own close button and dock-side menu are drawn only when the
+/// frontend was told it can dock, and that is `can_dock` on the frontend URL.
+/// CEF builds that URL inside `show_dev_tools` and takes no argument for it, so
+/// the flag is added by re-pointing the frontend at its own address. Clicking
+/// the button then reaches CEF as `closeWindow`, which closes the devtools
+/// browser, and `on_browser_destroyed` retires the dock from there.
+///
+/// Answers whether the frontend is now pointed at a docking URL, which is what
+/// ends the poll in `NDCefChromeWindow`: the inspector's browser is CEF's own,
+/// not this client's, so there is no load callback to hang this on.
+func ndCefDockFrontend(_ frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
+    guard let frame, frame.pointee.is_main?(frame) != 0 else { return false }
+    guard let raw = frame.pointee.get_url?(frame) else { return false }
+    let url = ndCefString(raw)
+    nd_cef_string_free(raw)
+    guard url.hasPrefix("devtools://") else { return false }
+    if url.contains("can_dock=") { return true }
+    var docked = cef_string_t()
+    ndCefSetString(url + (url.contains("?") ? "&" : "?") + "can_dock=true", &docked)
+    defer { nd_cef_string_clear(&docked) }
+    frame.pointee.load_url?(frame, &docked)
+    return true
+}
+
 /// Hands a handler struct to CEF with the reference the caller is owed.
 func ndCefHandOut<T>(_ handler: UnsafeMutablePointer<T>?) -> UnsafeMutablePointer<T>? {
     guard let handler else { return nil }

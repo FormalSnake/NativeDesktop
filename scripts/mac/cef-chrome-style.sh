@@ -27,7 +27,7 @@ launch() {
   LOG=$(mktemp)
   NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
     ND_SCRIPT=examples/webview-probe/cef-chrome.tsx "$HOST" \
-    "--load-extension=$EXTENSION" "--remote-debugging-port=$PORT" >"$LOG" 2>&1 &
+    "--load-extension=$EXTENSION" "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
   for _ in $(seq 1 400); do
     grep -q "ND_AUTOMATION_LISTENING" "$LOG" && break
@@ -45,7 +45,7 @@ launch() {
 }
 
 launch
-ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" \
+ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" ND_HOST_LOG="$LOG" \
   bun scripts/mac/cef-chrome-drive.ts \
   || { echo "FAIL: driver"; grep -vE "^\[[0-9]+:" "$LOG" | tail -40; exit 1; }
 

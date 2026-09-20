@@ -37,6 +37,47 @@ export async function waitForTarget(
   throw new Error(`no matching CDP target after ${timeoutMs}ms; saw ${JSON.stringify(last.map((t) => `${t.type} ${t.url}`))}`);
 }
 
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Clicks the docked inspector's own close button, in the frontend attached to
+ * `frontend`, and answers where it was. Null means the toolbar has no close
+ * control, which is what an inspector that was never told it can dock looks
+ * like: the button is in the DOM either way, carrying `hidden` and no box.
+ *
+ * A real mouse event rather than a DOM `.click()`, so the frontend's own
+ * toolbar handling runs.
+ */
+export async function clickDevToolsClose(frontend: Session): Promise<Box | null> {
+  const box = await frontend.eval<Box | null>(`(() => {
+    let hit = null;
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        if (!hit && el.classList && el.classList.contains('close-devtools')) hit = el;
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    if (!hit) return null;
+    const r = hit.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+  if (!box) return null;
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2, button: "left", clickCount: 1 };
+  // `buttons` is the mask of what is held down, and Chromium's event router
+  // drops a press that claims no button is.
+  await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...at, button: "none", buttons: 0 });
+  await frontend.send("Input.dispatchMouseEvent", { type: "mousePressed", ...at, buttons: 1 });
+  await frontend.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, buttons: 0 });
+  return box;
+}
+
 type Handler = (params: Record<string, unknown>) => void;
 
 export class Session {

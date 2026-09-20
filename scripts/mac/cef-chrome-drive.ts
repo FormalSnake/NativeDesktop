@@ -10,6 +10,7 @@
 // on-screen window of this process is either one of the app's own windows or an
 // anchor at alpha 0.
 import { connectApp } from "@nativedesktop/test";
+import { Session, clickDevToolsClose } from "../cdp.ts";
 import { KEY_ESCAPE, activateApp, menuWindows, systemKey, until } from "./app-chrome-lib";
 
 const pid = process.env.ND_HOST_PID ?? "";
@@ -52,9 +53,19 @@ async function strays(leg: string): Promise<void> {
   );
 }
 
-async function targets(): Promise<{ type: string; url: string }[]> {
+async function targets(): Promise<{ type: string; url: string; webSocketDebuggerUrl?: string }[]> {
   const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
-  return (await response.json()) as { type: string; url: string }[];
+  return (await response.json()) as { type: string; url: string; webSocketDebuggerUrl?: string }[];
+}
+
+/// How many times the host has reported the dock going away. The count, not
+/// the presence: the same trace line fires for every close, so only a fresh
+/// one says the button that was just clicked is what closed it.
+async function devToolsClosedTraces(): Promise<number> {
+  const path = process.env.ND_HOST_LOG ?? "";
+  if (!path) return 0;
+  const text = await Bun.file(path).text().catch(() => "");
+  return text.split("\n").filter((line) => line.includes("chrome devtools closed")).length;
 }
 
 async function evaluate(code: string): Promise<string | null> {
@@ -112,7 +123,44 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
   );
   const devtoolsTarget = (await targets()).find((t) => t.url.startsWith("devtools://"));
   check("devtoolsTarget", devtoolsTarget !== undefined, devtoolsTarget?.url.slice(0, 60) ?? "none");
+
+  // The inspector's own close button. It is drawn only when the frontend was
+  // told it can dock, and clicking it has to take the dock down through the
+  // host rather than leaving the toggle pointing at an inspector that is
+  // already gone.
+  check("devtoolsCanDock", devtoolsTarget?.url.includes("can_dock=true") === true, devtoolsTarget?.url.slice(-48) ?? "none");
+  // Taken with the dock up, before the close below: Chromium shows its status
+  // bubble for a few seconds after a docked inspector goes away, on the app's
+  // own toggle as much as on the close button, and it is a window of its own.
   await strays("devtools");
+  const closedBefore = await devToolsClosedTraces();
+  const frontend = await Session.open(devtoolsTarget?.webSocketDebuggerUrl ?? "");
+  await frontend.send("Runtime.enable");
+  const closeBox = await clickDevToolsClose(frontend);
+  check(
+    "devtoolsCloseButton",
+    closeBox !== null,
+    closeBox ? `${Math.round(closeBox.width)}x${Math.round(closeBox.height)} at ${Math.round(closeBox.x)}` : "no close control in the toolbar",
+  );
+  frontend.close();
+  await Bun.sleep(3000);
+  check(
+    "devtoolsClosedByButton",
+    (await targets()).filter((t) => t.url.startsWith("devtools://")).length === 0,
+    "no devtools:// target left",
+  );
+  check("devtoolsCloseReported", (await devToolsClosedTraces()) > closedBefore, `chrome devtools closed ${closedBefore} -> after`);
+
+  // The dock goes back up, so the rest of the drive runs against the state the
+  // legs below were written for, and the app's own toggle proves it did not go
+  // stale when the frontend closed itself.
+  await app.getByTestId("c-devtools-open").click();
+  await Bun.sleep(4000);
+  check(
+    "devtoolsToggleNotStale",
+    (await targets()).filter((t) => t.url.startsWith("devtools://")).length === 1,
+    "the app's toggle reopened the inspector",
+  );
 }
 
 // A real click into the page followed by real keystrokes. The web contents is

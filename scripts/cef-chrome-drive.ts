@@ -8,7 +8,7 @@
 // Real X11 input, not CDP input: Chrome's accelerators are handled in the
 // browser process from the native key event, and a debugger-injected one never
 // reaches them.
-import { Session, targets, waitForTarget } from "./cdp.ts";
+import { Session, clickDevToolsClose, targets, waitForTarget } from "./cdp.ts";
 
 const port = Number(process.env.ND_CDP_PORT ?? "9333");
 const pass = process.env.ND_CHROME_PASS ?? "first";
@@ -24,6 +24,16 @@ function check(name: string, ok: boolean, detail: string): void {
 
 function sh(...argv: string[]): string {
   return Bun.spawnSync(argv, { env: { ...process.env, DISPLAY: display } }).stdout.toString().trim();
+}
+
+/// How many times the engine has reported the dock going away. The count, not
+/// the presence: the same marker fires for every close, so only a fresh one
+/// says the button that was just clicked is what closed it.
+async function devToolsClosedMarkers(): Promise<number> {
+  const path = process.env.ND_HOST_LOG ?? "";
+  if (!path) return 0;
+  const text = await Bun.file(path).text().catch(() => "");
+  return text.split("\n").filter((line) => line.includes("ND_CEF devtoolsClosed")).length;
 }
 
 /// Windows a user could see: mapped, and at least 200x200. Chromium keeps a
@@ -136,6 +146,12 @@ if (pass === "first") {
 // quits like they do, which is the assertion that the engine closes the
 // devtools browser before the one it inspects.
 if (pass === "devtools") {
+  // The inspector draws its own toolbar only in a pane tall enough for it, and
+  // this app's webview is one row among many at the window's default size. The
+  // census is re-taken because the app's own window is in it.
+  sh("xdotool", "search", "--name", "ND CEF Probe", "windowsize", "1240", "860");
+  await Bun.sleep(2000);
+  baseline = census();
   // The pointer clicks into the view first: a real X key event only reaches
   // Chrome's accelerators through the window that has X input focus.
   sh("xdotool", "mousemove", "300", "400", "click", "1");
@@ -150,6 +166,39 @@ if (pass === "devtools") {
   });
   const onRoot = sh("xwininfo", "-root", "-children").split("\n").filter((l) => /DevTools/.test(l));
   check("devToolsInsideView", onRoot.length === 0, `no devtools window among the root's children (${onRoot.length} found)`);
+
+  // The inspector's own close button. It is drawn only when the frontend was
+  // told it can dock, and clicking it has to take the dock down through the
+  // engine rather than leaving the toggle pointing at an inspector that is
+  // already gone.
+  const frontendTarget = await waitForTarget(port, (t) => t.url.startsWith("devtools://"));
+  check("devToolsCanDock", frontendTarget.url.includes("can_dock=true"), frontendTarget.url.slice(-48));
+  const closedBefore = await devToolsClosedMarkers();
+  const frontend = await Session.open(frontendTarget.webSocketDebuggerUrl ?? "");
+  await frontend.send("Runtime.enable");
+  const closeBox = await clickDevToolsClose(frontend);
+  check(
+    "devToolsCloseButton",
+    closeBox !== null,
+    closeBox ? `${Math.round(closeBox.width)}x${Math.round(closeBox.height)} at ${Math.round(closeBox.x)}` : "no close control in the toolbar",
+  );
+  frontend.close();
+  await Bun.sleep(3000);
+  check(
+    "devToolsClosedByButton",
+    (await targets(port)).filter((t) => t.url.startsWith("devtools://")).length === 0,
+    "no devtools:// target left",
+  );
+  const closedAfter = await devToolsClosedMarkers();
+  check("devToolsCloseReported", closedAfter > closedBefore, `ND_CEF devtoolsClosed ${closedBefore} -> ${closedAfter}`);
+  sh("xdotool", "key", "--clearmodifiers", "F12");
+  await Bun.sleep(4000);
+  check(
+    "devToolsToggleNotStale",
+    (await targets(port)).filter((t) => t.url.startsWith("devtools://")).length === 1,
+    "F12 after the close button reopened the inspector",
+  );
+
   await leg("devToolsToggleOff", async () => {
     sh("xdotool", "key", "--clearmodifiers", "F12");
     await Bun.sleep(2500);

@@ -37,6 +37,7 @@ import Foundation
     /// going away.
     private var devToolsClosing: UnsafeMutablePointer<cef_browser_view_t>?
     private var devToolsCloseTimer: Timer?
+    private var dockFrontendTimer: Timer?
     /// Inspector views whose browser has gone. They stay children of the window
     /// for the rest of its life: `remove_child_view` on one of these poisons the
     /// next `show_dev_tools` or `close_dev_tools`, which then hangs the UI
@@ -223,8 +224,35 @@ import Foundation
         let tools = UnsafeMutableRawPointer(popup).assumingMemoryBound(to: cef_view_t.self)
         panel.pointee.add_child_view?(panel, tools)
         devToolsView = popup
+        pointFrontendAtDock()
         view?.ndTrace("chrome devtools docked")
         return true
+    }
+
+    /// Tells the frontend it is docked, so it draws its own close button. The
+    /// URL is only readable once CEF has put it on the main frame, and the
+    /// inspector's browser is not on this client, so this polls for it rather
+    /// than waiting on a load callback that never comes.
+    private func pointFrontendAtDock() {
+        dockFrontendTimer?.invalidate()
+        var tries = 0
+        dockFrontendTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                tries += 1
+                guard self.dockFrontend() || tries >= 100 else { return }
+                self.dockFrontendTimer?.invalidate()
+                self.dockFrontendTimer = nil
+            }
+        }
+    }
+
+    private func dockFrontend() -> Bool {
+        guard let devToolsView, let browser = devToolsView.pointee.get_browser?(devToolsView) else { return false }
+        defer { nd_cef_ref_release(browser) }
+        guard let frame = browser.pointee.get_main_frame?(browser) else { return false }
+        defer { nd_cef_ref_release(frame) }
+        return ndCefDockFrontend(frame)
     }
 
     /// Undoes `dockDevTools`. Nothing in the window's layout is touched here:
@@ -266,10 +294,20 @@ import Foundation
 
     /// The inspector's browser has gone: the window can be laid out again and
     /// the page takes the whole width back.
+    ///
+    /// The frontend's own close button takes the browser away without passing
+    /// through `closeDevTools`, so a still-docked view is retired here too;
+    /// leaving it set keeps `hasDockedDevTools` true and the app's toggle then
+    /// tries to close an inspector that is already gone.
     func devToolsBrowserClosed() {
-        guard let closing = devToolsClosing else { return }
+        guard let closing = devToolsClosing ?? devToolsView else { return }
         closedDevToolsViews.append(closing)
         devToolsClosing = nil
+        devToolsView = nil
+        devToolsCloseTimer?.invalidate()
+        devToolsCloseTimer = nil
+        dockFrontendTimer?.invalidate()
+        dockFrontendTimer = nil
         if let cefWindow {
             let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
             panel.pointee.layout?(panel)
@@ -277,9 +315,17 @@ import Foundation
         view?.ndTrace("chrome devtools closed")
     }
 
-    /// Chrome docks DevTools to the right at about a third of the contents
-    /// width; the page takes what is left, so the two always add up to the
-    /// window and the box layout leaves no gap.
+    /// Chrome's own right-dock default, floored at the width the frontend's
+    /// toolbar needs: below that the toolbar overflows to the right and takes
+    /// the close button off screen with it (397px on 151.3.23). The upper
+    /// clamp leaves the page a column of its own.
+    private static func dockWidth(_ width: Int32) -> Int32 {
+        let wanted = width * 45 / 100
+        return min(max(wanted, 400), width > 240 ? width - 240 : width / 2)
+    }
+
+    /// Chrome docks DevTools to the right; the page takes what is left, so the
+    /// two always add up to the window and the box layout leaves no gap.
     func dockedSize(devTools: Bool, view asked: UnsafeMutableRawPointer?) -> cef_size_t {
         let bounds = view?.bounds ?? .zero
         let width = Int32(bounds.width.rounded())
@@ -291,7 +337,7 @@ import Foundation
         guard devToolsView != nil else {
             return cef_size_t(width: devTools ? 0 : max(1, width), height: max(1, height))
         }
-        let tools = max(1, width / 3)
+        let tools = max(1, Self.dockWidth(width))
         return cef_size_t(width: devTools ? tools : max(1, width - tools), height: max(1, height))
     }
 
@@ -438,6 +484,8 @@ import Foundation
         reliftTimer = nil
         devToolsCloseTimer?.invalidate()
         devToolsCloseTimer = nil
+        dockFrontendTimer?.invalidate()
+        dockFrontendTimer = nil
         // The views closed inspectors left behind come out of the window here,
         // with nothing else in flight: leaving one in the layout means Chromium
         // walks a BrowserView with no browser while it destroys the window, and
@@ -533,6 +581,15 @@ extension NDCefHandlerBox {
             let asked = UnsafeMutableRawPointer(cefView)
             nd_cef_ref_release(cefView)
             return ndCefPreferredSize(selfPointer, devTools: true, view: asked)
+        }
+        // The inspector's browser is CEF's own, so this client's
+        // `on_before_close` never reports it. This is the one callback that
+        // does, and the frontend's own close button is a path that reaches the
+        // dock through nothing else.
+        devToolsViewDelegate.pointee.on_browser_destroyed = { selfPointer, browserView, browser in
+            nd_cef_ref_release(browserView)
+            nd_cef_ref_release(browser)
+            ndCefDeliver(selfPointer) { $0?.chrome?.devToolsBrowserClosed() }
         }
     }
 

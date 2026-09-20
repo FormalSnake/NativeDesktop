@@ -359,7 +359,15 @@ it, Chrome's window and toolbar do not.
   half of the same embedding window, and toggle it off again. The shortcut
   arrives as `IDC_DEV_TOOLS_TOGGLE`, which Chrome would answer with a
   DevToolsWindow of its own, so `cef_command_handler_t::on_chrome_command`
-  takes it and closes the docked browser instead. Alloy still uses CEF's separate
+  takes it and closes the docked browser instead. The inspector's own close
+  button is drawn by the frontend and only when it was told it can dock, which
+  is `can_dock` on the frontend URL; CEF builds that URL inside `show_dev_tools`
+  and takes no argument for it, so the frontend is re-pointed at its own address
+  with the flag added once the document is up. The button then reaches CEF as
+  `closeWindow`, which closes the devtools browser, and the dock comes down the
+  same way the toggle takes it down. The dock's width is floored at the width
+  that toolbar needs: narrower and it overflows to the right, taking the close
+  button off screen with it. Alloy still uses CEF's separate
   devtools window (parenting that into GTK crashes, CEF #3165). Quitting closes
   the devtools browser and waits for its `on_before_close` before closing the
   browser it inspects; left to CEF's own order the inspected browser goes first,
