@@ -278,6 +278,10 @@ async function newTab(): Promise<void> {
 /// The webview's rectangle inside a window capture, in image pixels.
 async function captureViewRect(name: string, testId: string) {
   const [box, win] = await Promise.all([viewBox(testId), appWindowRect()]);
+  const panelEnd = Math.min(
+    box.height - 8,
+    (await pageNumber(app, testId, "document.getElementById('panel').getBoundingClientRect().bottom")) + 8,
+  );
   // By window number, never by pid: the anchor is a window of this process too
   // and it carries no pixels, so a pid-matched capture can come back black.
   const path = capture(name, win.number);
@@ -293,12 +297,14 @@ async function captureViewRect(name: string, testId: string) {
       h: Math.round(box.height * scale),
     },
     // The fixture's controls sit in a panel across the top, so the flat fill
-    // that a stale band would show up against starts below it.
+    // that a stale band would show up against starts below it. The panel wraps
+    // to more rows as the window narrows, so where it ends comes from the page
+    // rather than from a fixed fraction of the view.
     fill: {
       x: Math.round(box.x * scale),
-      y: Math.round((box.y + box.height * 0.25) * scale),
+      y: Math.round((box.y + panelEnd) * scale),
       w: Math.round(box.width * scale),
-      h: Math.round(box.height * 0.75 * scale),
+      h: Math.round((box.height - panelEnd) * scale),
     },
   };
 }
@@ -742,8 +748,9 @@ const legs: Leg[] = [
       const field = JSON.parse(
         (await pageEval(app, page, "JSON.stringify(document.getElementById('text').getBoundingClientRect())")) ?? "{}",
       );
-      const box = await viewBox(page);
-      await main.mouse.click(box.x + field.x + 20, box.y + field.y + field.height / 2);
+      await clearForRealPointer(page);
+      const spot = await globalPoint(page, field.x + 20, field.y + field.height / 2);
+      realPointer(spot.x, spot.y, "left");
       await until(
         "the page field takes focus",
         () => pageEval(app, page, "String(document.activeElement.id)"),
@@ -1138,18 +1145,20 @@ const legs: Leg[] = [
         colourDistance(clean.mean, FIXTURE_FILL) < 90,
         `the page is not filling the view before the overlay: mean ${JSON.stringify(clean.mean)}`,
       );
-      // The find bar is the app's own chrome inside the content area; the lift
-      // makes z-order ordinary AppKit sibling order, so it has to cover the web
-      // contents rather than disappear behind Chromium's layer.
+      // The find bar is the app's own chrome, and opening it takes a strip the
+      // web contents held a moment ago. The lift makes z-order ordinary AppKit
+      // sibling order, so those pixels have to become the app's: Chromium's
+      // layer drawing on regardless is what this catches. Both probes read the
+      // SAME window rectangle, the one the webview filled before the bar.
       await main.keyboard.press("Meta+f");
       await until("the find bar opens", () => main.getByTestId("find-bar").isVisible(), (v) => v === true, 10000);
       const after = await captureViewRect("overlay-after", page);
-      const over = probePng(after.path, after.rect);
+      const over = probePng(after.path, before.rect);
       const clean2 = probePng(before.path, before.rect);
       assert(
         colourDistance(over.mean, clean2.mean) > 6,
-        `the find bar left the webview rectangle unchanged (${JSON.stringify(clean2.mean)} vs ${JSON.stringify(over.mean)}),` +
-          " so it is not drawing over the web contents",
+        `the find bar changed nothing in the rectangle the web contents filled (${JSON.stringify(clean2.mean)}` +
+          ` vs ${JSON.stringify(over.mean)}), so Chromium's layer is still drawing there`,
       );
       await main.keyboard.press("Escape");
     },
@@ -1378,6 +1387,16 @@ async function ensureFixturePage(): Promise<void> {
   // reports a missing element rather than its own result.
   const page = await activePage().catch(() => null);
   if (page !== null && (await pageEval(app, page, "location.href").catch(() => null)) === `${FIXTURE_ORIGIN}/index.html`) {
+    // The page carries state no reload cleared, and Chromium's own menu is
+    // built from it: a selection left by an earlier leg turns the page menu
+    // into the selection menu, and a leg asserting Back reports that instead.
+    await pageEval(
+      app,
+      page,
+      "getSelection().removeAllRanges(); scrollTo(0, 0);" +
+        " document.activeElement?.blur?.(); document.getElementById('text').value = '';" +
+        " document.getElementById('edit').textContent = ''",
+    ).catch(() => null);
     return;
   }
   mainPage = await loadFixture();
