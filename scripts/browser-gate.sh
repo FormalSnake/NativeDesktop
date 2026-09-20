@@ -9,8 +9,9 @@
 #   3. zig build test         — the unit-test binaries
 #   4. headless-smoke         — a window maps under weston
 #   5. headless-webview       — the webview surface + the page vocabulary
-#   6. sourcetree drive       — row actions, iconData, the a11y probe
-#   7. the app's own drives   — through the APP's own harness; a missing one
+#   6. headless-decoration    — the x11 window-button layout follows the portal
+#   7. sourcetree drive       — row actions, iconData, the a11y probe
+#   8. the app's own drives   — through the APP's own harness; a missing one
 #                               SKIPs, a failing one reports unless
 #                               ND_BROWSER_APP_STRICT=1
 #
@@ -80,6 +81,10 @@ check_tests() {
 
 check_smoke()   { ./scripts/headless-smoke.sh; }
 check_webview() { ./scripts/headless-webview.sh; }
+# Runs before the wayland steps below, and in a subshell: it drives an Xvfb
+# rig, and check_sourcetree's `export GDK_BACKEND=wayland` leaks into every
+# step after it.
+check_decoration() { ( ./scripts/headless-decoration.sh ); }
 
 # The sourcetree drive spawns its own host (launchApp), so it needs a
 # compositor but not the ND_AUTOMATION_SOCKET harness headless-run.sh sets up.
@@ -124,9 +129,10 @@ step "zig build" check_build
 step "zig build test" check_tests
 step "headless smoke" check_smoke
 step "headless webview" check_webview
+step "headless decoration" check_decoration
 step "sourcetree drive" check_sourcetree
 
-# 7. The app's own drives, if the app repo is checked out beside us. Each runs
+# 8. The app's own drives, if the app repo is checked out beside us. Each runs
 #    through the APP's harness (its scripts/headless*.sh), never re-invented
 #    here. A missing drive is a SKIP: the app is written by a different agent on
 #    a different schedule, and this gate certifies the FRAMEWORK. A drive that
