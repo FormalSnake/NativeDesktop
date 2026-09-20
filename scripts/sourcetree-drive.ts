@@ -98,13 +98,12 @@ function luminance(img: Png, x: number, y: number): number {
   return (img.data[i]! * 299 + img.data[i + 1]! * 587 + img.data[i + 2]! * 114) / 1000;
 }
 
-/// Column runs per row band inside `rect` (logical, window top-left space).
-/// The row fill is taken as the rect's modal luminance rather than a fixed
-/// threshold, so the profile reads the same in dark appearance and under a
-/// hover highlight.
-function profileRows(img: Png, rect: { x: number; y: number; w: number; h: number }, scale: number): Run[][] {
-  const x0 = Math.round(rect.x * scale), x1 = Math.min(img.w, Math.round((rect.x + rect.w) * scale));
-  const y0 = Math.round(rect.y * scale), y1 = Math.min(img.h, Math.round((rect.y + rect.h) * scale));
+type Rect = { x: number; y: number; w: number; h: number };
+
+/// The modal luminance of `rect`, which every profile below reads as the fill
+/// its ink contrasts with, so a profile reads the same in dark appearance and
+/// under a hover highlight.
+function modalFill(img: Png, x0: number, x1: number, y0: number, y1: number): number {
   const hist = new Map<number, number>();
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
@@ -114,6 +113,33 @@ function profileRows(img: Png, rect: { x: number; y: number; w: number; h: numbe
   }
   let fill = 0, best = -1;
   for (const [l, count] of hist) if (count > best) { best = count; fill = l; }
+  return fill;
+}
+
+/// The tallest contiguous ink band inside `rect`, in logical units. `fill` is
+/// the caller's reference background and `contrast` how far from it a pixel has
+/// to sit to count. Both are the caller's because a narrow column can be
+/// dominated by the very chrome being measured: take the modal luminance inside
+/// a button's own column and the button's fill IS the fill, which reads as no
+/// ink at all.
+function inkBandHeight(img: Png, rect: Rect, scale: number, fill: number, contrast: number): number {
+  const x0 = Math.round(rect.x * scale), x1 = Math.min(img.w, Math.round((rect.x + rect.w) * scale));
+  const y0 = Math.round(rect.y * scale), y1 = Math.min(img.h, Math.round((rect.y + rect.h) * scale));
+  let tallest = 0, run = 0;
+  for (let y = y0; y < y1; y++) {
+    let ink = false;
+    for (let x = x0; x < x1; x++) if (Math.abs(luminance(img, x, y) - fill) > contrast) { ink = true; break; }
+    run = ink ? run + 1 : 0;
+    if (run > tallest) tallest = run;
+  }
+  return tallest / scale;
+}
+
+/// Column runs per row band inside `rect` (logical, window top-left space).
+function profileRows(img: Png, rect: Rect, scale: number): Run[][] {
+  const x0 = Math.round(rect.x * scale), x1 = Math.min(img.w, Math.round((rect.x + rect.w) * scale));
+  const y0 = Math.round(rect.y * scale), y1 = Math.min(img.h, Math.round((rect.y + rect.h) * scale));
+  const fill = modalFill(img, x0, x1, y0, y1);
   const isInk = (x: number, y: number): boolean => Math.abs(luminance(img, x, y) - fill) > 60;
   const bands: { y0: number; y1: number }[] = [];
   for (let y = y0; y < y1; y++) {
@@ -311,7 +337,14 @@ try {
 // are directly comparable. The probe hosts run one at a time, after the main
 // host is closed: a GApplication is single-instance per id, so two live GTK
 // hosts sharing the gate's ND_APP_ID would collide.
-const rowProfile = async (variant: string, hoverFirst = false): Promise<Run[][]> => {
+interface Profile {
+  rows: Run[][];
+  img: Png;
+  rect: Rect;
+  scale: number;
+}
+
+const rowProfile = async (variant: string, hoverFirst = false): Promise<Profile> => {
   const label = hoverFirst ? `${variant}+hover` : variant;
   const probe = await launchApp({
     entry: "examples/sourcetree/main.tsx",
@@ -328,16 +361,17 @@ const rowProfile = async (variant: string, hoverFirst = false): Promise<Run[][]>
     }
     const shot = await probe.screenshot(`${shotDir}/sourcetree-geo-${label}.png`, { minBytes: 2000 });
     const img = decodePng(new Uint8Array(await Bun.file(shot.path).arrayBuffer()));
-    const rows = profileRows(img, widget.geometry, img.w / win.w);
+    const scale = img.w / win.w;
+    const rows = profileRows(img, widget.geometry, scale);
     if (rows.length < 2) throw new Error(`st-geo (${label}) profiled ${rows.length} row bands, want at least 2`);
-    return rows;
+    return { rows, img, rect: widget.geometry, scale };
   } finally {
     await probe.close();
   }
 };
 
-const flat = await rowProfile("flat");
-const deep = await rowProfile("deep");
+const flat = (await rowProfile("flat")).rows;
+const deep = (await rowProfile("deep")).rows;
 const flatX = flat[0]![0]![0], deepX = deep[0]![0]![0];
 // Row 0 is a leaf at depth 0 in BOTH trees and differs only in whether the
 // tree holds an expandable node at all (deep's sits last, off screen). A tree
@@ -362,7 +396,7 @@ console.log(`ND_ST_INDENT_OK flat-list title x=${flatX}, same rows under a branc
 // button is the only run the "always" profile adds.
 const hidden = await rowProfile("hover");
 const shown = await rowProfile("always");
-const hiddenRow = hidden[0]!, shownRow = shown[0]!;
+const hiddenRow = hidden.rows[0]!, shownRow = shown.rows[0]!;
 for (let i = 0; i < hiddenRow.length; i++) {
   const a = hiddenRow[i]!, b = shownRow[i];
   if (!b || Math.abs(a[0] - b[0]) > 0.5 || Math.abs(a[1] - b[1]) > 0.5) {
@@ -379,10 +413,42 @@ console.log(
     ` the drawn action adds ${fmtRun(shownRow[shownRow.length - 1]!)}`,
 );
 
+// A row action is a libadwaita row suffix: `.flat`, so at rest it draws its
+// symbolic glyph and no bezel at all. Under stock Adwaita a raised chip and a
+// flat button allocate the same 34px, so size alone cannot tell them apart;
+// what can is how much of that allocation is painted. The action's own column
+// is read against the tree's row background at a contrast of 20, which is the
+// one bar that separates them: below it the alternating row fills read as ink
+// everywhere, above it Adwaita's own resting button fill drops out. A flat
+// suffix leaves its 16pt glyph there and a `.circular` chip leaves the whole
+// 34pt button, so the bound is that glyph plus antialiasing, well inside the
+// row's content height that the row pitch bounds from above.
+if (app.backend === "gtk") {
+  const lastRun = shownRow[shownRow.length - 1]!;
+  const rowFill = modalFill(shown.img, 0, shown.img.w, 0, shown.img.h);
+  const actionRect = {
+    x: shown.rect.x + lastRun[0] - 2,
+    y: shown.rect.y,
+    w: lastRun[1] - lastRun[0] + 5,
+    h: shown.rect.h,
+  };
+  const drawn = inkBandHeight(shown.img, actionRect, shown.scale, rowFill, 20);
+  const symbolic = 16, slack = 4;
+  const pitch = shown.rect.h / shown.rows.length;
+  if (drawn > symbolic + slack) {
+    throw new Error(
+      `a row action paints ${drawn.toFixed(1)}pt in its own column, over the ${symbolic + slack}pt a flat suffix's` +
+        ` ${symbolic}pt glyph needs: the button is drawing resting chrome (a raised or .circular button)`,
+    );
+  }
+  if (drawn > pitch) throw new Error(`a row action draws ${drawn.toFixed(1)}pt tall, past the ${pitch.toFixed(1)}pt row pitch`);
+  console.log(`ND_ST_ACTIONFLAT_OK the drawn action paints ${drawn.toFixed(1)}pt in its column, a bare glyph inside a ${pitch.toFixed(1)}pt row`);
+}
+
 // The hover RPC cannot reach the reveal (see above), so this only proves the
 // row does not move under it; the pair above carries the real proof.
 if (app.backend === "appkit") {
-  const hoveredRow = (await rowProfile("hover", true))[0]!;
+  const hoveredRow = (await rowProfile("hover", true)).rows[0]!;
   for (let i = 0; i < hiddenRow.length; i++) {
     if (Math.abs(hiddenRow[i]![0] - (hoveredRow[i]?.[0] ?? NaN)) > 0.5) {
       throw new Error(`row content moved under hover at run ${i}: ${fmtRun(hiddenRow[i]!)} vs ${hoveredRow[i] ? fmtRun(hoveredRow[i]!) : "(missing)"}`);
