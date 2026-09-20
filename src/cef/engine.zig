@@ -781,6 +781,11 @@ const View = struct {
     /// callback before the new one takes the slot.
     menu_popup: ?*gtkmenu.Popup = null,
     menu_request: ?*MenuRequest = null,
+    /// A menu Chromium asked for while a mouse button was still down, and the
+    /// timeout watching for that button to come up. See `openNativeMenu`.
+    menu_pending: ?*MenuRequest = null,
+    menu_open_source: c_uint = 0,
+    menu_open_deadline_us: i64 = 0,
 
     /// The last `findStart` text, so findNext/findPrevious can re-issue it:
     /// CEF's find takes the search text on every call.
@@ -5896,8 +5901,43 @@ fn cancelMenuRequest(req: *MenuRequest) void {
     alloc.destroy(req);
 }
 
+/// How long a pending menu waits for the pointer button to come up, and how
+/// often it looks. The wait is bounded because a button the X server believes
+/// is still down after the user has let go (a release swallowed by a grab that
+/// went away with its client) would otherwise park the menu forever.
+const menu_button_wait_us: i64 = 2 * std.time.us_per_s;
+const menu_button_poll_ms: c_uint = 16;
+
 fn openNativeMenu(view: *View, req: *MenuRequest) void {
     closeNativeMenu(view);
+    // Chromium raises the context menu on the press, not the release, so this
+    // routinely arrives with the right button still down. A GtkPopover grabs
+    // the seat as it pops up, and while a button is held the X server holds an
+    // automatic pointer grab for the client that owns the window the press
+    // landed in, which here is Chromium's own X connection and not GDK's.
+    // XGrabPointer answers AlreadyGrabbed, and GTK hides a popover whose grab
+    // failed before it is ever mapped: no menu and no error. So the menu waits
+    // out the rest of the user's click.
+    if (x11.pointerButtonsDown()) {
+        view.menu_pending = req;
+        view.menu_open_deadline_us = glib.getMonotonicTime() + menu_button_wait_us;
+        view.menu_open_source = glib.timeoutAdd(menu_button_poll_ms, &onMenuButtonWatch, view);
+        return;
+    }
+    presentNativeMenu(view, req);
+}
+
+fn onMenuButtonWatch(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    if (x11.pointerButtonsDown() and glib.getMonotonicTime() < view.menu_open_deadline_us) return 1; // G_SOURCE_CONTINUE
+    view.menu_open_source = 0;
+    const req = view.menu_pending orelse return 0;
+    view.menu_pending = null;
+    presentNativeMenu(view, req);
+    return 0; // G_SOURCE_REMOVE
+}
+
+fn presentNativeMenu(view: *View, req: *MenuRequest) void {
     // The popover takes a keyboard grab, and X input focus is on CEF's own
     // window after any interaction with the page; without this the menu opens
     // with no keyboard.
@@ -5913,6 +5953,14 @@ fn openNativeMenu(view: *View, req: *MenuRequest) void {
 }
 
 fn closeNativeMenu(view: *View) void {
+    if (view.menu_open_source != 0) {
+        _ = glib.Source.remove(view.menu_open_source);
+        view.menu_open_source = 0;
+    }
+    if (view.menu_pending) |req| {
+        view.menu_pending = null;
+        cancelMenuRequest(req);
+    }
     const popup = view.menu_popup orelse return;
     gtkmenu.close(popup);
 }

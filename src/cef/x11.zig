@@ -58,6 +58,7 @@ const FnFlush = *const fn (*Display) callconv(.c) c_int;
 const FnSync = *const fn (*Display, c_int) callconv(.c) c_int;
 const FnSetInputFocus = *const fn (*Display, Window, c_int, c_ulong) callconv(.c) c_int;
 const FnGetInputFocus = *const fn (*Display, *Window, *c_int) callconv(.c) c_int;
+const FnQueryPointer = *const fn (*Display, Window, *Window, *Window, *c_int, *c_int, *c_int, *c_int, *c_uint) callconv(.c) c_int;
 const FnGetXDisplay = *const fn (*gdk.Display) callconv(.c) ?*Display;
 const FnGetXid = *const fn (*gdk.Surface) callconv(.c) Window;
 const FnTrap = *const fn (*gdk.Display) callconv(.c) void;
@@ -94,6 +95,7 @@ const Api = struct {
     get_geometry: FnGeometry,
     intern_atom: FnInternAtom,
     get_window_property: FnGetProperty,
+    query_pointer: FnQueryPointer,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
     surface_lookup: FnSurfaceLookup,
@@ -148,6 +150,7 @@ fn loadApi() ?*const Api {
         .get_geometry = x.lookup(FnGeometry, "XGetGeometry") orelse return missing(&x, &g, "XGetGeometry"),
         .intern_atom = x.lookup(FnInternAtom, "XInternAtom") orelse return missing(&x, &g, "XInternAtom"),
         .get_window_property = x.lookup(FnGetProperty, "XGetWindowProperty") orelse return missing(&x, &g, "XGetWindowProperty"),
+        .query_pointer = x.lookup(FnQueryPointer, "XQueryPointer") orelse return missing(&x, &g, "XQueryPointer"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
         .surface_lookup = g.lookup(FnSurfaceLookup, "gdk_x11_surface_lookup_for_display") orelse return missing(&x, &g, "gdk_x11_surface_lookup_for_display"),
@@ -339,6 +342,27 @@ pub fn focused() Window {
     var revert: c_int = 0;
     _ = c.api.get_input_focus(c.x, &window, &revert);
     return if (window <= 1) 0 else window;
+}
+
+/// Button1Mask through Button5Mask of the modifier mask XQueryPointer answers
+/// with.
+const BUTTON_MASK: c_uint = 0x1f00;
+
+/// True while any pointer button is held. Untrapped for the same reason
+/// `focused` is: it is a round trip, and the only window it names is the root,
+/// which cannot be gone.
+pub fn pointerButtonsDown() bool {
+    const c = conn() orelse return false;
+    const root = c.api.default_root_window(c.x);
+    var got_root: Window = 0;
+    var child: Window = 0;
+    var rx: c_int = 0;
+    var ry: c_int = 0;
+    var wx: c_int = 0;
+    var wy: c_int = 0;
+    var mask: c_uint = 0;
+    if (c.api.query_pointer(c.x, root, &got_root, &child, &rx, &ry, &wx, &wy, &mask) == 0) return false;
+    return (mask & BUTTON_MASK) != 0;
 }
 
 /// Moves an embedding container under a different toplevel, which is what a
