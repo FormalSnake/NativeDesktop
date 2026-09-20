@@ -60,3 +60,5 @@ jobs:
         run: nix develop -c ./scripts/headless-propreset.sh
       - name: headless popover (anchorRef places a pooled popover)
         run: nix develop -c ./scripts/headless-popover.sh
+      - name: headless menu order (the native menu tracks a reordered list)
+        run: nix develop -c ./scripts/headless-menu-order.sh
