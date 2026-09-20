@@ -1053,6 +1053,57 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     return 0
 }
 
+/// `menuModel`: the live NSMenu the target owns, flattened in draw order
+/// (rpc.json's MenuModelResult). Read off the menu the owner is carrying, not
+/// off the NDMenuNode tree that built it, so it answers what AppKit would
+/// actually draw. A node owning no menu (a <menu>, any ordinary view) is
+/// invalidParams.
+@MainActor private func semanticMenuModel(_ view: NSView, _ nodeID: UInt32,
+                                          _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+                                          _ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    guard let menu = ndOwnedMenu(view) else { return invalidValue(errOut, nodeID) }
+    var items: [String] = []
+    ndFlattenMenu(menu, prefix: "", into: &items)
+    let encoded = items.map { "\"\(escapeJSONString($0))\"" }.joined(separator: ",")
+    setResultRaw(resultOut, "{\"ref\":\(nodeID),\"items\":[\(encoded)]}")
+    return 0
+}
+
+/// The menu a node OWNS: a menubar node owns the installed app menu, a
+/// MenuButton/SplitButton its combo button's, a TrayItem its status item's.
+@MainActor private func ndOwnedMenu(_ view: NSView) -> NSMenu? {
+    if let node = ndMenuNode(view) { return node.kind == .menubar ? NSApp.mainMenu : nil }
+    if let combo = view as? NSComboButton { return combo.menu }
+    if let tray = view as? NDTrayItemView { return tray.statusItem.menu }
+    return nil
+}
+
+/// Draw order, with a submenu contributing its own entry and then its
+/// children under a `Parent > Child` prefix. A separator is `---`, never
+/// leading, trailing, or doubled, so both backends' section and separator
+/// spellings compare equal.
+@MainActor private func ndFlattenMenu(_ menu: NSMenu, prefix: String, into out: inout [String]) {
+    // Separators are scoped to THIS menu, not the whole flattening: a submenu
+    // opening with one must not fence itself off from its own title.
+    let start = out.count
+    for item in menu.items {
+        if item.isSeparatorItem {
+            if out.count > start, out.last != "---" { out.append("---") }
+            continue
+        }
+        if let submenu = item.submenu {
+            // The menu carries the name: a holder NSMenuItem built with
+            // NSMenuItem() reports "NSMenuItem" as its title, not "".
+            let title = submenu.title.isEmpty ? item.title : submenu.title
+            out.append(prefix + title)
+            ndFlattenMenu(submenu, prefix: prefix + title + " > ", into: &out)
+            continue
+        }
+        out.append(prefix + item.title)
+    }
+    while out.count > start, out.last == "---" { out.removeLast() }
+}
+
 /// `a11y` — the live per-node accessibility probe behind getTree's
 /// enabled/focused/value fields. Value reads mirror
 /// `semanticSetValue`'s kind dispatch so both sides of a round-trip agree
@@ -1332,6 +1383,8 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
         else { return invalidValue(errOut, nodeID) }
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"dispatched\":true}")
         return 0
+    case "menuModel":
+        return semanticMenuModel(view, nodeID, resultOut, errOut)
     case "a11y":
         return semanticA11y(view, nodeID, resultOut, errOut)
     case "windowState":

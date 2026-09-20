@@ -713,6 +713,88 @@ fn ndBuildSubmenuModel(submenu: *gio.Menu) ?*gio.Menu {
 // rebuilt per owner on every structural change. Keyed by the owner WIDGET. ----
 var menu_owner_children: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty;
 
+/// Every attached menu node's current parent handle, across all three child
+/// registries. A menu handle is a GMenu/GMenuItem, never a GtkWidget, so it
+/// has no gtk_widget_get_parent to ask: without this the core reads every
+/// menu node as unparented (`hasParent`) and its removal reaches no model at
+/// all, and a reordered child is appended a second time instead of moved.
+var menu_node_parent: std.AutoHashMapUnmanaged(usize, usize) = .empty;
+
+/// The ordered child list of whichever owner holds `parent`: the menubar's
+/// menus, a <menu>'s items, or a MenuButton/SplitButton's children.
+fn ndMenuChildList(parent: usize) ?*std.ArrayList(usize) {
+    if (menu_owner_children.getPtr(parent)) |l| return l;
+    if (submenu_items.getPtr(parent)) |l| return l;
+    if (menubar_menus.getPtr(parent)) |l| return l;
+    return null;
+}
+
+/// Drops `child` from the list it currently sits in. React moves a child by
+/// emitting insertBefore/append with NO preceding remove, so every attach
+/// detaches first; otherwise the model gains a second copy of the same item
+/// (a 3-item tab list drew 5 entries after one reorder).
+fn ndMenuDetachNode(child_w: *gtk.Widget) void {
+    const child = @intFromPtr(child_w);
+    const parent = menu_node_parent.get(child) orelse return;
+    _ = menu_node_parent.remove(child);
+    const list = ndMenuChildList(parent) orelse return;
+    for (list.items, 0..) |c, i| {
+        if (c == child) {
+            _ = list.orderedRemove(i);
+            return;
+        }
+    }
+}
+
+/// True while a menu node sits in some owner's child list, which is what the
+/// core's `hasParent` gate asks before dispatching a remove (src/tree.zig).
+pub fn ndMenuNodeAttached(child_w: *gtk.Widget) bool {
+    return menu_node_parent.contains(@intFromPtr(child_w));
+}
+
+/// The dev-mode GC sweep tears a doomed subtree down through `unparent`
+/// rather than a remove op, so a swept menu node has to leave its owner's
+/// list the same way a removed one does.
+pub fn ndMenuSweepNode(child_w: *gtk.Widget) void {
+    if (!menu_node_parent.contains(@intFromPtr(child_w))) return;
+    ndMenuDetachNode(child_w);
+    ndMenuPurgeNode(@intFromPtr(child_w));
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
+}
+
+/// Inserts `child` into `list` before `before` (at the end when `before` is
+/// null or already gone) and records the new parent. The caller detaches
+/// first, so the list pointer is taken AFTER that mutation.
+fn ndMenuListInsert(list: *std.ArrayList(usize), parent: usize, child: usize, before: ?usize) void {
+    var idx: usize = list.items.len;
+    if (before) |b| {
+        for (list.items, 0..) |c, i| if (c == b) {
+            idx = i;
+            break;
+        };
+    }
+    list.insert(events_gpa, idx, child) catch return;
+    menu_node_parent.put(events_gpa, child, parent) catch {};
+}
+
+/// Drops an unmounted node's own registry entries, and its whole subtree's:
+/// the core releases every descendant handle in the same commit, and a GLib
+/// address reuse would otherwise hand a fresh node the dead one's item list
+/// (the resurrection cbMenuOwnerDestroyed guards against for owners).
+fn ndMenuPurgeNode(node: usize) void {
+    if (submenu_items.fetchRemove(node)) |kv| {
+        var list = kv.value;
+        for (list.items) |c| {
+            _ = menu_node_parent.remove(c);
+            ndMenuPurgeNode(c);
+        }
+        list.deinit(events_gpa);
+    }
+    _ = menu_labels.remove(node);
+    if (menu_item_info.fetchRemove(node)) |kv| _ = menu_node_ids.remove(kv.value.node_id);
+}
+
 fn ndMenuOwnerRebuild(owner: *gtk.Widget) void {
     const children = menu_owner_children.get(@intFromPtr(owner)) orelse return;
     const model = ndBuildModelFromList(children.items);
@@ -724,21 +806,17 @@ fn ndMenuOwnerRebuild(owner: *gtk.Widget) void {
     }
 }
 
-fn ndMenuOwnerAppend(owner: *gtk.Widget, child: *gtk.Widget) void {
+fn ndMenuOwnerAttach(owner: *gtk.Widget, child: *gtk.Widget, before: ?*gtk.Widget) void {
+    ndMenuDetachNode(child);
     const gop = menu_owner_children.getOrPut(events_gpa, @intFromPtr(owner)) catch return;
     if (!gop.found_existing) gop.value_ptr.* = .empty;
-    gop.value_ptr.append(events_gpa, @intFromPtr(child)) catch {};
+    ndMenuListInsert(gop.value_ptr, @intFromPtr(owner), @intFromPtr(child), if (before) |b| @intFromPtr(b) else null);
     ndMenuOwnerRebuild(owner);
 }
 
 fn ndMenuOwnerRemove(owner: *gtk.Widget, child: *gtk.Widget) void {
-    const list = menu_owner_children.getPtr(@intFromPtr(owner)) orelse return;
-    for (list.items, 0..) |c, i| {
-        if (c == @intFromPtr(child)) {
-            _ = list.orderedRemove(i);
-            break;
-        }
-    }
+    ndMenuDetachNode(child);
+    ndMenuPurgeNode(@intFromPtr(child));
     ndMenuOwnerRebuild(owner);
 }
 
@@ -756,6 +834,7 @@ fn ndMenuOwnersRefresh() void {
 fn cbMenuOwnerDestroyed(w: *gtk.Widget, _: ?*anyopaque) callconv(.c) void {
     if (menu_owner_children.fetchRemove(@intFromPtr(w))) |kv| {
         var list = kv.value;
+        for (list.items) |c| _ = menu_node_parent.remove(c);
         list.deinit(events_gpa);
     }
 }
@@ -887,21 +966,36 @@ fn ndMenuRefresh() void {
     }
 }
 
-fn ndMenubarAppendMenu(menubar_w: *gtk.Widget, menu_w: *gtk.Widget) void {
+fn ndMenubarAttachMenu(menubar_w: *gtk.Widget, menu_w: *gtk.Widget, before: ?*gtk.Widget) void {
+    ndMenuDetachNode(menu_w);
     const menubar: *gio.Menu = @ptrCast(@alignCast(menubar_w));
     const gop = menubar_menus.getOrPut(events_gpa, @intFromPtr(menubar)) catch return;
     if (!gop.found_existing) gop.value_ptr.* = .empty;
-    gop.value_ptr.append(events_gpa, @intFromPtr(menu_w)) catch {};
+    ndMenuListInsert(gop.value_ptr, @intFromPtr(menubar), @intFromPtr(menu_w), if (before) |b| @intFromPtr(b) else null);
     ndMenuRefresh();
 }
 
-fn ndMenuAppendItem(menu_w: *gtk.Widget, item_w: *gtk.Widget) void {
+fn ndMenubarRemoveMenu(_: *gtk.Widget, menu_w: *gtk.Widget) void {
+    ndMenuDetachNode(menu_w);
+    ndMenuPurgeNode(@intFromPtr(menu_w));
+    ndMenuRefresh();
+}
+
+fn ndMenuAttachItem(menu_w: *gtk.Widget, item_w: *gtk.Widget, before: ?*gtk.Widget) void {
+    ndMenuDetachNode(item_w);
     const submenu: *gio.Menu = @ptrCast(@alignCast(menu_w));
     const gop = submenu_items.getOrPut(events_gpa, @intFromPtr(submenu)) catch return;
     if (!gop.found_existing) gop.value_ptr.* = .empty;
-    gop.value_ptr.append(events_gpa, @intFromPtr(item_w)) catch {};
+    ndMenuListInsert(gop.value_ptr, @intFromPtr(submenu), @intFromPtr(item_w), if (before) |b| @intFromPtr(b) else null);
     ndMenuRefresh();
     ndMenuOwnersRefresh(); // a button owner holding this Menu re-snapshots it
+}
+
+fn ndMenuRemoveItem(_: *gtk.Widget, item_w: *gtk.Widget) void {
+    ndMenuDetachNode(item_w);
+    ndMenuPurgeNode(@intFromPtr(item_w));
+    ndMenuRefresh();
+    ndMenuOwnersRefresh();
 }
 
 /// GObject weak-ref notify: a recorded headerbar is being finalized (the
@@ -942,6 +1036,76 @@ pub fn ndMenuNoteHeaderBar(hb: *adw.HeaderBar) void {
 /// window content.
 pub fn ndMenuAttachToWindow(_: *gtk.Widget) void {
     ndMenuRefresh();
+}
+
+// ---- menuModel read-back (the "menuModel" semantic action). Walks the
+// GMenuModel the owner is ACTUALLY carrying, not the registries that built
+// it, so a drive asserts what GTK would draw. ----
+
+fn ndMenuModelAppendEntry(out: *std.ArrayList([]const u8), alloc: std.mem.Allocator, prefix: []const u8, label: []const u8) ?[]const u8 {
+    const path = std.fmt.allocPrint(alloc, "{s}{s}", .{ prefix, label }) catch return null;
+    out.append(alloc, path) catch return null;
+    return path;
+}
+
+/// A section's items are drawn inline, fenced by separators. An empty section
+/// draws nothing, so it contributes no fence either (the builder always opens
+/// and closes with a section, and either end can be empty).
+fn ndMenuModelFlatten(model: *gio.MenuModel, prefix: []const u8, out: *std.ArrayList([]const u8), alloc: std.mem.Allocator) void {
+    // Fences are scoped to THIS menu, not the whole flattening: a submenu
+    // opening with a section must not fence itself off from its own title.
+    const start = out.items.len;
+    const n = gio.MenuModel.getNItems(model);
+    var i: c_int = 0;
+    while (i < n) : (i += 1) {
+        if (gio.MenuModel.getItemLink(model, i, "section")) |section| {
+            const before = out.items.len;
+            if (before > start and !std.mem.eql(u8, out.items[before - 1], "---")) {
+                out.append(alloc, "---") catch return;
+            }
+            ndMenuModelFlatten(section, prefix, out, alloc);
+            // Nothing came out of it: drop the fence we just opened.
+            if (out.items.len == before + 1) _ = out.pop();
+            continue;
+        }
+        var label: []const u8 = "";
+        if (gio.MenuModel.getItemAttributeValue(model, i, "label", null)) |v| {
+            var len: usize = 0;
+            const s = glib.Variant.getString(v, &len);
+            label = s[0..len];
+        }
+        if (gio.MenuModel.getItemLink(model, i, "submenu")) |submenu| {
+            const path = ndMenuModelAppendEntry(out, alloc, prefix, label) orelse continue;
+            const child_prefix = std.fmt.allocPrint(alloc, "{s} > ", .{path}) catch continue;
+            ndMenuModelFlatten(submenu, child_prefix, out, alloc);
+            continue;
+        }
+        _ = ndMenuModelAppendEntry(out, alloc, prefix, label);
+    }
+    while (out.items.len > start and std.mem.eql(u8, out.items[out.items.len - 1], "---")) _ = out.pop();
+}
+
+/// The live model of a menu OWNER: a MenuButton/SplitButton's own, or the
+/// menubar's installed one (the primary button's model where a headerbar
+/// homes it, the GtkApplication menubar otherwise). Null for any other node,
+/// including a <menu>, which only ever draws inside one of these.
+fn ndMenuOwnerModel(widget: *gtk.Widget) ?*gio.MenuModel {
+    if (gobject.ext.isA(widget, adw.SplitButton)) return adw.SplitButton.getMenuModel(@ptrCast(@alignCast(widget)));
+    if (gobject.ext.isA(widget, gtk.MenuButton)) return gtk.MenuButton.getMenuModel(@ptrCast(@alignCast(widget)));
+    const menubar = the_menubar orelse return null;
+    if (@intFromPtr(menubar) != @intFromPtr(widget)) return null;
+    if (menu_primary_button) |btn| return gtk.MenuButton.getMenuModel(btn);
+    const app = menu_app orelse return null;
+    return gtk.Application.getMenubar(app);
+}
+
+/// `items` for the menuModel RPC, or null when the node owns no menu.
+/// Allocated in `alloc` (the backend's request arena).
+pub fn ndMenuModelItems(widget: *gtk.Widget, alloc: std.mem.Allocator) ?[]const []const u8 {
+    const model = ndMenuOwnerModel(widget) orelse return null;
+    var out: std.ArrayList([]const u8) = .empty;
+    ndMenuModelFlatten(model, "", &out, alloc);
+    return out.toOwnedSlice(alloc) catch null;
 }
 
 // ---- <headerbar> back/forward navigation (canGoBack/canGoForward +
@@ -5040,9 +5204,9 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             } else adw.ToolbarView.setContent(tv, child);
         } else adw.ToolbarView.setContent(tv, child);
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
-        ndMenubarAppendMenu(parent, child);
+        ndMenubarAttachMenu(parent, child, null);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
-        ndMenuAppendItem(parent, child);
+        ndMenuAttachItem(parent, child, null);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
         const group: *adw.PreferencesGroup = @ptrCast(@alignCast(parent));
         if (gtk.Widget.getParent(child) != null) {
@@ -5071,9 +5235,9 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             gtk.Overlay.addOverlay(ov, child);
         }
     } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
-        ndMenuOwnerAppend(parent, child);
+        ndMenuOwnerAttach(parent, child, null);
     } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
-        ndMenuOwnerAppend(parent, child);
+        ndMenuOwnerAttach(parent, child, null);
     } else if (std.mem.eql(u8, parent_kind, "Popover")) {
         gtk.Popover.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Expander")) {
@@ -5171,6 +5335,10 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
                 adw.HeaderBar.packStart(hb, child);
             }
         } else adw.HeaderBar.packStart(hb, child);
+    } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
+        ndMenubarAttachMenu(parent, child, b);
+    } else if (std.mem.eql(u8, parent_kind, "Menu")) {
+        ndMenuAttachItem(parent, child, b);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
         // AdwPreferencesGroup cannot insert at an index: a mid-list insert
         // lands at the end (documented asymmetry; remount re-adds settle order).
@@ -5198,6 +5366,10 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         } else {
             gtk.Overlay.addOverlay(ov, child);
         }
+    } else if (std.mem.eql(u8, parent_kind, "MenuButton")) {
+        ndMenuOwnerAttach(parent, child, b);
+    } else if (std.mem.eql(u8, parent_kind, "SplitButton")) {
+        ndMenuOwnerAttach(parent, child, b);
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
         const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
@@ -5269,9 +5441,9 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
-        // M13: submenu removal rebuilds on next refresh (v1 no-op)
+        ndMenubarRemoveMenu(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
-        // M13: item removal rebuilds on next refresh (v1 no-op)
+        ndMenuRemoveItem(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "SettingsGroup")) {
         adw.PreferencesGroup.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Row")) {

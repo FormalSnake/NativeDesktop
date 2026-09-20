@@ -41,7 +41,7 @@ fn parseParams(comptime T: type, gpa: std.mem.Allocator, params: ?std.json.Value
 /// reads one widget's bounds + owning window on the UI thread so the
 /// automation thread can resolve drag endpoints; `resolve_ref` ranks a
 /// testID's instances; `list_windows` snapshots every Window node's state.
-const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows, webview_info, webview_eval_start, webview_eval_poll, focus, scroll_into_view, snapshot_node, set_window_frame };
+const JobKind = enum { get_tree, screenshot, click, wait_poll, set_value, type_text, scroll, double_click, right_click, hover, window_action, probe_rect, resolve_ref, list_windows, webview_info, webview_eval_start, webview_eval_poll, menu_model, focus, scroll_into_view, snapshot_node, set_window_frame };
 
 /// A request/response handoff between the automation thread and the
 /// embedder's UI thread. The tree is read exclusively on the UI thread (see
@@ -164,6 +164,7 @@ fn handleOnUi(job: *UiJob) void {
         .webview_info => handleSemanticAction(job, "webviewInfo"),
         .webview_eval_start => handleSemanticAction(job, "webviewEvalStart"),
         .webview_eval_poll => handleSemanticAction(job, "webviewEvalPoll"),
+        .menu_model => handleSemanticAction(job, "menuModel"),
         .focus => handleSemanticAction(job, "focus"),
         .scroll_into_view => handleSemanticAction(job, "scrollIntoView"),
         .snapshot_node => handleSnapshotNode(job),
@@ -668,12 +669,16 @@ fn buildActionArgs(job: *UiJob) [:0]const u8 {
 /// browser's bugs are, and an actionability refusal there means a drive can
 /// never inspect them.
 ///
+/// `menuModel` waives it because every menu node is chrome with no geometry
+/// at all: the handle is a GMenu/GMenuItem on GTK and a host-only NSView on
+/// AppKit, so the bounds check refuses the only nodes it can answer for.
+///
 /// `scrollIntoView` and `snapshotNode` waive it for the opposite reason: a
 /// node scrolled out of its viewport reports invisible, and refusing there
 /// would refuse exactly the node scrollIntoView exists to bring back.
 fn waivesActionability(kind: JobKind) bool {
     return switch (kind) {
-        .webview_info, .webview_eval_start, .webview_eval_poll, .scroll_into_view, .snapshot_node => true,
+        .webview_info, .webview_eval_start, .webview_eval_poll, .menu_model, .scroll_into_view, .snapshot_node => true,
         else => false,
     };
 }
@@ -1288,6 +1293,15 @@ pub const Server = struct {
                 };
                 defer p.deinit();
                 var job = UiJob{ .tree = self.tree, .kind = .webview_info, .gpa = self.gpa, .io = self.io };
+                if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
+                return self.runJobAndEnvelope(&job, id);
+            },
+            .menuModel => {
+                const p = parseParams(rpc.MenuModelParams, self.gpa, parsed.value.params) catch {
+                    return errorEnvelope(self.gpa, id, rpc.code_invalid_params, rpc.msg_invalid_params, null);
+                };
+                defer p.deinit();
+                var job = UiJob{ .tree = self.tree, .kind = .menu_model, .gpa = self.gpa, .io = self.io };
                 if (self.targetError(id, &job, p.value.ref, p.value.testId, p.value.window)) |env| return env;
                 return self.runJobAndEnvelope(&job, id);
             },

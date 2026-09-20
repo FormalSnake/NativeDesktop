@@ -47,22 +47,24 @@ calls on this page into a `launchApp`/`AppHandle` API for Bun tests and drive sc
 | `focus` | `{ref?, testId?, window?}` | `{ok: true}` | moves keyboard focus to the target, the same path the widget-level `focus` command takes; afterwards `waitFor {testId, state: "focused"}` holds |
 | `scrollIntoView` | `{ref?, testId?, window?}` | `{ok: true, scrolled}` | scrolls the target's nearest scrollable ancestor until the target is inside the viewport; `scrolled: false` means there was no scroll ancestor, which is a success |
 | `snapshotNode` | `{ref?, testId?, window?, path?}` | `{path, width, height}` | renders ONE node to a PNG; `width`/`height` are the node's logical size, so they match its `geometry` (a window `screenshot` is at the display's backing scale instead). Without `path` the host writes beside the automation socket and answers where |
+| `menuModel` | `{ref?, testId?, window?}` | `{ref, items}` | the target's LIVE native menu, flattened in draw order: `items` are the GMenuModel's labels on GTK and the NSMenu's titles on AppKit, a nested submenu contributing its own entry then its children as `Parent > Child`, and a separator as `---` (never leading, trailing or doubled). Targets a `Menubar` (the installed app menu, defaults included on AppKit), a `MenuButton`/`SplitButton` or a `TrayItem`; a `Menu` answers `invalidParams`, since it only ever draws inside one of those |
 | `setWindowFrame` | `{window?, x?, y?, width?, height?}` | `WindowInfo` | moves and/or resizes a window, omitted components unchanged; answers that window's `WindowInfo` re-probed after the move |
 
 `click`, `setValue`, `type`, `scroll`, `doubleClick`, `rightClick`, `hover`, `focus`,
-`scrollIntoView`, `snapshotNode`, `webviewInfo`, and
+`scrollIntoView`, `snapshotNode`, `webviewInfo`, `menuModel`, and
 `webviewEval` all target by exactly one of `ref` or `testId` (`invalidParams` otherwise). `window` optionally scopes `testId` resolution
 to one window, using the same actionable-first ranking as `resolve`. Targeting by `testId` is one
 round trip with host-side resolution, so no `getTree` walk is needed first.
 
-`webviewInfo`, `webviewEval`, `scrollIntoView` and `snapshotNode` are the exceptions to the
-actionability check. They resolve a node the user could not reach: only visibility and bounds are
+`webviewInfo`, `webviewEval`, `scrollIntoView`, `snapshotNode` and `menuModel` are the exceptions
+to the actionability check. They resolve a node the user could not reach: only visibility and bounds are
 waived, and a node that does not exist still answers `-32001`. The two webview methods ask a page a
 question rather than act on a widget, which is what lets a drive inspect an extension's background
 page or a non-active tab, both of which live in hidden `Activity` subtrees. `scrollIntoView` and
 `snapshotNode` waive it for the opposite reason: a node scrolled out of its viewport reports
 invisible, and refusing there would refuse exactly the node `scrollIntoView` exists to bring back.
-Every other action still refuses a node it cannot see.
+`menuModel` waives it because every menu node is chrome with no geometry at all. Every other
+action still refuses a node it cannot see.
 
 ### SourceTree row actions
 

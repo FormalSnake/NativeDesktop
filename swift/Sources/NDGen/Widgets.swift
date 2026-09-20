@@ -2610,9 +2610,9 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
             }
         }
     } else if parentKind == "Menubar" {
-        ndMenuAppendChild(parent, child)
+        ndMenuAttachChild(parent, child, before: nil)
     } else if parentKind == "Menu" {
-        ndMenuAppendChild(parent, child)
+        ndMenuAttachChild(parent, child, before: nil)
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.appendReactView(child)
@@ -2623,9 +2623,9 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "Overlay" {
         (parent as! NDOverlayView).addOverlayChild(child)
     } else if parentKind == "MenuButton" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: nil)
     } else if parentKind == "SplitButton" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: nil)
     } else if parentKind == "Popover" {
         ndPopoverSetChild(parent, child)
     } else if parentKind == "Expander" {
@@ -2635,7 +2635,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
     } else if parentKind == "ToastOverlay" {
         ndToastOverlaySetChild(parent, child)
     } else if parentKind == "TrayItem" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: nil)
     } else if parentKind == "Paned" {
         let split = parent as! NSSplitView
         split.addSubview(child)
@@ -2740,9 +2740,9 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
             }
         }
     } else if parentKind == "Menubar" {
-        ndMenuAppendChild(parent, child)
+        ndMenuAttachChild(parent, child, before: before)
     } else if parentKind == "Menu" {
-        ndMenuAppendChild(parent, child)
+        ndMenuAttachChild(parent, child, before: before)
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
         group.insertReactView(child, before: before)
@@ -2751,13 +2751,13 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
     } else if parentKind == "Overlay" {
         (parent as! NDOverlayView).addOverlayChild(child)
     } else if parentKind == "MenuButton" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: before)
     } else if parentKind == "SplitButton" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: before)
     } else if parentKind == "StatusPage" {
         ndStatusPagePack(parent, child, before: before)
     } else if parentKind == "TrayItem" {
-        ndMenuOwnerAppend(parent, child)
+        ndMenuOwnerAttach(parent, child, before: before)
     } else if parentKind == "Paned" {
         let split = parent as! NSSplitView
         split.addSubview(child, positioned: .below, relativeTo: before)

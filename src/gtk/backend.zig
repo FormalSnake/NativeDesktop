@@ -163,12 +163,16 @@ fn applyCssClassesIfPresent(widget: *gtk.Widget, props: ?std.json.Value) void {
 /// Generation GC helpers: detach a swept widget from its parent
 /// without destroying the parent or siblings.
 pub fn hasParent(widget: *gtk.Widget) bool {
-    if (!isRealWidget(widget)) return false; // menu node: never parented into a GtkWidget tree
+    // A menu node is never parented into a GtkWidget tree; its attachment is
+    // its place in an owner's child list, and the core gates its remove op on
+    // this answer (src/tree.zig). Reporting false meant a <menuitem> could
+    // leave the React tree while the GMenuModel kept drawing it.
+    if (!isRealWidget(widget)) return generated.ndMenuNodeAttached(widget);
     return gtk.Widget.getParent(widget) != null;
 }
 
 pub fn unparentWidget(widget: *gtk.Widget) void {
-    if (!isRealWidget(widget)) return; // menu node: nothing to unparent
+    if (!isRealWidget(widget)) return generated.ndMenuSweepNode(widget); // menu node: leaves its owner's list, nothing to unparent
     // dev-mode GC sweep path: a doomed <paned> needs the same settle-timer
     // cancel here as the ordinary removeChild dispatch (AppKit peer:
     // Backend.swift's vt.unparent calling ndPanedTeardown).
@@ -676,6 +680,7 @@ fn vtSemanticAction(
     // GMenu handle to a GtkWidget, so reject them here.
     if (!isRealWidget(w)) {
         if (std.mem.eql(u8, action_s, "a11y")) return semanticMenuA11y(node_id, result_json_out);
+        if (std.mem.eql(u8, action_s, "menuModel")) return semanticMenuModel(w, node_id, result_json_out, err_json_out);
         if (!std.mem.eql(u8, action_s, "click")) {
             setErr(err_json_out, node_id);
             return -32602;
@@ -711,6 +716,8 @@ fn vtSemanticAction(
         return semanticWebViewEvalPoll(node_id, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "webviewPageText")) {
         return semanticWebViewPageText(w, node_id, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "menuModel")) {
+        return semanticMenuModel(w, node_id, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "a11y")) {
         return semanticA11y(w, node_id, result_json_out);
     } else if (std.mem.eql(u8, action_s, "windowState")) {
@@ -745,6 +752,22 @@ fn vtSemanticAction(
 fn semanticMenuA11y(node_id: u32, result_json_out: *?[*:0]u8) i32 {
     const enabled = generated.menuItemEnabled(node_id) orelse true;
     const json = std.fmt.allocPrint(arena, "{{\"enabled\":{},\"focused\":false,\"value\":null}}", .{enabled}) catch return -32603;
+    defer arena.free(json);
+    result_json_out.* = mallocZ(json);
+    return 0;
+}
+
+/// "menuModel": the live GMenuModel the target owns, flattened in draw order
+/// (rpc.json's MenuModelResult). Read off the model the owner is carrying,
+/// never off the registries that built it, so it answers what GTK would
+/// actually draw. A node owning no menu (a <menu>, any ordinary widget) is
+/// invalidParams.
+fn semanticMenuModel(widget: *gtk.Widget, node_id: u32, result_json_out: *?[*:0]u8, err_json_out: *?[*:0]u8) i32 {
+    const items = generated.ndMenuModelItems(widget, arena) orelse {
+        setErr(err_json_out, node_id);
+        return -32602;
+    };
+    const json = std.json.Stringify.valueAlloc(arena, .{ .ref = node_id, .items = items }, .{}) catch return -32603;
     defer arena.free(json);
     result_json_out.* = mallocZ(json);
     return 0;

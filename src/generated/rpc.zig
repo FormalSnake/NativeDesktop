@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, type, scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, webviewEval, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, type, scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, menuModel, webviewEval, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -26,6 +26,7 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "windows", .method = .windows },
     .{ .name = "pointer", .method = .pointer },
     .{ .name = "webviewInfo", .method = .webviewInfo },
+    .{ .name = "menuModel", .method = .menuModel },
     .{ .name = "webviewEval", .method = .webviewEval },
     .{ .name = "drag", .method = .drag },
     .{ .name = "keys", .method = .keys },
@@ -247,6 +248,16 @@ pub const WebViewInfo = struct {
     canGoForward: bool,
 };
 
+/// `items` is the LIVE native menu model flattened in draw order (the GMenuModel the owner
+/// carries on GTK, the NSMenu it carries on AppKit), never the React tree. A nested submenu
+/// contributes its own entry followed by its children prefixed `Parent > Child`; a separator (a
+/// GMenu section boundary, an NSMenuItem separator) is the entry `---`, never leading,
+/// trailing, or doubled.
+pub const MenuModelResult = struct {
+    ref: u32,
+    items: [][]const u8,
+};
+
 /// `value` is the result's STRING rendering (the engine's own JSValue-to-string), the same
 /// shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception
 /// `ok` is false and `error` carries the engine's message.
@@ -425,6 +436,17 @@ pub const PointerParams = struct {
 /// the app forwarding its navigate/titleChanged events. Target by exactly one of ref / testId
 /// (window optionally scopes testId resolution); a target that is not a WebView answers -32602.
 pub const WebviewInfoParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// menuModel: Reads a menu owner's live native menu back, flattened in draw order, so a drive
+/// can assert what the user would actually see instead of what the React tree says. Targets a
+/// Menubar node (the installed app menu, including the platform's default menus on AppKit), a
+/// MenuButton/SplitButton, or a TrayItem; a Menu node answers -32602, since a <menu> only ever
+/// draws inside one of those owners. Target by exactly one of ref / testId.
+pub const MenuModelParams = struct {
     ref: ?u32 = null,
     testId: ?[]const u8 = null,
     window: ?u32 = null,

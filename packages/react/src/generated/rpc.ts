@@ -159,6 +159,12 @@ export interface WebViewInfo {
   canGoForward: boolean;
 }
 
+/** `items` is the LIVE native menu model flattened in draw order (the GMenuModel the owner carries on GTK, the NSMenu it carries on AppKit), never the React tree. A nested submenu contributes its own entry followed by its children prefixed `Parent > Child`; a separator (a GMenu section boundary, an NSMenuItem separator) is the entry `---`, never leading, trailing, or doubled. */
+export interface MenuModelResult {
+  ref: number;
+  items: string[];
+}
+
 /** `value` is the result's STRING rendering (the engine's own JSValue-to-string), the same shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception `ok` is false and `error` carries the engine's message. */
 export interface WebViewEvalResult {
   ref: number;
@@ -294,6 +300,13 @@ export interface WebviewInfoParams {
   window?: number;
 }
 
+/** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, or a TrayItem; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
+export interface MenuModelParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
 /** Evaluates `code` in a WebView node's page and answers the result's string rendering. `world` picks an isolated content world by name (absent/empty = the page's own world), matching the executeJavaScript command. The engine's evaluation is asynchronous: the host starts it, then polls its own UI thread until it settles or timeoutMs elapses (-32002). A thrown exception is a RESULT with ok:false, not an RPC error. Target by exactly one of ref / testId; a target that is not a WebView answers -32602. */
 export interface WebviewEvalParams {
   ref?: number;
@@ -343,6 +356,7 @@ export interface RpcMethods {
   windows: { params: undefined; result: WindowsResult };
   pointer: { params: PointerParams; result: PointerResult };
   webviewInfo: { params: WebviewInfoParams; result: WebViewInfo };
+  menuModel: { params: MenuModelParams; result: MenuModelResult };
   webviewEval: { params: WebviewEvalParams; result: WebViewEvalResult };
   drag: { params: DragParams; result: DragResult };
   keys: { params: KeysParams; result: KeysResult };

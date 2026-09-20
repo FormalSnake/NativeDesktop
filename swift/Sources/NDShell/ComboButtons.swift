@@ -64,15 +64,19 @@ func ndApplyComboIcon(_ combo: NSComboButton, _ iconName: String) {
 /// Generated structural MenuButton/SplitButton/TrayItem arms: children are
 /// Menu/MenuItem host handles (NDMenuNodeView) — route them into the owner
 /// registry, which rebuilds this owner's NSMenu on every structural change.
-func ndMenuOwnerAppend(_ owner: NSView, _ child: NSView) {
+func ndMenuOwnerAttach(_ owner: NSView, _ child: NSView, before: NSView?) {
     guard let node = ndMenuNode(child) else { return }
     ndEnsureMenuManager()
-    ndMenuManager?.ownerAppend(owner, node)
+    // A reordered child arrives as a bare insertBefore, so it leaves its
+    // current list before it joins this one (MenuBar.swift).
+    ndMenuDetachNode(node)
+    ndMenuManager?.ownerAttach(owner, node, before: before.flatMap(ndMenuNode))
 }
 
-func ndMenuOwnerRemove(_ owner: NSView, _ child: NSView) {
+func ndMenuOwnerRemove(_: NSView, _ child: NSView) {
     guard let node = ndMenuNode(child) else { return }
-    ndMenuManager?.ownerRemove(owner, node)
+    ndMenuDetachNode(node)
+    ndMenuManager?.scheduleRebuild()
 }
 
 /// NDMenuManager.rebuild hands each owner its freshly built menu here.

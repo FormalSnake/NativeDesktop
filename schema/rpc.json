@@ -190,6 +190,14 @@
       ]
     },
     {
+      "name": "MenuModelResult",
+      "doc": "`items` is the LIVE native menu model flattened in draw order (the GMenuModel the owner carries on GTK, the NSMenu it carries on AppKit), never the React tree. A nested submenu contributes its own entry followed by its children prefixed `Parent > Child`; a separator (a GMenu section boundary, an NSMenuItem separator) is the entry `---`, never leading, trailing, or doubled.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "items", "type": "string", "list": true }
+      ]
+    },
+    {
       "name": "WebViewEvalResult",
       "doc": "`value` is the result's STRING rendering (the engine's own JSValue-to-string), the same shape the javaScriptResult event carries — never a typed JSON value. On a thrown exception `ok` is false and `error` carries the engine's message.",
       "fields": [
@@ -382,6 +390,16 @@
         { "name": "window", "type": "u32", "optional": true }
       ],
       "result": "WebViewInfo"
+    },
+    {
+      "name": "menuModel",
+      "doc": "Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, or a TrayItem; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "MenuModelResult"
     },
     {
       "name": "webviewEval",

@@ -41,6 +41,14 @@ final class NDMenuNode {
     var defaults: Bool = true
     var nodeID: UInt32 = 0
     var children: [NDMenuNode] = []
+    /// Where this node currently hangs: a parent menu node, or a menu owner's
+    /// view (MenuButton/SplitButton/TrayItem). A menu node's view never enters
+    /// the view hierarchy, so `superview` cannot answer it, and the core gates
+    /// the remove op on that answer (`vt.has_parent`, src/tree.zig). Both are
+    /// weak: a dropped node must not pin its parent alive.
+    weak var parentNode: NDMenuNode?
+    weak var ownerView: NSView?
+    var isAttached: Bool { parentNode != nil || ownerView != nil }
     init(_ kind: NDMenuKind) { self.kind = kind }
 }
 
@@ -111,15 +119,46 @@ func ndMenuItemConnect(_ view: NSView, nodeID: UInt32) {
     ndMenuNodesByID[nodeID] = node
 }
 
-func ndMenuAppendChild(_ parent: NSView, _ child: NSView) {
+/// Places `child` under `parent` before `before` (at the end when `before` is
+/// nil or already gone). React reorders a keyed list with a bare insertBefore
+/// and no preceding remove, so an already-attached child MOVES; appending it
+/// again would draw the same item twice.
+func ndMenuAttachChild(_ parent: NSView, _ child: NSView, before: NSView?) {
     guard let p = ndMenuNode(parent), let c = ndMenuNode(child) else { return }
-    p.children.append(c)
+    ndMenuDetachNode(c)
+    var idx = p.children.count
+    if let b = before.flatMap(ndMenuNode), let i = p.children.firstIndex(where: { $0 === b }) { idx = i }
+    p.children.insert(c, at: idx)
+    c.parentNode = p
     ndMenuManager?.scheduleRebuild()
 }
 
 func ndMenuRemoveChild(_ parent: NSView, _ child: NSView) {
-    guard let p = ndMenuNode(parent), let c = ndMenuNode(child) else { return }
-    p.children.removeAll { $0 === c }
+    guard ndMenuNode(parent) != nil, let c = ndMenuNode(child) else { return }
+    ndMenuDetachNode(c)
+    ndMenuManager?.scheduleRebuild()
+}
+
+/// Drops a node from whichever list holds it. Shared by the move path, the
+/// remove arms, and `release_node`'s registry purge.
+func ndMenuDetachNode(_ node: NDMenuNode) {
+    if let p = node.parentNode {
+        p.children.removeAll { $0 === node }
+        node.parentNode = nil
+    }
+    if let owner = node.ownerView {
+        ndMenuManager?.ownerRemove(owner, node)
+        node.ownerView = nil
+    }
+}
+
+/// `release_node` seam (Backend.swift's `ndPurgeNodeRegistries`): an unmounted
+/// menu node leaves the model even on the teardown paths that never dispatch a
+/// remove op (the dev-mode GC sweep), and its nodeID stops resolving.
+func ndMenuPurgeNodeView(_ view: NSView) {
+    guard let node = ndMenuNode(view) else { return }
+    ndMenuDetachNode(node)
+    if node.nodeID != 0, ndMenuNodesByID[node.nodeID] === node { ndMenuNodesByID[node.nodeID] = nil }
     ndMenuManager?.scheduleRebuild()
 }
 
@@ -165,10 +204,13 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         scheduleRebuild()
     }
 
-    func ownerAppend(_ view: NSView, _ node: NDMenuNode) {
+    func ownerAttach(_ view: NSView, _ node: NDMenuNode, before: NDMenuNode?) {
         var entry = owners[ObjectIdentifier(view)] ?? NDMenuOwner(view: view)
-        entry.children.append(node)
+        var idx = entry.children.count
+        if let b = before, let i = entry.children.firstIndex(where: { $0 === b }) { idx = i }
+        entry.children.insert(node, at: idx)
         owners[ObjectIdentifier(view)] = entry
+        node.ownerView = view
         scheduleRebuild()
     }
 

@@ -156,6 +156,11 @@ func buildVTable() -> nd_backend {
             if let pane = view as? NDToolbarPaneView {
                 return pane.paneController != nil || pane.manager != nil
             }
+            // A menu node's view never enters the hierarchy either
+            // (MenuBar.swift); its place in a parent menu or an owner's list
+            // is its attachment. Reporting nil meant a <menuitem> could leave
+            // the React tree while the NSMenu kept drawing it.
+            if let node = ndMenuNode(view) { return node.isAttached }
             return view.superview != nil
         }
     }
@@ -169,6 +174,10 @@ func buildVTable() -> nd_backend {
             // tears down doomed widgets via this path instead of remove_child
             // — a torn-down `<paned>` needs the same controller cleanup here.
             ndPanedTeardown(view)
+            // Same for a swept menu node: it leaves its owner's list, since
+            // removeFromSuperview has nothing to detach for a handle that was
+            // never in the hierarchy.
+            ndMenuPurgeNodeView(view)
             view.removeFromSuperview()
         }
     }
@@ -384,6 +393,7 @@ func buildVTable() -> nd_backend {
     radioGroupIdentifier[id] = nil
     EventDispatcher.shared.purge(view)
     ndMenuManager?.purgeOwner(view)
+    ndMenuPurgeNodeView(view)
     ndLayoutPurge(view)
     ndHoverPurge(view)
     ndEmptyStatePurge(view)
