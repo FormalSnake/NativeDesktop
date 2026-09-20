@@ -10,6 +10,7 @@
 // on-screen window of this process is either one of the app's own windows or an
 // anchor at alpha 0.
 import { connectApp } from "@nativedesktop/test";
+import { KEY_ESCAPE, activateApp, menuWindows, systemKey, until } from "./app-chrome-lib";
 
 const pid = process.env.ND_HOST_PID ?? "";
 const debugPort = process.env.ND_CEF_DEBUG_PORT ?? "9334";
@@ -133,9 +134,18 @@ const typed = await evaluate("document.getElementById('text').value");
 check("pointerAndKeyboard", typed === "abc", `field reads ${JSON.stringify(typed)}`);
 
 // Chromium's own context menu, with the app's items merged into the model while
-// on_before_context_menu is still on the stack. The RPC dismisses the menu.
+// on_before_context_menu is still on the stack. Under Chrome style the host
+// draws it as an NSMenu, whose tracking loop owns the main thread, so nothing
+// between the right click and the Escape may touch the automation socket: the
+// window server is the only reader while it is up.
+activateApp();
+await Bun.sleep(400);
 await app.getByTestId("c-view").rightClick();
-await Bun.sleep(900);
+const menus = await until("the context menu opens", menuWindows, (w) => w.length > 0, 15000).catch(() => []);
+check("contextMenuOpens", menus.length > 0, `${menus.length} menu window(s)`);
+systemKey(KEY_ESCAPE);
+await until("the context menu closes", menuWindows, (w) => w.length === 0, 10000);
+await Bun.sleep(400);
 await strays("contextMenu");
 
 // A background tab: the page's own view is hidden by the tab view, so the
