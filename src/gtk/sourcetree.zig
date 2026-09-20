@@ -350,12 +350,13 @@ fn makeActionButton(box: *gtk.ListBox, node_idx: u32, action_idx: u32, action: A
         }
     } else if (has_icon) {
         gtk.Button.setIconName(btn, ndicons.symbolic(action.icon));
-        // Round chip, the GNOME shape for an icon-only row button.
-        gtk.Widget.addCssClass(btn.as(gtk.Widget), "circular");
+        // `.flat` is libadwaita's row-suffix shape: no resting bezel, the full
+        // `image-button` hit area, chrome on hover. `.circular` is deliberately
+        // absent. It is the selector third-party stylesheets restyle, and one
+        // that grows `button.circular.image-button` turns a row suffix into a
+        // chip taller than the row's own title.
+        gtk.Widget.addCssClass(btn.as(gtk.Widget), "flat");
     }
-    // Both shapes keep the button's own chrome: `.flat` leaves a labelled
-    // action reading as bare text and an icon-only one as a bare glyph painted
-    // straight onto the row fill, with no hit area next to its chromed sibling.
     if (action.destructive) gtk.Widget.addCssClass(btn.as(gtk.Widget), "destructive-action");
     if (action.tooltip) |t| gtk.Widget.setTooltipText(btn.as(gtk.Widget), t);
     gtk.Widget.setValign(btn.as(gtk.Widget), .center);
