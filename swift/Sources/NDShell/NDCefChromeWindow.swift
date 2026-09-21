@@ -77,6 +77,26 @@ import Foundation
         for window in live.allObjects { window.closeDevTools() }
     }
 
+    /// Every instance that still has a Views window, for the surface adopter.
+    static var liveWindows: [NDCefChromeWindow] {
+        live.allObjects.filter { $0.cefWindow != nil && !$0.closed }
+    }
+
+    /// The invisible window CEF drew the browser into. Chromium parents its own
+    /// sheets to it, which is how a surface is matched to its browser.
+    var anchorWindow: NSWindow? { anchor }
+
+    /// The app window showing this browser.
+    var hostWindow: NSWindow? { view?.window }
+
+    /// The webview's rectangle in screen coordinates, or nil when its tab is
+    /// hidden or it is off screen.
+    var surfaceTargetFrame: NSRect? { targetScreenFrame() }
+
+    func traceSurface(_ message: String) {
+        view?.ndTrace("chrome surface \(message)")
+    }
+
     init(view: NDCefWebView) {
         self.view = view
         NDCefChromeWindow.live.add(self)
@@ -171,6 +191,7 @@ import Foundation
         if wasKey { view.window?.makeKey() }
         syncAnchor()
         observeGeometry()
+        NDCefSurfaceWindows.start()
         view.ndTrace("chrome anchored \(anchorWindow.frame) target=\(targetScreenFrame().map(\.debugDescription) ?? "none")")
         if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
     }

@@ -37,19 +37,33 @@ async function census(): Promise<Window[]> {
     .map((line) => JSON.parse(line) as Window);
 }
 
-/// Visible windows the app does not own. An anchor is invisible by construction
-/// (alpha 0), so anything else at alpha > 0 beyond the app's own count is a
-/// window the engine put on screen.
+type AppWindow = { geometry: { x: number; y: number; w: number; h: number } };
+
+/// Visible windows that are neither the app's own nor inside one of them. An
+/// anchor is invisible by construction (alpha 0); a Chromium surface the host
+/// adopted is visible but is a child of the app window and sits over the
+/// webview, so containment is the invariant rather than a count.
+function outside(visible: Window[], own: AppWindow[]): Window[] {
+  const owned = own.map((w) => w.geometry);
+  return visible.filter((w) => {
+    if (owned.some((g) => g.x === w.x && g.y === w.y && g.w === w.width && g.h === w.height)) return false;
+    return !owned.some((g) => w.x >= g.x && w.y >= g.y && w.x + w.width <= g.x + g.w && w.y + w.height <= g.y + g.h);
+  });
+}
+
 async function strays(leg: string): Promise<void> {
   const [windows, own] = await Promise.all([census(), app.windows()]);
   // Layer 0 is the ordinary window layer. A menu or a tooltip sits above it and
   // is not a browser window, which is what this is looking for.
   const visible = windows.filter((w) => w.alpha > 0 && w.layer === 0);
   const anchors = windows.filter((w) => w.alpha === 0);
+  const loose = outside(visible, own.windows as unknown as AppWindow[]);
   check(
     `census/${leg}`,
-    visible.length === own.windows.length,
-    `${visible.length} visible, app owns ${own.windows.length}, ${anchors.length} anchor(s)`,
+    loose.length === 0,
+    loose.length
+      ? `${loose.map((w) => `${w.width}x${w.height}@${w.x},${w.y}`).join(" | ")} outside the app's windows`
+      : `${visible.length} visible, app owns ${own.windows.length}, ${anchors.length} anchor(s)`,
   );
 }
 
@@ -341,7 +355,16 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
   const dialogs = pageTarget.url.replace("127.0.0.1", "localhost").replace(/\/$/, "") + "/dialogs";
   await page.send("Page.navigate", { url: dialogs });
   await Bun.sleep(2500);
-  const ownWindows = (await app.windows()).windows.length;
+  /// What the host reported adopting. A surface that merely happens to land
+  /// inside the app window is not the same as one the host took: the trace is
+  /// the proof the adoption ran.
+  async function adoptions(): Promise<string[]> {
+    const path = process.env.ND_HOST_LOG ?? "";
+    if (!path) return [];
+    const text = await Bun.file(path).text().catch(() => "");
+    return text.split("\n").filter((line) => line.includes("chrome surface adopted"));
+  }
+  const adoptedBefore = (await adoptions()).length;
 
   async function ndState(): Promise<Record<string, string>> {
     return JSON.parse(await page.eval<string>("JSON.stringify(window.ndState ?? {})").catch(() => "{}"));
@@ -382,12 +405,13 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
       await Bun.sleep(1500);
     }
     const visible = (await census()).filter((w) => w.alpha > 0 && w.layer === 0);
+    const loose = outside(visible, (await app.windows()).windows as unknown as AppWindow[]);
     check(
       `${name}NoStrayWindow`,
-      visible.length <= ownWindows,
-      visible.length > ownWindows
-        ? `${visible.length} visible windows, the app owns ${ownWindows}: ${visible.map((w) => `${w.width}x${w.height}@${w.x},${w.y}`).join(" | ")}`
-        : `fired ${fired}`,
+      loose.length === 0,
+      loose.length
+        ? `${loose.map((w) => `${w.width}x${w.height}@${w.x},${w.y}`).join(" | ")} outside the app's windows`
+        : `fired ${fired}, ${visible.length} visible window(s)`,
     );
     if (dismiss === "after") {
       // Ended from the page rather than with a key event: a Chromium sheet here
@@ -417,6 +441,12 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
   await surface("httpAuth", "window.ndHttpAuth()", "", 6000, "before");
   await surface("download", "window.ndDownload()", "", 6000);
   await surface("passwordSubmit", "window.ndPasswordSubmit()", "", 8000);
+  const adoptedAfter = await adoptions();
+  check(
+    "surfacesAdopted",
+    adoptedAfter.length > adoptedBefore,
+    adoptedAfter.slice(-3).map((l) => l.slice(l.indexOf("chrome surface"))).join(" | ") || "the host adopted nothing",
+  );
   page.close();
 }
 

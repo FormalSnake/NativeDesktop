@@ -65,7 +65,7 @@ wait "$HOST_PID" 2>/dev/null || true
 
 # Second run: everything but the DevTools dock, then a real quit.
 launch
-ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" \
+ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" ND_HOST_LOG="$LOG" \
   ND_CEF_CHROME_SKIP_DEVTOOLS=1 bun scripts/mac/cef-chrome-drive.ts >/dev/null \
   || { echo "FAIL: driver (no devtools)"; grep -vE "^\[[0-9]+:" "$LOG" | tail -40; exit 1; }
 

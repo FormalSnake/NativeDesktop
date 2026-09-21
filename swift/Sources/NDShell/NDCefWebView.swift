@@ -1577,6 +1577,11 @@ func ndCefParseJSONText(_ raw: String) -> [String: Any]? {
         return ok
     }
 
+    // Before anything closes: a Chromium surface left as a child of a window
+    // AppKit is tearing down is one more object in a quit path that already has
+    // a crash of its own.
+    NDCefSurfaceWindows.releaseAll()
+
     for view in views { view.closeDevToolsForShutdown() }
     let inspectorsClosed = phase(
         "the inspectors closing",
