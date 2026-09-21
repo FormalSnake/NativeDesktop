@@ -473,6 +473,7 @@ final class NDCefWebView: NSView {
         case "registerScriptMessage": ndRegisterScriptMessage(obj)
         case "unregisterScriptMessage": ndUnregisterScriptMessage(obj)
         case "respondScheme": NDCefSchemes.respond(obj)
+        case "respondPermission": NDCefPermissions.respond(obj)
         case "getCookies": ndGetCookies(obj)
         case "setCookie": ndSetCookie(obj)
         case "deleteCookie": ndDeleteCookie(obj)
@@ -793,6 +794,7 @@ final class NDCefHandlerBox {
     fileprivate(set) var find: UnsafeMutablePointer<cef_find_handler_t>?
     fileprivate(set) var download: UnsafeMutablePointer<cef_download_handler_t>?
     fileprivate(set) var jsDialog: UnsafeMutablePointer<cef_jsdialog_handler_t>?
+    fileprivate(set) var permission: UnsafeMutablePointer<cef_permission_handler_t>?
     fileprivate(set) var dialog: UnsafeMutablePointer<cef_dialog_handler_t>?
     fileprivate(set) var contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>?
     fileprivate(set) var focus: UnsafeMutablePointer<cef_focus_handler_t>?
@@ -817,6 +819,7 @@ final class NDCefHandlerBox {
         find = ndCefAlloc(cef_find_handler_t.self, self)
         download = ndCefAlloc(cef_download_handler_t.self, self)
         jsDialog = ndCefAlloc(cef_jsdialog_handler_t.self, self)
+        permission = ndCefAlloc(cef_permission_handler_t.self, self)
         dialog = ndCefAlloc(cef_dialog_handler_t.self, self)
         contextMenu = ndCefAlloc(cef_context_menu_handler_t.self, self)
         focus = ndCefAlloc(cef_focus_handler_t.self, self)
@@ -832,6 +835,7 @@ final class NDCefHandlerBox {
         wireFind()
         wireDownload()
         wireJSDialog()
+        wirePermission()
         wireDialog()
         wireContextMenu()
         wireFocus()
@@ -911,6 +915,9 @@ final class NDCefHandlerBox {
         }
         client.pointee.get_download_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.download)
+        }
+        client.pointee.get_permission_handler = { selfPointer in
+            ndCefHandOut(ndCefBox(selfPointer)?.permission)
         }
         client.pointee.get_jsdialog_handler = { selfPointer in
             ndCefHandOut(ndCefBox(selfPointer)?.jsDialog)
@@ -1132,6 +1139,50 @@ final class NDCefHandlerBox {
         }
     }
 
+    /// Chrome style answers a permission request with Chromium's own prompt, a
+    /// Views bubble anchored to the toolbar this embedding does not have. On
+    /// AppKit it becomes a window of its own that follows the anchor, so both
+    /// routes are taken here and the request reaches the app as
+    /// `permissionRequest`, answered with `respondPermission`. An unanswered id
+    /// leaves the page waiting, as `schemeRequest` does.
+    private func wirePermission() {
+        guard let permission else { return }
+        permission.pointee.on_show_permission_prompt = {
+            selfPointer, browser, promptID, requestingOrigin, requestedPermissions, callback in
+            let origin = ndCefString(requestingOrigin)
+            nd_cef_ref_release(browser)
+            guard let callback else { return 0 }
+            nd_cef_ref_add(callback)
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefPermissions.request(view: view, promptID: promptID, origin: origin,
+                                         mask: requestedPermissions, callback: token, media: false)
+            }
+            nd_cef_ref_release(callback)
+            return 1
+        }
+        permission.pointee.on_request_media_access_permission = {
+            selfPointer, browser, frame, requestingOrigin, requestedPermissions, callback in
+            let origin = ndCefString(requestingOrigin)
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            guard let callback else { return 0 }
+            nd_cef_ref_add(callback)
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefPermissions.request(view: view, promptID: 0, origin: origin,
+                                         mask: requestedPermissions, callback: token, media: true)
+            }
+            nd_cef_ref_release(callback)
+            return 1
+        }
+        permission.pointee.on_dismiss_permission_prompt = { _, browser, promptID, _ in
+            nd_cef_ref_release(browser)
+            guard Thread.isMainThread else { return }
+            MainActor.assumeIsolated { NDCefPermissions.dismiss(promptID: promptID) }
+        }
+    }
+
     private func wireDialog() {
         guard let dialog else { return }
         dialog.pointee.on_file_dialog = {
@@ -1304,6 +1355,18 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(frame)
             ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
             return 1
+        }
+        // Chrome style answers an HTTP auth challenge with Chromium's own login
+        // window, which under this embedding is a window of its own and blocks
+        // the app behind it. The framework has no way for an app to supply
+        // credentials, so the challenge is refused: 0 cancels the request and
+        // the page gets the 401 it would have got if the user pressed Cancel.
+        request.pointee.get_auth_credentials = { _, browser, originUrl, _, _, _, _, _, callback in
+            let origin = ndCefString(originUrl)
+            nd_cef_ref_release(browser)
+            if let callback { nd_cef_ref_release(callback) }
+            ndCefWarn("HTTP authentication refused for \(origin): no credential surface in this engine")
+            return 0
         }
         request.pointee.get_resource_request_handler = {
             selfPointer, browser, frame, request, _, _, _, disableDefaultHandling in

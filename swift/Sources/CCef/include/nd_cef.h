@@ -35,6 +35,7 @@
 #include "include/capi/cef_focus_handler_capi.h"
 #include "include/capi/cef_jsdialog_handler_capi.h"
 #include "include/capi/cef_load_handler_capi.h"
+#include "include/capi/cef_permission_handler_capi.h"
 #include "include/capi/cef_registration_capi.h"
 #include "include/capi/cef_request_context_capi.h"
 #include "include/capi/cef_request_handler_capi.h"

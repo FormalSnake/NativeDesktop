@@ -27,12 +27,18 @@ export const DIALOG_SURFACES_PAGE: string =
   `Promise.resolve(p).then(v=>window.ndState[name]='ok:'+String(v).slice(0,40),` +
   `e=>window.ndState[name]='rejected:'+e.name);return name}` +
   `function challenge(){return new Uint8Array(32)}` +
+  // One controller per passkey call, so a drive can end the request without a
+  // key event: a Chromium sheet is a window of its own on AppKit and synthetic
+  // input does not reach it, which would leave it on screen for every later leg.
+  `var passkeyAbort=null;` +
+  `function passkeySignal(){passkeyAbort=new AbortController();return passkeyAbort.signal}` +
+  `window.ndAbortPasskey=()=>{if(passkeyAbort)passkeyAbort.abort();return 'aborted'};` +
   `window.ndPasskeyGet=()=>track('passkeyGet',navigator.credentials.get(` +
-  `{publicKey:{challenge:challenge(),timeout:60000,userVerification:'preferred'}}));` +
+  `{signal:passkeySignal(),publicKey:{challenge:challenge(),timeout:60000,userVerification:'preferred'}}));` +
   `window.ndPasskeyConditional=()=>track('passkeyConditional',navigator.credentials.get(` +
-  `{mediation:'conditional',publicKey:{challenge:challenge(),timeout:60000}}));` +
+  `{signal:passkeySignal(),mediation:'conditional',publicKey:{challenge:challenge(),timeout:60000}}));` +
   `window.ndPasskeyCreate=()=>track('passkeyCreate',navigator.credentials.create(` +
-  `{publicKey:{challenge:challenge(),rp:{name:'nd gate'},user:{id:challenge(),name:'nd',displayName:'nd'},` +
+  `{signal:passkeySignal(),publicKey:{challenge:challenge(),rp:{name:'nd gate'},user:{id:challenge(),name:'nd',displayName:'nd'},` +
   `pubKeyCredParams:[{type:'public-key',alg:-7}],timeout:60000}}));` +
   `window.ndGeolocation=()=>track('geolocation',new Promise((res,rej)=>` +
   `navigator.geolocation.getCurrentPosition(()=>res('position'),e=>rej(new Error(e.message||'denied')))));` +

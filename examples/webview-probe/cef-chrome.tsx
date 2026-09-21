@@ -1,5 +1,6 @@
 import { render, sendCommand, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
+import { dialogSurfacesRoute } from "../../scripts/fixtures/dialog-surfaces.ts";
 
 // Chrome style gate (ND_CEF_STYLE=chrome), driven by scripts/cef-chrome-drive.ts.
 // Chrome style is the only style that carries Chromium's extension runtime, and
@@ -30,7 +31,9 @@ a{color:#9cf}</style>
 const fixture = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
-  fetch() {
+  fetch(request) {
+    const surface = dialogSurfacesRoute(new URL(request.url).pathname);
+    if (surface) return surface;
     return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
   },
 });
@@ -80,6 +83,12 @@ function App() {
               style={{ hexpand: true, vexpand: true }}
               onTitleChanged={(e) => setTitle(e.text)}
               onNewWindow={(e) => setPopup(e.text)}
+              onPermissionRequest={(e) => {
+                const d = e.data as { id: string; origin: string; types: string };
+                // Denied, so the page's promise settles and the drive can read
+                // the round trip back off it. A real app draws its own sheet.
+                if (view.current) sendCommand(view.current, "respondPermission", { id: d.id, allow: false });
+              }}
             />
           </box>
           <box tabLabel="Other" orientation="vertical">

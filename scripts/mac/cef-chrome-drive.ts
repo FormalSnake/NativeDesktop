@@ -317,6 +317,109 @@ check(
 if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") await checkTiling("resized");
 await strays("resize");
 
+// The surfaces Chromium draws itself rather than asking a CEF handler about:
+// the WebAuthn sheet, the permission prompts, the JS dialogs, HTTP auth, a
+// download and the save-password bubble. Chrome style anchors them to the
+// browser's own widget, which here is a content view lifted out of an invisible
+// anchor window, so the question each leg answers is whether the surface landed
+// on the app's window or somewhere of its own.
+// Only in the run that leaves DevTools alone: navigating this view while the
+// inspector is docked trips a Chromium CHECK and takes the browser process
+// down, which is the same shutdown-ordering ground as the quit crash and has
+// nothing to do with the surfaces below.
+const pageTarget = process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1"
+  ? undefined
+  : (await targets()).find((t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"));
+if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
+  // Nothing to assert in this run.
+} else if (!pageTarget?.webSocketDebuggerUrl) {
+  check("dialogSurfaces", false, "no page target to drive the dialog surfaces on");
+} else {
+  const page = await Session.open(pageTarget.webSocketDebuggerUrl);
+  // Through a host name, not the literal address: WebAuthn refuses an
+  // IP-address origin outright.
+  const dialogs = pageTarget.url.replace("127.0.0.1", "localhost").replace(/\/$/, "") + "/dialogs";
+  await page.send("Page.navigate", { url: dialogs });
+  await Bun.sleep(2500);
+  const ownWindows = (await app.windows()).windows.length;
+
+  async function ndState(): Promise<Record<string, string>> {
+    return JSON.parse(await page.eval<string>("JSON.stringify(window.ndState ?? {})").catch(() => "{}"));
+  }
+
+  /// Fires one surface and reports every window of this process the surface put
+  /// on screen beyond the app's own. An anchor is invisible by construction, so
+  /// anything at alpha > 0 on the ordinary window layer is a window the user can
+  /// see. `dismiss` is when Escape goes in: "before" for a surface the framework
+  /// answers with a sheet of the app's own, which is a window and has to be gone
+  /// before the census means anything; "after" for a Chromium sheet, where
+  /// ending the request the page is waiting on is the proof it took the app's
+  /// key event.
+  async function surface(
+    name: string,
+    call: string,
+    settles: string,
+    waitMs = 9000,
+    dismiss: "none" | "before" | "after" = "none",
+  ): Promise<void> {
+    let fired = "";
+    try {
+      fired = String(await page.eval<string>(call, true));
+    } catch (error) {
+      fired = `threw: ${(error as Error).message.slice(0, 60)}`;
+    }
+    await Bun.sleep(waitMs);
+    if (dismiss === "before") {
+      // The framework answers a JS dialog with a sheet on the app's own window,
+      // and a sheet is a window: it has to be answered before the census counts
+      // anything. Return takes the default button, which Escape does not on an
+      // alert whose only button is OK.
+      activateApp();
+      await Bun.sleep(400);
+      systemKey(KEY_RETURN);
+      await Bun.sleep(2000);
+      systemKey(KEY_ESCAPE);
+      await Bun.sleep(1500);
+    }
+    const visible = (await census()).filter((w) => w.alpha > 0 && w.layer === 0);
+    check(
+      `${name}NoStrayWindow`,
+      visible.length <= ownWindows,
+      visible.length > ownWindows
+        ? `${visible.length} visible windows, the app owns ${ownWindows}: ${visible.map((w) => `${w.width}x${w.height}@${w.x},${w.y}`).join(" | ")}`
+        : `fired ${fired}`,
+    );
+    if (dismiss === "after") {
+      // Ended from the page rather than with a key event: a Chromium sheet here
+      // is a window of its own that synthetic input never reaches, and one left
+      // up would sit over every later leg.
+      await page.eval("window.ndAbortPasskey()").catch(() => "");
+      await Bun.sleep(2500);
+    }
+    if (settles) {
+      const value = (await ndState())[settles] ?? "absent";
+      check(`${name}Settles`, value !== "pending" && value !== "absent", `window.ndState.${settles} = ${value}`);
+    }
+  }
+
+  await surface("passkeyGet", "window.ndPasskeyGet()", "passkeyGet", 9000, "after");
+  await surface("passkeyCreate", "window.ndPasskeyCreate()", "passkeyCreate", 9000, "after");
+  // Conditional mediation is passive by design: it draws nothing until the user
+  // picks a credential out of the autofill list, so it has no outcome to settle.
+  await surface("passkeyConditional", "window.ndPasskeyConditional()", "", 9000, "after");
+  // Permission prompts reach the app through cef_permission_handler_t rather
+  // than Chromium's own bubble, and the probe denies them.
+  await surface("geolocation", "window.ndGeolocation()", "geolocation");
+  await surface("notifications", "window.ndNotifications()", "notifications");
+  // The framework answers a JS dialog with a sheet on the app's own window, so
+  // the sheet is dismissed before the census counts windows.
+  await surface("jsAlert", "window.ndAlert()", "", 4000, "before");
+  await surface("httpAuth", "window.ndHttpAuth()", "", 6000, "before");
+  await surface("download", "window.ndDownload()", "", 6000);
+  await surface("passwordSubmit", "window.ndPasswordSubmit()", "", 8000);
+  page.close();
+}
+
 if (failures.length > 0) {
   for (const failure of failures) console.error(`ND_CEF_CHROME_FAIL ${failure}`);
   process.exit(1);

@@ -182,6 +182,129 @@ final class NDCefSchemeRequest: @unchecked Sendable {
 
 /// JavaScript dialogs and file choosers, routed into the same host-native
 /// sheets the WebKit surface uses. Nothing here may let Chromium present its
+/// Permission requests, parked until the app answers `respondPermission`.
+/// Chromium would otherwise draw its own prompt, which under Chrome style with
+/// no toolbar becomes a window of its own placed against the invisible anchor.
+enum NDCefPermissions {
+    private struct Parked {
+        let callback: UInt
+        /// Non-zero on the getUserMedia route, where the mask has to come back
+        /// exactly as it went out or CEF rejects it.
+        let mediaMask: UInt32
+        /// Chromium's own id for the prompt, so a dismissal can forget a
+        /// request whose callback CEF has already torn down. Zero on the
+        /// getUserMedia route, which has no dismissal callback.
+        let promptID: UInt64
+    }
+
+    /// The permission names the app sees. Chromium's own enum is a bitmask, so
+    /// a request carrying two of them reports both.
+    private static let names: [(UInt32, String)] = [
+        (UInt32(CEF_PERMISSION_TYPE_AR_SESSION.rawValue), "arSession"),
+        (UInt32(CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM.rawValue), "cameraPanTiltZoom"),
+        (UInt32(CEF_PERMISSION_TYPE_CAMERA_STREAM.rawValue), "camera"),
+        (UInt32(CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL.rawValue), "capturedSurfaceControl"),
+        (UInt32(CEF_PERMISSION_TYPE_CLIPBOARD.rawValue), "clipboard"),
+        (UInt32(CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS.rawValue), "topLevelStorageAccess"),
+        (UInt32(CEF_PERMISSION_TYPE_DISK_QUOTA.rawValue), "diskQuota"),
+        (UInt32(CEF_PERMISSION_TYPE_LOCAL_FONTS.rawValue), "localFonts"),
+        (UInt32(CEF_PERMISSION_TYPE_GEOLOCATION.rawValue), "geolocation"),
+        (UInt32(CEF_PERMISSION_TYPE_HAND_TRACKING.rawValue), "handTracking"),
+        (UInt32(CEF_PERMISSION_TYPE_IDENTITY_PROVIDER.rawValue), "identityProvider"),
+        (UInt32(CEF_PERMISSION_TYPE_IDLE_DETECTION.rawValue), "idleDetection"),
+        (UInt32(CEF_PERMISSION_TYPE_MIC_STREAM.rawValue), "microphone"),
+        (UInt32(CEF_PERMISSION_TYPE_MIDI_SYSEX.rawValue), "midiSysex"),
+        (UInt32(CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS.rawValue), "multipleDownloads"),
+        (UInt32(CEF_PERMISSION_TYPE_NOTIFICATIONS.rawValue), "notifications"),
+        (UInt32(CEF_PERMISSION_TYPE_KEYBOARD_LOCK.rawValue), "keyboardLock"),
+        (UInt32(CEF_PERMISSION_TYPE_POINTER_LOCK.rawValue), "pointerLock"),
+        (UInt32(CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER.rawValue), "protectedMediaIdentifier"),
+        (UInt32(CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER.rawValue), "registerProtocolHandler"),
+        (UInt32(CEF_PERMISSION_TYPE_STORAGE_ACCESS.rawValue), "storageAccess"),
+        (UInt32(CEF_PERMISSION_TYPE_VR_SESSION.rawValue), "vrSession"),
+        (UInt32(CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION.rawValue), "webAppInstallation"),
+        (UInt32(CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT.rawValue), "windowManagement"),
+        (UInt32(CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS.rawValue), "fileSystemAccess"),
+        (UInt32(CEF_PERMISSION_TYPE_LOCAL_NETWORK.rawValue), "localNetwork"),
+        (UInt32(CEF_PERMISSION_TYPE_LOOPBACK_NETWORK.rawValue), "loopbackNetwork"),
+        (UInt32(CEF_PERMISSION_TYPE_SENSORS.rawValue), "sensors"),
+    ]
+
+    private static let mediaNames: [(UInt32, String)] = [
+        (UInt32(CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE.rawValue), "microphone"),
+        (UInt32(CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE.rawValue), "camera"),
+        (UInt32(CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE.rawValue), "desktopAudio"),
+        (UInt32(CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE.rawValue), "desktopVideo"),
+    ]
+
+    @MainActor private static var pending: [String: Parked] = [:]
+    @MainActor private static var sequence = 0
+
+    @MainActor static func request(
+        view: NDCefWebView?,
+        promptID: UInt64,
+        origin: String,
+        mask: UInt32,
+        callback token: UInt,
+        media: Bool
+    ) {
+        guard let view else {
+            answer(Parked(callback: token, mediaMask: media ? mask : 0, promptID: promptID), allow: false)
+            return
+        }
+        sequence += 1
+        let id = "cefpermission-\(sequence)"
+        pending[id] = Parked(callback: token, mediaMask: media ? mask : 0, promptID: promptID)
+        let types = (media ? mediaNames : names)
+            .filter { mask & $0.0 != 0 }
+            .map { $0.1 }
+            .joined(separator: ",")
+        view.ndTrace("permissionRequest id=\(id) origin=\(origin) types=\(types)")
+        view.emitData("permissionRequest", ["id": id, "origin": origin, "types": types])
+    }
+
+    /// Chromium finished with the prompt (a navigation, a closed browser, or
+    /// the answer below). The callback is spent, so the parked request is
+    /// dropped without being continued.
+    @MainActor static func dismiss(promptID: UInt64) {
+        guard promptID != 0 else { return }
+        guard let key = pending.first(where: { $0.value.promptID == promptID })?.key else { return }
+        guard let parked = pending.removeValue(forKey: key) else { return }
+        guard let raw = UnsafeMutableRawPointer(bitPattern: parked.callback) else { return }
+        nd_cef_ref_release(raw.assumingMemoryBound(to: cef_permission_prompt_callback_t.self))
+    }
+
+    /// `respondPermission`, on the UI thread.
+    @MainActor static func respond(_ obj: [String: Any]) {
+        guard let id = obj["id"] as? String else {
+            ndCefWarn("respondPermission: missing id")
+            return
+        }
+        guard let parked = pending.removeValue(forKey: id) else {
+            ndCefWarn("respondPermission: unknown request id \(id)")
+            return
+        }
+        answer(parked, allow: (obj["allow"] as? NSNumber)?.boolValue ?? (obj["allow"] as? Bool ?? false))
+    }
+
+    @MainActor private static func answer(_ parked: Parked, allow: Bool) {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: parked.callback) else { return }
+        if parked.mediaMask != 0 {
+            let callback = raw.assumingMemoryBound(to: cef_media_access_callback_t.self)
+            if allow {
+                callback.pointee.cont?(callback, parked.mediaMask)
+            } else {
+                callback.pointee.cancel?(callback)
+            }
+            nd_cef_ref_release(callback)
+            return
+        }
+        let callback = raw.assumingMemoryBound(to: cef_permission_prompt_callback_t.self)
+        callback.pointee.cont?(callback, allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY)
+        nd_cef_ref_release(callback)
+    }
+}
+
 /// own window: that is the no-stray-window invariant, and a JS dialog is the
 /// easiest place to break it.
 enum NDCefDialogs {
