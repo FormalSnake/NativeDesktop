@@ -13,7 +13,16 @@
 // ND_APP_CHROME_LEGS=<comma separated> runs a subset.
 import { connectApp, type AttachedApp, type LocatorFactory } from "@nativedesktop/test";
 
-import { Session, clickDevToolsClose, inspectedPageBounds, targets, waitForTarget, type Box } from "../cdp.ts";
+import {
+  Session,
+  clickDevToolsClose,
+  clickDeviceToolbar,
+  dragFrontendSplitter,
+  inspectedPageBounds,
+  targets,
+  waitForTarget,
+  type Box,
+} from "../cdp.ts";
 
 import {
   FIXTURE_FILL,
@@ -396,7 +405,9 @@ async function pickMenuItem(items: ShownMenuItem[], label: string): Promise<void
 /// the only way in.
 async function openInspector(page: string): Promise<void> {
   const box = await viewBox(page);
-  const items = await openPageMenu(page, box.height - 60);
+  // Mid-page: the bottom of the view can be under the Dock, and a real right
+  // click there never reaches the app.
+  const items = await openPageMenu(page, box.height / 2);
   // The app's own item when it has one, Chromium's otherwise: the engine keeps
   // Inspect in the model precisely because Chrome style docks the inspector.
   const label = items.some((i) => i.depth === 0 && i.label === "Inspect Element") ? "Inspect Element" : "Inspect";
@@ -411,19 +422,24 @@ async function closeInspector(page: string): Promise<void> {
 
 /// What the frontend reserved for the page, with the frontend's own viewport
 /// beside it.
-/// The inspector's own close button, which is the one path off the frontend
-/// that this app's menus do not have: its Inspect item is Chromium's, and that
-/// one only ever opens an inspector.
-async function closeFrontend(): Promise<void> {
+/// Runs `body` against the docked frontend's own protocol session.
+async function onFrontend<T>(body: (session: Session) => Promise<T>): Promise<T> {
   const target = await waitForTarget(DEBUG_PORT, (t) => t.url.startsWith("devtools://"), 20000);
   const session = await Session.open(target.webSocketDebuggerUrl ?? "");
   try {
     await session.send("Runtime.enable");
-    const box = await clickDevToolsClose(session);
-    assert(box !== null, "the frontend's toolbar has no close button");
+    return await body(session);
   } finally {
     session.close();
   }
+}
+
+/// The inspector's own close button, which is the one path off the frontend
+/// that this app's menus do not have: its Inspect item is Chromium's, and that
+/// one only ever opens an inspector.
+async function closeFrontend(): Promise<void> {
+  const box = await onFrontend((session) => clickDevToolsClose(session));
+  assert(box !== null, "the frontend's toolbar has no close button");
   await until(
     "the inspector goes away",
     async () => (await targets(DEBUG_PORT)).filter((t) => t.url.startsWith("devtools://")).length,
@@ -448,7 +464,20 @@ async function frontendGeometry(): Promise<{ bounds: Box | null; width: number; 
 /// placeholder and expects the embedder to put the page in that rectangle. A
 /// placeholder that is not the page's own rectangle is the empty strip the
 /// owner sees, and it is also what device mode draws the phone into.
-async function dockTiles(page: string, phase: string): Promise<void> {
+/// The rectangle the host last put the page's own view at, off its trace. In
+/// device mode the page's document reports the emulated viewport rather than
+/// the view it is drawn in, and this is the only handle on the view itself.
+function appliedPageRect(): { x: number; y: number; w: number; h: number } | null {
+  const path = process.env.ND_APP_HOST_LOG;
+  if (!path) return null;
+  const log = Bun.spawnSync(["rg", "-o", "chrome devtools page rect \\d+x\\d+@\\d+,\\d+", path]);
+  const lines = log.stdout.toString().trim().split("\n").filter((line) => line.length > 0);
+  const last = lines[lines.length - 1];
+  const m = last?.match(/(\d+)x(\d+)@(\d+),(\d+)/);
+  return m ? { w: Number(m[1]), h: Number(m[2]), x: Number(m[3]), y: Number(m[4]) } : null;
+}
+
+async function dockTiles(page: string, phase: string, emulated = false): Promise<void> {
   let detail = "never measured";
   for (let attempt = 0; attempt < 15; attempt++) {
     const box = await viewBox(page);
@@ -461,15 +490,21 @@ async function dockTiles(page: string, phase: string): Promise<void> {
       detail = `${phase}: the frontend announced no page bounds`;
     } else {
       const hole = tools.bounds;
-      detail = `${phase}: page ${pw}x${ph}, hole ${hole.width}x${hole.height}@${hole.x},${hole.y}`
+      const applied = appliedPageRect();
+      detail = `${phase}: page ${pw}x${ph}, view ${applied ? `${applied.w}x${applied.h}@${applied.x},${applied.y}` : "untraced"}`
+        + `, hole ${hole.width}x${hole.height}@${hole.x},${hole.y}`
         + `, inspector ${tools.width} wide, webview ${Math.round(box.width)}`;
-      // Sizes and the span, not screen origins: Chromium's screenX for a
+      // The view the page is drawn in has to BE the hole, origin included.
+      // Sizes only for the document itself: Chromium's screenX for a
       // BrowserView reparented into this window is the popup's original
-      // position and never moves, on either document, so the two are not in
-      // one space. The origin is what the leg's capture shows.
-      const fits = Math.abs(hole.width - pw!) <= 2 && Math.abs(hole.height - ph!) <= 2;
+      // position and never moves, so the two documents are not in one space,
+      // and under device emulation the page reports the device's viewport
+      // rather than the view at all.
+      const placed = applied !== null && Math.abs(applied.x - hole.x) <= 2 && Math.abs(applied.y - hole.y) <= 2
+        && Math.abs(applied.w - hole.width) <= 2 && Math.abs(applied.h - hole.height) <= 2;
+      const fits = emulated || (Math.abs(hole.width - pw!) <= 2 && Math.abs(hole.height - ph!) <= 2);
       const spans = Math.abs(tools.width - box.width) <= 2;
-      if (fits && spans) return;
+      if (placed && fits && spans) return;
     }
     await Bun.sleep(1000);
   }
@@ -1439,6 +1474,11 @@ const legs: Leg[] = [
       // Three tabs and the app's sidebar: the page is not at the window origin
       // and it is one of several live webviews, which is the shape the probe
       // gate's single static view does not have.
+      //
+      // Brought forward first: this machine has other windows, and the address
+      // bar only takes what it is typed while the app is the active one.
+      activateApp();
+      await Bun.sleep(600);
       await loadFixture();
       await newTab();
       await loadFixture();
@@ -1458,6 +1498,23 @@ const legs: Leg[] = [
       await app.setWindowSize(1180, 880);
       await Bun.sleep(1500);
       await dockTiles(page, "resized");
+
+      // The user drags the frontend's own splitter: the hole moves and the
+      // page has to move with it.
+      const dragged = await onFrontend((session) => dragFrontendSplitter(session, -120));
+      assert(dragged, "the frontend has no splitter to drag");
+      await Bun.sleep(1200);
+      await dockTiles(page, "splitterDragged");
+
+      // Device mode: the hole stops being a column and becomes the device's
+      // rectangle, which is what puts the phone in the page area.
+      const phone = await onFrontend((session) => clickDeviceToolbar(session));
+      assert(phone !== null, "the frontend has no device-toolbar toggle");
+      await Bun.sleep(2000);
+      await dockTiles(page, "deviceMode", true);
+      await onFrontend((session) => clickDeviceToolbar(session));
+      await Bun.sleep(2000);
+      await dockTiles(page, "deviceModeOff");
 
       // Back to the first tab and forward again: every other webview in the
       // overlay is hidden rather than gone, and the one that comes back has to

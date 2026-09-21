@@ -201,3 +201,79 @@ export async function inspectedPageBounds(
   })()`);
   return JSON.parse(raw) as { bounds: Box | null; width: number; height: number };
 }
+
+/**
+ * Clicks the frontend's device-toolbar toggle, the phone icon. Device mode is
+ * the case the hole stops being a column and becomes the device's own
+ * rectangle, which is where Chrome draws the phone.
+ */
+export async function clickDeviceToolbar(frontend: Session): Promise<Box | null> {
+  return await clickIn(frontend, `(() => {
+    let hit = null;
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        const label = el.getAttribute && el.getAttribute('aria-label');
+        if (!hit && label && /device toolbar/i.test(label)) hit = el;
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    return hit;
+  })()`);
+}
+
+/**
+ * Drags the docked frontend's own splitter, which is what a user does to make
+ * the inspector wider: the hole moves with it and the page has to follow.
+ */
+export async function dragFrontendSplitter(frontend: Session, dx: number): Promise<boolean> {
+  const box = await frontend.eval<Box | null>(`(() => {
+    let hit = null;
+    const walk = (root) => {
+      for (const el of root.querySelectorAll('*')) {
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (!hit && /resizer/.test(cls)) {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.width < 20 && r.height > innerHeight - 4) hit = el;
+        }
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(document);
+    if (!hit) return null;
+    const r = hit.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+  if (!box) return false;
+  const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...from, button: "none", buttons: 0 });
+  await frontend.send("Input.dispatchMouseEvent", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 });
+  // In steps: the split widget follows the pointer rather than the drop, and a
+  // single jump is a gesture its handler never sees the middle of.
+  for (let step = 1; step <= 4; step++) {
+    await frontend.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved", x: from.x + (dx * step) / 4, y: from.y, button: "left", buttons: 1,
+    });
+  }
+  await frontend.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: from.x + dx, y: from.y, button: "left", buttons: 0, clickCount: 1,
+  });
+  return true;
+}
+
+/// A real mouse click on whatever `finder` answers with, in the frontend.
+async function clickIn(frontend: Session, finder: string): Promise<Box | null> {
+  const box = await frontend.eval<Box | null>(`(() => {
+    const el = ${finder};
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+  if (!box) return null;
+  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2, button: "left", clickCount: 1 };
+  await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...at, button: "none", buttons: 0 });
+  await frontend.send("Input.dispatchMouseEvent", { type: "mousePressed", ...at, buttons: 1 });
+  await frontend.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, buttons: 0 });
+  return box;
+}
