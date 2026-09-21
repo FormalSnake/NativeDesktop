@@ -261,8 +261,10 @@ fn appGetBrowserProcessHandler(_: [*c]c.cef_app_t) callconv(.c) [*c]c.cef_browse
 
 const SinkClientObj = ref.Counted(c.cef_client_t, void);
 const SinkLifeObj = ref.Counted(c.cef_life_span_handler_t, void);
+const SinkRequestObj = ref.Counted(c.cef_request_handler_t, void);
 var sink_client: ?*SinkClientObj = null;
 var sink_life: ?*SinkLifeObj = null;
+var sink_request: ?*SinkRequestObj = null;
 
 /// The view the app hears a Chrome-created browser about. Chrome's own window
 /// belongs to no `<webview>`, and the app's tab-opening handler is per view, so
@@ -275,12 +277,20 @@ fn getDefaultClient(_: [*c]c.cef_browser_process_handler_t) callconv(.c) [*c]c.c
         const life = SinkLifeObj.create({}) orelse return null;
         life.cef.on_after_created = &onSinkBrowserCreated;
         life.cef.on_before_close = &onSinkBrowserClosed;
-        const client = SinkClientObj.create({}) orelse {
+        const request = SinkRequestObj.create({}) orelse {
             life.drop();
             return null;
         };
+        request.cef.on_before_browse = &onSinkBeforeBrowse;
+        const client = SinkClientObj.create({}) orelse {
+            life.drop();
+            request.drop();
+            return null;
+        };
         client.cef.get_life_span_handler = &sinkGetLifeSpanHandler;
+        client.cef.get_request_handler = &sinkGetRequestHandler;
         sink_life = life;
+        sink_request = request;
         sink_client = client;
     }
     return sink_client.?.handOut();
@@ -288,6 +298,10 @@ fn getDefaultClient(_: [*c]c.cef_browser_process_handler_t) callconv(.c) [*c]c.c
 
 fn sinkGetLifeSpanHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_life_span_handler_t {
     return (sink_life orelse return null).handOut();
+}
+
+fn sinkGetRequestHandler(_: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_request_handler_t {
+    return (sink_request orelse return null).handOut();
 }
 
 /// The one Chrome-created browser this engine does not close, and the timer
@@ -338,27 +352,175 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
         if (browser.*.get_identifier) |get_id| kept_browser_id = get_id(browser);
     }
 
+    const url = mainFrameUrl(browser);
+    tr("sinkCreated id={d} window={x} keep={} url={?s}", .{
+        if (browser.*.get_identifier) |get_id| get_id(browser) else 0,
+        window,
+        keep,
+        url,
+    });
+    // A browser Chrome has only just made has not started its navigation, so
+    // its main frame's URL is empty. Reporting that as the new window's URL is
+    // what handed the app a dead about:blank tab for every chrome.tabs.create
+    // an extension makes; the real destination arrives in on_before_browse.
+    if (url == null or url.?.len == 0) {
+        if (url) |u| alloc.free(u);
+        var browser_id: c_int = 0;
+        if (browser.*.get_identifier) |get_id| browser_id = get_id(browser);
+        ref.addRefParam(host);
+        pending_sink.append(alloc, .{
+            .id = browser_id,
+            .host = host,
+            .window = window,
+            .keep = keep,
+            .deadline_us = glib.getMonotonicTime() + sink_url_wait_us,
+        }) catch {
+            ref.releaseParam(host);
+            if (!keep) {
+                if (host.*.close_browser) |close| close(host, 1);
+            }
+            return;
+        };
+        armSinkTimer();
+        return;
+    }
+    reportSinkUrl(url);
+    if (keep) return;
+    if (host.*.close_browser) |close| close(host, 1);
+}
+
+/// A browser Chrome created whose first navigation this engine is still waiting
+/// for. The window is already unmapped; the entry only exists so the URL the
+/// app is told is the one the extension asked for.
+const PendingSink = struct {
+    id: c_int,
+    host: [*c]c.cef_browser_host_t,
+    /// Its top-level on the X server. Views shows the window it made again
+    /// after `on_after_created` has unmapped it, exactly as it does for the
+    /// kept browser, so the window watcher unmaps it on every tick instead.
+    window: usize,
+    keep: bool,
+    deadline_us: i64,
+};
+
+/// How long a Chrome-created browser may go without starting a navigation
+/// before it is closed. Nothing is reported for it: a window whose destination
+/// never existed is a tab the app could only open on about:blank, which is
+/// exactly the dead tab this path exists to stop producing.
+const sink_url_wait_us: i64 = 1500 * std.time.us_per_ms;
+const sink_timer_interval_ms: c_uint = 250;
+
+var pending_sink: std.ArrayList(PendingSink) = .empty;
+var sink_timer: c_uint = 0;
+
+fn armSinkTimer() void {
+    if (sink_timer != 0) return;
+    sink_timer = glib.timeoutAdd(sink_timer_interval_ms, &onSinkTimer, null);
+}
+
+fn onSinkTimer(_: ?*anyopaque) callconv(.c) c_int {
+    const now = glib.getMonotonicTime();
+    var i: usize = 0;
+    while (i < pending_sink.items.len) {
+        const entry = pending_sink.items[i];
+        if (entry.deadline_us > now) {
+            i += 1;
+            continue;
+        }
+        _ = pending_sink.orderedRemove(i);
+        if (!entry.keep) {
+            if (entry.host.*.close_browser) |close| close(entry.host, 1);
+        }
+        ref.releaseParam(entry.host);
+    }
+    if (pending_sink.items.len != 0) return 1;
+    sink_timer = 0;
+    return 0;
+}
+
+fn takePendingSink(browser_id: c_int) ?PendingSink {
+    for (pending_sink.items, 0..) |entry, i| {
+        if (entry.id != browser_id) continue;
+        return pending_sink.orderedRemove(i);
+    }
+    return null;
+}
+
+/// Hands the app the URL as `newWindow`, the contract every other
+/// window-opening route uses. `url` is adopted.
+fn reportSinkUrl(url: ?[]u8) void {
+    // Any live view rather than only the focused one: a view is destroyed with
+    // the window that held it and takes the focus record with it, and a tab an
+    // extension asked for must not be dropped because nothing has taken focus
+    // since.
+    const target = focused_view orelse anyLiveView();
+    if (target) |view| {
+        tr("sinkNewWindow node={d} url={?s}", .{ view.node_id, url });
+        post(.{ .view = view, .name = "newWindow", .text = url });
+        return;
+    }
+    tr("sinkNewWindow dropped url={?s}", .{url});
+    if (url) |u| alloc.free(u);
+}
+
+fn anyLiveView() ?*View {
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (view.container != 0) return view;
+    }
+    return null;
+}
+
+fn mainFrameUrl(browser: [*c]c.cef_browser_t) ?[]u8 {
+    const get_frame = browser.*.get_main_frame orelse return null;
+    const frame = get_frame(browser);
+    if (frame == null) return null;
+    defer ref.releaseParam(frame);
+    const get_url = frame.*.get_url orelse return null;
+    const raw = get_url(frame);
+    if (raw == null) return null;
+    defer freeUserfree(raw);
+    return dupeStr(raw);
+}
+
+/// The first navigation of a Chrome-created browser, which is where its real
+/// destination finally exists. The browser is closed here rather than in
+/// on_after_created, so nothing of it is ever fetched or drawn.
+fn onSinkBeforeBrowse(
+    _: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    _: c_int,
+    _: c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    if (browser == null) return 0;
+    var browser_id: c_int = 0;
+    if (browser.*.get_identifier) |get_id| browser_id = get_id(browser);
+    const entry = takePendingSink(browser_id) orelse {
+        tr("sinkBrowse id={d} pending=false", .{browser_id});
+        return 0;
+    };
+    defer ref.releaseParam(entry.host);
+
     var url: ?[]u8 = null;
-    if (browser.*.get_main_frame) |get_frame| {
-        const frame = get_frame(browser);
-        if (frame != null) {
-            defer ref.releaseParam(frame);
-            if (frame.*.get_url) |get_url| {
-                const raw = get_url(frame);
-                if (raw != null) {
-                    defer freeUserfree(raw);
-                    url = dupeStr(raw);
-                }
+    if (request != null) {
+        if (request.*.get_url) |get_url| {
+            const raw = get_url(request);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                url = dupeStr(raw);
             }
         }
     }
-    if (focused_view) |view| {
-        post(.{ .view = view, .name = "newWindow", .text = url });
-    } else if (url) |u| {
-        alloc.free(u);
-    }
-    if (keep) return;
-    if (host.*.close_browser) |close| close(host, 1);
+    reportSinkUrl(url);
+    if (entry.keep) return 0;
+    if (entry.host.*.close_browser) |close| close(entry.host, 1);
+    return 1;
 }
 
 // ============================================================================
@@ -392,8 +554,19 @@ fn startChromeWindowWatch() void {
     chrome_watch_timer = glib.timeoutAdd(chrome_watch_interval_ms, &onChromeWindowWatch, null);
 }
 
+fn isPendingSinkWindow(window: usize) bool {
+    if (window == 0) return false;
+    for (pending_sink.items) |entry| {
+        if (entry.window == window) return true;
+    }
+    return false;
+}
+
 fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     if (kept_window != 0) x11.hide(kept_window);
+    for (pending_sink.items) |entry| {
+        if (entry.window != 0) x11.hide(entry.window);
+    }
     // Sized for a real session rather than for a gate's bare X server: the root
     // on the owner's desktop carries every X client on it.
     var buf: [1024]x11.Window = undefined;
@@ -414,6 +587,10 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     for (gone.items) |w| _ = adopted_windows.remove(w);
     for (children) |w| {
         if (w == 0 or w == kept_window) continue;
+        // A browser this engine is still waiting on a URL for is not a dialog
+        // Chrome drew; adopting one would move it onto the view and leave it
+        // there, which is the stray window the whole sink exists to prevent.
+        if (isPendingSinkWindow(w)) continue;
         if (adopted_windows.contains(w)) continue;
         if (x11.windowPid(w) != self_pid) continue;
         // GDK knows every window it made, which is the app's toplevels and the
@@ -501,8 +678,9 @@ fn adoptChromeWindow(window: usize) void {
 /// engine closed on the spot, so the kept one is told apart by its identifier.
 fn onSinkBrowserClosed(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
-    const host = kept_host orelse return;
     const get_id = browser.*.get_identifier orelse return;
+    if (takePendingSink(get_id(browser))) |entry| ref.releaseParam(entry.host);
+    const host = kept_host orelse return;
     if (get_id(browser) != kept_browser_id) return;
     kept_host = null;
     kept_window = 0;
@@ -2305,6 +2483,16 @@ fn onBeforePopup(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    // `window.open("about:blank")` followed by `w.location = …` from the
+    // opener reaches the app as about:blank and the destination never exists:
+    // denying the popup makes window.open answer null and the opener's next
+    // statement throw. Letting it through to the sink client instead was tried
+    // and taken back out. Chrome builds a real top-level for it, this engine
+    // cannot unmap that one (a popup's window handle is not known yet when
+    // `on_after_created` runs, and `cef_window_info_t.bounds` is ignored for a
+    // Chrome-style popup, measured on 151.3.23), and the gate's census caught
+    // it both times. The Chrome-created-browser path below is a different
+    // mechanism and is not affected.
     post(.{ .view = LifeObj.of(self).payload, .name = "newWindow", .text = dupeStr(target_url) });
     return 1;
 }

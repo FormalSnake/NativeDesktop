@@ -165,6 +165,19 @@ async function menuRows(): Promise<string[]> {
   return rows;
 }
 
+/// Every URL the engine has handed the app as a new window, in order. The app's
+/// only route for a page- or extension-initiated tab is this event, so a report
+/// that carries no URL is a tab the app can only open on about:blank.
+async function sinkNewWindowUrls(): Promise<string[]> {
+  const path = process.env.ND_HOST_LOG ?? "";
+  if (!path) return [];
+  const text = await Bun.file(path).text().catch(() => "");
+  return text
+    .split("\n")
+    .filter((line) => line.includes("ND_CEF sinkNewWindow"))
+    .map((line) => line.slice(line.indexOf("url=") + 4).trim());
+}
+
 /// A point inside the app's own `<webview>`, in root coordinates. Aiming at a
 /// fixed screen point breaks the moment the app above the view grows a row:
 /// the engine's embed trace and the X server between them know where the view
@@ -312,6 +325,27 @@ if (pass === "first") {
       return key;
     });
   }
+
+  // The URL the app is handed for a tab it did not open itself. A browser
+  // Chrome has only just made has not started its navigation, so reading its
+  // main frame at creation time reports nothing and the app opens a dead
+  // about:blank tab; the destination has to come from the navigation.
+  const target = `${pageTarget.url.replace(/\/[^/]*$/, "")}/one`;
+  const before = (await sinkNewWindowUrls()).length;
+  await leg("tabsCreateUrl", () => sw.eval(`ndOpenTabUrl(${JSON.stringify(target)}).then(t=>'tab '+t.id).catch(e=>'rejected: '+e.message)`));
+  const afterTab = (await sinkNewWindowUrls()).slice(before);
+  check("tabsCreateReportsUrl", afterTab.some((u) => u === target), `${JSON.stringify(afterTab)} want ${target}`);
+
+  // An extension's own page, which is how 1Password opens its welcome and
+  // sign-in tabs.
+  const beforeExt = (await sinkNewWindowUrls()).length;
+  await leg("extensionTab", () => sw.eval("ndOpenExtensionTab().then(t=>'tab '+t.id).catch(e=>'rejected: '+e.message)"));
+  const afterExt = (await sinkNewWindowUrls()).slice(beforeExt);
+  check(
+    "extensionTabReportsUrl",
+    afterExt.some((u) => u.startsWith(`chrome-extension://${extId}/`)),
+    `${JSON.stringify(afterExt)} want chrome-extension://${extId}/…`,
+  );
 
   await sw.eval(`ndWrite(${JSON.stringify(token)}).then(()=>'written')`);
   check("storageWritten", true, token);
