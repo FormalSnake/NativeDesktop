@@ -224,6 +224,11 @@ import Foundation
         let tools = UnsafeMutableRawPointer(popup).assumingMemoryBound(to: cef_view_t.self)
         panel.pointee.add_child_view?(panel, tools)
         devToolsView = popup
+        // CEF hands the popup over already sized to the whole window, and
+        // adding it is not by itself something the panel lays out again: on a
+        // second dock the inspector keeps that full width and covers the page.
+        // The close path asks for the same pass for the same reason.
+        panel.pointee.layout?(panel)
         pointFrontendAtDock()
         view?.ndTrace("chrome devtools docked")
         return true
@@ -268,9 +273,68 @@ import Foundation
             nd_cef_ref_release(browserHost)
         }
         view?.ndTrace("chrome devtools closing")
-        // CEF creates the inspector's browser with a client of its own, so this
-        // client's `on_before_close` never fires for it. The BrowserView losing
-        // its browser is the same signal seen from the only side that has one.
+        awaitDevToolsBrowser()
+    }
+
+    /// The inspector's browser is going: the window can be laid out again, and
+    /// the page takes the whole width back, once it has actually gone.
+    ///
+    /// The frontend's own close button takes the browser away without passing
+    /// through `closeDevTools`, so a still-docked view is given up here too;
+    /// leaving it set keeps `hasDockedDevTools` true and the app's toggle then
+    /// tries to close an inspector that is already gone.
+    ///
+    /// `on_browser_destroyed` runs while the browser still answers, so the dock
+    /// is given up only once that browser has really gone, and only while it is
+    /// still the one on screen. Both are load-bearing: acting on the report
+    /// alone takes down an inspector docked since, which then lays out at zero
+    /// width and leaves the page beside a blank half.
+    func devToolsBrowserClosed() {
+        if devToolsClosing != nil {
+            awaitDevToolsBrowser()
+            return
+        }
+        guard let docked = devToolsView else { return }
+        // As a bit pattern, the same way every other CEF pointer crosses an
+        // isolation boundary here: Swift's raw pointers are not Sendable.
+        let token = UInt(bitPattern: docked)
+        devToolsCloseTimer?.invalidate()
+        let deadline = Date().addingTimeInterval(5)
+        devToolsCloseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let stop = {
+                    self.devToolsCloseTimer?.invalidate()
+                    self.devToolsCloseTimer = nil
+                }
+                // Superseded by a dock since, or the report was spurious and
+                // the browser is still there: either way this is not ours.
+                guard let mine = self.devToolsView, UInt(bitPattern: mine) == token else { return stop() }
+                guard self.browserIsGone(mine) else {
+                    if Date() >= deadline { stop() }
+                    return
+                }
+                stop()
+                self.devToolsView = nil
+                self.dockFrontendTimer?.invalidate()
+                self.dockFrontendTimer = nil
+                self.retire(mine)
+            }
+        }
+    }
+
+    private func browserIsGone(_ browserView: UnsafeMutablePointer<cef_browser_view_t>) -> Bool {
+        let browser = browserView.pointee.get_browser?(browserView)
+        defer { if let browser { nd_cef_ref_release(browser) } }
+        return browser == nil || browser!.pointee.is_valid?(browser) == 0
+    }
+
+    /// CEF creates the inspector's browser with a client of its own, so this
+    /// client's `on_before_close` never fires for it, and the delegate's
+    /// `on_browser_destroyed` runs while the browser is still answering. The
+    /// BrowserView losing its browser is the signal, from the only side that
+    /// has one.
+    private func awaitDevToolsBrowser() {
         devToolsCloseTimer?.invalidate()
         let deadline = Date().addingTimeInterval(5)
         devToolsCloseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -285,29 +349,24 @@ import Foundation
                 let gone = browser == nil || browser!.pointee.is_valid?(browser) == 0
                 if let browser { nd_cef_ref_release(browser) }
                 guard gone || Date() >= deadline else { return }
-                self.devToolsCloseTimer?.invalidate()
-                self.devToolsCloseTimer = nil
-                self.devToolsBrowserClosed()
+                self.retire(closing)
             }
         }
     }
 
-    /// The inspector's browser has gone: the window can be laid out again and
-    /// the page takes the whole width back.
-    ///
-    /// The frontend's own close button takes the browser away without passing
-    /// through `closeDevTools`, so a still-docked view is retired here too;
-    /// leaving it set keeps `hasDockedDevTools` true and the app's toggle then
-    /// tries to close an inspector that is already gone.
-    func devToolsBrowserClosed() {
-        guard let closing = devToolsClosing ?? devToolsView else { return }
+    private func retire(_ closing: UnsafeMutablePointer<cef_browser_view_t>) {
         closedDevToolsViews.append(closing)
+        // Out of the box layout's flow, rather than merely asking for a width
+        // of zero: the layout caches what a child asked for last, so a view
+        // left visible keeps claiming the dock's share and the next inspector
+        // is squeezed to nothing beside a blank half. Hidden, not removed,
+        // because `remove_child_view` on one of these poisons the next
+        // show_dev_tools and hangs the UI thread.
+        let base = UnsafeMutableRawPointer(closing).assumingMemoryBound(to: cef_view_t.self)
+        base.pointee.set_visible?(base, 0)
         devToolsClosing = nil
-        devToolsView = nil
         devToolsCloseTimer?.invalidate()
         devToolsCloseTimer = nil
-        dockFrontendTimer?.invalidate()
-        dockFrontendTimer = nil
         if let cefWindow {
             let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
             panel.pointee.layout?(panel)
@@ -326,14 +385,14 @@ import Foundation
 
     /// Chrome docks DevTools to the right; the page takes what is left, so the
     /// two always add up to the window and the box layout leaves no gap.
-    func dockedSize(devTools: Bool, view asked: UnsafeMutableRawPointer?) -> cef_size_t {
+    func dockedSize(devTools: Bool) -> cef_size_t {
         let bounds = view?.bounds ?? .zero
         let width = Int32(bounds.width.rounded())
         let height = Int32(bounds.height.rounded())
         // A view left behind by a closed inspector takes no width at all.
-        if let asked, closedDevToolsViews.contains(where: { UnsafeMutableRawPointer($0) == asked }) {
-            return cef_size_t(width: 0, height: max(1, height))
-        }
+        // Without this the stale view keeps claiming the dock's share and the
+        // box layout squeezes the live inspector out, leaving its width of
+        // blank between the page and whatever is left of the inspector.
         guard devToolsView != nil else {
             return cef_size_t(width: devTools ? 0 : max(1, width), height: max(1, height))
         }
@@ -578,9 +637,8 @@ extension NDCefHandlerBox {
             return CEF_CTT_NONE
         }
         devToolsViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
-            let asked = UnsafeMutableRawPointer(cefView)
             nd_cef_ref_release(cefView)
-            return ndCefPreferredSize(selfPointer, devTools: true, view: asked)
+            return ndCefPreferredSize(selfPointer, devTools: true)
         }
         // The inspector's browser is CEF's own, so this client's
         // `on_before_close` never reports it. This is the one callback that
@@ -651,7 +709,7 @@ extension NDCefHandlerBox {
         browserViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
         browserViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
             nd_cef_ref_release(cefView)
-            return ndCefPreferredSize(selfPointer, devTools: false, view: nil)
+            return ndCefPreferredSize(selfPointer, devTools: false)
         }
         browserViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
             nd_cef_ref_release(browserView)
@@ -745,15 +803,12 @@ let ndCefBlockedChromeCommands: Set<Int32> = ndCefCommandIDs([
 
 /// The size one of the window's two BrowserViews asks the box layout for.
 private func ndCefPreferredSize(
-    _ handler: UnsafeMutableRawPointer?, devTools: Bool, view asked: UnsafeMutableRawPointer?
+    _ handler: UnsafeMutableRawPointer?, devTools: Bool
 ) -> cef_size_t {
     var size = cef_size_t(width: 0, height: 0)
-    // The pointer crosses the isolation boundary as a bit pattern, the same way
-    // every other CEF pointer does here: Swift's raw pointers are not Sendable.
-    let token = UInt(bitPattern: asked)
     ndCefDeliver(handler) { view in
         guard let chrome = view?.chrome else { return }
-        size = chrome.dockedSize(devTools: devTools, view: UnsafeMutableRawPointer(bitPattern: token))
+        size = chrome.dockedSize(devTools: devTools)
     }
     return size
 }
