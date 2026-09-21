@@ -1172,6 +1172,124 @@ pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
     headerbar_nav_ids.put(events_gpa, @intFromPtr(widget), node_id) catch {};
 }
 
+// ---- <headerbar> fill title (address-bar shape) ----------------------------
+// AdwHeaderBar CENTRES its title widget: hexpand reaches the centre box, but
+// the centred allocation is symmetric about the header's middle, so the title
+// stops at twice the distance to the NEARER pack and the rest of the row stays
+// empty. Measured on libadwaita 1.9.1/GTK 4.22.4, a 1402px header with a 520px
+// start pack and an 81px end pack: 212px of field, 456px of free run to its
+// right. The centre only stops centring once the title's NATURAL width no
+// longer fits, and an editable is the one child with a natural-width lever
+// that does not also raise the header's MINIMUM width (max-width-chars is a
+// natural; a width request is a minimum, and driving that from the header's
+// own allocation would stop the window shrinking again). With the natural out
+// of reach the same header gives 662px of field and 6px of slack on each side.
+//
+// The count is a constant rather than a measurement because nothing consults a
+// window's natural width once it is mapped: `<window>` always carries a
+// defaultWidth (schema default 480), so the create arm always sets a default
+// size. A thousand characters is wider than any header on any monitor and
+// still two orders of magnitude below what an unbounded value produces.
+const nd_fill_max_chars: c_int = 1000;
+
+/// Widgets the SearchInput create arm built, so the header's attach can
+/// promote one to the title slot whichever GTK type it ended up being
+/// (a leading icon makes it a GtkEntry rather than a GtkSearchEntry).
+var nd_search_inputs: std.AutoHashMapUnmanaged(usize, void) = .empty;
+
+pub fn ndNoteSearchInput(widget: *gtk.Widget) void {
+    nd_search_inputs.put(events_gpa, @intFromPtr(widget), {}) catch {};
+}
+
+fn ndIsSearchInput(widget: *gtk.Widget) bool {
+    return nd_search_inputs.contains(@intFromPtr(widget));
+}
+
+/// Promotes a header child to the title slot and makes it take the free run
+/// between the start and end packs (generated HeaderBar attach arm). A child
+/// that is not editable keeps hexpand and AdwHeaderBar's centred run, since
+/// there is no way to widen its natural that does not also pin the window's
+/// minimum width.
+pub fn ndHeaderBarSetFillTitle(hb: *adw.HeaderBar, child: *gtk.Widget) void {
+    gtk.Widget.setHexpand(child, 1);
+    gtk.Widget.setHalign(child, .fill);
+    if (gobject.ext.isA(child, gtk.Editable)) {
+        gtk.Editable.setMaxWidthChars(@ptrCast(@alignCast(child)), nd_fill_max_chars);
+    }
+    adw.HeaderBar.setTitleWidget(hb, child);
+    adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+}
+
+// ---- leading icon inside a text/search field -------------------------------
+// GtkEntry's PRIMARY icon is the GTK spelling of the glyph browsers put inside
+// the address bar (the padlock). GtkSearchEntry hard-codes its own magnifier
+// there and exposes no icon API at all, so a SearchInput that declares
+// `leadingIconName` is built as a GtkEntry dressed as a search entry instead:
+// the .search style class, a clear icon on the secondary slot, and the same
+// plain "changed"/"activate" signals the SearchInput arms already connect. The
+// choice is made at create, so an app that shows the icon conditionally passes
+// a NAME for every state rather than dropping the prop.
+fn cbEntryClearIcon(entry: *gtk.Entry, pos: gtk.EntryIconPosition, _: ?*anyopaque) callconv(.c) void {
+    if (pos != .secondary) return;
+    gtk.Editable.setText(entry.as(gtk.Editable), "");
+}
+
+fn cbEntryClearVisible(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const entry: *gtk.Entry = @ptrCast(@alignCast(obj));
+    const has_text = std.mem.span(gtk.Editable.getText(entry.as(gtk.Editable))).len > 0;
+    gtk.Entry.setIconFromIconName(entry, .secondary, if (has_text) "edit-clear-symbolic" else null);
+}
+
+/// The GtkSearchEntry affordances a plain GtkEntry does not carry on its own.
+pub fn ndEntryDressAsSearch(entry: *gtk.Entry) void {
+    gtk.Widget.addCssClass(entry.as(gtk.Widget), "search");
+    gtk.Entry.setIconActivatable(entry, .secondary, 1);
+    _ = gtk.Entry.signals.icon_press.connect(entry, ?*anyopaque, &cbEntryClearIcon, null, .{});
+    _ = gobject.signalConnectData(asObject(entry), "changed", @ptrCast(&cbEntryClearVisible), null, null, .{});
+    cbEntryClearVisible(asObject(entry), null);
+}
+
+/// Merged create + applyProps arm for leadingIconName/Tooltip/Label. Absent
+/// keys keep what the entry already has; an empty name clears the icon, which
+/// is what a dropped prop reaches the host as.
+pub fn ndEntryApplyLeadingIcon(entry: *gtk.Entry, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (propStr(props, "leadingIconName")) |name| {
+        if (name.len == 0) {
+            gtk.Entry.setIconFromIconName(entry, .primary, null);
+        } else {
+            gtk.Entry.setIconFromIconName(entry, .primary, ndicons.symbolic(dupeZ(name)));
+            gtk.Entry.setIconActivatable(entry, .primary, 1);
+            gtk.Entry.setIconSensitive(entry, .primary, 1);
+        }
+    }
+    // GTK has no separate accessible object for an entry icon, so the icon's
+    // tooltip IS what AT-SPI reads out for it; the accessible name is the
+    // fallback when the app gave no tooltip.
+    const tip = propStr(props, "leadingIconTooltip") orelse propStr(props, "leadingIconLabel");
+    if (tip) |t| gtk.Entry.setIconTooltipText(entry, .primary, if (t.len == 0) null else dupeZ(t));
+}
+
+/// `activateLeadingIcon`: fires the leading icon exactly as a pointer press
+/// on it would. GTK4 removed app-constructible input events, so this is also
+/// the only way a Linux gate can reach an icon that is not a widget of its
+/// own; on a keyboard it is what an app binds a shortcut to.
+pub fn ndEntryCommand(widget: *gtk.Widget, command: []const u8) void {
+    if (!std.mem.eql(u8, command, "activateLeadingIcon")) return;
+    if (!gobject.ext.isA(widget, gtk.Entry)) return;
+    const entry: *gtk.Entry = @ptrCast(@alignCast(widget));
+    if (gtk.Entry.getIconName(entry, .primary) == null) return;
+    gobject.signalEmitByName(asObject(entry), "icon-press", @intFromEnum(gtk.EntryIconPosition.primary));
+}
+
+/// The primary icon's rectangle in the entry's own coordinates, for a popover
+/// that asked to point at the icon rather than at the whole field
+/// (Popover.anchorSlot = "leadingIcon").
+pub fn ndEntryLeadingIconArea(entry: *gtk.Entry, out: *gdk.Rectangle) bool {
+    if (gtk.Entry.getIconName(entry, .primary) == null) return false;
+    gtk.Entry.getIconArea(entry, .primary, out);
+    return out.f_width > 0 and out.f_height > 0;
+}
+
 /// backend.zig routes a non-widget node handle's semantic click here.
 /// A menu node's declared enabled state, for the automation a11y probe.
 /// Null when the node id names no menu item. Menu handles are GMenuItems, not
@@ -1282,6 +1400,31 @@ fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
     if (desired) |d| gtk.Widget.setParent(child, d);
 }
 
+const ND_POPOVER_ICON_SLOT = "nd-popover-icon-slot";
+
+/// Generated applyProps Popover.anchorSlot arm. "leadingIcon" points the
+/// popover at the anchor entry's primary icon rather than at the whole field,
+/// which is what puts a site-info panel under the padlock instead of under the
+/// middle of the address bar.
+fn ndPopoverApplyAnchorSlot(child: *gtk.Widget, slot: []const u8) void {
+    const want_icon = std.mem.eql(u8, slot, "leadingIcon");
+    gobject.Object.setData(asObject(child), ND_POPOVER_ICON_SLOT, if (want_icon) @ptrFromInt(1) else null);
+    ndPopoverPointAtSlot(child);
+}
+
+/// Re-points an anchored popover at its anchor's leading icon. A no-op unless
+/// the app asked for the icon slot and the anchor really is an entry carrying
+/// a primary icon, so a popover on any other widget keeps GtkPopover's own
+/// "whole parent" rectangle.
+fn ndPopoverPointAtSlot(child: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_ICON_SLOT) == null) return;
+    const parent = gtk.Widget.getParent(child) orelse return;
+    if (!gobject.ext.isA(parent, gtk.Entry)) return;
+    var area: gdk.Rectangle = undefined;
+    if (!ndEntryLeadingIconArea(@ptrCast(@alignCast(parent)), &area)) return;
+    gtk.Popover.setPointingTo(@ptrCast(@alignCast(child)), &area);
+}
+
 /// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
 /// schema default, so dropping `anchorRef` falls back to the tree parent).
 fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
@@ -1290,6 +1433,7 @@ fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
     const up = gtk.Widget.getVisible(child) != 0;
     if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
     ndPopoverEnsureAnchor(child);
+    ndPopoverPointAtSlot(child);
     if (up and gtk.Widget.getParent(child) != null) gtk.Popover.popup(@ptrCast(@alignCast(child)));
 }
 
@@ -2952,6 +3096,7 @@ fn createWidget(
         }
         if (propStr(props, "placeholder")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));
+        ndEntryApplyLeadingIcon(entry, props, dupeZ);
         return entry.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         const view = gtk.TextView.new();
@@ -3168,12 +3313,27 @@ fn createWidget(
         if (propBool(props, "extendContentToTopEdge") orelse false) adw.ToolbarView.setExtendContentToTopEdge(tv, 1);
         return tv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        if (propStr(props, "leadingIconName")) |_| {
+            // A leading icon needs GtkEntry's icon API, which GtkSearchEntry
+            // does not have; ndEntryDressAsSearch puts the search look and the
+            // clear button back (the type choice is create-time).
+            const entry = gtk.Entry.new();
+            if (propStr(props, "text")) |t| {
+                if (t.len > 0) gtk.Editable.setText(entry.as(gtk.Editable), dupeZ(t));
+            }
+            if (propStr(props, "placeholder")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));
+            ndEntryDressAsSearch(entry);
+            ndEntryApplyLeadingIcon(entry, props, dupeZ);
+            ndNoteSearchInput(entry.as(gtk.Widget));
+            return entry.as(gtk.Widget);
+        }
         const search = gtk.SearchEntry.new();
         const editable = search.as(gtk.Editable);
         if (propStr(props, "text")) |t| {
             if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));
         }
         if (propStr(props, "placeholder")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));
+        ndNoteSearchInput(search.as(gtk.Widget));
         return search.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         const box = gtk.ListBox.new();
@@ -3619,6 +3779,9 @@ const nd_resets_Button = [_]NdPropReset{
 const nd_resets_TextInput = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
     .{ .key = "placeholder", .value = .{ .string = "" } },
+    .{ .key = "leadingIconName", .value = .{ .string = "" } },
+    .{ .key = "leadingIconTooltip", .value = .{ .string = "" } },
+    .{ .key = "leadingIconLabel", .value = .{ .string = "" } },
     .{ .key = "editable", .value = .{ .bool = true } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
@@ -3781,6 +3944,9 @@ const nd_resets_ToolbarView = [_]NdPropReset{
 const nd_resets_SearchInput = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
     .{ .key = "placeholder", .value = .{ .string = "" } },
+    .{ .key = "leadingIconName", .value = .{ .string = "" } },
+    .{ .key = "leadingIconTooltip", .value = .{ .string = "" } },
+    .{ .key = "leadingIconLabel", .value = .{ .string = "" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -3970,6 +4136,7 @@ const nd_resets_SplitButton = [_]NdPropReset{
 };
 const nd_resets_Popover = [_]NdPropReset{
     .{ .key = "anchor", .value = .{ .integer = 0 } },
+    .{ .key = "anchorSlot", .value = .{ .string = "widget" } },
     .{ .key = "open", .value = .{ .bool = false } },
     .{ .key = "position", .value = .{ .string = "top" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4386,6 +4553,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             }
         }
         if (propStr(props, "placeholder")) |p_| gtk.Entry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            ndEntryApplyLeadingIcon(@ptrCast(@alignCast(widget)), props, dupeZ);
+        } else if (propStr(props, "leadingIconName")) |_| std.debug.print("ND_WARN <textinput> leadingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state instead of dropping the prop\n", .{});
+        // "leadingIconTooltip" handled by ndEntryApplyLeadingIcon above (merged).
+        // "leadingIconLabel" handled by ndEntryApplyLeadingIcon above (merged).
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(@as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable), @intFromBool(e));
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (propStr(props, "text")) |t| {
@@ -4521,7 +4693,16 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 unblockEcho(asObject(widget));
             }
         }
-        if (propStr(props, "placeholder")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
+        if (propStr(props, "placeholder")) |p_| {
+            if (gobject.ext.isA(widget, gtk.SearchEntry)) {
+                gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
+            } else gtk.Entry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));
+        }
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            ndEntryApplyLeadingIcon(@ptrCast(@alignCast(widget)), props, dupeZ);
+        } else if (propStr(props, "leadingIconName")) |_| std.debug.print("ND_WARN <searchinput> leadingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state instead of dropping the prop\n", .{});
+        // "leadingIconTooltip" handled by ndEntryApplyLeadingIcon above (merged).
+        // "leadingIconLabel" handled by ndEntryApplyLeadingIcon above (merged).
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         {
             const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
@@ -4661,11 +4842,13 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "iconName")) |ic| adw.SplitButton.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
     } else if (std.mem.eql(u8, kind, "Popover")) {
         if (propInt(props, "anchor")) |a| ndPopoverApplyAnchor(widget, @intCast(@max(0, a)));
+        if (propStr(props, "anchorSlot")) |sl| ndPopoverApplyAnchorSlot(widget, sl);
         if (propBool(props, "open")) |o| {
             const pop: *gtk.Popover = @ptrCast(@alignCast(widget));
             const up = gtk.Widget.getVisible(widget) != 0;
             if (o and !up) {
                 ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here
+                ndPopoverPointAtSlot(widget); // the icon rect is only real once the entry has laid out
                 if (gtk.Widget.getParent(widget) != null) {
                     gtk.Popover.popup(pop);
                 } else {
@@ -4876,6 +5059,13 @@ fn cbEntryActivate(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const editable: *gtk.Editable = @ptrCast(@alignCast(obj));
     const text = std.mem.span(gtk.Editable.getText(editable));
     if (emit) |f| f(node_id, "activate", .{ .text = text });
+}
+
+fn cbEntryIconPress(entry: *gtk.Entry, pos: gtk.EntryIconPosition, data: ?*anyopaque) callconv(.c) void {
+    if (pos != .primary) return; // secondary is the clear button (ndEntryDressAsSearch)
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    _ = entry;
+    if (emit) |f| f(node_id, "leadingIconClicked", .{});
 }
 
 fn cbBufferChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -5105,6 +5295,9 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_TextInput_activate = asObject(widget);
         const hid_TextInput_activate = gobject.signalConnectData(obj_TextInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});
         _ = hid_TextInput_activate;
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryIconPress), data, null, .{});
+        }
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         const obj_TextArea_changed = asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?))));
         const hid_TextArea_changed = gobject.signalConnectData(obj_TextArea_changed, "changed", @ptrCast(&cbBufferChanged), data, null, .{});
@@ -5144,6 +5337,9 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         const obj_SearchInput_activate = asObject(widget);
         const hid_SearchInput_activate = gobject.signalConnectData(obj_SearchInput_activate, "activate", @ptrCast(&cbEntryActivate), data, null, .{});
         _ = hid_SearchInput_activate;
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryIconPress), data, null, .{});
+        }
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         const obj_SourceList_selectionChanged = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);
         const hid_SourceList_selectionChanged = gobject.signalConnectData(obj_SourceList_selectionChanged, "row-selected", @ptrCast(&cbListBoxRowSelected), data, null, .{});
@@ -5256,8 +5452,12 @@ pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8,
     if (std.mem.eql(u8, kind, "Window")) {
         if (std.mem.eql(u8, command, "showTabOverview") or std.mem.eql(u8, command, "present")) return ndtabs_gtk.command(widget, command, arg);
         nddialog_gtk.command(widget, command, arg);
+    } else if (std.mem.eql(u8, kind, "TextInput")) {
+        ndEntryCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         ndweb_gtk.command(widget, command, arg);
+    } else if (std.mem.eql(u8, kind, "SearchInput")) {
+        ndEntryCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
         ndtoast_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "Terminal")) {
@@ -5314,10 +5514,9 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
-        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
-            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
-            adw.HeaderBar.setTitleWidget(hb, child);
-            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+        const wants_title = if (attached.slot) |sl| std.mem.eql(u8, sl, "title") else ndIsSearchInput(child);
+        if (wants_title and adw.HeaderBar.getTitleWidget(hb) == null) {
+            ndHeaderBarSetFillTitle(hb, child);
         } else {
             const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, "end") else false;
             ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, null);
@@ -5437,10 +5636,9 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
         const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
-        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {
-            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
-            adw.HeaderBar.setTitleWidget(hb, child);
-            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+        const wants_title = if (attached.slot) |sl| std.mem.eql(u8, sl, "title") else ndIsSearchInput(child);
+        if (wants_title and adw.HeaderBar.getTitleWidget(hb) == null) {
+            ndHeaderBarSetFillTitle(hb, child);
         } else {
             const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, "end") else false;
             ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, b);

@@ -57,6 +57,11 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         if treeParent === parent { treeParent = nil }
     }
 
+    /// `anchorSlot`: "leadingIcon" points the popover at the anchor field's
+    /// leading icon (the padlock) rather than at the whole field, so a
+    /// site-info panel opens under the glyph the user clicked.
+    var anchorSlot = "widget"
+
     func applyAnchor(_ nodeID: UInt32) {
         guard nodeID != anchorNodeID else { return }
         anchorNodeID = nodeID
@@ -105,7 +110,8 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             }
             let size = contentContainer.fittingSize
             popover.contentSize = NSSize(width: max(size.width, 60), height: max(size.height, 28))
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge(for: anchor))
+            let rect = (anchorSlot == "leadingIcon" ? ndLeadingIconRect(of: anchor) : nil) ?? anchor.bounds
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: preferredEdge(for: anchor))
         } else {
             pendingOpen = false
             guard popover.isShown else { return }
@@ -158,6 +164,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
 func makePopover(_ props: [String: Any]) -> NSView {
     let handle = NDPopoverHandleView()
     handle.position = propStr(props, "position") ?? "top"
+    handle.anchorSlot = propStr(props, "anchorSlot") ?? "widget"
     handle.applyAnchor(UInt32(max(0, propInt(props, "anchor") ?? 0)))
     if propBool(props, "open") ?? false {
         handle.applyOpen(true) // no anchor yet: recorded as pendingOpen
@@ -178,6 +185,11 @@ func ndPopoverApplyPosition(_ view: NSView, _ position: String) {
 /// Generated ndApplyProps Popover.anchor arm.
 func ndPopoverApplyAnchor(_ view: NSView, _ nodeID: UInt32) {
     (view as? NDPopoverHandleView)?.applyAnchor(nodeID)
+}
+
+/// Generated ndApplyProps Popover.anchorSlot arm.
+func ndPopoverApplyAnchorSlot(_ view: NSView, _ slot: String) {
+    (view as? NDPopoverHandleView)?.anchorSlot = slot
 }
 
 /// Generated ndConnectEvents Popover arm.

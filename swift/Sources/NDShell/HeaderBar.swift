@@ -299,6 +299,13 @@ final class NDSearchField: NSSearchField {
         if let w = ndPreferredWidth { s.width = w }
         return s
     }
+
+    // The search-button rect moves with the field's width, and the leading
+    // icon's overlay sits on top of it (LeadingIcon.swift).
+    override func layout() {
+        super.layout()
+        ndLayoutLeadingIcon(self)
+    }
 }
 
 /// Per-window `Window.toolbarStyle` (create-only), recorded by the generated

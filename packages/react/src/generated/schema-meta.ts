@@ -163,7 +163,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "box": [{ name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "label": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "button": [{ name: "clicked", handler: "onClick", payload: "none" }, { name: "hoverChanged", handler: "onHoverChanged", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
-  "textinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
+  "textinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "leadingIconClicked", handler: "onLeadingIconClicked", payload: "none" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "textarea": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "checkbox": [{ name: "toggled", handler: "onToggled", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "radio": [{ name: "toggled", handler: "onToggled", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
@@ -182,7 +182,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "splitview": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "headerbar": [{ name: "back", handler: "onBack", payload: "none" }, { name: "forward", handler: "onForward", payload: "none" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "toolbarview": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
-  "searchinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
+  "searchinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "leadingIconClicked", handler: "onLeadingIconClicked", payload: "none" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "sourcelist": [{ name: "selectionChanged", handler: "onSelectionChanged", payload: "index" }, { name: "rowActivated", handler: "onRowActivated", payload: "index" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "sourcetree": [{ name: "selectionChanged", handler: "onSelectionChanged", payload: "data" }, { name: "rowActivated", handler: "onRowActivated", payload: "data" }, { name: "nodeExpanded", handler: "onNodeExpanded", payload: "data" }, { name: "nodeCollapsed", handler: "onNodeCollapsed", payload: "data" }, { name: "actionClicked", handler: "onActionClicked", payload: "data" }, { name: "middleClicked", handler: "onMiddleClick", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "menubar": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
@@ -245,7 +245,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "box": ["onHoverChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "label": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "button": ["onClick", "onHoverChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
-  "textinput": ["onChanged", "onActivate", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
+  "textinput": ["onChanged", "onActivate", "onLeadingIconClicked", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "textarea": ["onChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "checkbox": ["onToggled", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "radio": ["onToggled", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
@@ -264,7 +264,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "splitview": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "headerbar": ["onBack", "onForward", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "toolbarview": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
-  "searchinput": ["onChanged", "onActivate", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
+  "searchinput": ["onChanged", "onActivate", "onLeadingIconClicked", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "sourcelist": ["onSelectionChanged", "onRowActivated", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "sourcetree": ["onSelectionChanged", "onRowActivated", "onNodeExpanded", "onNodeCollapsed", "onActionClicked", "onMiddleClick", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "menubar": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
@@ -321,7 +321,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "box": [],
   "label": [],
   "button": ["focus"],
-  "textinput": ["focus"],
+  "textinput": ["focus", "activateLeadingIcon"],
   "textarea": ["focus"],
   "checkbox": ["focus"],
   "radio": ["focus"],
@@ -340,7 +340,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "splitview": [],
   "headerbar": [],
   "toolbarview": [],
-  "searchinput": ["focus"],
+  "searchinput": ["focus", "activateLeadingIcon"],
   "sourcelist": [],
   "sourcetree": [],
   "menubar": [],
@@ -394,13 +394,13 @@ export const widgetCommands: Record<string, readonly string[]> = {
 export type WidgetCommandNames = {
   "window": "showAlert" | "openFile" | "saveFile" | "showAbout" | "showTabOverview" | "present";
   "button": "focus";
-  "textinput": "focus";
+  "textinput": "focus" | "activateLeadingIcon";
   "textarea": "focus";
   "checkbox": "focus";
   "radio": "focus";
   "select": "focus";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "respondPermission" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "setContextMenuItems" | "listExtensions" | "watchExtensions" | "listExtensionActions" | "readExtensionAction" | "installExtension" | "uninstallExtension" | "setExtensionEnabled" | "focus";
-  "searchinput": "focus";
+  "searchinput": "focus" | "activateLeadingIcon";
   "switch": "focus";
   "numberinput": "focus";
   "toastoverlay": "showToast" | "dismissToast";

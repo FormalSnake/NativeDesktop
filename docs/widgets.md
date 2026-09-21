@@ -128,6 +128,9 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | createAndUpdate |
 | `placeholder` | string | none | createAndUpdate |
+| `leadingIconName` | string | none | createAndUpdate |
+| `leadingIconTooltip` | string | none | createAndUpdate |
+| `leadingIconLabel` | string | none | createAndUpdate |
 | `editable` | bool | true | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
@@ -140,12 +143,13 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+| `leadingIconClicked` | `onLeadingIconClicked` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`.
 
 ## TextArea (`<textarea>`)
 
@@ -659,6 +663,9 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | createAndUpdate |
 | `placeholder` | string | none | createAndUpdate |
+| `leadingIconName` | string | none | createAndUpdate |
+| `leadingIconTooltip` | string | none | createAndUpdate |
+| `leadingIconLabel` | string | none | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -670,12 +677,13 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 |---|---|---|
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
+| `leadingIconClicked` | `onLeadingIconClicked` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`.
 
 ## SourceList (`<sourcelist>`)
 
@@ -1180,6 +1188,7 @@ Automation role: `popover`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `anchor` | int | 0 | createAndUpdate |
+| `anchorSlot` | widget \| leadingIcon | widget | createAndUpdate |
 | `open` | bool | false | createAndUpdate |
 | `position` | top \| bottom \| left \| right | top | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |

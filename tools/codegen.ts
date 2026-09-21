@@ -1513,6 +1513,124 @@ pub fn ndHeaderBarConnectNav(widget: *gtk.Widget, node_id: u32) void {
     headerbar_nav_ids.put(events_gpa, @intFromPtr(widget), node_id) catch {};
 }
 
+// ---- <headerbar> fill title (address-bar shape) ----------------------------
+// AdwHeaderBar CENTRES its title widget: hexpand reaches the centre box, but
+// the centred allocation is symmetric about the header's middle, so the title
+// stops at twice the distance to the NEARER pack and the rest of the row stays
+// empty. Measured on libadwaita 1.9.1/GTK 4.22.4, a 1402px header with a 520px
+// start pack and an 81px end pack: 212px of field, 456px of free run to its
+// right. The centre only stops centring once the title's NATURAL width no
+// longer fits, and an editable is the one child with a natural-width lever
+// that does not also raise the header's MINIMUM width (max-width-chars is a
+// natural; a width request is a minimum, and driving that from the header's
+// own allocation would stop the window shrinking again). With the natural out
+// of reach the same header gives 662px of field and 6px of slack on each side.
+//
+// The count is a constant rather than a measurement because nothing consults a
+// window's natural width once it is mapped: \`<window>\` always carries a
+// defaultWidth (schema default 480), so the create arm always sets a default
+// size. A thousand characters is wider than any header on any monitor and
+// still two orders of magnitude below what an unbounded value produces.
+const nd_fill_max_chars: c_int = 1000;
+
+/// Widgets the SearchInput create arm built, so the header's attach can
+/// promote one to the title slot whichever GTK type it ended up being
+/// (a leading icon makes it a GtkEntry rather than a GtkSearchEntry).
+var nd_search_inputs: std.AutoHashMapUnmanaged(usize, void) = .empty;
+
+pub fn ndNoteSearchInput(widget: *gtk.Widget) void {
+    nd_search_inputs.put(events_gpa, @intFromPtr(widget), {}) catch {};
+}
+
+fn ndIsSearchInput(widget: *gtk.Widget) bool {
+    return nd_search_inputs.contains(@intFromPtr(widget));
+}
+
+/// Promotes a header child to the title slot and makes it take the free run
+/// between the start and end packs (generated HeaderBar attach arm). A child
+/// that is not editable keeps hexpand and AdwHeaderBar's centred run, since
+/// there is no way to widen its natural that does not also pin the window's
+/// minimum width.
+pub fn ndHeaderBarSetFillTitle(hb: *adw.HeaderBar, child: *gtk.Widget) void {
+    gtk.Widget.setHexpand(child, 1);
+    gtk.Widget.setHalign(child, .fill);
+    if (gobject.ext.isA(child, gtk.Editable)) {
+        gtk.Editable.setMaxWidthChars(@ptrCast(@alignCast(child)), nd_fill_max_chars);
+    }
+    adw.HeaderBar.setTitleWidget(hb, child);
+    adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
+}
+
+// ---- leading icon inside a text/search field -------------------------------
+// GtkEntry's PRIMARY icon is the GTK spelling of the glyph browsers put inside
+// the address bar (the padlock). GtkSearchEntry hard-codes its own magnifier
+// there and exposes no icon API at all, so a SearchInput that declares
+// \`leadingIconName\` is built as a GtkEntry dressed as a search entry instead:
+// the .search style class, a clear icon on the secondary slot, and the same
+// plain "changed"/"activate" signals the SearchInput arms already connect. The
+// choice is made at create, so an app that shows the icon conditionally passes
+// a NAME for every state rather than dropping the prop.
+fn cbEntryClearIcon(entry: *gtk.Entry, pos: gtk.EntryIconPosition, _: ?*anyopaque) callconv(.c) void {
+    if (pos != .secondary) return;
+    gtk.Editable.setText(entry.as(gtk.Editable), "");
+}
+
+fn cbEntryClearVisible(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    const entry: *gtk.Entry = @ptrCast(@alignCast(obj));
+    const has_text = std.mem.span(gtk.Editable.getText(entry.as(gtk.Editable))).len > 0;
+    gtk.Entry.setIconFromIconName(entry, .secondary, if (has_text) "edit-clear-symbolic" else null);
+}
+
+/// The GtkSearchEntry affordances a plain GtkEntry does not carry on its own.
+pub fn ndEntryDressAsSearch(entry: *gtk.Entry) void {
+    gtk.Widget.addCssClass(entry.as(gtk.Widget), "search");
+    gtk.Entry.setIconActivatable(entry, .secondary, 1);
+    _ = gtk.Entry.signals.icon_press.connect(entry, ?*anyopaque, &cbEntryClearIcon, null, .{});
+    _ = gobject.signalConnectData(asObject(entry), "changed", @ptrCast(&cbEntryClearVisible), null, null, .{});
+    cbEntryClearVisible(asObject(entry), null);
+}
+
+/// Merged create + applyProps arm for leadingIconName/Tooltip/Label. Absent
+/// keys keep what the entry already has; an empty name clears the icon, which
+/// is what a dropped prop reaches the host as.
+pub fn ndEntryApplyLeadingIcon(entry: *gtk.Entry, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (propStr(props, "leadingIconName")) |name| {
+        if (name.len == 0) {
+            gtk.Entry.setIconFromIconName(entry, .primary, null);
+        } else {
+            gtk.Entry.setIconFromIconName(entry, .primary, ndicons.symbolic(dupeZ(name)));
+            gtk.Entry.setIconActivatable(entry, .primary, 1);
+            gtk.Entry.setIconSensitive(entry, .primary, 1);
+        }
+    }
+    // GTK has no separate accessible object for an entry icon, so the icon's
+    // tooltip IS what AT-SPI reads out for it; the accessible name is the
+    // fallback when the app gave no tooltip.
+    const tip = propStr(props, "leadingIconTooltip") orelse propStr(props, "leadingIconLabel");
+    if (tip) |t| gtk.Entry.setIconTooltipText(entry, .primary, if (t.len == 0) null else dupeZ(t));
+}
+
+/// \`activateLeadingIcon\`: fires the leading icon exactly as a pointer press
+/// on it would. GTK4 removed app-constructible input events, so this is also
+/// the only way a Linux gate can reach an icon that is not a widget of its
+/// own; on a keyboard it is what an app binds a shortcut to.
+pub fn ndEntryCommand(widget: *gtk.Widget, command: []const u8) void {
+    if (!std.mem.eql(u8, command, "activateLeadingIcon")) return;
+    if (!gobject.ext.isA(widget, gtk.Entry)) return;
+    const entry: *gtk.Entry = @ptrCast(@alignCast(widget));
+    if (gtk.Entry.getIconName(entry, .primary) == null) return;
+    gobject.signalEmitByName(asObject(entry), "icon-press", @intFromEnum(gtk.EntryIconPosition.primary));
+}
+
+/// The primary icon's rectangle in the entry's own coordinates, for a popover
+/// that asked to point at the icon rather than at the whole field
+/// (Popover.anchorSlot = "leadingIcon").
+pub fn ndEntryLeadingIconArea(entry: *gtk.Entry, out: *gdk.Rectangle) bool {
+    if (gtk.Entry.getIconName(entry, .primary) == null) return false;
+    gtk.Entry.getIconArea(entry, .primary, out);
+    return out.f_width > 0 and out.f_height > 0;
+}
+
 /// backend.zig routes a non-widget node handle's semantic click here.
 /// A menu node's declared enabled state, for the automation a11y probe.
 /// Null when the node id names no menu item. Menu handles are GMenuItems, not
@@ -1626,6 +1744,31 @@ fn ndPopoverEnsureAnchor(child: *gtk.Widget) void {
     if (desired) |d| gtk.Widget.setParent(child, d);
 }
 
+const ND_POPOVER_ICON_SLOT = "nd-popover-icon-slot";
+
+/// Generated applyProps Popover.anchorSlot arm. "leadingIcon" points the
+/// popover at the anchor entry's primary icon rather than at the whole field,
+/// which is what puts a site-info panel under the padlock instead of under the
+/// middle of the address bar.
+fn ndPopoverApplyAnchorSlot(child: *gtk.Widget, slot: []const u8) void {
+    const want_icon = std.mem.eql(u8, slot, "leadingIcon");
+    gobject.Object.setData(asObject(child), ND_POPOVER_ICON_SLOT, if (want_icon) @ptrFromInt(1) else null);
+    ndPopoverPointAtSlot(child);
+}
+
+/// Re-points an anchored popover at its anchor's leading icon. A no-op unless
+/// the app asked for the icon slot and the anchor really is an entry carrying
+/// a primary icon, so a popover on any other widget keeps GtkPopover's own
+/// "whole parent" rectangle.
+fn ndPopoverPointAtSlot(child: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_ICON_SLOT) == null) return;
+    const parent = gtk.Widget.getParent(child) orelse return;
+    if (!gobject.ext.isA(parent, gtk.Entry)) return;
+    var area: gdk.Rectangle = undefined;
+    if (!ndEntryLeadingIconArea(@ptrCast(@alignCast(parent)), &area)) return;
+    gtk.Popover.setPointingTo(@ptrCast(@alignCast(child)), &area);
+}
+
 /// Generated applyProps Popover.anchor arm. 0 is the no-anchor sentinel (the
 /// schema default, so dropping \`anchorRef\` falls back to the tree parent).
 fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
@@ -1634,6 +1777,7 @@ fn ndPopoverApplyAnchor(child: *gtk.Widget, node_id: u32) void {
     const up = gtk.Widget.getVisible(child) != 0;
     if (up) gtk.Popover.popdown(@ptrCast(@alignCast(child)));
     ndPopoverEnsureAnchor(child);
+    ndPopoverPointAtSlot(child);
     if (up and gtk.Widget.getParent(child) != null) gtk.Popover.popup(@ptrCast(@alignCast(child)));
 }
 
@@ -3291,6 +3435,8 @@ function genZig(s: Schema): string {
  *  entry needs one — genZigCommands throws otherwise (same fail-loud contract
  *  as the create/apply templates). Bodies see `widget`, `command`, and `arg`. */
 const ZIG_COMMANDS: Record<string, string> = {
+  TextInput: "        ndEntryCommand(widget, command);\n",
+  SearchInput: "        ndEntryCommand(widget, command);\n",
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
   Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
   // Dialogs parent on the Window node's OWN handle (multi-window correct);
@@ -3729,12 +3875,26 @@ function genZigCreateBody(w: Widget): string {
     out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));\n        }\n";
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));\n";
     out += "        if (propBool(props, \"editable\")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));\n";
+    out += "        ndEntryApplyLeadingIcon(entry, props, dupeZ);\n";
     out += "        return entry.as(gtk.Widget);\n";
   } else if (w.name === "SearchInput") {
+    out += "        if (propStr(props, \"leadingIconName\")) |_| {\n";
+    out += "            // A leading icon needs GtkEntry's icon API, which GtkSearchEntry\n";
+    out += "            // does not have; ndEntryDressAsSearch puts the search look and the\n";
+    out += "            // clear button back (the type choice is create-time).\n";
+    out += "            const entry = gtk.Entry.new();\n";
+    out += "            if (propStr(props, \"text\")) |t| {\n                if (t.len > 0) gtk.Editable.setText(entry.as(gtk.Editable), dupeZ(t));\n            }\n";
+    out += "            if (propStr(props, \"placeholder\")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));\n";
+    out += "            ndEntryDressAsSearch(entry);\n";
+    out += "            ndEntryApplyLeadingIcon(entry, props, dupeZ);\n";
+    out += "            ndNoteSearchInput(entry.as(gtk.Widget));\n";
+    out += "            return entry.as(gtk.Widget);\n";
+    out += "        }\n";
     out += "        const search = gtk.SearchEntry.new();\n";
     out += "        const editable = search.as(gtk.Editable);\n";
     out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));\n        }\n";
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));\n";
+    out += "        ndNoteSearchInput(search.as(gtk.Widget));\n";
     out += "        return search.as(gtk.Widget);\n";
   } else if (w.name === "TextArea") {
     out += "        const view = gtk.TextView.new();\n";
@@ -4361,7 +4521,17 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            }\n";
       out += "        }\n";
     } else if (w.name === "SearchInput" && p.name === "placeholder") {
-      out += "        if (propStr(props, \"placeholder\")) |p_| gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
+      out += "        if (propStr(props, \"placeholder\")) |p_| {\n";
+      out += "            if (gobject.ext.isA(widget, gtk.SearchEntry)) {\n";
+      out += "                gtk.SearchEntry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
+      out += "            } else gtk.Entry.setPlaceholderText(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
+      out += "        }\n";
+    } else if ((w.name === "SearchInput" || w.name === "TextInput") && p.name === "leadingIconName") {
+      out += "        if (gobject.ext.isA(widget, gtk.Entry)) {\n";
+      out += "            ndEntryApplyLeadingIcon(@ptrCast(@alignCast(widget)), props, dupeZ);\n";
+      out += `        } else if (propStr(props, "leadingIconName")) |_| std.debug.print("ND_WARN <${w.intrinsic}> leadingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state instead of dropping the prop\\n", .{});\n`;
+    } else if ((w.name === "SearchInput" || w.name === "TextInput") && (p.name === "leadingIconTooltip" || p.name === "leadingIconLabel")) {
+      out += `        // "${p.name}" handled by ndEntryApplyLeadingIcon above (merged).\n`;
     } else if (w.name === "TextArea" && p.name === "text") {
       out += "        if (propStr(props, \"text\")) |t| {\n";
       out += "            // The tracked handle is the GtkScrolledWindow frame (create arm).\n";
@@ -4737,6 +4907,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            const up = gtk.Widget.getVisible(widget) != 0;\n";
       out += "            if (o and !up) {\n";
       out += "                ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here\n";
+      out += "                ndPopoverPointAtSlot(widget); // the icon rect is only real once the entry has laid out\n";
       out += "                if (gtk.Widget.getParent(widget) != null) {\n";
       out += "                    gtk.Popover.popup(pop);\n";
       out += "                } else {\n";
@@ -4751,6 +4922,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        }\n";
     } else if (w.name === "Popover" && p.name === "anchor") {
       out += "        if (propInt(props, \"anchor\")) |a| ndPopoverApplyAnchor(widget, @intCast(@max(0, a)));\n";
+    } else if (w.name === "Popover" && p.name === "anchorSlot") {
+      out += "        if (propStr(props, \"anchorSlot\")) |sl| ndPopoverApplyAnchorSlot(widget, sl);\n";
     } else if (w.name === "Popover" && p.name === "position") {
       out += "        if (propStr(props, \"position\")) |pos| gtk.Popover.setPosition(@ptrCast(@alignCast(widget)), ndPositionFromString(pos));\n";
     } else if (w.name === "Expander" && p.name === "label") {
@@ -4817,7 +4990,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "sourcetree" | "commandpalette" | "terminal" | "hover" | "tag" | "combobox" | "breadcrumb" | "tabview" | "richtext"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "entryicon" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "sourcetree" | "commandpalette" | "terminal" | "hover" | "tag" | "combobox" | "breadcrumb" | "tabview" | "richtext"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   // C4: hover isn't a plain GObject signal on the widget itself — it's an
@@ -4835,6 +5008,12 @@ const SIGNALS: Record<string, SignalTemplate> = {
   // is the app's job, and this is what AppKit already did.
   "SearchInput.changed":     { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "SearchInput.activate":    { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
+  // GtkEntry's icon-press carries the icon position, so one callback serves
+  // both slots and filters; a SearchInput with no leading icon is a
+  // GtkSearchEntry, which has no such signal at all, hence the type guard in
+  // connectEvents rather than an unconditional connect.
+  "SearchInput.leadingIconClicked": { signal: "icon-press", target: "entryicon", cb: "cbEntryIconPress", suppress: false },
+  "TextInput.leadingIconClicked":   { signal: "icon-press", target: "entryicon", cb: "cbEntryIconPress", suppress: false },
   "TextArea.changed":        { signal: "changed",          target: "buffer", cb: "cbBufferChanged",    suppress: true },
   "Checkbox.toggled":        { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
   "Radio.toggled":           { signal: "toggled",          target: "widget", cb: "cbCheckToggled",     suppress: true },
@@ -4986,6 +5165,13 @@ const CALLBACK_BODIES: Record<string, string> = {
     const editable: *gtk.Editable = @ptrCast(@alignCast(obj));
     const text = std.mem.span(gtk.Editable.getText(editable));
     if (emit) |f| f(node_id, "changed", .{ .text = text });
+}
+`,
+  cbEntryIconPress: `fn cbEntryIconPress(entry: *gtk.Entry, pos: gtk.EntryIconPosition, data: ?*anyopaque) callconv(.c) void {
+    if (pos != .primary) return; // secondary is the clear button (ndEntryDressAsSearch)
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    _ = entry;
+    if (emit) |f| f(node_id, "leadingIconClicked", .{});
 }
 `,
   cbEntryActivate: `fn cbEntryActivate(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -5435,6 +5621,12 @@ function genZigEvents(s: Schema): string {
         out += "        ndRichTextConnect(widget, node_id);\n";
         continue;
       }
+      if (t.target === "entryicon") {
+        out += "        if (gobject.ext.isA(widget, gtk.Entry)) {\n";
+        out += `            _ = gobject.signalConnectData(asObject(widget), ${JSON.stringify(t.signal)}, @ptrCast(&${t.cb}), data, null, .{});\n`;
+        out += "        }\n";
+        continue;
+      }
       const objExpr = t.target === "buffer"
         ? "asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?))))" // TextArea's tracked widget is the ScrolledWindow frame; the buffer hangs off the inner GtkTextView.
         : t.target === "listview-inner"
@@ -5459,10 +5651,9 @@ interface StructuralTemplate {
 
 function headerBarAttach(withBefore: boolean): string {
   let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
-  s += "        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {\n";
-  s += "            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width\n";
-  s += "            adw.HeaderBar.setTitleWidget(hb, child);\n";
-  s += "            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it\n";
+  s += "        const wants_title = if (attached.slot) |sl| std.mem.eql(u8, sl, \"title\") else ndIsSearchInput(child);\n";
+  s += "        if (wants_title and adw.HeaderBar.getTitleWidget(hb) == null) {\n";
+  s += "            ndHeaderBarSetFillTitle(hb, child);\n";
   s += "        } else {\n";
   s += "            const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, \"end\") else false;\n";
   s += `            ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, ${withBefore ? "b" : "null"});\n`;
@@ -5471,7 +5662,8 @@ function headerBarAttach(withBefore: boolean): string {
 }
 
 /// Removes an app child from whichever slot box holds it; the title widget
-/// (a SearchEntry) is the one child adw.HeaderBar.remove still owns.
+/// (a SearchEntry or a `slot="title"` child) is the one child
+/// adw.HeaderBar.remove still owns.
 function headerBarDetach(): string {
   let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
   s += "        if (ndHeaderBarSlotBoxOf(hb, child)) |box| {\n";
@@ -5747,10 +5939,11 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       return s;
     },
   },
-  // A SearchInput child of a title-less header takes the title-widget slot —
-  // the center expanse — so it stretches across the free run exactly like the
-  // AppKit shell's updateSearchFieldWidths() does for NSSearchFields (browser
-  // address bars). Headers that declared a title keep pack_start/pack_end.
+  // A SearchInput child of a title-less header, and any child the app marks
+  // `slot="title"`, takes the title-widget slot (the center expanse) and
+  // stretches across the free run between the packs, exactly like the AppKit
+  // shell's updateSearchFieldWidths() does for NSSearchFields (browser address
+  // bars). Headers that declared a title keep pack_start/pack_end.
   HeaderBar: {
     append: () => headerBarAttach(false),
     insertBefore: () => headerBarAttach(true),
@@ -7638,6 +7831,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        field.bezelStyle = .roundedBezel\n";
     out += '        if let ph = propStr(props, "placeholder") { field.placeholderString = ph }\n';
     out += '        if let e = propBool(props, "editable") { field.isEditable = e }\n';
+    out += "        ndApplyLeadingIcon(field, props)\n";
     out += "        return field\n";
   } else if (w.name === "SearchInput") {
     // NDSearchField (HeaderBar.swift): NSSearchField + a settable preferred
@@ -7645,6 +7839,7 @@ function genSwiftCreateBody(w: Widget): string {
     // header-slotted search field across the free run (address bar).
     out += `        let search = NDSearchField(string: propStr(props, "text") ?? ${swiftDefaultStr(w, "text")})\n`;
     out += '        if let ph = propStr(props, "placeholder") { search.placeholderString = ph }\n';
+    out += "        ndApplyLeadingIcon(search, props)\n";
     out += "        return search\n";
   } else if (w.name === "TextArea") {
     out += "        let scroll = NSScrollView()\n";
@@ -8096,6 +8291,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        ndCodeEditorApply(view, props)  // text/language/theme/diagnostics all re-attribute one text storage\n";
     } else if (w.name === "CodeEditor") {
       out += `        // "${p.name}" handled by ndCodeEditorApply above (merged).\n`;
+    } else if ((w.name === "SearchInput" || w.name === "TextInput") && p.name === "leadingIconName") {
+      out += "        ndApplyLeadingIcon(view, props)  // leadingIconName/Tooltip/Label merged\n";
+    } else if ((w.name === "SearchInput" || w.name === "TextInput") && (p.name === "leadingIconTooltip" || p.name === "leadingIconLabel")) {
+      out += `        // "${p.name}" handled by ndApplyLeadingIcon above (merged).\n`;
     } else if (w.name === "TextInput" && p.name === "text") {
       out += '        if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {\n';
       out += "            withEchoSuppressed(view) { field.stringValue = t }\n";
@@ -8361,6 +8560,8 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let o = propBool(props, "open") { ndPopoverApplyOpen(view, o) }\n';
     } else if (w.name === "Popover" && p.name === "anchor") {
       out += '        if let a = propInt(props, "anchor") { ndPopoverApplyAnchor(view, UInt32(max(0, a))) }\n';
+    } else if (w.name === "Popover" && p.name === "anchorSlot") {
+      out += '        if let sl = propStr(props, "anchorSlot") { ndPopoverApplyAnchorSlot(view, sl) }\n';
     } else if (w.name === "Popover" && p.name === "position") {
       out += '        if let pos = propStr(props, "position") { ndPopoverApplyPosition(view, pos) }\n';
     } else if (w.name === "Expander" && p.name === "label") {
@@ -8460,6 +8661,10 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "TextInput.activate":      { selector: "fireText",    payload: "text" },
   "SearchInput.changed":     { selector: "fireText",    payload: "text" },
   "SearchInput.activate":    { selector: "fireText",    payload: "text" },
+  // The leading icon is an overlay NSButton inside the field (LeadingIcon.swift);
+  // it fires on its own target/action, so the connect only hands over the id.
+  "SearchInput.leadingIconClicked": { selector: "leadingicon", payload: "none" },
+  "TextInput.leadingIconClicked":   { selector: "leadingicon", payload: "none" },
   "TextArea.changed":        { selector: "fireText",    payload: "text" },
   // Checkbox/Switch/Slider now emit directly from their own SwiftUI-hosted
   // classes (SWIFT_CUSTOM_CONNECT below) — Radio and Select still go through
@@ -8697,6 +8902,10 @@ function genSwiftEvents(s: Schema): string {
         }
         continue;
       }
+      if (t.selector === "leadingicon") {
+        out += "        ndLeadingIconConnect(view, nodeID: nodeID)\n";
+        continue;
+      }
       if (t.selector === "nativeview") {
         // The retained core tree connects NativeView after create so it can pass nodeID.
         continue;
@@ -8732,6 +8941,8 @@ function genSwiftEvents(s: Schema): string {
  *  AppKit peer of ZIG_COMMANDS, same fail-loud contract. Bodies see `view`,
  *  `command`, and `argJson`. */
 const SWIFT_COMMANDS: Record<string, string> = {
+  TextInput: "        ndEntryCommand(view, command)\n",
+  SearchInput: "        ndEntryCommand(view, command)\n",
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
   Terminal: "        ndTerminalCommand(view, command, argJson)\n",
   // Dialogs resolve the owning NSWindow from the node's OWN handle

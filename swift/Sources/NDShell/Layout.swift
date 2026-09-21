@@ -249,9 +249,21 @@ final class NDTextField: NSTextField {
         didSet { invalidateIntrinsicContentSize() }
     }
 
+    // NSTextField has no leading-icon slot of its own, so the inset the icon
+    // needs lives in the cell (LeadingIcon.swift).
+    override class var cellClass: AnyClass? {
+        get { NDTextFieldCell.self }
+        set { super.cellClass = newValue }
+    }
+
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
         return NSSize(width: s.width + ndPadding.left + ndPadding.right, height: s.height + ndPadding.top + ndPadding.bottom)
+    }
+
+    override func layout() {
+        super.layout()
+        ndLayoutLeadingIcon(self)
     }
 }
 

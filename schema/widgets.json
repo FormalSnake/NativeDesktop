@@ -270,6 +270,9 @@
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconTooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconLabel", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "editable", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
@@ -281,12 +284,13 @@
       "events": [
         { "name": "changed", "ndpName": "onChanged", "payload": "text" },
         { "name": "activate", "ndpName": "onActivate", "payload": "text" },
+        { "name": "leadingIconClicked", "ndpName": "onLeadingIconClicked" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
         { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
       ],
-      "commands": ["focus"],
+      "commands": ["focus", "activateLeadingIcon"],
       "automation": { "role": "textbox", "textFrom": "text" }
     },
     {
@@ -728,7 +732,7 @@
       "container": {
         "childModel": "multi",
         "attachedProps": [
-          { "name": "slot", "type": "enum", "values": ["start", "end"], "default": "start" }
+          { "name": "slot", "type": "enum", "values": ["start", "end", "title"], "default": "start" }
         ]
       },
       "props": [
@@ -789,6 +793,9 @@
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconName", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconTooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "leadingIconLabel", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -799,12 +806,13 @@
       "events": [
         { "name": "changed", "ndpName": "onChanged", "payload": "text" },
         { "name": "activate", "ndpName": "onActivate", "payload": "text" },
+        { "name": "leadingIconClicked", "ndpName": "onLeadingIconClicked" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
         { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
       ],
-      "commands": ["focus"],
+      "commands": ["focus", "activateLeadingIcon"],
       "automation": { "role": "textbox", "textFrom": "text" }
     },
     {
@@ -1305,6 +1313,7 @@
       "container": { "childModel": "single" },
       "props": [
         { "name": "anchor", "type": "int", "default": 0, "appliesTo": "createAndUpdate", "refProp": "anchorRef" },
+        { "name": "anchorSlot", "type": "enum", "values": ["widget", "leadingIcon"], "default": "widget", "appliesTo": "createAndUpdate" },
         { "name": "open", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "position", "type": "enum", "values": ["top", "bottom", "left", "right"], "default": "top", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
