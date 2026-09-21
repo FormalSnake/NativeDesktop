@@ -147,6 +147,24 @@ async function checkTiling(phase: string): Promise<void> {
   );
 }
 
+/// The rows the open menu's keyboard walk stops on, from the host's own trace.
+/// GTK skips separators and insensitive items, and the menu opens with the
+/// first row focused, so a row's index is the number of Down presses to it.
+async function menuRows(): Promise<string[]> {
+  const path = process.env.ND_HOST_LOG ?? "";
+  if (!path) return [];
+  const text = await Bun.file(path).text().catch(() => "");
+  const lines = text.split("\n").filter((line) => line.includes("menuShown "));
+  const start = lines.findLastIndex((line) => line.includes("depth=0 index=0 "));
+  const rows: string[] = [];
+  for (const line of start < 0 ? lines : lines.slice(start)) {
+    const m = /menuShown depth=(\d+) index=\d+ id=-?\d+ kind=(\w+) enabled=(\d) checked=\d (?:accel=\S* )?label=(.*)$/.exec(line);
+    if (!m || m[1] !== "0" || m[2] === "separator" || m[3] !== "1") continue;
+    rows.push(m[4]!);
+  }
+  return rows;
+}
+
 /// How many times the engine has reported the dock going away. The count, not
 /// the presence: the same marker fires for every close, so only a fresh one
 /// says the button that was just clicked is what closed it.
@@ -347,6 +365,53 @@ if (pass === "devtools") {
     await Bun.sleep(2500);
     return `${(await targets(port)).filter((t) => t.url.startsWith("devtools://")).length} devtools target(s) left`;
   });
+
+  // Chromium's own Inspect, picked from the engine's native menu. The engine
+  // keeps that item because Chrome style docks the inspector, so the pick has
+  // to land in the view rather than opening a DevTools window of its own.
+  sh("xdotool", "mousemove", "300", "400", "click", "3");
+  await Bun.sleep(1800);
+  const rows = await menuRows();
+  const inspectAt = rows.indexOf("Inspect");
+  check("inspectInMenu", inspectAt >= 0, rows.join(" | ") || "no menu in the trace");
+  if (inspectAt >= 0) {
+    // Off the popover before keying: GTK moves focus to whatever the pointer
+    // is over, and the click that opened the menu left it at its corner.
+    sh("xdotool", "mousemove", "1200", "860");
+    await Bun.sleep(400);
+    for (let i = 0; i < inspectAt; i += 1) {
+      sh("xdotool", "key", "--clearmodifiers", "Down");
+      await Bun.sleep(150);
+    }
+    sh("xdotool", "key", "--clearmodifiers", "Return");
+    await Bun.sleep(5000);
+    const opened = (await targets(port)).filter((t) => t.url.startsWith("devtools://"));
+    check("inspectOpensDevTools", opened.length === 1, `${opened.length} devtools target(s) after Inspect`);
+    const onRootAfterInspect = sh("xwininfo", "-root", "-children").split("\n").filter((l) => /DevTools/.test(l));
+    check("inspectStaysInside", onRootAfterInspect.length === 0, `${onRootAfterInspect.length} devtools window(s) on the root`);
+    await checkTiling("inspect");
+    if (opened[0]?.webSocketDebuggerUrl) {
+      const frontend = await Session.open(opened[0].webSocketDebuggerUrl);
+      const selected = await frontend.eval<string>(`(() => {
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('li.selected, .elements-disclosure .selected')) {
+            const text = (el.textContent || '').trim();
+            if (text) return text.slice(0, 60);
+          }
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) { const hit = walk(el.shadowRoot); if (hit) return hit; }
+          }
+          return '';
+        };
+        return walk(document);
+      })()`).catch(() => "");
+      frontend.close();
+      check("inspectSelectsElement", selected.length > 0, selected || "the Elements selection is not readable");
+    }
+    // Closed again, so the pass quits in the shape its clean-quit leg expects.
+    sh("xdotool", "key", "--clearmodifiers", "F12");
+    await Bun.sleep(2500);
+  }
 }
 
 // chrome://extensions is the only page Chromium exposes its extension registry
