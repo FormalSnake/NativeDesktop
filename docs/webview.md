@@ -184,6 +184,29 @@ policy-interruption noise are filtered on both backends, and blocked-port loads
 `window.open` or `target=_blank`. The host always denies the native popup and
 lets the app decide what a new window means, usually a native tab.
 
+Under Chrome style two more routes reach it, and both used to hand the app a URL
+it could not use. A browser Chrome makes for itself (`chrome.tabs.create`,
+`chrome.windows.create`, `chrome.runtime.openOptionsPage`) is reported through
+`get_default_client`, and at `on_after_created` it has not started its
+navigation yet, so its main frame's URL is empty: every extension-opened tab
+arrived as a dead `about:blank`. The report now waits for that browser's first
+navigation and carries the URL it was actually asked for; a browser that never
+navigates is closed after 1.5 seconds and reported as nothing, since a tab the
+app could only open on `about:blank` is the thing this exists to stop producing.
+`ND_CEF sinkNewWindow` traces what was reported, and names the view the app
+hears it on: the focused one, or any live one when the window that held the
+focused view has since closed.
+
+`window.open("about:blank")` followed by `w.location = …` from the opener is
+still lost, and stays lost. Denying the popup makes `window.open` answer null
+and the opener's next statement throw, so the destination exists nowhere. Letting
+it through to the sink client instead was built and taken back out: Chrome
+builds a real top-level for a popup, `on_after_created` runs before that window
+has a handle so the engine has nothing to unmap, and `cef_window_info_t.bounds`
+is ignored for a Chrome-style popup, so the window sat on screen at 1050x880
+until the browser closed. Measured twice on 151.3.23, against the gate's own
+top-level census.
+
 `downloadRequested` carries `{ data: { url, suggestedFilename? } }` when the
 engine hits a response it cannot render, or an attachment. The engine-side
 download is cancelled and the app performs it. The Bun process has full network
@@ -560,13 +583,37 @@ await uninstallExtension(registry.current!, id);
 
 const actions = await listExtensionActions(registry.current!);
 // [{ id, name, enabled, title, iconUrl, popupUrl, badgeText }]
+
+const sources = await watchExtensions(registry.current!, (change) => reload(change.reason));
+// ["developerPrivate.onItemStateChanged", "management.onInstalled", …]
 ```
+
+`watchExtensions` subscribes the registry view to Chromium's own change events,
+which is the only way an app learns about an install it did not make: a Web
+Store install happens entirely inside Chromium and reaches no other `<webview>`
+callback. Which events a build exposes to `chrome://extensions` is not something
+the host can know from a header, so nothing is assumed: the page feature-detects
+`chrome.developerPrivate.onItemStateChanged` and the four `chrome.management`
+events, attaches to the ones that are there, and the promise answers with that
+list. An empty list is a rejection, not a silent no-op. Later changes arrive on
+the `onExtensionsChanged` prop as `{ reason }`, carrying Chromium's own
+vocabulary (`INSTALLED`, `UNINSTALLED`, `LOADED`, `PREFS_CHANGED`, …) or the
+`management` event name; treat it as a hint and re-read the registry. The
+subscription belongs to the document, so call it again after the view reloads.
 
 `installExtension` takes an unpacked directory and loads it into the live
 profile, with no relaunch and no `--load-extension`. There is no API that takes
 a path: `chrome.developerPrivate.loadUnpacked` opens a directory chooser, so the
 path is parked on the view and the engine's `cef_dialog_handler_t` answers the
-chooser with it. `uninstallExtension` goes through `chrome.management.uninstall`,
+chooser with it. It is bounded: 90 seconds, after which the promise rejects with
+the path it was given rather than leaving the app waiting for the process's
+life. Two things could stall it before that. Chromium unpacks and validates the
+directory itself, which a large extension makes slow (a 46 MB one took over a
+minute). And `loadUnpacked` can open the chooser a second time, with no path
+parked for it; that used to fall through to CEF's own directory chooser, a
+dialog nobody answers, so an unarmed chooser during an install is now cancelled
+and the failure reaches the app. `ND_CEF installDialogAnswered` and
+`ND_CEF installDialogUnarmed` tell the two apart in the host log. `uninstallExtension` goes through `chrome.management.uninstall`,
 which always draws Chrome's own "Remove <name>?" confirmation when the caller is
 not the extension being removed (`developerPrivate` has no `uninstall`, and its
 `removeMultipleExtensions` refuses its own documented signature on 151), so the
@@ -593,6 +640,72 @@ extension itself, so `badgeText` is always empty and a popup URL changed at
 runtime is not seen. A popup in an app-owned view does not close on blur and is
 not sized by the popup document, so the app owns both. And the `activeTab` grant
 Chrome issues when its own toolbar button is clicked is never issued.
+
+What the 1Password extension (`aeblfdkhhhdcdjpifhhbdiojplfjncoa`, 8.12.37.1)
+does inside this embedding, measured headless on CEF 151.3.23 against an
+unpacked copy loaded at launch beside a control extension whose content script
+does nothing but mark the DOM:
+
+- **Content scripts inject.** On a plain `http://127.0.0.1` login page with a
+  username and a password field, `Runtime.executionContextCreated` reports an
+  isolated world named "1Password – Password Manager" for the main frame, and
+  evaluating in it answers `chrome.runtime.id`. The control extension's world is
+  there beside it and its content script marked the document.
+- **It injects no UI.** The same document has no `com-1password-*` element, no
+  shadow host, and no `data-onepassword-*` attribute on either field, while the
+  control extension's marker div and title suffix are both present. So the
+  inline icon being absent is not this framework failing to run content scripts;
+  1Password's own script runs and stays quiet. A never-configured extension with
+  no account is the first thing to rule out, since 1Password shows its inline
+  icon while merely locked.
+- **Its service worker goes to sleep and does not come back.** It is a target at
+  startup and gone by the end of the run, which is ordinary MV3 behaviour, but
+  nothing here wakes it: an app that wants the worker running has the same one
+  lever the Extensions page uses, `chrome.developerPrivate.openDevTools` with
+  `isServiceWorker: true`.
+- **Its welcome tab exists but nobody sees it.** A page target for
+  `chrome-extension://<id>/app/app.html#/page/welcome?language=en` was present
+  from startup: `chrome.tabs.create` worked and Chrome built a browser for it,
+  which this engine keeps unmapped as the tabbed browser the install path needs.
+  That is why signing in was never possible in the app: the page it wants is
+  open, off screen, in a browser the app is not told the URL of. The fix is
+  above, under what a Chrome-created browser reports.
+- **`browser_info_manager.cc:858 Timeout of new browser info response for
+  frame …` repeats every two seconds** for the whole run, with a fresh frame id
+  each time. Frames are being created that the browser side never resolves.
+  Unmeasured: whether those frames are 1Password's (its inline menu is an
+  iframe) and whether a frame that never gets browser info is what leaves its
+  popup and its inline UI blank.
+
+The popup document loads in an app-owned view and never gets past its splash.
+Not yet measured inside the running extension, but the shape of the gap is
+structural: a `<webview>` showing `chrome-extension://<id>/popup/…` is an
+ordinary tab to Chromium, not `mojom::ViewType::kExtensionPopup`, so
+`chrome.extension.getViews({type: "popup"})` does not find it,
+`chrome.windows.getCurrent()` answers with the popup's own window, and
+`chrome.tabs.query({active: true, currentWindow: true})` answers about that
+window rather than about the page the user is looking at. A popup that boots by
+asking which page it is acting on waits forever. CEF 151 exposes no way to ask
+for that view type: `extension` appears in its headers only as a filename
+extension and as `cef_register_extension` (a V8 extension), and the browser a
+`<webview>` creates is whatever `chrome_child_window` builds.
+
+Two facts that the next attempt at runtime action state should start from, both
+confirmed against the CEF 151 headers rather than guessed:
+
+- `cef_browser_t::get_identifier` "is also used as the tabId for extension
+  APIs" (`include/capi/cef_browser_capi.h:132`). Every `<webview>` therefore has
+  a real Chromium tab id that the host already knows, which is what
+  `listExtensionActions` needs to take so per-tab `setPopup`, `setBadgeText`,
+  `setIcon` and `setTitle` can be read at all.
+- The host cannot reach an extension's service worker. Its whole CDP substrate
+  is `cef_browser_host_t::execute_dev_tools_method` (`src/cef/cdp.zig`), which
+  is per browser and page-target only; a `service_worker` target exists only on
+  the remote debugging port, which the host does not speak. Reading
+  `chrome.action.getPopup({tabId})` and friends without a fork therefore means
+  evaluating them in a page of that extension, which every extension with a
+  popup has, rather than in its worker. That is a hidden `<webview>` per
+  extension and it has not been built or measured.
 
 Two paths that would close that gap are blocked in CEF 151, both on the same
 missing piece:
