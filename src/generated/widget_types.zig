@@ -217,6 +217,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.setMuted",
     "webview.setContextMenuItems",
     "webview.listExtensions",
+    "webview.watchExtensions",
     "webview.listExtensionActions",
     "webview.installExtension",
     "webview.uninstallExtension",

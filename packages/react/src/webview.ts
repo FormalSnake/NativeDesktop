@@ -16,6 +16,7 @@ const pendingCookies = new Map<string, Pending<Cookie[]>>();
 const pendingSessions = new Map<string, Pending<string>>();
 const pendingExtensions = new Map<string, Pending<InstalledExtension[]>>();
 const pendingActions = new Map<string, Pending<ExtensionAction[]>>();
+const pendingWatches = new Map<string, Pending<string[]>>();
 let seq = 0;
 
 function nextId(prefix: string): string {
@@ -168,6 +169,58 @@ function extensionMutation(
     pendingExtensions.set(id, { resolve, reject });
     sendCommand(node, command, { id, ...args });
   });
+}
+
+/// Why the registry changed, as Chromium spelled it: `developerPrivate`'s own
+/// vocabulary (`INSTALLED`, `UNINSTALLED`, `LOADED`, `UNLOADED`,
+/// `PREFS_CHANGED`, …) or the `chrome.management` event name that fired. Treat
+/// it as a hint and re-read the registry; the set is Chromium's, not this
+/// framework's.
+export interface ExtensionsChange {
+  reason: string;
+}
+
+/// One list, not one per view: an event carries the payload and nothing that
+/// names the view it came from, and Chromium exposes its registry to one page,
+/// so an app has one of these views.
+const extensionsWatchers: Array<(change: ExtensionsChange) => void> = [];
+
+/// Subscribes to the registry's own change events, so an app learns that an
+/// extension was installed, removed, enabled, disabled or updated instead of
+/// polling for it. A Web Store install happens entirely inside Chromium and
+/// reaches no other `<webview>` callback.
+///
+/// `node` is the same `chrome://extensions` view `listExtensions` uses, and the
+/// subscription belongs to that document: call it again after the view
+/// reloads. Resolves with the event sources it attached to, which is what the
+/// page really exposes rather than what this framework hoped for. `listener`
+/// runs on every later change.
+export function watchExtensions(
+  node: NdNodeRef<"webview">,
+  listener: (change: ExtensionsChange) => void,
+): Promise<string[]> {
+  const id = nextId("ext");
+  return new Promise<string[]>((resolve, reject) => {
+    pendingWatches.set(id, { resolve, reject });
+    extensionsWatchers.push(listener);
+    sendCommand(node, "watchExtensions", { id });
+  });
+}
+
+/// Pass as a <webview>'s `onExtensionsChanged` prop. It settles the
+/// watchExtensions() call that carries the same `id`, and delivers every later
+/// change to the listeners registered with it.
+export function onExtensionsChanged(e: { data: unknown }): void {
+  const result = e.data as { id?: string; ok?: boolean; sources?: string[]; error?: string; reason?: string };
+  if (result.id !== undefined) {
+    const call = pendingWatches.get(result.id);
+    if (!call) return;
+    pendingWatches.delete(result.id);
+    if (result.ok) call.resolve(result.sources ?? []);
+    else call.reject(new Error(result.error ?? "watchExtensions failed"));
+    return;
+  }
+  for (const listener of extensionsWatchers) listener({ reason: result.reason ?? "" });
 }
 
 export interface ExtensionAction {

@@ -4,9 +4,11 @@ import {
   listExtensionActions,
   listExtensions,
   onExtensionActions,
+  onExtensionsChanged,
   onExtensionsList,
   setExtensionEnabled,
   uninstallExtension,
+  watchExtensions,
   onJavaScriptResult,
   render,
   sendCommand,
@@ -113,7 +115,7 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -322,6 +324,7 @@ function App(): React.ReactNode {
               url={CHROME_STYLE ? "chrome://extensions" : ""}
               onExtensionsList={onExtensionsList}
               onExtensionActions={onExtensionActions}
+              onExtensionsChanged={onExtensionsChanged}
               onChromeDialog={onChromeDialogSeen}
             />
           </box>
@@ -585,6 +588,20 @@ async function run(ctx: {
   // The registry is writable at runtime: an unpacked directory installs into
   // the live profile with no relaunch, its action is reported, it disables and
   // enables again, and it uninstalls.
+  // The registry's own change events. An app that cannot hear them is left
+  // polling for an install that happens entirely inside Chromium; the
+  // subscription is made before the registry is touched so the install below
+  // is what proves it fires.
+  await step("extensionsChanged", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    const view = ctx.extensions.current;
+    if (!view) throw new Error("no extensions view ref");
+    const sources = await watchExtensions(view, (change) => record("extensionsChanged", change.reason));
+    if (sources.length === 0) throw new Error("watchExtensions attached to nothing");
+    return `ok (${sources.join(", ")})`;
+  });
+
   await step("runtimeExtensions", async () => {
     // The uninstall leg ends at Chrome's own confirmation, which only this
     // pass's driver answers; leaving it up for a later pass would put a dialog
@@ -605,6 +622,9 @@ async function run(ctx: {
     const installed = await installExtension(view, path);
     const mine = installed.find((e) => e.name === "ND Runtime Extension");
     if (!mine) throw new Error(`installExtension did not register it: ${installed.map((e) => e.name).join(", ")}`);
+    // The subscription made above has to have heard the install that just
+    // happened; an app hears a Web Store install the same way.
+    const reason = await waitFor<string>("extensionsChanged", () => true, "the registry reports the install");
 
     const actions = await listExtensionActions(view);
     const action = actions.find((a) => a.id === mine.id);
@@ -627,7 +647,7 @@ async function run(ctx: {
       ),
       (error: Error) => ctx.setResult("uninstallExtension", `fail: ${error.message}`),
     );
-    return `ok (installed ${mine.id}, action ${action.title}, disabled, enabled, uninstall asked)`;
+    return `ok (installed ${mine.id}, change ${reason}, action ${action.title}, disabled, enabled, uninstall asked)`;
   });
 
   // The app's own items, which the engine appends to Chromium's model after a

@@ -4728,6 +4728,7 @@ const SIGNALS: Record<string, SignalTemplate> = {
   "WebView.audioStateChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.extensionsList":      { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.extensionActions":    { signal: "",              target: "webview", cb: "", suppress: false },
+  "WebView.extensionsChanged":   { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.chromeDialog":        { signal: "",              target: "webview", cb: "", suppress: false },
   "WebView.permissionRequest":   { signal: "",              target: "webview", cb: "", suppress: false },
   // Terminal effect (title/bell/exit) + connection state fire from the reader
@@ -8380,6 +8381,7 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   "WebView.audioStateChanged":   { selector: "webview", payload: "data" },
   "WebView.extensionsList":      { selector: "webview", payload: "data" },
   "WebView.extensionActions":    { selector: "webview", payload: "data" },
+  "WebView.extensionsChanged":   { selector: "webview", payload: "data" },
   "WebView.chromeDialog":        { selector: "webview", payload: "data" },
   "WebView.permissionRequest":   { selector: "webview", payload: "data" },
   // Terminal effect (title/bell/exit) + connection state fire from a reader

@@ -644,6 +644,7 @@
         { "name": "audioStateChanged", "ndpName": "onAudioStateChanged", "payload": "data" },
         { "name": "extensionsList", "ndpName": "onExtensionsList", "payload": "data" },
         { "name": "extensionActions", "ndpName": "onExtensionActions", "payload": "data" },
+        { "name": "extensionsChanged", "ndpName": "onExtensionsChanged", "payload": "data" },
         { "name": "chromeDialog", "ndpName": "onChromeDialog", "payload": "data" },
         { "name": "permissionRequest", "ndpName": "onPermissionRequest", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
@@ -661,7 +662,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
-        "listExtensions", "listExtensionActions", "installExtension", "uninstallExtension", "setExtensionEnabled",
+        "listExtensions", "watchExtensions", "listExtensionActions", "installExtension", "uninstallExtension", "setExtensionEnabled",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

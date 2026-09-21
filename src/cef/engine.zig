@@ -1088,6 +1088,9 @@ const View = struct {
     main_frame: ?[]u8 = null,
     scripts: std.StringHashMapUnmanaged(ScriptEntry) = .empty,
     channels: std.StringHashMapUnmanaged(Channel) = .empty,
+    /// Whether the registry-change binding is already on this view. Adding one
+    /// twice is a protocol error rather than a no-op.
+    extensions_watched: bool = false,
     /// Work parked until the world it names has an execution context, and the
     /// clock that expires it if that never happens.
     deferred: std.ArrayList(Deferred) = .empty,
@@ -1810,6 +1813,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondPermission")) return cmdRespondPermission(arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
+    if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensionActions")) return cmdListExtensionActions(view, arg);
     if (std.mem.eql(u8, cmd, "installExtension")) return cmdInstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "uninstallExtension")) return cmdUninstallExtension(view, arg);
@@ -4011,6 +4015,13 @@ fn worldForBinding(view: *View, binding: []const u8) ?[]const u8 {
 fn onBindingCalled(view: *View, root: std.json.Value) void {
     const binding = stringField(root, "name") orelse return;
     const payload_text = stringField(root, "payload") orelse return;
+    if (std.mem.eql(u8, binding, extensions_changed_binding)) {
+        var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
+        defer parsed.deinit();
+        const reason = stringField(parsed.value, "reason") orelse "";
+        emitExtensionsChanged(view, reason);
+        return;
+    }
     const world = worldForBinding(view, binding) orelse return;
 
     var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
@@ -4310,6 +4321,81 @@ const list_extensions_js =
     \\  })));
     \\})()
 ;
+
+/// The binding `watchExtensions` subscribes the registry's own events to. One
+/// name for the view, in the page's own world: chrome://extensions runs no user
+/// scripts and has no isolated world of this engine's to put it in.
+const extensions_changed_binding = "__ndExtensionsChanged";
+
+/// Which of Chromium's registry events this build actually exposes to
+/// chrome://extensions is not something the host can know from a header, so
+/// nothing is assumed: every candidate is feature-detected in the page and the
+/// command answers with the ones it attached to. An answer with an empty list
+/// is a failure, not a silent no-op.
+///
+/// `developerPrivate.onItemStateChanged` is the event the real Extensions page
+/// listens to, so it carries the whole vocabulary (installed, uninstalled,
+/// loaded, unloaded, prefs changed); `chrome.management`'s four are the public
+/// spelling of the same thing and are attached beside it so a build that binds
+/// only one of the two still reports.
+const watch_extensions_js =
+    \\(() => {
+    \\  if (typeof chrome === "undefined" || !chrome.developerPrivate) {
+    \\    throw new Error("watchExtensions needs a view showing chrome://extensions");
+    \\  }
+    \\  if (globalThis.__ndExtensionsWatch) return JSON.stringify(globalThis.__ndExtensionsWatch);
+    \\  const send = (reason) => {
+    \\    try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason) })); } catch (e) {}
+    \\  };
+    \\  const sources = [];
+    \\  const item = chrome.developerPrivate.onItemStateChanged;
+    \\  if (item && typeof item.addListener === "function") {
+    \\    item.addListener((e) => send((e && e.event_type) || "itemStateChanged"));
+    \\    sources.push("developerPrivate.onItemStateChanged");
+    \\  }
+    \\  for (const name of ["onInstalled", "onUninstalled", "onEnabled", "onDisabled"]) {
+    \\    const ev = chrome.management && chrome.management[name];
+    \\    if (ev && typeof ev.addListener === "function") {
+    \\      ev.addListener(() => send(name));
+    \\      sources.push("management." + name);
+    \\    }
+    \\  }
+    \\  if (sources.length === 0) throw new Error("watchExtensions: this page exposes no registry events");
+    \\  globalThis.__ndExtensionsWatch = sources;
+    \\  return JSON.stringify(sources);
+    \\})()
+;
+
+/// Subscribes the view to the registry's own change events. Without it an app
+/// has no way to learn that an extension was installed, removed, enabled,
+/// disabled or updated: a Web Store install happens entirely inside Chromium
+/// and reaches no <webview> callback, so the app is left polling.
+fn cmdWatchExtensions(view: *View, arg: ?std.json.Value) void {
+    const id = extensionCommandId(arg, "watchExtensions") orelse return;
+    if (!view.extensions_watched) {
+        var params: std.ArrayList(u8) = .empty;
+        defer params.deinit(alloc);
+        params.appendSlice(alloc, "{\"name\":") catch return;
+        cdp.quote(&params, extensions_changed_binding);
+        params.appendSlice(alloc, "}") catch return;
+        // Re-adding a binding is a protocol error rather than a no-op, and the
+        // app is expected to call this again after the view reloads.
+        _ = cdpSend(view, "Runtime.addBinding", params.items, .ignore);
+        view.extensions_watched = true;
+    }
+    startJsonCommand(view, id, "extensionsChanged", "sources", watch_extensions_js);
+}
+
+/// A registry change reported by the page's own subscription. No correlation
+/// id: the app's listener is the whole audience.
+fn emitExtensionsChanged(view: *View, reason: []const u8) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "reason", .{ .string = reason }) catch return;
+    tr("extensionsChanged node={d} reason={s}", .{ view.node_id, reason });
+    f(view.node_id, "extensionsChanged", .{ .data = .{ .object = payload } });
+}
 
 fn cmdListExtensions(view: *View, arg: ?std.json.Value) void {
     const obj = argObject(arg) orelse {
