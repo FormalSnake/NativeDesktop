@@ -182,10 +182,57 @@ final class NDCefSchemeRequest: @unchecked Sendable {
 
 /// JavaScript dialogs and file choosers, routed into the same host-native
 /// sheets the WebKit surface uses. Nothing here may let Chromium present its
+/// `URL.origin` form: scheme, host and a non-default port, with no trailing
+/// slash. CEF serializes an origin as a GURL, which always ends in one, and an
+/// app comparing it against `location.origin` would never match.
+func ndCefOriginForm(_ raw: String) -> String {
+    guard let sep = raw.range(of: "://") else {
+        return String(raw.reversed().drop(while: { $0 == "/" }).reversed())
+    }
+    let scheme = String(raw[raw.startIndex..<sep.lowerBound])
+    let rest = raw[sep.upperBound...]
+    var authority = String(rest.prefix(while: { $0 != "/" }))
+    let defaultPort: String? = scheme == "http" ? ":80" : (scheme == "https" || scheme == "wss" ? ":443" : nil)
+    if let defaultPort, authority.hasSuffix(defaultPort) {
+        authority = String(authority.dropLast(defaultPort.count))
+    }
+    return "\(scheme)://\(authority)"
+}
+
+/// The URL of a browser's main frame, read while the browser reference is still
+/// held by the callback that was handed it.
+func ndCefMainFrameURL(_ browser: UnsafeMutablePointer<cef_browser_t>?) -> String {
+    guard let browser, let frame = browser.pointee.get_main_frame?(browser) else { return "" }
+    defer { nd_cef_ref_release(frame) }
+    guard let raw = frame.pointee.get_url?(frame) else { return "" }
+    defer { nd_cef_string_free(raw) }
+    return ndCefString(raw)
+}
+
+/// One owned reference to the browser's own request context, which is where its
+/// content settings live whether it was created on a named profile or the
+/// global one.
+func ndCefBrowserContext(_ browser: UnsafeMutablePointer<cef_browser_t>?) -> UnsafeMutablePointer<cef_request_context_t>? {
+    guard let browser, let host = browser.pointee.get_host?(browser) else { return nil }
+    defer { nd_cef_ref_release(host) }
+    return host.pointee.get_request_context?(host)
+}
+
 /// Permission requests, parked until the app answers `respondPermission`.
 /// Chromium would otherwise draw its own prompt, which under Chrome style with
 /// no toolbar becomes a window of its own placed against the invisible anchor.
+///
+/// The app owns persistence, so Chromium must not also own it. ACCEPT and DENY
+/// are both explicit user actions to Chromium and are written into the
+/// profile's content settings, after which that origin never asks again. CEF
+/// 151 has no one-time grant to answer with (`cef_permission_request_result_t`
+/// is accept/deny/dismiss/ignore), so the answer is put back to the profile
+/// default through `cef_request_context_t::set_content_setting` as soon as CEF
+/// says it is done with the prompt. `resetPermissions` is the same clearing on
+/// demand.
 enum NDCefPermissions {
+    enum Answer { case allow, deny, dismiss }
+
     private struct Parked {
         let callback: UInt
         /// Non-zero on the getUserMedia route, where the mask has to come back
@@ -195,7 +242,58 @@ enum NDCefPermissions {
         /// request whose callback CEF has already torn down. Zero on the
         /// getUserMedia route, which has no dismissal callback.
         let promptID: UInt64
+        /// The bits CEF asked for, whichever route they came in on. Recorded
+        /// against the origin when the app answers, so `resetPermissions`
+        /// clears only what Chromium has actually prompted for.
+        let requestMask: UInt32
+        let origin: String
+        /// The media route has no dismissal callback to clear the answer from,
+        /// so it carries the context it has to clear itself. One owned
+        /// reference, released with the parked request.
+        let context: UInt
     }
+
+    /// The content settings an answered permission can be written into, so it
+    /// can be written back out. A permission type CEF 151 names no content
+    /// setting for is left alone rather than guessed at; geolocation has two
+    /// because Chromium splits the precise/approximate choice into its own
+    /// setting.
+    private static let contentSettings: [(UInt32, [cef_content_setting_types_t])] = [
+        (UInt32(CEF_PERMISSION_TYPE_AR_SESSION.rawValue), [CEF_CONTENT_SETTING_TYPE_AR]),
+        (UInt32(CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM.rawValue), [CEF_CONTENT_SETTING_TYPE_CAMERA_PAN_TILT_ZOOM]),
+        (UInt32(CEF_PERMISSION_TYPE_CAMERA_STREAM.rawValue), [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA]),
+        (UInt32(CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL.rawValue), [CEF_CONTENT_SETTING_TYPE_CAPTURED_SURFACE_CONTROL]),
+        (UInt32(CEF_PERMISSION_TYPE_CLIPBOARD.rawValue), [CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE]),
+        (UInt32(CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS.rawValue), [CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_STORAGE_ACCESS]),
+        (UInt32(CEF_PERMISSION_TYPE_DISK_QUOTA.rawValue), [CEF_CONTENT_SETTING_TYPE_PERSISTENT_STORAGE]),
+        (UInt32(CEF_PERMISSION_TYPE_LOCAL_FONTS.rawValue), [CEF_CONTENT_SETTING_TYPE_LOCAL_FONTS]),
+        (UInt32(CEF_PERMISSION_TYPE_GEOLOCATION.rawValue),
+         [CEF_CONTENT_SETTING_TYPE_GEOLOCATION, CEF_CONTENT_SETTING_TYPE_GEOLOCATION_WITH_OPTIONS]),
+        (UInt32(CEF_PERMISSION_TYPE_HAND_TRACKING.rawValue), [CEF_CONTENT_SETTING_TYPE_HAND_TRACKING]),
+        (UInt32(CEF_PERMISSION_TYPE_IDLE_DETECTION.rawValue), [CEF_CONTENT_SETTING_TYPE_IDLE_DETECTION]),
+        (UInt32(CEF_PERMISSION_TYPE_MIC_STREAM.rawValue), [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC]),
+        (UInt32(CEF_PERMISSION_TYPE_MIDI_SYSEX.rawValue), [CEF_CONTENT_SETTING_TYPE_MIDI_SYSEX]),
+        (UInt32(CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS.rawValue), [CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS]),
+        (UInt32(CEF_PERMISSION_TYPE_NOTIFICATIONS.rawValue), [CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS]),
+        (UInt32(CEF_PERMISSION_TYPE_KEYBOARD_LOCK.rawValue), [CEF_CONTENT_SETTING_TYPE_KEYBOARD_LOCK]),
+        (UInt32(CEF_PERMISSION_TYPE_POINTER_LOCK.rawValue), [CEF_CONTENT_SETTING_TYPE_POINTER_LOCK]),
+        // CEF_CONTENT_SETTING_TYPE_PROTECTED_MEDIA_IDENTIFIER is deliberately
+        // absent: desktop Chromium does not register it, and asking for its
+        // pattern scope aborts the browser process.
+        (UInt32(CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER.rawValue), [CEF_CONTENT_SETTING_TYPE_PROTOCOL_HANDLERS]),
+        (UInt32(CEF_PERMISSION_TYPE_STORAGE_ACCESS.rawValue), [CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS]),
+        (UInt32(CEF_PERMISSION_TYPE_VR_SESSION.rawValue), [CEF_CONTENT_SETTING_TYPE_VR]),
+        (UInt32(CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION.rawValue), [CEF_CONTENT_SETTING_TYPE_WEB_APP_INSTALLATION]),
+        (UInt32(CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT.rawValue), [CEF_CONTENT_SETTING_TYPE_WINDOW_MANAGEMENT]),
+        (UInt32(CEF_PERMISSION_TYPE_LOCAL_NETWORK.rawValue), [CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK]),
+        (UInt32(CEF_PERMISSION_TYPE_LOOPBACK_NETWORK.rawValue), [CEF_CONTENT_SETTING_TYPE_LOOPBACK_NETWORK]),
+        (UInt32(CEF_PERMISSION_TYPE_SENSORS.rawValue), [CEF_CONTENT_SETTING_TYPE_SENSORS]),
+    ]
+
+    private static let mediaContentSettings: [(UInt32, [cef_content_setting_types_t])] = [
+        (UInt32(CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE.rawValue), [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC]),
+        (UInt32(CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE.rawValue), [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA]),
+    ]
 
     /// The permission names the app sees. Chromium's own enum is a bitmask, so
     /// a request carrying two of them reports both.
@@ -239,39 +337,83 @@ enum NDCefPermissions {
 
     @MainActor private static var pending: [String: Parked] = [:]
     @MainActor private static var sequence = 0
+    /// What an outstanding prompt asked for. Read back in `dismiss`.
+    @MainActor private static var prompts: [UInt64: (origin: String, mask: UInt32)] = [:]
+    /// What each origin has been asked for, so `resetPermissions` has something
+    /// to clear: CEF 151 can remove one origin's setting, but has no clear-all
+    /// for a content type. Recording the bits rather than sweeping the whole
+    /// table is also what keeps the sweep safe, see `clear`.
+    @MainActor private static var answeredOrigins: [String: (prompt: UInt32, media: UInt32)] = [:]
+
+    @MainActor private static func remember(_ origin: String, media: UInt32, prompt: UInt32) {
+        guard !origin.isEmpty else { return }
+        var seen = answeredOrigins[origin] ?? (prompt: 0, media: 0)
+        seen.prompt |= prompt
+        seen.media |= media
+        answeredOrigins[origin] = seen
+    }
 
     @MainActor static func request(
         view: NDCefWebView?,
         promptID: UInt64,
-        origin: String,
+        origin rawOrigin: String,
+        mainFrameURL: String,
+        frameURL: String?,
+        isMainFrame: Bool,
         mask: UInt32,
         callback token: UInt,
+        context: UInt,
         media: Bool
     ) {
+        let origin = ndCefOriginForm(rawOrigin)
+        let parked = Parked(callback: token, mediaMask: media ? mask : 0, promptID: promptID,
+                            requestMask: mask, origin: origin, context: context)
         guard let view else {
-            answer(Parked(callback: token, mediaMask: media ? mask : 0, promptID: promptID), allow: false)
+            answer(parked, result: .dismiss)
             return
         }
         sequence += 1
         let id = "cefpermission-\(sequence)"
-        pending[id] = Parked(callback: token, mediaMask: media ? mask : 0, promptID: promptID)
+        pending[id] = parked
+        if !media { prompts[promptID] = (origin, mask) }
         let types = (media ? mediaNames : names)
             .filter { mask & $0.0 != 0 }
             .map { $0.1 }
             .joined(separator: ",")
-        view.ndTrace("permissionRequest id=\(id) origin=\(origin) types=\(types)")
-        view.emitData("permissionRequest", ["id": id, "origin": origin, "types": types])
+        view.ndTrace("permissionRequest id=\(id) origin=\(origin) types=\(types) frame=\(frameURL ?? "-") main=\(isMainFrame)")
+        var payload: [String: Any] = ["id": id, "origin": origin, "types": types, "mainFrameUrl": mainFrameURL]
+        if let frameURL {
+            payload["frameUrl"] = frameURL
+            payload["isMainFrame"] = isMainFrame
+        }
+        view.emitData("permissionRequest", payload)
     }
 
-    /// Chromium finished with the prompt (a navigation, a closed browser, or
-    /// the answer below). The callback is spent, so the parked request is
-    /// dropped without being continued.
-    @MainActor static func dismiss(promptID: UInt64) {
+    /// CEF is done with the prompt: either the app answered it, or Chromium
+    /// retired it on its own (a navigation, a closed browser). Chromium has
+    /// written its content setting by now, so this is where it is written back
+    /// out; a request still parked is one nobody answered, and the app is told
+    /// the id is dead.
+    @MainActor static func dismiss(view: NDCefWebView?, promptID: UInt64,
+                                   result: cef_permission_request_result_t,
+                                   context: UnsafeMutablePointer<cef_request_context_t>?) {
         guard promptID != 0 else { return }
+        if let record = prompts.removeValue(forKey: promptID) {
+            // A dismissal records no content setting, so there is nothing to undo.
+            if result != CEF_PERMISSION_RESULT_DISMISS, let context {
+                clearLater(context: context, origin: record.origin, mask: record.mask, media: false)
+            }
+        }
         guard let key = pending.first(where: { $0.value.promptID == promptID })?.key else { return }
         guard let parked = pending.removeValue(forKey: key) else { return }
-        guard let raw = UnsafeMutableRawPointer(bitPattern: parked.callback) else { return }
-        nd_cef_ref_release(raw.assumingMemoryBound(to: cef_permission_prompt_callback_t.self))
+        if let view {
+            view.ndTrace("permissionRequestDismissed id=\(key)")
+            view.emitData("permissionRequestDismissed", ["id": key])
+        }
+        if let raw = UnsafeMutableRawPointer(bitPattern: parked.callback) {
+            nd_cef_ref_release(raw.assumingMemoryBound(to: cef_permission_prompt_callback_t.self))
+        }
+        releaseContext(parked)
     }
 
     /// `respondPermission`, on the UI thread.
@@ -281,27 +423,138 @@ enum NDCefPermissions {
             return
         }
         guard let parked = pending.removeValue(forKey: id) else {
-            ndCefWarn("respondPermission: unknown request id \(id)")
+            // An id this engine handed out but no longer has parked: the app
+            // answered it already, or Chromium retired it and the app's answer
+            // was in flight. Neither is a mistake worth a warning.
+            if !wasIssued(id) { ndCefWarn("respondPermission: unknown request id \(id)") }
             return
         }
-        answer(parked, allow: (obj["allow"] as? NSNumber)?.boolValue ?? (obj["allow"] as? Bool ?? false))
+        answer(parked, result: result(from: obj))
     }
 
-    @MainActor private static func answer(_ parked: Parked, allow: Bool) {
+    @MainActor private static func result(from obj: [String: Any]) -> Answer {
+        if let name = obj["result"] as? String {
+            switch name {
+            case "allow": return .allow
+            case "deny": return .deny
+            case "dismiss": return .dismiss
+            default: ndCefWarn("respondPermission: unknown result \(name)")
+            }
+        }
+        let allow = (obj["allow"] as? NSNumber)?.boolValue ?? (obj["allow"] as? Bool ?? false)
+        return allow ? .allow : .deny
+    }
+
+    @MainActor private static func wasIssued(_ id: String) -> Bool {
+        let prefix = "cefpermission-"
+        guard id.hasPrefix(prefix), let n = Int(id.dropFirst(prefix.count)) else { return false }
+        return n >= 1 && n <= sequence
+    }
+
+    @MainActor private static func answer(_ parked: Parked, result: Answer) {
+        defer { releaseContext(parked) }
         guard let raw = UnsafeMutableRawPointer(bitPattern: parked.callback) else { return }
         if parked.mediaMask != 0 {
             let callback = raw.assumingMemoryBound(to: cef_media_access_callback_t.self)
-            if allow {
+            // The media callback has no dismiss of its own: cancelling is the
+            // only way to end the request without granting it.
+            if result == .allow {
                 callback.pointee.cont?(callback, parked.mediaMask)
             } else {
                 callback.pointee.cancel?(callback)
             }
             nd_cef_ref_release(callback)
+            if result != .dismiss, let context = UnsafeMutableRawPointer(bitPattern: parked.context) {
+                let ctx = context.assumingMemoryBound(to: cef_request_context_t.self)
+                clearLater(context: ctx, origin: parked.origin, mask: parked.mediaMask, media: true)
+                remember(parked.origin, media: parked.mediaMask, prompt: 0)
+            }
             return
         }
         let callback = raw.assumingMemoryBound(to: cef_permission_prompt_callback_t.self)
-        callback.pointee.cont?(callback, allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY)
+        let code: cef_permission_request_result_t
+        switch result {
+        case .allow: code = CEF_PERMISSION_RESULT_ACCEPT
+        case .deny: code = CEF_PERMISSION_RESULT_DENY
+        case .dismiss: code = CEF_PERMISSION_RESULT_DISMISS
+        }
+        callback.pointee.cont?(callback, code)
         nd_cef_ref_release(callback)
+        if result != .dismiss { remember(parked.origin, media: 0, prompt: parked.requestMask) }
+    }
+
+    @MainActor private static func releaseContext(_ parked: Parked) {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: parked.context) else { return }
+        nd_cef_ref_release(raw.assumingMemoryBound(to: cef_request_context_t.self))
+    }
+
+    /// Always on a later turn, never inline: `on_dismiss_permission_prompt`
+    /// runs while Chromium is still finishing the decision, and a clear made
+    /// there is overwritten by the content setting the decision then writes.
+    /// Measured on 151.3.23: clearing inline from the dismissal left the origin
+    /// blocked and it never asked again.
+    @MainActor static func clearLater(context: UnsafeMutablePointer<cef_request_context_t>,
+                                      origin: String, mask: UInt32, media: Bool) {
+        guard mask != 0, !origin.isEmpty else { return }
+        nd_cef_ref_add(context)
+        let token = UInt(bitPattern: context)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                guard let raw = UnsafeMutableRawPointer(bitPattern: token) else { return }
+                let ctx = raw.assumingMemoryBound(to: cef_request_context_t.self)
+                clear(context: ctx, origin: origin, mask: mask, media: media)
+                nd_cef_ref_release(ctx)
+            }
+        }
+    }
+
+    /// Removes the settings an answer may have written, so the same origin asks
+    /// again and the app's own store stays the only record of the decision.
+    ///
+    /// `set_website_setting` with a null value, not `set_content_setting`: the
+    /// latter aborts the browser process for a type Chromium keeps as a website
+    /// setting rather than a content setting. `mask` only ever carries bits
+    /// Chromium itself raised a prompt for, which is what keeps this safe: a
+    /// type Chromium has registered no pattern scope for aborts the process.
+    @MainActor private static func clear(context: UnsafeMutablePointer<cef_request_context_t>,
+                                         origin: String, mask: UInt32, media: Bool) {
+        guard !origin.isEmpty, let set = context.pointee.set_content_setting else { return }
+        var url = cef_string_t()
+        var topLevel = cef_string_t()
+        ndCefSetString(origin, &url)
+        ndCefSetString(origin, &topLevel)
+        defer {
+            nd_cef_string_clear(&url)
+            nd_cef_string_clear(&topLevel)
+        }
+        for (bit, settings) in (media ? mediaContentSettings : contentSettings) where mask & bit != 0 {
+            for setting in settings {
+                // Both URLs, not a null top level: CEF derives the setting's
+                // pattern pair from them, and an invalid secondary aborts the
+                // browser process. A type scoped to the requesting origin alone
+                // ignores the second one.
+                set(context, &url, &topLevel, setting, CEF_CONTENT_SETTING_VALUE_DEFAULT)
+            }
+        }
+    }
+
+    /// `resetPermissions`: puts Chromium's stored decisions for an origin back
+    /// to the profile default, so a site the app blocked long ago asks again.
+    /// With no `origin` it covers every origin this process has answered for,
+    /// which is as wide as CEF 151 goes: there is no clear-all for a type.
+    @MainActor static func reset(_ obj: [String: Any], context: UnsafeMutablePointer<cef_request_context_t>?) {
+        guard let context else { return }
+        var filter = UInt32.max
+        var mediaFilter = UInt32.max
+        if let wanted = obj["types"] as? [String] {
+            filter = names.filter { wanted.contains($0.1) }.reduce(0) { $0 | $1.0 }
+            mediaFilter = mediaNames.filter { wanted.contains($0.1) }.reduce(0) { $0 | $1.0 }
+        }
+        let only = (obj["origin"] as? String).map(ndCefOriginForm)
+        for (origin, seen) in answeredOrigins where only == nil || only == origin {
+            clearLater(context: context, origin: origin, mask: seen.prompt & filter, media: false)
+            clearLater(context: context, origin: origin, mask: seen.media & mediaFilter, media: true)
+        }
     }
 }
 

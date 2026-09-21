@@ -562,12 +562,13 @@ Automation role: `webview`. Text source: none. Children: none.
 | `extensionsChanged` | `onExtensionsChanged` | data |
 | `chromeDialog` | `onChromeDialog` | data |
 | `permissionRequest` | `onPermissionRequest` | data |
+| `permissionRequestDismissed` | `onPermissionRequestDismissed` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `respondDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `focus`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `focus`.
 
 The browser-grade surface around these commands is documented in [WebView](/components/webview/).
 

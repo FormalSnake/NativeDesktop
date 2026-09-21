@@ -2463,6 +2463,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
     if (std.mem.eql(u8, cmd, "respondPermission")) return cmdRespondPermission(arg);
     if (std.mem.eql(u8, cmd, "respondDownload")) return cmdRespondDownload(arg);
+    if (std.mem.eql(u8, cmd, "resetPermissions")) return cmdResetPermissions(view, arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
@@ -3698,14 +3699,14 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     // Keyed by Chromium's prompt id rather than by view, so a prompt dismissed
     // after its tab went away is still forgotten.
     if (box.permission_dismissed) |prompt_id| {
-        dropPermissionRequest(prompt_id);
+        dropPermissionRequest(box.view, prompt_id);
         return 0;
     }
     // The tab this came from can have been closed while the event was in
     // flight; the widget, and with it the container window, is already gone.
     if (!live_views.contains(@intFromPtr(box.view))) {
         if (box.menu_request) |req| cancelMenuRequest(req);
-        if (box.permission) |req| answerPermissionRequest(req, false);
+        if (box.permission) |req| answerPermissionRequest(req, .dismiss);
         if (box.download) |req| answerDownload(req, null);
         return 0;
     }
@@ -7012,11 +7013,28 @@ fn onPageFileDialogDone(_: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?
 // (`on_show_permission_prompt` and the getUserMedia one) and hands the request
 // to the app as `permissionRequest`, answered with `respondPermission`. An
 // unanswered id leaves the page waiting, as `schemeRequest` does.
+//
+// The app owns persistence, so Chromium must not also own it. ACCEPT and DENY
+// are both explicit user actions to Chromium and are written into the profile's
+// content settings, after which that origin never asks again and the app's own
+// store stops being consulted. CEF 151 has no one-time grant to answer with
+// (`cef_permission_request_result_t` is accept/deny/dismiss/ignore), so the
+// answer is put back to the profile default through
+// `cef_request_context_t::set_content_setting` as soon as CEF says it is done
+// with the prompt. `resetPermissions` is the same clearing on demand.
+
+const PermissionResult = enum { allow, deny, dismiss };
 
 const PermissionRequest = struct {
     id: []const u8,
     origin: []const u8,
     types: []const u8,
+    /// The URL of the frame CEF named and whether it is the main one. CEF hands
+    /// a frame to the getUserMedia route only; the prompt route names nothing
+    /// below the browser, so `frame_url` is null there.
+    frame_url: ?[]const u8,
+    is_main_frame: bool,
+    main_frame_url: []const u8,
     /// Chromium's own id for the prompt, so `on_dismiss_permission_prompt` can
     /// drop a request whose callback CEF has already torn down. Zero on the
     /// getUserMedia route, which has no dismissal callback.
@@ -7026,10 +7044,25 @@ const PermissionRequest = struct {
     /// non-zero on the media route.
     callback: usize,
     media_mask: u32,
+    /// The bits CEF asked for, whichever route they came in on. Recorded
+    /// against the origin when the app answers, so `resetPermissions` clears
+    /// only what Chromium has actually prompted for.
+    request_mask: u32,
+    /// The media route has no dismissal callback to clear the answer from, so
+    /// it carries the context and the mask it has to clear itself. One owned
+    /// reference, released with the request.
+    context: ?*c.cef_request_context_t,
 };
 
 var pending_permission_requests: std.StringHashMapUnmanaged(*PermissionRequest) = .empty;
 var permission_seq: u64 = 0;
+
+/// What each origin has been asked for, so `resetPermissions` has something to
+/// clear: CEF 151 can remove one origin's setting, but has no clear-all for a
+/// content type. Recording the bits rather than sweeping the whole table is
+/// also what keeps the sweep safe, see `clearPermissionSettings`.
+const PermissionMasks = struct { prompt: u32 = 0, media: u32 = 0 };
+var answered_permission_origins: std.StringHashMapUnmanaged(PermissionMasks) = .empty;
 
 /// The permission names the app sees. Chromium's own enum is a bitmask, so a
 /// request carrying two of them reports both.
@@ -7072,6 +7105,50 @@ const media_permission_names = [_]struct { bit: u32, name: []const u8 }{
     .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE), .name = "desktopVideo" },
 };
 
+/// The content settings an answered permission can be written into, so it can
+/// be written back out. A permission type CEF 151 names no content setting for
+/// is left alone rather than guessed at; geolocation has two because Chromium
+/// splits the precise/approximate choice into its own setting.
+const PermissionSettings = struct { bit: u32, settings: []const c_uint };
+
+const permission_content_settings = [_]PermissionSettings{
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_AR_SESSION), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_AR} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_CAMERA_PAN_TILT_ZOOM} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAMERA_STREAM), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_CAPTURED_SURFACE_CONTROL} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CLIPBOARD), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_TOP_LEVEL_STORAGE_ACCESS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_DISK_QUOTA), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_PERSISTENT_STORAGE} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_FONTS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_LOCAL_FONTS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_GEOLOCATION), .settings = &.{ c.CEF_CONTENT_SETTING_TYPE_GEOLOCATION, c.CEF_CONTENT_SETTING_TYPE_GEOLOCATION_WITH_OPTIONS } },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_HAND_TRACKING), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_HAND_TRACKING} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_IDLE_DETECTION), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_IDLE_DETECTION} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MIC_STREAM), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MIDI_SYSEX), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_MIDI_SYSEX} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_AUTOMATIC_DOWNLOADS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_NOTIFICATIONS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_KEYBOARD_LOCK), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_KEYBOARD_LOCK} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_POINTER_LOCK), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_POINTER_LOCK} },
+    // CEF_CONTENT_SETTING_TYPE_PROTECTED_MEDIA_IDENTIFIER is deliberately
+    // absent: desktop Chromium does not register it, and asking for its pattern
+    // scope aborts the browser process. Measured on 151.3.23 against a Linux
+    // build, which trapped in HostContentSettingsMap on exactly that type.
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_PROTOCOL_HANDLERS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_STORAGE_ACCESS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_STORAGE_ACCESS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_VR_SESSION), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_VR} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_WEB_APP_INSTALLATION} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_WINDOW_MANAGEMENT} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS_DEPRECATED), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK_ACCESS} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_NETWORK), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_LOCAL_NETWORK} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOOPBACK_NETWORK), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_LOOPBACK_NETWORK} },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_SENSORS), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_SENSORS} },
+};
+
+const media_content_settings = [_]PermissionSettings{
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC} },
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE), .settings = &.{c.CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA} },
+};
+
 fn permissionTypeList(mask: u32, media: bool) []const u8 {
     var out: std.ArrayList(u8) = .empty;
     if (media) {
@@ -7090,17 +7167,185 @@ fn permissionTypeList(mask: u32, media: bool) []const u8 {
     return out.toOwnedSlice(alloc) catch &.{};
 }
 
-fn postPermissionRequest(view: *View, prompt_id: u64, origin: [*c]const c.cef_string_t, mask: u32, callback: usize, media: bool) void {
+/// The bits a list of permission names stands for, so `resetPermissions` takes
+/// the same vocabulary `permissionRequest` reports. An unknown name is ignored.
+fn permissionTypeMask(names: []const []const u8, media: bool) u32 {
+    var mask: u32 = 0;
+    for (names) |name| {
+        if (media) {
+            for (media_permission_names) |entry| {
+                if (std.mem.eql(u8, entry.name, name)) mask |= entry.bit;
+            }
+        } else {
+            for (permission_names) |entry| {
+                if (std.mem.eql(u8, entry.name, name)) mask |= entry.bit;
+            }
+        }
+    }
+    return mask;
+}
+
+/// `URL.origin` form: scheme, host and a non-default port, with no trailing
+/// slash. CEF serializes an origin as a GURL, which always ends in one, and an
+/// app comparing it against `location.origin` would never match.
+fn originForm(raw: []const u8) []const u8 {
+    const sep = std.mem.indexOf(u8, raw, "://") orelse {
+        const trimmed = std.mem.trimEnd(u8, raw, "/");
+        return alloc.dupe(u8, trimmed) catch &.{};
+    };
+    const scheme = raw[0..sep];
+    const rest = raw[sep + 3 ..];
+    const end = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    var authority = rest[0..end];
+    const default_port: ?[]const u8 = if (std.mem.eql(u8, scheme, "http"))
+        ":80"
+    else if (std.mem.eql(u8, scheme, "https") or std.mem.eql(u8, scheme, "wss"))
+        ":443"
+    else
+        null;
+    if (default_port) |port| {
+        if (std.mem.endsWith(u8, authority, port)) authority = authority[0 .. authority.len - port.len];
+    }
+    return std.fmt.allocPrint(alloc, "{s}://{s}", .{ scheme, authority }) catch &.{};
+}
+
+/// CEF UI thread: removes the settings an answer may have written, so the same
+/// origin asks again and the app's own store stays the only record of the
+/// decision.
+///
+/// `set_website_setting` with a null value, not `set_content_setting` with
+/// CEF_CONTENT_SETTING_VALUE_DEFAULT: the latter reaches
+/// `HostContentSettingsMap::SetContentSettingDefaultScope`, which aborts the
+/// browser process for a type Chromium keeps as a website setting rather than a
+/// content setting (geolocation's precise/approximate choice is one). The
+/// website-setting entry point serves both kinds and removes the rule either
+/// way. Measured against 151.3.23: the content-setting call trapped in
+/// `SetContentSettingDefaultScope` on the first answered geolocation prompt.
+///
+/// Both URLs are passed, never a null top level: CEF derives the rule's pattern
+/// pair from them, and a type scoped to the requesting origin alone ignores the
+/// second one.
+///
+/// `mask` only ever carries bits Chromium itself raised a prompt for. That is
+/// the safety property this depends on: a type Chromium has not registered a
+/// pattern scope for aborts the browser process, and a type it just prompted
+/// for necessarily has one.
+fn clearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool) void {
+    if (origin.len == 0) return;
+    const set = ctx.set_website_setting orelse return;
+    var url = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&url);
+    if (!setStr(&url, origin)) return;
+    const table: []const PermissionSettings = if (media) &media_content_settings else &permission_content_settings;
+    for (table) |entry| {
+        if (mask & entry.bit == 0) continue;
+        for (entry.settings) |setting| {
+            set(ctx, &url, &url, @intCast(setting), null);
+        }
+    }
+    tr("permissionSettingsCleared origin={s} mask={x} media={}", .{ origin, mask, media });
+}
+
+/// What an outstanding prompt asked for. Read back in
+/// `on_dismiss_permission_prompt`. Touched on the CEF UI thread only, where
+/// both permission callbacks run.
+const PromptRecord = struct { origin: []const u8, mask: u32 };
+var prompt_records: std.AutoHashMapUnmanaged(u64, PromptRecord) = .empty;
+
+const ClearSettingsCall = struct { ctx: *c.cef_request_context_t, origin: []u8, mask: u32, media: bool };
+const ClearSettingsObj = ref.Counted(c.cef_task_t, ClearSettingsCall);
+
+/// Always a task, never an inline call, even when this is already the CEF UI
+/// thread: `on_dismiss_permission_prompt` runs while Chromium is still
+/// finishing the decision, and a clear made there is overwritten by the content
+/// setting the decision then writes. A task runs on the next UI turn, after
+/// that write. Measured on 151.3.23: clearing inline from the dismissal left
+/// the origin blocked and it never asked again.
+fn postClearPermissionSettings(ctx: *c.cef_request_context_t, origin: []const u8, mask: u32, media: bool) void {
+    if (mask == 0 or origin.len == 0) return;
+    const api = loader.loaded() orelse return;
+    const copy = alloc.dupe(u8, origin) catch return;
+    const task = ClearSettingsObj.create(.{ .ctx = ctx, .origin = copy, .mask = mask, .media = media }) orelse {
+        alloc.free(copy);
+        return;
+    };
+    task.cef.execute = &runClearSettingsTask;
+    ref.addRefParam(ctx);
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) {
+        ref.releaseParam(ctx);
+        alloc.free(copy);
+        task.drop();
+    }
+    task.drop();
+}
+
+fn runClearSettingsTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    const call = ClearSettingsObj.of(self).payload;
+    clearPermissionSettings(call.ctx, call.origin, call.mask, call.media);
+    ref.releaseParam(call.ctx);
+    alloc.free(call.origin);
+}
+
+fn postPermissionRequest(
+    view: *View,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    prompt_id: u64,
+    origin: [*c]const c.cef_string_t,
+    mask: u32,
+    callback: usize,
+    media: bool,
+) void {
     const req = alloc.create(PermissionRequest) catch return;
+    const raw_origin = dupeStr(origin) orelse (alloc.dupe(u8, "") catch &.{});
+    defer alloc.free(raw_origin);
+    var frame_url: ?[]const u8 = null;
+    var is_main = false;
+    if (frame != null) {
+        if (frame.*.is_main) |f| is_main = f(frame) != 0;
+        if (frame.*.get_url) |get_url| {
+            const raw = get_url(frame);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                frame_url = dupeStr(raw);
+            }
+        }
+    }
     req.* = .{
         .id = &.{},
-        .origin = dupeStr(origin) orelse (alloc.dupe(u8, "") catch &.{}),
+        .origin = originForm(raw_origin),
         .types = permissionTypeList(mask, media),
+        .frame_url = frame_url,
+        .is_main_frame = is_main,
+        .main_frame_url = mainFrameUrl(browser) orelse (alloc.dupe(u8, "") catch &.{}),
         .prompt_id = prompt_id,
         .callback = callback,
         .media_mask = if (media) mask else 0,
+        .request_mask = mask,
+        .context = if (media) browserContext(browser) else null,
     };
+    if (!media) rememberPrompt(prompt_id, req.origin, mask);
     post(.{ .view = view, .name = "permissionRequest", .permission = req });
+}
+
+/// One owned reference to the browser's own request context, which is where its
+/// content settings live whether it was created on a named profile or the
+/// global one.
+fn browserContext(browser: [*c]c.cef_browser_t) ?*c.cef_request_context_t {
+    if (browser == null) return null;
+    const get_host = browser.*.get_host orelse return null;
+    const host = get_host(browser);
+    if (host == null) return null;
+    defer ref.releaseOwned(host);
+    const get_ctx = host.*.get_request_context orelse return null;
+    const ctx = get_ctx(host);
+    if (ctx == null) return null;
+    return @ptrCast(ctx);
+}
+
+fn rememberPrompt(prompt_id: u64, origin: []const u8, mask: u32) void {
+    const copy = alloc.dupe(u8, origin) catch return;
+    prompt_records.put(alloc, prompt_id, .{ .origin = copy, .mask = mask }) catch alloc.free(copy);
 }
 
 /// GTK thread: parks the request and raises the event the app answers with
@@ -7108,14 +7353,14 @@ fn postPermissionRequest(view: *View, prompt_id: u64, origin: [*c]const c.cef_st
 fn announcePermissionRequest(view: *View, req: *PermissionRequest) void {
     permission_seq += 1;
     req.id = std.fmt.allocPrint(alloc, "cefpermission-{d}", .{permission_seq}) catch {
-        answerPermissionRequest(req, false);
+        answerPermissionRequest(req, .deny);
         return;
     };
     pending_permission_requests.put(alloc, req.id, req) catch {
-        answerPermissionRequest(req, false);
+        answerPermissionRequest(req, .deny);
         return;
     };
-    tr("permissionRequest node={d} id={s} origin={s} types={s}", .{ view.node_id, req.id, req.origin, req.types });
+    tr("permissionRequest node={d} id={s} origin={s} types={s} frame={?s} main={}", .{ view.node_id, req.id, req.origin, req.types, req.frame_url, req.is_main_frame });
 
     const f = emit orelse return;
     var payload: std.json.ObjectMap = .empty;
@@ -7123,16 +7368,24 @@ fn announcePermissionRequest(view: *View, req: *PermissionRequest) void {
     payload.put(alloc, "id", .{ .string = req.id }) catch return;
     payload.put(alloc, "origin", .{ .string = req.origin }) catch return;
     payload.put(alloc, "types", .{ .string = req.types }) catch return;
+    payload.put(alloc, "mainFrameUrl", .{ .string = req.main_frame_url }) catch return;
+    if (req.frame_url) |url| {
+        payload.put(alloc, "frameUrl", .{ .string = url }) catch return;
+        payload.put(alloc, "isMainFrame", .{ .bool = req.is_main_frame }) catch return;
+    }
     f(view.node_id, "permissionRequest", .{ .data = .{ .object = payload } });
 }
 
 /// Answers CEF and frees the request. Safe to call with a callback that is
 /// already spent: `on_dismiss_permission_prompt` clears it first.
-fn answerPermissionRequest(req: *PermissionRequest, allow: bool) void {
+fn answerPermissionRequest(req: *PermissionRequest, result: PermissionResult) void {
     defer {
         if (req.id.len > 0) alloc.free(req.id);
+        if (req.frame_url) |url| alloc.free(url);
+        alloc.free(req.main_frame_url);
         alloc.free(req.origin);
         alloc.free(req.types);
+        if (req.context) |ctx| ref.releaseParam(ctx);
         alloc.destroy(req);
     }
     if (req.callback == 0) return;
@@ -7140,18 +7393,42 @@ fn answerPermissionRequest(req: *PermissionRequest, allow: bool) void {
         const cb: [*c]c.cef_media_access_callback_t = @ptrFromInt(req.callback);
         defer ref.releaseParam(cb);
         // The mask has to come back exactly as it went out, or CEF rejects it.
-        if (allow) {
+        // The media callback has no dismiss of its own: cancelling is the only
+        // way to end the request without granting it.
+        if (result == .allow) {
             if (cb.*.cont) |cont| cont(cb, req.media_mask);
         } else if (cb.*.cancel) |cancel| {
             cancel(cb);
+        }
+        if (result != .dismiss) {
+            if (req.context) |ctx| {
+                postClearPermissionSettings(ctx, req.origin, req.media_mask, true);
+                rememberAnsweredOrigin(req.origin, .{ .media = req.media_mask });
+            }
         }
         return;
     }
     const cb: [*c]c.cef_permission_prompt_callback_t = @ptrFromInt(req.callback);
     defer ref.releaseParam(cb);
     if (cb.*.cont) |cont| {
-        cont(cb, @intCast(if (allow) c.CEF_PERMISSION_RESULT_ACCEPT else c.CEF_PERMISSION_RESULT_DENY));
+        cont(cb, @intCast(switch (result) {
+            .allow => c.CEF_PERMISSION_RESULT_ACCEPT,
+            .deny => c.CEF_PERMISSION_RESULT_DENY,
+            .dismiss => c.CEF_PERMISSION_RESULT_DISMISS,
+        }));
     }
+    if (result != .dismiss) rememberAnsweredOrigin(req.origin, .{ .prompt = req.request_mask });
+}
+
+fn rememberAnsweredOrigin(origin: []const u8, add: PermissionMasks) void {
+    if (origin.len == 0) return;
+    if (answered_permission_origins.getPtr(origin)) |seen| {
+        seen.prompt |= add.prompt;
+        seen.media |= add.media;
+        return;
+    }
+    const copy = alloc.dupe(u8, origin) catch return;
+    answered_permission_origins.put(alloc, copy, add) catch alloc.free(copy);
 }
 
 fn onShowPermissionPrompt(
@@ -7164,7 +7441,7 @@ fn onShowPermissionPrompt(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     const view = PermissionObj.of(self).payload;
-    postPermissionRequest(view, prompt_id, requesting_origin, requested_permissions, @intFromPtr(callback), false);
+    postPermissionRequest(view, browser, null, prompt_id, requesting_origin, requested_permissions, @intFromPtr(callback), false);
     return 1;
 }
 
@@ -7179,26 +7456,39 @@ fn onRequestMediaAccessPermission(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     const view = PermissionObj.of(self).payload;
-    postPermissionRequest(view, 0, requesting_origin, requested_permissions, @intFromPtr(callback), true);
+    postPermissionRequest(view, browser, frame, 0, requesting_origin, requested_permissions, @intFromPtr(callback), true);
     return 1;
 }
 
-/// Chromium gave up on the prompt (a navigation, a closed browser). The
-/// callback is spent, so the parked request is dropped without answering it.
+/// CEF is done with the prompt: either the app answered it, or Chromium retired
+/// it on its own (a navigation, a closed browser). Chromium has written its
+/// content setting by now, so this is where it is written back out; the request
+/// still being parked means nobody answered, and the app is told the id is dead.
 fn onDismissPermissionPrompt(
     self: [*c]c.cef_permission_handler_t,
     browser: [*c]c.cef_browser_t,
     prompt_id: u64,
-    _: c.cef_permission_request_result_t,
+    result: c.cef_permission_request_result_t,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     const view = PermissionObj.of(self).payload;
+    if (prompt_records.fetchRemove(prompt_id)) |entry| {
+        defer alloc.free(entry.value.origin);
+        // A dismissal records no content setting, so there is nothing to undo.
+        if (result != c.CEF_PERMISSION_RESULT_DISMISS) {
+            if (browserContext(browser)) |ctx| {
+                defer ref.releaseParam(ctx);
+                postClearPermissionSettings(ctx, entry.value.origin, entry.value.mask, false);
+            }
+        }
+    }
     post(.{ .view = view, .name = "permissionDismissed", .permission_dismissed = prompt_id });
 }
 
 /// GTK thread: forgets a prompt CEF has finished with. The callback is spent,
-/// so it is released without being called.
-fn dropPermissionRequest(prompt_id: u64) void {
+/// so it is released without being called. A request still parked here is one
+/// the app never answered, so it also hears that the id is dead.
+fn dropPermissionRequest(view: *View, prompt_id: u64) void {
     var it = pending_permission_requests.iterator();
     while (it.next()) |entry| {
         const req = entry.value_ptr.*;
@@ -7207,9 +7497,28 @@ fn dropPermissionRequest(prompt_id: u64) void {
         const cb: [*c]c.cef_permission_prompt_callback_t = @ptrFromInt(req.callback);
         req.callback = 0;
         ref.releaseParam(cb);
-        answerPermissionRequest(req, false);
+        if (live_views.contains(@intFromPtr(view))) {
+            tr("permissionRequestDismissed node={d} id={s}", .{ view.node_id, req.id });
+            if (emit) |f| {
+                var payload: std.json.ObjectMap = .empty;
+                defer payload.deinit(alloc);
+                payload.put(alloc, "id", .{ .string = req.id }) catch {};
+                f(view.node_id, "permissionRequestDismissed", .{ .data = .{ .object = payload } });
+            }
+        }
+        answerPermissionRequest(req, .dismiss);
         return;
     }
+}
+
+/// An id this engine handed out but no longer has parked: the app answered it
+/// already, or Chromium retired it and the app's answer was in flight. Neither
+/// is a mistake worth a warning; an id that was never handed out is.
+fn permissionIdWasIssued(id: []const u8) bool {
+    const prefix = "cefpermission-";
+    if (!std.mem.startsWith(u8, id, prefix)) return false;
+    const n = std.fmt.parseInt(u64, id[prefix.len..], 10) catch return false;
+    return n >= 1 and n <= permission_seq;
 }
 
 fn cmdRespondPermission(arg: ?std.json.Value) void {
@@ -7219,10 +7528,66 @@ fn cmdRespondPermission(arg: ?std.json.Value) void {
         return;
     };
     const entry = pending_permission_requests.fetchRemove(id) orelse {
+        if (permissionIdWasIssued(id)) return;
         std.debug.print("ND_WARN WebView respondPermission: unknown request id {s}\n", .{id});
         return;
     };
-    answerPermissionRequest(entry.value, objBool(obj_arg, "allow") orelse false);
+    const result: PermissionResult = blk: {
+        if (objStr(obj_arg, "result")) |name| {
+            if (std.mem.eql(u8, name, "allow")) break :blk .allow;
+            if (std.mem.eql(u8, name, "deny")) break :blk .deny;
+            if (std.mem.eql(u8, name, "dismiss")) break :blk .dismiss;
+            std.debug.print("ND_WARN WebView respondPermission: unknown result {s}\n", .{name});
+        }
+        break :blk if (objBool(obj_arg, "allow") orelse false) .allow else .deny;
+    };
+    answerPermissionRequest(entry.value, result);
+}
+
+/// `resetPermissions`: removes Chromium's stored decisions, so a site the app
+/// blocked earlier asks again. It clears what this process has recorded being
+/// asked, per origin, narrowed by `origin` and `types` when they are given.
+/// Nothing wider is possible or safe: CEF 151 has no clear-all for a content
+/// type, and a type Chromium has not registered aborts the browser process, so
+/// only bits Chromium itself raised a prompt for are ever handed back to it.
+fn cmdResetPermissions(view: *View, arg: ?std.json.Value) void {
+    const obj_arg = argObject(arg);
+    var filter: u32 = std.math.maxInt(u32);
+    var media_filter: u32 = std.math.maxInt(u32);
+    if (obj_arg) |obj| {
+        if (objStrList(obj, "types")) |list| {
+            var names: std.ArrayList([]const u8) = .empty;
+            defer names.deinit(alloc);
+            for (list.items) |item| {
+                if (item == .string) names.append(alloc, item.string) catch {};
+            }
+            filter = permissionTypeMask(names.items, false);
+            media_filter = permissionTypeMask(names.items, true);
+        }
+    }
+    const wanted: ?[]const u8 = if (obj_arg) |obj| objStr(obj, "origin") else null;
+    const form: ?[]const u8 = if (wanted) |origin| originForm(origin) else null;
+    defer if (form) |f| alloc.free(f);
+
+    const host = hostOf(view) orelse return;
+    const get_ctx = host.get_request_context orelse return;
+    const raw = get_ctx(host);
+    if (raw == null) return;
+    const ctx: *c.cef_request_context_t = @ptrCast(raw);
+    defer ref.releaseOwned(ctx);
+
+    var cleared: usize = 0;
+    var it = answered_permission_origins.iterator();
+    while (it.next()) |entry| {
+        const origin = entry.key_ptr.*;
+        if (form) |f| {
+            if (!std.mem.eql(u8, f, origin)) continue;
+        }
+        postClearPermissionSettings(ctx, origin, entry.value_ptr.prompt & filter, false);
+        postClearPermissionSettings(ctx, origin, entry.value_ptr.media & media_filter, true);
+        cleared += 1;
+    }
+    tr("resetPermissions node={d} origins={d} of={d}", .{ view.node_id, cleared, answered_permission_origins.count() });
 }
 
 fn answerJsDialog(callback: [*c]c.cef_jsdialog_callback_t, accepted: bool, text: ?[]const u8) void {

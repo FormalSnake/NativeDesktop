@@ -208,6 +208,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.unregisterScriptMessage",
     "webview.respondScheme",
     "webview.respondPermission",
+    "webview.resetPermissions",
     "webview.respondDownload",
     "webview.getCookies",
     "webview.setCookie",

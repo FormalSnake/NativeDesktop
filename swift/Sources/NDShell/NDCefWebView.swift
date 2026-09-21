@@ -480,6 +480,10 @@ final class NDCefWebView: NSView {
         case "respondScheme": NDCefSchemes.respond(obj)
         case "respondPermission": NDCefPermissions.respond(obj)
         case "respondDownload": NDCefDownloads.respond(obj)
+        case "resetPermissions":
+            let context = ndCefBrowserContext(browser)
+            defer { nd_cef_ref_release(context) }
+            NDCefPermissions.reset(obj, context: context)
         case "getCookies": ndGetCookies(obj)
         case "setCookie": ndSetCookie(obj)
         case "deleteCookie": ndDeleteCookie(obj)
@@ -1182,13 +1186,15 @@ final class NDCefHandlerBox {
         permission.pointee.on_show_permission_prompt = {
             selfPointer, browser, promptID, requestingOrigin, requestedPermissions, callback in
             let origin = ndCefString(requestingOrigin)
+            let mainFrameURL = ndCefMainFrameURL(browser)
             nd_cef_ref_release(browser)
             guard let callback else { return 0 }
             nd_cef_ref_add(callback)
             let token = UInt(bitPattern: callback)
             ndCefDeliver(selfPointer) { view in
                 NDCefPermissions.request(view: view, promptID: promptID, origin: origin,
-                                         mask: requestedPermissions, callback: token, media: false)
+                                         mainFrameURL: mainFrameURL, frameURL: nil, isMainFrame: false,
+                                         mask: requestedPermissions, callback: token, context: 0, media: false)
             }
             nd_cef_ref_release(callback)
             return 1
@@ -1196,22 +1202,44 @@ final class NDCefHandlerBox {
         permission.pointee.on_request_media_access_permission = {
             selfPointer, browser, frame, requestingOrigin, requestedPermissions, callback in
             let origin = ndCefString(requestingOrigin)
+            let mainFrameURL = ndCefMainFrameURL(browser)
+            // The media route has no dismissal callback to clear its answer
+            // from, so it carries the context it has to clear itself.
+            let context = UInt(bitPattern: ndCefBrowserContext(browser))
             nd_cef_ref_release(browser)
+            var frameURL: String?
+            var isMainFrame = false
+            if let frame {
+                isMainFrame = frame.pointee.is_main?(frame) != 0
+                if let raw = frame.pointee.get_url?(frame) {
+                    frameURL = ndCefString(raw)
+                    nd_cef_string_free(raw)
+                }
+            }
             nd_cef_ref_release(frame)
             guard let callback else { return 0 }
             nd_cef_ref_add(callback)
             let token = UInt(bitPattern: callback)
             ndCefDeliver(selfPointer) { view in
                 NDCefPermissions.request(view: view, promptID: 0, origin: origin,
-                                         mask: requestedPermissions, callback: token, media: true)
+                                         mainFrameURL: mainFrameURL, frameURL: frameURL, isMainFrame: isMainFrame,
+                                         mask: requestedPermissions, callback: token, context: context, media: true)
             }
             nd_cef_ref_release(callback)
             return 1
         }
-        permission.pointee.on_dismiss_permission_prompt = { _, browser, promptID, _ in
+        permission.pointee.on_dismiss_permission_prompt = { selfPointer, browser, promptID, result in
+            let context = ndCefBrowserContext(browser)
             nd_cef_ref_release(browser)
+            defer { nd_cef_ref_release(context) }
             guard Thread.isMainThread else { return }
-            MainActor.assumeIsolated { NDCefPermissions.dismiss(promptID: promptID) }
+            let token = UInt(bitPattern: context)
+            ndCefDeliver(selfPointer) { view in
+                NDCefPermissions.dismiss(
+                    view: view, promptID: promptID, result: result,
+                    context: UnsafeMutableRawPointer(bitPattern: token)?
+                        .assumingMemoryBound(to: cef_request_context_t.self))
+            }
         }
     }
 
