@@ -32,6 +32,8 @@ declare global {
   var __nd_notification_data: Map<string, unknown> | undefined;
   // eslint-disable-next-line no-var
   var __nd_app_active: boolean | undefined;
+  // eslint-disable-next-line no-var
+  var __nd_webview_engine: { engine: WebviewEngineName; style: CefStyle } | undefined;
 }
 
 function registry(): Map<string, Set<SystemEventHandler>> {
@@ -55,6 +57,18 @@ export function dispatchSystemEvent(channel: string, data: unknown): void {
   // handshake, so this is correct from the first render.
   if (channel === "app.activate") globalThis.__nd_app_active = true;
   else if (channel === "app.deactivate") globalThis.__nd_app_active = false;
+  // Which engine the host actually started, same replay-after-handshake
+  // contract as the activation state above. A host that asked for chromium
+  // and could not load it announces "system" here rather than only warning
+  // on stderr, which is the difference between an app knowing and an app
+  // probing the user agent.
+  else if (channel === "webview.engine") {
+    const d = data as { engine?: string; style?: string | null } | null;
+    globalThis.__nd_webview_engine = {
+      engine: d?.engine === "chromium" ? "chromium" : "system",
+      style: d?.style === "chrome" || d?.style === "alloy" ? d.style : null,
+    };
+  }
   for (const handler of registry().get(channel) ?? []) handler(data);
   // Deleted AFTER the fan-out, not inside each handler wrapper: every
   // subscriber must see the payload; a later click for the same id has none.
@@ -290,8 +304,34 @@ export interface RegisterSchemeOptions {
   secure?: boolean;
 }
 
+/** Which web engine the host actually started. */
+export type WebviewEngineName = "chromium" | "system";
+/** CEF's browser style, or null when the host is not running CEF at all. */
+export type CefStyle = "chrome" | "alloy" | null;
+
 /** Engine-level `<webview>` configuration. `core:webview` is default-granted. */
 export const webviewEngine = {
+  /**
+   * Which engine this host actually started, synchronously. Asking for
+   * `chromium` is not the same as getting it: a host with no usable CEF
+   * distribution falls back to the system engine, and before this the only
+   * way to tell was to read `navigator.userAgent` out of a live view.
+   *
+   * Backed by the host's `webview.engine` stream, replayed right after the
+   * handshake like `app.isActive()`, so it is correct from the first render.
+   * "system" against a host that predates the stream.
+   */
+  active(): WebviewEngineName {
+    return globalThis.__nd_webview_engine?.engine ?? "system";
+  },
+  /**
+   * CEF's browser style: "chrome" (Chromium's own browser runtime, which is
+   * what runs the extension system) or "alloy". Null whenever `active()` is
+   * not "chromium".
+   */
+  cefStyle(): CefStyle {
+    return globalThis.__nd_webview_engine?.style ?? null;
+  },
   /**
    * Registers a custom URI scheme (`crx`, `app`, …) with the web engine.
    * Requests for it arrive as the `schemeRequest` event on the `<webview>`

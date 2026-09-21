@@ -137,6 +137,13 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     the_vtable = backend.ndBackend();
     abi.nd_register_backend(ctx, &the_vtable);
     abi.nd_set_backend_name(ctx, "gtk");
+    // Which engine this host really started, not which one the app asked for:
+    // recorded before the child connects and replayed after the handshake, so
+    // `webviewEngine.active()` answers from the first render.
+    abi.nd_system_event(ctx, "webview.engine", if (cef.started())
+        (if (cef.chromeStyle()) "{\"engine\":\"chromium\",\"style\":\"chrome\"}" else "{\"engine\":\"chromium\",\"style\":\"alloy\"}")
+    else
+        "{\"engine\":\"system\",\"style\":null}");
 
     // Opt-in capability ACL + native plugin. Absent env = safe default
     // (core UI ops granted). Mirrors swift/Sources/NDShell/main.swift's

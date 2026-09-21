@@ -148,6 +148,22 @@ pub const Runtime = struct {
     /// right after HelloAck so app.isActive() is correct from the first
     /// render — including HMR/crash respawns.
     var last_app_active: ?bool = null;
+    /// Last `webview.engine` payload. Both backends announce which engine they
+    /// actually started before the child connects, so this is replayed after
+    /// HelloAck alongside the activation state. A fixed buffer rather than an
+    /// allocation: there is no runtime to own one at the time it is recorded,
+    /// and the payload is two short names.
+    var last_webview_engine: [96]u8 = undefined;
+    var last_webview_engine_len: usize = 0;
+
+    fn rememberWebviewEngine(data_json: []const u8) void {
+        // The replay below hands the stash straight back in, and @memcpy of a
+        // buffer onto itself is undefined.
+        if (data_json.ptr == @as([*]const u8, &last_webview_engine)) return;
+        if (data_json.len > last_webview_engine.len) return;
+        @memcpy(last_webview_engine[0..data_json.len], data_json);
+        last_webview_engine_len = data_json.len;
+    }
 
     pub fn start(
         gpa: std.mem.Allocator,
@@ -450,6 +466,7 @@ pub const Runtime = struct {
         // before this child connected (or before a respawn), so without the
         // replay the child would never learn it.
         if (last_app_active) |a| sendSystemEvent(if (a) "app.activate" else "app.deactivate", "{}");
+        if (last_webview_engine_len > 0) sendSystemEvent("webview.engine", last_webview_engine[0..last_webview_engine_len]);
 
         // Frame loop.
         while (true) {
@@ -873,6 +890,8 @@ pub const Runtime = struct {
             last_app_active = true;
         } else if (std.mem.eql(u8, channel, "app.deactivate")) {
             last_app_active = false;
+        } else if (std.mem.eql(u8, channel, "webview.engine")) {
+            rememberWebviewEngine(data_json);
         }
         const self = singleton orelse return;
         const validated = std.json.parseFromSlice(std.json.Value, self.gpa, data_json, .{}) catch {

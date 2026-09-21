@@ -84,9 +84,28 @@ guard let ctx = nd_init() else {
     exit(1)
 }
 gCtx = ctx
+
+/// Announces which web engine this host actually started. Called once before
+/// the runtime starts, and again if `cef_initialize` refuses after it.
+func ndAnnounceWebviewEngine(_ ctx: OpaquePointer) {
+    var payload = "{\"engine\":\"system\",\"style\":null}"
+    #if canImport(CCef)
+    if NDCefRuntime.isActive {
+        payload = "{\"engine\":\"chromium\",\"style\":\"\(NDCefRuntime.isChromeStyle ? "chrome" : "alloy")\"}"
+    }
+    #endif
+    nd_system_event(ctx, "webview.engine", payload)
+}
+
 gVTable = buildVTable()
 nd_register_backend(ctx, &gVTable)
 nd_set_backend_name(ctx, "appkit")
+// Which engine this host really started, not which one the app asked for:
+// `prepare()` has already resolved and loaded the distribution (or warned and
+// fallen back), and the answer is recorded before the child connects so the
+// handshake replay makes `webviewEngine.active()` correct from the first
+// render. `initialize()` below announces again if cef_initialize refuses.
+ndAnnounceWebviewEngine(ctx)
 
 // The rest of the packaged-app launch env (nd-app.json), before the plugin
 // block reads ND_PLUGINS and before nd_start_runtime snapshots the environment.
@@ -116,6 +135,7 @@ if ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
 // system engine rather than taking the app down.
 #if canImport(CCef)
 let ndCefRunning = ndCefEngine && NDCefRuntime.initialize()
+if ndCefEngine && !ndCefRunning { ndAnnounceWebviewEngine(ctx) }
 #endif
 // Every quit path goes through NSApplication.terminate(_:) (MenuBar's Quit
 // item / Cmd-Q), which calls exit() inside run() — code after run() never

@@ -17,6 +17,8 @@ pub const EmitFn = @import("types.zig").EmitFn;
 
 pub const earlyExecuteProcess = impl.earlyExecuteProcess;
 pub const pinDisplayBackend = impl.pinDisplayBackend;
+pub const started = impl.started;
+pub const chromeStyle = impl.chromeStyle;
 pub const shutdown = impl.shutdown;
 pub const setOnInitialized = impl.setOnInitialized;
 pub const create = impl.create;

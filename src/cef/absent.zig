@@ -12,6 +12,14 @@ pub fn earlyExecuteProcess(_: []const [*:0]const u8) ?u8 {
 
 pub fn pinDisplayBackend() void {}
 
+pub fn started() bool {
+    return false;
+}
+
+pub fn chromeStyle() bool {
+    return false;
+}
+
 pub fn shutdown() void {}
 
 pub fn setOnInitialized(_: *const fn () callconv(.c) void) void {}

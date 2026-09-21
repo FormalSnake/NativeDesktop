@@ -25,6 +25,7 @@ function BrowserTab({ url, onOpenTab }: { url: string; onOpenTab: (u: string) =>
       url={url}
       onNavigate={({ text }) => setAddressBar(text)}
       onTitleChanged={({ text }) => setTabTitle(text)}
+      onFocusChanged={({ checked }) => setCaretInPage(checked)}   // the PAGE has the keyboard
       onLoadProgress={({ value }) => setProgress(value)}          // 0..1
       onLoadFailed={({ data }) => showErrorPage(data)}            // { url, error }
       onNewWindow={({ text }) => onOpenTab(text)}                 // target=_blank / window.open
@@ -386,6 +387,14 @@ command — `<button>`, `<textinput>`, `<textarea>` and `<searchinput>` take it
 too — and it is the only way to move focus programmatically, since neither
 backend synthesises input for automation on Linux.
 
+Keyboard focus follows the last explicit request: focusing one of the app's own
+widgets takes the keyboard off the page, and it stays off until the user clicks
+in the page, tabs into it, or the app runs the view's `focus` command.
+`onFocusChanged` reports which side has it, `{ checked: true }` when the page
+gained the keyboard and `{ checked: false }` when it lost it, so an app can show
+a caret, dim a toolbar, or route its own shortcuts on the same state the engine
+is acting on.
+
 Adding a new webview *event* needs one-line routing entries in `tools/codegen.ts`
 (`SIGNALS` and `SWIFT_SIGNALS`) plus the schema. New *commands* are schema-only:
 dispatch forwards the raw command string to the hand-written engine files,
@@ -433,6 +442,24 @@ Chrome extension, service worker and all, and `chrome://extensions` lists it.
 The framework keeps the no-top-level invariant on both styles, so Chrome style
 brings no toolbar and no window of its own; what it costs is listed under
 [Chrome style](#chrome-style) below.
+
+Asking for an engine is not the same as getting one: a host with no usable CEF
+distribution warns on stderr and keeps running on the system engine, and before
+the app could ask, the only way to tell was to read `navigator.userAgent` out of
+a live view. `webviewEngine.active()` answers `"chromium" | "system"`
+synchronously, and `webviewEngine.cefStyle()` answers `"chrome" | "alloy" |
+null` (null whenever the engine is not chromium). Both are backed by the host's
+`webview.engine` stream, which the host replays right after the handshake the
+way it replays the activation state behind `app.isActive()`, so they are correct
+from the first render.
+
+```ts
+import { webviewEngine } from "@nativedesktop/react";
+
+if (webviewEngine.active() === "chromium" && webviewEngine.cefStyle() === "chrome") {
+  // chrome://extensions and the extension runtime exist here
+}
+```
 
 `nd doctor` reports the resolved engine and, for a chromium one, the style;
 fails when a chromium config has no CEF dist to resolve; and audits the last
