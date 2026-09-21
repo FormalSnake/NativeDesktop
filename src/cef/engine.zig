@@ -22,6 +22,7 @@ const gdk = @import("gdk");
 const glib = @import("glib");
 const gio = @import("gio");
 const gobject = @import("gobject");
+const adw = @import("adw");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
 const capi = @import("capi.zig");
@@ -470,6 +471,56 @@ fn anyLiveView() ?*View {
         if (view.container != 0) return view;
     }
     return null;
+}
+
+/// True while the window is showing a dialog of its own: an AdwDialog
+/// presented into it, which is drawn by the toplevel's surface. The X server
+/// stacks a child window above everything its parent draws, so over a page the
+/// dialog and its scrim are painted, reported as presented, and never seen.
+/// Read from GTK rather than counted as dialogs come and go: a count that
+/// leaks leaves a window with no page in it.
+fn windowHasVisibleDialog(root: *gtk.Root) bool {
+    const widget: *gtk.Widget = @ptrCast(@alignCast(root));
+    if (gobject.ext.cast(adw.ApplicationWindow, widget)) |window| {
+        return adw.ApplicationWindow.getVisibleDialog(window) != null;
+    }
+    if (gobject.ext.cast(adw.Window, widget)) |window| {
+        return adw.Window.getVisibleDialog(window) != null;
+    }
+    return false;
+}
+
+fn dialogOverView(view: *View) bool {
+    const root = gtk.Widget.getRoot(view.widget) orelse return false;
+    return windowHasVisibleDialog(root);
+}
+
+/// Where a page waits out a dialog: the place a hidden tab's window waits,
+/// which keeps it mapped and running. Parked rather than merely moved: an X
+/// window that comes back from behind its parent's edge has no contents to
+/// show and Chromium presents a new frame only when its window changes size,
+/// so a page that was moved back and not resized returned as a blank rectangle.
+fn standAside(view: *View) void {
+    if (view.container == 0) return;
+    view.aside = true;
+    parkContainer(view);
+}
+
+/// Re-reads the dialog state of `widget`'s window and moves the pages there out
+/// of the way or back. Called by the GTK side as a dialog is presented and
+/// again when it closes; `onEngineTick` is the backstop for a dialog that went
+/// away without one.
+pub fn refreshDialogOcclusion(widget: *gtk.Widget) void {
+    const root = gtk.Widget.getRoot(widget) orelse return;
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (view.container == 0) continue;
+        if (gtk.Widget.getMapped(view.widget) == 0) continue;
+        const view_root = gtk.Widget.getRoot(view.widget) orelse continue;
+        if (view_root != root) continue;
+        syncBounds(view);
+    }
 }
 
 fn mainFrameUrl(browser: [*c]c.cef_browser_t) ?[]u8 {
@@ -1036,6 +1087,9 @@ const View = struct {
 
     // GTK thread only from here down.
     container: x11.Window = 0,
+    /// The page is off to the side of the window because a dialog is up over
+    /// it. Only so the engine tick can spot one that never came back.
+    aside: bool = false,
     /// The toplevel the container is a child of. A view moved into another
     /// window by `moveNode` has to take its X child with it.
     container_parent: x11.Window = 0,
@@ -1629,6 +1683,10 @@ fn syncBounds(view: *View) void {
     // A parked view has no meaningful allocation to track, and moving its
     // window to one would put it back on screen.
     if (gtk.Widget.getMapped(view.widget) == 0) return;
+    // Same for a page standing aside: a dialog is up over this window, and
+    // tracking the allocation would put the page straight back on top of it.
+    if (dialogOverView(view)) return standAside(view);
+    view.aside = false;
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const native_widget: *gtk.Widget = @ptrCast(@alignCast(native));
     var rect: graphene.Rect = undefined;
@@ -2070,6 +2128,9 @@ fn onEngineTick(_: ?*anyopaque) callconv(.c) c_int {
         const view: *View = @ptrFromInt(key.*);
         if (gtk.Widget.getMapped(view.widget) == 0) continue;
         syncBrowserFocus(view);
+        // A page that stood aside for a dialog nobody told the engine about
+        // closing would otherwise stay there.
+        if (view.aside and !dialogOverView(view)) syncBounds(view);
     }
     return 1;
 }

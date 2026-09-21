@@ -157,6 +157,20 @@ function capture(path: string): void {
   else sh("grim", path);
 }
 
+/// Mean per-channel difference between the same rectangle of two captures, 0
+/// for identical pixels and 1 for black against white. This is how a leg asks
+/// whether something the app drew is actually on screen: a surface the X server
+/// stacks under the engine's own window is painted, reported by GTK as
+/// presented, and changes no pixel.
+function regionDiff(a: string, b: string, box: { x: number; y: number; w: number; h: number }): number {
+  const crop = `${box.w}x${box.h}+${box.x}+${box.y}`;
+  const out = sh(
+    "magick", a, "-crop", crop, "+repage", "(", b, "-crop", crop, "+repage", ")",
+    "-compose", "difference", "-composite", "-format", "%[fx:mean]", "info:",
+  );
+  return Number(out);
+}
+
 function resizeToplevel(id: string, w: number, h: number): void {
   if (rig === "x11") {
     sh("xdotool", "windowsize", id, String(w), String(h));
@@ -630,6 +644,85 @@ async function menuLegs(): Promise<void> {
   }
 }
 
+/// The framework's in-window dialog surfaces, over a page the engine renders
+/// into an X11 child window. The X server stacks that child above everything
+/// the toplevel's own surface draws, so a dialog GTK reports as presented can
+/// be invisible with the window modal-blocked behind it: these legs read
+/// pixels, not widget state. A rig can run this set alone
+/// (ND_ACCEPT_LEGS=palette).
+async function paletteLegs(): Promise<void> {
+  await resyncPage();
+  const palette = app.getByTestId("palette");
+  // The app's own accelerator, the only way in: a presented dialog is not in
+  // the widget tree the automation socket walks.
+  const openPalette = async (): Promise<boolean> => {
+    for (let i = 0; i < 3; i++) {
+      key("ctrl+l");
+      await Bun.sleep(1200);
+      if ((await palette.isVisible().catch(() => false)) === true) return true;
+    }
+    return false;
+  };
+  if ((await palette.isVisible().catch(() => null)) === null) {
+    skip("paletteOverPage", "the app under test has no command palette");
+    skip("paletteTakesKeys", "the app under test has no command palette");
+    skip("paletteEscapeCloses", "the app under test has no command palette");
+    return;
+  }
+  const win = geom(top);
+  if (!win) {
+    skip("paletteOverPage", "no toplevel geometry");
+    return;
+  }
+  // The window's middle, where a floating dialog is centred and where this app
+  // puts the page.
+  const box = { x: win.x + Math.round(win.w / 2) - 200, y: win.y + Math.round(win.h / 2) - 90, w: 400, h: 180 };
+  const before = `${shots}/palette-closed.png`;
+  const open = `${shots}/palette-open.png`;
+  capture(before);
+
+  const presented = await openPalette();
+  capture(open);
+  const openDiff = regionDiff(before, open, box);
+  check(
+    "paletteOverPage",
+    presented && openDiff > 0.02,
+    `presented=${presented}, ${(openDiff * 100).toFixed(2)}% pixel change over the page at ${box.x},${box.y}`,
+  );
+
+  typeText(`${fixture}?palette`);
+  await Bun.sleep(600);
+  // Ctrl+Return submits the raw query whatever row is highlighted.
+  key("ctrl+Return");
+  await Bun.sleep(3000);
+  await resyncPage();
+  let search = "";
+  for (let i = 0; i < 20; i++) {
+    search = await fixtureEval<string>("JSON.stringify(location.search)").catch(() => "");
+    if (search === "?palette") break;
+    await Bun.sleep(500);
+  }
+  check("paletteTakesKeys", search === "?palette", `page location.search=${JSON.stringify(search)} after typing an address into the palette`);
+
+  // A fresh baseline: the page the palette will cover is the one the leg above
+  // navigated to.
+  const reopened = `${shots}/palette-reopen.png`;
+  const closed = `${shots}/palette-escaped.png`;
+  capture(reopened);
+  await openPalette();
+  key("Escape");
+  await Bun.sleep(1200);
+  capture(closed);
+  const stillPresented = await palette.isVisible().catch(() => false);
+  const closedDiff = regionDiff(reopened, closed, box);
+  check(
+    "paletteEscapeCloses",
+    !stillPresented && closedDiff < 0.02,
+    `presented=${stillPresented}, ${(closedDiff * 100).toFixed(2)}% pixel change against the closed capture`,
+  );
+  noStray("palette");
+}
+
 // ============================================================================
 // Legs
 // ============================================================================
@@ -659,6 +752,7 @@ const hasApp = (await app.getByTestId("omnibox").isVisible().catch(() => false))
 
 if (legs === "menu") {
   await menuLegs();
+  await paletteLegs();
   finish();
 }
 
@@ -1128,6 +1222,9 @@ if (hasApp) {
 } else {
   skip("tabTraversalLeavesThePage", "the app under test has one widget tree");
 }
+
+// Last: this set navigates the page and leaves it there.
+await paletteLegs();
 
 capture(`${shots}/final.png`);
 

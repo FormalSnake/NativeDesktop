@@ -55,3 +55,5 @@ pub fn registerScheme(_: []const u8, _: bool, _: bool) bool {
 }
 
 pub fn setContextMenuMode(_: *gtk.Widget, _: []const u8) void {}
+
+pub fn refreshDialogOcclusion(_: *gtk.Widget) void {}

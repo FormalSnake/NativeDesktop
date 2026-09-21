@@ -20,6 +20,7 @@ const adw = @import("adw");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
 const ndicons = @import("icons.zig");
+const dialogsurface = @import("dialogsurface.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -220,7 +221,7 @@ fn present(state: *State) void {
         }
         break :blk state.handle;
     };
-    adw.Dialog.present(state.dialog, parent);
+    dialogsurface.present(state.dialog, parent);
     state.presented = true;
     state.pending_open = false;
     _ = gtk.Widget.grabFocus(state.entry.as(gtk.Widget));

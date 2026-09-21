@@ -16,6 +16,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const protocol = @import("../protocol.zig");
 const ndtabs_gtk = @import("tabs.zig");
+const dialogsurface = @import("dialogsurface.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents Window arm.
@@ -139,7 +140,7 @@ fn cmdShowAlert(widget: *gtk.Widget, arg: ?std.json.Value) void {
     }
 
     _ = gobject.signalConnectData(@ptrCast(@alignCast(dialog)), "response", @ptrCast(&cbAlertResponse), @ptrFromInt(@as(usize, node_id)), null, .{});
-    adw.Dialog.present(dialog.as(adw.Dialog), widget);
+    dialogsurface.present(dialog.as(adw.Dialog), widget);
 }
 
 fn cbAlertResponse(_: *gobject.Object, response: [*:0]const u8, data: ?*anyopaque) callconv(.c) void {
@@ -364,5 +365,5 @@ fn cmdShowAbout(widget: *gtk.Widget, arg: ?std.json.Value) void {
     if (objStr(obj, "website")) |w| {
         adw.AboutDialog.setWebsite(dialog, arena.dupeZ(u8, w) catch return);
     }
-    adw.Dialog.present(dialog.as(adw.Dialog), widget);
+    dialogsurface.present(dialog.as(adw.Dialog), widget);
 }

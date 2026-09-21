@@ -27,6 +27,7 @@ const automation_dialogs = @import("../automation_dialogs.zig");
 // create, so each entry point below is a single fall-through, and a build with
 // no CEF distribution to translate headers against compiles it out entirely.
 const cef = @import("../cef/backend.zig");
+const dialogsurface = @import("dialogsurface.zig");
 
 /// Peer of the generated widgets.zig EmitFn (same shape, same protocol module
 /// instance) — handed over once by the generated connectEvents WebView arm.
@@ -2744,7 +2745,7 @@ fn cbScriptDialog(obj: *gobject.Object, dialog: ?*anyopaque, _: ?*anyopaque) cal
     const ctx = alloc.create(ScriptDialogCtx) catch return dismissNow(d, kind);
     ctx.* = .{ .dialog = ref(d) orelse d, .kind = kind, .entry = entry };
     _ = gobject.signalConnectData(@ptrCast(@alignCast(alert)), "response", @ptrCast(&cbScriptDialogResponse), ctx, null, .{});
-    adw.Dialog.present(alert.as(adw.Dialog), widget);
+    dialogsurface.present(alert.as(adw.Dialog), widget);
     return 1;
 }
 

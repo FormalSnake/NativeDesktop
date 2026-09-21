@@ -496,6 +496,18 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   testing, because Views keeps the screen bounds it had when it created the
   window. What is left for the app is the `chromeDialog` event, which reports
   where the dialog is either way.
+- An AdwDialog the app presents in-window (`<commandpalette>`, `showAlert`,
+  `showAbout`, the script dialog a WebKit view puts up) is drawn by the
+  toplevel's own surface, and the X server stacks the child window a page is
+  rendered into above everything its parent draws. Over a webview the dialog
+  and its scrim were painted, reported by GTK as presented, and never seen: the
+  window sat modal-blocked with nothing on it until Escape. Every one of them
+  now goes through `src/gtk/dialogsurface.zig`, which tells the engine, and the
+  pages in that window stand aside (the place a hidden tab's window waits)
+  until the dialog closes. The page area is the window's background while one
+  is up, under the dialog's own scrim. Whether a dialog is up is read back from
+  `adw_window_get_visible_dialog` rather than counted, and the engine tick puts
+  a page back that was left aside.
 - Chrome's dialogs that belong to no browser (the install prompt, the
   post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
   CEF callback is consulted about them, and they arrive as top-level windows on
