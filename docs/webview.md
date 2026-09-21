@@ -238,14 +238,33 @@ not by which views happen to exist.
 `scriptMessage` carries `{ data: { name, world, body } }`. `body` is the posted
 value already decoded, so an object arrives as an object.
 
-`permissionRequest` carries `{ data: { id, origin, types } }` when a page asks
-for geolocation, notifications, a camera or microphone, or any of the other
-permissions Chromium prompts for. `types` is a comma-separated list, because one
-request can carry several (`getUserMedia({audio, video})` asks for both). Answer
-it with `respondPermission` (`{ id, allow }`); an unanswered id leaves the page
+`permissionRequest` carries
+`{ data: { id, origin, types, mainFrameUrl, frameUrl?, isMainFrame? } }` when a
+page asks for geolocation, notifications, a camera or microphone, or any of the
+other permissions Chromium prompts for. `types` is a comma-separated list,
+because one request can carry several (`getUserMedia({audio, video})` asks for
+both). Answer it with `respondPermission`; an unanswered id leaves the page
 waiting, as `schemeRequest` does. Chromium engine only: it exists because Chrome
 style would otherwise draw its own prompt, a Views bubble anchored to the
 toolbar this embedding does not have.
+
+`origin` is in `URL.origin` form (scheme, host, and a port only when it is not
+the scheme's default, with no trailing slash), so it compares equal to the
+page's own `location.origin`. CEF hands out a serialized GURL, which always ends
+in a slash; both backends strip it.
+
+`mainFrameUrl` is the browser's main-frame URL, on every request.
+`frameUrl` and `isMainFrame` name the frame that asked, and are present only on
+the getUserMedia route, which is the only one CEF hands a frame to
+(`on_request_media_access_permission`). `on_show_permission_prompt` names
+nothing below the browser, so a request from an iframe is told apart there by
+`origin` against `mainFrameUrl`, not by a frame the engine would have to invent.
+
+`permissionRequestDismissed` carries `{ data: { id } }` when Chromium retires a
+prompt itself, which it does on a navigation, a tab close, or a browser
+shutdown. The id is dead from that moment: answering it afterwards is a silent
+no-op, not a warning, so an app racing a dismissal against the user's click does
+not have to guard the answer.
 
 `schemeRequest` carries `{ data: { id, url, scheme } }` on the view that made
 the request. Answer it with `respondScheme` (`{ id, base64, mime, status?,
@@ -306,6 +325,35 @@ a script by identity through `WebKitUserContentManager`; WKUserContentController
 can only clear everything, so the AppKit side replays the surviving set on each
 mutation. `allowList`/`blockList` are native on GTK and compiled into a guard
 around the source on macOS, which WebKit gives no other way to express.
+
+`respondPermission` takes `{ id, result }`, where `result` is `"allow"`,
+`"deny"` or `"dismiss"`. `{ id, allow: true|false }` is kept as sugar for the
+first two. The third is the one a popover needs: Escape, a click away, a
+navigation and a closed tab are all a waved-away bubble, not a decision, and
+sending them as `deny` would have Chromium record a block. `dismiss` maps to
+`CEF_PERMISSION_RESULT_DISMISS`. The getUserMedia route has no dismiss of its
+own in CEF, so there `deny` and `dismiss` both cancel the request; what differs
+is that a dismissal writes nothing.
+
+**The app owns persistence, and Chromium is stopped from also owning it.**
+Chromium treats both `allow` and `deny` as an explicit user action and writes
+the answer into the profile's content settings, after which that origin never
+asks again and the app's own store stops being consulted. CEF 151 exposes no
+one-time grant (`cef_permission_request_result_t` is accept/deny/dismiss/ignore
+and nothing else), so the engine puts the answer back to the profile default
+through `cef_request_context_t::set_content_setting` as soon as CEF reports it
+is done with the prompt (`on_dismiss_permission_prompt` for the prompt route,
+straight after the answer for the media route). The app is therefore asked every
+time and decides from its own store. A permission type CEF 151 names no content
+setting for is left alone rather than guessed at.
+
+`resetPermissions` takes `{ origin?, types? }` and puts Chromium's stored
+decisions back to the profile default, which is what a browser's own "Reset
+Permissions" needs to make a blocked site ask again. `types` takes the same
+names `permissionRequest` reports (`"geolocation"`, `"camera"`, …) and defaults
+to all of them. `origin` defaults to every origin the engine has answered a
+permission for since the process started: CEF 151 can clear one origin's
+setting, but has no clear-all for a content type.
 
 `getCookies`/`setCookie`/`deleteCookie` act on the view's own profile.
 Deletion matches by name plus whichever of domain/path is given, and both
@@ -456,7 +504,9 @@ it, Chrome's window and toolbar do not.
   built. Without it Chromium draws a Views bubble anchored to a toolbar that
   does not exist: on GTK that lands inside the browser's X window at the top
   left of the page, on AppKit it becomes a window of its own that follows the
-  invisible anchor.
+  invisible anchor. The answer is cleared out of Chromium's content settings
+  again, and a prompt Chromium retires arrives as `permissionRequestDismissed`;
+  both are in the command notes above.
 - What is left Chromium-drawn, measured by the gate's `dialogs` pass: the
   WebAuthn sheet (`navigator.credentials.get`/`create`), HTTP basic auth, the
   "save password" bubble and the autofill surfaces. On GTK all of them are
