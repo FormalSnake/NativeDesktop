@@ -387,8 +387,8 @@ it, Chrome's window and toolbar do not.
   tab, incognito window, view-source, print, history, downloads and the
   extensions page are refused through `cef_command_handler_t::on_chrome_command`.
 - DevTools is docked inside the view: `openDevTools`, `closeDevTools`, F12 and
-  ctrl+shift+I open Chrome's inspector as a second browser in the right-hand
-  half of the same embedding window, and toggle it off again. The shortcut
+  ctrl+shift+I open Chrome's inspector as a second browser in the same embedding
+  window, and toggle it off again. The shortcut
   arrives as `IDC_DEV_TOOLS_TOGGLE`, which Chrome would answer with a
   DevToolsWindow of its own, so `cef_command_handler_t::on_chrome_command`
   takes it and closes the docked browser instead. The inspector's own close
@@ -397,9 +397,25 @@ it, Chrome's window and toolbar do not.
   and takes no argument for it, so the frontend is re-pointed at its own address
   with the flag added once the document is up. The button then reaches CEF as
   `closeWindow`, which closes the devtools browser, and the dock comes down the
-  same way the toggle takes it down. The dock's width is floored at the width
-  that toolbar needs: narrower and it overflows to the right, taking the close
-  button off screen with it. Alloy still uses CEF's separate
+  same way the toggle takes it down.
+
+  A frontend that can dock does not sit beside the page: it fills the whole view
+  and keeps a hole in its own layout for the page, which the embedder is
+  expected to draw there, and it announces that rectangle with
+  `setInspectedPageBounds`. So the inspector's window covers the view (an X
+  child over the whole container on GTK, a BrowserView under the window's fill
+  layout on AppKit) and the page's window is put in the hole and stacked above
+  it: raised among its siblings on GTK, inset inside a panel of its own on
+  AppKit, where a view inside a layout-managed parent has no bounds to set.
+  CEF drops the message and the inspector's browser carries CEF's own client, so
+  the rectangle is read off the frontend instead: a protocol session on that
+  browser patches `DevToolsHost.sendMessageToEmbedder` and forwards every
+  announcement into a `Runtime` binding (`installDockHook` in `src/cef/engine.zig`,
+  `NDCefDockFrontend.swift`). Following it is also what puts device mode's phone
+  in the page area rather than inside the inspector's own column. Until the
+  first announcement the page takes Chrome's right-dock default, 45% of the
+  view floored at the width the frontend's toolbar needs.
+  Alloy still uses CEF's separate
   devtools window (parenting that into GTK crashes, CEF #3165). Quitting closes
   the devtools browser and waits for its `on_before_close` before closing the
   browser it inspects; left to CEF's own order the inspected browser goes first,
