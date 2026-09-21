@@ -416,6 +416,19 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   `on_after_created`; the dialog then dereferenced freed memory. The first
   browser Chrome makes for itself is now kept, unmapped, as the tabbed browser
   every later lookup finds, and everything after it is closed as before.
+- A compositor that owns XWayland placement can put a Chrome dialog back. The
+  watcher marks each one transient for the host window and gives it
+  `_NET_WM_WINDOW_TYPE_DIALOG`, which is what a compositor reads to float and
+  centre a dialog on its parent, and then moves it over the view once.
+  Hyprland with the owner's config wins anyway: a rule there matches any window
+  with an empty class and an empty title (which is what one of these is until
+  well after it is mapped) and moves it to the top right of the monitor, and it
+  re-applies that within the frame, so the move is undone as fast as it is sent.
+  Re-sending it on every tick only trades positions, and reparenting the dialog
+  into the host's own window holds the position but breaks Chromium's hit
+  testing, because Views keeps the screen bounds it had when it created the
+  window. What is left for the app is the `chromeDialog` event, which reports
+  where the dialog is either way.
 - Chrome's dialogs that belong to no browser (the install prompt, the
   post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
   CEF callback is consulted about them, and they arrive as top-level windows on

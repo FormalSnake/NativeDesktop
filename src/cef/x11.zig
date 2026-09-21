@@ -70,6 +70,8 @@ const FnFree = *const fn (?*anyopaque) callconv(.c) c_int;
 const FnGeometry = *const fn (*Display, Window, *Window, *c_int, *c_int, *c_uint, *c_uint, *c_uint, *c_uint) callconv(.c) c_int;
 const FnInternAtom = *const fn (*Display, [*:0]const u8, c_int) callconv(.c) c_ulong;
 const FnGetProperty = *const fn (*Display, Window, c_ulong, c_long, c_long, c_int, c_ulong, *c_ulong, *c_int, *c_ulong, *c_ulong, *[*]u8) callconv(.c) c_int;
+const FnChangeProperty = *const fn (*Display, Window, c_ulong, c_ulong, c_int, c_int, [*]const u8, c_int) callconv(.c) c_int;
+const FnSetTransientFor = *const fn (*Display, Window, Window) callconv(.c) c_int;
 
 const Api = struct {
     init_threads: FnInitThreads,
@@ -95,6 +97,8 @@ const Api = struct {
     get_geometry: FnGeometry,
     intern_atom: FnInternAtom,
     get_window_property: FnGetProperty,
+    change_property: FnChangeProperty,
+    set_transient_for_hint: FnSetTransientFor,
     query_pointer: FnQueryPointer,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
@@ -150,6 +154,8 @@ fn loadApi() ?*const Api {
         .get_geometry = x.lookup(FnGeometry, "XGetGeometry") orelse return missing(&x, &g, "XGetGeometry"),
         .intern_atom = x.lookup(FnInternAtom, "XInternAtom") orelse return missing(&x, &g, "XInternAtom"),
         .get_window_property = x.lookup(FnGetProperty, "XGetWindowProperty") orelse return missing(&x, &g, "XGetWindowProperty"),
+        .change_property = x.lookup(FnChangeProperty, "XChangeProperty") orelse return missing(&x, &g, "XChangeProperty"),
+        .set_transient_for_hint = x.lookup(FnSetTransientFor, "XSetTransientForHint") orelse return missing(&x, &g, "XSetTransientForHint"),
         .query_pointer = x.lookup(FnQueryPointer, "XQueryPointer") orelse return missing(&x, &g, "XQueryPointer"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
@@ -405,7 +411,12 @@ pub fn hide(window: Window) void {
 /// window Chrome put up on its own findable: it belongs to no CEF browser and
 /// has no callback, but it is a child of the root and this process did not
 /// create it.
-pub fn rootChildren(out: []Window) []Window {
+/// The root's children, newest last. `truncated` reports a root with more
+/// children than the caller's buffer: a real desktop can have hundreds of X
+/// clients, and a watcher that silently reads the first few would stop seeing
+/// windows exactly on the busy session where it matters.
+pub fn rootChildren(out: []Window, truncated: *bool) []Window {
+    truncated.* = false;
     const c = conn() orelse return out[0..0];
     const root = c.api.default_root_window(c.x);
     var parent: Window = 0;
@@ -417,6 +428,7 @@ pub fn rootChildren(out: []Window) []Window {
     c.pop();
     if (ok == 0) return out[0..0];
     defer _ = c.api.free(@ptrCast(kids));
+    truncated.* = @as(usize, count) > out.len;
     const n = @min(out.len, @as(usize, count));
     for (0..n) |i| out[i] = kids[i];
     return out[0..n];
@@ -501,6 +513,30 @@ pub fn windowPid(window: Window) u32 {
     return @truncate(value);
 }
 
+/// Tells the window manager that `window` is a dialog belonging to `parent`.
+/// A compositor that manages XWayland top-levels itself places them by its own
+/// rules and discards a client's ConfigureRequest; the two hints below are what
+/// it reads instead, and a transient dialog is floated and centred on its
+/// parent rather than tiled wherever a new top-level would go.
+pub fn markDialogFor(window: Window, parent: Window) void {
+    if (window == 0 or parent == 0) return;
+    const c = conn() orelse return;
+    const type_atom = c.api.intern_atom(c.x, "_NET_WM_WINDOW_TYPE", 0);
+    const dialog_atom = c.api.intern_atom(c.x, "_NET_WM_WINDOW_TYPE_DIALOG", 0);
+    const XA_ATOM: c_ulong = 4;
+    const PROP_MODE_REPLACE: c_int = 0;
+    c.push();
+    _ = c.api.set_transient_for_hint(c.x, window, parent);
+    if (type_atom != 0 and dialog_atom != 0) {
+        var value: c_ulong = dialog_atom;
+        _ = c.api.change_property(c.x, window, type_atom, XA_ATOM, 32, PROP_MODE_REPLACE, @ptrCast(&value), 1);
+    }
+    _ = c.api.flush(c.x);
+    c.pop();
+}
+
+/// The window a window is a child of, or 0. A reparented dialog is told apart
+/// from one still sitting on the root by this and nothing else.
 pub const Origin = struct { x: c_int, y: c_int };
 
 /// A window's origin in root coordinates.

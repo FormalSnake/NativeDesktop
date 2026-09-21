@@ -375,9 +375,14 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
 // wherever Views decided to put it.
 
 const chrome_watch_interval_ms: c_uint = 200;
-const chrome_dialog_min_w: c_uint = 200;
-const chrome_dialog_min_h: c_uint = 80;
+/// Chromium's parked scaffolding (the clipboard owner, the drag proxy, the
+/// omnibox popup host) is 1x1, 10x10 or 44x55; a real dialog or bubble is
+/// bigger than all of them. The floor used to be 200x80, which dropped every
+/// bubble narrower than a browser window.
+const chrome_dialog_min_w: c_uint = 60;
+const chrome_dialog_min_h: c_uint = 30;
 var chrome_watch_timer: c_uint = 0;
+var chrome_watch_truncation_warned = false;
 var adopted_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 var self_pid: u32 = 0;
 
@@ -389,8 +394,15 @@ fn startChromeWindowWatch() void {
 
 fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     if (kept_window != 0) x11.hide(kept_window);
-    var buf: [128]x11.Window = undefined;
-    const children = x11.rootChildren(&buf);
+    // Sized for a real session rather than for a gate's bare X server: the root
+    // on the owner's desktop carries every X client on it.
+    var buf: [1024]x11.Window = undefined;
+    var truncated = false;
+    const children = x11.rootChildren(&buf, &truncated);
+    if (truncated and !chrome_watch_truncation_warned) {
+        chrome_watch_truncation_warned = true;
+        std.debug.print("ND_WARN WebView engine=chromium: more than {d} windows on the root; a Chrome dialog can be missed\n", .{buf.len});
+    }
     // The X server reuses window ids, so a dialog that is gone has to be
     // forgotten or the next window to land on its id is never adopted.
     var gone: std.ArrayList(usize) = .empty;
@@ -409,6 +421,12 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // on the root; moving one of those would be a good deal worse than
         // leaving a Chrome dialog where Views put it.
         if (x11.isGdkSurface(w)) continue;
+        // A compositor that manages XWayland top-levels itself (Hyprland does)
+        // places them by its own rules and discards the ConfigureRequest the
+        // move below sends, so the hints go on before anything else: a dialog
+        // marked transient for the host window is floated and centred on it
+        // rather than tiled into whatever corner a new top-level gets.
+        if (anchorView()) |anchor| x11.markDialogFor(w, x11.toplevelXid(anchor.view.widget));
         // Chromium keeps a handful of small parked top-levels of its own (the
         // omnibox popup host, the drag proxy) that are never presented; moving
         // one onto the view would drag scaffolding into the page.
@@ -440,26 +458,40 @@ fn anchorView() ?struct { view: *View, origin: x11.Origin } {
     return null;
 }
 
+/// Centred on the view that owns the dialog, in root coordinates. The dialog
+/// stays a top-level where Chromium thinks it is: reparenting it into the
+/// host's window puts it on screen in the right place but leaves Chromium
+/// hit-testing clicks against the coordinates it had before, and its buttons
+/// stop working (measured: the gate's uninstall confirmation stops answering).
+/// The move is sent once. A compositor that owns XWayland placement puts the
+/// window back within the frame, and re-sending the move on every tick only
+/// trades positions with it; see docs/webview.md.
+fn chromeDialogSpot(origin: x11.Origin, vw: c_int, vh: c_int, geo: x11.Geometry) struct { x: c_int, y: c_int } {
+    const gw: c_int = @intCast(geo.w);
+    const gh: c_int = @intCast(geo.h);
+    var x = origin.x;
+    var y = origin.y;
+    if (vw > gw) x += @divTrunc(vw - gw, 2);
+    if (vh > gh) y += @divTrunc(vh - gh, 2);
+    return .{ .x = x, .y = y };
+}
+
 fn adoptChromeWindow(window: usize) void {
     adopted_windows.put(alloc, window, {}) catch return;
     const anchor = anchorView() orelse return;
     const view = anchor.view;
     const geo = x11.geometry(window) orelse return;
-    const origin = anchor.origin;
-    const vw = view.size_w.load(.acquire);
-    const vh = view.size_h.load(.acquire);
-    var x = origin.x;
-    var y = origin.y;
-    if (vw > geo.w) x += @intCast((vw - geo.w) / 2);
-    if (vh > geo.h) y += @intCast((vh - geo.h) / 2);
-    x11.moveResize(window, x, y, geo.w, geo.h);
-    tr("chromeDialog node={d} window={x} {d}x{d} at {d},{d}", .{ view.node_id, window, geo.w, geo.h, x, y });
+    const vw: c_int = @intCast(view.size_w.load(.acquire));
+    const vh: c_int = @intCast(view.size_h.load(.acquire));
+    const spot = chromeDialogSpot(anchor.origin, vw, vh, geo);
+    x11.moveResize(window, spot.x, spot.y, geo.w, geo.h);
+    tr("chromeDialog node={d} window={x} {d}x{d} at {d},{d}", .{ view.node_id, window, geo.w, geo.h, spot.x, spot.y });
 
     const f = emit orelse return;
     var payload: std.json.ObjectMap = .empty;
     defer payload.deinit(alloc);
-    payload.put(alloc, "x", .{ .integer = x }) catch return;
-    payload.put(alloc, "y", .{ .integer = y }) catch return;
+    payload.put(alloc, "x", .{ .integer = spot.x }) catch return;
+    payload.put(alloc, "y", .{ .integer = spot.y }) catch return;
     payload.put(alloc, "width", .{ .integer = geo.w }) catch return;
     payload.put(alloc, "height", .{ .integer = geo.h }) catch return;
     f(view.node_id, "chromeDialog", .{ .data = .{ .object = payload } });
