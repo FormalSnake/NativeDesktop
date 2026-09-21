@@ -3,6 +3,7 @@ import {
   installExtension,
   listExtensionActions,
   listExtensions,
+  readExtensionAction,
   onExtensionActions,
   onExtensionsChanged,
   onExtensionsList,
@@ -115,7 +116,7 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -196,8 +197,10 @@ function App(): React.ReactNode {
   const hidden3 = useRef<NdNodeRef<"webview">>(null);
   const second = useRef<NdNodeRef<"webview">>(null);
   const extensions = useRef<NdNodeRef<"webview">>(null);
+  const actionPage = useRef<NdNodeRef<"webview">>(null);
   const [secondOpen, setSecondOpen] = useState(false);
   const [lateReady, setLateReady] = useState(false);
+  const [actionPopupUrl, setActionPopupUrl] = useState("");
   const [url, setUrl] = useState(`${BASE}/one`);
   const [phase, setPhase] = useState("starting");
   const [results, setResults] = useState<Record<string, string>>({});
@@ -224,6 +227,8 @@ function App(): React.ReactNode {
       hidden3,
       second,
       extensions,
+      actionPage,
+      setActionPopupUrl,
       setUrl,
       setResult,
       setPhase,
@@ -317,6 +322,20 @@ function App(): React.ReactNode {
                 else, so listExtensions is sent to a view showing it. Created
                 with that address rather than navigated to it: Chromium refuses
                 a renderer-initiated navigation to a chrome:// page. */}
+            {/* A page of the action fixture, which is the only context
+                Chromium tells an action's runtime state to. Created with the
+                address rather than navigated to it: Chromium refuses a
+                renderer-initiated navigation to an extension page. */}
+            {actionPopupUrl ? (
+              <webview
+                testID="wv-action"
+                ref={actionPage}
+                engine="chromium"
+                url={actionPopupUrl}
+                onExtensionActions={onExtensionActions}
+                onJavaScriptResult={onJavaScriptResult}
+              />
+            ) : null}
             <webview
               testID="wv-extensions"
               ref={extensions}
@@ -363,6 +382,8 @@ async function run(ctx: {
   hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
   second: React.RefObject<NdNodeRef<"webview"> | null>;
   extensions: React.RefObject<NdNodeRef<"webview"> | null>;
+  actionPage: React.RefObject<NdNodeRef<"webview"> | null>;
+  setActionPopupUrl: (u: string) => void;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (p: string) => void;
@@ -600,6 +621,64 @@ async function run(ctx: {
     const sources = await watchExtensions(view, (change) => record("extensionsChanged", change.reason));
     if (sources.length === 0) throw new Error("watchExtensions attached to nothing");
     return `ok (${sources.join(", ")})`;
+  });
+
+  // What an action really is right now, which the manifest cannot say. The
+  // fixture declares a popup and its worker turns it off, the way 1Password
+  // does while no account is configured; an app that reads the manifest off
+  // disk opens a popup the extension has switched off and shows a document it
+  // never meant to be on screen.
+  await step("runtimeActionState", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    const registry = ctx.extensions.current;
+    if (!registry) throw new Error("no extensions view ref");
+
+    const actions = await pollValue(
+      () => listExtensionActions(registry),
+      (list) => list.some((a) => a.name === "ND Action Extension"),
+      "the action fixture is registered",
+    );
+    const manifest = actions.find((a) => a.name === "ND Action Extension")!;
+    if (!manifest.popupUrl.endsWith("/popup.html")) throw new Error(`manifest popup ${manifest.popupUrl}`);
+    if (manifest.title !== "ND Action Manifest") throw new Error(`manifest title ${manifest.title}`);
+
+    ctx.setActionPopupUrl(manifest.popupUrl);
+    const page = await pollValue(
+      async () => ctx.actionPage.current,
+      (ref) => ref !== null,
+      "the action fixture's page is mounted",
+    );
+
+    // Off, though the manifest says otherwise. This is the whole leg: an app
+    // must not open a popup for an action in this state.
+    const cleared = await pollValue(
+      () => readExtensionAction(page!),
+      (state) => state.id === manifest.id,
+      "the action page answers for its own extension",
+    );
+    if (cleared.popupUrl !== "") throw new Error(`runtime popup is ${JSON.stringify(cleared.popupUrl)}, want "" `);
+    if (cleared.title !== "ND Action Runtime") throw new Error(`runtime title ${cleared.title}`);
+
+    // Per tab, on the tab Chromium calls active: the badge is set for that one
+    // and a different one is set as the default, so an answer carrying "T1"
+    // can only have come from the per-tab value.
+    await executeJavaScript(page!, `(async () => {
+      const active = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!active.length) throw new Error("chromium reports no active tab");
+      await chrome.action.setBadgeText({ text: "D" });
+      await chrome.action.setBadgeText({ tabId: active[0].id, text: "T1" });
+      await chrome.action.setPopup({ popup: "popup.html" });
+      return String(active[0].id);
+    })()`);
+
+    const perTab = await pollValue(
+      () => readExtensionAction(page!),
+      (state) => state.badgeText === "T1" && state.popupUrl.endsWith("/popup.html"),
+      "the badge and popup set at runtime are read back for the active tab",
+    );
+    if (perTab.tabId === 0) throw new Error("no active tab in the answer");
+    return `ok (manifest ${manifest.popupUrl.slice(-11)}, runtime "" then popup.html, badge ${perTab.badgeText} on tab ${perTab.tabId})`;
   });
 
   // An install that cannot work has to answer. The command runs a promise on

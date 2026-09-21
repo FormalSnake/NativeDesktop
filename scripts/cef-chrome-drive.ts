@@ -9,6 +9,7 @@
 // browser process from the native key event, and a debugger-injected one never
 // reaches them.
 import { Session, clickDevToolsClose, targets, waitForTarget } from "./cdp.ts";
+import type { TargetInfo } from "./cdp.ts";
 
 const port = Number(process.env.ND_CDP_PORT ?? "9333");
 const pass = process.env.ND_CHROME_PASS ?? "first";
@@ -281,7 +282,27 @@ const extensionsInfo = `new Promise((resolve) => {
     (list) => resolve(JSON.stringify(list.map((e) => ({ id: e.id, name: e.name, state: e.state, icon: (e.iconUrl ?? "").slice(0, 12) })))));
 })`;
 
-const swTarget = await waitForTarget(port, (t) => t.type === "service_worker" && t.url.startsWith("chrome-extension://"), 60000);
+await waitForTarget(port, (t) => t.type === "service_worker" && t.url.startsWith("chrome-extension://"), 60000);
+
+/// The gate loads more than one fixture, so the worker this drive wants is
+/// found by what it carries rather than by being first: the other fixture's
+/// worker has none of these helpers.
+async function gateWorker(): Promise<{ target: TargetInfo; session: Session }> {
+  for (let i = 0; i < 60; i++) {
+    for (const t of await targets(port)) {
+      if (t.type !== "service_worker" || !t.url.startsWith("chrome-extension://")) continue;
+      const session = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+      if (!session) continue;
+      const helpers = await session.eval<string>("typeof ndOpenTab").catch(() => "undefined");
+      if (helpers === "function") return { target: t, session };
+      session.close();
+    }
+    await Bun.sleep(500);
+  }
+  throw new Error("no service worker carrying the gate fixture's helpers");
+}
+
+const { target: swTarget, session: sw } = await gateWorker();
 const extId = swTarget.url.split("/")[2]!;
 check("extensionServiceWorker", true, swTarget.url);
 
@@ -292,7 +313,6 @@ const pageTarget = pass === "dialogs"
   : await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"), 30000);
 const page = await Session.open(pageTarget.webSocketDebuggerUrl!);
 await page.send("Page.enable");
-const sw = await Session.open(swTarget.webSocketDebuggerUrl!);
 
 if (pass === "first") {
   await leg("windowOpen", () => page.eval("window.open('about:blank','_blank'); 'window.open'", true));

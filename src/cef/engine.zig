@@ -1821,6 +1821,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensionActions")) return cmdListExtensionActions(view, arg);
+    if (std.mem.eql(u8, cmd, "readExtensionAction")) return cmdReadExtensionAction(view, arg);
     if (std.mem.eql(u8, cmd, "installExtension")) return cmdInstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "uninstallExtension")) return cmdUninstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "setExtensionEnabled")) return cmdSetExtensionEnabled(view, arg);
@@ -4495,6 +4496,53 @@ fn cmdListExtensionActions(view: *View, arg: ?std.json.Value) void {
     if (!startEval(view, .{ .extension_actions = id_copy }, list_extension_actions_js, "")) {
         alloc.free(id_copy);
     }
+}
+
+/// An action's state as Chromium holds it right now, which is not what the
+/// manifest says. `chrome.action.setPopup`, `setBadgeText`, `setIcon` and
+/// `setTitle` are answered to the extension alone, and `chrome://extensions` is
+/// told none of it: `developerPrivate` has no action field and the WebUI has no
+/// `chrome.action` at all (both checked on 151). A page of the extension does
+/// have the API, so this command is sent to a view showing one, which for an
+/// app drawing its own toolbar is the popup it mounts for a click.
+///
+/// An extension that clears its popup means it: 1Password sets it to "" while
+/// no account is configured so that a toolbar click opens its onboarding
+/// instead, and an app that opens the manifest's popup anyway shows a document
+/// the extension never meant to be on screen.
+///
+/// Which tab the state is read for is Chromium's own answer, not this engine's.
+/// `cef_browser_t::get_identifier` says in the header that it "is also used as
+/// the tabId for extension APIs", and under Chrome style it is not: a view's
+/// identifier is CEF's own small counter and Chromium answers `No tab with id:
+/// 1` for it. `{ active: true, lastFocusedWindow: true }` is what an extension
+/// itself uses, and it resolves to the page the app last had focus in.
+const read_action_js =
+    \\(async () => {
+    \\  if (typeof chrome === "undefined" || !chrome.action) {
+    \\    throw new Error("readExtensionAction needs a view showing a page of the extension");
+    \\  }
+    \\  const active = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    \\  const tab = active.length ? active[0] : null;
+    \\  const where = tab ? { tabId: tab.id } : {};
+    \\  const color = await chrome.action.getBadgeBackgroundColor(where);
+    \\  return JSON.stringify({
+    \\    id: chrome.runtime.id,
+    \\    tabId: tab ? tab.id : 0,
+    \\    tabUrl: tab ? (tab.url || "") : "",
+    \\    popupUrl: await chrome.action.getPopup(where),
+    \\    badgeText: await chrome.action.getBadgeText(where),
+    \\    badgeColor: Array.isArray(color) ? color : [],
+    \\    title: await chrome.action.getTitle(where),
+    \\    enabled: tab ? await chrome.action.isEnabled(tab.id) : true,
+    \\  });
+    \\})()
+;
+
+fn cmdReadExtensionAction(view: *View, arg: ?std.json.Value) void {
+    const id = extensionCommandId(arg, "readExtensionAction") orelse return;
+    const what = alloc.dupe(u8, "readExtensionAction") catch return;
+    startJsonCommand(view, id, "extensionActions", "action", what, registry_call_timeout_us, read_action_js);
 }
 
 const manifest_limit: usize = 1 << 20;

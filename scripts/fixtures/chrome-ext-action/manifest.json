@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "ND Action Extension",
+  "version": "1.0",
+  "description": "Fixture for the runtime action state leg of scripts/headless-webview-cef-chrome.sh.",
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ND Action Manifest",
+    "default_icon": { "16": "icon16.png" }
+  },
+  "icons": { "16": "icon16.png" },
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["<all_urls>"]
+}

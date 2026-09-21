@@ -18,6 +18,7 @@ export {
   listExtensions,
   onExtensionsList,
   listExtensionActions,
+  readExtensionAction,
   onExtensionActions,
   watchExtensions,
   onExtensionsChanged,
@@ -31,6 +32,7 @@ export type {
   ContextMenuItem,
   ContextMenuItemClick,
   ExtensionAction,
+  ExtensionActionState,
   ExtensionsChange,
   InstalledExtension,
 } from "./webview.ts";

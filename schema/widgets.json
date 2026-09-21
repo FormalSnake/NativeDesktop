@@ -662,7 +662,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
-        "listExtensions", "watchExtensions", "listExtensionActions", "installExtension", "uninstallExtension", "setExtensionEnabled",
+        "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

@@ -583,6 +583,8 @@ await uninstallExtension(registry.current!, id);
 
 const actions = await listExtensionActions(registry.current!);
 // [{ id, name, enabled, title, iconUrl, popupUrl, badgeText }]
+// What the MANIFEST declares. An extension can turn its popup off at runtime,
+// and an app must read readExtensionAction before opening one (see below).
 
 const sources = await watchExtensions(registry.current!, (change) => reload(change.reason));
 // ["developerPrivate.onItemStateChanged", "management.onInstalled", …]
@@ -677,35 +679,85 @@ does nothing but mark the DOM:
   iframe) and whether a frame that never gets browser info is what leaves its
   popup and its inline UI blank.
 
-The popup document loads in an app-owned view and never gets past its splash.
-Not yet measured inside the running extension, but the shape of the gap is
-structural: a `<webview>` showing `chrome-extension://<id>/popup/…` is an
-ordinary tab to Chromium, not `mojom::ViewType::kExtensionPopup`, so
-`chrome.extension.getViews({type: "popup"})` does not find it,
-`chrome.windows.getCurrent()` answers with the popup's own window, and
-`chrome.tabs.query({active: true, currentWindow: true})` answers about that
-window rather than about the page the user is looking at. A popup that boots by
-asking which page it is acting on waits forever. CEF 151 exposes no way to ask
-for that view type: `extension` appears in its headers only as a filename
-extension and as `cef_register_extension` (a V8 extension), and the browser a
-`<webview>` creates is whatever `chrome_child_window` builds.
+The popup document does not hang, and the popup host type is not what was
+wrong. Measured with the real extension in an app-owned view, CDP attached and
+every `chrome.*` namespace wrapped from a document-start script:
 
-Two facts that the next attempt at runtime action state should start from, both
-confirmed against the CEF 151 headers rather than guessed:
+- It boots. Nine calls, all `chrome.runtime.sendMessage`, all answered by its
+  service worker, none left pending, no uncaught error and no failed request.
+  It never calls `tabs.query`, `windows.getCurrent` or `extension.getViews`
+  from the popup at all, so the three answers this document used to blame were
+  never asked for. Its worker resolves the page for it and gets the right one:
+  `get-active-tab` answered with the `<webview>` the app was showing, not with
+  the popup.
+- It renders. A React tree with 23 laid-out elements under `#root`, which is
+  the skeleton it draws for the state its worker gave it:
+  `{ state: "AccountPasswordRequired", details: { accounts: [] } }`. No account
+  is configured, so there is nothing for the popup to show and onboarding lives
+  in the tab it opens at install.
+- **Chromium says the action has no popup.** `chrome.action.getPopup({})` and
+  `getPopup({tabId})` both answer `""` for every tab, though the manifest
+  declares `"default_popup": "popup/index.html"`. 1Password clears it at
+  runtime while no account is configured, so that a click on Chrome's own
+  toolbar button reaches `chrome.action.onClicked` and opens onboarding. An app
+  that reads the manifest off disk and opens that popup anyway is showing a
+  document the extension had switched off. That is the whole of what the owner
+  saw.
 
-- `cef_browser_t::get_identifier` "is also used as the tabId for extension
-  APIs" (`include/capi/cef_browser_capi.h:132`). Every `<webview>` therefore has
-  a real Chromium tab id that the host already knows, which is what
-  `listExtensionActions` needs to take so per-tab `setPopup`, `setBadgeText`,
-  `setIcon` and `setTitle` can be read at all.
-- The host cannot reach an extension's service worker. Its whole CDP substrate
-  is `cef_browser_host_t::execute_dev_tools_method` (`src/cef/cdp.zig`), which
-  is per browser and page-target only; a `service_worker` target exists only on
-  the remote debugging port, which the host does not speak. Reading
-  `chrome.action.getPopup({tabId})` and friends without a fork therefore means
-  evaluating them in a page of that extension, which every extension with a
-  popup has, rather than in its worker. That is a hidden `<webview>` per
-  extension and it has not been built or measured.
+`chrome.action.openPopup()` exists and refuses, which is the same fact from the
+other side: `Extension does not have a popup on the active tab.` for the
+windows whose tab it will consider, and `Cannot show popup for an inactive
+window.` for the rest. It was tried against every window this engine creates
+and against the browser Chrome keeps for itself; none of them made Chrome build
+an extension popup, and the browser process survived each attempt.
+
+So an action's live state is the thing to read, and `readExtensionAction` reads
+it. Where from is forced: `chrome://extensions` cannot answer, measured on 151
+by enumerating it (`developerPrivate` has no action field, `ExtensionInfo` has
+none of `popup`, `badgeText` or `title`, and the WebUI has no `chrome.action`
+and no `chrome.tabs`). A page of the extension has the whole API, so the
+command is sent to a view showing one, which for an app drawing its own toolbar
+is the popup view it mounts for a click:
+
+```tsx
+import { readExtensionAction } from "@nativedesktop/react";
+
+const state = await readExtensionAction(popupView.current!);
+// { id, tabId, tabUrl, popupUrl, badgeText, badgeColor, title, enabled }
+if (state.popupUrl === "") {
+  // The extension has no popup right now. Opening the manifest's one anyway is
+  // the bug above.
+}
+```
+
+Which tab the state is read for is Chromium's own answer, not this framework's.
+`cef_browser_t::get_identifier` says in its header that it "is also used as the
+tabId for extension APIs" (`include/capi/cef_browser_capi.h:132`); under Chrome
+style it is not. A view's identifier is CEF's own small counter, and passing one
+to `chrome.action.getBadgeText({tabId})` answers `No tab with id: 1` while the
+real tabs are session ids in the hundreds of millions. So the command asks
+`chrome.tabs.query({ active: true, lastFocusedWindow: true })`, which is what an
+extension itself uses and what 1Password's own worker used to find the page,
+and reports the `tabId` and `tabUrl` it read for. Read those back: the browser
+Chrome keeps for itself is the profile's only `normal` window, so when no view
+has taken focus yet it is what `lastFocusedWindow` resolves to, and the state
+comes back for whatever is parked in it. Measured: with no view focused, the
+answer for 1Password carried
+`tabUrl: "chrome-extension://…/app/app.html#/page/welcome"`. A click on the
+app's own toolbar follows focus in one of its views, which is the case this is
+read in.
+
+What is still missing is the click itself. An action whose runtime popup is `""`
+is one whose click Chrome answers with `chrome.action.onClicked`, and there is
+no toolbar button here for Chromium to consider clicked, so the app has to
+decide what that click means: for 1Password, opening its onboarding page.
+
+The host still cannot reach an extension's service worker. Its whole CDP
+substrate is `cef_browser_host_t::execute_dev_tools_method` (`src/cef/cdp.zig`),
+which is per browser and page-target only; a `service_worker` target exists only
+on the remote debugging port, which the host does not speak. Reading the action
+from a page of the extension is what that constraint leaves, and it is what
+ships.
 
 Two paths that would close that gap are blocked in CEF 151, both on the same
 missing piece:

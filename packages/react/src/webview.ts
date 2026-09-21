@@ -17,6 +17,7 @@ const pendingSessions = new Map<string, Pending<string>>();
 const pendingExtensions = new Map<string, Pending<InstalledExtension[]>>();
 const pendingActions = new Map<string, Pending<ExtensionAction[]>>();
 const pendingWatches = new Map<string, Pending<string[]>>();
+const pendingActionState = new Map<string, Pending<ExtensionActionState>>();
 let seq = 0;
 
 function nextId(prefix: string): string {
@@ -233,8 +234,50 @@ export interface ExtensionAction {
   iconUrl: string;
   /** `chrome-extension://…` popup page, or "" for an action that fires `onClicked`. */
   popupUrl: string;
-  /** Always "": Chromium answers `chrome.action.getBadgeText` to the extension alone. */
+  /** Always "": read the live value with `readExtensionAction`. */
   badgeText: string;
+}
+
+/// An action as Chromium holds it right now, which is not what the manifest
+/// says. `chrome.action.setPopup`, `setBadgeText` and `setTitle` are answered
+/// to the extension alone, so this is the only honest source for them.
+export interface ExtensionActionState {
+  id: string;
+  /// The tab the state was read for: Chromium's own active tab, which is the
+  /// page the app last had focus in. 0 when Chromium had no active tab.
+  tabId: number;
+  tabUrl: string;
+  /// The popup Chromium would open for a click. **`""` means the extension has
+  /// turned its popup off**, which is a state an app must respect: opening the
+  /// manifest's popup anyway shows a document the extension never meant to be
+  /// on screen. 1Password clears it while no account is configured so that a
+  /// click opens its onboarding instead.
+  popupUrl: string;
+  badgeText: string;
+  /// RGBA 0..255, or [] when the extension never set one.
+  badgeColor: number[];
+  title: string;
+  enabled: boolean;
+}
+
+/// Reads an action's live state. `node` is a `<webview>` showing any page of
+/// that extension, because that is the only context Chromium tells: the WebUI
+/// at `chrome://extensions` has no `chrome.action` and `developerPrivate`
+/// reports no action state at all. The popup page the app mounts for a click is
+/// one such page, so the shape this is meant for is: mount the popup view,
+/// read the state before showing it, and open nothing when `popupUrl` is `""`.
+///
+/// The state is per tab, and the tab is Chromium's own active one rather than
+/// anything this framework names: `cef_browser_t::get_identifier` claims in its
+/// header to be the extension tab id and under Chrome style it is not, so a
+/// `<webview>` has no tab id an app could pass. The answer carries the `tabId`
+/// and `tabUrl` it was read for.
+export function readExtensionAction(node: NdNodeRef<"webview">): Promise<ExtensionActionState> {
+  const id = nextId("ext");
+  return new Promise<ExtensionActionState>((resolve, reject) => {
+    pendingActionState.set(id, { resolve, reject });
+    sendCommand(node, "readExtensionAction", { id });
+  });
 }
 
 /// The actions the installed extensions declare, for an app that draws its own
@@ -252,7 +295,20 @@ export function listExtensionActions(node: NdNodeRef<"webview">): Promise<Extens
 
 /// Pass as a <webview>'s `onExtensionActions` prop.
 export function onExtensionActions(e: { data: unknown }): void {
-  const result = e.data as { id: string; ok: boolean; actions?: ExtensionAction[]; error?: string };
+  const result = e.data as {
+    id: string;
+    ok: boolean;
+    actions?: ExtensionAction[];
+    action?: ExtensionActionState;
+    error?: string;
+  };
+  const state = pendingActionState.get(result.id);
+  if (state) {
+    pendingActionState.delete(result.id);
+    if (result.ok && result.action) state.resolve(result.action);
+    else state.reject(new Error(result.error ?? "readExtensionAction failed"));
+    return;
+  }
   const call = pendingActions.get(result.id);
   if (!call) return;
   pendingActions.delete(result.id);

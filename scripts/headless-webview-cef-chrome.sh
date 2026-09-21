@@ -38,6 +38,10 @@ export ND_APP_ID="${ND_APP_ID:-dev.nativedesktop.headlessCefChrome}"
 CDP_PORT="${ND_CDP_PORT:-9334}"
 export ND_CDP_PORT="$CDP_PORT"
 EXTENSION="$PWD/scripts/fixtures/chrome-ext"
+# A second extension, loaded beside the first: its manifest declares a popup and
+# its worker turns that popup off, which is the state an app reading the
+# manifest off disk gets wrong.
+ACTION_EXTENSION="$PWD/scripts/fixtures/chrome-ext-action"
 # One data home across both passes: the restart leg is the whole point.
 XDG_DATA_HOME="$(mktemp -d)"
 export XDG_DATA_HOME
@@ -78,7 +82,7 @@ run_pass() {
   # clicks it, and only the first pass's driver does; a later pass would start
   # with that dialog sitting over the view.
   ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS="$pass" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
-    --load-extension="$EXTENSION" \
+    --load-extension="$EXTENSION,$ACTION_EXTENSION" \
     --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
 
