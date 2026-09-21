@@ -28,7 +28,7 @@ const T = 6000;
 // and one toolbar gap away on AppKit; 8 is the budget the gate allows for
 // that, and it is far below the ~460px the centred title used to waste.
 const TOL = 8;
-const START = ["nav-back", "nav-forward", "nav-reload", "weight-styled", "weight-plain"];
+const START = ["nav-back", "nav-forward", "nav-reload", "weight-box", "weight-plain-box"];
 const END = ["end-menu", "end-add"];
 
 const app = attached ? await connectApp() : await launchApp({ entry: "examples/headerfield/main.tsx", backend });
@@ -100,6 +100,20 @@ try {
   await app.getByTestId("address").fill("nativedesktop.dev");
   await poll(() => label("url-label"), (v) => v === "nativedesktop.dev", { timeoutMs: T });
   console.log("  ND_HEADERFIELD_SETVALUE_OK setValue still round-trips through `changed`");
+
+  // ---- leg 4 (GTK): a `font` style reaches the button's label child -------
+  // Adwaita declares `font-weight: bold` on the button NODE, and an explicit
+  // declaration beats a value inherited from an ancestor, so a `font` style on
+  // the wrapping <box> used to leave the button bold. Same string in both
+  // buttons, so the allocated widths differ only by the weight drawn.
+  if (gtk) {
+    const styled = await rectOf("weight-styled");
+    const plain = await rectOf("weight-plain");
+    if (styled.w >= plain.w) {
+      throw new Error(`fontWeight "normal" on the wrapping box did not reach the button: styled=${styled.w}px, bold=${plain.w}px`);
+    }
+    console.log(`  ND_HEADERFIELD_FONT_OK a header button under a box at fontWeight normal measures ${styled.w}px against ${plain.w}px at the theme's bold`);
+  }
 
   if (process.env.ND_SHOT_PATH) {
     await app.screenshot(process.env.ND_SHOT_PATH);

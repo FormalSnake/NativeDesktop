@@ -188,7 +188,7 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
         while (it.next()) |entry| {
             const key = entry.key_ptr.*;
             const def = findKey(key) orelse continue; // unknown key: caller warns
-            if (def.target == .widget) continue; // margin — not CSS
+            if (def.target == .widget) continue; // margin: not CSS
             if (std.mem.eql(u8, key, "border")) {
                 border_present = emitNested(&list, allocator, entry.value_ptr.*, "border") or border_present;
             } else if (std.mem.eql(u8, key, "font")) {
@@ -202,7 +202,36 @@ pub fn compileCss(allocator: std.mem.Allocator, node_id: u32, style: std.json.Va
         if (border_present) try list.appendSlice(allocator, "border-style: solid;");
     }
     try list.appendSlice(allocator, "}");
+    try emitFontDescendants(&list, allocator, node_id, style);
     return list.toOwnedSlice(allocator);
+}
+
+/// A second block repeating the font fields on the node's `button` and `label`
+/// descendants. A font is an inherited CSS property, so a plain container's
+/// font already reaches the text below it, with one exception that matters:
+/// Adwaita declares `font-weight: bold` on the BUTTON node itself, and an
+/// explicit declaration on a node beats a value inherited into it. So
+/// `font: { fontWeight: "normal" }` on a `<box>` (or a `<headerbar>`) left
+/// every button under it bold. Measured on libadwaita 1.9.1 / GTK 4.22.4 with
+/// pango_font_description_get_weight on the button's label: 700 with the node
+/// block alone, 400 once this block lands. `src/gtk/basecss.zig` already
+/// carried one hand-written instance of the same workaround for sidebar rows.
+///
+/// A font set on the button itself needs none of this (it inherits down to the
+/// label, measured), so the block is emitted for every styled node and simply
+/// matches nothing on a leaf.
+///
+/// Precedence: this selector is a class plus an element, so it outranks a
+/// descendant node's OWN `.nd-<id>` block. A child that sets its own font
+/// under a parent that also sets one gets the parent's, which is the one
+/// ordering GTK's selector engine can express here (it has no `:where()`).
+fn emitFontDescendants(list: *std.ArrayList(u8), allocator: std.mem.Allocator, node_id: u32, style: std.json.Value) !void {
+    if (style != .object) return;
+    const font = style.object.get("font") orelse return;
+    var probe: std.ArrayList(u8) = .empty;
+    defer probe.deinit(allocator);
+    if (!emitNested(&probe, allocator, font, "font")) return;
+    try list.print(allocator, ".nd-{d} button, .nd-{d} label {{{s}}}", .{ node_id, node_id, probe.items });
 }
 
 /// Called from tree.apply at create AND update whenever `props.style` is
@@ -356,6 +385,30 @@ test "compileCss: fontWeight bold emits font-weight: bold with no color-check re
     const css = try compileCss(talloc, 9, parsed.value);
     defer talloc.free(css);
     try std.testing.expect(std.mem.indexOf(u8, css, "font-weight: bold;") != null);
+}
+
+test "compileCss repeats the font fields on the node's button and label descendants" {
+    const talloc = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, talloc,
+        \\{"font":{"fontWeight":"normal"},"background":"#fff"}
+    , .{});
+    defer parsed.deinit();
+    const css = try compileCss(talloc, 12, parsed.value);
+    defer talloc.free(css);
+    try std.testing.expect(std.mem.indexOf(u8, css, ".nd-12 button, .nd-12 label {font-weight: normal;}") != null);
+    // Only the font fields repeat: a background there would paint a second
+    // rectangle over every control below the node.
+    const tail = css[std.mem.indexOf(u8, css, "button, ").?..];
+    try std.testing.expect(std.mem.indexOf(u8, tail, "background-color") == null);
+}
+
+test "compileCss emits no descendant block when the style sets no font" {
+    const talloc = std.testing.allocator;
+    const parsed = try std.json.parseFromSlice(std.json.Value, talloc, "{\"background\":\"#fff\"}", .{});
+    defer parsed.deinit();
+    const css = try compileCss(talloc, 13, parsed.value);
+    defer talloc.free(css);
+    try std.testing.expect(std.mem.indexOf(u8, css, "label") == null);
 }
 
 test "compileCss emits nested font/border fields with implied border-style" {

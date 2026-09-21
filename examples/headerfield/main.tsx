@@ -19,13 +19,15 @@ function App(): React.ReactNode {
           <button slot="start" testID="nav-back" iconName="go-previous-symbolic" />
           <button slot="start" testID="nav-forward" iconName="go-next-symbolic" />
           <button slot="start" testID="nav-reload" iconName="view-refresh-symbolic" />
-          <button
-            slot="start"
-            testID="weight-styled"
-            label="Bookmarks"
-            style={{ font: { fontWeight: "normal" } }}
-          />
-          <button slot="start" testID="weight-plain" label="Bookmarks" />
+          {/* Adwaita declares font-weight on the BUTTON node, which beats a
+              weight inherited from an ancestor, so this pair is the case a
+              container's `font` style has to reach. */}
+          <box slot="start" testID="weight-box" style={{ font: { fontWeight: "normal" } }}>
+            <button testID="weight-styled" label="Bookmarks" />
+          </box>
+          <box slot="start" testID="weight-plain-box">
+            <button testID="weight-plain" label="Bookmarks" />
+          </box>
           <searchinput
             ref={field}
             testID="address"
