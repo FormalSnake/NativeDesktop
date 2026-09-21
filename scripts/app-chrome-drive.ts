@@ -13,7 +13,14 @@
 // automation-socket shortcut steps over.
 import { readFileSync } from "node:fs";
 import { connectApp } from "@nativedesktop/test";
-import { Session, inspectedPageBounds, targets, waitForTarget } from "./cdp.ts";
+import {
+  Session,
+  clickDeviceToolbar,
+  dragFrontendSplitter,
+  inspectedPageBounds,
+  targets,
+  waitForTarget,
+} from "./cdp.ts";
 
 const rig = (process.env.ND_ACCEPT_RIG ?? "x11") as "x11" | "wlr" | "hypr";
 /// Everything a wlroots session and a Hyprland session share: XWayland, a
@@ -454,6 +461,19 @@ async function focusNativeChrome(at: { x: number; y: number }): Promise<void> {
 /// strip of bare background the frontend draws where it expected the page, and
 /// the same rectangle is what device mode reports, so following it is what
 /// draws the phone in the page area.
+/// Runs `body` against the docked frontend's own protocol session.
+async function onFrontend<T>(body: (session: Session) => Promise<T>): Promise<T | null> {
+  const target = (await targets(port)).find((t) => t.url.startsWith("devtools://"));
+  if (!target?.webSocketDebuggerUrl) return null;
+  const session = await Session.open(target.webSocketDebuggerUrl);
+  try {
+    await session.send("Runtime.enable");
+    return await body(session);
+  } finally {
+    session.close();
+  }
+}
+
 async function dockTiles(phase: string): Promise<void> {
   let detail = "never measured";
   for (let attempt = 0; attempt < 15; attempt++) {
@@ -1271,6 +1291,18 @@ if (hasApp) {
     resizeToplevel(top, 1400, 900);
     await Bun.sleep(1500);
     await dockTiles("resized");
+    // The user drags the frontend's own splitter, then turns device mode on:
+    // the hole moves, and in device mode it stops being a column and becomes
+    // the device's rectangle, which is where the phone belongs.
+    await onFrontend((session) => dragFrontendSplitter(session, -120));
+    await Bun.sleep(1200);
+    await dockTiles("splitterDragged");
+    await onFrontend((session) => clickDeviceToolbar(session));
+    await Bun.sleep(2000);
+    await dockTiles("deviceMode");
+    await onFrontend((session) => clickDeviceToolbar(session));
+    await Bun.sleep(2000);
+    await dockTiles("deviceModeOff");
     if (hasApp) {
       // The inspected tab goes off screen and comes back: every other view in
       // the app is alive and parked, and the one that returns has to be laid
