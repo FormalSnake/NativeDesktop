@@ -82,6 +82,7 @@ const Api = struct {
     default_colormap: FnDefaultColormap,
     map_window: FnWindowOnly,
     unmap_window: FnWindowOnly,
+    raise_window: FnWindowOnly,
     destroy_window: FnWindowOnly,
     move_resize_window: FnMoveResize,
     reparent_window: FnReparent,
@@ -139,6 +140,7 @@ fn loadApi() ?*const Api {
         .default_colormap = x.lookup(FnDefaultColormap, "XDefaultColormap") orelse return missing(&x, &g, "XDefaultColormap"),
         .map_window = x.lookup(FnWindowOnly, "XMapWindow") orelse return missing(&x, &g, "XMapWindow"),
         .unmap_window = x.lookup(FnWindowOnly, "XUnmapWindow") orelse return missing(&x, &g, "XUnmapWindow"),
+        .raise_window = x.lookup(FnWindowOnly, "XRaiseWindow") orelse return missing(&x, &g, "XRaiseWindow"),
         .destroy_window = x.lookup(FnWindowOnly, "XDestroyWindow") orelse return missing(&x, &g, "XDestroyWindow"),
         .move_resize_window = x.lookup(FnMoveResize, "XMoveResizeWindow") orelse return missing(&x, &g, "XMoveResizeWindow"),
         .reparent_window = x.lookup(FnReparent, "XReparentWindow") orelse return missing(&x, &g, "XReparentWindow"),
@@ -395,6 +397,18 @@ pub fn show(window: Window) void {
     c.push();
     _ = c.api.map_window(c.x, window);
     _ = c.api.sync(c.x, 0);
+    c.pop();
+}
+
+/// Puts `window` above its siblings. The page and the docked inspector are
+/// both children of the view's container, and the page is drawn inside the
+/// inspector's own area, so the stacking order is what makes it visible.
+pub fn raise(window: Window) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.raise_window(c.x, window);
+    _ = c.api.flush(c.x);
     c.pop();
 }
 

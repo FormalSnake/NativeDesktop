@@ -1201,6 +1201,19 @@ const View = struct {
     /// `devtools_container` is the same window while devtools is up and 0 when
     /// it is not, which is what the layout reads.
     dock_container: x11.Window = 0,
+    /// The inspector's own browser host, kept while it is docked: the protocol
+    /// session that reads the frontend's page rectangle sends through it.
+    devtools_host: std.atomic.Value(usize) = .init(0),
+    dock_session: cdp.Session = .{},
+    /// The id of the handshake call the frontend's hook waits on.
+    dock_handshake: std.atomic.Value(c_int) = .init(0),
+    /// The rectangle the frontend announced for the page, in view pixels. A
+    /// width of 0 is "it has not said yet", which lays the page out at Chrome's
+    /// own right-dock default until it does.
+    page_x: std.atomic.Value(u32) = .init(0),
+    page_y: std.atomic.Value(u32) = .init(0),
+    page_w: std.atomic.Value(u32) = .init(0),
+    page_h: std.atomic.Value(u32) = .init(0),
     size_w: std.atomic.Value(u32) = .init(0),
     size_h: std.atomic.Value(u32) = .init(0),
     /// The view's own long-lived host reference, taken with the browser and
@@ -1858,15 +1871,28 @@ fn layoutContents(view: *View, w: c_uint, h: c_uint) void {
     var plan: Layout = .{
         .page = view.cef_window.load(.acquire),
         .page_w = w,
+        .page_h = h,
         .h = h,
     };
     if (dock != 0) {
-        const dock_w = dockWidth(w);
-        plan.page_w = w - dock_w;
+        // A docked inspector is the whole view: the frontend lays its panels
+        // out around the hole it keeps for the page, and the page goes in that
+        // hole, stacked above it. Until the frontend has announced the hole the
+        // page takes Chrome's own right-dock default, so it is in its usual
+        // column for the frame or two before the first announcement.
         plan.dock = dock;
-        plan.dock_x = @intCast(w - dock_w);
-        plan.dock_w = dock_w;
+        plan.dock_x = 0;
+        plan.dock_w = w;
         plan.inner = view.devtools_window.load(.acquire);
+        const announced = view.page_w.load(.acquire);
+        if (announced != 0) {
+            plan.page_x = @intCast(view.page_x.load(.acquire));
+            plan.page_y = @intCast(view.page_y.load(.acquire));
+            plan.page_w = announced;
+            plan.page_h = view.page_h.load(.acquire);
+        } else {
+            plan.page_w = w - dockWidth(w);
+        }
     }
     if (onGtkThread()) {
         applyLayout(plan);
@@ -1902,7 +1928,10 @@ const Layout = struct {
     /// CEF's own window, whose Linux platform delegate sizes it once from
     /// window_info.bounds and never follows the parent afterwards.
     page: usize = 0,
+    page_x: c_int = 0,
+    page_y: c_int = 0,
     page_w: c_uint = 0,
+    page_h: c_uint = 0,
     /// The docked devtools, Chrome style only: our X child on the right, and
     /// CEF's devtools window inside it. Both 0 while the inspector is closed.
     dock: usize = 0,
@@ -1928,10 +1957,13 @@ const Layout = struct {
 /// call left whatever origin it had.
 fn applyLayout(plan: Layout) void {
     if (shutting_down) return;
-    if (plan.page != 0) x11.moveResize(@intCast(plan.page), 0, 0, plan.page_w, plan.h);
-    if (plan.dock == 0) return;
-    x11.moveResize(@intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
-    if (plan.inner != 0) x11.moveResize(@intCast(plan.inner), 0, 0, plan.dock_w, plan.h);
+    if (plan.dock != 0) {
+        x11.moveResize(@intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
+        if (plan.inner != 0) x11.moveResize(@intCast(plan.inner), 0, 0, plan.dock_w, plan.h);
+    }
+    if (plan.page == 0) return;
+    x11.moveResize(@intCast(plan.page), plan.page_x, plan.page_y, plan.page_w, plan.page_h);
+    if (plan.dock != 0) x11.raise(@intCast(plan.page));
 }
 
 // ============================================================================
@@ -2586,7 +2618,7 @@ fn onLoadingProgressChange(
 /// document is up. Clicking the button then reaches CEF as `closeWindow`, which
 /// closes the devtools browser: the end state `closeDockedDevTools` reaches,
 /// through `onBeforeClose`.
-fn dockFrontend(frame: [*c]c.cef_frame_t) void {
+fn dockFrontend(view: *View, frame: [*c]c.cef_frame_t) void {
     if (!chromeStyle() or frame == null) return;
     if (frame.*.is_main) |is_main| {
         if (is_main(frame) == 0) return;
@@ -2598,7 +2630,13 @@ fn dockFrontend(frame: [*c]c.cef_frame_t) void {
     const url = dupeStr(raw) orelse return;
     defer alloc.free(url);
     if (!std.mem.startsWith(u8, url, "devtools://")) return;
-    if (std.mem.indexOf(u8, url, "can_dock=") != null) return;
+    if (std.mem.indexOf(u8, url, "can_dock=") != null) {
+        // The document that carries the placeholder is this one: the frontend
+        // told it cannot dock lays out no hole and announces nothing, so the
+        // hook goes in here rather than on the frontend's first load.
+        installDockHook(view);
+        return;
+    }
     const sep: []const u8 = if (std.mem.indexOfScalar(u8, url, '?') == null) "?" else "&";
     const docked = std.fmt.allocPrint(alloc, "{s}{s}can_dock=true", .{ url, sep }) catch return;
     defer alloc.free(docked);
@@ -2610,14 +2648,14 @@ fn dockFrontend(frame: [*c]c.cef_frame_t) void {
 }
 
 fn onLoadStart(
-    _: [*c]c.cef_load_handler_t,
+    self: [*c]c.cef_load_handler_t,
     browser: [*c]c.cef_browser_t,
     frame: [*c]c.cef_frame_t,
     _: c.cef_transition_type_t,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
-    dockFrontend(frame);
+    dockFrontend(LoadObj.of(self).payload, frame);
 }
 
 fn onLoadingStateChange(
@@ -2724,13 +2762,12 @@ fn onBeforeDevToolsPopup(
     const w = view.size_w.load(.acquire);
     const h = view.size_h.load(.acquire);
     if (w == 0 or h == 0) return;
-    const dock_w = dockWidth(w);
     // The dock container outlives every devtools browser that sits in it.
     // Destroying it when devtools closes takes CEF's own window with it while
     // CEF is still tearing that window down, and the host dies on the way out.
     var dock = view.dock_container;
     if (dock == 0) {
-        dock = x11.createChild(view.container, @intCast(w - dock_w), 0, dock_w, h);
+        dock = x11.createChild(view.container, 0, 0, w, h);
         if (dock == 0) return;
         view.dock_container = dock;
     }
@@ -2740,7 +2777,7 @@ fn onBeforeDevToolsPopup(
 
     window_info.*.size = @sizeOf(c.cef_window_info_t);
     window_info.*.parent_window = dock;
-    window_info.*.bounds = .{ .x = 0, .y = 0, .width = @intCast(dock_w), .height = @intCast(h) };
+    window_info.*.bounds = .{ .x = 0, .y = 0, .width = @intCast(w), .height = @intCast(h) };
     // Alloy, not Chrome: a Chrome-style devtools browser comes with a Chrome
     // Browser and its tab strip, and the pair are torn down after the browser
     // they belonged to, which crashes on the way out of the process.
@@ -2763,10 +2800,15 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
         if (browser.*.get_host) |get_host| {
             const host = get_host(browser);
             if (host != null) {
-                defer ref.releaseParam(host);
                 if (host.*.get_window_handle) |get_window| {
                     view.devtools_window.store(@intCast(get_window(host)), .release);
                 }
+                // The reference is kept, like the page's: the session that
+                // reads the frontend's page rectangle sends through it, and
+                // onBeforeClose gives it back.
+                view.devtools_host.store(@intFromPtr(host), .release);
+                view.dock_session = cdp.attach(host, dockTag(view));
+                startDockSession(view);
             }
         }
         layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
@@ -2815,6 +2857,12 @@ fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser
                 if (host.*.get_window_handle) |get_window| {
                     if (@as(usize, @intCast(get_window(host))) == devtools) {
                         view.devtools_window.store(0, .release);
+                        cdp.detach(&view.dock_session);
+                        const devtools_host = view.devtools_host.swap(0, .acq_rel);
+                        if (devtools_host != 0) {
+                            ref.releaseParam(@as([*c]c.cef_browser_host_t, @ptrFromInt(devtools_host)));
+                        }
+                        view.page_w.store(0, .release);
                         const dock = view.devtools_container.swap(0, .acq_rel);
                         if (dock != 0) x11.hide(@intCast(dock));
                         layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
@@ -3099,10 +3147,23 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     return 0; // G_SOURCE_REMOVE
 }
 
+/// Which of a view's two protocol sessions a callback belongs to. A View is
+/// pointer-aligned, so the low bit is free to carry it: the page's session and
+/// the docked inspector's both land in the same sink.
+fn dockTag(view: *View) usize {
+    return @intFromPtr(view) | 1;
+}
+
 /// The devtools sink, both arms on the CEF UI thread. `tag` is the View
 /// pointer cdp.attach was handed.
 fn cdpResultSink(tag: usize, message_id: c_int, ok: bool, json: []const u8) void {
-    const view: *View = @ptrFromInt(tag);
+    const view: *View = @ptrFromInt(tag & ~@as(usize, 1));
+    if (tag & 1 != 0) {
+        // Nothing carrying parameters may go out before the agent has answered
+        // one that does not, so the frontend's hook waits on that answer.
+        if (ok and message_id == view.dock_handshake.load(.acquire)) installDockHook(view);
+        return;
+    }
     post(.{
         .view = view,
         .name = "",
@@ -3114,7 +3175,11 @@ fn cdpResultSink(tag: usize, message_id: c_int, ok: bool, json: []const u8) void
 }
 
 fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
-    const view: *View = @ptrFromInt(tag);
+    const view: *View = @ptrFromInt(tag & ~@as(usize, 1));
+    if (tag & 1 != 0) {
+        dockEvent(view, method, json);
+        return;
+    }
     // Only the three events this engine acts on are worth a hop; the Page and
     // Runtime domains are chatty enough that forwarding everything would put a
     // GTK idle source behind every DOM mutation.
@@ -3133,6 +3198,139 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
         .extra = alloc.dupe(u8, method) catch null,
         .text = alloc.dupe(u8, json) catch null,
     });
+}
+
+// ============================================================================
+// The docked inspector's frontend
+// ============================================================================
+//
+// Chrome's inspector does not sit beside the page: the frontend fills the
+// browser's whole contents area and keeps a hole in its own layout for the
+// page, which the browser draws into that rectangle. The frontend announces
+// the hole with `setInspectedPageBounds` every time it moves: the splitter is
+// dragged, the dock side changes, device mode turns on (the rectangle is then
+// the device's, which is how the phone is drawn inside the page area).
+//
+// CEF has no seam for that message, and the inspector's browser carries CEF's
+// own client, so no handler here ever sees it. The frontend is asked for it
+// instead, over its own protocol session: a patch on its channel to the
+// embedder forwards every announcement into a Runtime binding, which comes
+// back as `Runtime.bindingCalled`.
+
+const dock_binding = "ndDockBounds";
+
+/// Installed at document start and once on the live document. `DevToolsHost` is
+/// Chromium's own injection into a devtools:// page and is there before any
+/// frontend script runs; the retry covers that ordering not being contractual.
+const dock_hook =
+    \\(() => {
+    \\  const send = (rect, tries) => {
+    \\    if (typeof window.ndDockBounds === 'function') {
+    \\      window.ndDockBounds(rect.x + ',' + rect.y + ',' + rect.width + ',' + rect.height);
+    \\      return;
+    \\    }
+    \\    if (tries < 100) setTimeout(() => send(rect, tries + 1), 50);
+    \\  };
+    \\  const install = (tries) => {
+    \\    const host = window.DevToolsHost;
+    \\    if (!host || !host.sendMessageToEmbedder) {
+    \\      if (tries < 100) setTimeout(() => install(tries + 1), 50);
+    \\      return;
+    \\    }
+    \\    if (host.__ndDockHook) return;
+    \\    const original = host.sendMessageToEmbedder.bind(host);
+    \\    host.sendMessageToEmbedder = (message) => {
+    \\      try {
+    \\        const parsed = typeof message === 'string' ? JSON.parse(message) : message;
+    \\        if (parsed && parsed.method === 'setInspectedPageBounds') send(parsed.params[0], 0);
+    \\      } catch (error) {}
+    \\      return original(message);
+    \\    };
+    \\    host.__ndDockHook = true;
+    \\    window.dispatchEvent(new Event('resize'));
+    \\  };
+    \\  install(0);
+    \\})()
+;
+
+/// The agent attaches in answer to the first message, so the handshake is what
+/// starts it rather than something that waits for it. Nothing carrying
+/// parameters may go out until this one has been answered.
+fn startDockSession(view: *View) void {
+    const host = view.devtools_host.load(.acquire);
+    if (host == 0) return;
+    const id = cdp.send(@ptrFromInt(host), "Runtime.enable", "") orelse return;
+    view.dock_handshake.store(id, .release);
+}
+
+/// CEF UI thread, both of these: the dock session never touches GTK.
+fn dockEvent(view: *View, method: []const u8, json: []const u8) void {
+    if (std.mem.eql(u8, method, cdp.agent_attached)) {
+        installDockHook(view);
+        return;
+    }
+    if (!std.mem.eql(u8, method, "Runtime.bindingCalled")) return;
+    const payload = jsonStringField(json, "payload") orelse return;
+    const rect = dockRect(payload) orelse return;
+    if (view.page_w.load(.acquire) == rect[2] and view.page_h.load(.acquire) == rect[3] and
+        view.page_x.load(.acquire) == rect[0] and view.page_y.load(.acquire) == rect[1]) return;
+    view.page_x.store(rect[0], .release);
+    view.page_y.store(rect[1], .release);
+    view.page_w.store(rect[2], .release);
+    view.page_h.store(rect[3], .release);
+    tr("dockPageRect node={d} {d}x{d}@{d},{d}", .{ view.node_id, rect[2], rect[3], rect[0], rect[1] });
+    layoutContents(view, view.size_w.load(.acquire), view.size_h.load(.acquire));
+}
+
+fn installDockHook(view: *View) void {
+    const raw = view.devtools_host.load(.acquire);
+    if (raw == 0) return;
+    const host: *c.cef_browser_host_t = @ptrFromInt(raw);
+    var params: std.ArrayList(u8) = .empty;
+    defer params.deinit(alloc);
+    params.appendSlice(alloc, "{\"name\":\"" ++ dock_binding ++ "\"}") catch return;
+    _ = cdp.send(host, "Runtime.addBinding", params.items);
+    _ = cdp.send(host, "Page.enable", "");
+    var script: std.ArrayList(u8) = .empty;
+    defer script.deinit(alloc);
+    script.appendSlice(alloc, "{\"source\":") catch return;
+    cdp.quote(&script, dock_hook);
+    script.appendSlice(alloc, "}") catch return;
+    _ = cdp.send(host, "Page.addScriptToEvaluateOnNewDocument", script.items);
+    var now: std.ArrayList(u8) = .empty;
+    defer now.deinit(alloc);
+    now.appendSlice(alloc, "{\"expression\":") catch return;
+    cdp.quote(&now, dock_hook);
+    now.appendSlice(alloc, "}") catch return;
+    _ = cdp.send(host, "Runtime.evaluate", now.items);
+    tr("dockHook node={d}", .{view.node_id});
+}
+
+/// "x,y,width,height", which is what the hook sends: a binding payload is a
+/// string, and four numbers in one avoid unescaping JSON inside JSON.
+fn dockRect(payload: []const u8) ?[4]u32 {
+    var out: [4]u32 = .{ 0, 0, 0, 0 };
+    var it = std.mem.splitScalar(u8, payload, ',');
+    for (&out) |*slot| {
+        const field = it.next() orelse return null;
+        const value = std.fmt.parseInt(i64, std.mem.trim(u8, field, " "), 10) catch return null;
+        slot.* = @intCast(@max(value, 0));
+    }
+    if (out[2] == 0 or out[3] == 0) return null;
+    return out;
+}
+
+/// The one string field this file reads out of a protocol event, without
+/// pulling a JSON parser onto the UI thread for it. Escapes inside the value
+/// are left alone: the only reader is `dockRect`, whose payload is digits and
+/// commas.
+fn jsonStringField(json: []const u8, name: []const u8) ?[]const u8 {
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\":\"", .{name}) catch return null;
+    const at = std.mem.indexOf(u8, json, needle) orelse return null;
+    const rest = json[at + needle.len ..];
+    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    return rest[0..end];
 }
 
 fn remember(slot: *?[]u8, value: []const u8) void {
