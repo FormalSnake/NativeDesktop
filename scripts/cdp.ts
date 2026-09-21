@@ -164,3 +164,40 @@ export class Session {
     this.ws.close();
   }
 }
+
+/**
+ * What the docked frontend reserved for the inspected page, and how wide the
+ * frontend's own document is, read from `frontend`.
+ *
+ * A frontend told it can dock lays its panels out around a hole the embedder
+ * is supposed to draw the page into, and announces that rectangle with
+ * `setInspectedPageBounds` (in device mode it is the device's rectangle, which
+ * is how the phone ends up inside the page area). The message goes out through
+ * `DevToolsHost.sendMessageToEmbedder`, so this patches that channel and asks
+ * the frontend to lay out again.
+ */
+export async function inspectedPageBounds(
+  frontend: Session,
+): Promise<{ bounds: Box | null; width: number; height: number }> {
+  const raw = await frontend.eval<string>(`(() => {
+    const host = window.DevToolsHost;
+    if (host && host.sendMessageToEmbedder && !host.__ndProbeHook) {
+      const original = host.sendMessageToEmbedder.bind(host);
+      host.sendMessageToEmbedder = (message) => {
+        try {
+          const parsed = typeof message === 'string' ? JSON.parse(message) : message;
+          if (parsed && parsed.method === 'setInspectedPageBounds') window.__ndProbeBounds = parsed.params[0];
+        } catch (error) {}
+        return original(message);
+      };
+      host.__ndProbeHook = true;
+    }
+    window.dispatchEvent(new Event('resize'));
+    return new Promise((done) => setTimeout(() => done(JSON.stringify({
+      bounds: window.__ndProbeBounds ?? null,
+      width: innerWidth,
+      height: innerHeight,
+    })), 250));
+  })()`);
+  return JSON.parse(raw) as { bounds: Box | null; width: number; height: number };
+}

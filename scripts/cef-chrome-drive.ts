@@ -8,7 +8,7 @@
 // Real X11 input, not CDP input: Chrome's accelerators are handled in the
 // browser process from the native key event, and a debugger-injected one never
 // reaches them.
-import { Session, clickDevToolsClose, targets, waitForTarget } from "./cdp.ts";
+import { Session, clickDevToolsClose, inspectedPageBounds, targets, waitForTarget } from "./cdp.ts";
 import type { TargetInfo } from "./cdp.ts";
 
 const port = Number(process.env.ND_CDP_PORT ?? "9333");
@@ -82,19 +82,20 @@ async function embedContainers(): Promise<string[]> {
   return ids;
 }
 
-/// The docked view's inner tiling as the X server holds it: the container the
-/// engine embeds into, CEF's page window and the dock inside it, and the
+/// The docked view's inner geometry as the X server holds it: the container
+/// the engine embeds into, CEF's page window and the dock inside it, and the
 /// inspector's own window inside the dock. The docked view is the one with two
-/// mapped children; every other `<webview>` has only its page.
+/// mapped children; every other `<webview>` has only its page. The dock is the
+/// child that covers the container, the page the one inside it.
 async function dockLayout(): Promise<{ view: Geometry; page: Geometry; dock: Geometry; inner: Geometry | null } | null> {
   for (const id of await embedContainers()) {
     const view = geometryOf(id);
     if (!view) continue;
     const kids = childrenOf(id);
     if (kids.length < 2) continue;
-    const sorted = [...kids].sort((a, b) => a.x - b.x);
-    const page = sorted[0]!;
-    const dock = sorted[sorted.length - 1]!;
+    const sorted = [...kids].sort((a, b) => b.w * b.h - a.w * a.h);
+    const dock = sorted[0]!;
+    const page = sorted[sorted.length - 1]!;
     return { view, page, dock, inner: childrenOf(dock.id)[0] ?? null };
   }
   return null;
@@ -107,7 +108,9 @@ async function dockLayout(): Promise<{ view: Geometry; page: Geometry; dock: Geo
 /// window the engine laid out.
 async function pageAt(rootX: number, rootY: number): Promise<Session | null> {
   for (const target of await targets(port)) {
-    if (target.type !== "page") continue;
+    // The frontend is a page target too, and a docked one now covers the whole
+    // view: it answers the same screen position as the page it is inspecting.
+    if (target.type !== "page" || target.url.startsWith("devtools://")) continue;
     const session = await Session.open(target.webSocketDebuggerUrl!);
     const where = JSON.parse(await session.eval<string>("JSON.stringify([screenX, screenY])")) as number[];
     if (where[0] === rootX && where[1] === rootY) return session;
@@ -116,11 +119,41 @@ async function pageAt(rootX: number, rootY: number): Promise<Session | null> {
   return null;
 }
 
-/// The three windows have to tile the view with no seam, and the page has to
-/// be laid out at the width its window was given: a renderer still painting at
-/// an older width leaves bare background between the page and the inspector.
+/// A docked inspector fills the view and keeps a hole in its own layout for the
+/// page, which has to be where the page's window is; the page also has to be
+/// laid out at the size that window was given, since a renderer still painting
+/// at an older size leaves bare background inside the hole.
 async function checkTiling(phase: string): Promise<void> {
-  const layout = await dockLayout();
+  let layout: Awaited<ReturnType<typeof dockLayout>> = null;
+  let hole: { x: number; y: number; width: number; height: number } | null = null;
+  let size: number[] = [-1, -1];
+  let fits = false;
+  let covers = false;
+  let painted = false;
+  // Polled: the hole is announced over the frontend's own protocol session and
+  // the page's renderer lays out a frame or two after its window moves, so
+  // this is about where the three come to rest rather than about the first
+  // frame after a dock.
+  for (let attempt = 0; attempt < 15; attempt++) {
+    layout = await dockLayout();
+    if (layout) {
+      hole = await inspectedHole();
+      const paper = layout.page;
+      const shown = await pageAt(paper.rootX, paper.rootY);
+      size = shown
+        ? (JSON.parse(await shown.eval<string>("JSON.stringify([innerWidth, innerHeight])")) as number[])
+        : [-1, -1];
+      shown?.close();
+      fits = hole !== null && Math.abs(hole.x - paper.x) <= 2 && Math.abs(hole.y - paper.y) <= 2
+        && Math.abs(hole.width - paper.w) <= 2 && Math.abs(hole.height - paper.h) <= 2;
+      covers = layout.inner !== null && layout.inner.x === 0 && layout.inner.w === layout.dock.w
+        && layout.inner.h === layout.dock.h && layout.dock.x === 0
+        && layout.dock.w === layout.view.w && layout.dock.h === layout.view.h;
+      painted = size[0] === paper.w && size[1] === paper.h;
+      if (fits && covers && painted) break;
+    }
+    await Bun.sleep(1000);
+  }
   if (!layout) {
     check(`dockTiling/${phase}`, false, "no docked view: the container has no second mapped child");
     return;
@@ -128,24 +161,40 @@ async function checkTiling(phase: string): Promise<void> {
   const { view, page: paper, dock, inner } = layout;
   check(
     `dockTiling/${phase}`,
-    paper.x === 0 && paper.x + paper.w === dock.x && dock.x + dock.w === view.w && paper.h === view.h && dock.h === view.h,
-    `view ${view.w}x${view.h}, page ${paper.w}x${paper.h}+${paper.x}, dock ${dock.w}x${dock.h}+${dock.x}`,
+    fits,
+    `view ${view.w}x${view.h}, page ${paper.w}x${paper.h}+${paper.x},${paper.y}`
+      + `, hole ${hole ? `${hole.width}x${hole.height}+${hole.x},${hole.y}` : "none"}`,
   );
   check(
     `dockInner/${phase}`,
-    inner !== null && inner.x === 0 && inner.w === dock.w && inner.h === dock.h,
-    inner ? `inner ${inner.w}x${inner.h}+${inner.x} in dock ${dock.w}x${dock.h}` : "the dock has no mapped child",
+    covers,
+    inner ? `inner ${inner.w}x${inner.h}+${inner.x} in dock ${dock.w}x${dock.h}+${dock.x} of view ${view.w}` : "the dock has no mapped child",
   );
-  const shown = await pageAt(paper.rootX, paper.rootY);
-  const size = shown
-    ? (JSON.parse(await shown.eval<string>("JSON.stringify([innerWidth, innerHeight])")) as number[])
-    : [-1, -1];
-  shown?.close();
   check(
     `dockPageViewport/${phase}`,
-    size[0] === paper.w && size[1] === paper.h,
+    painted,
     `page lays out ${size[0]}x${size[1]} in a ${paper.w}x${paper.h} window`,
   );
+}
+
+/// The rectangle the docked frontend keeps for the page, in the frontend's own
+/// coordinates, which are the dock's and so the container's: the dock covers
+/// the container and its inner window covers the dock.
+async function inspectedHole(): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const target = (await targets(port)).find((t) => t.url.startsWith("devtools://"));
+  if (!target?.webSocketDebuggerUrl) return null;
+  const session = await Session.open(target.webSocketDebuggerUrl);
+  try {
+    const seen = await inspectedPageBounds(session);
+    const dpr = await session.eval<number>("devicePixelRatio").catch(() => 1);
+    if (!seen.bounds) return null;
+    return {
+      x: Math.round(seen.bounds.x * dpr), y: Math.round(seen.bounds.y * dpr),
+      width: Math.round(seen.bounds.width * dpr), height: Math.round(seen.bounds.height * dpr),
+    };
+  } finally {
+    session.close();
+  }
 }
 
 /// The rows the open menu's keyboard walk stops on, from the host's own trace.

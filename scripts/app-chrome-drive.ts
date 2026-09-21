@@ -13,7 +13,7 @@
 // automation-socket shortcut steps over.
 import { readFileSync } from "node:fs";
 import { connectApp } from "@nativedesktop/test";
-import { Session, targets, waitForTarget } from "./cdp.ts";
+import { Session, inspectedPageBounds, targets, waitForTarget } from "./cdp.ts";
 
 const rig = (process.env.ND_ACCEPT_RIG ?? "x11") as "x11" | "wlr" | "hypr";
 /// Everything a wlroots session and a Hyprland session share: XWayland, a
@@ -398,7 +398,10 @@ async function pageToScreen(id: string): Promise<{ x: number; y: number }> {
   // not over the page at all.
   const cx = Math.min(Math.max(r.x + r.w / 2, 8), m.w - 8);
   const cy = Math.min(Math.max(r.y + r.h / 2, 8), m.h - 8);
-  return { x: Math.round(view.container.x + cx * m.dpr), y: Math.round(view.container.y + cy * m.dpr) };
+  // Off CEF's own window, not the container: a docked inspector is the whole
+  // container and the page is a rectangle inside it, so the container's origin
+  // is the page's only while nothing is docked.
+  return { x: Math.round(view.cef.x + cx * m.dpr), y: Math.round(view.cef.y + cy * m.dpr) };
 }
 
 /// The screen position of the window's top-left in logical units, calibrated
@@ -441,6 +444,54 @@ async function widgetToScreen(testId: string): Promise<{ x: number; y: number } 
 async function focusNativeChrome(at: { x: number; y: number }): Promise<void> {
   pointerTo(at.x, at.y);
   click(1);
+}
+
+/// Where the docked inspector leaves the page, against where the page is.
+///
+/// The X windows tiling the container says nothing about this: told it can
+/// dock, the frontend fills the view and keeps a hole in its own layout for
+/// the page, and the page has to be in that hole. A page that is not is the
+/// strip of bare background the frontend draws where it expected the page, and
+/// the same rectangle is what device mode reports, so following it is what
+/// draws the phone in the page area.
+async function dockTiles(phase: string): Promise<void> {
+  let detail = "never measured";
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const view = shownView();
+    const target = (await targets(port)).find((t) => t.url.startsWith("devtools://"));
+    if (view && target?.webSocketDebuggerUrl) {
+      const session = await Session.open(target.webSocketDebuggerUrl);
+      const tools = await inspectedPageBounds(session).catch(() => null);
+      const dpr = await session.eval<number>("devicePixelRatio").catch(() => 1);
+      session.close();
+      const hole = tools?.bounds ?? null;
+      if (hole) {
+        // The frontend reports DIP; the X server speaks device pixels.
+        const want = {
+          x: Math.round(hole.x * dpr), y: Math.round(hole.y * dpr),
+          w: Math.round(hole.width * dpr), h: Math.round(hole.height * dpr),
+        };
+        const at = {
+          x: view.cef.x - view.container.x, y: view.cef.y - view.container.y,
+          w: view.cef.w, h: view.cef.h,
+        };
+        const span = Math.round((tools?.width ?? 0) * dpr);
+        detail = `${phase}: page ${at.w}x${at.h}@${at.x},${at.y}, hole ${want.w}x${want.h}@${want.x},${want.y}`
+          + `, inspector ${span} of container ${view.container.w}`;
+        const fits = Math.abs(want.x - at.x) <= 2 && Math.abs(want.y - at.y) <= 2
+          && Math.abs(want.w - at.w) <= 2 && Math.abs(want.h - at.h) <= 2;
+        const spans = Math.abs(span - view.container.w) <= 2;
+        if (fits && spans) {
+          check(`dockTiling/${phase}`, true, detail);
+          return;
+        }
+      } else {
+        detail = `${phase}: the frontend announced no page bounds`;
+      }
+    }
+    await Bun.sleep(1000);
+  }
+  check(`dockTiling/${phase}`, false, detail);
 }
 
 /// Polls until the browser's own window matches the container it sits in and
@@ -1216,9 +1267,26 @@ if (hasApp) {
     const splitAfter = after.cef.w < after.container.w && Math.abs(Math.round(m.w * m.dpr) - after.cef.w) <= 1;
     capture(`${shots}/devtools-docked.png`);
     check("devToolsResize", splitAfter, `page window ${after.cef.w} of ${after.container.w}, page ${m.w}@${m.dpr}`);
+    await dockTiles("open");
+    resizeToplevel(top, 1400, 900);
+    await Bun.sleep(1500);
+    await dockTiles("resized");
+    if (hasApp) {
+      // The inspected tab goes off screen and comes back: every other view in
+      // the app is alive and parked, and the one that returns has to be laid
+      // out against the inspector that is still docked.
+      key("ctrl+Tab");
+      await Bun.sleep(2500);
+      key("ctrl+Tab");
+      await Bun.sleep(2500);
+      await resyncPage();
+      await dockTiles("tabSwitch");
+    }
   } else {
     check("devToolsSplitsTheView", false, "no docked inspector");
     check("devToolsResize", false, "no docked inspector");
+    check("dockTiling/open", false, "no docked inspector");
+    check("dockTiling/resized", false, "no docked inspector");
   }
   // The pointer went to the inspector's half during the resize leg, and F12 is
   // a Chrome accelerator the browser only sees while the page has the
@@ -1232,6 +1300,26 @@ if (hasApp) {
   await Bun.sleep(4000);
   const leftOver = (await targets(port)).filter((t) => t.url.startsWith("devtools://"));
   check("devToolsCloses", leftOver.length === 0, `${leftOver.length} devtools target(s) left`);
+  // And once more, on an inspector that is not the first one this view has
+  // had: the second dock is where a retired inspector's share used to leak.
+  if (leftOver.length === 0) {
+    const again = await pageToScreen("title");
+    pointerTo(again.x, again.y);
+    click(1);
+    await Bun.sleep(500);
+    key("F12");
+    for (let i = 0; i < 40; i++) {
+      if ((await targets(port)).some((t) => t.url.startsWith("devtools://"))) break;
+      await Bun.sleep(500);
+    }
+    await dockTiles("reopened");
+    const backOn = await pageToScreen("title");
+    pointerTo(backOn.x, backOn.y);
+    click(1);
+    await Bun.sleep(500);
+    key("F12");
+    await Bun.sleep(4000);
+  }
   resizeToplevel(top, 1280, 800);
   await Bun.sleep(1000);
   const s = await settled(8000);

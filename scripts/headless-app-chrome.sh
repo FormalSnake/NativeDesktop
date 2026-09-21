@@ -107,8 +107,10 @@ launch_host() {
     export ND_DEMO_URL="$FIXTURE"
     export ND_WEBVIEW_TRACE=1
     # A distinct id per rig: both rigs run at once against one session bus, and
-    # the second launch would otherwise activate the first app and exit.
-    export ND_APP_ID="dev.nativedesktop.ndAccept${rig}"
+    # the second launch would otherwise activate the first app and exit. The
+    # prefix is settable for the same reason: two runs of this gate share the
+    # machine's session bus, and the second one would activate the first.
+    export ND_APP_ID="${ND_ACCEPT_APP_ID:-dev.nativedesktop.ndAccept}${rig}"
     # setsid so the whole CEF process tree lands in one session, which is what
     # the orphan check at quit counts.
     exec setsid "$FRAMEWORK/zig-out/bin/nd-hello" \

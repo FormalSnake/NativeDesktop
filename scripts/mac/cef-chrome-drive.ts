@@ -10,7 +10,7 @@
 // on-screen window of this process is either one of the app's own windows or an
 // anchor at alpha 0.
 import { connectApp } from "@nativedesktop/test";
-import { Session, clickDevToolsClose } from "../cdp.ts";
+import { Session, clickDevToolsClose, inspectedPageBounds } from "../cdp.ts";
 import { KEY_DOWN_ARROW, KEY_ESCAPE, KEY_RETURN, activateApp, menuStopsTo, menuWindows, shownMenu, systemKey, until } from "./app-chrome-lib";
 
 const pid = process.env.ND_HOST_PID ?? "";
@@ -72,28 +72,31 @@ async function targets(): Promise<{ type: string; url: string; webSocketDebugger
   return (await response.json()) as { type: string; url: string; webSocketDebuggerUrl?: string }[];
 }
 
-/// The page and the inspector share the webview: whatever each was laid out
-/// at has to add up to it, and a pair that does not is the strip of bare
-/// background a docked inspector leaves when one of the two is not filling its
-/// half.
+/// The docked inspector fills the webview and keeps a hole in its own layout
+/// for the page, which is where the page has to be drawn. A page that is not
+/// the size of that hole is the strip of bare background the owner sees
+/// between the two, and it is also what device mode draws the phone into.
 async function checkTiling(phase: string): Promise<void> {
   let detail = "never measured";
-  // Polled: the box layout and the two documents settle on their own schedule
+  // Polled: the layout and the two documents settle on their own schedule
   // after a dock or a resize, so the assertion is about where they come to
   // rest rather than about the first frame after the event.
   for (let attempt = 0; attempt < 12; attempt++) {
     const box = await app.getByTestId("c-view").boundingBox();
-    const pageWidth = Number(await evaluate("innerWidth"));
+    const page = String(await evaluate("innerWidth+'x'+innerHeight")).split("x").map(Number);
     const devtoolsTarget = (await targets()).find((t) => t.url.startsWith("devtools://"));
-    let toolsWidth = -1;
+    let tools: { bounds: { x: number; y: number; width: number; height: number } | null; width: number } | null = null;
     if (devtoolsTarget?.webSocketDebuggerUrl) {
       const session = await Session.open(devtoolsTarget.webSocketDebuggerUrl);
-      toolsWidth = Number(await session.eval<number>("innerWidth"));
+      tools = await inspectedPageBounds(session);
       session.close();
     }
     const view = Math.round(box?.width ?? -1);
-    detail = `page ${pageWidth} + inspector ${toolsWidth} = ${pageWidth + toolsWidth}, webview ${view}`;
-    if (pageWidth > 0 && toolsWidth > 0 && Math.abs(pageWidth + toolsWidth - view) <= 1) {
+    const hole = tools?.bounds;
+    detail = `page ${page[0]}x${page[1]}, hole ${hole ? `${hole.width}x${hole.height}@${hole.x},${hole.y}` : "none"}`
+      + `, inspector ${tools?.width ?? -1} wide, webview ${view}`;
+    if (hole && Math.abs(hole.width - page[0]!) <= 2 && Math.abs(hole.height - page[1]!) <= 2
+      && Math.abs((tools?.width ?? -1) - view) <= 2) {
       check(`dockTiling/${phase}`, true, detail);
       return;
     }
@@ -242,7 +245,16 @@ check("pointerAndKeyboard", typed === "abc", `field reads ${JSON.stringify(typed
 // window server is the only reader while it is up.
 activateApp();
 await Bun.sleep(400);
-await app.getByTestId("c-view").rightClick();
+// Inside the PAGE, not the middle of the view: the inspector is docked here
+// and it is most of the view, so the middle is the frontend, which answers a
+// right click with a menu of its own and no NSMenu at all.
+const menuView = await app.getByTestId("c-view").boundingBox();
+const menuPageWidth = Number(await evaluate("innerWidth"));
+await app.mouse.click(
+  (menuView?.x ?? 0) + Math.min(menuView?.width ?? 0, menuPageWidth) / 2,
+  (menuView?.y ?? 0) + (menuView?.height ?? 0) / 2,
+  { button: "right" },
+);
 const menus = await until("the context menu opens", menuWindows, (w) => w.length > 0, 15000).catch(() => []);
 check("contextMenuOpens", menus.length > 0, `${menus.length} menu window(s)`);
 systemKey(KEY_ESCAPE);

@@ -13,7 +13,7 @@
 // ND_APP_CHROME_LEGS=<comma separated> runs a subset.
 import { connectApp, type AttachedApp, type LocatorFactory } from "@nativedesktop/test";
 
-import { Session, waitForTarget } from "../cdp.ts";
+import { Session, inspectedPageBounds, waitForTarget, type Box } from "../cdp.ts";
 
 import {
   FIXTURE_FILL,
@@ -409,52 +409,13 @@ async function closeInspector(page: string): Promise<void> {
   await openInspector(page);
 }
 
-/// The inspected-page placeholder the frontend keeps for the embedder, in the
-/// frontend's own client coordinates, with the frontend's viewport beside it.
-/// DevTools is shadow DOM throughout, so the walk descends every root.
-const PLACEHOLDER_PROBE = `(() => {
-  window.dispatchEvent(new Event('resize'));
-  return new Promise((done) => setTimeout(() => done(JSON.stringify({
-    win: [innerWidth, innerHeight, screenX, screenY],
-    hit: window.__ndBounds ?? null,
-    seen: window.__ndEmbedder ?? [],
-  })), 250));
-})()`;
-
-/// Patches the frontend's own channel to the embedder, which is where the rect
-/// it wants the page drawn in is announced. Chrome's browser acts on that
-/// message; CEF drops it, so this is the only way to see what the frontend
-/// asked for.
-const EMBEDDER_HOOK = `(() => {
-  if (window.__ndHooked) return 'already';
-  const host = window.DevToolsHost;
-  if (!host || !host.sendMessageToEmbedder) return 'no DevToolsHost';
-  const original = host.sendMessageToEmbedder.bind(host);
-  window.__ndEmbedder = [];
-  host.sendMessageToEmbedder = (message) => {
-    try {
-      const parsed = typeof message === 'string' ? JSON.parse(message) : message;
-      window.__ndEmbedder.push(parsed.method);
-      if (parsed.method === 'setInspectedPageBounds') window.__ndBounds = parsed.params[0];
-    } catch (e) {}
-    return original(message);
-  };
-  window.__ndHooked = true;
-  return 'hooked';
-})()`;
-
-interface FrontendGeometry {
-  win: [number, number, number, number];
-  hit: { x: number; y: number; width: number; height: number } | null;
-  seen: string[];
-}
-
-async function frontendGeometry(): Promise<FrontendGeometry> {
+/// What the frontend reserved for the page, with the frontend's own viewport
+/// beside it.
+async function frontendGeometry(): Promise<{ bounds: Box | null; width: number; height: number }> {
   const target = await waitForTarget(DEBUG_PORT, (t) => t.url.startsWith("devtools://"), 20000);
   const session = await Session.open(target.webSocketDebuggerUrl ?? "");
   try {
-    await session.eval<string>(EMBEDDER_HOOK);
-    return JSON.parse(String(await session.eval<string>(PLACEHOLDER_PROBE))) as FrontendGeometry;
+    return await inspectedPageBounds(session);
   } finally {
     session.close();
   }
@@ -470,27 +431,23 @@ async function dockTiles(page: string, phase: string): Promise<void> {
   let detail = "never measured";
   for (let attempt = 0; attempt < 15; attempt++) {
     const box = await viewBox(page);
-    const pageRect = (await pageEval(app, page, "[screenX,screenY,innerWidth,innerHeight].join(',')")) ?? "";
-    const [px, py, pw, ph] = pageRect.split(",").map(Number);
+    const inner = (await pageEval(app, page, "innerWidth+'x'+innerHeight")) ?? "";
+    const [pw, ph] = inner.split("x").map(Number);
     const tools = await frontendGeometry().catch(() => null);
     if (tools === null) {
       detail = `${phase}: no devtools target`;
-    } else if (tools.hit === null) {
-      detail = `${phase}: the frontend announced no page bounds (embedder messages ${JSON.stringify(tools.seen)})`;
+    } else if (tools.bounds === null) {
+      detail = `${phase}: the frontend announced no page bounds`;
     } else {
-      const [toolsW] = tools.win;
-      const want = tools.hit;
-      detail =
-        `${phase}: page ${pw}x${ph}@${px},${py}, placeholder ${want.width}x${want.height}@${want.x},${want.y}` +
-        `, inspector ${toolsW} wide, webview ${Math.round(box.width)}`;
-      // Sizes, not screen origins: Chromium's screenX for a BrowserView that
-      // was reparented into this window is the popup's original position and
-      // never moves, on either document, so the two are not in one space. The
-      // origin is covered by the capture the leg takes.
-      const fits = Math.abs(want.width - pw!) <= 2 && Math.abs(want.height - ph!) <= 2;
-      // The frontend is the whole webview when it is docked for real: it draws
-      // its own panels around the hole the page sits in.
-      const spans = Math.abs(toolsW - box.width) <= 2;
+      const hole = tools.bounds;
+      detail = `${phase}: page ${pw}x${ph}, hole ${hole.width}x${hole.height}@${hole.x},${hole.y}`
+        + `, inspector ${tools.width} wide, webview ${Math.round(box.width)}`;
+      // Sizes and the span, not screen origins: Chromium's screenX for a
+      // BrowserView reparented into this window is the popup's original
+      // position and never moves, on either document, so the two are not in
+      // one space. The origin is what the leg's capture shows.
+      const fits = Math.abs(hole.width - pw!) <= 2 && Math.abs(hole.height - ph!) <= 2;
+      const spans = Math.abs(tools.width - box.width) <= 2;
       if (fits && spans) return;
     }
     await Bun.sleep(1000);
