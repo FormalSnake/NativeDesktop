@@ -511,6 +511,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `navigate` | `onNavigate` | text |
 | `titleChanged` | `onTitleChanged` | text |
 | `loadingChanged` | `onLoadingChanged` | checked |
+| `focusChanged` | `onFocusChanged` | checked |
 | `backAvailable` | `onBackAvailable` | checked |
 | `forwardAvailable` | `onForwardAvailable` | checked |
 | `loadProgress` | `onLoadProgress` | value |

@@ -46,6 +46,7 @@ final class NDWebView: WKWebView {
     private var lastLoading = false
     private var lastCanGoBack = false
     private var lastCanGoForward = false
+    private var lastPageFocused = false
     // Rounded to 3 decimals so float noise in estimatedProgress doesn't fire
     // spurious diffs; -1 sentinel so the first real value (even 0.0) still emits.
     private var lastProgress: Double = -1
@@ -952,6 +953,21 @@ final class NDWebView: WKWebView {
             lastProgress = progress
             emitEvent("loadProgress", json: "{\"value\":\(progress)}")
         }
+        let focused = ndPageHasKeyboard()
+        if focused != lastPageFocused {
+            lastPageFocused = focused
+            emitEvent("focusChanged", json: "{\"checked\":\(focused)}")
+        }
+    }
+
+    /// The page holds the keyboard when the key window's first responder is
+    /// this view or one of the engine's own views under it: WKWebView and
+    /// Chromium both install a subview of their own as the responder rather
+    /// than answering as the widget the app created.
+    func ndPageHasKeyboard() -> Bool {
+        guard let window, window.isKeyWindow else { return false }
+        guard let responder = window.firstResponder as? NSView else { return false }
+        return responder === self || responder.isDescendant(of: self)
     }
 
     func emitEvent(_ name: String, json: String) {

@@ -640,6 +640,7 @@
         { "name": "navigate", "ndpName": "onNavigate", "payload": "text" },
         { "name": "titleChanged", "ndpName": "onTitleChanged", "payload": "text" },
         { "name": "loadingChanged", "ndpName": "onLoadingChanged", "payload": "checked" },
+        { "name": "focusChanged", "ndpName": "onFocusChanged", "payload": "checked" },
         { "name": "backAvailable", "ndpName": "onBackAvailable", "payload": "checked" },
         { "name": "forwardAvailable", "ndpName": "onForwardAvailable", "payload": "checked" },
         { "name": "loadProgress", "ndpName": "onLoadProgress", "payload": "value" },
