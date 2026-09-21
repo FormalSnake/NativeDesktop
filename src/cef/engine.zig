@@ -1043,6 +1043,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     command_handler.cef.is_chrome_page_action_icon_visible = &isChromePageActionIconVisible;
     command_handler.cef.is_chrome_toolbar_button_visible = &isChromeToolbarButtonVisible;
     request_handler.cef.on_open_urlfrom_tab = &onOpenUrlFromTab;
+    request_handler.cef.get_auth_credentials = &onGetAuthCredentials;
     permission_handler.cef.on_show_permission_prompt = &onShowPermissionPrompt;
     permission_handler.cef.on_request_media_access_permission = &onRequestMediaAccessPermission;
     permission_handler.cef.on_dismiss_permission_prompt = &onDismissPermissionPrompt;
@@ -2086,6 +2087,30 @@ fn onOpenUrlFromTab(
     return 1;
 }
 
+/// Chrome style answers an HTTP auth challenge with Chromium's own login
+/// window, which this embedding may not have. The framework gives an app no way
+/// to supply credentials, so the challenge is refused: 0 cancels the request and
+/// the page gets the 401 it would have got if the user pressed Cancel.
+fn onGetAuthCredentials(
+    _: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    origin_url: [*c]const c.cef_string_t,
+    _: c_int,
+    _: [*c]const c.cef_string_t,
+    _: c_int,
+    _: [*c]const c.cef_string_t,
+    _: [*c]const c.cef_string_t,
+    callback: [*c]c.cef_auth_callback_t,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(callback);
+    if (dupeStr(origin_url)) |origin| {
+        defer alloc.free(origin);
+        std.debug.print("ND_WARN WebView engine=chromium: HTTP authentication refused for {s}; no credential surface in this engine\n", .{origin});
+    }
+    return 0;
+}
+
 // ============================================================================
 // cef_display_handler_t
 // ============================================================================
@@ -2436,6 +2461,8 @@ const Emission = struct {
     /// A permission prompt Chromium would otherwise have drawn itself. It
     /// holds the callback, so the GTK side owns answering it from here on.
     permission: ?*PermissionRequest = null,
+    /// Chromium's own id for a prompt it has finished with.
+    permission_dismissed: ?u64 = null,
 };
 
 fn post(e: Emission) void {
@@ -2469,6 +2496,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     // factory runs on the IO thread with no view in hand.
     if (box.scheme_obj) |obj| {
         announceSchemeRequest(obj);
+        return 0;
+    }
+    // Keyed by Chromium's prompt id rather than by view, so a prompt dismissed
+    // after its tab went away is still forgotten.
+    if (box.permission_dismissed) |prompt_id| {
+        dropPermissionRequest(prompt_id);
         return 0;
     }
     // The tab this came from can have been closed while the event was in
@@ -5044,9 +5077,13 @@ fn onFileDialog(
 // unanswered id leaves the page waiting, as `schemeRequest` does.
 
 const PermissionRequest = struct {
-    id: []u8,
-    origin: []u8,
-    types: []u8,
+    id: []const u8,
+    origin: []const u8,
+    types: []const u8,
+    /// Chromium's own id for the prompt, so `on_dismiss_permission_prompt` can
+    /// drop a request whose callback CEF has already torn down. Zero on the
+    /// getUserMedia route, which has no dismissal callback.
+    prompt_id: u64,
     /// `cef_permission_prompt_callback_t` or, for getUserMedia,
     /// `cef_media_access_callback_t`; `media_mask` tells them apart by being
     /// non-zero on the media route.
@@ -5060,45 +5097,45 @@ var permission_seq: u64 = 0;
 /// The permission names the app sees. Chromium's own enum is a bitmask, so a
 /// request carrying two of them reports both.
 const permission_names = [_]struct { bit: u32, name: []const u8 }{
-    .{ .bit = c.CEF_PERMISSION_TYPE_AR_SESSION, .name = "arSession" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM, .name = "cameraPanTiltZoom" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_CAMERA_STREAM, .name = "camera" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL, .name = "capturedSurfaceControl" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_CLIPBOARD, .name = "clipboard" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS, .name = "topLevelStorageAccess" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_DISK_QUOTA, .name = "diskQuota" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_LOCAL_FONTS, .name = "localFonts" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_GEOLOCATION, .name = "geolocation" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_HAND_TRACKING, .name = "handTracking" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_IDENTITY_PROVIDER, .name = "identityProvider" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_IDLE_DETECTION, .name = "idleDetection" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_MIC_STREAM, .name = "microphone" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_MIDI_SYSEX, .name = "midiSysex" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS, .name = "multipleDownloads" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_NOTIFICATIONS, .name = "notifications" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_KEYBOARD_LOCK, .name = "keyboardLock" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_POINTER_LOCK, .name = "pointerLock" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER, .name = "protectedMediaIdentifier" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER, .name = "registerProtocolHandler" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_STORAGE_ACCESS, .name = "storageAccess" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_VR_SESSION, .name = "vrSession" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION, .name = "webAppInstallation" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT, .name = "windowManagement" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS, .name = "fileSystemAccess" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS_DEPRECATED, .name = "localNetworkAccess" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_LOCAL_NETWORK, .name = "localNetwork" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_LOOPBACK_NETWORK, .name = "loopbackNetwork" },
-    .{ .bit = c.CEF_PERMISSION_TYPE_SENSORS, .name = "sensors" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_AR_SESSION), .name = "arSession" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM), .name = "cameraPanTiltZoom" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAMERA_STREAM), .name = "camera" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CAPTURED_SURFACE_CONTROL), .name = "capturedSurfaceControl" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_CLIPBOARD), .name = "clipboard" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS), .name = "topLevelStorageAccess" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_DISK_QUOTA), .name = "diskQuota" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_FONTS), .name = "localFonts" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_GEOLOCATION), .name = "geolocation" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_HAND_TRACKING), .name = "handTracking" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_IDENTITY_PROVIDER), .name = "identityProvider" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_IDLE_DETECTION), .name = "idleDetection" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MIC_STREAM), .name = "microphone" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MIDI_SYSEX), .name = "midiSysex" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_MULTIPLE_DOWNLOADS), .name = "multipleDownloads" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_NOTIFICATIONS), .name = "notifications" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_KEYBOARD_LOCK), .name = "keyboardLock" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_POINTER_LOCK), .name = "pointerLock" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER), .name = "protectedMediaIdentifier" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER), .name = "registerProtocolHandler" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_STORAGE_ACCESS), .name = "storageAccess" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_VR_SESSION), .name = "vrSession" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_WEB_APP_INSTALLATION), .name = "webAppInstallation" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT), .name = "windowManagement" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS), .name = "fileSystemAccess" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS_DEPRECATED), .name = "localNetworkAccess" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOCAL_NETWORK), .name = "localNetwork" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_LOOPBACK_NETWORK), .name = "loopbackNetwork" },
+    .{ .bit = @intCast(c.CEF_PERMISSION_TYPE_SENSORS), .name = "sensors" },
 };
 
 const media_permission_names = [_]struct { bit: u32, name: []const u8 }{
-    .{ .bit = c.CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE, .name = "microphone" },
-    .{ .bit = c.CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE, .name = "camera" },
-    .{ .bit = c.CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE, .name = "desktopAudio" },
-    .{ .bit = c.CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE, .name = "desktopVideo" },
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE), .name = "microphone" },
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE), .name = "camera" },
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE), .name = "desktopAudio" },
+    .{ .bit = @intCast(c.CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE), .name = "desktopVideo" },
 };
 
-fn permissionTypeList(mask: u32, media: bool) []u8 {
+fn permissionTypeList(mask: u32, media: bool) []const u8 {
     var out: std.ArrayList(u8) = .empty;
     if (media) {
         for (media_permission_names) |entry| {
@@ -5116,12 +5153,13 @@ fn permissionTypeList(mask: u32, media: bool) []u8 {
     return out.toOwnedSlice(alloc) catch &.{};
 }
 
-fn postPermissionRequest(view: *View, origin: [*c]const c.cef_string_t, mask: u32, callback: usize, media: bool) void {
+fn postPermissionRequest(view: *View, prompt_id: u64, origin: [*c]const c.cef_string_t, mask: u32, callback: usize, media: bool) void {
     const req = alloc.create(PermissionRequest) catch return;
     req.* = .{
         .id = &.{},
         .origin = dupeStr(origin) orelse (alloc.dupe(u8, "") catch &.{}),
         .types = permissionTypeList(mask, media),
+        .prompt_id = prompt_id,
         .callback = callback,
         .media_mask = if (media) mask else 0,
     };
@@ -5175,21 +5213,21 @@ fn answerPermissionRequest(req: *PermissionRequest, allow: bool) void {
     const cb: [*c]c.cef_permission_prompt_callback_t = @ptrFromInt(req.callback);
     defer ref.releaseParam(cb);
     if (cb.*.cont) |cont| {
-        cont(cb, if (allow) c.CEF_PERMISSION_RESULT_ACCEPT else c.CEF_PERMISSION_RESULT_DENY);
+        cont(cb, @intCast(if (allow) c.CEF_PERMISSION_RESULT_ACCEPT else c.CEF_PERMISSION_RESULT_DENY));
     }
 }
 
 fn onShowPermissionPrompt(
     self: [*c]c.cef_permission_handler_t,
     browser: [*c]c.cef_browser_t,
-    _: u64,
+    prompt_id: u64,
     requesting_origin: [*c]const c.cef_string_t,
     requested_permissions: u32,
     callback: [*c]c.cef_permission_prompt_callback_t,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     const view = PermissionObj.of(self).payload;
-    postPermissionRequest(view, requesting_origin, requested_permissions, @intFromPtr(callback), false);
+    postPermissionRequest(view, prompt_id, requesting_origin, requested_permissions, @intFromPtr(callback), false);
     return 1;
 }
 
@@ -5204,19 +5242,37 @@ fn onRequestMediaAccessPermission(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
     const view = PermissionObj.of(self).payload;
-    postPermissionRequest(view, requesting_origin, requested_permissions, @intFromPtr(callback), true);
+    postPermissionRequest(view, 0, requesting_origin, requested_permissions, @intFromPtr(callback), true);
     return 1;
 }
 
 /// Chromium gave up on the prompt (a navigation, a closed browser). The
 /// callback is spent, so the parked request is dropped without answering it.
 fn onDismissPermissionPrompt(
-    _: [*c]c.cef_permission_handler_t,
+    self: [*c]c.cef_permission_handler_t,
     browser: [*c]c.cef_browser_t,
-    _: u64,
+    prompt_id: u64,
     _: c.cef_permission_request_result_t,
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
+    const view = PermissionObj.of(self).payload;
+    post(.{ .view = view, .name = "permissionDismissed", .permission_dismissed = prompt_id });
+}
+
+/// GTK thread: forgets a prompt CEF has finished with. The callback is spent,
+/// so it is released without being called.
+fn dropPermissionRequest(prompt_id: u64) void {
+    var it = pending_permission_requests.iterator();
+    while (it.next()) |entry| {
+        const req = entry.value_ptr.*;
+        if (req.prompt_id == 0 or req.prompt_id != prompt_id) continue;
+        _ = pending_permission_requests.remove(entry.key_ptr.*);
+        const cb: [*c]c.cef_permission_prompt_callback_t = @ptrFromInt(req.callback);
+        req.callback = 0;
+        ref.releaseParam(cb);
+        answerPermissionRequest(req, false);
+        return;
+    }
 }
 
 fn cmdRespondPermission(arg: ?std.json.Value) void {
