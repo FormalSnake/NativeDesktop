@@ -984,6 +984,12 @@ const View = struct {
     /// by the command, read on the CEF UI thread by `on_file_dialog`.
     dialog_lock: SpinLock = .{},
     pending_dialog_path: ?[]u8 = null,
+    /// Whether an `installExtension` is still waiting for an answer on this
+    /// view. A chooser that opens while one is, with no path parked for it, is
+    /// the install asking a second time; letting CEF put its own directory
+    /// chooser up there is a dialog nobody will ever answer and an install
+    /// promise that never settles.
+    install_in_flight: bool = false,
     menu_items: []ctxmenu.Item = &.{},
     menu_commands: std.AutoHashMapUnmanaged(c_int, MenuCommand) = .empty,
     next_menu_command: c_int = menu_command_first,
@@ -2988,8 +2994,17 @@ const Deferred = union(enum) {
 /// feature being dead: an extension's background page reported exactly that.
 const world_wait_us: i64 = 5 * std.time.us_per_s;
 
-/// `event` and `key` are static strings; only `id` is owned.
-const JsonResult = struct { id: []u8, event: []const u8, key: []const u8 };
+/// `event` and `key` are static strings; `id` and `what` are owned. `what` is
+/// what a timeout calls the command in its error, and `budget_us` is how long
+/// the command may take: a round trip for most of them, a person's answer for
+/// the one that raises Chrome's own confirmation.
+const JsonResult = struct {
+    id: []u8,
+    event: []const u8,
+    key: []const u8,
+    what: []u8,
+    budget_us: i64,
+};
 
 /// Where the string form of one evaluation goes.
 const EvalSink = union(enum) {
@@ -3066,6 +3081,16 @@ const other_call_timeout_us: i64 = 15 * std.time.us_per_s;
 /// `uninstallExtension` waits on Chrome's own "Remove …?" confirmation, so its
 /// deadline is a person's, not a round trip's.
 const confirmed_call_timeout_us: i64 = 5 * std.time.us_per_min;
+/// `installExtension` waits on nobody: the directory chooser
+/// `developerPrivate.loadUnpacked` opens is answered by this engine's own
+/// dialog handler. What it does wait on is Chromium unpacking and validating
+/// the directory, which a large extension makes slow. Past this the command
+/// fails with the path it was given, rather than leaving the app's promise
+/// unsettled for the process's life.
+const install_call_timeout_us: i64 = 90 * std.time.us_per_s;
+/// The registry reads and the enable/disable writes: a promise around one
+/// chrome.* callback, with no dialog and no unpacking behind it.
+const registry_call_timeout_us: i64 = 30 * std.time.us_per_s;
 
 var pending_sweep_timer: c_uint = 0;
 
@@ -3086,10 +3111,26 @@ fn onPendingSweep(_: ?*anyopaque) callconv(.c) c_int {
     for (expired.items) |id| {
         const entry = pending_calls.fetchRemove(id) orelse continue;
         tr("cdpExpired node={d} id={d}", .{ entry.value.view.node_id, id });
-        failCall(entry.value.view, entry.value.call, "the engine never answered this devtools call");
+        var buf: [256]u8 = undefined;
+        failCall(entry.value.view, entry.value.call, expiryMessage(&buf, entry.value.call));
     }
     if (pending_calls.count() > 0) armPendingSweep();
     return 0;
+}
+
+/// What a call nobody answered tells its caller. Naming the command matters:
+/// an app whose install promise never settles reads the whole feature as dead,
+/// and the one thing it cannot do is work out which step stalled.
+fn expiryMessage(buf: []u8, call: Call) []const u8 {
+    const fallback = "the engine never answered this devtools call";
+    const what = switch (call) {
+        .eval => |e| switch (e.sink) {
+            .json_result => |r| r.what,
+            else => return fallback,
+        },
+        else => return fallback,
+    };
+    return std.fmt.bufPrint(buf, "{s}: the engine never answered", .{what}) catch fallback;
 }
 
 /// GTK thread only: every CDP result is marshaled before it is looked up here.
@@ -3100,7 +3141,10 @@ fn sinkFree(sink: EvalSink) void {
         .app => |id| alloc.free(id),
         .extensions => |id| alloc.free(id),
         .extension_actions => |id| alloc.free(id),
-        .json_result => |r| alloc.free(r.id),
+        .json_result => |r| {
+            alloc.free(r.id);
+            alloc.free(r.what);
+        },
         else => {},
     }
 }
@@ -3146,7 +3190,10 @@ fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Ca
     tr("cdp -> node={d} id={d} {s} {s}", .{ view.node_id, id, method, params_json });
     if (std.meta.activeTag(call) == .ignore) return true;
     const budget: i64 = switch (call) {
-        .eval => |e| if (e.sink == .json_result) confirmed_call_timeout_us else eval_call_timeout_us,
+        .eval => |e| switch (e.sink) {
+            .json_result => |r| r.budget_us,
+            else => eval_call_timeout_us,
+        },
         .stringify => eval_call_timeout_us,
         else => other_call_timeout_us,
     };
@@ -3614,6 +3661,12 @@ fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
         },
         .json_result => |result| {
             defer alloc.free(result.id);
+            defer alloc.free(result.what);
+            if (std.mem.startsWith(u8, result.what, "installExtension")) {
+                view.dialog_lock.lock();
+                view.install_in_flight = false;
+                view.dialog_lock.unlock();
+            }
             const f = emit orelse return;
             var payload: std.json.ObjectMap = .empty;
             defer payload.deinit(alloc);
@@ -4383,7 +4436,8 @@ fn cmdWatchExtensions(view: *View, arg: ?std.json.Value) void {
         _ = cdpSend(view, "Runtime.addBinding", params.items, .ignore);
         view.extensions_watched = true;
     }
-    startJsonCommand(view, id, "extensionsChanged", "sources", watch_extensions_js);
+    const what = alloc.dupe(u8, "watchExtensions") catch return;
+    startJsonCommand(view, id, "extensionsChanged", "sources", what, registry_call_timeout_us, watch_extensions_js);
 }
 
 /// A registry change reported by the page's own subscription. No correlation
@@ -4651,11 +4705,27 @@ fn extensionCommandId(arg: ?std.json.Value, comptime name: []const u8) ?[]const 
     };
 }
 
-fn startJsonCommand(view: *View, id: []const u8, event: []const u8, key: []const u8, code: []const u8) void {
-    const id_copy = alloc.dupe(u8, id) catch return;
-    if (!startEval(view, .{ .json_result = .{ .id = id_copy, .event = event, .key = key } }, code, "")) {
-        alloc.free(id_copy);
-    }
+fn startJsonCommand(
+    view: *View,
+    id: []const u8,
+    event: []const u8,
+    key: []const u8,
+    what: []u8,
+    budget_us: i64,
+    code: []const u8,
+) void {
+    const id_copy = alloc.dupe(u8, id) catch {
+        alloc.free(what);
+        return;
+    };
+    const sink: EvalSink = .{ .json_result = .{
+        .id = id_copy,
+        .event = event,
+        .key = key,
+        .what = what,
+        .budget_us = budget_us,
+    } };
+    if (!startEval(view, sink, code, "")) sinkFree(sink);
 }
 
 fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
@@ -4675,6 +4745,7 @@ fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
     view.dialog_lock.lock();
     if (view.pending_dialog_path) |old| alloc.free(old);
     view.pending_dialog_path = parked;
+    view.install_in_flight = true;
     view.dialog_lock.unlock();
 
     var code: std.ArrayList(u8) = .empty;
@@ -4682,7 +4753,8 @@ fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
     code.appendSlice(alloc, extension_mutation_prefix) catch return;
     code.appendSlice(alloc, install_extension_body) catch return;
     code.appendSlice(alloc, extension_mutation_suffix) catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+    const what = std.fmt.allocPrint(alloc, "installExtension {s}", .{path}) catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", what, install_call_timeout_us, code.items);
 }
 
 fn cmdUninstallExtension(view: *View, arg: ?std.json.Value) void {
@@ -4708,7 +4780,8 @@ fn cmdUninstallExtension(view: *View, arg: ?std.json.Value) void {
         \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
     ) catch return;
     code.appendSlice(alloc, extension_mutation_suffix) catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+    const what = alloc.dupe(u8, "uninstallExtension") catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", what, confirmed_call_timeout_us, code.items);
 }
 
 fn cmdSetExtensionEnabled(view: *View, arg: ?std.json.Value) void {
@@ -4730,7 +4803,8 @@ fn cmdSetExtensionEnabled(view: *View, arg: ?std.json.Value) void {
         \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
     ) catch return;
     code.appendSlice(alloc, extension_mutation_suffix) catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", code.items);
+    const what = alloc.dupe(u8, "setExtensionEnabled") catch return;
+    startJsonCommand(view, id, "extensionsList", "extensions", what, registry_call_timeout_us, code.items);
 }
 
 fn appendJsString(out: *std.ArrayList(u8), value: []const u8) !void {
@@ -5354,9 +5428,19 @@ fn onFileDialog(
     view.dialog_lock.lock();
     const path = view.pending_dialog_path;
     view.pending_dialog_path = null;
+    const installing = view.install_in_flight;
     view.dialog_lock.unlock();
-    const answer = path orelse return 0;
+    const answer = path orelse {
+        if (!installing) return 0;
+        // Cancelled rather than left to CEF: `loadUnpacked` answers a cancelled
+        // chooser with an error the app's promise carries, and opens a real
+        // directory chooser over the app if this returns 0.
+        tr("installDialogUnarmed node={d}", .{view.node_id});
+        if (callback.*.cancel) |cancel| cancel(callback);
+        return 1;
+    };
     defer alloc.free(answer);
+    tr("installDialogAnswered node={d} path={s}", .{ view.node_id, answer });
 
     const api = loader.loaded() orelse return 0;
     const list = api.string_list_alloc();

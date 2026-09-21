@@ -8,7 +8,7 @@
 // so this script only reads the accessibility tree.
 import { connectApp } from "@nativedesktop/test";
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 const app = await connectApp();
 

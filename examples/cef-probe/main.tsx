@@ -115,7 +115,7 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -600,6 +600,24 @@ async function run(ctx: {
     const sources = await watchExtensions(view, (change) => record("extensionsChanged", change.reason));
     if (sources.length === 0) throw new Error("watchExtensions attached to nothing");
     return `ok (${sources.join(", ")})`;
+  });
+
+  // An install that cannot work has to answer. The command runs a promise on
+  // chrome://extensions behind a directory chooser this engine answers itself,
+  // and every step of that can stall; a promise left unsettled reads to the app
+  // as the whole registry being dead.
+  await step("installExtensionError", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    const view = ctx.extensions.current;
+    if (!view) throw new Error("no extensions view ref");
+    const started = Date.now();
+    try {
+      await installExtension(view, `${process.cwd()}/scripts/fixtures/not-an-extension`);
+    } catch (error) {
+      return `ok (rejected in ${Date.now() - started}ms: ${(error as Error).message.slice(0, 80)})`;
+    }
+    throw new Error("installExtension resolved for a directory that is not an extension");
   });
 
   await step("runtimeExtensions", async () => {
