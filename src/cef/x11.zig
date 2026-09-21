@@ -535,6 +535,37 @@ pub fn markDialogFor(window: Window, parent: Window) void {
     c.pop();
 }
 
+/// Copies `WM_CLASS` from `from` onto `to`, and answers whether `to` now has
+/// one. Every window Chromium puts on the root (a dialog, the bubble it shows
+/// on entering fullscreen) carries neither a class nor a name, and that is
+/// what the compositor hands anything that enumerates windows: the owner's
+/// screenshot picker offers it as an untitled window beside the app, and a
+/// Hyprland rule keyed on an empty class and title moves it off to a corner.
+/// Copied from the app's own toplevel rather than composed here, so the two
+/// always agree on whatever GDK set.
+pub fn copyClass(from: Window, to: Window) bool {
+    if (from == 0 or to == 0) return false;
+    const c = conn() orelse return false;
+    const XA_WM_CLASS: c_ulong = 67;
+    const XA_STRING: c_ulong = 31;
+    const PROP_MODE_REPLACE: c_int = 0;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, from, XA_WM_CLASS, 0, 256, 0, XA_STRING, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or nitems == 0 or actual_format != 8) return false;
+    defer _ = c.api.free(@ptrCast(data));
+    c.push();
+    _ = c.api.change_property(c.x, to, XA_WM_CLASS, XA_STRING, 8, PROP_MODE_REPLACE, data, @intCast(nitems));
+    _ = c.api.flush(c.x);
+    c.pop();
+    return true;
+}
+
 /// The window a window is a child of, or 0. A reparented dialog is told apart
 /// from one still sitting on the root by this and nothing else.
 pub const Origin = struct { x: c_int, y: c_int };

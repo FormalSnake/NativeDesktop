@@ -508,6 +508,16 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   is up, under the dialog's own scrim. Whether a dialog is up is read back from
   `adw_window_get_visible_dialog` rather than counted, and the engine tick puts
   a page back that was left aside.
+- Every window Chromium puts on the root (a dialog, the bubble it shows when a
+  page goes fullscreen, the small parked ones) arrives with no `WM_CLASS` at
+  all, and a compositor hands that straight to whatever enumerates windows: on
+  Hyprland the app's own toplevel and an untitled second window are both
+  `hyprctl clients` entries, which is what a screenshot picker built on that
+  list offers, and a rule keyed on an empty class and title (the owner has one)
+  moves it to a corner. The window watcher copies the app toplevel's own
+  `WM_CLASS` onto each of them, once per window. The containers the pages are
+  rendered into need nothing: they are children of the toplevel and the
+  compositor never sees them.
 - Chrome's dialogs that belong to no browser (the install prompt, the
   post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
   CEF callback is consulted about them, and they arrive as top-level windows on

@@ -597,6 +597,9 @@ const chrome_dialog_min_h: c_uint = 30;
 var chrome_watch_timer: c_uint = 0;
 var chrome_watch_truncation_warned = false;
 var adopted_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
+/// Windows already stamped with the app's class, so the stamp costs one X
+/// request per window rather than one per tick.
+var named_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 var self_pid: u32 = 0;
 
 fn startChromeWindowWatch() void {
@@ -636,6 +639,12 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
     }
     for (gone.items) |w| _ = adopted_windows.remove(w);
+    gone.clearRetainingCapacity();
+    var named_it = named_windows.keyIterator();
+    while (named_it.next()) |key| {
+        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
+    }
+    for (gone.items) |w| _ = named_windows.remove(w);
     for (children) |w| {
         if (w == 0 or w == kept_window) continue;
         // A browser this engine is still waiting on a URL for is not a dialog
@@ -649,6 +658,17 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // on the root; moving one of those would be a good deal worse than
         // leaving a Chrome dialog where Views put it.
         if (x11.isGdkSurface(w)) continue;
+        // Whatever Chromium put up, the compositor is showing it as a window of
+        // this app: it gets the app's class, so nothing enumerating windows
+        // offers it as an untitled one of its own. Cheaper than the move below
+        // and done for every one of them, the small parked ones included.
+        if (!named_windows.contains(w)) {
+            if (anchorView()) |anchor| {
+                if (x11.copyClass(x11.toplevelXid(anchor.view.widget), w)) {
+                    named_windows.put(alloc, w, {}) catch {};
+                }
+            }
+        }
         // A compositor that manages XWayland top-levels itself (Hyprland does)
         // places them by its own rules and discards the ConfigureRequest the
         // move below sends, so the hints go on before anything else: a dialog

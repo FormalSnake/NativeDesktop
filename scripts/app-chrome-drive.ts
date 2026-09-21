@@ -723,6 +723,64 @@ async function paletteLegs(): Promise<void> {
   noStray("palette");
 }
 
+/// What a window picker is offered. The shell the owner runs builds its list
+/// from the compositor's own clients (`hyprctl clients`), so every window this
+/// app puts on the display is an entry there: the containers the pages are
+/// rendered into are children of the toplevel and never appear, but everything
+/// Chromium puts on the root does, and one with no class is offered as an
+/// untitled window of its own beside the app.
+async function compositorWindowLegs(): Promise<void> {
+  if (rig !== "hypr") {
+    skip("compositorShowsOneWindow", "only Hyprland answers with a client list");
+    skip("compositorWindowsAreNamed", "only Hyprland answers with a client list");
+    return;
+  }
+  interface Client { pid: number; class: string; title: string; size: number[]; at: number[] }
+  const ours = (): Client[] => {
+    try {
+      return (JSON.parse(sh("hyprctl", "-j", "clients")) as Client[]).filter((c) => c.pid === hostPid);
+    } catch {
+      return [];
+    }
+  };
+  const describe = (c: Client) => `${JSON.stringify(c.class)}/${JSON.stringify(c.title)} ${c.size?.[0]}x${c.size?.[1]}`;
+
+  await resyncPage();
+  const steady = ours();
+  check(
+    "compositorShowsOneWindow",
+    steady.length === 1,
+    `${steady.length}: ${steady.map(describe).join(" | ") || "none"}`,
+  );
+
+  // Chromium's own windows, provoked: the fixture's stage asks for fullscreen
+  // on a click, and Chromium puts its "press Esc" bubble on the root for a few
+  // seconds.
+  const at = await pageToScreen("stage");
+  pointerTo(at.x, at.y);
+  click(1);
+  let seen = 0;
+  const anonymous: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    await Bun.sleep(200);
+    for (const c of ours()) {
+      if (c.size?.[0] === steady[0]?.size?.[0] && c.size?.[1] === steady[0]?.size?.[1]) continue;
+      seen += 1;
+      if (!c.class) anonymous.push(describe(c));
+    }
+  }
+  check(
+    "compositorWindowsAreNamed",
+    seen > 0 && anonymous.length === 0,
+    seen === 0 ? "no window of Chromium's own appeared to check" : `${seen} sample(s) of an extra window, ${anonymous.length} with no class${anonymous.length > 0 ? `: ${anonymous[0]}` : ""}`,
+  );
+  key("Escape");
+  await Bun.sleep(1500);
+  const after = await settled(6000);
+  check("compositorLeftTheViewAlone", after.ok, after.detail);
+  noStray("compositorWindows");
+}
+
 // ============================================================================
 // Legs
 // ============================================================================
@@ -752,6 +810,7 @@ const hasApp = (await app.getByTestId("omnibox").isVisible().catch(() => false))
 
 if (legs === "menu") {
   await menuLegs();
+  await compositorWindowLegs();
   await paletteLegs();
   finish();
 }
@@ -1222,6 +1281,8 @@ if (hasApp) {
 } else {
   skip("tabTraversalLeavesThePage", "the app under test has one widget tree");
 }
+
+await compositorWindowLegs();
 
 // Last: this set navigates the page and leaves it there.
 await paletteLegs();
