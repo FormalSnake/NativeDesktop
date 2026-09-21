@@ -459,6 +459,106 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
     adoptedAfter.length > adoptedBefore,
     adoptedAfter.slice(-3).map((l) => l.slice(l.indexOf("chrome surface"))).join(" | ") || "the host adopted nothing",
   );
+
+  // The permission route's own state machine, which the app owns rather than
+  // Chromium: a dismissal is not a block, an answer does not stick in the
+  // profile's content settings, a reset makes a blocked site ask again, and a
+  // prompt Chromium retires by itself is reported instead of dying silently.
+  // The probe's answer is steered through the page's URL, which it reads off
+  // the request's own `mainFrameUrl`.
+  type PermissionSeen = {
+    id: string;
+    origin: string;
+    types: string;
+    mainFrameUrl: string;
+    frameUrl?: string;
+    isMainFrame?: boolean;
+  };
+  const hostLog = process.env.ND_HOST_LOG ?? "";
+  const probeLines = async (): Promise<string[]> =>
+    hostLog
+      ? (await Bun.file(hostLog).text().catch(() => "")).split("\n").filter((l) => l.startsWith("ND_PROBE "))
+      : [];
+  const permissionsSeen = async (): Promise<PermissionSeen[]> =>
+    (await probeLines())
+      .filter((l) => l.startsWith("ND_PROBE permission {"))
+      .map((l) => JSON.parse(l.slice("ND_PROBE permission ".length)) as PermissionSeen);
+  const pageOrigin = await page.eval<string>("location.origin");
+  const base = `${pageOrigin}/dialogs`;
+
+  /// Navigates to a fresh document carrying the answer the probe should give.
+  /// Blink caches a geolocation decision for the life of a document, so proving
+  /// the browser asked again means asking from a new one.
+  async function askGeolocation(mode: string, slot: string): Promise<string> {
+    await page.send("Page.navigate", { url: `${base}?nd=${mode}&slot=${slot}` });
+    await Bun.sleep(2500);
+    await page.eval(`window.ndGeo(${JSON.stringify(slot)})`, true).catch(() => "");
+    await Bun.sleep(6000);
+    const value = JSON.parse(await page.eval<string>("JSON.stringify(window.ndState ?? {})").catch(() => "{}"));
+    return value[`geo${slot}`] ?? "absent";
+  }
+
+  const beforeDismiss = (await permissionsSeen()).length;
+  const dismissed = await askGeolocation("dismiss", "1");
+  check("permissionDismissSettles", dismissed !== "pending" && dismissed !== "absent", `window.ndState.geo1 = ${dismissed}`);
+  check("permissionDismissReachedTheApp", (await permissionsSeen()).length > beforeDismiss, `${(await permissionsSeen()).length - beforeDismiss} request(s)`);
+
+  // Two denials of the same type on the same origin in one session. Chromium
+  // records an explicit DENY as a content setting, so without the answer being
+  // put back to the default the second ask never reaches the app.
+  const beforeTwice = (await permissionsSeen()).length;
+  await askGeolocation("deny", "2");
+  await askGeolocation("deny", "3");
+  const twice = (await permissionsSeen()).length - beforeTwice;
+  check("permissionAsksEveryTime", twice >= 2, `${twice} geolocation request(s) after a deny`);
+
+  // Reset, then a third ask: the app's own "Reset Permissions" has to make the
+  // site ask again whatever Chromium still has stored for it.
+  const beforeReset = (await permissionsSeen()).length;
+  const resetSeen = await askGeolocation("reset", "4");
+  const resetRuns = (await probeLines()).filter((l) => l.startsWith("ND_PROBE reset"));
+  check("permissionResetApplied", resetRuns.length > 0, `${resetRuns.length} resetPermissions run(s) by the probe`);
+  check(
+    "permissionAsksAfterReset",
+    (await permissionsSeen()).length > beforeReset,
+    `${(await permissionsSeen()).length - beforeReset} request(s), window.ndState.geo4 = ${resetSeen}`,
+  );
+
+  // A prompt nobody answers, retired by Chromium on the next navigation: the
+  // app has to hear it, and its late answer to the dead id must say nothing.
+  await page.send("Page.navigate", { url: `${base}?nd=none&slot=5` });
+  await Bun.sleep(2500);
+  await page.eval("window.ndGeo('5')", true).catch(() => "");
+  await Bun.sleep(3000);
+  await page.send("Page.navigate", { url: `${base}?nd=deny&slot=6` });
+  await Bun.sleep(4000);
+  const withdrawn = (await probeLines()).filter((l) => l.startsWith("ND_PROBE permissionDismissed"));
+  check(
+    "permissionRequestDismissedReported",
+    withdrawn.length > 0,
+    withdrawn.map((l) => l.slice("ND_PROBE ".length)).join(" | ") || "the app was never told the request was withdrawn",
+  );
+  const warned = hostLog
+    ? (await Bun.file(hostLog).text().catch(() => "")).split("\n").filter((l) => l.includes("respondPermission: unknown request id"))
+    : [];
+  check("permissionLateAnswerSilent", warned.length === 0, warned.join(" | ") || "no warning for the retired id");
+
+  // The payload: an origin in URL.origin form and the browser's main frame.
+  // `frameUrl`/`isMainFrame` come from the getUserMedia route, which this gate
+  // does not drive: a granted capture would raise macOS's own TCC dialog.
+  const seen = await permissionsSeen();
+  const origins = [...new Set(seen.map((p) => p.origin))];
+  check(
+    "permissionOriginIsUrlOrigin",
+    origins.length > 0 && origins.every((o) => !o.endsWith("/")) && origins.includes(pageOrigin),
+    `${origins.join(" | ")} against location.origin ${pageOrigin}`,
+  );
+  check(
+    "permissionCarriesMainFrameUrl",
+    seen.length > 0 && seen.every((p) => typeof p.mainFrameUrl === "string" && p.mainFrameUrl.startsWith(pageOrigin)),
+    seen.map((p) => p.mainFrameUrl).slice(-2).join(" | ") || "no mainFrameUrl",
+  );
+
   page.close();
 }
 

@@ -1,3 +1,6 @@
+import { sendCommand } from "@nativedesktop/react";
+import type { NdNodeRef } from "@nativedesktop/react";
+
 // The page the dialog-surface gates drive: one entry point per surface that
 // Chromium draws itself rather than asking a CEF handler about. Shared by the
 // GTK probe (examples/cef-probe) and the AppKit one
@@ -42,6 +45,12 @@ export const DIALOG_SURFACES_PAGE: string =
   `pubKeyCredParams:[{type:'public-key',alg:-7}],timeout:60000}}));` +
   `window.ndGeolocation=()=>track('geolocation',new Promise((res,rej)=>` +
   `navigator.geolocation.getCurrentPosition(()=>res('position'),e=>rej(new Error(e.message||'denied')))));` +
+  // Slotted, so one document can be asked for the same permission more than
+  // once and a drive can read each answer on its own key. Blink caches a
+  // geolocation decision for the life of the document, so a drive proving the
+  // browser asked again navigates between slots.
+  `window.ndGeo=(slot)=>track('geo'+slot,new Promise((res,rej)=>` +
+  `navigator.geolocation.getCurrentPosition(()=>res('position'),e=>rej(new Error(e.message||'denied')))));` +
   `window.ndNotifications=()=>track('notifications',Notification.requestPermission());` +
   `window.ndCamera=()=>track('camera',navigator.mediaDevices.getUserMedia({video:true}));` +
   `window.ndAlert=()=>{setTimeout(()=>alert('nd gate alert'),0);return 'alert'};` +
@@ -79,4 +88,50 @@ export function dialogSurfacesRoute(path: string): Response | null {
     });
   }
   return null;
+}
+
+/// The `permissionRequest` payload, as both probes read it.
+export type PermissionPayload = {
+  id: string;
+  origin: string;
+  types: string;
+  mainFrameUrl: string;
+  frameUrl?: string;
+  isMainFrame?: boolean;
+};
+
+type PermissionPolicy = "allow" | "deny" | "dismiss" | "none";
+type WebViewRef = NdNodeRef<"webview">;
+
+/// A drive steers the probe's answer through the page's own URL (`?nd=…`),
+/// which needs no channel of its own: the app reads it off the request's
+/// `mainFrameUrl`. `none` leaves the request unanswered, so Chromium can retire
+/// it and the withdrawal route can be driven.
+function permissionPolicy(url: string): PermissionPolicy {
+  const value = /[?&]nd=([a-z]+)/.exec(url)?.[1];
+  return value === "allow" || value === "dismiss" || value === "none" ? value : "deny";
+}
+
+/// One line per request into the host's own log, which is where a drive reads
+/// what the app was told: the events label only keeps the last dozen.
+export function answerPermission(view: WebViewRef | null, payload: PermissionPayload): void {
+  console.log(`ND_PROBE permission ${JSON.stringify(payload)}`);
+  if (!view) return;
+  const policy = permissionPolicy(payload.mainFrameUrl ?? "");
+  if (policy === "none") return;
+  sendCommand(view, "respondPermission", { id: payload.id, result: policy });
+}
+
+export function permissionWithdrawn(view: WebViewRef | null, id: string): void {
+  console.log(`ND_PROBE permissionDismissed ${id}`);
+  // A late answer to a retired id has to be a silent no-op, not a warning.
+  if (view) sendCommand(view, "respondPermission", { id, result: "deny" });
+}
+
+/// `?nd=reset` asks the app to clear Chromium's stored decisions, which is what
+/// a browser's own "Reset Permissions" does.
+export function permissionNavigated(view: WebViewRef | null, url: string): void {
+  if (!view || !/[?&]nd=reset\b/.test(url)) return;
+  console.log(`ND_PROBE reset ${url}`);
+  sendCommand(view, "resetPermissions", {});
 }

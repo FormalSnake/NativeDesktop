@@ -19,7 +19,13 @@ import {
   webviewEngine,
 } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
-import { dialogSurfacesRoute } from "../../scripts/fixtures/dialog-surfaces.ts";
+import {
+  answerPermission,
+  dialogSurfacesRoute,
+  permissionNavigated,
+  permissionWithdrawn,
+} from "../../scripts/fixtures/dialog-surfaces.ts";
+import type { PermissionPayload } from "../../scripts/fixtures/dialog-surfaces.ts";
 
 // M1 assertion target for the Chromium engine: one <webview engine="chromium">
 // renders a real page inside the host's own window, the six create-time events
@@ -172,12 +178,18 @@ function DialogsApp(): React.ReactNode {
           engine="chromium"
           url={`${LOCAL_BASE}/dialogs`}
           style={{ vexpand: true, hexpand: true }}
+          onNavigate={(e) => {
+            if (view.current) permissionNavigated(view.current, e.text);
+          }}
           onPermissionRequest={(e) => {
-            const d = e.data as { id: string; origin: string; types: string };
+            const d = e.data as PermissionPayload;
             note(`permissionRequest ${d.types}`);
-            // Denied, so the page's promise settles and the gate can read the
-            // round trip back off it. A real app draws its own sheet here.
-            if (view.current) sendCommand(view.current, "respondPermission", { id: d.id, allow: false });
+            answerPermission(view.current, d);
+          }}
+          onPermissionRequestDismissed={(e) => {
+            const d = e.data as { id: string };
+            note(`permissionDismissed ${d.id}`);
+            permissionWithdrawn(view.current, d.id);
           }}
           onChromeDialog={(e) => {
             const d = e.data as { x: number; y: number; width: number; height: number };
