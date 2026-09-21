@@ -210,6 +210,22 @@ function chromeDialogs(): number[][] {
   return out;
 }
 
+/// Every mapped top-level on the root, with the rectangle the X server has for
+/// it. `census` floors at 200x200 because it is counting browser windows; a
+/// Views sheet can be narrower than that and is exactly what this pass is
+/// looking for, so nothing is filtered out here.
+function mappedToplevels(): Array<{ id: string; name: string; x: number; y: number; w: number; h: number }> {
+  const out: Array<{ id: string; name: string; x: number; y: number; w: number; h: number }> = [];
+  for (const line of sh("xwininfo", "-root", "-children").split("\n")) {
+    const m = line.match(/^\s*(0x[0-9a-f]+)\s+(".*?"|\(has no name\)).*?\s(\d+)x(\d+)\+(-?\d+)\+(-?\d+)/);
+    if (!m) continue;
+    const [, id, name, w, h, x, y] = m;
+    if (!sh("xwininfo", "-id", id).includes("Map State: IsViewable")) continue;
+    out.push({ id, name, x: Number(x), y: Number(y), w: Number(w), h: Number(h) });
+  }
+  return out;
+}
+
 let baseline = census();
 
 /// Runs one route that could open a window and reports what the X server says
@@ -241,7 +257,11 @@ const swTarget = await waitForTarget(port, (t) => t.type === "service_worker" &&
 const extId = swTarget.url.split("/")[2]!;
 check("extensionServiceWorker", true, swTarget.url);
 
-const pageTarget = await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"), 30000);
+// The dialogs pass runs its own single-view app, and its page is served through
+// a host name rather than a literal address: WebAuthn refuses an IP origin.
+const pageTarget = pass === "dialogs"
+  ? await waitForTarget(port, (t) => t.type === "page" && t.url.includes("/dialogs"), 30000)
+  : await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"), 30000);
 const page = await Session.open(pageTarget.webSocketDebuggerUrl!);
 await page.send("Page.enable");
 const sw = await Session.open(swTarget.webSocketDebuggerUrl!);
@@ -414,9 +434,89 @@ if (pass === "devtools") {
   }
 }
 
+// The surfaces Chromium draws itself rather than asking a CEF handler about:
+// the WebAuthn sheet, the permission prompts, the JS dialogs, HTTP auth, a
+// download and the save-password bubble. Each one is fired from the page and
+// answered by two questions: did a top-level land outside the app's window,
+// and did the page's own promise ever settle.
+if (pass === "dialogs") {
+  const hostWindow = mappedToplevels().find((w) => w.name.includes("ND CEF Dialogs"));
+  check("dialogsHostWindow", !!hostWindow, hostWindow ? `${hostWindow.w}x${hostWindow.h} at ${hostWindow.x},${hostWindow.y}` : "no app window on the root");
+  const host = hostWindow ?? { id: "", name: "", x: 0, y: 0, w: 0, h: 0 };
+  const inside = (w: { x: number; y: number; w: number; h: number }): boolean =>
+    w.x >= host.x && w.y >= host.y && w.x + w.w <= host.x + host.w && w.y + w.h <= host.y + host.h;
+
+  const before = mappedToplevels().map((w) => w.id);
+  // The pointer sits in the page for the whole pass: a permission prompt and a
+  // download both want a user gesture, and Chrome's own bubbles are anchored
+  // off the browser that has focus.
+  sh("xdotool", "mousemove", String(host.x + Math.floor(host.w / 2)), String(host.y + Math.floor(host.h / 2)), "click", "1");
+  await Bun.sleep(800);
+
+  async function state(): Promise<Record<string, string>> {
+    return JSON.parse(await page.eval<string>("JSON.stringify(window.ndState ?? {})").catch(() => "{}"));
+  }
+
+  /// Fires one surface and reports where its UI landed. `settles` names the
+  /// `window.ndState` key whose promise has to stop being "pending"; a surface
+  /// with no promise of its own passes it as an empty string.
+  async function surface(name: string, call: string, settles: string, waitMs = 9000, abort = false): Promise<void> {
+    let fired = "";
+    try {
+      fired = String(await page.eval<string>(call, true));
+    } catch (error) {
+      fired = `threw: ${(error as Error).message.slice(0, 60)}`;
+    }
+    await Bun.sleep(waitMs);
+    const strays = mappedToplevels().filter((w) => !before.includes(w.id) && !inside(w));
+    const detail = strays.map((w) => `${w.id} ${w.name} ${w.w}x${w.h} at ${w.x},${w.y}`).join(" | ");
+    check(`${name}NoStrayWindow`, strays.length === 0, strays.length ? `outside the app window: ${detail}` : `fired ${fired}`);
+    if (abort) {
+      // Ended from the page rather than with a key event: a Chromium sheet left
+      // up would sit over every later leg, and on AppKit it is a window of its
+      // own that synthetic input never reaches.
+      await page.eval("window.ndAbortPasskey()").catch(() => "");
+      await Bun.sleep(2500);
+    }
+    if (settles) {
+      const value = (await state())[settles] ?? "absent";
+      check(`${name}Settles`, value !== "pending" && value !== "absent", `window.ndState.${settles} = ${value}`);
+    }
+  }
+
+  await surface("passkeyGet", "window.ndPasskeyGet()", "passkeyGet", 9000, true);
+  await surface("passkeyCreate", "window.ndPasskeyCreate()", "passkeyCreate", 9000, true);
+  // Conditional mediation is passive by design: it draws nothing until the
+  // user picks a credential out of the autofill list, so it has no outcome to
+  // settle and the only question is whether it put a window up.
+  await surface("passkeyConditional", "window.ndPasskeyConditional()", "", 9000, true);
+  // Permission prompts reach the app through cef_permission_handler_t rather
+  // than Chromium's own bubble, and the probe denies them, so each promise has
+  // to settle and the app has to have been told what was asked for.
+  await surface("geolocation", "window.ndGeolocation()", "geolocation");
+  await surface("notifications", "window.ndNotifications()", "notifications");
+  await surface("camera", "window.ndCamera()", "camera");
+  const hostLog = process.env.ND_HOST_LOG ?? "";
+  const traced = hostLog
+    ? (await Bun.file(hostLog).text().catch(() => "")).split("\n").filter((l) => l.includes("ND_CEF permissionRequest"))
+    : [];
+  check(
+    "permissionRequestsReachedTheApp",
+    ["geolocation", "notifications", "camera"].every((t) => traced.some((l) => l.includes(`types=${t}`))),
+    traced.map((l) => l.slice(l.indexOf("permissionRequest"))).join(" | ") || "no permissionRequest reported",
+  );
+  await surface("jsAlert", "window.ndAlert()", "", 4000);
+  await surface("jsConfirm", "window.ndConfirm()", "", 4000);
+  await surface("jsPrompt", "window.ndPrompt()", "", 4000);
+  await surface("httpAuth", "window.ndHttpAuth()", "", 6000);
+  await surface("download", "window.ndDownload()", "", 6000);
+  await surface("passwordSubmit", "window.ndPasswordSubmit()", "", 8000);
+  baseline = census();
+}
+
 // chrome://extensions is the only page Chromium exposes its extension registry
 // on, and a Chrome-style webview can be navigated straight to it.
-if (pass !== "devtools") {
+if (pass !== "devtools" && pass !== "dialogs") {
   await page.send("Page.navigate", { url: "chrome://extensions/" });
   await Bun.sleep(3000);
   const listed = JSON.parse(await page.eval<string>(extensionsInfo)) as Array<{ id: string; name: string; state: string; icon: string }>;
@@ -540,7 +640,7 @@ if (pass === "second") {
   check("storageSurvivedRestart", stored === token, `read ${JSON.stringify(stored)}`);
 }
 
-const strays = census().filter((w) => !w.includes("ND CEF Probe"));
+const strays = census().filter((w) => !w.includes("ND CEF Probe") && !w.includes("ND CEF Dialogs"));
 check("noStrayTopLevel", strays.length === 0, strays.length ? strays.join(" | ") : "only the host window");
 
 page.close();

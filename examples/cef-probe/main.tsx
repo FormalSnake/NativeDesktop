@@ -16,6 +16,7 @@ import {
   webviewEngine,
 } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
+import { dialogSurfacesRoute } from "../../scripts/fixtures/dialog-surfaces.ts";
 
 // M1 assertion target for the Chromium engine: one <webview engine="chromium">
 // renders a real page inside the host's own window, the six create-time events
@@ -86,6 +87,8 @@ const fixture = Bun.serve({
           `</script></body></html>`,
       );
     }
+    const surface = dialogSurfacesRoute(path);
+    if (surface) return surface;
     return html(PAGE("ND CEF One", "<h1>ND Chromium engine</h1><p>page one</p>"));
   },
 });
@@ -95,6 +98,12 @@ function html(body: string): Response {
 }
 
 const BASE = `http://127.0.0.1:${fixture.port}`;
+
+/// The same fixture through a name rather than a literal address. WebAuthn
+/// refuses an IP-address origin outright ("relying party ID is not a
+/// registrable domain"), so the passkey legs have to be driven from a host
+/// name; `localhost` is the only one a gate with no network has.
+const LOCAL_BASE = `http://localhost:${fixture.port}`;
 
 /// The scheme the launch path declares through ND_CEF_SCHEMES. The extension
 /// origin the browser app uses (nbext://) is declared exactly this way, so this
@@ -113,6 +122,12 @@ const CHROME_STYLE = (process.env.ND_CEF_STYLE ?? "") === "chrome";
 /// The gate pass whose driver clicks Chrome's "Remove …?" confirmation. Unset
 /// outside the gate, where there is one run and somebody is watching it.
 const REGISTRY_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
+
+/// The pass that probes Chromium's own dialogs and bubbles. It renders one view
+/// filling the window rather than the scripted legs above: a Views surface is
+/// placed against the browser's own bounds, so a view sharing the window with
+/// fifteen labels measures nothing the app would ever ship.
+const DIALOGS_PASS = (process.env.ND_CEF_PROBE_PASS ?? "") === "dialogs";
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -131,6 +146,44 @@ async function waitFor<T>(kind: string, pred: (v: T) => boolean, what: string, t
     }
     await new Promise((r) => setTimeout(r, 50));
   }
+}
+
+/// One view, the whole window, on the page that asks for every Chromium-drawn
+/// surface. What the app was told about each one is written into a label, so
+/// the drive can read the app's side and the X server's side of the same event.
+function DialogsApp(): React.ReactNode {
+  const view = useRef<NdNodeRef<"webview">>(null);
+  const [events, setEvents] = useState<string[]>([]);
+  const note = (line: string): void => setEvents((prev) => [...prev, line].slice(-12));
+
+  return (
+    <window title="ND CEF Dialogs" defaultWidth={1100} defaultHeight={820}>
+      <box orientation="vertical" spacing={4} style={{ padding: 8 }}>
+        <label testID="dialogs-events" text={`events=${events.join(" | ")}`} />
+        <webview
+          testID="wv"
+          ref={view}
+          engine="chromium"
+          url={`${LOCAL_BASE}/dialogs`}
+          style={{ vexpand: true, hexpand: true }}
+          onPermissionRequest={(e) => {
+            const d = e.data as { id: string; origin: string; types: string };
+            note(`permissionRequest ${d.types}`);
+            // Denied, so the page's promise settles and the gate can read the
+            // round trip back off it. A real app draws its own sheet here.
+            if (view.current) sendCommand(view.current, "respondPermission", { id: d.id, allow: false });
+          }}
+          onChromeDialog={(e) => {
+            const d = e.data as { x: number; y: number; width: number; height: number };
+            note(`chromeDialog ${d.width}x${d.height}@${d.x},${d.y}`);
+          }}
+          onDownloadRequested={(e) => note(`downloadRequested ${JSON.stringify(e.data)}`)}
+          onNewWindow={(e) => note(`newWindow ${e.text}`)}
+          onJavaScriptResult={onJavaScriptResult}
+        />
+      </box>
+    </window>
+  );
 }
 
 function App(): React.ReactNode {
@@ -643,4 +696,4 @@ async function poll<T>(
   }
 }
 
-await render(<App />);
+await render(DIALOGS_PASS ? <DialogsApp /> : <App />);

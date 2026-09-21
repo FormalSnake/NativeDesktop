@@ -178,6 +178,13 @@ quit_host second
 run_pass menu
 quit_host menu
 
+# The surfaces Chromium draws itself: the WebAuthn sheet, the permission
+# prompts, the JS dialogs, HTTP auth, a download and the save-password bubble.
+# Its own app, one view filling the window, because a Views surface is placed
+# against the browser's own bounds.
+run_pass dialogs
+quit_host dialogs
+
 # The Chrome Web Store, opt-in: it is the one leg that needs the network, and
 # Google's consent interstitial is not something a gate should depend on by
 # default. ND_CEF_CHROME_STORE=1 turns it on; the profile is the same mktemp one
