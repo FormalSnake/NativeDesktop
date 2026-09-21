@@ -102,7 +102,7 @@ launch() {
   cd "$APP_DIR"
   NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
     ND_SCRIPT=src/main.tsx NB_STORE_DIR="$PROFILE/store" ND_CEF_CACHE="$PROFILE/cef" \
-    "$HOST" "--load-extension=$EXTENSION" "--remote-debugging-port=$PORT" >"$LOG" 2>&1 &
+    "$HOST" "--load-extension=$EXTENSION" "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
   cd "$ROOT"
   for _ in $(seq 1 600); do

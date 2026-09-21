@@ -13,6 +13,8 @@
 // ND_APP_CHROME_LEGS=<comma separated> runs a subset.
 import { connectApp, type AttachedApp, type LocatorFactory } from "@nativedesktop/test";
 
+import { Session, waitForTarget } from "../cdp.ts";
+
 import {
   FIXTURE_FILL,
   FIXTURE_ORIGIN,
@@ -64,6 +66,7 @@ const mainWindow = (await app.windows()).windows[0]!.ref;
 const main: LocatorFactory = await app.window(0);
 
 const skipDevTools = process.env.ND_APP_CHROME_SKIP_DEVTOOLS === "1";
+const DEBUG_PORT = Number(process.env.ND_CEF_DEBUG_PORT ?? "9436");
 
 // MARK: - app vocabulary
 
@@ -357,7 +360,16 @@ async function clearForRealPointer(testId: string): Promise<void> {
 async function openPageMenu(page: string, atY?: number): Promise<ShownMenuItem[]> {
   await clearForRealPointer(page);
   const box = await viewBox(page);
-  const spot = await globalPoint(page, box.width / 2, atY ?? box.height / 2);
+  // Inside the PAGE, not the middle of the view: a docked inspector is most of
+  // the view, and a right click that lands in the frontend gets the frontend's
+  // own menu, or nothing.
+  const inner = await pageEval(app, page, "innerWidth+'x'+innerHeight").catch(() => null);
+  const [pageWidth, pageHeight] = (inner ?? `${box.width}x${box.height}`).split("x").map(Number);
+  const spot = await globalPoint(
+    page,
+    Math.min(box.width, pageWidth!) / 2,
+    Math.min(atY ?? box.height / 2, pageHeight! - 20),
+  );
   realPointer(spot.x, spot.y, "right");
   await until(
     "the context menu opens",
@@ -385,13 +397,105 @@ async function pickMenuItem(items: ShownMenuItem[], label: string): Promise<void
 async function openInspector(page: string): Promise<void> {
   const box = await viewBox(page);
   const items = await openPageMenu(page, box.height - 60);
-  await pickMenuItem(items, "Inspect Element");
+  // The app's own item when it has one, Chromium's otherwise: the engine keeps
+  // Inspect in the model precisely because Chrome style docks the inspector.
+  const label = items.some((i) => i.depth === 0 && i.label === "Inspect Element") ? "Inspect Element" : "Inspect";
+  await pickMenuItem(items, label);
 }
 
 /// The same item again: `openDevTools` toggles, and the Chrome command handler
 /// refuses F12 and cmd+alt+I, so Inspect Element is the only way in and out.
 async function closeInspector(page: string): Promise<void> {
   await openInspector(page);
+}
+
+/// The inspected-page placeholder the frontend keeps for the embedder, in the
+/// frontend's own client coordinates, with the frontend's viewport beside it.
+/// DevTools is shadow DOM throughout, so the walk descends every root.
+const PLACEHOLDER_PROBE = `(() => {
+  window.dispatchEvent(new Event('resize'));
+  return new Promise((done) => setTimeout(() => done(JSON.stringify({
+    win: [innerWidth, innerHeight, screenX, screenY],
+    hit: window.__ndBounds ?? null,
+    seen: window.__ndEmbedder ?? [],
+  })), 250));
+})()`;
+
+/// Patches the frontend's own channel to the embedder, which is where the rect
+/// it wants the page drawn in is announced. Chrome's browser acts on that
+/// message; CEF drops it, so this is the only way to see what the frontend
+/// asked for.
+const EMBEDDER_HOOK = `(() => {
+  if (window.__ndHooked) return 'already';
+  const host = window.DevToolsHost;
+  if (!host || !host.sendMessageToEmbedder) return 'no DevToolsHost';
+  const original = host.sendMessageToEmbedder.bind(host);
+  window.__ndEmbedder = [];
+  host.sendMessageToEmbedder = (message) => {
+    try {
+      const parsed = typeof message === 'string' ? JSON.parse(message) : message;
+      window.__ndEmbedder.push(parsed.method);
+      if (parsed.method === 'setInspectedPageBounds') window.__ndBounds = parsed.params[0];
+    } catch (e) {}
+    return original(message);
+  };
+  window.__ndHooked = true;
+  return 'hooked';
+})()`;
+
+interface FrontendGeometry {
+  win: [number, number, number, number];
+  hit: { x: number; y: number; width: number; height: number } | null;
+  seen: string[];
+}
+
+async function frontendGeometry(): Promise<FrontendGeometry> {
+  const target = await waitForTarget(DEBUG_PORT, (t) => t.url.startsWith("devtools://"), 20000);
+  const session = await Session.open(target.webSocketDebuggerUrl ?? "");
+  try {
+    await session.eval<string>(EMBEDDER_HOOK);
+    return JSON.parse(String(await session.eval<string>(PLACEHOLDER_PROBE))) as FrontendGeometry;
+  } finally {
+    session.close();
+  }
+}
+
+/// Where the docked inspector leaves the page, against where the page actually
+/// is. The two X/NS windows tiling the webview says nothing about this: told it
+/// can dock, the frontend lays its panels out around an inspected-page
+/// placeholder and expects the embedder to put the page in that rectangle. A
+/// placeholder that is not the page's own rectangle is the empty strip the
+/// owner sees, and it is also what device mode draws the phone into.
+async function dockTiles(page: string, phase: string): Promise<void> {
+  let detail = "never measured";
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const box = await viewBox(page);
+    const pageRect = (await pageEval(app, page, "[screenX,screenY,innerWidth,innerHeight].join(',')")) ?? "";
+    const [px, py, pw, ph] = pageRect.split(",").map(Number);
+    const tools = await frontendGeometry().catch(() => null);
+    if (tools === null) {
+      detail = `${phase}: no devtools target`;
+    } else if (tools.hit === null) {
+      detail = `${phase}: the frontend announced no page bounds (embedder messages ${JSON.stringify(tools.seen)})`;
+    } else {
+      const [toolsW] = tools.win;
+      const want = tools.hit;
+      detail =
+        `${phase}: page ${pw}x${ph}@${px},${py}, placeholder ${want.width}x${want.height}@${want.x},${want.y}` +
+        `, inspector ${toolsW} wide, webview ${Math.round(box.width)}`;
+      // Sizes, not screen origins: Chromium's screenX for a BrowserView that
+      // was reparented into this window is the popup's original position and
+      // never moves, on either document, so the two are not in one space. The
+      // origin is covered by the capture the leg takes.
+      const fits = Math.abs(want.width - pw!) <= 2 && Math.abs(want.height - ph!) <= 2;
+      // The frontend is the whole webview when it is docked for real: it draws
+      // its own panels around the hole the page sits in.
+      const spans = Math.abs(toolsW - box.width) <= 2;
+      if (fits && spans) return;
+    }
+    await Bun.sleep(1000);
+  }
+  throw new LegFailure(detail);
 }
 
 // MARK: - legs
@@ -1348,6 +1452,60 @@ const legs: Leg[] = [
       );
       await pointerSweep(page, "after the dock closed", 2);
       await censusHolds(app, "devTools");
+    },
+  },
+  {
+    name: "dockTiling",
+    run: async () => {
+      if (skipDevTools) return;
+      // Three tabs and the app's sidebar: the page is not at the window origin
+      // and it is one of several live webviews, which is the shape the probe
+      // gate's single static view does not have.
+      await loadFixture();
+      await newTab();
+      await loadFixture();
+      await newTab();
+      const page = await loadFixture();
+      const full = (await viewBox(page)).width;
+      await openInspector(page);
+      await until(
+        "the dock takes a share of the viewport",
+        () => pageNumber(app, page, "innerWidth"),
+        (w) => w > 0 && w < full - 40,
+        25000,
+      ).catch(() => null);
+      await dockTiles(page, "open");
+      capture("dock-open", (await appWindowRect()).number);
+
+      await app.setWindowSize(1180, 880);
+      await Bun.sleep(1500);
+      await dockTiles(page, "resized");
+
+      // Back to the first tab and forward again: every other webview in the
+      // overlay is hidden rather than gone, and the one that comes back has to
+      // be laid out against the inspector that is still docked.
+      // The tab the inspector belongs to goes off screen and comes back. What
+      // the other tab holds does not matter, so this reads the id defensively:
+      // a tab with no page of its own answers activePage with nothing.
+      const shown = async () => await activePage().catch(() => "");
+      await main.getByTestId("menu-prev-tab").click();
+      await until("the inspected tab goes off screen", shown, (id) => id !== page, 15000);
+      await main.getByTestId("menu-next-tab").click();
+      await until("the inspected tab is back", shown, (id) => id === page, 15000);
+      await dockTiles(page, "tabSwitch");
+
+      await closeInspector(page);
+      const back = (await viewBox(page)).width;
+      await until(
+        "the dock closes",
+        () => pageNumber(app, page, "innerWidth"),
+        (w) => Math.abs(w - back) <= 2,
+        20000,
+      ).catch(() => null);
+      await openInspector(page);
+      await dockTiles(page, "reopened");
+      await closeInspector(page);
+      await censusHolds(app, "dockTiling");
     },
   },
 ];
