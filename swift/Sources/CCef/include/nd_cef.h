@@ -46,6 +46,8 @@
 #include "include/capi/views/cef_box_layout_capi.h"
 #include "include/capi/views/cef_browser_view_capi.h"
 #include "include/capi/views/cef_browser_view_delegate_capi.h"
+#include "include/capi/views/cef_panel_capi.h"
+#include "include/capi/views/cef_panel_delegate_capi.h"
 #include "include/capi/views/cef_window_capi.h"
 #include "include/capi/views/cef_window_delegate_capi.h"
 
@@ -99,6 +101,7 @@ cef_browser_view_t *nd_cef_browser_view_create(cef_client_t *client,
                                                cef_request_context_t *request_context,
                                                cef_browser_view_delegate_t *delegate);
 cef_window_t *nd_cef_window_create_top_level(cef_window_delegate_t *delegate);
+cef_panel_t *nd_cef_panel_create(cef_panel_delegate_t *delegate);
 
 /// Numeric IDC value for a command name from cef_command_ids.h, or -1. The
 /// numbers move between Chromium versions; the names do not.

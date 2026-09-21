@@ -41,6 +41,7 @@ static struct {
                                              cef_request_context_t *,
                                              cef_browser_view_delegate_t *);
   cef_window_t *(*window_create_top_level)(cef_window_delegate_t *);
+  cef_panel_t *(*panel_create)(cef_panel_delegate_t *);
   int (*id_for_command_id_name)(const char *);
 } g;
 
@@ -99,6 +100,7 @@ int nd_cef_load(const char *framework_binary_path) {
   g.register_scheme_handler_factory = bind_symbol("cef_register_scheme_handler_factory");
   g.browser_view_create = bind_symbol("cef_browser_view_create");
   g.window_create_top_level = bind_symbol("cef_window_create_top_level");
+  g.panel_create = bind_symbol("cef_panel_create");
   g.id_for_command_id_name = bind_symbol("cef_id_for_command_id_name");
 
   if (!g.api_hash || !g.execute_process || !g.initialize || !g.shutdown ||
@@ -173,6 +175,10 @@ cef_browser_view_t *nd_cef_browser_view_create(cef_client_t *client,
 
 cef_window_t *nd_cef_window_create_top_level(cef_window_delegate_t *delegate) {
   return g.window_create_top_level ? g.window_create_top_level(delegate) : NULL;
+}
+
+cef_panel_t *nd_cef_panel_create(cef_panel_delegate_t *delegate) {
+  return g.panel_create ? g.panel_create(delegate) : NULL;
 }
 
 int nd_cef_command_id(const char *name) {

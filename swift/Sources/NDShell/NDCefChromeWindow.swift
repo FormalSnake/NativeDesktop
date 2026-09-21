@@ -32,6 +32,15 @@ import Foundation
     private weak var view: NDCefWebView?
     private var cefWindow: UnsafeMutablePointer<cef_window_t>?
     private var browserView: UnsafeMutablePointer<cef_browser_view_t>?
+    /// The page's own container inside the window. The docked inspector fills
+    /// the window and the page is drawn over it, in the rectangle the frontend
+    /// keeps for it, so the page needs a parent whose layout can place it
+    /// anywhere rather than one that tiles its children.
+    private var pageHost: UnsafeMutablePointer<cef_panel_t>?
+    /// Where the frontend last said the page belongs, in window coordinates.
+    /// Nil while no inspector is docked, which is the page filling the window.
+    private var pageRect: cef_rect_t?
+    private lazy var frontend = NDCefDockFrontend(window: self)
     private var devToolsView: UnsafeMutablePointer<cef_browser_view_t>?
     /// The inspector's view between `close_dev_tools` and its browser actually
     /// going away.
@@ -148,7 +157,8 @@ import Foundation
         if let layout = panel.pointee.set_to_fill_layout?(panel) {
             nd_cef_ref_release(UnsafeMutableRawPointer(layout))
         }
-        if let browserView {
+        if let browserView, let host = nd_cef_panel_create(nil) {
+            pageHost = host
             // add_child_view TAKES the reference it is passed, the same
             // hand-over contract as the create calls, so the one this object
             // keeps has to be added first. Without it the BrowserView is freed
@@ -156,7 +166,10 @@ import Foundation
             // holds it, and every later window operation faults.
             nd_cef_ref_add(browserView)
             let child = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
-            panel.pointee.add_child_view?(panel, child)
+            host.pointee.add_child_view?(host, child)
+            nd_cef_ref_add(host)
+            panel.pointee.add_child_view?(panel, UnsafeMutableRawPointer(host).assumingMemoryBound(to: cef_view_t.self))
+            applyPageRect()
         }
 
         guard let view else { return }
@@ -220,22 +233,12 @@ import Foundation
     /// lifted into the host. Chrome's own dock is a WebContents split inside
     /// the browser window; this is the same shape, drawn by CEF's box layout.
     func dockDevTools(_ popup: UnsafeMutablePointer<cef_browser_view_t>) -> Bool {
-        guard !closed, let cefWindow, let browserView else { return false }
+        guard !closed, let cefWindow, browserView != nil else { return false }
         if let devToolsView {
             nd_cef_ref_release(devToolsView)
             self.devToolsView = nil
         }
         let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
-        var settings = cef_box_layout_settings_t()
-        settings.size = MemoryLayout<cef_box_layout_settings_t>.size
-        settings.horizontal = 1
-        // The split ratio comes from the two delegates' get_preferred_size,
-        // which always add up to the window width, rather than from per-view
-        // flex: cef_box_layout_t::set_flex_for_view segfaults on a BrowserView
-        // passed through its cef_view_t base.
-        settings.default_flex = 0
-        guard let layout = panel.pointee.set_to_box_layout?(panel, &settings) else { return false }
-        defer { nd_cef_ref_release(UnsafeMutableRawPointer(layout)) }
         // Two references: one for `add_child_view`, which takes the one it is
         // passed, and one for the field below. The reference the callback
         // arrived with is balanced by its own release, so without this the
@@ -243,16 +246,64 @@ import Foundation
         nd_cef_ref_add(popup)
         nd_cef_ref_add(popup)
         let tools = UnsafeMutableRawPointer(popup).assumingMemoryBound(to: cef_view_t.self)
-        panel.pointee.add_child_view?(panel, tools)
+        // Below the page's container, which the fill layout leaves covering the
+        // window: the inspector is the backdrop the page is drawn on top of,
+        // the same shape Chrome's own dock has.
+        panel.pointee.add_child_view_at?(panel, tools, 0)
         devToolsView = popup
-        // CEF hands the popup over already sized to the whole window, and
-        // adding it is not by itself something the panel lays out again: on a
-        // second dock the inspector keeps that full width and covers the page.
-        // The close path asks for the same pass for the same reason.
-        panel.pointee.layout?(panel)
+        // Where the page goes until the frontend says otherwise: Chrome's own
+        // right-dock default, so the page is in its usual column for the frame
+        // or two before the first announcement rather than covering the
+        // inspector.
+        let bounds = view?.bounds ?? .zero
+        let width = Int32(bounds.width.rounded())
+        let height = Int32(bounds.height.rounded())
+        pageRect = cef_rect_t(x: 0, y: 0, width: max(1, width - Self.dockWidth(width)), height: max(1, height))
+        applyPageRect()
         pointFrontendAtDock()
         view?.ndTrace("chrome devtools docked")
         return true
+    }
+
+    /// Puts the page where the frontend asked for it. The inspector fills the
+    /// window either way; this is the hole in its layout, and it is also what
+    /// device mode reports, so the phone is drawn in the page area instead of
+    /// inside the inspector's own column.
+    func pageBoundsAnnounced(_ rect: cef_rect_t) {
+        guard !closed, devToolsView != nil, rect.width > 0, rect.height > 0 else { return }
+        if let current = pageRect, current.x == rect.x, current.y == rect.y,
+           current.width == rect.width, current.height == rect.height { return }
+        pageRect = rect
+        applyPageRect()
+        view?.ndTrace("chrome devtools page rect \(rect.width)x\(rect.height)@\(rect.x),\(rect.y)")
+    }
+
+    /// The page's container is laid out with the page inset to `pageRect`: a
+    /// box layout's insets are the one public way to place a child anywhere in
+    /// its parent, since a view inside a layout-managed parent has no bounds of
+    /// its own to set.
+    private func applyPageRect() {
+        guard let pageHost else { return }
+        let bounds = view?.bounds ?? .zero
+        let width = Int32(bounds.width.rounded())
+        let height = Int32(bounds.height.rounded())
+        let rect = pageRect ?? cef_rect_t(x: 0, y: 0, width: max(1, width), height: max(1, height))
+        var settings = cef_box_layout_settings_t()
+        settings.size = MemoryLayout<cef_box_layout_settings_t>.size
+        settings.horizontal = 1
+        settings.default_flex = 1
+        settings.inside_border_insets = cef_insets_t(
+            top: max(0, rect.y),
+            left: max(0, rect.x),
+            bottom: max(0, height - (rect.y + rect.height)),
+            right: max(0, width - (rect.x + rect.width)))
+        if let layout = pageHost.pointee.set_to_box_layout?(pageHost, &settings) {
+            nd_cef_ref_release(UnsafeMutableRawPointer(layout))
+        }
+        if let cefWindow {
+            let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
+            panel.pointee.layout?(panel)
+        }
     }
 
     /// Tells the frontend it is docked, so it draws its own close button. The
@@ -276,9 +327,23 @@ import Foundation
     private func dockFrontend() -> Bool {
         guard let devToolsView, let browser = devToolsView.pointee.get_browser?(devToolsView) else { return false }
         defer { nd_cef_ref_release(browser) }
+        // The same poll is where the frontend's own browser first answers, so
+        // the protocol session that reads its page rectangle starts here.
+        if !frontend.isRunning, let browserHost = browser.pointee.get_host?(browser) {
+            defer { nd_cef_ref_release(browserHost) }
+            frontend.start(host: browserHost, observer: view?.box.dockObserver)
+        }
         guard let frame = browser.pointee.get_main_frame?(browser) else { return false }
         defer { nd_cef_ref_release(frame) }
         return ndCefDockFrontend(frame)
+    }
+
+    func frontendResult(id: Int32, ok: Bool) {
+        frontend.handleResult(id: id, ok: ok)
+    }
+
+    func frontendEvent(method: String, json: String) {
+        frontend.handleEvent(method: method, json: json)
     }
 
     /// Undoes `dockDevTools`. Nothing in the window's layout is touched here:
@@ -388,10 +453,13 @@ import Foundation
         devToolsClosing = nil
         devToolsCloseTimer?.invalidate()
         devToolsCloseTimer = nil
-        if let cefWindow {
-            let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
-            panel.pointee.layout?(panel)
+        // Only when nothing took its place: an inspector docked since owns the
+        // page rectangle, and the session behind it is that one's.
+        if devToolsView == nil {
+            frontend.stop()
+            pageRect = nil
         }
+        applyPageRect()
         view?.ndTrace("chrome devtools closed")
     }
 
@@ -404,21 +472,21 @@ import Foundation
         return min(max(wanted, 400), width > 240 ? width - 240 : width / 2)
     }
 
-    /// Chrome docks DevTools to the right; the page takes what is left, so the
-    /// two always add up to the window and the box layout leaves no gap.
+    /// The docked inspector is the whole webview: it draws its panels around
+    /// the hole it keeps for the page, and the page is that hole's size.
     func dockedSize(devTools: Bool) -> cef_size_t {
         let bounds = view?.bounds ?? .zero
-        let width = Int32(bounds.width.rounded())
-        let height = Int32(bounds.height.rounded())
-        // A view left behind by a closed inspector takes no width at all.
-        // Without this the stale view keeps claiming the dock's share and the
-        // box layout squeezes the live inspector out, leaving its width of
-        // blank between the page and whatever is left of the inspector.
+        let width = max(1, Int32(bounds.width.rounded()))
+        let height = max(1, Int32(bounds.height.rounded()))
+        // A view left behind by a closed inspector takes no size at all: the
+        // layout caches what a child asked for last, and one that keeps asking
+        // for the window is one that keeps covering it.
         guard devToolsView != nil else {
-            return cef_size_t(width: devTools ? 0 : max(1, width), height: max(1, height))
+            return cef_size_t(width: devTools ? 0 : width, height: devTools ? 0 : height)
         }
-        let tools = max(1, Self.dockWidth(width))
-        return cef_size_t(width: devTools ? tools : max(1, width - tools), height: max(1, height))
+        if devTools { return cef_size_t(width: width, height: height) }
+        let rect = pageRect ?? cef_rect_t(x: 0, y: 0, width: width, height: height)
+        return cef_size_t(width: max(1, rect.width), height: max(1, rect.height))
     }
 
     // MARK: - Lifting the web contents
@@ -492,8 +560,14 @@ import Foundation
             host.addChildWindow(anchor, ordered: .above)
         }
         if anchor.frame != rect {
+            let resized = anchor.frame.size != rect.size
             anchor.setFrame(rect, display: false)
             if anchor.frame != rect { view?.ndTrace("chrome anchor clamped want=\(rect) got=\(anchor.frame)") }
+            // The page's insets are the window's size minus its rectangle, so
+            // they are stale the moment the window is a different size. The
+            // frontend answers a resize with a rectangle of its own; this is
+            // what the page sits at until it does.
+            if resized, pageRect != nil { applyPageRect() }
         }
         if !anchor.isVisible { cefWindow.pointee.show?(cefWindow) }
     }
@@ -560,6 +634,7 @@ import Foundation
     func teardown() {
         guard !closed else { return }
         closed = true
+        frontend.stop()
         reliftTimer?.invalidate()
         reliftTimer = nil
         devToolsCloseTimer?.invalidate()
@@ -609,6 +684,10 @@ import Foundation
             self.browserView = nil
             nd_cef_ref_release(browserView)
         }
+        if let pageHost {
+            self.pageHost = nil
+            nd_cef_ref_release(pageHost)
+        }
     }
 
     /// Closes the Views window, once the browser it belonged to has gone.
@@ -637,11 +716,30 @@ extension NDCefHandlerBox {
         windowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
         browserViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
         devToolsViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
+        dockObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
         command = ndCefAlloc(cef_command_handler_t.self, self)
         wireWindowDelegate()
         wireBrowserViewDelegate()
         wireDevToolsViewDelegate()
+        wireDockObserver()
         wireCommand()
+    }
+
+    /// The inspector's browser is CEF's own, so its protocol traffic arrives on
+    /// an observer of its own rather than the one attached to the page.
+    private func wireDockObserver() {
+        guard let dockObserver else { return }
+        dockObserver.pointee.on_dev_tools_method_result = { selfPointer, browser, messageID, success, _, _ in
+            nd_cef_ref_release(browser)
+            let ok = success != 0
+            ndCefDeliver(selfPointer) { $0?.chrome?.frontendResult(id: messageID, ok: ok) }
+        }
+        dockObserver.pointee.on_dev_tools_event = { selfPointer, browser, method, params, paramsSize in
+            let name = ndCefString(method)
+            nd_cef_ref_release(browser)
+            let raw = ndCefJSONText(params, paramsSize)
+            ndCefDeliver(selfPointer) { $0?.chrome?.frontendEvent(method: name, json: raw) }
+        }
     }
 
     /// The docked DevTools is the second BrowserView in the page's window, and
