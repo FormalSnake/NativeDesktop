@@ -13,7 +13,7 @@
 // ND_APP_CHROME_LEGS=<comma separated> runs a subset.
 import { connectApp, type AttachedApp, type LocatorFactory } from "@nativedesktop/test";
 
-import { Session, inspectedPageBounds, waitForTarget, type Box } from "../cdp.ts";
+import { Session, clickDevToolsClose, inspectedPageBounds, targets, waitForTarget, type Box } from "../cdp.ts";
 
 import {
   FIXTURE_FILL,
@@ -411,6 +411,27 @@ async function closeInspector(page: string): Promise<void> {
 
 /// What the frontend reserved for the page, with the frontend's own viewport
 /// beside it.
+/// The inspector's own close button, which is the one path off the frontend
+/// that this app's menus do not have: its Inspect item is Chromium's, and that
+/// one only ever opens an inspector.
+async function closeFrontend(): Promise<void> {
+  const target = await waitForTarget(DEBUG_PORT, (t) => t.url.startsWith("devtools://"), 20000);
+  const session = await Session.open(target.webSocketDebuggerUrl ?? "");
+  try {
+    await session.send("Runtime.enable");
+    const box = await clickDevToolsClose(session);
+    assert(box !== null, "the frontend's toolbar has no close button");
+  } finally {
+    session.close();
+  }
+  await until(
+    "the inspector goes away",
+    async () => (await targets(DEBUG_PORT)).filter((t) => t.url.startsWith("devtools://")).length,
+    (n) => n === 0,
+    20000,
+  );
+}
+
 async function frontendGeometry(): Promise<{ bounds: Box | null; width: number; height: number }> {
   const target = await waitForTarget(DEBUG_PORT, (t) => t.url.startsWith("devtools://"), 20000);
   const session = await Session.open(target.webSocketDebuggerUrl ?? "");
@@ -1451,17 +1472,19 @@ const legs: Leg[] = [
       await until("the inspected tab is back", shown, (id) => id === page, 15000);
       await dockTiles(page, "tabSwitch");
 
-      await closeInspector(page);
+      // Closed from the frontend's own button: the app's Inspect item is
+      // Chromium's, which opens an inspector rather than toggling one.
+      await closeFrontend();
       const back = (await viewBox(page)).width;
       await until(
-        "the dock closes",
+        "the page takes the view back",
         () => pageNumber(app, page, "innerWidth"),
         (w) => Math.abs(w - back) <= 2,
         20000,
-      ).catch(() => null);
+      );
       await openInspector(page);
       await dockTiles(page, "reopened");
-      await closeInspector(page);
+      await closeFrontend();
       await censusHolds(app, "dockTiling");
     },
   },
