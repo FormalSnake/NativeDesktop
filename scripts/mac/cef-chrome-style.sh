@@ -46,6 +46,7 @@ launch() {
 
 launch
 ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" ND_HOST_LOG="$LOG" \
+  ND_APP_HOST_LOG="$LOG" \
   bun scripts/mac/cef-chrome-drive.ts \
   || { echo "FAIL: driver"; grep -vE "^\[[0-9]+:" "$LOG" | tail -40; exit 1; }
 

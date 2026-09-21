@@ -11,7 +11,7 @@
 // anchor at alpha 0.
 import { connectApp } from "@nativedesktop/test";
 import { Session, clickDevToolsClose } from "../cdp.ts";
-import { KEY_ESCAPE, activateApp, menuWindows, systemKey, until } from "./app-chrome-lib";
+import { KEY_DOWN_ARROW, KEY_ESCAPE, KEY_RETURN, activateApp, menuStopsTo, menuWindows, shownMenu, systemKey, until } from "./app-chrome-lib";
 
 const pid = process.env.ND_HOST_PID ?? "";
 const debugPort = process.env.ND_CEF_DEBUG_PORT ?? "9334";
@@ -56,6 +56,36 @@ async function strays(leg: string): Promise<void> {
 async function targets(): Promise<{ type: string; url: string; webSocketDebuggerUrl?: string }[]> {
   const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
   return (await response.json()) as { type: string; url: string; webSocketDebuggerUrl?: string }[];
+}
+
+/// The page and the inspector share the webview: whatever each was laid out
+/// at has to add up to it, and a pair that does not is the strip of bare
+/// background a docked inspector leaves when one of the two is not filling its
+/// half.
+async function checkTiling(phase: string): Promise<void> {
+  let detail = "never measured";
+  // Polled: the box layout and the two documents settle on their own schedule
+  // after a dock or a resize, so the assertion is about where they come to
+  // rest rather than about the first frame after the event.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const box = await app.getByTestId("c-view").boundingBox();
+    const pageWidth = Number(await evaluate("innerWidth"));
+    const devtoolsTarget = (await targets()).find((t) => t.url.startsWith("devtools://"));
+    let toolsWidth = -1;
+    if (devtoolsTarget?.webSocketDebuggerUrl) {
+      const session = await Session.open(devtoolsTarget.webSocketDebuggerUrl);
+      toolsWidth = Number(await session.eval<number>("innerWidth"));
+      session.close();
+    }
+    const view = Math.round(box?.width ?? -1);
+    detail = `page ${pageWidth} + inspector ${toolsWidth} = ${pageWidth + toolsWidth}, webview ${view}`;
+    if (pageWidth > 0 && toolsWidth > 0 && Math.abs(pageWidth + toolsWidth - view) <= 1) {
+      check(`dockTiling/${phase}`, true, detail);
+      return;
+    }
+    await Bun.sleep(1000);
+  }
+  check(`dockTiling/${phase}`, false, detail);
 }
 
 /// How many times the host has reported the dock going away. The count, not
@@ -129,6 +159,15 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
   // host rather than leaving the toggle pointing at an inspector that is
   // already gone.
   check("devtoolsCanDock", devtoolsTarget?.url.includes("can_dock=true") === true, devtoolsTarget?.url.slice(-48) ?? "none");
+
+  // The page and the inspector have to tile the webview with no seam. Their
+  // halves are two CEF views in one box layout here rather than two X windows,
+  // so what each was actually laid out at is what each document reports, and
+  // the two have to add up to the view they share. The resize case rides the
+  // window resize at the end of this drive, which already runs with the dock
+  // up; resizing here as well only churns Chromium's own widgets.
+  await checkTiling("open");
+
   // Taken with the dock up, before the close below: Chromium shows its status
   // bubble for a few seconds after a docked inspector goes away, on the app's
   // own toggle as much as on the close button, and it is a window of its own.
@@ -161,6 +200,7 @@ if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
     (await targets()).filter((t) => t.url.startsWith("devtools://")).length === 1,
     "the app's toggle reopened the inspector",
   );
+  await checkTiling("reopened");
 }
 
 // A real click into the page followed by real keystrokes. The web contents is
@@ -196,6 +236,55 @@ await until("the context menu closes", menuWindows, (w) => w.length === 0, 10000
 await Bun.sleep(400);
 await strays("contextMenu");
 
+// Chromium's own Inspect, picked from the native menu. The engine keeps that
+// item because Chrome style docks the inspector, so the pick has to land in
+// the view like the toggle does rather than opening a DevTools window.
+if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") {
+  await app.getByTestId("c-devtools-open").click();
+  await until(
+    "the inspector closes before the Inspect pick",
+    async () => (await targets()).filter((t) => t.url.startsWith("devtools://")).length,
+    (n) => n === 0,
+    15000,
+  );
+  activateApp();
+  await Bun.sleep(400);
+  await app.getByTestId("c-view").rightClick();
+  await until("the context menu opens for Inspect", menuWindows, (w) => w.length > 0, 15000);
+  const stops = menuStopsTo(shownMenu(), "Inspect");
+  systemKey(KEY_DOWN_ARROW, stops);
+  systemKey(KEY_RETURN);
+  await until("the context menu closes after Inspect", menuWindows, (w) => w.length === 0, 10000);
+  const docked = await until(
+    "Inspect opens the inspector",
+    async () => (await targets()).filter((t) => t.url.startsWith("devtools://")),
+    (t) => t.length > 0,
+    20000,
+  ).catch(() => []);
+  check("inspectOpensDevTools", docked.length === 1, `${docked.length} devtools target(s) after Inspect`);
+  await Bun.sleep(2500);
+  // Docked, not a window of its own: the two halves add up to the webview.
+  await checkTiling("inspect");
+  if (docked[0]?.webSocketDebuggerUrl) {
+    const frontend = await Session.open(docked[0].webSocketDebuggerUrl);
+    const selected = await frontend.eval<string>(`(() => {
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('li.selected, .elements-disclosure .selected')) {
+          const text = (el.textContent || '').trim();
+          if (text) return text.slice(0, 60);
+        }
+        for (const el of root.querySelectorAll('*')) {
+          if (el.shadowRoot) { const hit = walk(el.shadowRoot); if (hit) return hit; }
+        }
+        return '';
+      };
+      return walk(document);
+    })()`).catch(() => "");
+    frontend.close();
+    check("inspectSelectsElement", selected.length > 0, selected || "the Elements selection is not readable");
+  }
+}
+
 // A background tab: the page's own view is hidden by the tab view, so the
 // lifted subtree goes with it, the browser is told it is hidden, and the anchor
 // leaves the screen. Switching back has to bring animation frames with it.
@@ -223,6 +312,9 @@ check(
   anchors.some((a) => Math.abs(a.width - (geometry?.width ?? -1)) <= 1),
   `webview ${geometry?.width}x${geometry?.height}, anchors ${anchors.map((a) => `${a.width}x${a.height}`).join(",")}`,
 );
+// The dock is still up from the devtools leg, so the two halves have to have
+// followed the window to its new width.
+if (process.env.ND_CEF_CHROME_SKIP_DEVTOOLS !== "1") await checkTiling("resized");
 await strays("resize");
 
 if (failures.length > 0) {
