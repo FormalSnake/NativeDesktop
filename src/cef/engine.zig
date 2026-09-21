@@ -1511,12 +1511,18 @@ const Layout = struct {
 /// error trap off the GTK thread. That trap list is per display and not thread
 /// safe: doing it took the host down inside
 /// `delete_outdated_error_traps` from `gdk_x11_display_error_trap_push`.
+/// The origin of the two Chromium owns is re-asserted, not just their size:
+/// they are children of containers this engine created with a black
+/// background, so either one sitting at anything but 0,0 shows as a strip of
+/// bare background beside the page or the inspector. Chromium moves its own
+/// widget's window on paths this engine has no callback for, and the size-only
+/// call left whatever origin it had.
 fn applyLayout(plan: Layout) void {
     if (shutting_down) return;
-    if (plan.page != 0) x11.resize(@intCast(plan.page), plan.page_w, plan.h);
+    if (plan.page != 0) x11.moveResize(@intCast(plan.page), 0, 0, plan.page_w, plan.h);
     if (plan.dock == 0) return;
     x11.moveResize(@intCast(plan.dock), plan.dock_x, 0, plan.dock_w, plan.h);
-    if (plan.inner != 0) x11.resize(@intCast(plan.inner), plan.dock_w, plan.h);
+    if (plan.inner != 0) x11.moveResize(@intCast(plan.inner), 0, 0, plan.dock_w, plan.h);
 }
 
 // ============================================================================
