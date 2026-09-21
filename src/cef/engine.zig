@@ -1097,6 +1097,13 @@ var chrome_style: ?bool = null;
 /// with CEF's extra client callbacks. `webview.cef.style` in the app config
 /// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
 /// because the command line and the browser style have to agree.
+/// Whether this process actually came up as the CEF browser process. An app
+/// that asked for chromium and got a host with no loadable distribution is
+/// running WebKitGTK, and this is what tells the two apart.
+pub fn started() bool {
+    return process_ready;
+}
+
 pub fn chromeStyle() bool {
     if (chrome_style) |v| return v;
     const raw = std.c.getenv("ND_CEF_STYLE");
@@ -1535,6 +1542,9 @@ const View = struct {
     active_handler: c_ulong = 0,
     focus_widget_handler: c_ulong = 0,
     active_window: ?*gtk.Window = null,
+    /// Whether the page currently holds the keyboard, as last told to the
+    /// browser. Transitions are what the app hears as `focusChanged`.
+    page_focused: bool = false,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
 
@@ -1855,6 +1865,10 @@ fn syncBrowserFocus(view: *View) void {
         // comes home.
         const cef_window = view.cef_window.load(.acquire);
         if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) x11.focusToplevel(view.widget);
+        if (view.page_focused) {
+            view.page_focused = false;
+            if (emit) |f| f(view.node_id, "focusChanged", .{ .checked = false });
+        }
         return;
     }
     const root = gtk.Widget.getRoot(view.widget) orelse return;
@@ -1864,23 +1878,62 @@ fn syncBrowserFocus(view: *View) void {
     const cef_window = view.cef_window.load(.acquire);
     if (mine and active) {
         if (cef_window != 0) x11.focus(@intCast(cef_window));
-    } else if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) {
-        // Back to the toplevel, and only from the view that is holding the
+    } else if (view.page_focused or (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window)))) {
+        // Back to the app, and only from the view that is holding the
         // keyboard: the others share this toplevel and would take it off
-        // whichever one has it.
-        //
-        // The toplevel and not a focus proxy beside it, though a proxy is what
-        // would keep the browser from taking a key pressed over the page: GTK4
-        // reads the keyboard through XI2, which delivers a key event to the
-        // focus window with no propagation to the ancestor GDK selected on, so
-        // focus anywhere but the toplevel surface itself leaves GTK with
-        // nothing. Measured both ways: with focus on a 1x1 child of the
-        // toplevel, and on the one GDK makes for itself, the window stays key
-        // and every key press is dropped.
-        x11.focusToplevel(view.widget);
+        // whichever one has it. `page_focused` as well as the X comparison,
+        // because Chromium can move input focus below the window this engine
+        // reparented, and the comparison then answers false while the keyboard
+        // is very much the page's.
+        returnFocusToApp(view);
     }
     const host = hostOf(view) orelse return;
-    if (host.set_focus) |set| set(host, @intFromBool(active and mine));
+    const wants = active and mine;
+    if (host.set_focus) |set| set(host, @intFromBool(wants));
+    if (wants != view.page_focused) {
+        view.page_focused = wants;
+        if (emit) |f| f(view.node_id, "focusChanged", .{ .checked = wants });
+    }
+}
+
+/// Whether this X server is XWayland, where the compositor owns activation.
+/// A Wayland session always names its socket in the environment, and a GTK app
+/// on X11 in one is on XWayland by definition.
+fn onXWayland() bool {
+    if (xwayland) |v| return v;
+    const v = std.c.getenv("WAYLAND_DISPLAY") != null;
+    xwayland = v;
+    return v;
+}
+var xwayland: ?bool = null;
+
+/// Hands X input focus back to the app's own chrome after the page had it.
+///
+/// X delivers a key press to the window under the pointer whenever that window
+/// sits below the focus window, so focus on the toplevel itself leaves every
+/// key with the browser's child while the pointer is over the page: the app
+/// asks for its address field, keeps GTK's focus widget, and still types into
+/// the page. Asking the window manager to activate the window instead parks
+/// input focus on a focus proxy of its own, which is not an ancestor of the
+/// browser's window; that is the arrangement a user already gets by clicking
+/// the field, which is why that route always worked.
+///
+/// Not on XWayland. There the compositor answers the activation itself, pins
+/// input focus to the toplevel exactly as before, and costs the page its next
+/// click; measured on the wlroots rig, where it took five legs that click into
+/// the page down with it.
+fn returnFocusToApp(view: *View) void {
+    if (!onXWayland()) {
+        if (gtk.Widget.getNative(view.widget)) |native| {
+            if (gtk.Native.getSurface(native)) |surface| {
+                if (gobject.ext.cast(gdk.Toplevel, surface)) |toplevel| {
+                    gdk.Toplevel.focus(toplevel, 0);
+                    return;
+                }
+            }
+        }
+    }
+    x11.focusToplevel(view.widget);
 }
 
 /// Smallest side, in device pixels, of a view the keyboard can belong to. Apps
@@ -1894,6 +1947,9 @@ const focusable_min_px: u32 = 32;
 
 /// Read from the atomics `syncBounds` keeps, because the CEF UI thread asks.
 fn focusEligible(view: *View) bool {
+    // A page standing aside for a dialog is parked off the window: the dialog
+    // has the keyboard, and the page may not take it back until it comes home.
+    if (view.aside) return false;
     return view.size_w.load(.acquire) >= focusable_min_px and view.size_h.load(.acquire) >= focusable_min_px;
 }
 
@@ -6538,8 +6594,9 @@ fn runCloseDevToolsTask(self: [*c]c.cef_task_t) callconv(.c) void {
 
 fn cmdFocus(view: *View) void {
     _ = gtk.Widget.grabFocus(view.widget);
-    const host = hostOf(view) orelse return;
-    if (host.set_focus) |set| set(host, 1);
+    // The widget can already BE the focus widget, in which case grabFocus
+    // notifies nothing and only this call tells the browser.
+    syncBrowserFocus(view);
 }
 
 fn jsonToInt(v: std.json.Value) i64 {
@@ -8362,6 +8419,14 @@ fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, sou
     defer ref.releaseParam(browser);
     const view = FocusObj.of(self).payload;
     focused_view = view;
+    // A view too small to click into is refused whatever the source. An app
+    // that keeps a functional-but-invisible browser (the hidden view Chromium
+    // makes an extension registry readable from) had two browsers taking
+    // focus from each other tens of thousands of times in a single run: every
+    // grant moved X input focus, the browser that lost it asked again, and
+    // the loop pinned GTK's focus widget on a webview, undid whatever the app
+    // had just focused, and buried the GTK idle queue deep enough that
+    // automation stopped answering.
     if (!focusEligible(view)) return 1;
     return @intFromBool(source == c.FOCUS_SOURCE_NAVIGATION);
 }

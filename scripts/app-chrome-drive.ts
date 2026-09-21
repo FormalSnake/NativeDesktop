@@ -619,6 +619,67 @@ async function focusRouting(label: string): Promise<void> {
   );
 }
 
+/// The node type getTree reports as holding the GTK focus widget, or "none".
+/// A hidden view is a node like any other, so a leg that names the holder
+/// catches a parked tab reporting focus as well as the one on screen.
+async function focusedNodeType(): Promise<string> {
+  type Node = { type?: string; testID?: string; focused?: boolean; children?: Node[] };
+  let found = "none";
+  const walk = (n: Node): void => {
+    if (n.focused) found = n.testID ? `${n.type}/${n.testID}` : `${n.type}`;
+    for (const child of n.children ?? []) walk(child);
+  };
+  walk((await app.tree() as { root: Node }).root);
+  return found;
+}
+
+/// Keyboard focus follows the LAST EXPLICIT REQUEST. The app asking a GTK
+/// widget for focus is the same request a user makes by clicking it, and
+/// nothing on the engine's side may hand the keyboard back to the page until
+/// the user gives it back. Asserted from the state that is hardest to leave:
+/// the page holding the keyboard, with the pointer left over the page.
+async function focusRequest(label: string): Promise<void> {
+  const field = await widgetToScreen("omnibox");
+  if (!field) {
+    skip(`${label}.holdsTheWidget`, "no omnibox bounding box");
+    skip(`${label}.typesIntoTheWidget`, "no omnibox bounding box");
+    return;
+  }
+  const pageAt = await pageToScreen("probe");
+
+  await page.eval("document.getElementById('probe').value=''; 'reset'");
+  pointerTo(pageAt.x, pageAt.y);
+  click(1);
+  await Bun.sleep(900);
+
+  await app.getByTestId("omnibox").fill("nd").catch(() => {});
+  await app.getByTestId("omnibox").focus().catch(() => {});
+  const fieldBefore = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageBefore = (await metrics()).probe;
+  // Past two engine ticks: the routing is re-asserted on a timer, and a leg
+  // that reads straight back sees the request before anything can undo it.
+  await Bun.sleep(1600);
+  const holder = await focusedNodeType();
+  typeText("ASKED");
+  await Bun.sleep(900);
+  const fieldAfter = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const pageAfter = (await metrics()).probe;
+  check(
+    `${label}.holdsTheWidget`,
+    holder !== "none" && !holder.startsWith("WebView"),
+    `getTree reports ${holder} focused 1.6s after the focus command, pointer over the page`,
+  );
+  // `includes`, not an exact append: focusing a search field selects what is
+  // already in it, so the next keystroke replaces rather than extends.
+  check(
+    `${label}.typesIntoTheWidget`,
+    fieldAfter.includes("ASKED") && pageAfter === pageBefore,
+    `field ${JSON.stringify(fieldBefore)} -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfter)}`,
+  );
+  key("Escape");
+  await Bun.sleep(300);
+}
+
 /// The debugger session has to be on the view that is on screen. Switching
 /// tabs moves which of the app's browsers that is, and a session left on a
 /// parked one reports the park size and sees none of the input the legs send.
@@ -1151,6 +1212,37 @@ if (legs === "menu") {
   finish();
 }
 
+// Keyboard routing on its own (ND_ACCEPT_LEGS=focus): the set is slow to
+// reach through the whole run, and it is the one a change to the engine's
+// focus handling has to be re-read against.
+if (legs === "focus") {
+  if (!hasApp) {
+    skip("focusRouting.toField", "the app under test has no omnibox");
+    finish();
+  }
+  // The full set reaches these legs after a dozen others have already put the
+  // debugger session back on the fixture; alone, they have to do it here. The
+  // session `resyncPage` pins follows the view on screen, which at startup can
+  // be a tab that is not the fixture at all.
+  for (let i = 0; i < 40; i++) {
+    if (await metrics().then(() => true).catch(() => false)) break;
+    const t = (await targets(port)).find((x) => x.type === "page" && x.url === fixture && x.webSocketDebuggerUrl);
+    if (t && t.id !== pageTargetId) {
+      const s = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+      if (s) {
+        page.close();
+        page = s;
+        pageTargetId = t.id;
+        await page.send("Runtime.enable");
+      }
+    }
+    await Bun.sleep(300);
+  }
+  await focusRouting("focusRouting");
+  await focusRequest("focusRequest");
+  finish();
+}
+
 for (const [w, h] of [[1500, 950], [820, 620], [1760, 1080], [700, 520]] as Array<[number, number]>) {
   resizeToplevel(top, w, h);
   await Bun.sleep(400);
@@ -1328,6 +1420,14 @@ if (hasApp) {
 } else {
   skip("focusRouting.toField", "the app under test has no omnibox");
   skip("focusRouting.toPage", "the app under test has no omnibox");
+}
+
+if (hasApp) {
+  await focusRequest("focusRequest");
+  noStray("focusRequest");
+} else {
+  skip("focusRequest.holdsTheWidget", "the app under test has no omnibox");
+  skip("focusRequest.typesIntoTheWidget", "the app under test has no omnibox");
 }
 
 if (hasApp) {
