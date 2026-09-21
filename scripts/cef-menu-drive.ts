@@ -134,17 +134,46 @@ const page = sessions[sessions.length - 1]!;
 
 const baseline = census();
 
-// The view's origin on screen: right-click at a known point and read back the
-// view coordinate the engine reported for it. Nothing else in the host knows
-// where the X child window landed.
-sh("xdotool", "mousemove", "300", "400", "click", "3");
+// The view's origin on screen: right-click somewhere inside it and read back
+// the view coordinate the engine reported for the click. Nothing else in the
+// host knows where the X child window landed.
+//
+// Where to aim comes from the host's own embed trace rather than a fixed
+// screen point: the app above the view decides how tall it is, and a probe
+// that grows one label pushes the view out from under any point picked here.
+const containers = [...(await logText()).matchAll(
+  /ND_CEF embed node=\d+ parent=0x[0-9a-f]+ container=(0x[0-9a-f]+) bounds=\d+x\d+\+-?\d+\+-?\d+ mapped=true/g,
+)].map((m) => m[1]!);
+/// The centre of a container that is still on screen, newest first: the trace
+/// also carries views from windows the probe has since closed, and those
+/// containers are gone from the X server.
+function aimAt(): { x: number; y: number } | null {
+  for (const id of [...containers].reverse()) {
+    const out = sh("xwininfo", "-id", id);
+    if (!out.includes("Map State: IsViewable")) continue;
+    const w = out.match(/^\s*Width:\s+(\d+)/m);
+    const h = out.match(/^\s*Height:\s+(\d+)/m);
+    const x = out.match(/^\s*Absolute upper-left X:\s+(-?\d+)/m);
+    const y = out.match(/^\s*Absolute upper-left Y:\s+(-?\d+)/m);
+    if (!w || !h || !x || !y) continue;
+    if (Number(w[1]) < 40 || Number(h[1]) < 40) continue;
+    return { x: Number(x[1]) + Math.round(Number(w[1]) / 2), y: Number(y[1]) + Math.round(Number(h[1]) / 2) };
+  }
+  return null;
+}
+const aim = aimAt();
+if (!aim) {
+  console.error("ND_CEF_MENU_FAIL the host never reported a mapped view to aim at");
+  process.exit(1);
+}
+sh("xdotool", "mousemove", String(aim.x), String(aim.y), "click", "3");
 await Bun.sleep(1800);
 const calibration = [...(await logText()).matchAll(/menuOpen node=\d+ at=(-?\d+),(-?\d+)/g)].at(-1);
 if (!calibration) {
-  console.error("ND_CEF_MENU_FAIL the engine drew no menu for the calibration click");
+  console.error(`ND_CEF_MENU_FAIL the engine drew no menu for the calibration click at ${aim.x},${aim.y}`);
   process.exit(1);
 }
-const origin = { x: 300 - Number(calibration[1]), y: 400 - Number(calibration[2]) };
+const origin = { x: aim.x - Number(calibration[1]), y: aim.y - Number(calibration[2]) };
 const withMenu = census();
 const added = withMenu.filter((w) => !baseline.includes(w));
 check("menuIsOneSurface", added.length === 1, added.length ? added.join(" | ") : "the menu added no top-level of its own");

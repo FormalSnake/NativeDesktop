@@ -165,6 +165,21 @@ async function menuRows(): Promise<string[]> {
   return rows;
 }
 
+/// A point inside the app's own `<webview>`, in root coordinates. Aiming at a
+/// fixed screen point breaks the moment the app above the view grows a row:
+/// the engine's embed trace and the X server between them know where the view
+/// actually landed. Horizontally left of centre so a docked inspector on the
+/// right is never what gets clicked.
+async function aimInView(): Promise<{ x: number; y: number } | null> {
+  for (const id of await embedContainers()) {
+    const box = geometryOf(id);
+    if (!box || box.w < 200 || box.h < 80) continue;
+    if (!sh("xwininfo", "-id", id).includes("Map State: IsViewable")) continue;
+    return { x: box.rootX + Math.round(box.w / 4), y: box.rootY + Math.round(box.h / 2) };
+  }
+  return null;
+}
+
 /// How many times the engine has reported the dock going away. The count, not
 /// the presence: the same marker fires for every close, so only a fresh one
 /// says the button that was just clicked is what closed it.
@@ -288,7 +303,8 @@ if (pass === "first") {
 
   // Chrome's accelerators reach the browser process only from a real key
   // event, so the pointer clicks into the view first to give it X input focus.
-  sh("xdotool", "mousemove", "300", "400", "click", "1");
+  const acceleratorAim = (await aimInView()) ?? { x: 300, y: 400 };
+  sh("xdotool", "mousemove", String(acceleratorAim.x), String(acceleratorAim.y), "click", "1");
   await Bun.sleep(800);
   for (const key of ["ctrl+n", "ctrl+t", "ctrl+shift+n", "ctrl+u", "ctrl+p", "ctrl+shift+o", "ctrl+h", "ctrl+j"]) {
     await leg(`accelerator ${key}`, async () => {
@@ -313,7 +329,8 @@ if (pass === "devtools") {
   baseline = census();
   // The pointer clicks into the view first: a real X key event only reaches
   // Chrome's accelerators through the window that has X input focus.
-  sh("xdotool", "mousemove", "300", "400", "click", "1");
+  const focusAim = (await aimInView()) ?? { x: 300, y: 400 };
+  sh("xdotool", "mousemove", String(focusAim.x), String(focusAim.y), "click", "1");
   await Bun.sleep(800);
   await leg("devToolsDocked", async () => {
     sh("xdotool", "key", "--clearmodifiers", "F12");
@@ -389,7 +406,8 @@ if (pass === "devtools") {
   // Chromium's own Inspect, picked from the engine's native menu. The engine
   // keeps that item because Chrome style docks the inspector, so the pick has
   // to land in the view rather than opening a DevTools window of its own.
-  sh("xdotool", "mousemove", "300", "400", "click", "3");
+  const inspectAim = (await aimInView()) ?? { x: 300, y: 400 };
+  sh("xdotool", "mousemove", String(inspectAim.x), String(inspectAim.y), "click", "3");
   await Bun.sleep(1800);
   const rows = await menuRows();
   const inspectAt = rows.indexOf("Inspect");

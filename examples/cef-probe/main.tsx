@@ -258,7 +258,11 @@ function App(): React.ReactNode {
           ref={view}
           engine="chromium"
           url={url}
-          style={{ vexpand: true, hexpand: true }}
+          // A floor, not decoration: the check labels above stack one row per
+          // check, and the drives right-click at points inside this view. A
+          // check added to the list used to squeeze the view until those points
+          // fell outside it.
+          style={{ vexpand: true, hexpand: true, minHeight: 200 }}
           onNavigate={(e) => record("navigate", e.text)}
           onTitleChanged={(e) => record("title", e.text)}
           onLoadingChanged={(e) => record("loading", e.checked)}
