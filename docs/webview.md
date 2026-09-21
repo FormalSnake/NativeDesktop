@@ -205,6 +205,15 @@ not by which views happen to exist.
 `scriptMessage` carries `{ data: { name, world, body } }`. `body` is the posted
 value already decoded, so an object arrives as an object.
 
+`permissionRequest` carries `{ data: { id, origin, types } }` when a page asks
+for geolocation, notifications, a camera or microphone, or any of the other
+permissions Chromium prompts for. `types` is a comma-separated list, because one
+request can carry several (`getUserMedia({audio, video})` asks for both). Answer
+it with `respondPermission` (`{ id, allow }`); an unanswered id leaves the page
+waiting, as `schemeRequest` does. Chromium engine only: it exists because Chrome
+style would otherwise draw its own prompt, a Views bubble anchored to the
+toolbar this embedding does not have.
+
 `schemeRequest` carries `{ data: { id, url, scheme } }` on the view that made
 the request. Answer it with `respondScheme` (`{ id, base64, mime, status?,
 headers? }`, or `{ id, error }` to fail it); an unanswered id leaves the page
@@ -392,6 +401,41 @@ it, Chrome's window and toolbar do not.
   Chromium reports in the model.
 - The app menu, the page action icons and the toolbar buttons are all reported
   invisible, so no Chrome UI is created for the browser.
+- Permission requests (geolocation, notifications, camera, microphone and the
+  rest of Chromium's prompt list) are taken by `cef_permission_handler_t` and
+  reported to the app as `permissionRequest`, so Chrome's own prompt is never
+  built. Without it Chromium draws a Views bubble anchored to a toolbar that
+  does not exist: on GTK that lands inside the browser's X window at the top
+  left of the page, on AppKit it becomes a window of its own that follows the
+  invisible anchor.
+- What is left Chromium-drawn, measured by the gate's `dialogs` pass: the
+  WebAuthn sheet (`navigator.credentials.get`/`create`), HTTP basic auth, the
+  "save password" bubble and the autofill surfaces. On GTK all of them are
+  painted inside the browser's own X window, so they cannot leave the app; the
+  WebAuthn sheet is centred at the top of the page and Escape ends the request
+  with `NotAllowedError`.
+- On AppKit each of those is an `NSWindow` of its own, a `NativeWidgetMacNSWindow`
+  Chromium parents to the invisible anchor, so it followed the anchor rather
+  than the app. The host now adopts them (`NDCefSurfaceWindows`): a 200ms sweep
+  of the process's window list finds the Views windows that are not the app's
+  own and not an anchor, makes each a child window of the window hosting the
+  browser that raised it, and places it centred at the top of that webview's
+  screen rectangle, which is where Chrome puts a tab-modal sheet. They then move
+  and resize with the app window, leave the screen with a hidden tab, and are
+  handed back before the engine tears down. `didBecomeKey`/`didBecomeMain` are
+  no use for finding them: a Views window is ordered in without ever becoming
+  key or main.
+- `cef_request_handler_t::get_auth_credentials` is implemented and refuses the
+  challenge, which is what Alloy needs, but Chrome style never calls it on CEF
+  151.3.23: the login window still comes up and the handler's own warning never
+  prints. Chrome answers an auth challenge through its own LoginHandler, and
+  there is no client seam in front of it.
+- WebAuthn has no CEF callback at all. A request can be ended from the page
+  with an `AbortController` (which is what the gate does) but not from the
+  embedder, so on AppKit a page asking for a passkey still puts a window on
+  screen that the app does not own. Closing that needs either a CEF patch or a
+  Chromium feature switch that turns the sheet off, neither of which is in
+  this branch.
 
 On macOS the same style is driven against the real browser app by
 `scripts/mac/app-chrome-style.sh` (marker `ND_APP_CHROME_MAC_OK`), which covers
@@ -613,6 +657,15 @@ confirmation), and the extension and its storage across a restart. The top-level
 census holds through every leg. `ND_CEF_CHROME_STORE=1` adds the Web Store legs
 (`ND_CEF_CHROME_STORE_OK`), which are opt-in because they need the network and
 Google's consent interstitial.
+
+Its `dialogs` pass covers the surfaces Chromium draws itself: a passkey request
+with and without conditional mediation, `navigator.credentials.create`, the
+geolocation, notification and camera prompts, `alert`/`confirm`/`prompt`, HTTP
+basic auth, a download and a password-form submit. Each one is fired from
+`scripts/fixtures/dialog-surfaces.ts` and answered by two questions, where the
+UI landed and whether the page's own promise ever settled. The page is served
+through `localhost` rather than `127.0.0.1` because WebAuthn refuses an
+IP-address origin.
 
 `scripts/headless-webview.sh` runs `examples/webview-probe` under weston and
 drives it with `scripts/webview-drive.ts` (marker `ND_WEBVIEW2_OK`). The probe
