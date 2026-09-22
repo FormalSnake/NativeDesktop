@@ -58,8 +58,8 @@ var base_installed = false;
 const nd_base_css =
     \\.nd-badge, label.pill { background: alpha(currentColor, 0.12); border-radius: 99px; padding: 1px 7px; }
     \\.nd-badge { font-size: 0.85em; font-weight: bold; }
-    \\button.compact { min-height: 24px; padding: 0 8px; }
-    \\button.large { min-height: 40px; padding: 0 18px; }
+    \\button.nd-button-small { min-height: 24px; padding: 0 8px; }
+    \\button.nd-button-large { min-height: 40px; padding: 0 18px; }
     \\.nd-compact button { min-height: 26px; }
     \\.nd-compact entry { min-height: 26px; }
     \\box.activatable { border-radius: 9px; }

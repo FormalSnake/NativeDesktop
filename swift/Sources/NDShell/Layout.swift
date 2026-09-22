@@ -218,6 +218,32 @@ final class NDButton: NSButton {
 /// `NSTextField` subclass carrying GTK-style `padding` (same
 /// intrinsicContentSize-inflation trick as NDButton; text fields have no
 /// bezel-shape wrinkle so there's no equivalent of NDButton's bezelStyle switch).
+/// `<label variant>`: the system text style behind each step of the Adwaita
+/// typography scale. Applied only when the variant changes, so a re-render
+/// that re-sends the same variant does not clobber a `style` font. `body`
+/// at create leaves the label's own font alone.
+nonisolated(unsafe) private var ndLabelVariants: [ObjectIdentifier: String] = [:]
+
+func ndLabelApplyVariant(_ label: NSTextField, _ variant: String) {
+    let key = ObjectIdentifier(label)
+    let previous = ndLabelVariants[key]
+    if previous == variant || (previous == nil && variant == "body") { return }
+    ndLabelVariants[key] = variant
+    switch variant {
+    case "title1": label.font = .preferredFont(forTextStyle: .largeTitle)
+    case "title2": label.font = .preferredFont(forTextStyle: .title1)
+    case "title3": label.font = .preferredFont(forTextStyle: .title2)
+    case "title4": label.font = .preferredFont(forTextStyle: .title3)
+    case "heading": label.font = .preferredFont(forTextStyle: .headline)
+    case "caption": label.font = .preferredFont(forTextStyle: .caption1)
+    case "captionHeading":
+        label.font = NSFontManager.shared.convert(.preferredFont(forTextStyle: .caption1), toHaveTrait: .boldFontMask)
+    case "monospace": label.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    default: label.font = .systemFont(ofSize: NSFont.systemFontSize)
+    }
+    ndInvalidateBoxChain(from: label)
+}
+
 final class NDTextField: NSTextField {
     var ndPadding = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) {
         didSet { invalidateIntrinsicContentSize() }

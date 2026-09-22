@@ -12,6 +12,7 @@ const std = @import("std");
 const gtk = @import("gtk");
 const gobject = @import("gobject");
 const adw = @import("adw");
+const glib = @import("glib");
 const ndicons = @import("icons.zig");
 
 const alloc = std.heap.page_allocator;
@@ -78,7 +79,12 @@ fn configured(e: *Entry) bool {
 fn applyToPage(e: *Entry, page: *adw.StatusPage) void {
     adw.StatusPage.setIconName(page, if (e.icon) |ic| ndicons.symbolic(ic).ptr else null);
     adw.StatusPage.setTitle(page, if (e.title) |t| t.ptr else "");
-    adw.StatusPage.setDescription(page, if (e.desc) |d| d.ptr else null);
+    if (e.desc) |d| {
+        // The description is Pango markup with no use-markup switch: escape it.
+        const esc = glib.markupEscapeText(d.ptr, -1);
+        defer glib.free(esc);
+        adw.StatusPage.setDescription(page, esc);
+    } else adw.StatusPage.setDescription(page, null);
 }
 
 /// Swap point, called wherever a widget's item array lands (create + item

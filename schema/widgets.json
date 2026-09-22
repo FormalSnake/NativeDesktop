@@ -38,7 +38,7 @@
     "accent", "success", "warning", "error",
     "boxed-list", "boxed-list-separate", "card", "activatable",
     "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd",
-    "dimmed", "background", "view", "frame", "compact", "menu", "inline",
+    "dimmed", "dim-label", "background", "view", "frame", "compact", "menu", "inline",
     "large-title", "property", "round", "opaque", "devel",
     "icon-dropshadow", "lowres-icon"
   ],
@@ -215,6 +215,7 @@
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "create" },
         { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "variant", "type": "enum", "values": ["body", "title1", "title2", "title3", "title4", "heading", "caption", "captionHeading", "monospace"], "default": "body", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -247,6 +248,7 @@
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "prominent", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "destructive", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "badge", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "size", "type": "enum", "values": ["small", "regular", "large"], "default": "regular", "appliesTo": "createAndUpdate" }
       ],
@@ -941,6 +943,7 @@
       "props": [
         { "name": "title", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "description", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "separateRows", "type": "bool", "default": false, "appliesTo": "create" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },

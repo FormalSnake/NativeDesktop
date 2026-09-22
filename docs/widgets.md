@@ -72,6 +72,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | create |
 | `ellipsize` | bool | false | create |
+| `variant` | body \| title1 \| title2 \| title3 \| title4 \| heading \| caption \| captionHeading \| monospace | body | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -104,6 +105,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
 | `prominent` | bool | false | createAndUpdate |
+| `destructive` | bool | false | createAndUpdate |
 | `badge` | string | none | createAndUpdate |
 | `size` | small \| regular \| large | regular | createAndUpdate |
 
@@ -812,6 +814,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 |---|---|---|---|
 | `title` | string |  | createAndUpdate |
 | `description` | string | none | createAndUpdate |
+| `separateRows` | bool | false | create |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

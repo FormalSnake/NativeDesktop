@@ -389,7 +389,7 @@ fn ndBuildSourceRows(box: *gtk.ListBox, arr: ?std.json.Array, dupeZ: *const fn (
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
         if (it.object.get("iconName")) |ic| {
             if (ic == .string) {
-                const img = gtk.Image.newFromIconName(dupeZ(ic.string));
+                const img = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic.string)));
                 adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
             }
         }
@@ -1671,7 +1671,8 @@ fn cbSplitViewMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
     const root = gtk.Widget.getRoot(widget) orelse return;
     if (!gobject.ext.isA(root, adw.ApplicationWindow)) return;
     const win: *adw.ApplicationWindow = @ptrCast(@alignCast(root));
-    const cond = adw.BreakpointCondition.newLength(.max_width, px, .px);
+    // sp follows the desktop text scale, the unit libadwaita's own breakpoints use.
+    const cond = adw.BreakpointCondition.newLength(.max_width, px, .sp);
     const bp = adw.Breakpoint.new(cond); // takes ownership of cond
     var v = gobject.ext.Value.newFrom(true);
     defer gobject.Value.unset(&v);
@@ -2685,10 +2686,127 @@ pub fn create(
     the_window: *?*gtk.Window,
 ) !*gtk.Widget {
     const widget = try createWidget(app, kind, props, dupeZ, the_window);
+    ndApplyKindAlign(kind, widget);
     ndApplyTooltip(widget, props, dupeZ);
     ndApplyEnabled(widget, props);
     nddnd_gtk.applyProps(widget, props, dupeZ);
     return widget;
+}
+
+const ND_DEFAULT_HALIGN = "nd-default-halign";
+const ND_DEFAULT_VALIGN = "nd-default-valign";
+const ND_HB_START_BOX = "nd-hb-start-box";
+const ND_HB_END_BOX = "nd-hb-end-box";
+
+/// GtkWidget defaults to halign/valign fill, which stretches a button to a
+/// vertical box's full width and to a horizontal box's full height. These
+/// kinds have a correct natural size on both axes (the AppKit peer's
+/// ndSelfSizedKinds in Layout.swift); everything else keeps fill, since a
+/// label wraps to its allocation and containers and fields are meant to
+/// fill. Checkbox and Radio stay fill on purpose: their indicator sits at
+/// the start either way and Adwaita gives the whole row the hit area.
+const nd_self_sized_kinds = [_][]const u8{
+    "Button",      "ToggleButton", "Select",        "ComboBox",  "Switch",
+    "SegmentedControl", "DatePicker", "ColorPicker", "FontPicker", "MenuButton",
+    "SplitButton", "LinkButton",   "Spinner",       "ProgressCircle", "NumberInput",
+    "Avatar",      "Badge",        "Tag",           "Kbd",
+};
+
+fn ndApplyKindAlign(kind: []const u8, widget: *gtk.Widget) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return;
+    for (nd_self_sized_kinds) |k| {
+        if (!std.mem.eql(u8, kind, k)) continue;
+        gtk.Widget.setHalign(widget, .start);
+        gtk.Widget.setValign(widget, .center);
+        gobject.Object.setData(asObject(widget), ND_DEFAULT_HALIGN, @ptrFromInt(@as(usize, @intFromEnum(gtk.Align.start)) + 1));
+        gobject.Object.setData(asObject(widget), ND_DEFAULT_VALIGN, @ptrFromInt(@as(usize, @intFromEnum(gtk.Align.center)) + 1));
+        return;
+    }
+}
+
+/// The alignment a widget falls back to when a style drops its halign/valign
+/// key (style.zig): the kind default recorded at create, else GTK's fill.
+pub fn ndDefaultAlign(widget: *gtk.Widget, horizontal: bool) gtk.Align {
+    const key: [*:0]const u8 = if (horizontal) ND_DEFAULT_HALIGN else ND_DEFAULT_VALIGN;
+    const raw = gobject.Object.getData(asObject(widget), key) orelse return .fill;
+    return @enumFromInt(@intFromPtr(raw) - 1);
+}
+
+/// Puts `child` into `box` before `before`, or last when `before` is null
+/// or not packed in this box: a Popover or Dialog sibling is anchored on its
+/// parent, never packed, so its GTK prev-sibling is meaningless and used to
+/// send the new child to the front. gtk_box_append/insert_child_after assert
+/// the child has no parent, so an already-packed child moves with
+/// reorderChildAfter, which never unparents (unparenting an interior node
+/// destroys its subtree).
+fn ndBoxPlace(box: *gtk.Box, child: *gtk.Widget, before: ?*gtk.Widget) void {
+    const bw = box.as(gtk.Widget);
+    const anchor: ?*gtk.Widget = blk: {
+        if (before) |b| {
+            if (gtk.Widget.getParent(b) == bw) break :blk gtk.Widget.getPrevSibling(b);
+        }
+        break :blk gtk.Widget.getLastChild(bw);
+    };
+    const parent = gtk.Widget.getParent(child);
+    if (parent == bw) {
+        if (anchor == child) return;
+        gtk.Box.reorderChildAfter(box, child, anchor);
+        return;
+    }
+    if (parent) |p| {
+        // A slot change (HeaderBar start -> end) re-homes between boxes; the
+        // core's per-node ref keeps the child alive across the remove.
+        if (!gobject.ext.isA(p, gtk.Box)) return;
+        gtk.Box.remove(@ptrCast(@alignCast(p)), child);
+    }
+    gtk.Box.insertChildAfter(box, child, anchor);
+}
+
+/// AdwHeaderBar's pack_start/pack_end only append, so each slot owns one
+/// GtkBox packed once (lazily, so a header without app children is
+/// untouched); children then insert by sibling like any Box. Framework
+/// chrome packed directly (nav buttons at create, the primary menu button)
+/// stays outside these boxes.
+fn ndHeaderBarSlotBox(hb: *adw.HeaderBar, end_slot: bool) *gtk.Box {
+    const key: [*:0]const u8 = if (end_slot) ND_HB_END_BOX else ND_HB_START_BOX;
+    if (gobject.Object.getData(asObject(hb), key)) |p| return @ptrCast(@alignCast(p));
+    const box = gtk.Box.new(.horizontal, 6);
+    if (end_slot) adw.HeaderBar.packEnd(hb, box.as(gtk.Widget)) else adw.HeaderBar.packStart(hb, box.as(gtk.Widget));
+    gobject.Object.setData(asObject(hb), key, box);
+    return box;
+}
+
+/// AdwStatusPage:description is Pango markup with no use-markup switch, so an
+/// app string is escaped first (an '&' or '<' would otherwise blank the page).
+fn ndSetStatusDescription(page: *adw.StatusPage, text: [:0]const u8) void {
+    const esc = glib.markupEscapeText(text.ptr, -1);
+    defer glib.free(esc);
+    adw.StatusPage.setDescription(page, esc);
+}
+
+/// <label variant>: the Adwaita typography scale as one set-replace over its
+/// style classes, so a re-render that changes the variant never stacks two.
+const nd_label_variant_classes = [_][2][:0]const u8{
+    .{ "title1", "title-1" },   .{ "title2", "title-2" },  .{ "title3", "title-3" },
+    .{ "title4", "title-4" },   .{ "heading", "heading" }, .{ "caption", "caption" },
+    .{ "captionHeading", "caption-heading" }, .{ "monospace", "monospace" },
+};
+
+fn ndLabelApplyVariant(widget: *gtk.Widget, variant: []const u8) void {
+    for (nd_label_variant_classes) |pair| {
+        if (std.mem.eql(u8, variant, pair[0])) gtk.Widget.addCssClass(widget, pair[1].ptr) else gtk.Widget.removeCssClass(widget, pair[1].ptr);
+    }
+}
+
+fn ndHeaderBarSlotBoxOf(hb: *adw.HeaderBar, child: *gtk.Widget) ?*gtk.Box {
+    const parent = gtk.Widget.getParent(child) orelse return null;
+    inline for (.{ ND_HB_START_BOX, ND_HB_END_BOX }) |key| {
+        if (gobject.Object.getData(asObject(hb), key)) |p| {
+            const box: *gtk.Box = @ptrCast(@alignCast(p));
+            if (box.as(gtk.Widget) == parent) return box;
+        }
+    }
+    return null;
 }
 
 /// `tooltip` is a GtkWidget property, so one arm covers every kind. Menu
@@ -2698,6 +2816,17 @@ fn ndApplyTooltip(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
     const tip = propStr(props, "tooltip") orelse return;
     if (!gobject.ext.isA(widget, gtk.Widget)) return;
     gtk.Widget.setTooltipText(widget, if (tip.len > 0) dupeZ(tip).ptr else null);
+    // GTK derives no accessible name from a tooltip, so an icon-only control
+    // would be announced by nothing; the tooltip is the short name the HIG
+    // asks every element to carry.
+    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip));
+}
+
+fn ndSetAccessibleLabel(widget: *gtk.Widget, name: [:0]const u8) void {
+    var props = [_]gtk.AccessibleProperty{.label};
+    var values = [_]gobject.Value{gobject.ext.Value.newFrom(@as([*:0]const u8, name.ptr))};
+    defer gobject.Value.unset(&values[0]);
+    gtk.Accessible.updatePropertyValue(widget.as(gtk.Accessible), 1, &props, &values);
 }
 
 /// `enabled` is GtkWidget sensitivity, so one arm covers every kind, and
@@ -2751,6 +2880,7 @@ fn createWidget(
         // GtkLabel defaults to centered text when it is allocated extra width.
         // Native form rows expect their expanding title labels to stay leading-aligned.
         gtk.Label.setXalign(label, 0.0);
+        ndLabelApplyVariant(label.as(gtk.Widget), propStr(props, "variant") orelse "body");
         if (propBool(props, "ellipsize") orelse false) {
             // The label must stop dictating its parent's width: .end caps the
             // minimum at one ellipsis, max-width-chars(1) caps the natural
@@ -2802,14 +2932,16 @@ fn createWidget(
         // prominent -> the Adwaita accent treatment (AppKit peer:
         // NSToolbarItem.style .prominent / an accent bezel).
         if (propBool(props, "prominent") orelse false) gtk.Widget.addCssClass(button.as(gtk.Widget), "suggested-action");
+        if (propBool(props, "destructive") orelse false) gtk.Widget.addCssClass(button.as(gtk.Widget), "destructive-action");
         if (propStr(props, "badge")) |bd| ndButtonApplyBadge(button, bd, dupeZ);
-        // size -> compact/large button metrics (src/gtk/style.zig defines
-        // both classes; AppKit peer: NSControl.controlSize).
+        // size -> nd-button-small/large metrics (src/gtk/basecss.zig defines
+        // both classes; AppKit peer: NSControl.controlSize). libadwaita owns
+        // the bare `.compact`, so the classes carry the nd prefix.
         const size = propStr(props, "size") orelse "regular";
         if (std.mem.eql(u8, size, "small")) {
-            gtk.Widget.addCssClass(button.as(gtk.Widget), "compact");
+            gtk.Widget.addCssClass(button.as(gtk.Widget), "nd-button-small");
         } else if (std.mem.eql(u8, size, "large")) {
-            gtk.Widget.addCssClass(button.as(gtk.Widget), "large");
+            gtk.Widget.addCssClass(button.as(gtk.Widget), "nd-button-large");
         }
         return button.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextInput")) {
@@ -2918,8 +3050,11 @@ fn createWidget(
         const sep = gtk.Separator.new(if (vertical) .vertical else .horizontal);
         return sep.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Spinner")) {
-        const sp = gtk.Spinner.new();
-        if (propBool(props, "spinning") orelse true) gtk.Spinner.setSpinning(sp, 1);
+        // AdwSpinner (libadwaita 1.6) is the current GNOME spinner; GtkSpinner is
+        // the pre-47 throbber. It animates whenever visible, so `spinning`
+        // maps to visibility, which is also how GNOME apps stop one.
+        const sp = adw.Spinner.new();
+        gtk.Widget.setVisible(sp.as(gtk.Widget), @intFromBool(propBool(props, "spinning") orelse true));
         return sp.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TabView")) {
         // In-window view switching, the libadwaita idiom: a switcher over an
@@ -3072,6 +3207,7 @@ fn createWidget(
         // AdwPreferencesRow children in its rounded list box and any other
         // child in a plain box below it, with native title/description.
         const group = adw.PreferencesGroup.new();
+        if (propBool(props, "separateRows") orelse false) adw.PreferencesGroup.setSeparateRows(group, 1); // .boxed-list-separate
         const t = propStr(props, "title") orelse "";
         if (t.len > 0) adw.PreferencesGroup.setTitle(group, dupeZ(t));
         if (propStr(props, "description")) |d| adw.PreferencesGroup.setDescription(group, dupeZ(d));
@@ -3188,6 +3324,7 @@ fn createWidget(
         return btn.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Banner")) {
         const banner = adw.Banner.new(dupeZ(propStr(props, "title") orelse ""));
+        adw.Banner.setUseMarkup(banner, 0); // AdwBanner defaults to Pango markup: an '&' in an app title would blank it
         if (propStr(props, "buttonLabel")) |bl| adw.Banner.setButtonLabel(banner, dupeZ(bl));
         if (propBool(props, "revealed") orelse false) adw.Banner.setRevealed(banner, 1);
         return banner.as(gtk.Widget);
@@ -3265,7 +3402,7 @@ fn createWidget(
         const page = adw.StatusPage.new();
         if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));
         adw.StatusPage.setTitle(page, dupeZ(propStr(props, "title") orelse ""));
-        if (propStr(props, "description")) |d| adw.StatusPage.setDescription(page, dupeZ(d));
+        if (propStr(props, "description")) |d| ndSetStatusDescription(page, dupeZ(d));
         // Multi children (action buttons) fan into one wrapping GtkBox set as
         // the page's single child — same move ToolbarView/SettingsGroup make.
         const box = gtk.Box.new(.vertical, 12);
@@ -3458,6 +3595,7 @@ const nd_resets_Box = [_]NdPropReset{
     .{ .key = "dropTarget", .value = .{ .bool = false } },
 };
 const nd_resets_Label = [_]NdPropReset{
+    .{ .key = "variant", .value = .{ .string = "body" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -3474,6 +3612,7 @@ const nd_resets_Button = [_]NdPropReset{
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
     .{ .key = "prominent", .value = .{ .bool = false } },
+    .{ .key = "destructive", .value = .{ .bool = false } },
     .{ .key = "badge", .value = .{ .string = "" } },
     .{ .key = "size", .value = .{ .string = "regular" } },
 };
@@ -4210,6 +4349,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             // -1 sentinel = platform standard (6), same as the create arm.
             gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));
         }
+    } else if (std.mem.eql(u8, kind, "Label")) {
+        if (propStr(props, "variant")) |v| ndLabelApplyVariant(widget, v);
     } else if (std.mem.eql(u8, kind, "Button")) {
         if (propStr(props, "label")) |l| ndButtonSetLabel(@ptrCast(@alignCast(widget)), l, dupeZ);
         if (propStr(props, "iconName")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);
@@ -4221,14 +4362,17 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 gtk.Widget.removeCssClass(widget, "suggested-action");
             }
         }
+        if (propBool(props, "destructive")) |d| {
+            if (d) gtk.Widget.addCssClass(widget, "destructive-action") else gtk.Widget.removeCssClass(widget, "destructive-action");
+        }
         if (propStr(props, "badge")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);
         if (propStr(props, "size")) |sz| {
-            gtk.Widget.removeCssClass(widget, "compact");
-            gtk.Widget.removeCssClass(widget, "large");
+            gtk.Widget.removeCssClass(widget, "nd-button-small");
+            gtk.Widget.removeCssClass(widget, "nd-button-large");
             if (std.mem.eql(u8, sz, "small")) {
-                gtk.Widget.addCssClass(widget, "compact");
+                gtk.Widget.addCssClass(widget, "nd-button-small");
             } else if (std.mem.eql(u8, sz, "large")) {
-                gtk.Widget.addCssClass(widget, "large");
+                gtk.Widget.addCssClass(widget, "nd-button-large");
             }
         }
     } else if (std.mem.eql(u8, kind, "TextInput")) {
@@ -4307,7 +4451,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px));
         }
     } else if (std.mem.eql(u8, kind, "Spinner")) {
-        if (propBool(props, "spinning")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));
+        if (propBool(props, "spinning")) |sp| gtk.Widget.setVisible(widget, @intFromBool(sp));
     } else if (std.mem.eql(u8, kind, "TabView")) {
         if (propInt(props, "selectedIndex")) |idx| {
             if (ndTabViewStack(widget)) |stack| {
@@ -4548,7 +4692,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     } else if (std.mem.eql(u8, kind, "StatusPage")) {
         if (propStr(props, "iconName")) |ic| adw.StatusPage.setIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(ic)));
         if (propStr(props, "title")) |t| adw.StatusPage.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
-        if (propStr(props, "description")) |d| adw.StatusPage.setDescription(@ptrCast(@alignCast(widget)), dupeZ(d));
+        if (propStr(props, "description")) |d| ndSetStatusDescription(@ptrCast(@alignCast(widget)), dupeZ(d));
     } else if (std.mem.eql(u8, kind, "DatePicker")) {
         if (propStr(props, "value")) |v| {
             if (ndDateKeyFromIso(v)) |key| {
@@ -5135,17 +5279,7 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             ndMenuAttachToWindow(child);
         } else ndtabs_gtk.appendToWindow(parent, child);
     } else if (std.mem.eql(u8, parent_kind, "Box")) {
-        const box: *gtk.Box = @ptrCast(@alignCast(parent));
-        if (gtk.Widget.getParent(child) != null) {
-            // Moving an already-mounted child to the end (e.g. `insertBefore`
-            // degenerating here because `before` was null — see insertBefore
-            // below): `gtk_box_append` asserts the child has no parent, same
-            // constraint as `insertChildAfter`. `reorderChildAfter` anchored
-            // on the current last child is GTK's move-to-end primitive.
-            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent));
-        } else {
-            gtk.Box.append(box, child);
-        }
+        ndBoxPlace(@ptrCast(@alignCast(parent)), child, null);
     } else if (std.mem.eql(u8, parent_kind, "ScrollView")) {
         gtk.ScrolledWindow.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
@@ -5184,13 +5318,10 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
             adw.HeaderBar.setTitleWidget(hb, child);
             adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
-        } else if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "end")) {
-                adw.HeaderBar.packEnd(hb, child);
-            } else {
-                adw.HeaderBar.packStart(hb, child);
-            }
-        } else adw.HeaderBar.packStart(hb, child);
+        } else {
+            const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, "end") else false;
+            ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, null);
+        }
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         const tv: *adw.ToolbarView = @ptrCast(@alignCast(parent));
         if (gobject.ext.isA(child, adw.HeaderBar)) {
@@ -5244,12 +5375,7 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         gtk.Expander.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
-        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
-        if (gtk.Widget.getParent(child) != null) {
-            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)));
-        } else {
-            gtk.Box.append(box, child);
-        }
+        ndBoxPlace(@ptrCast(@alignCast(adw.StatusPage.getChild(page).?)), child, null);
     } else if (std.mem.eql(u8, parent_kind, "ToastOverlay")) {
         adw.ToastOverlay.setChild(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "TrayItem")) {
@@ -5278,20 +5404,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
     if (gobject.ext.isA(child, gtk.Popover)) return ndPopoverAttach(child, parent);
     if (gobject.ext.isA(child, adw.Dialog)) return ndDialogAttach(child, parent);
     if (std.mem.eql(u8, parent_kind, "Box")) {
-        const box: *gtk.Box = @ptrCast(@alignCast(parent));
-        const prev = gtk.Widget.getPrevSibling(b);
-        if (gtk.Widget.getParent(child) != null) {
-            // Reordering an already-mounted child (e.g. a pin-sort), not a
-            // fresh insert: `gtk_box_insert_child_after` asserts the child
-            // has no parent and would silently no-op (Gtk-CRITICAL) here.
-            // `reorderChildAfter` is GTK's dedicated move primitive — it
-            // repositions the child in place with no unparent, so it can't
-            // cascade-destroy the moved child's own children (the M8 GC
-            // lesson: unparenting an interior node destroys its subtree).
-            gtk.Box.reorderChildAfter(box, child, prev);
-        } else {
-            gtk.Box.insertChildAfter(box, child, prev);
-        }
+        ndBoxPlace(@ptrCast(@alignCast(parent)), child, b);
     } else if (std.mem.eql(u8, parent_kind, "TabView")) {
         // `b` unused: AdwViewStack cannot insert at an index — append (see template comment).
         const stack = ndTabViewStack(parent) orelse return;
@@ -5328,13 +5441,10 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
             gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width
             adw.HeaderBar.setTitleWidget(hb, child);
             adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it
-        } else if (attached.slot) |sl| {
-            if (std.mem.eql(u8, sl, "end")) {
-                adw.HeaderBar.packEnd(hb, child);
-            } else {
-                adw.HeaderBar.packStart(hb, child);
-            }
-        } else adw.HeaderBar.packStart(hb, child);
+        } else {
+            const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, "end") else false;
+            ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, b);
+        }
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
         ndMenubarAttachMenu(parent, child, b);
     } else if (std.mem.eql(u8, parent_kind, "Menu")) {
@@ -5372,13 +5482,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         ndMenuOwnerAttach(parent, child, b);
     } else if (std.mem.eql(u8, parent_kind, "StatusPage")) {
         const page: *adw.StatusPage = @ptrCast(@alignCast(parent));
-        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));
-        const prev = gtk.Widget.getPrevSibling(b);
-        if (gtk.Widget.getParent(child) != null) {
-            gtk.Box.reorderChildAfter(box, child, prev);
-        } else {
-            gtk.Box.insertChildAfter(box, child, prev);
-        }
+        ndBoxPlace(@ptrCast(@alignCast(adw.StatusPage.getChild(page).?)), child, b);
     } else if (std.mem.eql(u8, parent_kind, "Paned")) {
         const p: *gtk.Paned = @ptrCast(@alignCast(parent));
         if (gtk.Paned.getStartChild(p) == null) {
@@ -5437,7 +5541,10 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
             host = @ptrCast(@alignCast(cur));
         }
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
-        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);
+        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));
+        if (ndHeaderBarSlotBoxOf(hb, child)) |box| {
+            gtk.Box.remove(box, child);
+        } else adw.HeaderBar.remove(hb, child);
     } else if (std.mem.eql(u8, parent_kind, "ToolbarView")) {
         adw.ToolbarView.remove(@ptrCast(@alignCast(parent)), child);
     } else if (std.mem.eql(u8, parent_kind, "Menubar")) {
@@ -5514,4 +5621,4 @@ pub const style_subkeys = [_]StyleSubDef{
     .{ .parent = "border", .name = "borderColor", .css = "border-color", .kind = "color", .unit = null },
     .{ .parent = "border", .name = "borderRadius", .css = "border-radius", .kind = "int", .unit = "px" },
 };
-pub const css_class_spec = [_][]const u8{ "suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "background", "view", "frame", "compact", "menu", "inline", "large-title", "property", "round", "opaque", "devel", "icon-dropshadow", "lowres-icon" };
+pub const css_class_spec = [_][]const u8{ "suggested-action", "destructive-action", "flat", "raised", "circular", "pill", "linked", "toolbar", "spacer", "title-1", "title-2", "title-3", "title-4", "heading", "document", "body", "caption-heading", "caption", "monospace", "numeric", "accent", "success", "warning", "error", "boxed-list", "boxed-list-separate", "card", "activatable", "navigation-sidebar", "nd-native-sidebar", "selection-mode", "osd", "dimmed", "dim-label", "background", "view", "frame", "compact", "menu", "inline", "large-title", "property", "round", "opaque", "devel", "icon-dropshadow", "lowres-icon" };

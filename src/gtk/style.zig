@@ -9,6 +9,9 @@ const generated = @import("generated");
 var gpa: std.mem.Allocator = undefined;
 var providers: std.AutoHashMapUnmanaged(u32, *gtk.CssProvider) = .empty;
 var size_requested: std.AutoHashMapUnmanaged(u32, void) = .empty;
+var align_touched: std.AutoHashMapUnmanaged(u32, AlignFlags) = .empty;
+
+const AlignFlags = packed struct { halign: bool = false, valign: bool = false, hexpand: bool = false, vexpand: bool = false };
 pub const StyleErrorFn = *const fn (node_id: u32, key: []const u8) void;
 var on_error: ?StyleErrorFn = null;
 var ready = false;
@@ -67,6 +70,59 @@ fn parseAlign(value: std.json.Value) ?gtk.Align {
     if (std.mem.eql(u8, s, "center")) return .center;
     std.debug.print("ND_WARN unknown align value \"{s}\" (fill|start|end|center)\n", .{s});
     return null;
+}
+
+/// hexpand/vexpand/halign/valign are GTK widget properties that drive the
+/// layout engine, not CSS, and they are set-replace: a key the style dropped
+/// resets, expand to off and align to the kind default recorded at create
+/// (generated.ndDefaultAlign: fill for most kinds, start/center for the
+/// self-sized ones). A true expand with no explicit align on that axis means
+/// "take the room", so the widget fills it, which is what the AppKit box does
+/// with an expanding child. `align_touched` remembers which keys the last
+/// style set so a node whose create arm chose its own alignment is left
+/// alone until a style actually touches it.
+fn applyAlignment(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void {
+    const prev = align_touched.get(node_id) orelse AlignFlags{};
+    var now = AlignFlags{};
+    const hx = boolKey(style, "hexpand");
+    const vx = boolKey(style, "vexpand");
+    if (hx) |v| {
+        gtk.Widget.setHexpand(widget, @intFromBool(v));
+        now.hexpand = true;
+    } else if (prev.hexpand) gtk.Widget.setHexpand(widget, 0);
+    if (vx) |v| {
+        gtk.Widget.setVexpand(widget, @intFromBool(v));
+        now.vexpand = true;
+    } else if (prev.vexpand) gtk.Widget.setVexpand(widget, 0);
+
+    if (style.object.get("halign")) |v| {
+        if (parseAlign(v)) |a| {
+            gtk.Widget.setHalign(widget, a);
+            now.halign = true;
+        }
+    } else if (hx orelse false) {
+        gtk.Widget.setHalign(widget, .fill);
+        now.halign = true;
+    } else if (prev.halign) gtk.Widget.setHalign(widget, generated.ndDefaultAlign(widget, true));
+
+    if (style.object.get("valign")) |v| {
+        if (parseAlign(v)) |a| {
+            gtk.Widget.setValign(widget, a);
+            now.valign = true;
+        }
+    } else if (vx orelse false) {
+        gtk.Widget.setValign(widget, .fill);
+        now.valign = true;
+    } else if (prev.valign) gtk.Widget.setValign(widget, generated.ndDefaultAlign(widget, false));
+
+    if (now.halign or now.valign or now.hexpand or now.vexpand) {
+        align_touched.put(gpa, node_id, now) catch {};
+    } else _ = align_touched.remove(node_id);
+}
+
+fn boolKey(style: std.json.Value, key: []const u8) ?bool {
+    const v = style.object.get(key) orelse return null;
+    return if (v == .bool) v.bool else null;
 }
 
 /// `{css_name}: {value}{unit};` — the hex/rgb sanity check applies only to
@@ -166,18 +222,9 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
             if (on_error) |f| f(node_id, key);
             continue;
         }
-        if (std.mem.eql(u8, key, "margin")) {
-            applyMarginSpacing(widget, entry.value_ptr.*);
-        } else if (std.mem.eql(u8, key, "hexpand")) {
-            if (entry.value_ptr.* == .bool) gtk.Widget.setHexpand(widget, @intFromBool(entry.value_ptr.*.bool));
-        } else if (std.mem.eql(u8, key, "vexpand")) {
-            if (entry.value_ptr.* == .bool) gtk.Widget.setVexpand(widget, @intFromBool(entry.value_ptr.*.bool));
-        } else if (std.mem.eql(u8, key, "halign")) {
-            if (parseAlign(entry.value_ptr.*)) |a| gtk.Widget.setHalign(widget, a);
-        } else if (std.mem.eql(u8, key, "valign")) {
-            if (parseAlign(entry.value_ptr.*)) |a| gtk.Widget.setValign(widget, a);
-        }
+        if (std.mem.eql(u8, key, "margin")) applyMarginSpacing(widget, entry.value_ptr.*);
     }
+    applyAlignment(widget, node_id, style);
 
     // minWidth/minHeight share one gtk_widget_set_size_request call, so the
     // pair is read outside the loop: setting one axis must not clobber the

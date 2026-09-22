@@ -468,8 +468,11 @@ fn applyFilters(dialog: *gtk.FileDialog, filters: ?[]const Filter) void {
     gtk.FileDialog.setFilters(dialog, store.as(gio.ListModel));
 }
 
-const AlertJob = struct { ctx: *abi.NdContext, id: u32, dialog: *gtk.AlertDialog, default_button: c_int };
+const AlertJob = struct { ctx: *abi.NdContext, id: u32, default_button: i64 };
 
+/// dialog.showMessage on AdwAlertDialog, the dialog window.showAlert
+/// (dialogs.zig) already presents, so one app never shows two dialog styles.
+/// The wire addresses buttons by index, so the response ids are the indexes.
 fn showMessage(ctx: *abi.NdContext, id: u32, p: []const u8) void {
     const P = struct {
         message: []const u8 = "",
@@ -482,71 +485,44 @@ fn showMessage(ctx: *abi.NdContext, id: u32, p: []const u8) void {
     defer parsed.deinit();
     const v = parsed.value;
 
-    // Build with an empty format string (never the message itself — a message
-    // with a `%` would be interpreted as a printf directive) and set the real
-    // text through the non-formatting setter.
-    const dialog = gtk.AlertDialog.new("");
-    const msg_z = alloc.dupeZ(u8, v.message) catch {
-        objUnref(dialog);
-        return respond(ctx, id, false, "oom");
-    };
-    gtk.AlertDialog.setMessage(dialog, msg_z.ptr);
-    alloc.free(msg_z);
-    if (v.detail) |d| {
-        const dz = alloc.dupeZ(u8, d) catch null;
-        if (dz) |dd| {
-            gtk.AlertDialog.setDetail(dialog, dd.ptr);
-            alloc.free(dd);
-        }
-    }
-    // GtkAlertDialog has no per-severity styling, so `level` is accepted but
-    // has no visual effect on this backend.
-    setAlertButtons(dialog, v.buttons);
-    const default_button: c_int = if (v.defaultButton) |db| @intCast(db) else 0;
-    gtk.AlertDialog.setDefaultButton(dialog, default_button);
+    // AdwAlertDialog copies every string it is handed.
+    const msg_z = alloc.dupeZ(u8, v.message) catch return respond(ctx, id, false, "oom");
+    defer alloc.free(msg_z);
+    const detail_z: ?[:0]u8 = if (v.detail) |d| (alloc.dupeZ(u8, d) catch null) else null;
+    defer if (detail_z) |dz| alloc.free(dz);
+    const dialog = adw.AlertDialog.new(msg_z.ptr, if (detail_z) |dz| dz.ptr else null);
 
-    const job = alloc.create(AlertJob) catch {
-        objUnref(dialog);
-        return respond(ctx, id, false, "oom");
-    };
-    job.* = .{ .ctx = ctx, .id = id, .dialog = dialog, .default_button = default_button };
-    gtk.AlertDialog.choose(dialog, activeWindow(), null, &cbAlert, job);
-}
-
-/// Builds the NULL-terminated C strv GtkAlertDialog wants (default `["OK"]`).
-/// setButtons copies the array (g_strdupv), so the dup'd strings can be freed
-/// immediately after.
-fn setAlertButtons(dialog: *gtk.AlertDialog, buttons: ?[]const []const u8) void {
+    // `level` has no visual here either: libadwaita styles responses, not dialogs.
     const default_btns = [_][]const u8{"OK"};
-    const btns: []const []const u8 = buttons orelse &default_btns;
-    const cstrs = alloc.alloc(?[*:0]const u8, btns.len + 1) catch return;
-    defer alloc.free(cstrs);
-    var made: usize = 0;
-    defer for (cstrs[0..made]) |c| if (c) |cc| alloc.free(std.mem.span(cc));
+    const btns: []const []const u8 = v.buttons orelse &default_btns;
+    var id_buf: [24]u8 = undefined;
     for (btns, 0..) |b, i| {
-        const z = alloc.dupeZ(u8, b) catch break;
-        cstrs[i] = z.ptr;
-        made += 1;
+        const rid = std.fmt.bufPrintZ(&id_buf, "{d}", .{i}) catch continue;
+        const lz = alloc.dupeZ(u8, b) catch continue;
+        defer alloc.free(lz);
+        adw.AlertDialog.addResponse(dialog, rid.ptr, lz.ptr);
     }
-    cstrs[made] = null;
-    gtk.AlertDialog.setButtons(dialog, @ptrCast(cstrs.ptr));
+    var default_button: i64 = v.defaultButton orelse 0;
+    if (default_button < 0 or default_button >= @as(i64, @intCast(btns.len))) default_button = 0;
+    const did = std.fmt.bufPrintZ(&id_buf, "{d}", .{default_button}) catch unreachable;
+    adw.AlertDialog.setDefaultResponse(dialog, did.ptr);
+    // Escape and the close button answer with the default, as the dismissed
+    // GtkAlertDialog this replaced did.
+    adw.AlertDialog.setCloseResponse(dialog, did.ptr);
+
+    const job = alloc.create(AlertJob) catch return respond(ctx, id, false, "oom");
+    job.* = .{ .ctx = ctx, .id = id, .default_button = default_button };
+    const parent: ?*gtk.Widget = if (activeWindow()) |w| w.as(gtk.Widget) else null;
+    adw.AlertDialog.choose(dialog, parent, null, &cbAlert, job);
 }
 
-fn cbAlert(_: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
+fn cbAlert(source: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
     const job: *AlertJob = @ptrCast(@alignCast(user_data.?));
-    defer {
-        objUnref(job.dialog);
-        alloc.destroy(job);
-    }
-    var err: ?*glib.Error = null;
-    const idx = gtk.AlertDialog.chooseFinish(job.dialog, res, &err);
-    if (err) |e| {
-        e.free();
-        // Dismissed (Escape / close) — no button clicked; fall back to default.
-        respondValue(job.ctx, job.id, @as(i64, job.default_button));
-        return;
-    }
-    respondValue(job.ctx, job.id, @as(i64, idx));
+    defer alloc.destroy(job);
+    const dialog: *adw.AlertDialog = @ptrCast(@alignCast(source.?));
+    const response = std.mem.span(adw.AlertDialog.chooseFinish(dialog, res));
+    const idx = std.fmt.parseInt(i64, response, 10) catch job.default_button;
+    respondValue(job.ctx, job.id, idx);
 }
 
 // ============================================================================

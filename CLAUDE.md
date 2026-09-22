@@ -273,7 +273,16 @@ fill/start/center/end, defaulting per child from a create-time widget-kind
 table (`ndSelfSizedKinds`: buttons, switches, pickers and the like keep their
 own size; containers, scroll shapes, TextInput/Image/Chart fill) rather than a
 live `intrinsicContentSize` read, which used to flip a child between natural
-and fill depending on whether a SwiftUI leaf had measured yet. Natural and
+and fill depending on whether a SwiftUI leaf had measured yet. The GTK
+backend keeps the same table (`nd_self_sized_kinds`, emitted by
+`tools/codegen.ts` next to the create dispatcher: halign start, valign center
+at create), and `src/gtk/style.zig`'s `applyAlignment` makes
+hexpand/vexpand/halign/valign set-replace there too: a dropped key falls back
+to the kind default, and a true expand with no explicit align fills its axis.
+GTK sibling placement into a GtkBox goes through one `ndBoxPlace` (Box,
+StatusPage, and the per-slot boxes an AdwHeaderBar gets, since
+pack_start/pack_end only append); an anchor sibling that is not packed in the
+box, a Popover or Dialog, means append. Natural and
 minimum size are measured and cached separately per child (a wrapping label's
 minimum is a floor, its natural is its text width); `style.margin`,
 `minWidth`/`minHeight`, hexpand/vexpand/halign/valign are set-replace like

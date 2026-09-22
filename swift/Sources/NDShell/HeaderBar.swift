@@ -1180,16 +1180,29 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     func ownerWindow() -> NSWindow? { resolveOwnerWindow() }
 }
 
-/// Appends `child` to `bar`'s start/end slot arrays (generated HeaderBar
-/// append/insertBefore arm). If the bar's pane is already registered with the
-/// window toolbar, a coalesced rebuild picks the new item up.
-func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String) {
+/// Places `child` in `bar`'s start/end slot array (generated HeaderBar
+/// append/insertBefore arm): before `before` when that sibling is in the same
+/// slot, else last. A child already in a slot moves rather than duplicating,
+/// so a React reorder or slot change lands in tree order. If the bar's pane
+/// is already registered with the window toolbar, a coalesced rebuild picks
+/// the change up.
+func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String, before: NSView? = nil) {
+    bar.startViews.removeAll { $0 === child }
+    bar.endViews.removeAll { $0 === child }
     if slot == "end" {
-        bar.endViews.append(child)
+        ndSlotInsert(&bar.endViews, child, before: before)
     } else {
-        bar.startViews.append(child)
+        ndSlotInsert(&bar.startViews, child, before: before)
     }
     bar.pane?.manager?.scheduleRebuild()
+}
+
+private func ndSlotInsert(_ views: inout [NSView], _ child: NSView, before: NSView?) {
+    if let b = before, let i = views.firstIndex(where: { $0 === b }) {
+        views.insert(child, at: i)
+    } else {
+        views.append(child)
+    }
 }
 
 /// Materializes / updates the header's floating back/forward control from the

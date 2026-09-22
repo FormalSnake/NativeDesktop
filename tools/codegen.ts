@@ -717,7 +717,7 @@ fn ndBuildSourceRows(box: *gtk.ListBox, arr: ?std.json.Array, dupeZ: *const fn (
         adw.PreferencesRow.setTitle(row.as(adw.PreferencesRow), dupeZ(title));
         if (it.object.get("iconName")) |ic| {
             if (ic == .string) {
-                const img = gtk.Image.newFromIconName(dupeZ(ic.string));
+                const img = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic.string)));
                 adw.ActionRow.addPrefix(row, img.as(gtk.Widget));
             }
         }
@@ -2015,7 +2015,8 @@ fn cbSplitViewMapped(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
     const root = gtk.Widget.getRoot(widget) orelse return;
     if (!gobject.ext.isA(root, adw.ApplicationWindow)) return;
     const win: *adw.ApplicationWindow = @ptrCast(@alignCast(root));
-    const cond = adw.BreakpointCondition.newLength(.max_width, px, .px);
+    // sp follows the desktop text scale, the unit libadwaita's own breakpoints use.
+    const cond = adw.BreakpointCondition.newLength(.max_width, px, .sp);
     const bp = adw.Breakpoint.new(cond); // takes ownership of cond
     var v = gobject.ext.Value.newFrom(true);
     defer gobject.Value.unset(&v);
@@ -3030,6 +3031,128 @@ fn ndSkeletonDraw(area: *gtk.DrawingArea, cr: *cairo.Context, width: c_int, heig
 }
 `;
 
+
+/// Hand-written Zig emitted once next to the GTK create dispatcher: sibling
+/// placement into a GtkBox (Box, StatusPage and the HeaderBar slot boxes all
+/// route through it) and the per-kind alignment defaults.
+const GTK_PLACEMENT_HELPERS = `const ND_DEFAULT_HALIGN = "nd-default-halign";
+const ND_DEFAULT_VALIGN = "nd-default-valign";
+const ND_HB_START_BOX = "nd-hb-start-box";
+const ND_HB_END_BOX = "nd-hb-end-box";
+
+/// GtkWidget defaults to halign/valign fill, which stretches a button to a
+/// vertical box's full width and to a horizontal box's full height. These
+/// kinds have a correct natural size on both axes (the AppKit peer's
+/// ndSelfSizedKinds in Layout.swift); everything else keeps fill, since a
+/// label wraps to its allocation and containers and fields are meant to
+/// fill. Checkbox and Radio stay fill on purpose: their indicator sits at
+/// the start either way and Adwaita gives the whole row the hit area.
+const nd_self_sized_kinds = [_][]const u8{
+    "Button",      "ToggleButton", "Select",        "ComboBox",  "Switch",
+    "SegmentedControl", "DatePicker", "ColorPicker", "FontPicker", "MenuButton",
+    "SplitButton", "LinkButton",   "Spinner",       "ProgressCircle", "NumberInput",
+    "Avatar",      "Badge",        "Tag",           "Kbd",
+};
+
+fn ndApplyKindAlign(kind: []const u8, widget: *gtk.Widget) void {
+    if (!gobject.ext.isA(widget, gtk.Widget)) return;
+    for (nd_self_sized_kinds) |k| {
+        if (!std.mem.eql(u8, kind, k)) continue;
+        gtk.Widget.setHalign(widget, .start);
+        gtk.Widget.setValign(widget, .center);
+        gobject.Object.setData(asObject(widget), ND_DEFAULT_HALIGN, @ptrFromInt(@as(usize, @intFromEnum(gtk.Align.start)) + 1));
+        gobject.Object.setData(asObject(widget), ND_DEFAULT_VALIGN, @ptrFromInt(@as(usize, @intFromEnum(gtk.Align.center)) + 1));
+        return;
+    }
+}
+
+/// The alignment a widget falls back to when a style drops its halign/valign
+/// key (style.zig): the kind default recorded at create, else GTK's fill.
+pub fn ndDefaultAlign(widget: *gtk.Widget, horizontal: bool) gtk.Align {
+    const key: [*:0]const u8 = if (horizontal) ND_DEFAULT_HALIGN else ND_DEFAULT_VALIGN;
+    const raw = gobject.Object.getData(asObject(widget), key) orelse return .fill;
+    return @enumFromInt(@intFromPtr(raw) - 1);
+}
+
+/// Puts \`child\` into \`box\` before \`before\`, or last when \`before\` is null
+/// or not packed in this box: a Popover or Dialog sibling is anchored on its
+/// parent, never packed, so its GTK prev-sibling is meaningless and used to
+/// send the new child to the front. gtk_box_append/insert_child_after assert
+/// the child has no parent, so an already-packed child moves with
+/// reorderChildAfter, which never unparents (unparenting an interior node
+/// destroys its subtree).
+fn ndBoxPlace(box: *gtk.Box, child: *gtk.Widget, before: ?*gtk.Widget) void {
+    const bw = box.as(gtk.Widget);
+    const anchor: ?*gtk.Widget = blk: {
+        if (before) |b| {
+            if (gtk.Widget.getParent(b) == bw) break :blk gtk.Widget.getPrevSibling(b);
+        }
+        break :blk gtk.Widget.getLastChild(bw);
+    };
+    const parent = gtk.Widget.getParent(child);
+    if (parent == bw) {
+        if (anchor == child) return;
+        gtk.Box.reorderChildAfter(box, child, anchor);
+        return;
+    }
+    if (parent) |p| {
+        // A slot change (HeaderBar start -> end) re-homes between boxes; the
+        // core's per-node ref keeps the child alive across the remove.
+        if (!gobject.ext.isA(p, gtk.Box)) return;
+        gtk.Box.remove(@ptrCast(@alignCast(p)), child);
+    }
+    gtk.Box.insertChildAfter(box, child, anchor);
+}
+
+/// AdwHeaderBar's pack_start/pack_end only append, so each slot owns one
+/// GtkBox packed once (lazily, so a header without app children is
+/// untouched); children then insert by sibling like any Box. Framework
+/// chrome packed directly (nav buttons at create, the primary menu button)
+/// stays outside these boxes.
+fn ndHeaderBarSlotBox(hb: *adw.HeaderBar, end_slot: bool) *gtk.Box {
+    const key: [*:0]const u8 = if (end_slot) ND_HB_END_BOX else ND_HB_START_BOX;
+    if (gobject.Object.getData(asObject(hb), key)) |p| return @ptrCast(@alignCast(p));
+    const box = gtk.Box.new(.horizontal, 6);
+    if (end_slot) adw.HeaderBar.packEnd(hb, box.as(gtk.Widget)) else adw.HeaderBar.packStart(hb, box.as(gtk.Widget));
+    gobject.Object.setData(asObject(hb), key, box);
+    return box;
+}
+
+/// AdwStatusPage:description is Pango markup with no use-markup switch, so an
+/// app string is escaped first (an '&' or '<' would otherwise blank the page).
+fn ndSetStatusDescription(page: *adw.StatusPage, text: [:0]const u8) void {
+    const esc = glib.markupEscapeText(text.ptr, -1);
+    defer glib.free(esc);
+    adw.StatusPage.setDescription(page, esc);
+}
+
+/// <label variant>: the Adwaita typography scale as one set-replace over its
+/// style classes, so a re-render that changes the variant never stacks two.
+const nd_label_variant_classes = [_][2][:0]const u8{
+    .{ "title1", "title-1" },   .{ "title2", "title-2" },  .{ "title3", "title-3" },
+    .{ "title4", "title-4" },   .{ "heading", "heading" }, .{ "caption", "caption" },
+    .{ "captionHeading", "caption-heading" }, .{ "monospace", "monospace" },
+};
+
+fn ndLabelApplyVariant(widget: *gtk.Widget, variant: []const u8) void {
+    for (nd_label_variant_classes) |pair| {
+        if (std.mem.eql(u8, variant, pair[0])) gtk.Widget.addCssClass(widget, pair[1].ptr) else gtk.Widget.removeCssClass(widget, pair[1].ptr);
+    }
+}
+
+fn ndHeaderBarSlotBoxOf(hb: *adw.HeaderBar, child: *gtk.Widget) ?*gtk.Box {
+    const parent = gtk.Widget.getParent(child) orelse return null;
+    inline for (.{ ND_HB_START_BOX, ND_HB_END_BOX }) |key| {
+        if (gobject.Object.getData(asObject(hb), key)) |p| {
+            const box: *gtk.Box = @ptrCast(@alignCast(p));
+            if (box.as(gtk.Widget) == parent) return box;
+        }
+    }
+    return null;
+}
+
+`;
+
 function genZig(s: Schema): string {
   let out = HEADER_ZIG;
   out += "const std = @import(\"std\");\n";
@@ -3084,11 +3207,13 @@ function genZig(s: Schema): string {
   out += "    the_window: *?*gtk.Window,\n";
   out += ") !*gtk.Widget {\n";
   out += "    const widget = try createWidget(app, kind, props, dupeZ, the_window);\n";
+  out += "    ndApplyKindAlign(kind, widget);\n";
   out += "    ndApplyTooltip(widget, props, dupeZ);\n";
   out += "    ndApplyEnabled(widget, props);\n";
   out += "    nddnd_gtk.applyProps(widget, props, dupeZ);\n";
   out += "    return widget;\n";
   out += "}\n\n";
+  out += GTK_PLACEMENT_HELPERS;
   out += "/// `tooltip` is a GtkWidget property, so one arm covers every kind. Menu\n";
   out += "/// nodes (Menubar/Menu/MenuItem) hand back GMenu objects rather than\n";
   out += "/// widgets, hence the type guard.\n";
@@ -3096,6 +3221,16 @@ function genZig(s: Schema): string {
   out += "    const tip = propStr(props, \"tooltip\") orelse return;\n";
   out += "    if (!gobject.ext.isA(widget, gtk.Widget)) return;\n";
   out += "    gtk.Widget.setTooltipText(widget, if (tip.len > 0) dupeZ(tip).ptr else null);\n";
+  out += "    // GTK derives no accessible name from a tooltip, so an icon-only control\n";
+  out += "    // would be announced by nothing; the tooltip is the short name the HIG\n";
+  out += "    // asks every element to carry.\n";
+  out += "    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip));\n";
+  out += "}\n\n";
+  out += "fn ndSetAccessibleLabel(widget: *gtk.Widget, name: [:0]const u8) void {\n";
+  out += "    var props = [_]gtk.AccessibleProperty{.label};\n";
+  out += "    var values = [_]gobject.Value{gobject.ext.Value.newFrom(@as([*:0]const u8, name.ptr))};\n";
+  out += "    defer gobject.Value.unset(&values[0]);\n";
+  out += "    gtk.Accessible.updatePropertyValue(widget.as(gtk.Accessible), 1, &props, &values);\n";
   out += "}\n\n";
   out += "/// `enabled` is GtkWidget sensitivity, so one arm covers every kind, and\n";
   out += "/// insensitivity propagates through the subtree the way GTK draws it.\n";
@@ -3479,6 +3614,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        // AdwPreferencesRow children in its rounded list box and any other\n";
     out += "        // child in a plain box below it, with native title/description.\n";
     out += "        const group = adw.PreferencesGroup.new();\n";
+    out += `        if (propBool(props, "separateRows") orelse ${dflt(w, "separateRows")}) adw.PreferencesGroup.setSeparateRows(group, 1); // .boxed-list-separate\n`;
     out += `        const t = propStr(props, "title") orelse ${zigDefaultStr(w, "title")};\n`;
     out += "        if (t.len > 0) adw.PreferencesGroup.setTitle(group, dupeZ(t));\n";
     out += "        if (propStr(props, \"description\")) |d| adw.PreferencesGroup.setDescription(group, dupeZ(d));\n";
@@ -3523,6 +3659,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        // GtkLabel defaults to centered text when it is allocated extra width.\n";
     out += "        // Native form rows expect their expanding title labels to stay leading-aligned.\n";
     out += "        gtk.Label.setXalign(label, 0.0);\n";
+    out += `        ndLabelApplyVariant(label.as(gtk.Widget), propStr(props, "variant") orelse ${zigDefaultStr(w, "variant")});\n`;
     out += "        if (propBool(props, \"ellipsize\") orelse false) {\n";
     out += "            // The label must stop dictating its parent's width: .end caps the\n";
     out += "            // minimum at one ellipsis, max-width-chars(1) caps the natural\n";
@@ -3574,14 +3711,16 @@ function genZigCreateBody(w: Widget): string {
     out += "        // prominent -> the Adwaita accent treatment (AppKit peer:\n";
     out += "        // NSToolbarItem.style .prominent / an accent bezel).\n";
     out += `        if (propBool(props, "prominent") orelse ${dflt(w, "prominent")}) gtk.Widget.addCssClass(button.as(gtk.Widget), "suggested-action");\n`;
+    out += `        if (propBool(props, "destructive") orelse ${dflt(w, "destructive")}) gtk.Widget.addCssClass(button.as(gtk.Widget), "destructive-action");\n`;
     out += "        if (propStr(props, \"badge\")) |bd| ndButtonApplyBadge(button, bd, dupeZ);\n";
-    out += "        // size -> compact/large button metrics (src/gtk/style.zig defines\n";
-    out += "        // both classes; AppKit peer: NSControl.controlSize).\n";
+    out += "        // size -> nd-button-small/large metrics (src/gtk/basecss.zig defines\n";
+    out += "        // both classes; AppKit peer: NSControl.controlSize). libadwaita owns\n";
+    out += "        // the bare `.compact`, so the classes carry the nd prefix.\n";
     out += `        const size = propStr(props, "size") orelse ${zigDefaultStr(w, "size")};\n`;
     out += "        if (std.mem.eql(u8, size, \"small\")) {\n";
-    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"compact\");\n";
+    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"nd-button-small\");\n";
     out += "        } else if (std.mem.eql(u8, size, \"large\")) {\n";
-    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"large\");\n";
+    out += "            gtk.Widget.addCssClass(button.as(gtk.Widget), \"nd-button-large\");\n";
     out += "        }\n";
     out += "        return button.as(gtk.Widget);\n";
   } else if (w.name === "TextInput") {
@@ -3692,8 +3831,11 @@ function genZigCreateBody(w: Widget): string {
     out += "        const sep = gtk.Separator.new(if (vertical) .vertical else .horizontal);\n";
     out += "        return sep.as(gtk.Widget);\n";
   } else if (w.name === "Spinner") {
-    out += "        const sp = gtk.Spinner.new();\n";
-    out += "        if (propBool(props, \"spinning\") orelse true) gtk.Spinner.setSpinning(sp, 1);\n";
+    out += "        // AdwSpinner (libadwaita 1.6) is the current GNOME spinner; GtkSpinner is\n";
+    out += "        // the pre-47 throbber. It animates whenever visible, so `spinning`\n";
+    out += "        // maps to visibility, which is also how GNOME apps stop one.\n";
+    out += "        const sp = adw.Spinner.new();\n";
+    out += "        gtk.Widget.setVisible(sp.as(gtk.Widget), @intFromBool(propBool(props, \"spinning\") orelse true));\n";
     out += "        return sp.as(gtk.Widget);\n";
   } else if (w.name === "TabView") {
     out += "        // In-window view switching, the libadwaita idiom: a switcher over an\n";
@@ -3930,6 +4072,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        return btn.as(gtk.Widget);\n";
   } else if (w.name === "Banner") {
     out += `        const banner = adw.Banner.new(dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
+    out += "        adw.Banner.setUseMarkup(banner, 0); // AdwBanner defaults to Pango markup: an '&' in an app title would blank it\n";
     out += "        if (propStr(props, \"buttonLabel\")) |bl| adw.Banner.setButtonLabel(banner, dupeZ(bl));\n";
     out += `        if (propBool(props, "revealed") orelse ${dflt(w, "revealed")}) adw.Banner.setRevealed(banner, 1);\n`;
     out += "        return banner.as(gtk.Widget);\n";
@@ -4007,7 +4150,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        const page = adw.StatusPage.new();\n";
     out += "        if (propStr(props, \"iconName\")) |ic| adw.StatusPage.setIconName(page, ndicons.symbolic(dupeZ(ic)));\n";
     out += `        adw.StatusPage.setTitle(page, dupeZ(propStr(props, "title") orelse ${zigDefaultStr(w, "title")}));\n`;
-    out += "        if (propStr(props, \"description\")) |d| adw.StatusPage.setDescription(page, dupeZ(d));\n";
+    out += "        if (propStr(props, \"description\")) |d| ndSetStatusDescription(page, dupeZ(d));\n";
     out += "        // Multi children (action buttons) fan into one wrapping GtkBox set as\n";
     out += "        // the page's single child — same move ToolbarView/SettingsGroup make.\n";
     out += "        const box = gtk.Box.new(.vertical, 12);\n";
@@ -4260,6 +4403,12 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"iconName\")) |ic| ndButtonSetIconName(@ptrCast(@alignCast(widget)), ic, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "iconData") {
       out += "        if (propStr(props, \"iconData\")) |d| ndButtonApplyIconData(@ptrCast(@alignCast(widget)), d, dupeZ);\n";
+    } else if (w.name === "Label" && p.name === "variant") {
+      out += "        if (propStr(props, \"variant\")) |v| ndLabelApplyVariant(widget, v);\n";
+    } else if (w.name === "Button" && p.name === "destructive") {
+      out += "        if (propBool(props, \"destructive\")) |d| {\n";
+      out += "            if (d) gtk.Widget.addCssClass(widget, \"destructive-action\") else gtk.Widget.removeCssClass(widget, \"destructive-action\");\n";
+      out += "        }\n";
     } else if (w.name === "Button" && p.name === "prominent") {
       out += "        if (propBool(props, \"prominent\")) |pr| {\n";
       out += "            if (pr) {\n";
@@ -4272,12 +4421,12 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propStr(props, \"badge\")) |bd| ndButtonApplyBadge(@ptrCast(@alignCast(widget)), bd, dupeZ);\n";
     } else if (w.name === "Button" && p.name === "size") {
       out += "        if (propStr(props, \"size\")) |sz| {\n";
-      out += "            gtk.Widget.removeCssClass(widget, \"compact\");\n";
-      out += "            gtk.Widget.removeCssClass(widget, \"large\");\n";
+      out += "            gtk.Widget.removeCssClass(widget, \"nd-button-small\");\n";
+      out += "            gtk.Widget.removeCssClass(widget, \"nd-button-large\");\n";
       out += "            if (std.mem.eql(u8, sz, \"small\")) {\n";
-      out += "                gtk.Widget.addCssClass(widget, \"compact\");\n";
+      out += "                gtk.Widget.addCssClass(widget, \"nd-button-small\");\n";
       out += "            } else if (std.mem.eql(u8, sz, \"large\")) {\n";
-      out += "                gtk.Widget.addCssClass(widget, \"large\");\n";
+      out += "                gtk.Widget.addCssClass(widget, \"nd-button-large\");\n";
       out += "            }\n";
       out += "        }\n";
     } else if (w.name === "Select" && p.name === "selectedIndex") {
@@ -4311,7 +4460,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "Image" && p.name === "pixelSize") {
       out += "        if (propInt(props, \"pixelSize\")) |px| {\n            if (px > 0) gtk.Image.setPixelSize(@ptrCast(@alignCast(widget)), @intCast(px));\n        }\n";
     } else if (w.name === "Spinner" && p.name === "spinning") {
-      out += "        if (propBool(props, \"spinning\")) |sp| gtk.Spinner.setSpinning(@ptrCast(@alignCast(widget)), @intFromBool(sp));\n";
+      out += "        if (propBool(props, \"spinning\")) |sp| gtk.Widget.setVisible(widget, @intFromBool(sp));\n";
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
       out += "        if (propInt(props, \"selectedIndex\")) |idx| {\n";
       out += "            if (ndTabViewStack(widget)) |stack| {\n";
@@ -4620,7 +4769,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "StatusPage" && p.name === "title") {
       out += "        if (propStr(props, \"title\")) |t| adw.StatusPage.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
     } else if (w.name === "StatusPage" && p.name === "description") {
-      out += "        if (propStr(props, \"description\")) |d| adw.StatusPage.setDescription(@ptrCast(@alignCast(widget)), dupeZ(d));\n";
+      out += "        if (propStr(props, \"description\")) |d| ndSetStatusDescription(@ptrCast(@alignCast(widget)), dupeZ(d));\n";
     } else if (w.name === "DatePicker" && p.name === "value") {
       out += "        if (propStr(props, \"value\")) |v| {\n";
       out += "            if (ndDateKeyFromIso(v)) |key| {\n";
@@ -5308,19 +5457,26 @@ interface StructuralTemplate {
   remove: (childExpr: string) => string;
 }
 
-function headerBarAttach(): string {
+function headerBarAttach(withBefore: boolean): string {
   let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
   s += "        if (gobject.ext.isA(child, gtk.SearchEntry) and adw.HeaderBar.getTitleWidget(hb) == null) {\n";
   s += "            gtk.Widget.setHexpand(child, 1); // claim the center box's free run, not natural width\n";
   s += "            adw.HeaderBar.setTitleWidget(hb, child);\n";
   s += "            adw.HeaderBar.setShowTitle(hb, 1); // the title-less create arm disabled it\n";
-  s += "        } else if (attached.slot) |sl| {\n";
-  s += "            if (std.mem.eql(u8, sl, \"end\")) {\n";
-  s += "                adw.HeaderBar.packEnd(hb, child);\n";
-  s += "            } else {\n";
-  s += "                adw.HeaderBar.packStart(hb, child);\n";
-  s += "            }\n";
-  s += "        } else adw.HeaderBar.packStart(hb, child);\n";
+  s += "        } else {\n";
+  s += "            const end_slot = if (attached.slot) |sl| std.mem.eql(u8, sl, \"end\") else false;\n";
+  s += `            ndBoxPlace(ndHeaderBarSlotBox(hb, end_slot), child, ${withBefore ? "b" : "null"});\n`;
+  s += "        }\n";
+  return s;
+}
+
+/// Removes an app child from whichever slot box holds it; the title widget
+/// (a SearchEntry) is the one child adw.HeaderBar.remove still owns.
+function headerBarDetach(): string {
+  let s = "        const hb: *adw.HeaderBar = @ptrCast(@alignCast(parent));\n";
+  s += "        if (ndHeaderBarSlotBoxOf(hb, child)) |box| {\n";
+  s += "            gtk.Box.remove(box, child);\n";
+  s += "        } else adw.HeaderBar.remove(hb, child);\n";
   return s;
 }
 
@@ -5437,37 +5593,8 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
     },
   },
   Box: {
-    append: () => {
-      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
-      s += "        if (gtk.Widget.getParent(child) != null) {\n";
-      s += "            // Moving an already-mounted child to the end (e.g. `insertBefore`\n";
-      s += "            // degenerating here because `before` was null — see insertBefore\n";
-      s += "            // below): `gtk_box_append` asserts the child has no parent, same\n";
-      s += "            // constraint as `insertChildAfter`. `reorderChildAfter` anchored\n";
-      s += "            // on the current last child is GTK's move-to-end primitive.\n";
-      s += "            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(parent));\n";
-      s += "        } else {\n";
-      s += "            gtk.Box.append(box, child);\n";
-      s += "        }\n";
-      return s;
-    },
-    insertBefore: () => {
-      let s = "        const box: *gtk.Box = @ptrCast(@alignCast(parent));\n";
-      s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
-      s += "        if (gtk.Widget.getParent(child) != null) {\n";
-      s += "            // Reordering an already-mounted child (e.g. a pin-sort), not a\n";
-      s += "            // fresh insert: `gtk_box_insert_child_after` asserts the child\n";
-      s += "            // has no parent and would silently no-op (Gtk-CRITICAL) here.\n";
-      s += "            // `reorderChildAfter` is GTK's dedicated move primitive — it\n";
-      s += "            // repositions the child in place with no unparent, so it can't\n";
-      s += "            // cascade-destroy the moved child's own children (the M8 GC\n";
-      s += "            // lesson: unparenting an interior node destroys its subtree).\n";
-      s += "            gtk.Box.reorderChildAfter(box, child, prev);\n";
-      s += "        } else {\n";
-      s += "            gtk.Box.insertChildAfter(box, child, prev);\n";
-      s += "        }\n";
-      return s;
-    },
+    append: () => "        ndBoxPlace(@ptrCast(@alignCast(parent)), child, null);\n",
+    insertBefore: () => "        ndBoxPlace(@ptrCast(@alignCast(parent)), child, b);\n",
     remove: () => "        gtk.Box.remove(@ptrCast(@alignCast(parent)), child);\n",
   },
   ScrollView: {
@@ -5625,9 +5752,9 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   // AppKit shell's updateSearchFieldWidths() does for NSSearchFields (browser
   // address bars). Headers that declared a title keep pack_start/pack_end.
   HeaderBar: {
-    append: () => headerBarAttach(),
-    insertBefore: () => headerBarAttach(),
-    remove: () => "        adw.HeaderBar.remove(@ptrCast(@alignCast(parent)), child);\n",
+    append: () => headerBarAttach(false),
+    insertBefore: () => headerBarAttach(true),
+    remove: () => headerBarDetach(),
   },
   ToolbarView: {
     // A HeaderBar child is always a top bar (type check, so headerbar apps
@@ -5711,23 +5838,12 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   StatusPage: {
     append: () => {
       let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
-      s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
-      s += "        if (gtk.Widget.getParent(child) != null) {\n";
-      s += "            gtk.Box.reorderChildAfter(box, child, gtk.Widget.getLastChild(box.as(gtk.Widget)));\n";
-      s += "        } else {\n";
-      s += "            gtk.Box.append(box, child);\n";
-      s += "        }\n";
+      s += "        ndBoxPlace(@ptrCast(@alignCast(adw.StatusPage.getChild(page).?)), child, null);\n";
       return s;
     },
     insertBefore: () => {
       let s = "        const page: *adw.StatusPage = @ptrCast(@alignCast(parent));\n";
-      s += "        const box: *gtk.Box = @ptrCast(@alignCast(adw.StatusPage.getChild(page).?));\n";
-      s += "        const prev = gtk.Widget.getPrevSibling(b);\n";
-      s += "        if (gtk.Widget.getParent(child) != null) {\n";
-      s += "            gtk.Box.reorderChildAfter(box, child, prev);\n";
-      s += "        } else {\n";
-      s += "            gtk.Box.insertChildAfter(box, child, prev);\n";
-      s += "        }\n";
+      s += "        ndBoxPlace(@ptrCast(@alignCast(adw.StatusPage.getChild(page).?)), child, b);\n";
       return s;
     },
     remove: () => {
@@ -7482,6 +7598,7 @@ function genSwiftCreateBody(w: Widget): string {
   } else if (w.name === "Label") {
     out += `        let text = propStr(props, "text") ?? ${swiftDefaultStr(w, "text")}\n`;
     out += "        let label = NDTextField(labelWithString: text)\n";
+    out += `        ndLabelApplyVariant(label, propStr(props, "variant") ?? ${swiftDefaultStr(w, "variant")})\n`;
     out += '        if propBool(props, "ellipsize") ?? false {\n';
     out += "            // Truncate instead of forcing the min width to the full text.\n";
     out += "            label.lineBreakMode = .byTruncatingTail\n";
@@ -7512,6 +7629,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)\n";
     out += "        }\n";
     out += `        if propBool(props, "prominent") ?? ${swiftDefaultBool(w, "prominent")} { ndButtonApplyProminent(b, true) }\n`;
+    out += `        if propBool(props, "destructive") ?? ${swiftDefaultBool(w, "destructive")} { b.hasDestructiveAction = true }\n`;
     out += '        if let badge = propStr(props, "badge") { ndButtonApplyBadge(b, badge) }\n';
     out += `        ndButtonApplySize(b, propStr(props, "size") ?? ${swiftDefaultStr(w, "size")})\n`;
     out += "        return b\n";
@@ -8024,6 +8142,10 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let icon = propStr(props, "iconName"), let btn = view as? NSButton { ndButtonApplyIconName(btn, icon) }\n';
     } else if (w.name === "Button" && p.name === "iconData") {
       out += '        if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }\n';
+    } else if (w.name === "Label" && p.name === "variant") {
+      out += '        if let v = propStr(props, "variant"), let tf = view as? NSTextField { ndLabelApplyVariant(tf, v) }\n';
+    } else if (w.name === "Button" && p.name === "destructive") {
+      out += '        if let d = propBool(props, "destructive"), let btn = view as? NSButton { btn.hasDestructiveAction = d }\n';
     } else if (w.name === "Button" && p.name === "prominent") {
       out += '        if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }\n';
     } else if (w.name === "Button" && p.name === "badge") {
@@ -9086,7 +9208,7 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   },
   HeaderBar: {
     append: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
-    insertBefore: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)\n',
+    insertBefore: () => '        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot, before: before)\n',
     remove: () => "        ndHeaderBarUnpack(parent as! NDHeaderBarView, child)\n",
   },
   ToolbarView: {
@@ -9310,9 +9432,11 @@ const SITE_DOC_NOTES: Record<string, string> = {
   Window:
     "`toolbarStyle`, `frameAutosaveName`, and `density` shape the macOS unified toolbar and window chrome; see [Windows & Chrome](/native-platform/windows-chrome/) for what each one does on each platform. The dialog and tab commands are covered in [Dialogs](/components/dialogs/) and [Native Tabs](/native-platform/tabs/).",
   Box:
-    "`spacing`'s default, `-1`, is the \"platform standard\" sentinel: 6 on the GTK backend (the Adwaita gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`, the typed export built on the same platform-standard numbers.\n\nThe two backends default the cross axis differently. GTK stretches every child across the box's perpendicular axis. On AppKit a child with a natural cross-axis size keeps that size: buttons, switches, segmented controls, steppers, date pickers, color wells, non-editable labels, and sliders and progress bars on their thickness axis. A control stretched to the window width is not native there. Containers, scroll shapes, editable or bezeled text fields, and image views still fill, because filling is their native form. To stretch one of the others, set `style.halign` (or `valign`, in a horizontal box) to `\"fill\"`, or set the cross-axis expand flag.",
+    "`spacing`'s default, `-1`, is the \"platform standard\" sentinel: 6 on the GTK backend (the Adwaita gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`, the typed export built on the same platform-standard numbers.\n\nBoth backends keep a child with a natural cross-axis size at that size: buttons, switches, segmented controls, steppers, date pickers, color wells, and sliders and progress bars on their thickness axis. A control stretched to the window width is native on neither platform. Containers, scroll shapes, editable or bezeled text fields, image views, and labels still fill, because filling is their native form (a wrapping label needs the width). Checkboxes and radios also fill on GTK, where Adwaita gives the whole row the hit area. To stretch one of the others, set `style.halign` (or `valign`, in a horizontal box) to `\"fill\"`, or set the cross-axis expand flag, which fills its axis when no explicit align is given.",
   Button:
-    "`prominent`, `badge`, and `size` render natively on both backends; see [Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each platform's controls.",
+    "`prominent`, `destructive`, `badge`, and `size` render natively on both backends (`.suggested-action` / `.destructive-action` on GTK, the accent bezel and `hasDestructiveAction` on AppKit); see [Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each platform's controls. Both flags belong to the one action they describe, never to every button in a row.",
+  Label:
+    "`variant` is the typography scale: `title1` to `title4`, `heading`, `body`, `caption`, `captionHeading`, and `monospace`. GTK applies the matching Adwaita style class (`.title-1`, `.heading`, `.caption-heading`, ...); AppKit applies the matching system text style (large title, title 1 to 3, headline, caption). Use it instead of `cssClasses` or `style.fontSize` for hierarchy, so the size follows each platform's scale.",
   TextArea:
     "`minContentHeight` is a floor, not a fixed height. Both backends wrap the text view in a scroller and hold it at least that tall, so an empty `<textarea>` still occupies the default instead of collapsing to nothing and failing the automation actionability check. Pass `0` to opt out. See [Automation Socket](/automation-testing/automation-socket/).",
   Select: DOC_NOTES.Select!,

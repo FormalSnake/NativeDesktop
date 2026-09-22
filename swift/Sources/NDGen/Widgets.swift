@@ -1538,6 +1538,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
         let label = NDTextField(labelWithString: text)
+        ndLabelApplyVariant(label, propStr(props, "variant") ?? "body")
         if propBool(props, "ellipsize") ?? false {
             // Truncate instead of forcing the min width to the full text.
             label.lineBreakMode = .byTruncatingTail
@@ -1568,6 +1569,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
             b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         if propBool(props, "prominent") ?? false { ndButtonApplyProminent(b, true) }
+        if propBool(props, "destructive") ?? false { b.hasDestructiveAction = true }
         if let badge = propStr(props, "badge") { ndButtonApplyBadge(b, badge) }
         ndButtonApplySize(b, propStr(props, "size") ?? "regular")
         return b
@@ -1904,8 +1906,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
 @MainActor let ndPropResets: [String: [String: Any]] = [
     "Window": ["title": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Box": ["spacing": -1, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "Label": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "badge": "", "size": "regular"],
+    "Label": ["variant": "body", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "destructive": false, "badge": "", "size": "regular"],
     "TextInput": ["text": "", "placeholder": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "TextArea": ["text": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Checkbox": ["checked": false, "label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2004,6 +2006,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
             // -1 sentinel = platform standard, same as the create arm.
             box.ndSpacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
+    } else if kind == "Label" {
+        if let v = propStr(props, "variant"), let tf = view as? NSTextField { ndLabelApplyVariant(tf, v) }
     } else if kind == "Button" {
         if let l = propStr(props, "label"), let b = view as? NSButton {
             b.title = l
@@ -2014,6 +2018,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let icon = propStr(props, "iconName"), let btn = view as? NSButton { ndButtonApplyIconName(btn, icon) }
         if let data = propStr(props, "iconData"), let btn = view as? NSButton { ndApplyButtonIconData(btn, iconData: data, label: btn.title) }
         if let pr = propBool(props, "prominent"), let btn = view as? NSButton { ndButtonApplyProminent(btn, pr) }
+        if let d = propBool(props, "destructive"), let btn = view as? NSButton { btn.hasDestructiveAction = d }
         if let bd = propStr(props, "badge"), let btn = view as? NSButton { ndButtonApplyBadge(btn, bd) }
         if let sz = propStr(props, "size"), let btn = view as? NSButton { ndButtonApplySize(btn, sz) }
     } else if kind == "TextInput" {
@@ -2729,7 +2734,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         }
         controller.splitViewItemsChanged()
     } else if parentKind == "HeaderBar" {
-        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot)
+        ndHeaderBarPack(parent as! NDHeaderBarView, child, slot: attachedSlot, before: before)
     } else if parentKind == "ToolbarView" {
         let pane = parent as! NDToolbarPaneView
         ndToolbarPanePack(pane, child, slot: attachedSlot)

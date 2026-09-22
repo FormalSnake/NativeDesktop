@@ -144,6 +144,8 @@ natively.
 
 - **`<settingsgroup>`**: `title` and `description` (both createAndUpdate) render as the group's
   native heading and footer. Row children join the rounded list; any other child lands below it.
+  `separateRows` (create) draws each row as its own card (libadwaita's `.boxed-list-separate`);
+  AppKit keeps the grouped inset form either way.
   Reordering an already-mounted child settles in append order on Linux, since
   `AdwPreferencesGroup` has no insert-at-index.
 - **`<row>`**: `title`, `subtitle`, `iconData` (createAndUpdate), `iconName` (create),

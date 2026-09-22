@@ -73,7 +73,7 @@ Automation role: `group`. Text source: none. Children: multi.
 
 `spacing`'s default, `-1`, is the "platform standard" sentinel: 6 on the GTK backend (the Adwaita gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`, the typed export built on the same platform-standard numbers.
 
-The two backends default the cross axis differently. GTK stretches every child across the box's perpendicular axis. On AppKit a child with a natural cross-axis size keeps that size: buttons, switches, segmented controls, steppers, date pickers, color wells, non-editable labels, and sliders and progress bars on their thickness axis. A control stretched to the window width is not native there. Containers, scroll shapes, editable or bezeled text fields, and image views still fill, because filling is their native form. To stretch one of the others, set `style.halign` (or `valign`, in a horizontal box) to `"fill"`, or set the cross-axis expand flag.
+Both backends keep a child with a natural cross-axis size at that size: buttons, switches, segmented controls, steppers, date pickers, color wells, and sliders and progress bars on their thickness axis. A control stretched to the window width is native on neither platform. Containers, scroll shapes, editable or bezeled text fields, image views, and labels still fill, because filling is their native form (a wrapping label needs the width). Checkboxes and radios also fill on GTK, where Adwaita gives the whole row the hit area. To stretch one of the others, set `style.halign` (or `valign`, in a horizontal box) to `"fill"`, or set the cross-axis expand flag, which fills its axis when no explicit align is given.
 
 ## Label (`<label>`)
 
@@ -83,6 +83,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | create |
 | `ellipsize` | bool | false | create |
+| `variant` | body \| title1 \| title2 \| title3 \| title4 \| heading \| caption \| captionHeading \| monospace | body | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -96,6 +97,8 @@ Automation role: `label`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+
+`variant` is the typography scale: `title1` to `title4`, `heading`, `body`, `caption`, `captionHeading`, and `monospace`. GTK applies the matching Adwaita style class (`.title-1`, `.heading`, `.caption-heading`, ...); AppKit applies the matching system text style (large title, title 1 to 3, headline, caption). Use it instead of `cssClasses` or `style.fontSize` for hierarchy, so the size follows each platform's scale.
 
 ## Button (`<button>`)
 
@@ -115,6 +118,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
 | `prominent` | bool | false | createAndUpdate |
+| `destructive` | bool | false | createAndUpdate |
 | `badge` | string | none | createAndUpdate |
 | `size` | small \| regular \| large | regular | createAndUpdate |
 
@@ -129,7 +133,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
-`prominent`, `badge`, and `size` render natively on both backends; see [Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each platform's controls.
+`prominent`, `destructive`, `badge`, and `size` render natively on both backends (`.suggested-action` / `.destructive-action` on GTK, the accent bezel and `hasDestructiveAction` on AppKit); see [Styling & Design Language](/core-concepts/styling-design-language/) for how they map onto each platform's controls. Both flags belong to the one action they describe, never to every button in a row.
 
 ## TextInput (`<textinput>`)
 
@@ -855,6 +859,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 |---|---|---|---|
 | `title` | string |  | createAndUpdate |
 | `description` | string | none | createAndUpdate |
+| `separateRows` | bool | false | create |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

@@ -98,6 +98,7 @@ fn cmdShowToast(widget: *gtk.Widget, arg: ?std.json.Value) void {
     const id_z = alloc.dupeZ(u8, id) catch return;
 
     const toast = adw.Toast.new(title_z);
+    adw.Toast.setUseMarkup(toast, 0); // AdwToast defaults to Pango markup: an '&' in an app title would blank it
     if (objStr(obj, "buttonLabel")) |bl| {
         const bl_z = alloc.dupeZ(u8, bl) catch null;
         if (bl_z) |z| {
