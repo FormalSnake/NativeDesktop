@@ -3224,7 +3224,7 @@ function genZig(s: Schema): string {
   out += "    // GTK derives no accessible name from a tooltip, so an icon-only control\n";
   out += "    // would be announced by nothing; the tooltip is the short name the HIG\n";
   out += "    // asks every element to carry.\n";
-  out += "    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip));\n";
+  out += "    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip)) else gtk.Accessible.resetProperty(widget.as(gtk.Accessible), .label);\n";
   out += "}\n\n";
   out += "fn ndSetAccessibleLabel(widget: *gtk.Widget, name: [:0]const u8) void {\n";
   out += "    var props = [_]gtk.AccessibleProperty{.label};\n";

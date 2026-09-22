@@ -2819,7 +2819,7 @@ fn ndApplyTooltip(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
     // GTK derives no accessible name from a tooltip, so an icon-only control
     // would be announced by nothing; the tooltip is the short name the HIG
     // asks every element to carry.
-    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip));
+    if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip)) else gtk.Accessible.resetProperty(widget.as(gtk.Accessible), .label);
 }
 
 fn ndSetAccessibleLabel(widget: *gtk.Widget, name: [:0]const u8) void {
