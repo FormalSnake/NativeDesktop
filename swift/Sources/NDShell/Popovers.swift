@@ -85,8 +85,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             // directly under the toolbar's end items where the button lives.
             if let anchor, anchor.window == nil, let b = ndPromotedAnchorButton(under: anchor),
                let window = ndToolbarOwner(of: b)?.ownerWindow(), let content = window.contentView {
-                let size = contentContainer.fittingSize
-                popover.contentSize = NSSize(width: max(size.width, 60), height: max(size.height, 28))
+                sizeContent()
                 let bounds = content.bounds
                 let rect = content.isFlipped
                     ? NSRect(x: bounds.maxX - 44, y: bounds.minY, width: 36, height: 1)
@@ -108,8 +107,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
                 }
                 return
             }
-            let size = contentContainer.fittingSize
-            popover.contentSize = NSSize(width: max(size.width, 60), height: max(size.height, 28))
+            sizeContent()
             let rect = (anchorSlot == "leadingIcon" ? ndLeadingIconRect(of: anchor) : nil) ?? anchor.bounds
             popover.show(relativeTo: rect, of: anchor, preferredEdge: preferredEdge(for: anchor))
         } else {
@@ -140,6 +138,31 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         // Genuine dismissal (click-outside / Esc): the app flips its
         // controlled `open` back to false on this event.
         ndEmitEvent(nodeID, "closed", "{}")
+    }
+
+    private var sizeConstraints: [NSLayoutConstraint] = []
+
+    /// Sizes the panel from its child's natural size and pins it there.
+    /// NSPopover fits its content view again once it is shown, and a box child
+    /// has no frame yet at that point, so `contentSize` alone did not hold:
+    /// measured 137x40 set, 24x24 after show, which is the 12pt insets around
+    /// nothing, an empty glass blob.
+    private func sizeContent() {
+        let inset: CGFloat = 12
+        var size = NSSize(width: 60, height: 28)
+        if let child = contentContainer.subviews.first {
+            let natural = ndNaturalChildSize(child)
+            let flags = ndLayoutFlags[ObjectIdentifier(child)] ?? NDLayoutFlags()
+            size.width = max(size.width, max(natural.width, flags.minWidth).rounded(.up) + inset * 2)
+            size.height = max(size.height, max(natural.height, flags.minHeight).rounded(.up) + inset * 2)
+        }
+        NSLayoutConstraint.deactivate(sizeConstraints)
+        sizeConstraints = [
+            contentContainer.widthAnchor.constraint(equalToConstant: size.width),
+            contentContainer.heightAnchor.constraint(equalToConstant: size.height),
+        ]
+        NSLayoutConstraint.activate(sizeConstraints)
+        popover.contentSize = size
     }
 
     /// Single-child slot (generated structural Popover arms).

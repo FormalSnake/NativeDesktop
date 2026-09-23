@@ -18,6 +18,7 @@
 // hands the socket over in ND_AUTOMATION_SOCKET, and a bare
 // `bun scripts/headerfield-drive.ts` launches one itself.
 import { connectApp, findNode, launchApp, poll } from "../packages/test/src/index.ts";
+import { pngSize } from "../packages/test/src/png.ts";
 import type { Backend } from "@nativedesktop/host";
 
 const backend = process.argv[2] as Backend | undefined;
@@ -142,10 +143,37 @@ try {
       throw new Error(`the site-info popover points at ${mid}, outside the field's leading quarter (field ${field.x}..${field.x + field.w})`);
     }
     console.log(`  ND_HEADERFIELD_ANCHOR_OK the popover points at ${mid}, on the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
+
+    // The panel holds its content: the popover window is at least the label
+    // plus the panel's 12pt insets on each side. An empty panel collapsed to
+    // the insets alone.
+    const text = await rectOf("site-info-label");
+    const body = text.h + 24;
+    if (popover!.width < text.w + 24 || popover!.height < body) {
+      throw new Error(`the site-info popover is ${popover!.width}x${popover!.height}, too small for its ${text.w}x${text.h} label`);
+    }
+    console.log(`  ND_HEADERFIELD_POPOVER_SIZE_OK the popover is ${popover!.width}x${popover!.height} around a ${text.w}x${text.h} label`);
+
+    // And it paints: inside the panel body, away from the arrow and the glass
+    // edge, the label's glyphs make some rows differ from the fill.
     if (process.env.ND_NDSHOT && process.env.ND_REGION_SHOT_PATH) {
-      const shot = Bun.spawnSync([process.env.ND_NDSHOT, "capture", "--pid", String(hostPid), "--region", "--out", process.env.ND_REGION_SHOT_PATH]);
+      const path = process.env.ND_REGION_SHOT_PATH;
+      const shot = Bun.spawnSync([process.env.ND_NDSHOT, "capture", "--pid", String(hostPid), "--region", "--out", path]);
       if (shot.exitCode !== 0) throw new Error(`ndshot capture failed: ${shot.stderr.toString().trim()}`);
-      console.log(`  capture ${process.env.ND_REGION_SHOT_PATH}`);
+      const scale = (await pngSize(path)).width / main.w;
+      const x = (popover!.x - main.x + 8) * scale;
+      const y = (popover!.y + popover!.height - body + 4 - main.y) * scale;
+      const w = (popover!.width - 16) * scale;
+      const h = (body - 8) * scale;
+      const probe = Bun.spawnSync(["swift", "scripts/mac/png-probe.swift", path, ...[x, y, w, h].map((v) => String(Math.round(v)))], {
+        env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined },
+      });
+      if (probe.exitCode !== 0) throw new Error(`png-probe failed: ${probe.stderr.toString().trim()}`);
+      const bands = (JSON.parse(probe.stdout.toString()) as { bands: number[][] }).bands.map(([r, g, b]) => (r! + g! + b!) / 3);
+      const spread = Math.max(...bands) - Math.min(...bands);
+      if (spread < 12) throw new Error(`the site-info popover body is flat (band luminance spread ${spread.toFixed(1)}), nothing painted in it`);
+      console.log(`  ND_HEADERFIELD_POPOVER_INK_OK the popover body paints its label (band luminance spread ${spread.toFixed(1)})`);
+      console.log(`  capture ${path}`);
     }
   }
 
