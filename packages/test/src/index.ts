@@ -31,6 +31,8 @@ export type { ActionOptions, BoundingBox, LocatorClient, RoleOptions, TextOption
 export { expect, LocatorAssertions, ValueAssertions } from "./expect.ts";
 export type { ExpectOptions } from "./expect.ts";
 export { Keyboard, Mouse, toChord } from "./keyboard.ts";
+export { Cursor } from "./cursor.ts";
+export type { CursorButtonOptions, CursorMoveOptions, CursorTarget } from "./cursor.ts";
 export { LocatorError, StrictModeError, TimeoutError, describeNode, rankCandidates } from "./errors.ts";
 export { formatSelector, parseSelector } from "./selectors.ts";
 export type { SelectorPart, TextSpec } from "./selectors.ts";

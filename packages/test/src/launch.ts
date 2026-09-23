@@ -30,6 +30,7 @@ import {
   type WindowsResult,
 } from "@nativedesktop/react/rpc";
 import { TimedClient } from "./client.ts";
+import { Cursor } from "./cursor.ts";
 import { type DialogScript, dialogScriptEnv } from "./dialogs.ts";
 import type { Keyboard, Mouse } from "./keyboard.ts";
 import {
@@ -299,6 +300,8 @@ export class AppHandle implements LocatorClient {
   }
 
   private async teardown(): Promise<void> {
+    this.cursorDriver?.close();
+    this.cursorDriver = undefined;
     this.client?.close();
     this.client = undefined;
     const live = this.live;
@@ -385,6 +388,17 @@ export class AppHandle implements LocatorClient {
 
   get mouse(): Mouse {
     return this.locators.mouse;
+  }
+
+  private cursorDriver?: Cursor;
+
+  /** The real system cursor (macOS). See cursor.ts. */
+  get cursor(): Cursor {
+    return (this.cursorDriver ??= new Cursor({
+      binary: async () => this.config.binary,
+      pid: this.pid,
+      windows: () => this.windows(),
+    }));
   }
 
   locator(selector: string): Locator {

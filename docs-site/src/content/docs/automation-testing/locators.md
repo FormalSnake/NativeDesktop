@@ -84,6 +84,28 @@ key names, `keyboard.type("hello")`, `mouse.click(x, y)` / `dblclick` / `dragTo`
 logical-window-topleft coordinates. Those ride the input-synthesis RPCs, so they answer `-32003` on
 GTK.
 
+`app.cursor` (macOS) drives the real system cursor instead. The events are posted at the HID tap,
+so the app cannot tell them from a physical mouse: hover tracking, native context menus, drag
+sessions and window-server hit testing all see them, where `app.mouse`'s events only reach the
+app's own queue. A test that should prove what a user sees clicks through `app.cursor`:
+
+```ts
+await app.cursor.click(app.getByTestId("agree-check"));
+await app.cursor.rightClick(app.getByTestId("query-input")); // opens the field's native menu
+await app.cursor.drag(app.getByTestId("volume-slider"), { x: 400, y: 120 });
+await app.cursor.dblclick({ x: 60, y: 200 }); // window-relative logical points
+await app.cursor.scroll(app.getByTestId("row-scroll"), { dy: -200 });
+```
+
+Targets are a locator (its centre) or a window-relative point. `move`/`hover`/`click`/`drag` pass
+through `steps` intermediate positions (12 by default, 20 for the second half of a drag) so hover
+and drag tracking see a path, not a jump. Before the first event the app is brought to the front.
+The user's cursor really moves, so avoid it on a machine someone is using. The events come from the
+host binary's `--nd-input` helper, which runs as its own responsible process: grant the host binary
+Accessibility once in System Settings, or with SIP disabled run it with `--nd-grant`. An ungranted
+binary fails the call with the binary's path in the message. Gate:
+`scripts/mac/cursor-drive.ts` prints `ND_CURSOR_OK`.
+
 ## Actionability
 
 Before a single-target action a locator resolves every 100ms until the deadline (`app.actionTimeout`,

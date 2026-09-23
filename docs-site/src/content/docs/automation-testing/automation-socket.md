@@ -389,8 +389,9 @@ app. This takes focus from whatever the user is doing, which is why it only happ
 The capture runs in a helper: the host binary re-spawned with `--nd-capture` and responsibility
 disclaimed. Screen Recording is therefore checked against the host binary itself, not against the
 terminal, agent or test runner that launched it, and one grant covers every launcher. Grant it once
-in System Settings, or with SIP disabled run the host binary with `--nd-grant`, which writes the
-grant into the system TCC database through `sudo sqlite3`, keyed to the signing identifier so it
+in System Settings, or with SIP disabled run the host binary with `--nd-grant`, which writes
+Screen Recording, plus the Accessibility and PostEvent grants `app.cursor` needs, into the system
+TCC database through `sudo sqlite3`, keyed to the signing identifier so it
 survives rebuilds. The grant follows the binary's real path, so a new install location needs it
 again. `ND_SNAPSHOT_SCK` lines on stderr say why a capture fell back to the offscreen ladder
 (`ND_SNAPSHOT_RUNG rung=1`), and `ND_SNAPSHOT_REGION` lists the windows a region capture composited.

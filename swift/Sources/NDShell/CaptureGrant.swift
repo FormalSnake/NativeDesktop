@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
-// `NDShell --nd-grant`: writes this binary's Screen Recording row into the
-// system TCC database, so the capture helper (AutomationCapture.swift) works
+// `NDShell --nd-grant`: writes this binary's Screen Recording, Accessibility
+// and PostEvent rows into the system TCC database, so the capture helper
+// (AutomationCapture.swift) and the input helper (InputHelper.swift) work
 // without a trip through System Settings. That file is SIP-protected, so this
 // only works with SIP disabled, and it needs root (sudo prompts on the
 // terminal). The row's requirement is the signing identifier rather than the
@@ -67,15 +68,19 @@ func ndCaptureGrantMain() -> Int32 {
     }
     let client = path.replacingOccurrences(of: "'", with: "''")
     let now = Int(Date().timeIntervalSince1970)
-    let sql = """
+    // Screen Recording for the capture helper, Accessibility and PostEvent for
+    // the input helper (InputHelper.swift).
+    let sql = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"].map { service in
+        """
         INSERT OR REPLACE INTO access
           (service, client, client_type, auth_value, auth_reason, auth_version, csreq,
            indirect_object_identifier, flags, last_modified, last_reminded)
-        VALUES ('kTCCServiceScreenCapture', '\(client)', 1, 2, 4, 1, X'\(csreq)',
+        VALUES ('\(service)', '\(client)', 1, 2, 4, 1, X'\(csreq)',
            'UNUSED', 0, \(now), \(now));
         """
+    }.joined(separator: "\n")
     let (status, _) = ndRun("/usr/bin/sudo", ["/usr/bin/sqlite3", ndTCCDatabase, sql])
     guard status == 0 else { return fail("writing \(ndTCCDatabase) failed (exit \(status))", 4) }
-    print("NDShell: Screen Recording granted to \(path) (identifier \"\(identifier)\")")
+    print("NDShell: Screen Recording, Accessibility and PostEvent granted to \(path) (identifier \"\(identifier)\")")
     return 0
 }

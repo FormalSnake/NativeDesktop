@@ -15,6 +15,8 @@ import type {
   WindowsResult,
 } from "@nativedesktop/react/rpc";
 import { AutomationClient } from "./socket.ts";
+import { resolveHostBinary } from "@nativedesktop/host";
+import { Cursor } from "./cursor.ts";
 import { Locator, LocatorFactory, type LocatorClient, type RoleOptions, type TextOptions } from "./locator.ts";
 import type { Keyboard, Mouse } from "./keyboard.ts";
 import { renderWaitValue, type WaitOpts } from "./wait.ts";
@@ -106,6 +108,17 @@ export class AttachedApp implements LocatorClient {
     return this.factory.mouse;
   }
 
+  private cursorDriver?: Cursor;
+
+  /** The real system cursor (macOS). See cursor.ts. The helper comes from the
+   * locally resolved host binary, since an attached app's own is unknown. */
+  get cursor(): Cursor {
+    return (this.cursorDriver ??= new Cursor({
+      binary: () => resolveHostBinary({ backend: "appkit" }),
+      windows: () => this.windows(),
+    }));
+  }
+
   locator(selector: string): Locator {
     return this.factory.locator(selector);
   }
@@ -146,6 +159,7 @@ export class AttachedApp implements LocatorClient {
   }
 
   close(): Promise<void> {
+    this.cursorDriver?.close();
     this.rpc.close();
     return Promise.resolve();
   }

@@ -165,6 +165,11 @@ PNG's width/height from its IHDR chunk, independent of the harness.
 [ndshot](/automation-testing/automation-socket/#screenshots-on-macos-ndshot). It requires
 `tools/ndshot/build.sh` to have run at least once.
 
+For captures that include the app's sheets, menus and panels, launch with
+`env: { ND_AUTOMATION_CAPTURE: "region" }` instead: the RPC itself then captures the composited
+screen area, with the window focused first. See
+[Composited captures from the host](/automation-testing/automation-socket/#composited-captures-from-the-host).
+
 ### Dialog scripts
 
 `dialogScript` takes the same shape `ND_AUTOMATION_DIALOG_SCRIPT` parses. See

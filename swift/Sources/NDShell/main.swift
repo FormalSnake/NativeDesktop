@@ -47,6 +47,7 @@ nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 // Helper modes, before anything touches NSApplication or the core.
 switch CommandLine.arguments.dropFirst().first {
 case "--nd-capture": exit(ndCaptureHelperMain(Array(CommandLine.arguments.dropFirst(2))))
+case "--nd-input": exit(ndInputHelperMain())
 case "--nd-grant": exit(ndCaptureGrantMain())
 default: break
 }
