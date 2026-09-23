@@ -264,7 +264,9 @@ final class NDCefDevTools {
 
     /// One JavaScript round trip, answered in WebKit's shape: a string value
     /// (nil for undefined) or a message from the thrown exception. `world` is
-    /// "" for the page's own world.
+    /// "" for the page's own world. `userGesture` runs it as if the user had
+    /// just clicked the page, which is what requestPictureInPicture and
+    /// requestFullscreen ask for.
     func evaluate(_ code: String, world: String, userGesture: Bool = false, _ completion: @escaping (String?, String?) -> Void) {
         withWorldContext(world) { [weak self] contextID in
             guard let self else {

@@ -4596,6 +4596,9 @@ const JsonResult = struct {
 const EvalSink = union(enum) {
     /// `executeJavaScript`: emits `javaScriptResult` with this correlation id.
     app: []u8,
+    /// `executeJavaScript` with `userGesture`: the same answer, from code run
+    /// as if the user had just clicked the page.
+    app_gesture: []u8,
     /// `webviewEval`: settles this entry in `pending_evals`.
     auto: u64,
     /// The `pageTextContains` cache.
@@ -4724,7 +4727,7 @@ var pending_calls: std.AutoHashMapUnmanaged(c_int, PendingCall) = .empty;
 
 fn sinkFree(sink: EvalSink) void {
     switch (sink) {
-        .app => |id| alloc.free(id),
+        .app, .app_gesture => |id| alloc.free(id),
         .extensions => |id| alloc.free(id),
         .extension_actions => |id| alloc.free(id),
         .json_result => |r| {
@@ -5081,13 +5084,18 @@ fn issueEval(view: *View, sink: EvalSink, code: []const u8, world: []const u8, r
     // evaluate_javascript does not await either, and a Promise has to
     // stringify as "[object Promise]" on both engines. The extension commands
     // are the exception: they query Chromium's own callback APIs and there is
-    // no app code on the other side of them to be consistent with.
+    // no app code on the other side of them to be consistent with. So is a
+    // gesture call: WebKit has no gesture to be consistent about, and what it
+    // exists for (requestPictureInPicture, requestFullscreen) answers with a
+    // promise whose outcome is the whole point of the call.
     params.appendSlice(alloc, ",\"returnByValue\":false,\"awaitPromise\":") catch return false;
-    const await_promise = sink == .extensions or sink == .json_result or sink == .extension_actions;
+    const await_promise = sink == .extensions or sink == .json_result or sink == .extension_actions or
+        sink == .app_gesture;
     params.appendSlice(alloc, if (await_promise) "true" else "false") catch return false;
-    // `chrome.management.uninstall` refuses without one, and the gesture that
-    // stands behind these commands is the app's own button.
-    if (sink == .json_result) params.appendSlice(alloc, ",\"userGesture\":true") catch return false;
+    // `chrome.management.uninstall` refuses without one, and so do
+    // requestPictureInPicture and requestFullscreen; the gesture that stands
+    // behind these calls is the app's own button or shortcut.
+    if (sink == .json_result or sink == .app_gesture) params.appendSlice(alloc, ",\"userGesture\":true") catch return false;
     params.appendSlice(alloc, ",\"objectGroup\":\"nd\"") catch return false;
     const context_id = worldContextId(view, world);
     if (context_id != 0) {
@@ -5222,7 +5230,7 @@ fn exceptionText(details: std.json.Value) []const u8 {
 
 fn finishEval(view: *View, sink: EvalSink, ok: bool, text: []const u8) void {
     switch (sink) {
-        .app => |id| {
+        .app, .app_gesture => |id| {
             defer alloc.free(id);
             const f = emit orelse return;
             var payload: std.json.ObjectMap = .empty;
@@ -5982,8 +5990,10 @@ fn cmdExecuteJavaScript(view: *View, arg: ?std.json.Value) void {
         return;
     };
     const world = objStr(obj, "world") orelse "";
+    const gesture = if (obj.get("userGesture")) |g| g == .bool and g.bool else false;
     const id_copy = alloc.dupe(u8, id) catch return;
-    if (!startEval(view, .{ .app = id_copy }, code, world)) alloc.free(id_copy);
+    const sink: EvalSink = if (gesture) .{ .app_gesture = id_copy } else .{ .app = id_copy };
+    if (!startEval(view, sink, code, world)) alloc.free(id_copy);
 }
 
 /// Chromium keeps its extension registry behind chrome.developerPrivate, which

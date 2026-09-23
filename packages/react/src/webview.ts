@@ -88,9 +88,20 @@ function request<T>(
 /// serialized result once the matching `javaScriptResult` event arrives;
 /// rejects with the host-reported error when `ok` is false. `world` names an
 /// isolated JavaScript world (the same names `addUserScript` uses); omit it to
-/// run in the page's own world.
-export function executeJavaScript(node: NdNodeRef<"webview">, code: string, world?: string): Promise<string> {
-  return request(node, pendingEvals, "js", "executeJavaScript", world ? { code, world } : { code });
+/// run in the page's own world. `userGesture` runs the code as if the user had
+/// just clicked the page, for the calls a page only honours from a click
+/// (`requestPictureInPicture`, `requestFullscreen`); Chromium engine only.
+export function executeJavaScript(
+  node: NdNodeRef<"webview">,
+  code: string,
+  world?: string,
+  options?: { userGesture?: boolean },
+): Promise<string> {
+  return request(node, pendingEvals, "js", "executeJavaScript", {
+    code,
+    ...(world ? { world } : {}),
+    ...(options?.userGesture ? { userGesture: true } : {}),
+  });
 }
 
 /// Pass as a <webview>'s `onJavaScriptResult` prop — resolves or rejects the

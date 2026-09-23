@@ -251,7 +251,9 @@ extension NDCefWebView {
             ndCefWarn("malformed executeJavaScript arg")
             return
         }
-        devTools.evaluate(code, world: obj["world"] as? String ?? "") { [weak self] value, error in
+        devTools.evaluate(
+            code, world: obj["world"] as? String ?? "", userGesture: obj["userGesture"] as? Bool ?? false
+        ) { [weak self] value, error in
             var fields: [String: Any] = ["id": id]
             if let error {
                 fields["ok"] = false

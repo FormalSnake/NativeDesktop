@@ -323,9 +323,17 @@ selected text only on macOS; WebKitGTK's hit test reports `hasSelection` alone.
 
 ## Command notes
 
-`executeJavaScript` takes `{ id, code, world? }`. Prefer the promise helper
-(`executeJavaScript(node, code, world?)`). JS exceptions reject with the real
-message, for example `Error: boom`.
+`executeJavaScript` takes `{ id, code, world?, userGesture? }`. Prefer the
+promise helper (`executeJavaScript(node, code, world?, { userGesture? })`). JS
+exceptions reject with the real message, for example `Error: boom`.
+`userGesture: true` runs the code with a user activation, as if the user had
+just clicked the page: `video.requestPictureInPicture()` and
+`requestFullscreen()` refuse without one (`NotAllowedError: Must be handling a
+user gesture`), and an app shortcut or button is the gesture that stands behind
+them. A gesture call's promise is awaited on both platforms, so the answer is
+what `requestPictureInPicture()` settled to. Chromium engine only (CDP
+`Runtime.evaluate`'s `userGesture`); WebKit has no equivalent and ignores the
+field.
 
 Every promise helper (`executeJavaScript`, `getCookies`, `saveSession`, the
 extension calls) rejects when its view is removed before the answer arrives,
