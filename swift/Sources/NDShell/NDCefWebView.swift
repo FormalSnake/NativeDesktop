@@ -808,6 +808,7 @@ final class NDCefHandlerBox {
     var windowDelegate: UnsafeMutablePointer<cef_window_delegate_t>?
     var browserViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
     var devToolsViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
+    var stageDelegate: UnsafeMutablePointer<cef_panel_delegate_t>?
     /// The observer on the docked inspector's own browser, which is CEF's and
     /// not this client's (NDCefDockFrontend.swift).
     var dockObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
@@ -871,6 +872,7 @@ final class NDCefHandlerBox {
             windowDelegate.map(UnsafeMutableRawPointer.init),
             browserViewDelegate.map(UnsafeMutableRawPointer.init),
             devToolsViewDelegate.map(UnsafeMutableRawPointer.init),
+            stageDelegate.map(UnsafeMutableRawPointer.init),
             dockObserver.map(UnsafeMutableRawPointer.init),
         ] {
             nd_cef_ref_release(object)
@@ -894,6 +896,7 @@ final class NDCefHandlerBox {
         windowDelegate = nil
         browserViewDelegate = nil
         devToolsViewDelegate = nil
+        stageDelegate = nil
         dockObserver = nil
     }
 

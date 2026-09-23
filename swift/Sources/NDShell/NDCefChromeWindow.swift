@@ -32,10 +32,14 @@ import Foundation
     private weak var view: NDCefWebView?
     private var cefWindow: UnsafeMutablePointer<cef_window_t>?
     private var browserView: UnsafeMutablePointer<cef_browser_view_t>?
-    /// The page's own container inside the window. The docked inspector fills
-    /// the window and the page is drawn over it, in the rectangle the frontend
-    /// keeps for it, so the page needs a parent whose layout can place it
-    /// anywhere rather than one that tiles its children.
+    /// The panel the page and a docked inspector share. The inspector fills it
+    /// and the page sits over it at exactly the rectangle the frontend keeps for
+    /// it, which is Chrome's own dock. A page container filling the window with
+    /// the page inset inside it looked the same and took every press meant for
+    /// the inspector's toolbar, splitter and panels. A CEF panel always has a
+    /// layout (FillLayout by default) and CEF has no absolute one, so the
+    /// children are placed by bounds after each of its layout passes, from
+    /// `stageLaidOut`.
     private var pageHost: UnsafeMutablePointer<cef_panel_t>?
     /// Where the frontend last said the page belongs, in window coordinates.
     /// Nil while no inspector is docked, which is the page filling the window.
@@ -157,7 +161,7 @@ import Foundation
         if let layout = panel.pointee.set_to_fill_layout?(panel) {
             nd_cef_ref_release(UnsafeMutableRawPointer(layout))
         }
-        if let browserView, let host = nd_cef_panel_create(nil) {
+        if let browserView, let host = nd_cef_panel_create(view?.box.stageDelegate) {
             pageHost = host
             // add_child_view TAKES the reference it is passed, the same
             // hand-over contract as the create calls, so the one this object
@@ -233,12 +237,12 @@ import Foundation
     /// lifted into the host. Chrome's own dock is a WebContents split inside
     /// the browser window; this is the same shape, drawn by CEF's box layout.
     func dockDevTools(_ popup: UnsafeMutablePointer<cef_browser_view_t>) -> Bool {
-        guard !closed, let cefWindow, browserView != nil else { return false }
+        guard !closed, cefWindow != nil, browserView != nil else { return false }
         if let devToolsView {
             nd_cef_ref_release(devToolsView)
             self.devToolsView = nil
         }
-        let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
+        guard let pageHost else { return false }
         // Two references: one for `add_child_view`, which takes the one it is
         // passed, and one for the field below. The reference the callback
         // arrived with is balanced by its own release, so without this the
@@ -249,7 +253,7 @@ import Foundation
         // Below the page's container, which the fill layout leaves covering the
         // window: the inspector is the backdrop the page is drawn on top of,
         // the same shape Chrome's own dock has.
-        panel.pointee.add_child_view_at?(panel, tools, 0)
+        pageHost.pointee.add_child_view_at?(pageHost, tools, 0)
         devToolsView = popup
         // Where the page goes until the frontend says otherwise: Chrome's own
         // right-dock default, so the page is in its usual column for the frame
@@ -278,31 +282,31 @@ import Foundation
         view?.ndTrace("chrome devtools page rect \(rect.width)x\(rect.height)@\(rect.x),\(rect.y)")
     }
 
-    /// The page's container is laid out with the page inset to `pageRect`: a
-    /// box layout's insets are the one public way to place a child anywhere in
-    /// its parent, since a view inside a layout-managed parent has no bounds of
-    /// its own to set.
+    /// Lays the stage out again, which ends in `stageLaidOut` placing its
+    /// children.
     private func applyPageRect() {
         guard let pageHost else { return }
-        let bounds = view?.bounds ?? .zero
-        let width = Int32(bounds.width.rounded())
-        let height = Int32(bounds.height.rounded())
-        let rect = pageRect ?? cef_rect_t(x: 0, y: 0, width: max(1, width), height: max(1, height))
-        var settings = cef_box_layout_settings_t()
-        settings.size = MemoryLayout<cef_box_layout_settings_t>.size
-        settings.horizontal = 1
-        settings.default_flex = 1
-        settings.inside_border_insets = cef_insets_t(
-            top: max(0, rect.y),
-            left: max(0, rect.x),
-            bottom: max(0, height - (rect.y + rect.height)),
-            right: max(0, width - (rect.x + rect.width)))
-        if let layout = pageHost.pointee.set_to_box_layout?(pageHost, &settings) {
-            nd_cef_ref_release(UnsafeMutableRawPointer(layout))
+        let base = UnsafeMutableRawPointer(pageHost).assumingMemoryBound(to: cef_view_t.self)
+        base.pointee.invalidate_layout?(base)
+        pageHost.pointee.layout?(pageHost)
+    }
+
+    /// The stage's fill layout has just sized every child to the whole stage.
+    /// The inspector keeps that; the page is moved into its rectangle. Setting
+    /// a child's bounds does not lay the stage out again, so this holds until
+    /// the next pass, which lands here too.
+    func stageLaidOut(_ bounds: cef_rect_t) {
+        let width = max(1, bounds.width)
+        let height = max(1, bounds.height)
+        var whole = cef_rect_t(x: 0, y: 0, width: width, height: height)
+        for tools in [devToolsView, devToolsClosing].compactMap({ $0 }) {
+            let base = UnsafeMutableRawPointer(tools).assumingMemoryBound(to: cef_view_t.self)
+            base.pointee.set_bounds?(base, &whole)
         }
-        if let cefWindow {
-            let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
-            panel.pointee.layout?(panel)
+        if let browserView {
+            var rect = pageRect ?? whole
+            let base = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
+            base.pointee.set_bounds?(base, &rect)
         }
     }
 
@@ -518,7 +522,9 @@ import Foundation
         lifted = content
         // AppKit keeps a content view either way, so the anchor is handed an
         // empty one rather than left pointing at a view in another window.
-        anchor.contentView = NSView(frame: content.frame)
+        let placeholder = NDCefLiftPlaceholder(frame: content.frame)
+        placeholder.lifted = content
+        anchor.contentView = placeholder
         content.frame = view.bounds
         content.autoresizingMask = [.width, .height]
         view.addSubview(content)
@@ -563,11 +569,10 @@ import Foundation
             let resized = anchor.frame.size != rect.size
             anchor.setFrame(rect, display: false)
             if anchor.frame != rect { view?.ndTrace("chrome anchor clamped want=\(rect) got=\(anchor.frame)") }
-            // The page's insets are the window's size minus its rectangle, so
-            // they are stale the moment the window is a different size. The
-            // frontend answers a resize with a rectangle of its own; this is
-            // what the page sits at until it does.
-            if resized, pageRect != nil { applyPageRect() }
+            // The stage has no layout to follow the window, so every resize
+            // places its children again. The frontend answers a resize with a
+            // page rectangle of its own; until it does the page keeps the last.
+            if resized { applyPageRect() }
         }
         if !anchor.isVisible { cefWindow.pointee.show?(cefWindow) }
     }
@@ -645,11 +650,10 @@ import Foundation
         // with nothing else in flight: leaving one in the layout means Chromium
         // walks a BrowserView with no browser while it destroys the window, and
         // the quit dies in its own activation path.
-        if let cefWindow {
-            let panel = UnsafeMutableRawPointer(cefWindow).assumingMemoryBound(to: cef_panel_t.self)
+        if let pageHost {
             for stale in closedDevToolsViews {
                 let tools = UnsafeMutableRawPointer(stale).assumingMemoryBound(to: cef_view_t.self)
-                panel.pointee.remove_child_view?(panel, tools)
+                pageHost.pointee.remove_child_view?(pageHost, tools)
             }
         }
         for stale in closedDevToolsViews { nd_cef_ref_release(stale) }
@@ -716,11 +720,13 @@ extension NDCefHandlerBox {
         windowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
         browserViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
         devToolsViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
+        stageDelegate = ndCefAlloc(cef_panel_delegate_t.self, self)
         dockObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
         command = ndCefAlloc(cef_command_handler_t.self, self)
         wireWindowDelegate()
         wireBrowserViewDelegate()
         wireDevToolsViewDelegate()
+        wireStageDelegate()
         wireDockObserver()
         wireCommand()
     }
@@ -767,6 +773,16 @@ extension NDCefHandlerBox {
             nd_cef_ref_release(browserView)
             nd_cef_ref_release(browser)
             ndCefDeliver(selfPointer) { $0?.chrome?.devToolsBrowserClosed() }
+        }
+    }
+
+    private func wireStageDelegate() {
+        guard let stageDelegate else { return }
+        stageDelegate.pointee.base.on_layout_changed = { selfPointer, cefView, newBounds in
+            nd_cef_ref_release(cefView)
+            guard let newBounds else { return }
+            let bounds = newBounds.pointee
+            ndCefDeliver(selfPointer) { $0?.chrome?.stageLaidOut(bounds) }
         }
     }
 
@@ -919,6 +935,33 @@ let ndCefBlockedChromeCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_CONTENT_CONTEXT_PRINT", "IDC_ROUTE_MEDIA", "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
     "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE", "IDC_CONTENT_CONTEXT_TRANSLATE",
 ])
+
+/// The anchor's content view once the real one is lifted. A web contents
+/// Chromium attaches after the lift (the docked inspector) is parented to the
+/// window's current content view, which is this one, in a window that is alpha
+/// 0 and click-through: it drew, since its pixels come through the compositor,
+/// and took no press at all. Each attach goes straight into the lifted view
+/// instead. Moving the NSView there afterwards trips a reentrancy check in
+/// Chromium (`base/observer_list.h`, "Check failed: !check_reentrancy").
+private final class NDCefLiftPlaceholder: NSView {
+    weak var lifted: NSView?
+
+    override func addSubview(_ view: NSView) {
+        guard let lifted else { return super.addSubview(view) }
+        // Under the page's own view and above the compositor surface, the order
+        // Chrome stacks its dock in.
+        let floor = lifted.subviews.first { NSStringFromClass(type(of: $0)).contains("CompositorSuperview") }
+        lifted.addSubview(view, positioned: .above, relativeTo: floor)
+    }
+
+    override func addSubview(
+        _ view: NSView, positioned place: NSWindow.OrderingMode, relativeTo other: NSView?
+    ) {
+        guard let lifted else { return super.addSubview(view, positioned: place, relativeTo: other) }
+        guard let other, other.superview === lifted else { return addSubview(view) }
+        lifted.addSubview(view, positioned: place, relativeTo: other)
+    }
+}
 
 /// The size one of the window's two BrowserViews asks the box layout for.
 private func ndCefPreferredSize(
