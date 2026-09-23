@@ -72,4 +72,5 @@ export const WIDGET_TYPE: Record<string, number> = {
   Skeleton: 69,
   Chart: 70,
   CodeEditor: 71,
+  WindowControls: 72,
 };

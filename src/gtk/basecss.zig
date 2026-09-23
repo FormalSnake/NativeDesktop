@@ -62,6 +62,7 @@ const nd_base_css =
     \\button.nd-button-large { min-height: 40px; padding: 0 18px; }
     \\.nd-compact button { min-height: 26px; }
     \\.nd-compact entry { min-height: 26px; }
+    \\box.view { background-color: alpha(currentColor, 0.07); border-radius: 9px; }
     \\box.activatable { border-radius: 9px; }
     \\box.activatable:hover { background-image: image(alpha(currentColor, 0.04)); }
     \\box.navigation-sidebar > button { min-height: 36px; padding: 0 8px; margin: 0 6px 2px; border-radius: 9px; font-weight: normal; background: transparent; }
@@ -70,6 +71,14 @@ const nd_base_css =
     \\box.navigation-sidebar > button.suggested-action { background-color: color-mix(in srgb, currentColor 10%, transparent); color: inherit; }
     \\box.navigation-sidebar > button.suggested-action:hover { background-color: color-mix(in srgb, currentColor 13%, transparent); }
     \\box.navigation-sidebar > button.suggested-action:active { background-color: color-mix(in srgb, currentColor 19%, transparent); }
+    \\overlay-split-view.nd-content-card { background-color: var(--sidebar-bg-color); }
+    \\overlay-split-view.nd-content-card > .nd-sidebar-pane { background: none; box-shadow: none; border: none; }
+    \\overlay-split-view.nd-content-card > dimming, overlay-split-view.nd-content-card > shadow, overlay-split-view.nd-content-card > border, overlay-split-view.nd-content-card > outline { background: none; box-shadow: none; }
+    \\.nd-floating-sidebar { background-color: var(--sidebar-bg-color); margin: 8px; border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 8px 28px 4px rgba(0, 0, 0, 0.22); }
+    \\toolbarview.nd-card-bars, toolbarview.nd-card-bars > .top-bar, toolbarview.nd-card-bars > .bottom-bar { background: none; box-shadow: none; }
+    \\progressbar.osd.dimmed { opacity: 1; }
+    \\progressbar.osd.dimmed > trough > progress { background-color: alpha(currentColor, 0.3); }
+    \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 

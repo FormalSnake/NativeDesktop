@@ -1133,6 +1133,16 @@ func ndProgressCircleApply(_ view: NSView, _ props: [String: Any]) {
 /// `<progressbar>`: SwiftUI `ProgressView`, the system determinate bar.
 final class NDProgressBarView: NDHostedLeaf {
     private var fraction: Double = 0
+    private var lastShown: Double = 0
+    /// `osd` class: Adwaita's thin page-load bar, drawn as one here
+    /// (NDShell/LoadBar.swift) instead of the system bar.
+    var loadBar = false {
+        didSet { if loadBar != oldValue { refreshLeaf() } }
+    }
+    /// `dimmed` with `osd`: the bar in the secondary ink instead of the accent.
+    var quiet = false {
+        didSet { if quiet != oldValue { refreshLeaf() } }
+    }
 
     func apply(fraction: Double?) {
         if let fraction { self.fraction = fraction }
@@ -1140,7 +1150,12 @@ final class NDProgressBarView: NDHostedLeaf {
     }
 
     override func leafContent() -> AnyView {
-        AnyView(ProgressView(value: min(max(fraction, 0), 1)))
+        guard loadBar else { return AnyView(ProgressView(value: min(max(fraction, 0), 1))) }
+        // A value below the last one shown is a new load starting over, which
+        // jumps back rather than sliding backwards.
+        let restart = fraction < lastShown
+        lastShown = fraction
+        return AnyView(NDLoadBarView(fraction: fraction, restart: restart, quiet: quiet))
     }
 
     override var ndA11yValueJSON: String { "\(fraction)" }
@@ -1534,6 +1549,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         // ndStandardSpacing (8) here, 6 on the GTK peer.
         let spacingRaw = propInt(props, "spacing") ?? -1
         box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)
+        box.ndWindowHandle = propBool(props, "windowHandle") ?? false
         return box
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
@@ -1723,6 +1739,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let bp = propInt(props, "breakpoint"), bp > 0 {
             controller.breakpointPx = CGFloat(bp)
         }
+        controller.edgeReveal = propBool(props, "edgeReveal") ?? false
+        controller.contentCard = (propStr(props, "contentStyle") ?? "plain") == "card"
         return controller.splitView
     } else if kind == "HeaderBar" {
         let bar = NDHeaderBarView()
@@ -1897,6 +1915,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         return makeChart(props, minContentHeight: propInt(props, "minContentHeight") ?? 160)  // SwiftUI Swift Charts in an NSHostingView (NDShell/Charts.swift)
     } else if kind == "CodeEditor" {
         return ndCodeEditorCreate(props)  // TextKit 2 NSTextView in a ruler'd scroll view (NDShell/CodeEditors.swift)
+    } else if kind == "WindowControls" {
+        return NDWindowControlsView(side: propStr(props, "side") ?? "start")
     }
     FileHandle.standardError.write("ND_WARN unknown widget kind=\(kind)\n".data(using: .utf8)!)
     return nil
@@ -1907,7 +1927,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
 /// none (empty string, 0, false, empty list).
 @MainActor let ndPropResets: [String: [String: Any]] = [
     "Window": ["title": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "Box": ["spacing": -1, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Box": ["spacing": -1, "windowHandle": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Label": ["variant": "body", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "destructive": false, "badge": "", "size": "regular"],
     "TextInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -1926,7 +1946,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "ListView": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "WebView": ["url": "", "contextMenuMode": "native", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "NativeView": ["props": "{}", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "SplitView": ["collapsed": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SplitView": ["collapsed": false, "edgeReveal": false, "contentStyle": "plain", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "HeaderBar": ["title": "", "subtitle": "", "canGoBack": false, "canGoForward": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "ToolbarView": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SearchInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -1977,6 +1997,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "Skeleton": ["width": 0, "height": 16, "radius": 6, "animated": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Chart": ["type": "line", "series": [Any](), "xLabel": "", "yLabel": "", "showLegend": true, "showGrid": true, "animated": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "CodeEditor": ["text": "", "language": "", "theme": "", "showLineNumbers": true, "readOnly": false, "tabWidth": 4, "diagnostics": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "WindowControls": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
 ]
 
 /// A prop the app dropped arrives as JSON null (host-config.ts's removal
@@ -2008,6 +2029,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
             // -1 sentinel = platform standard, same as the create arm.
             box.ndSpacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
+        if let h = propBool(props, "windowHandle"), let box = view as? NDBoxView { box.ndWindowHandle = h }
     } else if kind == "Label" {
         if let v = propStr(props, "variant"), let tf = view as? NSTextField { ndLabelApplyVariant(tf, v) }
     } else if kind == "Button" {
@@ -2106,6 +2128,10 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
                 sidebarItem.isCollapsed = c
             }
         }
+        if let r = propBool(props, "edgeReveal"), let split = view as? NSSplitView,
+           let controller = ndSplitViewController(for: split) { controller.edgeReveal = r }
+        if let cs = propStr(props, "contentStyle"), let split = view as? NSSplitView,
+           let controller = ndSplitViewController(for: split) { controller.contentCard = cs == "card" }
     } else if kind == "HeaderBar" {
         if let t = propStr(props, "title"), let bar = view as? NDHeaderBarView {
             bar.ndTitle = t
@@ -2383,6 +2409,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     } else if kind == "WebView" {
         ndWebViewConnect(view, nodeID: nodeID)
     } else if kind == "NativeView" {
+    } else if kind == "SplitView" {
+        ndSplitRevealConnect(view, nodeID: nodeID)
     } else if kind == "HeaderBar" {
         ndHeaderBarConnectNav(view, nodeID: nodeID)
     } else if kind == "SearchInput" {
@@ -2452,6 +2480,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndChartConnect(view, nodeID: nodeID)
     } else if kind == "CodeEditor" {
         ndCodeEditorConnect(view, nodeID: nodeID)
+    } else if kind == "WindowControls" {
+        ndWindowControlsConnect(view, nodeID: nodeID)
     }
 }
 
@@ -2468,6 +2498,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndEntryCommand(view, command)
     } else if kind == "WebView" {
         ndWebViewCommand(view, command, argJson)
+    } else if kind == "SplitView" {
+        ndSplitRevealCommand(view, command)
     } else if kind == "SearchInput" {
         ndEntryCommand(view, command)
     } else if kind == "ToastOverlay" {

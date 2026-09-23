@@ -691,3 +691,55 @@ pub fn gdkDisplay() ?*gdk.Display {
     const c = conn() orelse return null;
     return c.gdk;
 }
+
+// ---- XShape: cutting the page's window to what GTK shows of it --------------
+// An X child window is drawn above everything its parent paints, so a GTK
+// widget laid over a page is invisible under it and a page in a rounded card
+// shows square corners. The Shape extension gives the child window a bounding
+// region instead, and whatever is outside it is the parent's again, both for
+// drawing and for input. libXext is optional: without it the page stays a
+// rectangle, which is what it was before.
+
+pub const Rect = extern struct { x: c_short, y: c_short, width: c_ushort, height: c_ushort };
+
+const FnShapeRects = *const fn (*Display, Window, c_int, c_int, c_int, [*]const Rect, c_int, c_int, c_int) callconv(.c) void;
+const FnShapeMask = *const fn (*Display, Window, c_int, c_int, c_int, c_ulong, c_int) callconv(.c) void;
+const shape_bounding: c_int = 0;
+const shape_set: c_int = 0;
+const yx_banded: c_int = 3;
+
+var shape_attempted = false;
+var shape_rects: ?FnShapeRects = null;
+var shape_mask: ?FnShapeMask = null;
+
+fn loadShape() bool {
+    if (!shape_attempted) {
+        shape_attempted = true;
+        var ext = std.DynLib.open("libXext.so.6") catch std.DynLib.open("libXext.so") catch {
+            std.debug.print("ND_WARN CEF: libXext not found; a page keeps square corners and covers overlays\n", .{});
+            return false;
+        };
+        shape_rects = ext.lookup(FnShapeRects, "XShapeCombineRectangles");
+        shape_mask = ext.lookup(FnShapeMask, "XShapeCombineMask");
+    }
+    return shape_rects != null and shape_mask != null;
+}
+
+/// Gives `window` the bounding region `rects` (window coordinates, device
+/// pixels, y-x banded). An empty list hides the whole window.
+pub fn setShape(window: Window, rects: []const Rect) void {
+    if (window == 0 or !loadShape()) return;
+    const c = conn() orelse return;
+    c.push();
+    shape_rects.?(c.x, window, shape_bounding, 0, 0, rects.ptr, @intCast(rects.len), shape_set, yx_banded);
+    c.pop();
+}
+
+/// Back to the plain rectangle.
+pub fn clearShape(window: Window) void {
+    if (window == 0 or !loadShape()) return;
+    const c = conn() orelse return;
+    c.push();
+    shape_mask.?(c.x, window, shape_bounding, 0, 0, 0, shape_set);
+    c.pop();
+}

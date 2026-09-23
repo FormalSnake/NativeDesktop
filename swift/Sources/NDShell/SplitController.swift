@@ -79,11 +79,29 @@ final class NDSplitViewController: NSSplitViewController {
     var explicitCollapsed = false
     private var breakpointActive = false
 
+    /// `edgeReveal` prop: see SplitReveal.swift.
+    var edgeReveal = false {
+        didSet { if edgeReveal != oldValue { reveal.update() } }
+    }
+
+    lazy var reveal = NDSplitReveal(controller: self)
+
+    /// `contentStyle="card"`: see ContentCard.swift.
+    var contentCard = false {
+        didSet { if contentCard != oldValue { ndApplyContentCard(self) } }
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         observeDividerDrags()
         applyFractions()
         applyBreakpoint()
+        if let item = splitViewItems.first(where: { $0.behavior == .sidebar }), !item.isCollapsed {
+            let w = item.viewController.view.frame.width
+            if w > 1 { reveal.lastSidebarWidth = w }
+        }
+        reveal.update()
+        ndApplyContentCard(self)
     }
 
     /// A hysteresis band around `breakpointPx`, not a single crossing point,
@@ -127,6 +145,20 @@ final class NDSplitViewController: NSSplitViewController {
             name: NSSplitView.willResizeSubviewsNotification,
             object: splitView,
         )
+        // Collapsing the sidebar resizes the panes without running this
+        // controller's viewDidLayout, and both the card's leading margin and
+        // the edge-reveal strip depend on whether the sidebar is beside it.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(splitViewDidResize(_:)),
+            name: NSSplitView.didResizeSubviewsNotification,
+            object: splitView,
+        )
+    }
+
+    @objc private func splitViewDidResize(_ note: Notification) {
+        reveal.update()
+        ndApplyContentCard(self)
     }
 
     /// The moment the app's declared fraction stops being the authority.
@@ -429,6 +461,74 @@ private struct NDPaneInstall {
     weak var host: NSView?
     var shape: NDPaneContentShape
     var bottom: NSLayoutConstraint?
+    /// The two candidate top pins: under the title bar band, or at the pane's
+    /// own top edge for a window whose tree places its own window controls
+    /// (`ndWindowOwnsTitlebar`). Exactly one is active.
+    var topSafe: NSLayoutConstraint?
+    var topEdge: NSLayoutConstraint?
+    var leading: NSLayoutConstraint?
+    var trailing: NSLayoutConstraint?
+}
+
+/// Insets the installed content of `host` from the pane's edges (the content
+/// card's margin). Zero puts it back flush. A scroll-shaped root keeps its
+/// edge-to-edge install.
+@MainActor func ndSetPaneInsets(_ host: NSView, _ insets: NSEdgeInsets) {
+    for (_, install) in ndPaneInstalls where install.host === host {
+        guard install.shape != .scrolling else { continue }
+        if install.topSafe?.constant != insets.top { install.topSafe?.constant = insets.top }
+        if install.topEdge?.constant != insets.top { install.topEdge?.constant = insets.top }
+        if install.leading?.constant != insets.left { install.leading?.constant = insets.left }
+        if install.trailing?.constant != -insets.right { install.trailing?.constant = -insets.right }
+        if install.bottom?.constant != -insets.bottom { install.bottom?.constant = -insets.bottom }
+    }
+}
+
+/// Windows whose tree carries a `<windowcontrols>` slot. Their panes start at
+/// the top edge: the only thing left in the title bar band is the traffic
+/// lights, and the app has already made room for them in its own first row.
+nonisolated(unsafe) private var ndTitlebarOwners: Set<ObjectIdentifier> = []
+
+func ndWindowOwnsTitlebar(_ window: NSWindow?) -> Bool {
+    guard let window else { return false }
+    return ndTitlebarOwners.contains(ObjectIdentifier(window))
+}
+
+/// Flips every installed pane in `window` between the two top pins.
+@MainActor func ndSetWindowOwnsTitlebar(_ window: NSWindow, _ owns: Bool) {
+    let key = ObjectIdentifier(window)
+    guard ndTitlebarOwners.contains(key) != owns else { return }
+    if owns { ndTitlebarOwners.insert(key) } else { ndTitlebarOwners.remove(key) }
+    for (_, install) in ndPaneInstalls where install.host?.window === window {
+        ndApplyPaneTop(install)
+    }
+}
+
+/// NDPaneHostView calls this once it lands in a window, since a pane is
+/// installed before it has one.
+@MainActor func ndRefreshPaneTop(_ host: NSView) {
+    for (_, install) in ndPaneInstalls where install.host === host {
+        ndApplyPaneTop(install)
+    }
+}
+
+private func ndApplyPaneTop(_ install: NDPaneInstall) {
+    guard let safe = install.topSafe, let edge = install.topEdge else { return }
+    let owns = ndWindowOwnsTitlebar(install.host?.window)
+    // Deactivate first: both active at once is an unsatisfiable pair.
+    if owns { safe.isActive = false; edge.isActive = true } else { edge.isActive = false; safe.isActive = true }
+}
+
+/// The content root installed in `host`, for code that has to lift a pane's
+/// content out and put it back (the edge reveal).
+func ndPaneContent(in host: NSView) -> NSView? {
+    ndPaneInstalls.first(where: { $0.value.host === host }).flatMap { key, _ in
+        host.subviews.lazy.compactMap { v -> NSView? in
+            if ObjectIdentifier(v) == key { return v }
+            if let ext = v as? NSBackgroundExtensionView, let c = ext.contentView, ObjectIdentifier(c) == key { return c }
+            return nil
+        }.first
+    }
 }
 
 nonisolated(unsafe) private var ndPaneInstalls: [ObjectIdentifier: NDPaneInstall] = [:]
@@ -513,9 +613,23 @@ func ndMakePaneViewController(_ content: NSView) -> NDPaneViewController {
 func ndInstallPaneContent(_ content: NSView, into host: NSView) {
     host.subviews.forEach { $0.removeFromSuperview() }
     content.translatesAutoresizingMaskIntoConstraints = false
+    // The split decides a pane's width (its fraction, the person's drag), and
+    // the pane's content fits into it: a box's natural width is its widest
+    // row, and one long tab title at the box's own resistance widened the
+    // sidebar to fit it untruncated. The item's minimum thickness is the floor.
+    content.setContentCompressionResistancePriority(.init(1), for: .horizontal)
     let shape = ndPaneContentShape(content)
     var bottom: NSLayoutConstraint?
-    defer { ndPaneInstalls[ObjectIdentifier(content)] = NDPaneInstall(host: host, shape: shape, bottom: bottom) }
+    var topSafe: NSLayoutConstraint?
+    var topEdge: NSLayoutConstraint?
+    var leading: NSLayoutConstraint?
+    var trailing: NSLayoutConstraint?
+    defer {
+        let install = NDPaneInstall(host: host, shape: shape, bottom: bottom, topSafe: topSafe, topEdge: topEdge,
+                                    leading: leading, trailing: trailing)
+        ndPaneInstalls[ObjectIdentifier(content)] = install
+        ndApplyPaneTop(install)
+    }
     switch shape {
     case .scrolling:
         let extended = NSBackgroundExtensionView()
@@ -564,12 +678,11 @@ func ndInstallPaneContent(_ content: NSView, into host: NSView) {
         // a smeared copy of a focused search field's ring and of a list's
         // footer caption into the titlebar band.
         bottom = content.bottomAnchor.constraint(equalTo: host.safeAreaLayoutGuide.bottomAnchor)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
-            content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-            bottom!,
-        ])
+        topSafe = content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor)
+        topEdge = content.topAnchor.constraint(equalTo: host.topAnchor)
+        leading = content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor)
+        trailing = content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor)
+        NSLayoutConstraint.activate([leading!, trailing!, bottom!])
     case .plain:
         host.addSubview(content)
         // ALL leading/trailing/top pins go through the safe-area guide, not
@@ -579,11 +692,10 @@ func ndInstallPaneContent(_ content: NSView, into host: NSView) {
         // is what the glass blurs), but its LAYOUT must inset past it. For
         // the sidebar pane those insets are zero, so one form serves both.
         bottom = content.bottomAnchor.constraint(equalTo: host.bottomAnchor)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor),
-            bottom!,
-            content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor),
-        ])
+        topSafe = content.topAnchor.constraint(equalTo: host.safeAreaLayoutGuide.topAnchor)
+        topEdge = content.topAnchor.constraint(equalTo: host.topAnchor)
+        leading = content.leadingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.leadingAnchor)
+        trailing = content.trailingAnchor.constraint(equalTo: host.safeAreaLayoutGuide.trailingAnchor)
+        NSLayoutConstraint.activate([leading!, trailing!, bottom!])
     }
 }

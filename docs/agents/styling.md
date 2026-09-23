@@ -40,6 +40,10 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable.
   | `monospace` | `.font = .monospacedSystemFont(ofSize:weight:)` |
   | `numeric` | `.font = .monospacedDigitSystemFont(ofSize:weight:)` |
   | `activatable` | on a box, an `NSTrackingArea`-driven quaternary-fill hover highlight at the concentric radius |
+  | `card` | on a box, a raised `NSBox` backing (white in light mode, a white veil in dark) with a hairline, and the box clips its children to the card's corner |
+  | `view` | on a box, a quaternary-fill tile (GTK: `box.view` is a 7% `currentColor` tile in the framework base CSS, not Adwaita's view background) |
+  | `osd` | on a progress bar, the thin page-load bar: an accent line that slides to each value and fades out at 1 (GTK: Adwaita's own `progressbar.osd`, animated by the framework) |
+  | `osd` + `dimmed` | the same bar in the secondary ink rather than the accent, for a quiet chrome |
   | `toolbar` | on a box, an `NSVisualEffectView` `.headerView` backing plus a 1pt `.separatorColor` bottom hairline |
   | `boxed-list` | on a box, a grouped `NSBox` card with leading-inset hairline row dividers |
   | `navigation-sidebar` | on a box whose children are row-shaped, a `.sourceList` `NSTableView` backing it (`SidebarTable.swift`); `nd-native-sidebar` skips the row-shape gate |
@@ -47,8 +51,8 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable.
   The font/color rows target `NSTextField`; for `TextArea`/`ScrollView` widgets (an `NSScrollView`
   wrapping an `NSTextView`) they target the wrapped `NSTextView` instead.
 
-  `card`, `view` and `osd` are silently ignored on macOS; native chrome for those roles comes from
-  the SplitView/HeaderBar widgets themselves, not from class strings.
+  `card` and `view` on anything but a box, and `osd` on anything but a progress bar, are ignored on
+  macOS; native chrome for those roles comes from the SplitView/HeaderBar widgets themselves.
 
   `pill` on a label, `activatable` on a box, and `navigation-sidebar` on a box are the classes
   libadwaita scopes to other widget types. GTK carries them in framework base CSS

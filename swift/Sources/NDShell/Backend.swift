@@ -371,6 +371,7 @@ func buildVTable() -> nd_backend {
     ndNavigationSidebars.remove(id)
     ndBoxedLists.remove(id)
     ndBoxedListBackings[id] = nil
+    ndTileFills[id] = nil
     ndToolbarStrips.remove(id)
     ndToolbarBackings[id] = nil
     ndPillBadged.remove(id)
@@ -747,6 +748,17 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
+    if let bar = view as? NDProgressBarView {
+        bar.loadBar = classes.contains("osd")
+        bar.quiet = classes.contains("dimmed")
+    }
+
+    // `view` on a box: a tile of content colour on a sidebar surface, drawn
+    // the way macOS fills a source-list tile (quaternary fill, no hairline).
+    if let box = view as? NDBoxView {
+        ndApplyTileFill(box, enabled: classes.contains("view") && !classes.contains("card"))
+    }
+
     // `pill` on a text label: the capsule count badge apps hand-roll on GTK.
     // Set-replace, but gated on a recorded prior state — an unconditional
     // disable would clobber a bezeled TextInput's own drawsBackground.
@@ -828,6 +840,16 @@ func ndApplyBoxedListCard(_ box: NSView, enabled: Bool) {
     backing.fillColor = .underPageBackgroundColor
 }
 
+/// A card's fill. Light, the control background (white), which is what a
+/// raised panel is on macOS; dark, a lighter veil over whatever is under it,
+/// since the dark control background is darker than every surface a card sits
+/// on and read as a hole (Adwaita's dark `card_bg_color` is the same veil).
+let ndCardFillColor = NSColor(name: "ndCardFill") { appearance in
+    appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ? NSColor(white: 1, alpha: 0.1)
+        : .controlBackgroundColor
+}
+
 /// Raised-surface treatment for a `card` box: the same `NSBox` backing idiom
 /// as `ndApplyBoxedListCard`, filled with `.controlBackgroundColor` and hair-
 /// lined with `.separatorColor` so the panel reads against the window
@@ -841,15 +863,25 @@ func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
         if let backing = ndSurfaceCardBackings[id] {
             backing.removeFromSuperview()
             ndSurfaceCardBackings[id] = nil
+            stack.layer?.cornerRadius = 0
+            stack.layer?.masksToBounds = false
         }
         return
     }
     if ndSurfaceCardBackings[id] != nil { return }
+    // The card clips what it holds to its own rounded shape, so a child that
+    // paints to its edges (a web page, an image) does not stick a square
+    // corner out past the backing's curve. `clipsToBounds` only clips to the
+    // rectangle.
+    stack.wantsLayer = true
+    stack.layer?.cornerRadius = ndConcentricRadius(in: stack, fallback: NDRadius.card)
+    stack.layer?.cornerCurve = .continuous
+    stack.layer?.masksToBounds = true
     let backing = NSBox()
     backing.boxType = .custom
     backing.borderWidth = 1
     backing.borderColor = .separatorColor
-    backing.fillColor = .controlBackgroundColor
+    backing.fillColor = ndCardFillColor
     backing.cornerRadius = ndConcentricRadius(in: stack, fallback: NDRadius.card)
     backing.titlePosition = .noTitle
     backing.contentViewMargins = .zero
@@ -862,6 +894,37 @@ func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
         backing.bottomAnchor.constraint(equalTo: stack.bottomAnchor),
     ])
     ndSurfaceCardBackings[id] = backing
+}
+
+nonisolated(unsafe) private var ndTileFills: [ObjectIdentifier: NSBox] = [:]
+
+/// A box's `view` tile (see ndApplyCssClasses). Same backing idiom as the
+/// card, with a translucent system fill that reads on any sidebar material.
+func ndApplyTileFill(_ box: NDBoxView, enabled: Bool) {
+    let id = ObjectIdentifier(box)
+    guard enabled else {
+        ndTileFills[id]?.removeFromSuperview()
+        ndTileFills[id] = nil
+        return
+    }
+    if ndTileFills[id] != nil { return }
+    let backing = NSBox()
+    backing.boxType = .custom
+    backing.borderWidth = 0
+    backing.borderColor = .clear
+    backing.fillColor = .quaternarySystemFill
+    backing.cornerRadius = ndConcentricRadius(in: box, fallback: NDRadius.card)
+    backing.titlePosition = .noTitle
+    backing.contentViewMargins = .zero
+    backing.translatesAutoresizingMaskIntoConstraints = false
+    box.addSubview(backing, positioned: .below, relativeTo: nil)
+    NSLayoutConstraint.activate([
+        backing.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+        backing.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+        backing.topAnchor.constraint(equalTo: box.topAnchor),
+        backing.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+    ])
+    ndTileFills[id] = backing
 }
 
 /// Native header-strip treatment for a `toolbar` box: an `NDToolbarStripBacking`
@@ -1285,7 +1348,11 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     } else if let layer = view.layer {
         layer.borderWidth = 0
         layer.borderColor = nil
-        layer.cornerRadius = 0
+        // A `card` box owns its own corner (ndApplySurfaceCard); a style
+        // with no border says nothing about it.
+        if ndSurfaceCardBackings[ObjectIdentifier(view)] == nil, !ndContentCardRoots.contains(ObjectIdentifier(view)) {
+            layer.cornerRadius = 0
+        }
     }
     // NSEdgeInsets() (all-zero) is the baseline when `padding` drops out of
     // the style object, so this always runs. (Aside: NDButton's ndPadding

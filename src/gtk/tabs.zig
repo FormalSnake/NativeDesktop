@@ -39,6 +39,7 @@ const protocol = @import("../protocol.zig");
 const ndbasecss = @import("basecss.zig");
 const nddecoration = @import("decoration.zig");
 const ndwebview = @import("webview.zig");
+const ndchrome = @import("chrome.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -292,12 +293,16 @@ fn effectiveWindowChild(child: *gtk.Widget) *gtk.Widget {
 /// Whether the app's own tree carries the window's header bar: a root
 /// <toolbarview> (whose <headerbar> may still be attaching, hence the
 /// structural test rather than a search for the header itself), or a split
-/// layout whose panes carry theirs (notes, settings, inspector). Wrapping
-/// either would stack two titlebars.
+/// layout whose panes carry theirs (notes, settings, inspector), or one that
+/// places the window controls itself (the Arc shape: controls in the
+/// sidebar's first row, no header bar at all). Wrapping any of them would
+/// stack two titlebars.
 fn declaresOwnChrome(child: *gtk.Widget) bool {
     const effective = effectiveWindowChild(child);
     if (gobject.ext.isA(effective, adw.ToolbarView)) return true;
-    if (gobject.ext.isA(effective, adw.OverlaySplitView)) return containsToolbarView(effective);
+    if (gobject.ext.isA(effective, adw.OverlaySplitView)) {
+        return containsToolbarView(effective) or ndchrome.containsWindowControls(effective);
+    }
     return false;
 }
 

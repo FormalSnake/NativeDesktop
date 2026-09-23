@@ -49,6 +49,7 @@ Automation role: `group`. Text source: none. Children: multi.
 |---|---|---|---|
 | `orientation` | vertical \| horizontal | vertical | create |
 | `spacing` | int | -1 | createAndUpdate |
+| `windowHandle` | bool | false | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -569,6 +570,8 @@ Automation role: `group`. Text source: none. Children: multi.
 | `collapsed` | bool | false | createAndUpdate |
 | `listWidth` | float | 0 | create |
 | `breakpoint` | int | 0 | create |
+| `edgeReveal` | bool | false | createAndUpdate |
+| `contentStyle` | plain \| card | plain | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -578,10 +581,13 @@ Automation role: `group`. Text source: none. Children: multi.
 
 | Event | Handler | Payload |
 |---|---|---|
+| `revealChanged` | `onRevealChanged` | checked |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `revealSidebar`, `concealSidebar`.
 
 Attached props (set on children):
 
@@ -1883,4 +1889,26 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+## WindowControls (`<windowcontrols>`)
+
+Automation role: `group`. Text source: none. Children: none.
+
+| Prop | Type | Default | Applied |
+|---|---|---|---|
+| `side` | start \| end | start | create |
+| `enabled` | bool | true | createAndUpdate |
+| `tooltip` | string | none | createAndUpdate |
+| `draggable` | bool | false | createAndUpdate |
+| `dragPayload` | string | none | createAndUpdate |
+| `dropTarget` | bool | false | createAndUpdate |
+| `testID` | string | none | meta |
+
+| Event | Handler | Payload |
+|---|---|---|
+| `emptyChanged` | `onEmptyChanged` | checked |
+| `dragStarted` | `onDragStarted` | text |
+| `dragEnded` | `onDragEnded` | none |
+| `dragOver` | `onDragOver` | dragPoint |
+| `dropped` | `onDropped` | dragPoint |
 

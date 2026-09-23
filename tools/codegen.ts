@@ -884,6 +884,8 @@ fn ndAccelKeyName(k: []const u8) []const u8 {
     if (std.mem.eql(u8, k, "down")) return "Down";
     if (std.mem.eql(u8, k, "comma")) return "comma";
     if (std.mem.eql(u8, k, "period")) return "period";
+    if (std.mem.eql(u8, k, "[")) return "bracketleft";
+    if (std.mem.eql(u8, k, "]")) return "bracketright";
     return k; // single printable char (and f1..f12) pass through verbatim
 }
 
@@ -3348,6 +3350,7 @@ function genZig(s: Schema): string {
   out += "const ndempty_gtk = @import(\"../gtk/emptystate.zig\");\n";
   out += "const ndchart_gtk = @import(\"../gtk/chart.zig\");\n";
   out += "const ndmotion_gtk = @import(\"../gtk/motion.zig\");\n";
+  out += "const ndchrome_gtk = @import(\"../gtk/chrome.zig\");\n";
   out += "const nddnd_gtk = @import(\"../gtk/dnd.zig\");\n";
   out += "const ndcode_gtk = @import(\"../gtk/codeeditor.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
@@ -3463,6 +3466,7 @@ const ZIG_COMMANDS: Record<string, string> = {
   TextInput: "        ndEntryCommand(widget, command);\n",
   SearchInput: "        ndEntryCommand(widget, command);\n",
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
+  SplitView: "        ndchrome_gtk.splitCommand(widget, command);\n",
   Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
   // Dialogs parent on the Window node's OWN handle (multi-window correct);
   // tab commands route to tabs.zig first.
@@ -3760,6 +3764,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        // GTK (the Adwaita gutter), 8 on the AppKit peer.\n";
     out += "        const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);\n";
     out += "        const box = gtk.Box.new(orientation, spacing);\n";
+    out += "        if (propBool(props, \"windowHandle\")) |h| ndchrome_gtk.setWindowHandle(box.as(gtk.Widget), h);\n";
     out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Paned") {
     // Distinct from SplitView's AdwOverlaySplitView (collapsible sidebar):
@@ -3988,7 +3993,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        return scale.as(gtk.Widget);\n";
   } else if (w.name === "ProgressBar") {
     out += "        const pb = gtk.ProgressBar.new();\n";
-    out += "        if (propFloat(props, \"fraction\")) |f| gtk.ProgressBar.setFraction(pb, f);\n";
+    out += "        if (propFloat(props, \"fraction\")) |f| ndchrome_gtk.progressCreated(pb.as(gtk.Widget), f, props);\n";
     out += "        return pb.as(gtk.Widget);\n";
   } else if (w.name === "Image") {
     out += "        const img = gtk.Image.new();\n";
@@ -4018,6 +4023,8 @@ function genZigCreateBody(w: Widget): string {
     out += "            if (std.mem.eql(u8, h, \"never\")) gtk.ScrolledWindow.setPolicy(sw, .never, .automatic);\n";
     out += "        }\n";
     out += "        return sw.as(gtk.Widget);\n";
+  } else if (w.name === "WindowControls") {
+    out += "        return ndchrome_gtk.windowControlsNew(propStr(props, \"side\") orelse \"start\");\n";
   } else if (w.name === "Separator") {
     out += "        const vertical = if (propStr(props, \"orientation\")) |o| std.mem.eql(u8, o, \"vertical\") else false;\n";
     out += "        const sep = gtk.Separator.new(if (vertical) .vertical else .horizontal);\n";
@@ -4112,6 +4119,8 @@ function genZigCreateBody(w: Widget): string {
     out += "            gobject.Object.setData(asObject(sv), ND_SPLIT_PENDING_BREAKPOINT, @ptrFromInt(@as(usize, @intCast(bp_px))));\n";
     out += "            _ = gobject.signalConnectData(asObject(sv), \"map\", @ptrCast(&cbSplitViewMapped), null, null, .{});\n";
     out += "        }\n";
+    out += "        if (propBool(props, \"edgeReveal\")) |r| ndchrome_gtk.setEdgeReveal(sv.as(gtk.Widget), r);\n";
+    out += "        if (propStr(props, \"contentStyle\")) |cs| ndchrome_gtk.setContentStyle(sv.as(gtk.Widget), cs);\n";
     out += "        return sv.as(gtk.Widget);\n";
   } else if (w.name === "HeaderBar") {
     out += "        const hb = adw.HeaderBar.new();\n";
@@ -4495,7 +4504,13 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   if (w.name === "CodeEditor") return "        ndcode_gtk.applyProps(widget, props, dupeZ);\n";
   let out = "";
   for (const p of updProps) {
-    if (w.name === "Box" && p.name === "spacing") {
+    if (w.name === "Box" && p.name === "windowHandle") {
+      out += "        if (propBool(props, \"windowHandle\")) |h| ndchrome_gtk.setWindowHandle(widget, h);\n";
+    } else if (w.name === "SplitView" && p.name === "edgeReveal") {
+      out += "        if (propBool(props, \"edgeReveal\")) |r| ndchrome_gtk.setEdgeReveal(widget, r);\n";
+    } else if (w.name === "SplitView" && p.name === "contentStyle") {
+      out += "        if (propStr(props, \"contentStyle\")) |cs| ndchrome_gtk.setContentStyle(widget, cs);\n";
+    } else if (w.name === "Box" && p.name === "spacing") {
       out += "        if (propInt(props, \"spacing\")) |s| {\n";
       out += "            const box: *gtk.Box = @ptrCast(@alignCast(widget));\n";
       out += "            // -1 sentinel = platform standard (6), same as the create arm.\n";
@@ -4654,7 +4669,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            ndPanedApplyPosition(@ptrCast(@alignCast(widget)), frac);\n";
       out += "        }\n";
     } else if (w.name === "ProgressBar" && p.name === "fraction") {
-      out += "        if (propFloat(props, \"fraction\")) |f| gtk.ProgressBar.setFraction(@ptrCast(@alignCast(widget)), f);\n";
+      out += "        if (propFloat(props, \"fraction\")) |f| ndchrome_gtk.progressSetFraction(widget, f);\n";
     } else if (w.name === "Image" && p.name === "path") {
       out += "        if (propStr(props, \"path\")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));\n";
     } else if (w.name === "Image" && p.name === "iconName") {
@@ -5022,13 +5037,19 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   return out;
 }
 
-interface SignalTemplate { signal: string; target: "widget" | "entryicon" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "sourcetree" | "commandpalette" | "terminal" | "hover" | "tag" | "combobox" | "breadcrumb" | "tabview" | "richtext"; cb: string; suppress: boolean }
+interface SignalTemplate { signal: string; target: "widget" | "splitreveal" | "windowcontrols" | "entryicon" | "buffer" | "listview-inner" | "menuitem" | "headerbarnav" | "webview" | "nativeview" | "windowdialogs" | "windowtabs" | "toastoverlay" | "table" | "treeview" | "sourcetree" | "commandpalette" | "terminal" | "hover" | "tag" | "combobox" | "breadcrumb" | "tabview" | "richtext"; cb: string; suppress: boolean }
 const SIGNALS: Record<string, SignalTemplate> = {
   "Button.clicked":          { signal: "clicked",          target: "widget", cb: "cbClicked",          suppress: false },
   // C4: hover isn't a plain GObject signal on the widget itself — it's an
   // EventControllerMotion enter/leave pair, wired via ndHoverConnect (HOVER_CALLBACKS).
   "Button.hoverChanged":     { signal: "",                 target: "hover",  cb: "",                   suppress: false },
   "Box.hoverChanged":        { signal: "",                 target: "hover",  cb: "",                   suppress: false },
+  // The reveal is the split view's own show-sidebar flip (src/gtk/chrome.zig),
+  // so the connect only records the node id.
+  "SplitView.revealChanged": { signal: "",                 target: "splitreveal", cb: "",              suppress: false },
+  // Which side of the desktop's decoration layout holds buttons decides where
+  // an app puts the slot (src/gtk/chrome.zig).
+  "WindowControls.emptyChanged": { signal: "",             target: "windowcontrols", cb: "",           suppress: false },
   "TextInput.changed":       { signal: "changed",          target: "widget", cb: "cbEditableChanged",  suppress: true },
   "TextInput.activate":      { signal: "activate",         target: "widget", cb: "cbEntryActivate",    suppress: false },
   // GtkSearchEntry's own "search-changed" is debounced ~150ms, EXCEPT when the
@@ -5477,7 +5498,7 @@ function genZigEvents(s: Schema): string {
     if (t.target === "menuitem" || t.target === "headerbarnav" || t.target === "webview" || t.target === "nativeview"
       || t.target === "windowdialogs" || t.target === "windowtabs" || t.target === "toastoverlay" || t.target === "table" || t.target === "treeview"
       || t.target === "sourcetree" || t.target === "commandpalette" || t.target === "terminal" || t.target === "hover"
-      || t.target === "tag" || t.target === "combobox" || t.target === "breadcrumb" || t.target === "tabview"
+      || t.target === "splitreveal" || t.target === "windowcontrols" || t.target === "tag" || t.target === "combobox" || t.target === "breadcrumb" || t.target === "tabview"
       || t.target === "richtext" || t.target === "chart" || t.target === "codeeditor") continue; // custom connect, no GTK callback body
     used.add(t.cb);
   }
@@ -5579,6 +5600,14 @@ function genZigEvents(s: Schema): string {
           out += "        if (emit) |f| ndtoast_gtk.connectEvents(widget, node_id, f);\n";
           navConnected = true;
         }
+        continue;
+      }
+      if (t.target === "windowcontrols") {
+        out += "        if (emit) |f| ndchrome_gtk.connectWindowControls(widget, node_id, f);\n";
+        continue;
+      }
+      if (t.target === "splitreveal") {
+        out += "        if (emit) |f| ndchrome_gtk.connectSplitReveal(widget, node_id, f);\n";
         continue;
       }
       if (t.target === "hover") {
@@ -5916,7 +5945,7 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        if (attached.slot) |sl| {\n";
       s += "            if (std.mem.eql(u8, sl, \"sidebar\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
-      s += "                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot\n";
+      s += "                if (adw.OverlaySplitView.getCollapsed(sv) == 0) ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot; a collapsed split keeps it hidden\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
       s += "                const inner = ndSplitViewInner(sv);\n";
       s += "                adw.OverlaySplitView.setSidebar(inner, child);\n";
@@ -5939,7 +5968,7 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
       s += "        if (attached.slot) |sl| {\n";
       s += "            if (std.mem.eql(u8, sl, \"sidebar\")) {\n";
       s += "                adw.OverlaySplitView.setSidebar(sv, child);\n";
-      s += "                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot\n";
+      s += "                if (adw.OverlaySplitView.getCollapsed(sv) == 0) ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot; a collapsed split keeps it hidden\n";
       s += "            } else if (std.mem.eql(u8, sl, \"list\")) {\n";
       s += "                const inner = ndSplitViewInner(sv);\n";
       s += "                adw.OverlaySplitView.setSidebar(inner, child);\n";
@@ -7352,6 +7381,16 @@ func ndProgressCircleApply(_ view: NSView, _ props: [String: Any]) {
 /// \`<progressbar>\`: SwiftUI \`ProgressView\`, the system determinate bar.
 final class NDProgressBarView: NDHostedLeaf {
     private var fraction: Double = 0
+    private var lastShown: Double = 0
+    /// \`osd\` class: Adwaita's thin page-load bar, drawn as one here
+    /// (NDShell/LoadBar.swift) instead of the system bar.
+    var loadBar = false {
+        didSet { if loadBar != oldValue { refreshLeaf() } }
+    }
+    /// \`dimmed\` with \`osd\`: the bar in the secondary ink instead of the accent.
+    var quiet = false {
+        didSet { if quiet != oldValue { refreshLeaf() } }
+    }
 
     func apply(fraction: Double?) {
         if let fraction { self.fraction = fraction }
@@ -7359,7 +7398,12 @@ final class NDProgressBarView: NDHostedLeaf {
     }
 
     override func leafContent() -> AnyView {
-        AnyView(ProgressView(value: min(max(fraction, 0), 1)))
+        guard loadBar else { return AnyView(ProgressView(value: min(max(fraction, 0), 1))) }
+        // A value below the last one shown is a new load starting over, which
+        // jumps back rather than sliding backwards.
+        let restart = fraction < lastShown
+        lastShown = fraction
+        return AnyView(NDLoadBarView(fraction: fraction, restart: restart, quiet: quiet))
     }
 
     override var ndA11yValueJSON: String { "\\(fraction)" }
@@ -7788,6 +7832,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        // ndStandardSpacing (8) here, 6 on the GTK peer.\n";
     out += `        let spacingRaw = propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")}\n`;
     out += "        box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)\n";
+    out += '        box.ndWindowHandle = propBool(props, "windowHandle") ?? false\n';
     out += "        return box\n";
   } else if (w.name === "Paned") {
     // Bare NSSplitView (not NSSplitViewController-based — see SplitView's
@@ -7987,6 +8032,10 @@ function genSwiftCreateBody(w: Widget): string {
     out += "            floor_.isActive = true\n";
     out += "        }\n";
     out += "        return sv\n";
+  } else if (w.name === "WindowControls") {
+    // A placeholder the window's own traffic lights are moved onto
+    // (NDShell/WindowControls.swift); the end side is empty on this platform.
+    out += '        return NDWindowControlsView(side: propStr(props, "side") ?? "start")\n';
   } else if (w.name === "Separator") {
     out += "        let sep = NSBox()\n";
     out += "        sep.boxType = .separator\n";
@@ -8044,6 +8093,8 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        if let bp = propInt(props, "breakpoint"), bp > 0 {\n`;
     out += "            controller.breakpointPx = CGFloat(bp)\n";
     out += "        }\n";
+    out += '        controller.edgeReveal = propBool(props, "edgeReveal") ?? false\n';
+    out += '        controller.contentCard = (propStr(props, "contentStyle") ?? "plain") == "card"\n';
     out += "        return controller.splitView\n";
   } else if (w.name === "HeaderBar") {
     out += "        let bar = NDHeaderBarView()\n";
@@ -8298,6 +8349,14 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       // SplitView takes over as contentViewController, and view.window is
       // nil from then on (title updates silently dropped).
       out += '        if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }\n';
+    } else if (w.name === "Box" && p.name === "windowHandle") {
+      out += '        if let h = propBool(props, "windowHandle"), let box = view as? NDBoxView { box.ndWindowHandle = h }\n';
+    } else if (w.name === "SplitView" && p.name === "edgeReveal") {
+      out += '        if let r = propBool(props, "edgeReveal"), let split = view as? NSSplitView,\n';
+      out += "           let controller = ndSplitViewController(for: split) { controller.edgeReveal = r }\n";
+    } else if (w.name === "SplitView" && p.name === "contentStyle") {
+      out += '        if let cs = propStr(props, "contentStyle"), let split = view as? NSSplitView,\n';
+      out += '           let controller = ndSplitViewController(for: split) { controller.contentCard = cs == "card" }\n';
     } else if (w.name === "Box" && p.name === "spacing") {
       out += '        if let sp = propInt(props, "spacing"), let box = view as? NDBoxView {\n';
       out += "            // -1 sentinel = platform standard, same as the create arm.\n";
@@ -8691,6 +8750,10 @@ const SWIFT_SIGNALS: Record<string, SwiftSignalTemplate> = {
   // connectEvents routes it to ndHoverConnect (Hover.swift) instead.
   "Button.hoverChanged":     { selector: "hover",       payload: "checked" },
   "Box.hoverChanged":        { selector: "hover",       payload: "checked" },
+  // NDSplitViewController emits the reveal itself (SplitReveal.swift).
+  "SplitView.revealChanged": { selector: "splitreveal", payload: "checked" },
+  // NDWindowControlsView reports which side holds the buttons (WindowControls.swift).
+  "WindowControls.emptyChanged": { selector: "windowcontrols", payload: "checked" },
   "TextInput.changed":       { selector: "fireText",    payload: "text" },
   "TextInput.activate":      { selector: "fireText",    payload: "text" },
   "SearchInput.changed":     { selector: "fireText",    payload: "text" },
@@ -8860,6 +8923,8 @@ const SWIFT_CUSTOM_CONNECT: Record<string, string> = {
   windowtabs: "ndWindowTabsConnect",
   terminal: "ndTerminalConnect",
   hover: "ndHoverConnect",
+  splitreveal: "ndSplitRevealConnect",
+  windowcontrols: "ndWindowControlsConnect",
   paned: "ndPanedConnect",
   tag: "ndTagConnect",
   segmentedcontrol: "ndSegmentedControlConnect",
@@ -8980,6 +9045,7 @@ const SWIFT_COMMANDS: Record<string, string> = {
   TextInput: "        ndEntryCommand(view, command)\n",
   SearchInput: "        ndEntryCommand(view, command)\n",
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
+  SplitView: "        ndSplitRevealCommand(view, command)\n",
   Terminal: "        ndTerminalCommand(view, command, argJson)\n",
   // Dialogs resolve the owning NSWindow from the node's OWN handle
   // (ndWindow(for:)) — multi-window correct, no gWindow (M15). Tab commands

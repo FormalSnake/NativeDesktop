@@ -23,6 +23,7 @@ const ndpalette_gtk = @import("../gtk/commandpalette.zig");
 const ndempty_gtk = @import("../gtk/emptystate.zig");
 const ndchart_gtk = @import("../gtk/chart.zig");
 const ndmotion_gtk = @import("../gtk/motion.zig");
+const ndchrome_gtk = @import("../gtk/chrome.zig");
 const nddnd_gtk = @import("../gtk/dnd.zig");
 const ndcode_gtk = @import("../gtk/codeeditor.zig");
 const nd_plugin = @import("../plugin.zig");
@@ -543,6 +544,8 @@ fn ndAccelKeyName(k: []const u8) []const u8 {
     if (std.mem.eql(u8, k, "down")) return "Down";
     if (std.mem.eql(u8, k, "comma")) return "comma";
     if (std.mem.eql(u8, k, "period")) return "period";
+    if (std.mem.eql(u8, k, "[")) return "bracketleft";
+    if (std.mem.eql(u8, k, "]")) return "bracketright";
     return k; // single printable char (and f1..f12) pass through verbatim
 }
 
@@ -3042,6 +3045,7 @@ fn createWidget(
         // GTK (the Adwaita gutter), 8 on the AppKit peer.
         const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);
         const box = gtk.Box.new(orientation, spacing);
+        if (propBool(props, "windowHandle")) |h| ndchrome_gtk.setWindowHandle(box.as(gtk.Widget), h);
         return box.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Label")) {
         const text = propStr(props, "text") orelse "";
@@ -3188,7 +3192,7 @@ fn createWidget(
         return scale.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "ProgressBar")) {
         const pb = gtk.ProgressBar.new();
-        if (propFloat(props, "fraction")) |f| gtk.ProgressBar.setFraction(pb, f);
+        if (propFloat(props, "fraction")) |f| ndchrome_gtk.progressCreated(pb.as(gtk.Widget), f, props);
         return pb.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Image")) {
         const img = gtk.Image.new();
@@ -3315,6 +3319,8 @@ fn createWidget(
             gobject.Object.setData(asObject(sv), ND_SPLIT_PENDING_BREAKPOINT, @ptrFromInt(@as(usize, @intCast(bp_px))));
             _ = gobject.signalConnectData(asObject(sv), "map", @ptrCast(&cbSplitViewMapped), null, null, .{});
         }
+        if (propBool(props, "edgeReveal")) |r| ndchrome_gtk.setEdgeReveal(sv.as(gtk.Widget), r);
+        if (propStr(props, "contentStyle")) |cs| ndchrome_gtk.setContentStyle(sv.as(gtk.Widget), cs);
         return sv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         const hb = adw.HeaderBar.new();
@@ -3762,6 +3768,8 @@ fn createWidget(
         return ndchart_gtk.create(props, propInt(props, "minContentHeight") orelse 160);
     } else if (std.mem.eql(u8, kind, "CodeEditor")) {
         return ndcode_gtk.create(props, dupeZ);
+    } else if (std.mem.eql(u8, kind, "WindowControls")) {
+        return ndchrome_gtk.windowControlsNew(propStr(props, "side") orelse "start");
     }
     std.debug.print("ND_WARN unknown widget kind={s}\n", .{kind});
     return error.UnknownWidget;
@@ -3780,6 +3788,7 @@ const nd_resets_Window = [_]NdPropReset{
 };
 const nd_resets_Box = [_]NdPropReset{
     .{ .key = "spacing", .value = .{ .integer = -1 } },
+    .{ .key = "windowHandle", .value = .{ .bool = false } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -3949,6 +3958,8 @@ const nd_resets_NativeView = [_]NdPropReset{
 };
 const nd_resets_SplitView = [_]NdPropReset{
     .{ .key = "collapsed", .value = .{ .bool = false } },
+    .{ .key = "edgeReveal", .value = .{ .bool = false } },
+    .{ .key = "contentStyle", .value = .{ .string = "plain" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -4434,6 +4445,13 @@ const nd_resets_CodeEditor = [_]NdPropReset{
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
 };
+const nd_resets_WindowControls = [_]NdPropReset{
+    .{ .key = "enabled", .value = .{ .bool = true } },
+    .{ .key = "tooltip", .value = .{ .string = "" } },
+    .{ .key = "draggable", .value = .{ .bool = false } },
+    .{ .key = "dragPayload", .value = .{ .string = "" } },
+    .{ .key = "dropTarget", .value = .{ .bool = false } },
+};
 
 fn ndPropResets(kind: []const u8) []const NdPropReset {
     if (std.mem.eql(u8, kind, "Window")) return &nd_resets_Window;
@@ -4507,6 +4525,7 @@ fn ndPropResets(kind: []const u8) []const NdPropReset {
     if (std.mem.eql(u8, kind, "Skeleton")) return &nd_resets_Skeleton;
     if (std.mem.eql(u8, kind, "Chart")) return &nd_resets_Chart;
     if (std.mem.eql(u8, kind, "CodeEditor")) return &nd_resets_CodeEditor;
+    if (std.mem.eql(u8, kind, "WindowControls")) return &nd_resets_WindowControls;
     return &.{};
 }
 
@@ -4548,6 +4567,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             // -1 sentinel = platform standard (6), same as the create arm.
             gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));
         }
+        if (propBool(props, "windowHandle")) |h| ndchrome_gtk.setWindowHandle(widget, h);
     } else if (std.mem.eql(u8, kind, "Label")) {
         if (propStr(props, "variant")) |v| ndLabelApplyVariant(widget, v);
     } else if (std.mem.eql(u8, kind, "Button")) {
@@ -4647,7 +4667,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             }
         }
     } else if (std.mem.eql(u8, kind, "ProgressBar")) {
-        if (propFloat(props, "fraction")) |f| gtk.ProgressBar.setFraction(@ptrCast(@alignCast(widget)), f);
+        if (propFloat(props, "fraction")) |f| ndchrome_gtk.progressSetFraction(widget, f);
     } else if (std.mem.eql(u8, kind, "Image")) {
         if (propStr(props, "path")) |p_| gtk.Image.setFromFile(@ptrCast(@alignCast(widget)), dupeZ(p_));
         if (propStr(props, "iconName")) |n| gtk.Image.setFromIconName(@ptrCast(@alignCast(widget)), ndicons.symbolic(dupeZ(n)));
@@ -4710,6 +4730,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         }
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
+        if (propBool(props, "edgeReveal")) |r| ndchrome_gtk.setEdgeReveal(widget, r);
+        if (propStr(props, "contentStyle")) |cs| ndchrome_gtk.setContentStyle(widget, cs);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         if (propStr(props, "title")) |t| ndHeaderBarSetTitle(@ptrCast(@alignCast(widget)), dupeZ(t));
         if (propStr(props, "subtitle")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));
@@ -5360,6 +5382,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         if (emit) |f| ndweb_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "NativeView")) {
         // NativeView wires from the retained tree, which owns the node id.
+    } else if (std.mem.eql(u8, kind, "SplitView")) {
+        if (emit) |f| ndchrome_gtk.connectSplitReveal(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {
         ndHeaderBarConnectNav(widget, node_id);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
@@ -5473,6 +5497,8 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         if (emit) |f| ndchart_gtk.connectEvents(widget, node_id, f);
     } else if (std.mem.eql(u8, kind, "CodeEditor")) {
         if (emit) |f| ndcode_gtk.connectEvents(widget, node_id, f);
+    } else if (std.mem.eql(u8, kind, "WindowControls")) {
+        if (emit) |f| ndchrome_gtk.connectWindowControls(widget, node_id, f);
     }
 }
 
@@ -5488,6 +5514,8 @@ pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8,
         ndEntryCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "WebView")) {
         ndweb_gtk.command(widget, command, arg);
+    } else if (std.mem.eql(u8, kind, "SplitView")) {
+        ndchrome_gtk.splitCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         ndEntryCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "ToastOverlay")) {
@@ -5531,7 +5559,7 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
-                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot
+                if (adw.OverlaySplitView.getCollapsed(sv) == 0) ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot; a collapsed split keeps it hidden
             } else if (std.mem.eql(u8, sl, "list")) {
                 const inner = ndSplitViewInner(sv);
                 adw.OverlaySplitView.setSidebar(inner, child);
@@ -5655,7 +5683,7 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
-                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot
+                if (adw.OverlaySplitView.getCollapsed(sv) == 0) ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot; a collapsed split keeps it hidden
             } else if (std.mem.eql(u8, sl, "list")) {
                 const inner = ndSplitViewInner(sv);
                 adw.OverlaySplitView.setSidebar(inner, child);

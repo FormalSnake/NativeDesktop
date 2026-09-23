@@ -211,7 +211,28 @@ final class NDButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let s = super.intrinsicContentSize
-        return NSSize(width: s.width + ndPadding.left + ndPadding.right, height: s.height + ndPadding.top + ndPadding.bottom)
+        var size = NSSize(width: s.width + ndPadding.left + ndPadding.right, height: s.height + ndPadding.top + ndPadding.bottom)
+        // A borderless icon-only button measures as its glyph (9 pt tall for
+        // a chevron), which is both a target too small to hit and a frame the
+        // glyph draws past. Its floor is the control a toolbar item is: a
+        // square the size of the control height (GTK peer: Adwaita's flat
+        // image button, 34 px with its padding).
+        if !isBordered, title.isEmpty, image != nil {
+            let side = ndIconButtonSide(controlSize)
+            size.width = max(size.width, side)
+            size.height = max(size.height, side)
+        }
+        return size
+    }
+}
+
+/// The square a borderless icon button claims at each control size.
+func ndIconButtonSide(_ size: NSControl.ControlSize) -> CGFloat {
+    switch size {
+    case .mini: return 16
+    case .small: return 22
+    case .large, .extraLarge: return 32
+    default: return 28
     }
 }
 
@@ -273,6 +294,11 @@ final class NDTextField: NSTextField {
 /// arm in tools/codegen.ts).
 final class NDPaneHostView: NSView {
     override nonisolated var isFlipped: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ndRefreshPaneTop(self)
+    }
 }
 
 
@@ -301,7 +327,7 @@ private let ndSelfSizedKinds: Set<String> = [
     "Label", "Button", "ToggleButton", "Radio", "Checkbox", "Select", "Switch",
     "SegmentedControl", "DatePicker", "ColorPicker", "MenuButton", "SplitButton",
     "FontPicker", "ShareButton", "LinkButton", "Spinner", "ProgressCircle",
-    "NumberInput", "Avatar", "Badge", "Tag", "Kbd",
+    "NumberInput", "Avatar", "Badge", "Tag", "Kbd", "WindowControls",
 ]
 
 /// Whether `view`'s own natural size along `axis` is also its CORRECT size
@@ -486,6 +512,12 @@ func ndMinimumChildSize(_ view: NSView) -> NSSize {
     let kind = ndWidgetKinds[ObjectIdentifier(view)] ?? ""
     if kind == "Label" {
         floor.width = min(floor.width, ndLabelMinimumWidth)
+    } else if let button = view as? NSButton, button.lineBreakMode == .byTruncatingTail, !button.title.isEmpty {
+        // An ellipsizing button gives up its title before its box gives up
+        // width: its floor is the icon and an ellipsis, not the whole title,
+        // or one long tab title widens a sidebar past its fraction (GTK peer:
+        // a GtkLabel with ellipsize reports a near-zero minimum).
+        floor.width = min(floor.width, ndLabelMinimumWidth)
     } else if ndNaturalLengthFloors[kind] != nil {
         // The length these carry is a preference, not a requirement: an entry
         // or a track is as long as it is given.
@@ -604,6 +636,22 @@ final class NDBoxView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("NDBoxView is not NSCoding-decodable") }
+
+    /// `windowHandle`: a press on the box's own background moves the window,
+    /// and a double click does what the user set for a title bar double click.
+    /// A control inside the box is hit first and keeps its press.
+    var ndWindowHandle = false
+
+    override var mouseDownCanMoveWindow: Bool { ndWindowHandle }
+
+    override func mouseDown(with event: NSEvent) {
+        guard ndWindowHandle, let window else { return super.mouseDown(with: event) }
+        if event.clickCount == 2 {
+            ndPerformTitlebarDoubleClick(window)
+        } else {
+            window.performDrag(with: event)
+        }
+    }
 
     /// The React child list in document order. Decoration subviews (a card
     /// backing, the source-list table, the hover overlay) are ordinary

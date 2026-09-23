@@ -192,6 +192,7 @@
       "props": [
         { "name": "orientation", "type": "enum", "values": ["vertical", "horizontal"], "default": "vertical", "appliesTo": "create" },
         { "name": "spacing", "type": "int", "default": -1, "appliesTo": "createAndUpdate" },
+        { "name": "windowHandle", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -714,6 +715,8 @@
         { "name": "collapsed", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "listWidth", "type": "float", "default": 0.0, "appliesTo": "create" },
         { "name": "breakpoint", "type": "int", "default": 0, "appliesTo": "create" },
+        { "name": "edgeReveal", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contentStyle", "type": "enum", "values": ["plain", "card"], "default": "plain", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -722,11 +725,13 @@
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
+        { "name": "revealChanged", "ndpName": "onRevealChanged", "payload": "checked" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
         { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
       ],
+      "commands": ["revealSidebar", "concealSidebar"],
       "automation": { "role": "group", "textFrom": null }
     },
     {
@@ -2002,6 +2007,28 @@
       ],
       "commands": ["focus"],
       "automation": { "role": "textbox", "textFrom": "text" }
+    },
+    {
+      "name": "WindowControls",
+      "intrinsic": "windowcontrols",
+      "container": null,
+      "props": [
+        { "name": "side", "type": "enum", "values": ["start", "end"], "default": "start", "appliesTo": "create" },
+        { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
+        { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
+        { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "testID", "type": "string", "appliesTo": "meta" }
+      ],
+      "events": [
+        { "name": "emptyChanged", "ndpName": "onEmptyChanged", "payload": "checked" },
+        { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
+        { "name": "dragEnded", "ndpName": "onDragEnded" },
+        { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+      ],
+      "automation": { "role": "group", "textFrom": null }
     }
   ]
 }

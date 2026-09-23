@@ -32,6 +32,7 @@ const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const cdp = @import("cdp.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
+const ndchrome = @import("../gtk/chrome.zig");
 const gtkmenu = @import("gtkmenu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
@@ -1453,6 +1454,9 @@ const View = struct {
     /// The toplevel the container is a child of. A view moved into another
     /// window by `moveNode` has to take its X child with it.
     container_parent: x11.Window = 0,
+    /// Whether the container carries a bounding shape (see `syncShape`), so a
+    /// view that needs none clears it once rather than on every layout.
+    shaped: bool = false,
     created: bool = false,
     /// What the browser was actually created with. A `url` prop applied while
     /// the browser was still being created lands in `pending_url` alone, so
@@ -2114,8 +2118,140 @@ fn syncBounds(view: *View) void {
         view.container_parent = parent;
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
+    syncShape(view, native_widget, rect, scale);
     layoutContents(view, next.w, next.h);
 }
+
+/// Cuts the page's X window to what GTK shows of it: inside the rounded card
+/// it sits in (`contentStyle="card"`, or a `card` box), and clear of whatever
+/// GTK floats over it: a split view's sidebar sliding over the page, and the
+/// layers of an overlay the page is the base of (a load bar, an error page).
+/// A GTK widget cannot be drawn over an X child window, so without this the
+/// card's corners were square and every one of those layers was hidden under
+/// the page.
+fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64) void {
+    var card: ?graphene.Rect = null;
+    if (ndchrome.cardAncestor(view.widget)) |cw| {
+        var r: graphene.Rect = undefined;
+        if (gtk.Widget.computeBounds(cw, native, &r) != 0) card = r;
+    }
+    var covers: [max_covers]graphene.Rect = undefined;
+    var cover_n: usize = 0;
+    var cover_widgets: [max_covers]*gtk.Widget = undefined;
+    const found = ndchrome.coversOver(view.widget, &cover_widgets);
+    for (cover_widgets[0..found]) |cw| {
+        var r: graphene.Rect = undefined;
+        if (gtk.Widget.computeBounds(cw, native, &r) == 0) continue;
+        // A hairline anchor (the find bar's) and a probe view's couple of
+        // pixels are layout, not something to see: cutting them would put a
+        // line or a speck of window background in the page.
+        const cw_w = r.f_size.f_width;
+        const cw_h = r.f_size.f_height;
+        if (cw_w < 2 or cw_h < 2 or (cw_w < 8 and cw_h < 8)) continue;
+        covers[cover_n] = r;
+        cover_n += 1;
+    }
+    // A probe view a couple of pixels square (an extension action's badge
+    // reader) sits wherever the layout leaves it, often in a card's corner,
+    // and cutting it to nothing would stop it rendering what is read off it.
+    const tiny = view.bounds.w < 32 or view.bounds.h < 32;
+    if ((card == null and cover_n == 0) or tiny) {
+        if (view.shaped) x11.clearShape(view.container);
+        view.shaped = false;
+        return;
+    }
+    const w: usize = @intCast(view.bounds.w);
+    const h: usize = @intCast(view.bounds.h);
+    const radius = ndchrome.card_radius;
+    const px: f64 = page.f_origin.f_x;
+    const py: f64 = page.f_origin.f_y;
+
+    var rects: std.ArrayList(x11.Rect) = .empty;
+    defer rects.deinit(alloc);
+    // One device row at a time; rows with the same spans merge into one band,
+    // so a plain card is a handful of rectangles plus its corner rows.
+    const Span = [2]i32;
+    var band_start: usize = 0;
+    var band: [max_covers + 1]Span = undefined;
+    var band_n: usize = 0;
+    var y: usize = 0;
+    while (y <= h) : (y += 1) {
+        var spans: [max_covers + 1]Span = undefined;
+        var n: usize = 0;
+        if (y < h) {
+            const ly = py + (@as(f64, @floatFromInt(y)) + 0.5) / scale;
+            var lo: f64 = px;
+            var hi: f64 = px + @as(f64, @floatFromInt(w)) / scale;
+            var visible = true;
+            if (card) |cr| {
+                const top: f64 = cr.f_origin.f_y;
+                const bottom: f64 = top + cr.f_size.f_height;
+                if (ly < top or ly >= bottom) visible = false;
+                var inset: f64 = 0;
+                const r = @min(radius, @min(cr.f_size.f_width, cr.f_size.f_height) / 2);
+                if (ly < top + r) inset = r - @sqrt(@max(0, r * r - (top + r - ly) * (top + r - ly)));
+                if (ly > bottom - r) inset = r - @sqrt(@max(0, r * r - (ly - (bottom - r)) * (ly - (bottom - r))));
+                lo = @max(lo, cr.f_origin.f_x + inset);
+                hi = @min(hi, cr.f_origin.f_x + cr.f_size.f_width - inset);
+            }
+            if (visible and hi > lo) {
+                spans[0] = .{ @intFromFloat(@round((lo - px) * scale)), @intFromFloat(@round((hi - px) * scale)) };
+                n = 1;
+                // Each layer over this row takes its run out of the spans.
+                for (covers[0..cover_n]) |cv| {
+                    const c_top: f64 = cv.f_origin.f_y;
+                    if (ly < c_top or ly >= c_top + cv.f_size.f_height) continue;
+                    const c_lo: i32 = @intFromFloat(@round((cv.f_origin.f_x - px) * scale));
+                    const c_hi: i32 = @intFromFloat(@round((cv.f_origin.f_x + cv.f_size.f_width - px) * scale));
+                    var next: [max_covers + 1]Span = undefined;
+                    var m: usize = 0;
+                    for (spans[0..n]) |sp| {
+                        if (c_hi <= sp[0] or c_lo >= sp[1]) {
+                            next[m] = sp;
+                            m += 1;
+                            continue;
+                        }
+                        if (c_lo > sp[0] and m < next.len) {
+                            next[m] = .{ sp[0], c_lo };
+                            m += 1;
+                        }
+                        if (c_hi < sp[1] and m < next.len) {
+                            next[m] = .{ c_hi, sp[1] };
+                            m += 1;
+                        }
+                    }
+                    spans = next;
+                    n = m;
+                }
+            }
+        }
+        var same = y < h and n == band_n;
+        if (same) {
+            for (spans[0..n], band[0..n]) |a, b| {
+                if (a[0] != b[0] or a[1] != b[1]) same = false;
+            }
+        }
+        if (same) continue;
+        // Close the band that ends here.
+        for (band[0..band_n]) |sp| {
+            if (sp[1] <= sp[0] or y == band_start) continue;
+            rects.append(alloc, .{
+                .x = @intCast(sp[0]),
+                .y = @intCast(band_start),
+                .width = @intCast(sp[1] - sp[0]),
+                .height = @intCast(y - band_start),
+            }) catch return;
+        }
+        band_start = y;
+        band_n = n;
+        band = spans;
+    }
+    x11.setShape(view.container, rects.items);
+    view.shaped = true;
+}
+
+/// How many floating layers one page can be cut around.
+const max_covers = 6;
 
 /// The view's inner windows: the page browser, and the docked devtools beside
 /// it when it is open. Reads the XIDs on the calling thread and hands the X

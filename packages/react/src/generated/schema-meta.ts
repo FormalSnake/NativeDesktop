@@ -77,6 +77,7 @@ export const widgetMeta: Record<string, WidgetMeta> = {
   "Skeleton": { role: "custom", textFrom: null, childModel: null },
   "Chart": { role: "custom", textFrom: null, childModel: null },
   "CodeEditor": { role: "textbox", textFrom: "text", childModel: null },
+  "WindowControls": { role: "group", textFrom: null, childModel: null },
 };
 
 export const intrinsicToName: Record<string, string> = {
@@ -151,6 +152,7 @@ export const intrinsicToName: Record<string, string> = {
   "skeleton": "Skeleton",
   "chart": "Chart",
   "codeeditor": "CodeEditor",
+  "windowcontrols": "WindowControls",
 };
 
 export interface WidgetEvent {
@@ -179,7 +181,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "listview": [{ name: "rowActivated", handler: "onRowActivated", payload: "index" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "webview": [{ name: "navigate", handler: "onNavigate", payload: "text" }, { name: "titleChanged", handler: "onTitleChanged", payload: "text" }, { name: "loadingChanged", handler: "onLoadingChanged", payload: "checked" }, { name: "backAvailable", handler: "onBackAvailable", payload: "checked" }, { name: "forwardAvailable", handler: "onForwardAvailable", payload: "checked" }, { name: "loadProgress", handler: "onLoadProgress", payload: "value" }, { name: "loadFailed", handler: "onLoadFailed", payload: "data" }, { name: "newWindow", handler: "onNewWindow", payload: "text" }, { name: "browserCommand", handler: "onBrowserCommand", payload: "text" }, { name: "downloadRequested", handler: "onDownloadRequested", payload: "data" }, { name: "downloadUpdated", handler: "onDownloadUpdated", payload: "data" }, { name: "javaScriptResult", handler: "onJavaScriptResult", payload: "data" }, { name: "scriptMessage", handler: "onScriptMessage", payload: "data" }, { name: "schemeRequest", handler: "onSchemeRequest", payload: "data" }, { name: "cookiesResult", handler: "onCookiesResult", payload: "data" }, { name: "cookiesChanged", handler: "onCookiesChanged", payload: "data" }, { name: "faviconChanged", handler: "onFaviconChanged", payload: "data" }, { name: "findResult", handler: "onFindResult", payload: "data" }, { name: "securityChanged", handler: "onSecurityChanged", payload: "data" }, { name: "linkHover", handler: "onLinkHover", payload: "text" }, { name: "contextMenu", handler: "onContextMenu", payload: "data" }, { name: "contextMenuItemClicked", handler: "onContextMenuItemClicked", payload: "data" }, { name: "sessionSaved", handler: "onSessionSaved", payload: "data" }, { name: "audioStateChanged", handler: "onAudioStateChanged", payload: "data" }, { name: "extensionsList", handler: "onExtensionsList", payload: "data" }, { name: "extensionActions", handler: "onExtensionActions", payload: "data" }, { name: "extensionsChanged", handler: "onExtensionsChanged", payload: "data" }, { name: "chromeDialog", handler: "onChromeDialog", payload: "data" }, { name: "permissionRequest", handler: "onPermissionRequest", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "nativeview": [{ name: "nativeEvent", handler: "onNativeEvent", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
-  "splitview": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
+  "splitview": [{ name: "revealChanged", handler: "onRevealChanged", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "headerbar": [{ name: "back", handler: "onBack", payload: "none" }, { name: "forward", handler: "onForward", payload: "none" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "toolbarview": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "searchinput": [{ name: "changed", handler: "onChanged", payload: "text" }, { name: "activate", handler: "onActivate", payload: "text" }, { name: "leadingIconClicked", handler: "onLeadingIconClicked", payload: "none" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
@@ -230,6 +232,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
   "skeleton": [{ name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "chart": [{ name: "pointSelected", handler: "onPointSelected", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
   "codeeditor": [{ name: "changed", handler: "onChange", payload: "text" }, { name: "cursorMoved", handler: "onCursorMoved", payload: "data" }, { name: "diagnosticClicked", handler: "onDiagnosticClicked", payload: "data" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
+  "windowcontrols": [{ name: "emptyChanged", handler: "onEmptyChanged", payload: "checked" }, { name: "dragStarted", handler: "onDragStarted", payload: "text" }, { name: "dragEnded", handler: "onDragEnded", payload: "none" }, { name: "dragOver", handler: "onDragOver", payload: "dragPoint" }, { name: "dropped", handler: "onDropped", payload: "dragPoint" }],
 };
 
 /** JSX ref-prop name -> the wire prop that carries the target's node id
@@ -261,7 +264,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "listview": ["onRowActivated", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "webview": ["onNavigate", "onTitleChanged", "onLoadingChanged", "onBackAvailable", "onForwardAvailable", "onLoadProgress", "onLoadFailed", "onNewWindow", "onBrowserCommand", "onDownloadRequested", "onDownloadUpdated", "onJavaScriptResult", "onScriptMessage", "onSchemeRequest", "onCookiesResult", "onCookiesChanged", "onFaviconChanged", "onFindResult", "onSecurityChanged", "onLinkHover", "onContextMenu", "onContextMenuItemClicked", "onSessionSaved", "onAudioStateChanged", "onExtensionsList", "onExtensionActions", "onExtensionsChanged", "onChromeDialog", "onPermissionRequest", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "nativeview": ["onNativeEvent", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
-  "splitview": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
+  "splitview": ["onRevealChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "headerbar": ["onBack", "onForward", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "toolbarview": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "searchinput": ["onChanged", "onActivate", "onLeadingIconClicked", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
@@ -312,6 +315,7 @@ export const handlerPropNames: Record<string, string[]> = {
   "skeleton": ["onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "chart": ["onPointSelected", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
   "codeeditor": ["onChange", "onCursorMoved", "onDiagnosticClicked", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
+  "windowcontrols": ["onEmptyChanged", "onDragStarted", "onDragEnded", "onDragOver", "onDropped"],
 };
 
 /** Imperative commands each widget accepts via the widgetCommand NDP frame
@@ -337,7 +341,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "listview": [],
   "webview": ["goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools", "addUserScript", "removeUserScript", "clearUserScripts", "registerScriptMessage", "unregisterScriptMessage", "respondScheme", "respondPermission", "respondDownload", "getCookies", "setCookie", "deleteCookie", "findStart", "findNext", "findPrevious", "findStop", "saveSession", "restoreSession", "setMuted", "setContextMenuItems", "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled", "focus"],
   "nativeview": [],
-  "splitview": [],
+  "splitview": ["revealSidebar", "concealSidebar"],
   "headerbar": [],
   "toolbarview": [],
   "searchinput": ["focus", "activateLeadingIcon"],
@@ -388,6 +392,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "skeleton": [],
   "chart": [],
   "codeeditor": ["focus"],
+  "windowcontrols": [],
 };
 
 /** Compile-time command-name map (only widgets with commands appear). */
@@ -400,6 +405,7 @@ export type WidgetCommandNames = {
   "radio": "focus";
   "select": "focus";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "respondPermission" | "respondDownload" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "setContextMenuItems" | "listExtensions" | "watchExtensions" | "listExtensionActions" | "readExtensionAction" | "installExtension" | "uninstallExtension" | "setExtensionEnabled" | "focus";
+  "splitview": "revealSidebar" | "concealSidebar";
   "searchinput": "focus" | "activateLeadingIcon";
   "switch": "focus";
   "numberinput": "focus";
@@ -485,4 +491,5 @@ export const widgetPlatforms: Record<string, readonly ("macos" | "linux")[] | nu
   "skeleton": null,
   "chart": null,
   "codeeditor": null,
+  "windowcontrols": null,
 };

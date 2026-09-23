@@ -74,6 +74,7 @@ pub const widget_types = [_]Entry{
     .{ .name = "Skeleton", .value = 69, .role = "custom", .text_from = null },
     .{ .name = "Chart", .value = 70, .role = "custom", .text_from = null },
     .{ .name = "CodeEditor", .value = 71, .role = "textbox", .text_from = "text" },
+    .{ .name = "WindowControls", .value = 72, .role = "group", .text_from = null },
 };
 
 pub fn widgetTypeOf(name: []const u8) ?u16 {
@@ -174,6 +175,7 @@ pub const host_widgets: []const []const u8 = &.{
     "skeleton",
     "chart",
     "codeeditor",
+    "windowcontrols",
 };
 
 /// Every "<intrinsic>.<command>" this host build dispatches (helloAck.hostCommands).
@@ -226,6 +228,8 @@ pub const host_commands: []const []const u8 = &.{
     "webview.uninstallExtension",
     "webview.setExtensionEnabled",
     "webview.focus",
+    "splitview.revealSidebar",
+    "splitview.concealSidebar",
     "searchinput.focus",
     "searchinput.activateLeadingIcon",
     "switch.focus",
