@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ND escape fixture</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; }
+      body { background: rgb(0, 96, 208); color: #fff; font: 14px system-ui; }
+      #grid { display: grid; grid-template-columns: repeat(4, 180px); gap: 6px; padding: 8px; }
+      #grid > * { display: block; height: 28px; line-height: 28px; font: 13px system-ui; text-align: center;
+        background: rgba(0,0,0,.35); color: #fff; border: 0; text-decoration: none; }
+      #quiet { position: absolute; left: 0; right: 0; bottom: 0; height: 45%; }
+    </style>
+  </head>
+  <body>
+    <div id="grid">
+      <button id="open-gesture">open gesture</button>
+      <button id="open-popup">open popup features</button>
+      <button id="open-blank-nav">open blank then nav</button>
+      <button id="open-noopener">open noopener</button>
+      <a id="blank" href="/page2.html" target="_blank">target blank</a>
+      <a id="plain" href="/page2.html">plain link</a>
+      <a id="mailto" href="mailto:nobody@example.invalid">mailto</a>
+      <a id="extproto" href="nd-unknown-proto://x">external protocol</a>
+      <button id="print">window.print</button>
+      <button id="pip-doc">document pip</button>
+      <button id="share">navigator.share</button>
+      <button id="geo">geolocation</button>
+      <button id="notif">notification</button>
+      <button id="fullscreen">fullscreen</button>
+      <button id="open-chrome">open chrome://settings</button>
+      <button id="beforeunload">arm beforeunload</button>
+      <img id="img" alt="nd" src="data:image/gif;base64,R0lGODlhEAAQAIAAAP8AAAAAACH5BAAAAAAALAAAAAAQABAAAAIdhI+py+0Po5y02ouz3rz7D4biSJbmiabqyrbuWwAAOw==" style="width:28px;height:28px" />
+      <a id="img-link" href="/page2.html"><img alt="nd link" style="width:28px;height:28px" src="data:image/gif;base64,R0lGODlhEAAQAIAAAP8AAAAAACH5BAAAAAAALAAAAAAQABAAAAIdhI+py+0Po5y02ouz3rz7D4biSJbmiabqyrbuWwAAOw==" /></a>
+      <input id="field-empty" value="" placeholder="empty field" />
+      <input id="field-text" value="some field text" />
+      <textarea id="misspelled" spellcheck="true" style="height:28px">teh recieve</textarea>
+      <video id="vid" muted controls src="/clip.wav"></video>
+      <audio id="aud" controls src="/clip.wav"></audio>
+      <p id="prose">selectable prose one two three four</p>
+      <form id="login" action="/page2.html" method="get" style="display:contents">
+        <input id="user" name="user" autocomplete="username" value="nd-user" />
+        <input id="pass" name="pass" type="password" autocomplete="current-password" value="nd-secret-1" />
+        <button id="login-submit" type="submit">sign in</button>
+      </form>
+    </div>
+    <div id="quiet"></div>
+    <script>
+      const on = (id, fn) => (document.getElementById(id).onclick = fn);
+      on("open-gesture", () => window.open("/page2.html"));
+      on("open-popup", () => window.open("/page2.html", "ndpop", "popup,width=320,height=240"));
+      on("open-blank-nav", () => {
+        const w = window.open("about:blank");
+        if (w) w.location = "/page2.html";
+      });
+      on("open-noopener", () => window.open("/page2.html", "_blank", "noopener"));
+      on("print", () => window.print());
+      on("pip-doc", async () => {
+        try {
+          await documentPictureInPicture.requestWindow({ width: 200, height: 120 });
+          document.documentElement.dataset.ndPip = "opened";
+        } catch (e) {
+          document.documentElement.dataset.ndPip = String(e);
+        }
+      });
+      on("share", async () => {
+        try {
+          await navigator.share({ title: "nd", url: location.href });
+          document.documentElement.dataset.ndShare = "shared";
+        } catch (e) {
+          document.documentElement.dataset.ndShare = String(e);
+        }
+      });
+      on("geo", () => navigator.geolocation.getCurrentPosition(() => {}, () => {}));
+      on("notif", () => Notification.requestPermission());
+      on("fullscreen", () => document.documentElement.requestFullscreen());
+      on("open-chrome", () => window.open("chrome://settings"));
+      on("beforeunload", () => {
+        addEventListener("beforeunload", (e) => {
+          e.preventDefault();
+          e.returnValue = "";
+        });
+        document.documentElement.dataset.ndBeforeunload = "armed";
+      });
+    </script>
+  </body>
+</html>

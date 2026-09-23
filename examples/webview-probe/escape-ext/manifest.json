@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "ND escape probe",
+  "version": "1.0",
+  "description": "Gate fixture: every extension API that asks Chromium for a window or a tab of its own.",
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html",
+  "action": { "default_title": "ND escape probe" }
+}
