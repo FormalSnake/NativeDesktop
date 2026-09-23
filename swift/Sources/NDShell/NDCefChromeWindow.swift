@@ -108,6 +108,9 @@ import Foundation
     /// The app window showing this browser.
     var hostWindow: NSWindow? { view?.window }
 
+    /// The webview this browser belongs to.
+    var webView: NDCefWebView? { view }
+
     /// The webview's rectangle in screen coordinates, or nil when its tab is
     /// hidden or it is off screen.
     var surfaceTargetFrame: NSRect? { targetScreenFrame() }
@@ -1008,17 +1011,92 @@ extension NDCefHandlerBox {
         }
     }
 
-    /// Every Chrome command that would open a window of its own, refused. The
-    /// numbers move between Chromium versions, so the set is resolved from
-    /// cef_command_ids.h names at load.
+    /// Every Chrome command a key chord or Chromium's own menus can run reaches
+    /// here, and only the ones that act on the page itself are let through.
+    /// Everything else would put Chromium's browser UI on screen (a window, a
+    /// tab strip, the app menu, a bubble anchored to a toolbar this browser does
+    /// not have), so it is refused, and the ones an app has a meaning for reach
+    /// it as `browserCommand` instead: cmd+shift+N from a page is the app's
+    /// private window or nothing, never Chromium's. The numbers move between
+    /// Chromium versions, so the sets are resolved from cef_command_ids.h names
+    /// at load.
     private func wireCommand() {
         guard let command else { return }
-        command.pointee.on_chrome_command = { _, browser, commandID, _ in
+        command.pointee.on_chrome_command = { selfPointer, browser, commandID, _ in
             nd_cef_ref_release(browser)
-            return ndCefBlockedChromeCommands.contains(commandID) ? 1 : 0
+            if ndCefAllowedChromeCommands.contains(commandID) { return 0 }
+            let routed = ndCefRoutedChromeCommands[commandID]
+            ndCefDeliver(selfPointer) { view in
+                view?.ndTrace("chrome command \(commandID) refused\(routed.map { " as browserCommand \($0)" } ?? "")")
+                if let routed { view?.emitText("browserCommand", routed) }
+            }
+            return 1
         }
+        // The app menu, its page action icons and toolbar buttons belong to
+        // chrome this browser never has: it is a view inside the app's window.
+        command.pointee.is_chrome_app_menu_item_visible = { _, browser, _ in
+            nd_cef_ref_release(browser)
+            return 0
+        }
+        command.pointee.is_chrome_page_action_icon_visible = { _, _ in 0 }
+        command.pointee.is_chrome_toolbar_button_visible = { _, _ in 0 }
     }
 }
+
+/// The Chrome commands that act on the page in this browser and nothing else.
+/// Every other command id is refused by `on_chrome_command`.
+let ndCefAllowedChromeCommands: Set<Int32> = ndCefCommandIDs([
+    "IDC_BACK", "IDC_FORWARD", "IDC_RELOAD", "IDC_RELOAD_BYPASSING_CACHE",
+    "IDC_RELOAD_CLEARING_CACHE", "IDC_STOP", "IDC_ZOOM_PLUS", "IDC_ZOOM_NORMAL",
+    "IDC_ZOOM_MINUS", "IDC_CUT", "IDC_COPY", "IDC_PASTE",
+    // Escape in a page: stops a load or closes the find bar, and nothing more.
+    "IDC_CLOSE_FIND_OR_STOP",
+])
+
+/// Refused Chrome commands an app has its own meaning for, by the name the app
+/// receives in `browserCommand`. The names are the framework's, identical on
+/// GTK (src/cef/engine.zig), so an app handles them once.
+let ndCefRoutedChromeCommands: [Int32: String] = {
+    let names: [(String, String)] = [
+        ("IDC_NEW_WINDOW", "newWindow"),
+        ("IDC_NEW_INCOGNITO_WINDOW", "newPrivateWindow"),
+        ("IDC_NEW_TAB", "newTab"),
+        ("IDC_NEW_TAB_TO_RIGHT", "newTab"),
+        ("IDC_RESTORE_TAB", "reopenClosedTab"),
+        ("IDC_CLOSE_TAB", "closeTab"),
+        ("IDC_CLOSE_WINDOW", "closeWindow"),
+        ("IDC_SELECT_NEXT_TAB", "nextTab"),
+        ("IDC_SELECT_PREVIOUS_TAB", "previousTab"),
+        ("IDC_SHOW_HISTORY", "history"),
+        ("IDC_SHOW_DOWNLOADS", "downloads"),
+        ("IDC_SHOW_BOOKMARK_MANAGER", "bookmarks"),
+        ("IDC_BOOKMARK_THIS_TAB", "bookmarkPage"),
+        ("IDC_OPTIONS", "settings"),
+        ("IDC_MANAGE_EXTENSIONS", "extensions"),
+        ("IDC_CLEAR_BROWSING_DATA", "clearBrowsingData"),
+        ("IDC_PRINT", "print"),
+        ("IDC_BASIC_PRINT", "print"),
+        ("IDC_SAVE_PAGE", "savePage"),
+        ("IDC_VIEW_SOURCE", "viewSource"),
+        ("IDC_OPEN_FILE", "openFile"),
+        ("IDC_FIND", "find"),
+        ("IDC_FIND_NEXT", "findNext"),
+        ("IDC_FIND_PREVIOUS", "findPrevious"),
+        ("IDC_FOCUS_LOCATION", "focusAddress"),
+        ("IDC_FOCUS_SEARCH", "focusAddress"),
+        ("IDC_FULLSCREEN", "fullscreen"),
+        ("IDC_HOME", "home"),
+        ("IDC_TASK_MANAGER", "taskManager"),
+        ("IDC_TASK_MANAGER_SHORTCUT", "taskManager"),
+        ("IDC_EXIT", "quit"),
+    ]
+    var map: [Int32: String] = [:]
+    for (idc, name) in names {
+        let id = idc.withCString { nd_cef_command_id($0) }
+        if id >= 0 { map[id] = name }
+    }
+    return map
+}()
 
 /// Every Chrome command that would open a window of its own, or answer with a
 /// bubble anchored to browser chrome this engine does not have. The context menu
@@ -1043,6 +1121,10 @@ let ndCefBlockedChromeCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE", "IDC_CONTENT_CONTEXT_VIEWPAGESOURCE",
     "IDC_CONTENT_CONTEXT_PRINT", "IDC_ROUTE_MEDIA", "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
     "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE", "IDC_CONTENT_CONTEXT_TRANSLATE",
+    // Opens chrome://password-manager, which is Chromium's own UI.
+    "IDC_CONTENT_CONTEXT_AUTOFILL_FALLBACK_PASSWORDS_IMPORT_PASSWORDS",
+    // "Use enhanced spell check" asks through a Chromium dialog of its own.
+    "IDC_CONTENT_CONTEXT_SPELLING_TOGGLE",
 ])
 
 /// AppKit screen coordinates to the DIP screen rectangle CEF's Views layer

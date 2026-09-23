@@ -537,6 +537,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `loadProgress` | `onLoadProgress` | value |
 | `loadFailed` | `onLoadFailed` | data |
 | `newWindow` | `onNewWindow` | text |
+| `browserCommand` | `onBrowserCommand` | text |
 | `downloadRequested` | `onDownloadRequested` | data |
 | `javaScriptResult` | `onJavaScriptResult` | data |
 | `scriptMessage` | `onScriptMessage` | data |

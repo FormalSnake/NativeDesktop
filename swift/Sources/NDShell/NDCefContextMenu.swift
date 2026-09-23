@@ -274,11 +274,12 @@ func ndCefMenuItemDenied(_ commandID: Int32) -> Bool {
 }
 
 /// The subset of the deny list that Chrome's own context menu offers for a link,
-/// and that the app gets as `newWindow` with the link's URL instead.
+/// and that the app gets as `newWindow` with the link's URL instead. "Open Link
+/// in Incognito Window" is not one of them: `newWindow` carries no privacy, so
+/// the app would open the link in an ordinary tab, and the item is dropped.
 let ndCefOpenLinkCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB", "IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW",
-    "IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD", "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE",
-    "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
+    "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE", "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
 ])
 
 /// `cef_id_for_command_id_name` answers -1 for a name this build does not know,
