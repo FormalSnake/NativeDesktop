@@ -563,7 +563,7 @@ const routes: Route[] = [
   menuItem("menu.openLinkNewWindow", "plain", /open link in new window/i, { windows: 0 }),
   menuItem("menu.openLinkIncognito", "plain", /incognito/i, NONE),
   menuItem("menu.openLinkOtherProfile", "plain", /open link as|in profile/i, NONE),
-  menuItem("menu.searchFor", "select:prose", /search .* for/i, { windows: 0 }),
+  menuItem("menu.searchFor", "select:field-text", /search .* for/i, { windows: 0, tabs: 1 }),
   menuItem("menu.page", [0.5, 0.8], null, NONE),
   menuItem("menu.saveAs", [0.5, 0.8], /save as/i, NATIVE),
   menuItem("menu.image", "img", null, NONE),
