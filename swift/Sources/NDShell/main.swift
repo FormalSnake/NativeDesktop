@@ -44,6 +44,13 @@ nonisolated(unsafe) var ndWindowToolbarManager: NDToolbarManager? = nil
 // closed window's content view can't be pinned alive by a stale target.
 nonisolated(unsafe) weak var ndSnapshotTargetContent: NSView? = nil
 
+// Helper modes, before anything touches NSApplication or the core.
+switch CommandLine.arguments.dropFirst().first {
+case "--nd-capture": exit(ndCaptureHelperMain(Array(CommandLine.arguments.dropFirst(2))))
+case "--nd-grant": exit(ndCaptureGrantMain())
+default: break
+}
+
 // A packaged bundle carries its engine and its launch-declared schemes in
 // nd-app.json; both have to be in the environment before the selection below
 // reads it, and before any CEF process registers a scheme.

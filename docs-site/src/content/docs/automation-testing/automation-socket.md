@@ -342,9 +342,13 @@ the live composited window via ScreenCaptureKit. Capture works even when the win
 cd tools/ndshot && ./build.sh
 ```
 
-Three subcommands under `.build/release/ndshot`: `doctor` (reports Screen Recording permission
-state; exit 0 granted, 2 not), `list` (enumerates capturable windows as JSON lines), and
-`capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]`. The first
+Three subcommands under `tools/ndshot/bin/ndshot`: `doctor` (reports Screen Recording permission
+state; exit 0 granted, 2 not; `--grant` writes the grants itself when SIP is disabled), `list`
+(enumerates capturable windows as JSON lines), and
+`capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>] [--region] [--no-focus]`.
+`--region` captures the area under the window with the app's sheets, menus and panels on top, as
+described below. The window is raised and made key through Accessibility before the capture unless
+`--no-focus` is given. The first
 invocation of `list`/`capture` triggers the system's one-time, headful Screen Recording permission
 prompt. Grant it once via System Settings → Privacy & Security → Screen Recording; the grant then
 sticks to this binary's path and ad hoc signature across future runs and rebuilds. A rebuild that
@@ -360,3 +364,34 @@ the in-process SCK rung (`ND_AUTOMATION_CAPTURE=screencapturekit`) flushes the s
 before capturing. An external `ndshot` capture of an automation host is current as of the last tick,
 well inside its own ~250ms frame-stability resample. Capturing a non-automation app has no such
 guarantee.
+
+## Composited captures from the host
+
+`ND_AUTOMATION_CAPTURE` in the host's environment switches the `screenshot` RPC to ScreenCaptureKit,
+so every harness call (`app.screenshot`, `locator.screenshot`, the MCP bridge) gets the real
+composited window with its title bar and Liquid Glass:
+
+- `screencapturekit` captures the window alone.
+- `region` captures the screen area under the window with everything the app stacks on top of it:
+  alert sheets, popovers, context menus and the open/save panel, which draws in a separate Apple
+  process. The area grows to cover an overlay that leaves the window, such as a panel wider than
+  its parent or a cascading submenu. Other apps' windows are never composited in, so a window in
+  front of the app cannot leak into the picture.
+
+```ts
+const app = await launchApp({ entry: "main.tsx", env: { ND_AUTOMATION_CAPTURE: "region" } });
+```
+
+Before each capture the host brings its window forward and makes it key, so the picture shows the
+focused state rather than dimmed chrome, and not the thumbnail Stage Manager shows for a background
+app. This takes focus from whatever the user is doing, which is why it only happens in these modes.
+
+The capture runs in a helper: the host binary re-spawned with `--nd-capture` and responsibility
+disclaimed. Screen Recording is therefore checked against the host binary itself, not against the
+terminal, agent or test runner that launched it, and one grant covers every launcher. Grant it once
+in System Settings, or with SIP disabled run the host binary with `--nd-grant`, which writes the
+grant into the system TCC database through `sudo sqlite3`, keyed to the signing identifier so it
+survives rebuilds. The grant follows the binary's real path, so a new install location needs it
+again. `ND_SNAPSHOT_SCK` lines on stderr say why a capture fell back to the offscreen ladder
+(`ND_SNAPSHOT_RUNG rung=1`), and `ND_SNAPSHOT_REGION` lists the windows a region capture composited.
+Gate: `scripts/mac/region-capture-drive.ts` prints `ND_REGION_CAPTURE_OK`.

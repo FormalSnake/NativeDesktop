@@ -9,6 +9,8 @@ struct CaptureOptions {
     var pid: pid_t?
     var titleSubstring: String?
     var windowID: CGWindowID?
+    var region = false
+    var focus = true
 }
 
 func parseCaptureArgs(_ args: [String]) -> CaptureOptions? {
@@ -45,6 +47,10 @@ func parseCaptureArgs(_ args: [String]) -> CaptureOptions? {
                 return nil
             }
             options.windowID = parsed
+        case "--region":
+            options.region = true
+        case "--no-focus":
+            options.focus = false
         default:
             eprint("ndshot: unknown option '\(arg)'")
             return nil
@@ -116,6 +122,17 @@ func cmdCapture(_ args: [String]) async -> Int32 {
         return 3
     }
 
+    // Unfocused, the capture shows dimmed chrome, and under Stage Manager a
+    // background app's window is only a thumbnail in the strip. The settle
+    // loop below waits out the animation back to full size.
+    if options.focus {
+        if focusWindow(pid: target.pid, windowID: target.windowID, frame: target.frame) {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        } else {
+            eprint("ndshot: could not focus the window; capturing it as it is")
+        }
+    }
+
     // A window mid-open-animation reports its animating (shrunken) frame —
     // observed ~102x104 for an 1100x700 window captured right after app
     // launch — and ScreenCaptureKit sizes the output from that snapshot.
@@ -131,6 +148,23 @@ func cmdCapture(_ args: [String]) async -> Int32 {
         settled = fresh.frame
         target = fresh
         if stable { break }
+    }
+
+    if options.region {
+        let image: CGImage
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            image = try await captureRegion(target: target.window, content: content)
+        } catch {
+            eprint("ndshot: region capture failed: \(error.localizedDescription)")
+            return 4
+        }
+        guard writePNG(image, to: outPath) else {
+            eprint("ndshot: failed to write PNG to \(outPath)")
+            return 4
+        }
+        print("\(outPath) \(image.width)x\(image.height)")
+        return 0
     }
 
     let filter = SCContentFilter(desktopIndependentWindow: target.window)

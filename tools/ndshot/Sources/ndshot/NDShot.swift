@@ -17,10 +17,14 @@ let usageText = """
            "width":…, "height":…, "onScreen":…}
           Exit 2 if Screen Recording access is missing.
 
-      capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]
+      capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>] [--region] [--no-focus]
           Capture the first matching window to a PNG file. --window-id wins
           outright; --pid and --title compose (both must match if both are
-          given); --title is a case-insensitive substring match.
+          given); --title is a case-insensitive substring match. --region
+          captures the screen area under the window instead, with the app's
+          context menus, sheets, popovers and open/save panels on top.
+          The window is brought forward and made key first, so the capture
+          shows its focused state; --no-focus captures it as it is.
           Exit codes: 0 success, 2 no permission, 3 no matching window,
           4 capture/write failure.
 

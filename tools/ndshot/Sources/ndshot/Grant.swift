@@ -1,8 +1,8 @@
 import Foundation
 import Security
 
-// `doctor --grant`: writes the Screen Recording row into the system TCC
-// database directly. That file is SIP-protected, so this only works with SIP
+// `doctor --grant`: writes the Screen Recording, Accessibility and PostEvent
+// rows into the system TCC database directly. That file is SIP-protected, so this only works with SIP
 // disabled, and it needs root (sudo prompts on the terminal if it has to).
 //
 // The row's csreq is `identifier "com.nativedesktop.ndshot"` rather than the
@@ -11,6 +11,7 @@ import Security
 
 private let tccDatabase = "/Library/Application Support/com.apple.TCC/TCC.db"
 private let signingIdentifier = "com.nativedesktop.ndshot"
+private let grantedServices = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"]
 
 private func sipDisabled() -> Bool {
     let process = Process()
@@ -44,16 +45,21 @@ func cmdGrant() async -> Int32 {
         eprint("ndshot: could not compile the code requirement")
         return 4
     }
-    let path = executablePath()
+    // TCC matches the real path, not a symlink to it.
+    let path = URL(fileURLWithPath: executablePath()).resolvingSymlinksInPath().path
     let client = path.replacingOccurrences(of: "'", with: "''")
     let now = Int(Date().timeIntervalSince1970)
-    let sql = """
+    // Screen Recording for capture, Accessibility for focusing the window
+    // before it, and PostEvent for driving the real pointer.
+    let sql = grantedServices.map { service in
+        """
         INSERT OR REPLACE INTO access
           (service, client, client_type, auth_value, auth_reason, auth_version, csreq,
            indirect_object_identifier, flags, last_modified, last_reminded)
-        VALUES ('kTCCServiceScreenCapture', '\(client)', 1, 2, 4, 1, X'\(csreq)',
+        VALUES ('\(service)', '\(client)', 1, 2, 4, 1, X'\(csreq)',
            'UNUSED', 0, \(now), \(now));
         """
+    }.joined(separator: "\n")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
     process.arguments = ["/usr/bin/sqlite3", tccDatabase, sql]
@@ -68,7 +74,7 @@ func cmdGrant() async -> Int32 {
         eprint("ndshot: writing \(tccDatabase) failed (exit \(process.terminationStatus))")
         return 4
     }
-    print("ndshot: Screen Recording granted to \(path)")
+    print("ndshot: Screen Recording, Accessibility and PostEvent granted to \(path)")
     print("  requirement: identifier \"\(signingIdentifier)\" (survives rebuilds)")
     return 0
 }

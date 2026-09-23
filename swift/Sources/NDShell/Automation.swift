@@ -640,8 +640,11 @@ private extension Double {
     // prompts for screen-recording TCC on an ungranted machine (the ladder
     // below keeps the stock-runner no-prompt contract by default). A denied
     // grant falls through to the ladder.
-    if ProcessInfo.processInfo.environment["ND_AUTOMATION_CAPTURE"] == "screencapturekit",
-       let win = targetWindow, ndSnapshotViaSCK(win, pngPath) {
+    // `region` widens it to the screen area under the window, so context
+    // menus, sheets and open/save panels land in the picture.
+    let captureMode = ProcessInfo.processInfo.environment["ND_AUTOMATION_CAPTURE"]
+    if captureMode == "screencapturekit" || captureMode == "region",
+       let win = targetWindow, ndSnapshotViaSCK(win, pngPath, region: captureMode == "region") {
         FileHandle.standardError.write("ND_SNAPSHOT_RUNG rung=0\n".data(using: .utf8)!)
         return true
     }

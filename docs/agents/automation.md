@@ -165,9 +165,13 @@ Three subcommands, all under `tools/ndshot/bin/ndshot`:
   codesign identity, to help spot a stale grant after a rebuild). Exit 0 if granted, 2 if not.
 - `ndshot list` enumerates every capturable window as one JSON object per line: `{"pid":…,
   "windowID":…, "app":"…", "title":"…", "x":…, "y":…, "width":…, "height":…, "onScreen":…}`.
-- `ndshot capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>]`
+- `ndshot capture --out <path.png> [--pid <pid>] [--title <substring>] [--window-id <id>] [--region] [--no-focus]`
   captures the first matching window to a full-resolution PNG. `--title` is a case-insensitive
   substring match; `--pid`/`--title` compose (both must match); `--window-id` wins outright.
+  `--region` captures the screen area under the window instead, with the app's context menus,
+  sheets, popovers and open/save panels composited on top. The window is raised and made key
+  first (Accessibility, falling back to SkyLight), so captures show the focused state;
+  `--no-focus` skips that.
 
 Example capturing the ND Notes window:
 
@@ -186,8 +190,8 @@ System Settings → Privacy & Security → Screen Recording once; the grant then
 path and ad hoc signature (see above) across future runs and rebuilds. Do not script around this or
 loop retrying it; `ndshot doctor` exists so an agent can check the state instead of guessing.
 
-**SIP disabled:** `ndshot doctor --grant` skips System Settings and writes the Screen Recording row
-into `/Library/Application Support/com.apple.TCC/TCC.db` itself, through `sudo sqlite3`. It refuses
+**SIP disabled:** `ndshot doctor --grant` skips System Settings and writes the Screen Recording,
+Accessibility and PostEvent rows into `/Library/Application Support/com.apple.TCC/TCC.db` itself, through `sudo sqlite3`. It refuses
 unless `csrutil status` reports disabled, since that file is SIP-protected. The row's code
 requirement is `identifier "com.nativedesktop.ndshot"` rather than the cdhash Settings stores for an
 ad hoc binary, so the grant survives rebuilds that change the compiled bytes. Run it once per
