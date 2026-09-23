@@ -51,7 +51,7 @@ The full prop set (the [Widget Reference](/components/widget-reference/) has the
 |---|---|
 | `label` | The item's text. |
 | `iconName` | A freedesktop name, the same vocabulary as `Button.iconName` (see [Icons](/native-platform/icons/)), resolved through the same SF Symbol map on macOS. Deliberately not rendered on GNOME, where popover menus have no item icons and the HIG discourages them. |
-| `accelerator` | Grammar `mod+…+key`. Mods are `primary`, `shift`, `alt`, `ctrl`, where `primary` is ⌘ on macOS and Ctrl on GNOME. The key is one printable character or a named key: `enter`, `escape`, `backspace`, `delete`, `space`, `tab`, `f1` through `f12`, `left`, `right`, `up`, `down`, `comma`, `period`. |
+| `accelerator` | Grammar `mod+…+key`. Mods are `primary`, `shift`, `alt`, `ctrl`, where `primary` is ⌘ on macOS and Ctrl on GNOME. The key is one printable character or a named key: `enter`, `escape`, `backspace`, `delete`, `space`, `tab`, `f1` through `f12`, `left`, `right`, `up`, `down`, `comma`, `period`, `plus`, `minus`, `bracketleft`, `bracketright`. |
 | `role` | `none` by default, plus a fixed vocabulary: `separator`, `about`, `settings`, `quit`, `undo`, `redo`, `cut`, `copy`, `paste`, `delete`, `selectAll`, `close`, `minimize`, `zoom`, `fullscreen`. |
 | `enabled` | createAndUpdate. A disabled item does not fire `onSelect` on either platform. |
 | `onSelect` | Fires the `selected` event. |

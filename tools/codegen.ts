@@ -928,6 +928,10 @@ fn ndAccelKeyName(k: []const u8) []const u8 {
     if (std.mem.eql(u8, k, "period")) return "period";
     if (std.mem.eql(u8, k, "[")) return "bracketleft";
     if (std.mem.eql(u8, k, "]")) return "bracketright";
+    if (std.mem.eql(u8, k, "plus")) return "plus";
+    if (std.mem.eql(u8, k, "minus")) return "minus";
+    if (std.mem.eql(u8, k, "bracketleft")) return "bracketleft";
+    if (std.mem.eql(u8, k, "bracketright")) return "bracketright";
     return k; // single printable char (and f1..f12) pass through verbatim
 }
 
