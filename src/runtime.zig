@@ -138,6 +138,9 @@ pub const Runtime = struct {
     // Set once the reader loop has painted the overlay for the current
     // child's exit, so a stalled/aborted handshake doesn't paint twice.
     overlay_shown: bool = false,
+    // Set by `stop` before it kills the child, so the disconnect it causes is
+    // reported as the host's own shutdown rather than as the child dying.
+    stopping: std.atomic.Value(bool) = .init(false),
 
     var singleton: ?*Runtime = null;
     /// Last app.activate/app.deactivate transition, recorded even before the
@@ -542,13 +545,44 @@ pub const Runtime = struct {
         // must find a null stream, never the dead descriptor.
         self.retireStream(stream);
         self.discardQueuedFrames();
-        marker.print("ND_CHILD_EXITED\n", .{});
+        var why_buf: [64]u8 = undefined;
+        marker.print("ND_CHILD_EXITED {s}\n", .{self.exitReason(&why_buf)});
         if (self.overlay_shown) return; // already painted for this child's exit
         const msg = self.last_error_message orelse "Runtime disconnected";
         const OverlayJob = struct { rt: *Runtime, msg: []const u8 };
         const job = self.gpa.create(OverlayJob) catch return;
         job.* = .{ .rt = self, .msg = self.gpa.dupe(u8, msg) catch msg };
         abi_backend.vtable.marshal_async(abi_backend.ctx, &showOverlayOnUi, job);
+    }
+
+    /// `reason=... code=...` for the ND_CHILD_EXITED marker. A child that
+    /// was not killed here is reaped so its status can be read: the socket
+    /// closes a moment before the process is gone, so the reap polls briefly,
+    /// and a child that closed the socket but is still running after that is
+    /// reported as such rather than waited on.
+    fn exitReason(self: *Runtime, buf: []u8) []const u8 {
+        if (self.stopping.load(.acquire)) return "reason=hostShutdown code=none";
+        const pid = self.child.id orelse return "reason=killed code=none";
+        var tries: u32 = 0;
+        while (tries < 40) : (tries += 1) {
+            var status: c_int = 0;
+            const got = std.c.waitpid(pid, &status, std.c.W.NOHANG);
+            if (got < 0) return "reason=disconnected code=unknown";
+            if (got == pid) {
+                // Reaped here, so kill() and wait() must see no child left.
+                self.child.id = null;
+                const st: u32 = @bitCast(status);
+                if (std.c.W.IFEXITED(st)) {
+                    return std.fmt.bufPrint(buf, "reason=exited code={d}", .{std.c.W.EXITSTATUS(st)}) catch "reason=exited code=unknown";
+                }
+                if (std.c.W.IFSIGNALED(st)) {
+                    return std.fmt.bufPrint(buf, "reason=signal code={d}", .{@intFromEnum(std.c.W.TERMSIG(st))}) catch "reason=signal code=unknown";
+                }
+                return "reason=exited code=unknown";
+            }
+            std.Io.sleep(self.io, .fromMilliseconds(50), .awake) catch {};
+        }
+        return "reason=disconnected code=running";
     }
 
     fn showOverlayOnUi(data: ?*anyopaque) callconv(.c) void {
@@ -584,6 +618,7 @@ pub const Runtime = struct {
     /// down. No-op before `start` (no child yet).
     pub fn stop() void {
         if (singleton) |self| {
+            self.stopping.store(true, .release);
             self.overlay_shown = true;
             self.child.kill(self.io);
         }

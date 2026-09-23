@@ -50,7 +50,7 @@ grep for in the host's stderr (all `ND_*` markers print to stderr; capture `2>&1
 | `ND_CHILD_CONNECTED` | the Bun child connected over the NDP socket | landed |
 | `ND_COMMIT_APPLIED commitId=…` | a CommitBatch was applied to the retained tree | landed |
 | `ND_AUTOMATION_LISTENING path=…` | the automation RPC socket is ready | landed |
-| `ND_CHILD_EXITED` | the child disconnected (crash, `kill -9`, or clean exit) | landed |
+| `ND_CHILD_EXITED reason=… code=…` | the child disconnected: `reason=hostShutdown` (the host stopped it, e.g. the last window closed), `exited code=<status>`, `signal code=<signum>`, `killed`, or `disconnected code=running` | landed |
 | `ND_OVERLAY_SHOWN dev=…` | the host painted the crash overlay | landed |
 | `ND_GC_SWEEP gen=… removed=…` | generation GC swept orphaned widgets after a reload | landed |
 | `ND_RUNTIME_ERROR_REPORTED …` | the runtime reported a fatal error before dying | landed |
