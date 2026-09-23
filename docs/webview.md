@@ -321,6 +321,11 @@ selected text only on macOS; WebKitGTK's hit test reports `hasSelection` alone.
 (`executeJavaScript(node, code, world?)`). JS exceptions reject with the real
 message, for example `Error: boom`.
 
+Every promise helper (`executeJavaScript`, `getCookies`, `saveSession`, the
+extension calls) rejects when its view is removed before the answer arrives,
+and rejects at once when called on a view that is already gone, so a keyed
+remount never leaves an `await` hanging on a view that will never answer.
+
 `addUserScript` is a keyed registry: re-adding an `id` replaces it. GTK removes
 a script by identity through `WebKitUserContentManager`; WKUserContentController
 can only clear everything, so the AppKit side replays the surviving set on each
@@ -394,6 +399,11 @@ in the page, tabs into it, or the app runs the view's `focus` command.
 gained the keyboard and `{ checked: false }` when it lost it, so an app can show
 a caret, dim a toolbar, or route its own shortcuts on the same state the engine
 is acting on.
+
+A view smaller than 32 px on either side never takes the keyboard, whatever the
+page or the user does. An app that keeps a working but invisible browser, like
+a 2x2 view on `chrome://extensions` that reads the extension registry, relies on
+this: otherwise that view and the visible tab take focus from each other.
 
 Adding a new webview *event* needs one-line routing entries in `tools/codegen.ts`
 (`SIGNALS` and `SWIFT_SIGNALS`) plus the schema. New *commands* are schema-only:
