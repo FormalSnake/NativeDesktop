@@ -94,6 +94,7 @@ private let ndSFSymbolMap: [String: String] = [
     "camera-photo": "camera",
     "image-x-generic": "photo",
     "text-x-generic": "doc.text",
+    "video-x-generic": "play.rectangle",
     "drive-harddisk": "internaldrive",
     "media-eject": "eject",
     "input-keyboard": "keyboard",
