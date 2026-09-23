@@ -174,6 +174,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
+
 ## TextArea (`<textarea>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -198,6 +200,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 `minContentHeight` is a floor, not a fixed height. Both backends wrap the text view in a scroller and hold it at least that tall, so an empty `<textarea>` still occupies the default instead of collapsing to nothing and failing the automation actionability check. Pass `0` to opt out. See [Automation Socket](/automation-testing/automation-socket/).
 
@@ -750,6 +754,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 ## SourceList (`<sourcelist>`)
 
@@ -1955,6 +1961,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 ## WindowControls (`<windowcontrols>`)
 

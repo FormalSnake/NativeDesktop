@@ -159,6 +159,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
+
 ## TextArea (`<textarea>`)
 
 Automation role: `textbox`. Text source: `text`. Children: none.
@@ -183,6 +185,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 ## Checkbox (`<checkbox>`)
 
@@ -709,6 +713,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 ## SourceList (`<sourcelist>`)
 
@@ -1906,6 +1912,8 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dropped` | `onDropped` | dragPoint |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
+
+`sendCommand(ref.current, "focus", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.
 
 ## WindowControls (`<windowcontrols>`)
 

@@ -447,7 +447,9 @@ func ndViewIsEnabled(_ view: NSView) -> Bool { !ndDisabledViews.contains(ObjectI
 /// view that can actually take it. A hosted leaf also bumps its SwiftUI
 /// `@FocusState` token (SwiftUILeaves.swift) — AppKit's first-responder
 /// machinery has no way to reach into a pure-SwiftUI control on its own.
-@MainActor func ndFocusView(_ view: NSView) {
+/// `select` selects a text field's contents through its field editor, which
+/// only exists once the field is first responder.
+@MainActor func ndFocusView(_ view: NSView, select: Bool = false) {
     if ndHostedLeafFocus(view) { return }
     var target = view
     if let number = view as? NDNumberInputView {
@@ -457,6 +459,14 @@ func ndViewIsEnabled(_ view: NSView) -> Bool { !ndDisabledViews.contains(ObjectI
     }
     guard let window = target.window ?? ndWindow(for: target) else { return }
     window.makeFirstResponder(target)
+    if select, let field = target as? NSTextField { field.currentEditor()?.selectAll(nil) }
+}
+
+/// Whether a `focus` command's argument asks for `{ select: true }`.
+func ndFocusSelects(_ argJson: String) -> Bool {
+    guard let data = argJson.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+    return obj["select"] as? Bool ?? false
 }
 
 /// TabView's selection event. NSTabViewController is its own NSTabView
@@ -2521,7 +2531,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
     // `focus` is first-responder status on the view's window, so one arm
     // serves every kind that declares it (see UNIVERSAL_COMMANDS in
     // tools/codegen.ts).
-    if command == "focus" && kind != "Terminal" { return ndFocusView(view) }
+    if command == "focus" && kind != "Terminal" { return ndFocusView(view, select: ndFocusSelects(argJson)) }
     if kind == "Window" {
         if command == "showTabOverview" || command == "present" { ndWindowTabsCommand(view, command, argJson); return }
         ndWindowCommand(view, command, argJson)

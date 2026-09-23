@@ -2687,14 +2687,20 @@ fn ndAvatarSetImage(av: *adw.Avatar, path: []const u8, dupeZ: *const fn ([]const
 // ZIG_WAVE1. ----
 const ZIG_WAVE3 = `/// The universal \`focus\` command. TextArea and the list-shaped widgets hand
 /// back a GtkScrolledWindow frame, so the focusable widget is the view
-/// inside it, not the frame.
-fn ndGrabFocus(widget: *gtk.Widget) void {
+/// inside it, not the frame. \`{ select: true }\` selects a text field's
+/// contents: GtkSearchEntry grabs focus without selecting, and whether a
+/// GtkEntry does is a desktop setting, so it is done here rather than left to
+/// either.
+fn ndGrabFocus(widget: *gtk.Widget, arg: ?std.json.Value) void {
     if (!gobject.ext.isA(widget, gtk.Widget)) return; // menu node: nothing to focus
     var target = widget;
     if (gobject.ext.isA(widget, gtk.ScrolledWindow)) {
         if (scrolledWindowInner(@ptrCast(@alignCast(widget)))) |inner| target = inner;
     }
     _ = gtk.Widget.grabFocus(target);
+    if (propBool(arg, "select") orelse false) {
+        if (gobject.ext.isA(target, gtk.Editable)) gtk.Editable.selectRegion(@ptrCast(@alignCast(target)), 0, -1);
+    }
 }
 
 /// TabView's tracked handle is the switcher+stack box, so the page signal
@@ -3744,7 +3750,7 @@ function genZigCommands(s: Schema): string {
   out += "pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8, arg: ?std.json.Value) void {\n";
   out += "    // `focus` is a GtkWidget operation, so one arm serves every kind that\n";
   out += "    // declares it (see UNIVERSAL_COMMANDS in tools/codegen.ts).\n";
-  out += `    if (std.mem.eql(u8, command, "focus")${universalCommandGuard("zig")}) return ndGrabFocus(widget);\n`;
+  out += `    if (std.mem.eql(u8, command, "focus")${universalCommandGuard("zig")}) return ndGrabFocus(widget, arg);\n`;
   const withCommands = s.widgets.filter((w) => ownCommands(w).length > 0);
   if (withCommands.length === 0) {
     out += "    _ = arg;\n";
@@ -6929,7 +6935,9 @@ func ndViewIsEnabled(_ view: NSView) -> Bool { !ndDisabledViews.contains(ObjectI
 /// view that can actually take it. A hosted leaf also bumps its SwiftUI
 /// \`@FocusState\` token (SwiftUILeaves.swift) — AppKit's first-responder
 /// machinery has no way to reach into a pure-SwiftUI control on its own.
-@MainActor func ndFocusView(_ view: NSView) {
+/// \`select\` selects a text field's contents through its field editor, which
+/// only exists once the field is first responder.
+@MainActor func ndFocusView(_ view: NSView, select: Bool = false) {
     if ndHostedLeafFocus(view) { return }
     var target = view
     if let number = view as? NDNumberInputView {
@@ -6939,6 +6947,14 @@ func ndViewIsEnabled(_ view: NSView) -> Bool { !ndDisabledViews.contains(ObjectI
     }
     guard let window = target.window ?? ndWindow(for: target) else { return }
     window.makeFirstResponder(target)
+    if select, let field = target as? NSTextField { field.currentEditor()?.selectAll(nil) }
+}
+
+/// Whether a \`focus\` command's argument asks for \`{ select: true }\`.
+func ndFocusSelects(_ argJson: String) -> Bool {
+    guard let data = argJson.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+    return obj["select"] as? Bool ?? false
 }
 
 /// TabView's selection event. NSTabViewController is its own NSTabView
@@ -9359,7 +9375,7 @@ function genSwiftCommands(s: Schema): string {
   out += "    // `focus` is first-responder status on the view's window, so one arm\n";
   out += "    // serves every kind that declares it (see UNIVERSAL_COMMANDS in\n";
   out += "    // tools/codegen.ts).\n";
-  out += `    if command == "focus"${universalCommandGuard("swift")} { return ndFocusView(view) }\n`;
+  out += `    if command == "focus"${universalCommandGuard("swift")} { return ndFocusView(view, select: ndFocusSelects(argJson)) }\n`;
   const withCommands = s.widgets.filter((w) => ownCommands(w).length > 0);
   let first = true;
   for (const w of withCommands) {
@@ -10130,6 +10146,9 @@ function genWidgetSections(s: Schema, notes: Record<string, string>): string {
     }
     if ((w.commands ?? []).length) {
       out += `Imperative commands (via \`sendCommand(ref.current, …)\` from \`@nativedesktop/react\`): ${w.commands!.map((c) => "`" + c + "`").join(", ")}.\n\n`;
+      if (w.commands!.includes("focus") && w.automation?.role === "textbox") {
+        out += "`sendCommand(ref.current, \"focus\", { select: true })` also selects the field's contents, the way a browser's Ctrl+L does.\n\n";
+      }
     }
     if (w.container?.attachedProps?.length) {
       out += "Attached props (set on children):\n\n";
