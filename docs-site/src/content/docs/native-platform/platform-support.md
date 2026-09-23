@@ -82,7 +82,11 @@ CoreAnimation when composited on screen, so an in-process offscreen render can r
 `TextInput`/`TextArea` content. `tools/ndshot/`, a small Swift ScreenCaptureKit tool with its own
 stable code-signing identity, captures the live composited window instead. See
 [Screenshots on macOS (ndshot)](/automation-testing/automation-socket/#screenshots-on-macos-ndshot)
-for the one-time Screen Recording grant flow.
+for the one-time Screen Recording grant flow. The host can do the same itself under
+`ND_AUTOMATION_CAPTURE=region`, including sheets, menus and panels
+([Composited captures](/automation-testing/automation-socket/#composited-captures-from-the-host)),
+and `app.cursor` drives the real system cursor. Both are macOS only; on Linux the semantic RPCs and
+the offscreen render remain the path.
 
 ## Windows: designed, not built
 

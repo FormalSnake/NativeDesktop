@@ -190,6 +190,24 @@ state) maps its end point straight to a value through the same path
 `docs-site/src/content/docs/automation-testing/locators.md`,
 `docs-site/src/content/docs/core-concepts/layout.md`.
 
+**Composited captures + real cursor (macOS):** `ND_AUTOMATION_CAPTURE=region`
+(or `screencapturekit` for the window alone) makes the `screenshot` RPC
+capture through ScreenCaptureKit, composited with the app's sheets, context
+menus and open/save panels, after bringing the window forward and making it
+key (SkyLight front-process plus the make-key event records, and pumping
+AppKit-defined events so the activation lands; plain `NSApp.activate` is
+refused for a background-launched host). The capture runs in the host binary
+re-spawned as `--nd-capture` with responsibility disclaimed, and
+`@nativedesktop/test`'s `app.cursor` talks to `--nd-input`, a line-JSON helper
+posting HID-level CGEvents, so TCC checks the host binary itself, never the
+launcher. `<host> --nd-grant` (SIP off) writes Screen Recording, Accessibility
+and PostEvent rows into the system TCC.db keyed to the signing identifier; TCC
+matches the real path, and SwiftPM's `.build/release` is a symlink. The MCP
+bridge launches with `region` by default. `tools/ndshot` mirrors all of it
+(`capture --region`, focus via Accessibility, `doctor --grant`). Gates:
+`scripts/mac/region-capture-drive.ts` -> `ND_REGION_CAPTURE_OK`,
+`scripts/mac/cursor-drive.ts` -> `ND_CURSOR_OK`.
+
 **MCP bridge** (`packages/mcp/`): three tools instead of one per RPC.
 `execute({code})` runs `@nativedesktop/test` code with `{app, state, expect,
 launchApp, snapshot}` in scope and returns its value the same shape a drive

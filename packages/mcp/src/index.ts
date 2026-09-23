@@ -50,7 +50,13 @@ async function open(): Promise<App> {
   if (!options.entry) {
     throw new Error("no app to drive: set ND_MCP_ENTRY (or ND_AUTOMATION_SOCKET to attach to a running host)");
   }
-  return launchApp({ entry: options.entry, backend: options.backend });
+  // An agent judges the app from screenshots, so on macOS they show what a
+  // user would see: the focused, composited window with its sheets, menus and
+  // panels. An ungranted host falls back to the offscreen render.
+  const env = process.platform === "darwin"
+    ? { ND_AUTOMATION_CAPTURE: process.env.ND_AUTOMATION_CAPTURE ?? "region" }
+    : undefined;
+  return launchApp({ entry: options.entry, backend: options.backend, env });
 }
 
 async function currentApp(): Promise<App> {
@@ -155,7 +161,7 @@ server.registerTool(
   "execute",
   {
     description:
-      "Control the user's NativeDesktop app via @nativedesktop/test code snippets. Prefer single-line code with semicolons between statements.",
+      "Control the user's NativeDesktop app via @nativedesktop/test code snippets. Prefer single-line code with semicolons between statements. On macOS, act the way a user would: app.cursor.click/rightClick/dblclick/hover/drag/scroll(locator or {x,y}) move the real cursor, so hover states, native context menus and drags behave as they do for a person; locator.click() is a semantic shortcut that skips hit testing. app.screenshot(path) captures the focused window with its sheets, menus and open panels, so check it after every visible change.",
     inputSchema: {
       code: z
         .string()

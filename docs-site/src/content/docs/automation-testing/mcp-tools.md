@@ -59,6 +59,23 @@ A dead host answers `{error, stderrTail, hint: "call reset"}`.
 Closes the app, launches it again, and clears `state`. Use it after a crash, a wedged dialog, or to
 start a scenario from a known screen. Answers the new `{mode, pid, socket, entry}`.
 
+## What an agent sees and does on macOS
+
+The server launches the host with `ND_AUTOMATION_CAPTURE=region` unless the variable is already set,
+so `app.screenshot(path)` shows the focused window as the window server composites it, with alert
+sheets, open/save panels and context menus included, rather than an offscreen render. The
+`execute` description steers agents to [`app.cursor`](/automation-testing/locators/#actions-and-readers)
+for clicks, hover, right-clicks and drags: those move the real cursor, so a menu that only opens for
+real input, or a hover state, shows up the same way it does for a person. `locator.click()` stays
+available as the semantic shortcut. A host binary without the Screen Recording grant falls back to
+the offscreen render, and `app.cursor` fails with the binary's path until it has Accessibility; see
+[Composited captures](/automation-testing/automation-socket/#composited-captures-from-the-host) for
+the one-time grant.
+
+```js
+await app.cursor.rightClick(app.getByTestId("query-input")); await app.screenshot("/tmp/menu.png")
+```
+
 ## Attaching instead of spawning
 
 With `ND_AUTOMATION_SOCKET` set, the server attaches to a host somebody else launched, and `reset`

@@ -31,6 +31,15 @@ Six more synthesize real input (`pointer`, `drag`, `keys`, `doubleClick`, `right
 posting `NSEvent`s through the app's own queue. Those are macOS-only: GTK4 removed
 app-constructible events, so on Linux they answer `-32003` and you use the semantic methods instead.
 
+Those `NSEvent`s reach the app's own queue but not the window server, so AppKit's hover tracking,
+native context menus and drag sessions only partly believe them. For a test that must prove what a
+user sees, `@nativedesktop/test`'s [`app.cursor`](/automation-testing/locators/#actions-and-readers)
+moves the real system cursor instead, through HID-level events a physical mouse would produce. Its
+counterpart on the output side is `ND_AUTOMATION_CAPTURE=region`, which makes `screenshot` capture
+the focused, composited window together with its sheets, menus and open panels
+([Composited captures](/automation-testing/automation-socket/#composited-captures-from-the-host)).
+Both need the host binary granted once (`<host> --nd-grant` with SIP disabled, or System Settings).
+
 These plus `resolve`, `windows`, `focus`, `scrollIntoView`, `snapshotNode`, `setWindowFrame`,
 and the webview-only `webviewInfo`/`webviewEval` round out the socket; method-by-method detail,
 including error codes, lives on the [Automation Socket](/automation-testing/automation-socket/) page.
