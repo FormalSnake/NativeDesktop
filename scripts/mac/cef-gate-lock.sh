@@ -42,6 +42,14 @@ cef_gate_head() {
 
 cef_gate_lock() {
   local waited=0 holder pid head
+  # A gate started by a run that already holds the lock (a wrapper that locks,
+  # then calls a script that locks too) goes straight on instead of queueing
+  # behind its own parent until its timeout. It never releases the parent's lock.
+  if [ -n "${ND_CEF_GATE_HOLDER:-}" ] && kill -0 "$ND_CEF_GATE_HOLDER" 2>/dev/null &&
+    [ "$(cut -d' ' -f1 "$CEF_GATE_LOCK/owner" 2>/dev/null)" = "$ND_CEF_GATE_HOLDER" ]; then
+    RUN_DIR="$(mktemp -d /tmp/nd-mac-cef-gate-run.XXXXXX)"
+    return 0
+  fi
   mkdir -p "$CEF_GATE_QUEUE" 2>/dev/null || true
   CEF_GATE_TICKET="$(cef_gate_now_ns)-$$"
   mkdir "$CEF_GATE_QUEUE/$CEF_GATE_TICKET"
@@ -74,6 +82,7 @@ cef_gate_lock() {
   CEF_GATE_TICKET=""
   echo "$$ $(pwd) $0 since $(date +%H:%M:%S)" >"$CEF_GATE_LOCK/owner"
   CEF_GATE_HELD=1
+  export ND_CEF_GATE_HOLDER=$$
   RUN_DIR="$(mktemp -d /tmp/nd-mac-cef-gate-run.XXXXXX)"
   # A short sleep per turn, not one long one: whatever captures this run's
   # output waits for every process holding it, this one included.
