@@ -61,6 +61,12 @@ final class EventDispatcher: NSObject {
             if name == "activate" {
                 field.target = self
                 field.action = #selector(fireText(_:))
+                // `activate` is Return only. A text field sends its action when
+                // editing ends too (focus leaving it), and a search field sends
+                // it as the text changes; either would commit whatever the
+                // field holds on a mere blur.
+                field.cell?.sendsActionOnEndEditing = false
+                (field.cell as? NSSearchFieldCell)?.sendsWholeSearchString = true
             }
             return
         }
