@@ -549,11 +549,30 @@ private func ndKeyEquivalent(_ k: String) -> String {
     case "right": return String(UnicodeScalar(0xF703)!)
     case "comma": return ","
     case "period": return "."
+    // An unmapped name would become the key equivalent as written, and AppKit
+    // matches a multi-character key equivalent on its first character: "plus"
+    // turned cmd+P into Zoom In and "minus" cmd+M into Zoom Out.
+    case "plus": return "+"
+    case "minus": return "-"
+    case "equal": return "="
+    case "slash": return "/"
+    case "backslash": return "\\"
+    case "semicolon": return ";"
+    case "apostrophe": return "'"
+    case "bracketleft": return "["
+    case "bracketright": return "]"
+    case "grave": return "`"
+    case "home": return String(UnicodeScalar(0xF729)!)
+    case "end": return String(UnicodeScalar(0xF72B)!)
+    case "pageup": return String(UnicodeScalar(0xF72C)!)
+    case "pagedown": return String(UnicodeScalar(0xF72D)!)
     default:
         if k.count >= 2, k.first == "f", let n = Int(k.dropFirst()), n >= 1, n <= 12 {
             return String(UnicodeScalar(0xF704 + (n - 1))!)  // NSF1..NSF12FunctionKey
         }
-        return k  // single printable char
+        // Anything else longer than one character is a name this table does
+        // not know, and no key equivalent at all beats a wrong one.
+        return k.count == 1 ? k : ""
     }
 }
 
