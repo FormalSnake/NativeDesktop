@@ -276,7 +276,9 @@ export function capture(name: string, windowNumber?: number): string {
   const args = [NDSHOT, "capture", "--out", out];
   if (windowNumber !== undefined) args.push("--window-id", String(windowNumber));
   else args.push("--pid", String(HOST_PID));
-  const shot = Bun.spawnSync(args);
+  // ndshot can hang inside ScreenCaptureKit; a leg that waits on it forever
+  // takes the whole run and the machine's gate lock with it.
+  const shot = Bun.spawnSync(args, { timeout: 30_000 });
   if (shot.exitCode === 0) return out;
   // ndshot's exit 2 is "no Screen Recording access for this binary", which is
   // the machine owner's to grant. `screencapture -l` is the one other path to a

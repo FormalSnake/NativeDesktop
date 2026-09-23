@@ -54,28 +54,7 @@ export interface Box {
  * toolbar handling runs.
  */
 export async function clickDevToolsClose(frontend: Session): Promise<Box | null> {
-  const box = await frontend.eval<Box | null>(`(() => {
-    let hit = null;
-    const walk = (root) => {
-      for (const el of root.querySelectorAll('*')) {
-        if (!hit && el.classList && el.classList.contains('close-devtools')) hit = el;
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    };
-    walk(document);
-    if (!hit) return null;
-    const r = hit.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return null;
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
-  })()`);
-  if (!box) return null;
-  const at = { x: box.x + box.width / 2, y: box.y + box.height / 2, button: "left", clickCount: 1 };
-  // `buttons` is the mask of what is held down, and Chromium's event router
-  // drops a press that claims no button is.
-  await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...at, button: "none", buttons: 0 });
-  await frontend.send("Input.dispatchMouseEvent", { type: "mousePressed", ...at, buttons: 1 });
-  await frontend.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, buttons: 0 });
-  return box;
+  return await clickIn(frontend, DEVTOOLS_CLOSE);
 }
 
 type Handler = (params: Record<string, unknown>) => void;
@@ -202,24 +181,72 @@ export async function inspectedPageBounds(
   return JSON.parse(raw) as { bounds: Box | null; width: number; height: number };
 }
 
+/** The frontend's device-toolbar toggle, the phone icon, as a `frontendBox` finder. */
+export const DEVICE_TOOLBAR = `(() => {
+  let hit = null;
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      const label = el.getAttribute && el.getAttribute('aria-label');
+      if (!hit && label && /device toolbar/i.test(label)) hit = el;
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  };
+  walk(document);
+  return hit;
+})()`;
+
+/** The docked frontend's own splitter between the page and its panels. */
+export const FRONTEND_SPLITTER = `(() => {
+  let hit = null;
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      const cls = typeof el.className === 'string' ? el.className : '';
+      if (!hit && /resizer/.test(cls)) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.width < 20 && r.height > innerHeight - 4) hit = el;
+      }
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  };
+  walk(document);
+  return hit;
+})()`;
+
+/** The docked inspector's own close button. */
+export const DEVTOOLS_CLOSE = `(() => {
+  let hit = null;
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (!hit && el.classList && el.classList.contains('close-devtools')) hit = el;
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  };
+  walk(document);
+  return hit;
+})()`;
+
 /**
- * Clicks the frontend's device-toolbar toggle, the phone icon. Device mode is
- * the case the hole stops being a column and becomes the device's own
- * rectangle, which is where Chrome draws the phone.
+ * Where the element `finder` answers with sits in the frontend's viewport, in
+ * CSS pixels, or null when there is none or it has no box. A docked frontend
+ * fills the view, so this plus the view's origin is where a real pointer goes.
+ */
+export async function frontendBox(frontend: Session, finder: string): Promise<Box | null> {
+  return await frontend.eval<Box | null>(`(() => {
+    const el = ${finder};
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+}
+
+/**
+ * Clicks the frontend's device-toolbar toggle. Device mode is the case the
+ * hole stops being a column and becomes the device's own rectangle, which is
+ * where Chrome draws the phone.
  */
 export async function clickDeviceToolbar(frontend: Session): Promise<Box | null> {
-  return await clickIn(frontend, `(() => {
-    let hit = null;
-    const walk = (root) => {
-      for (const el of root.querySelectorAll('*')) {
-        const label = el.getAttribute && el.getAttribute('aria-label');
-        if (!hit && label && /device toolbar/i.test(label)) hit = el;
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    };
-    walk(document);
-    return hit;
-  })()`);
+  return await clickIn(frontend, DEVICE_TOOLBAR);
 }
 
 /**
@@ -227,23 +254,7 @@ export async function clickDeviceToolbar(frontend: Session): Promise<Box | null>
  * the inspector wider: the hole moves with it and the page has to follow.
  */
 export async function dragFrontendSplitter(frontend: Session, dx: number): Promise<boolean> {
-  const box = await frontend.eval<Box | null>(`(() => {
-    let hit = null;
-    const walk = (root) => {
-      for (const el of root.querySelectorAll('*')) {
-        const cls = typeof el.className === 'string' ? el.className : '';
-        if (!hit && /resizer/.test(cls)) {
-          const r = el.getBoundingClientRect();
-          if (r.width > 0 && r.width < 20 && r.height > innerHeight - 4) hit = el;
-        }
-        if (el.shadowRoot) walk(el.shadowRoot);
-      }
-    };
-    walk(document);
-    if (!hit) return null;
-    const r = hit.getBoundingClientRect();
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
-  })()`);
+  const box = await frontendBox(frontend, FRONTEND_SPLITTER);
   if (!box) return false;
   const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...from, button: "none", buttons: 0 });
@@ -263,13 +274,7 @@ export async function dragFrontendSplitter(frontend: Session, dx: number): Promi
 
 /// A real mouse click on whatever `finder` answers with, in the frontend.
 async function clickIn(frontend: Session, finder: string): Promise<Box | null> {
-  const box = await frontend.eval<Box | null>(`(() => {
-    const el = ${finder};
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return null;
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
-  })()`);
+  const box = await frontendBox(frontend, finder);
   if (!box) return null;
   const at = { x: box.x + box.width / 2, y: box.y + box.height / 2, button: "left", clickCount: 1 };
   await frontend.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...at, button: "none", buttons: 0 });

@@ -14,10 +14,11 @@
 import { connectApp, type AttachedApp, type LocatorFactory } from "@nativedesktop/test";
 
 import {
+  DEVICE_TOOLBAR,
+  DEVTOOLS_CLOSE,
+  FRONTEND_SPLITTER,
   Session,
-  clickDevToolsClose,
-  clickDeviceToolbar,
-  dragFrontendSplitter,
+  frontendBox,
   inspectedPageBounds,
   targets,
   waitForTarget,
@@ -434,12 +435,56 @@ async function onFrontend<T>(body: (session: Session) => Promise<T>): Promise<T>
   }
 }
 
+/// Where a control of the docked frontend is, as a point in the window: the
+/// frontend fills the page's view, so its viewport origin is the view's.
+async function frontendPoint(page: string, finder: string): Promise<{ x: number; y: number } | null> {
+  const box = await onFrontend((session) => frontendBox(session, finder));
+  if (box === null) return null;
+  const view = await viewBox(page);
+  return { x: view.x + box.x + box.width / 2, y: view.y + box.y + box.height / 2 };
+}
+
+/// Where the frontend saw pointer presses since the last call, in its own CSS
+/// pixels. A real click that changed nothing is told apart from one that
+/// never reached the frontend, or landed off its target, by this.
+async function frontendPresses(): Promise<string[]> {
+  return await onFrontend((session) => session.eval<string[]>(`(() => {
+    if (!window.__ndPresses) {
+      window.__ndPresses = [];
+      document.addEventListener('pointerdown', (e) => window.__ndPresses.push(Math.round(e.clientX) + ',' + Math.round(e.clientY)), true);
+    }
+    return window.__ndPresses.splice(0);
+  })()`));
+}
+
+/// The same record on the inspected page, which sits in the frontend's hole
+/// and is the other place a press near the splitter can go.
+async function pagePresses(page: string): Promise<string> {
+  return (await pageEval(app, page, `(() => {
+    if (!window.__ndPresses) {
+      window.__ndPresses = [];
+      document.addEventListener('pointerdown', (e) => window.__ndPresses.push(Math.round(e.clientX) + ',' + Math.round(e.clientY)), true);
+    }
+    return window.__ndPresses.splice(0).join(' ');
+  })()`)) ?? "";
+}
+
+/// Where the pointer is, and what AppKit says is under it, for a failure that
+/// has to say where a real press went.
+async function pressReport(page: string, at: { x: number; y: number }): Promise<string> {
+  const win = await appWindowRect();
+  const over = obstructions(win.x + at.x, win.y + at.y);
+  return `pressed at ${at.x},${at.y}, frontend saw [${(await frontendPresses()).join(" ")}], `
+    + `page saw [${await pagePresses(page)}], in front: [${over.join(", ")}]`;
+}
+
 /// The inspector's own close button, which is the one path off the frontend
 /// that this app's menus do not have: its Inspect item is Chromium's, and that
 /// one only ever opens an inspector.
-async function closeFrontend(): Promise<void> {
-  const box = await onFrontend((session) => clickDevToolsClose(session));
-  assert(box !== null, "the frontend's toolbar has no close button");
+async function closeFrontend(page: string): Promise<void> {
+  const at = await frontendPoint(page, DEVTOOLS_CLOSE);
+  assert(at !== null, "the frontend's toolbar has no close button");
+  await app.cursor.click(at!);
   await until(
     "the inspector goes away",
     async () => (await targets(DEBUG_PORT)).filter((t) => t.url.startsWith("devtools://")).length,
@@ -1495,26 +1540,56 @@ const legs: Leg[] = [
       await dockTiles(page, "open");
       capture("dock-open", (await appWindowRect()).number);
 
-      await app.setWindowSize(1180, 880);
-      await Bun.sleep(1500);
-      await dockTiles(page, "resized");
+      // Device mode: the hole stops being a column and becomes the device's
+      // rectangle, which is what puts the phone in the page area.
+      // The address field still holds the keyboard from loadFixture, and the
+      // app commits what it holds, as https, when it loses focus: the first
+      // real click would renavigate the page to a scheme the fixture does not
+      // serve. Escape hands the field back its URL first.
+      await main.keyboard.press("Escape");
+      await Bun.sleep(300);
+      await main.getByTestId(page).focus();
+      await Bun.sleep(500);
+      const phone = await frontendPoint(page, DEVICE_TOOLBAR);
+      assert(phone !== null, "the frontend has no device-toolbar toggle");
+      await frontendPresses();
+      await pagePresses(page);
+      await app.cursor.click(phone!);
+      await Bun.sleep(2000);
+      // In device mode the hole is the device's rectangle, inset from the
+      // column on every side; a hole still at the column's origin is a toggle
+      // that never turned on.
+      const device = (await frontendGeometry()).bounds;
+      assert(
+        device !== null && device.y > 0,
+        `device mode is not on: the hole is ${JSON.stringify(device)}; ` + await pressReport(page, phone!),
+      );
+      await dockTiles(page, "deviceMode", true);
+      capture("dock-device", (await appWindowRect()).number);
+      await app.cursor.click(phone!);
+      await Bun.sleep(2000);
+      await dockTiles(page, "deviceModeOff");
 
       // The user drags the frontend's own splitter: the hole moves and the
       // page has to move with it.
-      const dragged = await onFrontend((session) => dragFrontendSplitter(session, -120));
-      assert(dragged, "the frontend has no splitter to drag");
+      const column = (await frontendGeometry()).bounds;
+      const splitter = await frontendPoint(page, FRONTEND_SPLITTER);
+      assert(splitter !== null, "the frontend has no splitter to drag");
+      await frontendPresses();
+      await pagePresses(page);
+      await app.cursor.drag(splitter!, { x: splitter!.x - 120, y: splitter!.y });
       await Bun.sleep(1200);
+      const dragged = (await frontendGeometry()).bounds;
+      assert(
+        dragged !== null && column !== null && dragged.width < column.width - 60,
+        `the splitter drag left the hole at ${dragged?.width} of ${column?.width}; `
+          + await pressReport(page, splitter!),
+      );
       await dockTiles(page, "splitterDragged");
 
-      // Device mode: the hole stops being a column and becomes the device's
-      // rectangle, which is what puts the phone in the page area.
-      const phone = await onFrontend((session) => clickDeviceToolbar(session));
-      assert(phone !== null, "the frontend has no device-toolbar toggle");
-      await Bun.sleep(2000);
-      await dockTiles(page, "deviceMode", true);
-      await onFrontend((session) => clickDeviceToolbar(session));
-      await Bun.sleep(2000);
-      await dockTiles(page, "deviceModeOff");
+      await app.setWindowSize(1180, 880);
+      await Bun.sleep(1500);
+      await dockTiles(page, "resized");
 
       // Back to the first tab and forward again: every other webview in the
       // overlay is hidden rather than gone, and the one that comes back has to
@@ -1531,7 +1606,7 @@ const legs: Leg[] = [
 
       // Closed from the frontend's own button: the app's Inspect item is
       // Chromium's, which opens an inspector rather than toggling one.
-      await closeFrontend();
+      await closeFrontend(page);
       const back = (await viewBox(page)).width;
       await until(
         "the page takes the view back",
@@ -1541,7 +1616,7 @@ const legs: Leg[] = [
       );
       await openInspector(page);
       await dockTiles(page, "reopened");
-      await closeFrontend();
+      await closeFrontend(page);
       await censusHolds(app, "dockTiling");
     },
   },
