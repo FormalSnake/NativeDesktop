@@ -3,10 +3,10 @@ import AppKit
 /// CommandPalette: a floating command bar over the window (peer of
 /// src/gtk/commandpalette.zig's AdwDialog). The tracked handle is a host-only
 /// NSView (the Popover idiom) that lives in the tree only so `self.window`
-/// resolves the window to paint over; `open` toggles a dimmed full-window
-/// backdrop plus a Liquid Glass card (a borderless search field over an
-/// NSTableView of one-line results) whose top edge is fixed and whose height
-/// follows its row count.
+/// resolves the window to paint over; `open` toggles a scrim over the whole
+/// window and two quiet cards on it: the field, and below it the one-line
+/// results (an NSTableView), whose card follows its row count. The field's top
+/// edge is fixed.
 ///
 /// CONTROLLED: the app owns `query` and `items`; the widget never filters or
 /// reorders. Every keystroke fires queryChanged with the text the user typed;
@@ -52,49 +52,85 @@ private func paletteRow(from obj: [String: Any]) -> PaletteRow {
     )
 }
 
-/// Full-window scrim behind the card; a click on it cancels. Owns the
-/// Cmd/Ctrl+Return "submit as typed" key equivalent (a modifier-Return never
-/// reaches the field editor's doCommandBySelector).
+/// The scrim: the window's ground colour over everything, toolbar and sidebar
+/// included, so the bar is the only thing asking to be read. A click on it
+/// cancels. Owns the Cmd/Ctrl+Return "submit as typed" key equivalent (a
+/// modifier-Return never reaches the field editor's doCommandBySelector).
 private final class NDPaletteBackdrop: NSView {
     weak var handle: NDCommandPaletteHandleView?
     override var isFlipped: Bool { true }
     override func mouseDown(with event: NSEvent) { handle?.userCancel() }
+    // A backdrop fading out has been let go of; clicks go through it.
+    override func hitTest(_ point: NSPoint) -> NSView? { handle == nil ? nil : super.hitTest(point) }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.type == .keyDown,
            event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control),
            event.keyCode == 36 || event.keyCode == 76 { // Return / keypad Enter
-            handle?.emitSubmit()
+            handle?.emitSubmit(typedOnly: true)
             return true
         }
         return super.performKeyEquivalent(with: event)
     }
 }
 
-/// Shadow host for the glass card. NSGlassEffectView clips to its own corner
-/// radius, so the drop shadow has to live one level out; the path is rebuilt
-/// every layout pass because the card's height follows its row count. Also
-/// stops a click on the card's own chrome from reaching the backdrop's cancel.
-private final class NDPaletteCard: NSView {
+/// One of the bar's two cards: ground fill, hairline edge, a soft shadow.
+/// Colours are resolved in `updateLayer`, which AppKit calls again when the
+/// window's appearance changes. Also stops a click on the card from reaching
+/// the scrim's cancel.
+private final class NDPaletteSurface: NSView {
+    private let shadowAlpha: Float
+    private let shadowBlur: CGFloat
+    private let shadowDrop: CGFloat
+
+    init(shadowAlpha: Float, shadowBlur: CGFloat, shadowDrop: CGFloat) {
+        self.shadowAlpha = shadowAlpha
+        self.shadowBlur = shadowBlur
+        self.shadowDrop = shadowDrop
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        guard let layer else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer.backgroundColor = NDPaletteColors.ground.cgColor
+            layer.borderColor = NDPaletteColors.hairline.cgColor
+        }
+        layer.borderWidth = 1
+        layer.cornerRadius = NDPaletteMetrics.cardRadius
+        layer.cornerCurve = .continuous
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = shadowAlpha
+        layer.shadowRadius = shadowBlur / 2
+        // An unflipped layer's y points up, so a drop below the card is negative.
+        layer.shadowOffset = CGSize(width: 0, height: -shadowDrop)
+    }
     override func layout() {
         super.layout()
-        layer?.shadowPath = CGPath(
-            roundedRect: bounds,
-            cornerWidth: NDRadius.palette,
-            cornerHeight: NDRadius.palette,
-            transform: nil)
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: NDPaletteMetrics.cardRadius,
+                                   cornerHeight: NDPaletteMetrics.cardRadius, transform: nil)
     }
     override func mouseDown(with event: NSEvent) {}
 }
 
-/// Keyboard focus legitimately stays in the search field, which leaves the
-/// table unemphasized and its selection grey. The highlighted row is the
-/// palette's primary affordance, so force the emphasized rendering rather than
-/// hand-painting a fill: AppKit keeps its own accent colour, inset and
-/// curvature for the table's style.
+/// The highlighted row is a wash of grey with rounded corners, never the
+/// accent: keyboard focus stays in the field, and the row only marks where
+/// the arrow keys have walked to.
 private final class NDPaletteRowView: NSTableRowView {
     override var isEmphasized: Bool {
-        get { true }
+        get { false }
         set {}
+    }
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            NDPaletteColors.wash.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: NDPaletteMetrics.rowRadius,
+                         yRadius: NDPaletteMetrics.rowRadius).fill()
+        }
     }
 }
 
@@ -121,13 +157,20 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
     private var suppressQueryEmit = false
     private weak var returnFocus: NSResponder?
 
+    /// Fresh rows highlight the first one (a picker), or nothing (an address
+    /// bar, where Enter means the field).
+    private var highlightFirst = true
+
     private var backdrop: NDPaletteBackdrop?
+    /// Both cards together; the field's card is on top, the list's below.
     private var card: NSView?
+    private var listCard: NSView?
     private var searchField: NSTextField?
     private var tableView: NSTableView?
     private var scrollView: NSScrollView?
-    private var separator: NSBox?
     private var listHeight: NSLayoutConstraint?
+    private var listBottom: NSLayoutConstraint?
+    private var fieldBottom: NSLayoutConstraint?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -151,7 +194,7 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
 
     func setPlaceholder(_ ph: String) {
         placeholder = ph
-        searchField?.placeholderString = ph
+        searchField?.placeholderAttributedString = placeholderText()
         searchField?.setAccessibilityLabel(ph)
     }
 
@@ -179,12 +222,18 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
             updateListHeight()
             // Fresh results: the top row is the highlighted default (Return drills in).
             if presented {
-                highlight(rows.isEmpty ? -1 : 0)
+                highlight(defaultHighlight)
                 reassertFieldFocus()
             }
         }
         if presented { applyCompletion() }
     }
+
+    func setHighlightFirst(_ on: Bool) {
+        highlightFirst = on
+    }
+
+    private var defaultHighlight: Int { highlightFirst && !rows.isEmpty ? 0 : -1 }
 
     private static func rowsSignature(_ rows: [PaletteRow]) -> String {
         var s = ""
@@ -227,6 +276,7 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         suppressQueryEmit = true
         field.stringValue = typed + suffix
         suppressQueryEmit = false
+        quietSelection()
         let start = (typed as NSString).length
         editor.selectedRange = NSRange(location: start, length: (suffix as NSString).length)
     }
@@ -291,12 +341,16 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         typed = controlledQuery
         suffix = ""
         mayComplete = false
-        buildUI(in: content)
+        // The window's frame view, not its content view: the toolbar and a
+        // sidebar draw above the content view, and Arc dims all of them.
+        buildUI(in: content.superview ?? content)
         presented = true
-        highlight(rows.isEmpty ? -1 : 0)
+        animateIn()
+        highlight(defaultHighlight)
         // Becoming first responder selects the field's whole text, which is
         // what a seeded open (the current address) wants.
         if let field = searchField { window.makeFirstResponder(field) }
+        quietSelection()
     }
 
     func userCancel() { dismiss(programmatic: false) }
@@ -306,14 +360,16 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         guard presented else { return }
         presented = false
         let window = backdrop?.window
-        backdrop?.removeFromSuperview()
+        if let backdrop { animateOut(backdrop) }
         backdrop = nil
         card = nil
         searchField = nil
         tableView = nil
         scrollView = nil
-        separator = nil
         listHeight = nil
+        listBottom = nil
+        fieldBottom = nil
+        listCard = nil
         // Focus goes back where it was (the page, usually); a responder that
         // left the window meanwhile leaves it with the window.
         if let window, let back = returnFocus, (back as? NSView)?.window === window || back === window {
@@ -323,47 +379,97 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         if !programmatic { ndEmitEvent(nodeID, "cancel", "{}") }
     }
 
+    // ---- motion ----
+    // The scrim and the field fade in; the list settles in from a touch
+    // smaller, anchored at its top, on a short spring. Leaving is a quicker
+    // fade. Reduce Motion keeps the fades and drops the scale.
+
+    private static let closeDuration: CFTimeInterval = 0.12
+    private static let listScale: CGFloat = 0.98
+    private static let easeOut = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+
+    /// Response 0.30 s, damping 0.86, as stiffness and damping for a unit mass.
+    private static func settle(_ keyPath: String) -> CASpringAnimation {
+        let a = CASpringAnimation(keyPath: keyPath)
+        let response = 0.30
+        let fraction = 0.86
+        a.mass = 1
+        a.stiffness = pow(2 * .pi / response, 2)
+        a.damping = 4 * .pi * fraction / response
+        a.duration = a.settlingDuration
+        return a
+    }
+
+    private func animateIn() {
+        guard let backdrop, let dim = backdrop.layer else { return }
+        backdrop.layoutSubtreeIfNeeded()
+        let fade = Self.settle("opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        dim.add(fade, forKey: "nd-palette-in")
+        if let list = listCard { animateListIn(list) }
+    }
+
+    private func animateListIn(_ list: NSView) {
+        guard !list.isHidden, let layer = list.layer else { return }
+        let fade = Self.settle("opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        layer.add(fade, forKey: "nd-palette-list-fade")
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        // Layer-backed views keep their anchor at the corner, so the scale is
+        // built around the card's top edge by hand. The card is unflipped:
+        // its top is the layer's maxY.
+        let b = list.bounds
+        var t = CATransform3DMakeTranslation(b.midX, b.maxY, 0)
+        t = CATransform3DScale(t, Self.listScale, Self.listScale, 1)
+        t = CATransform3DTranslate(t, -b.midX, -b.maxY, 0)
+        let scale = Self.settle("transform")
+        scale.fromValue = NSValue(caTransform3D: t)
+        scale.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        layer.add(scale, forKey: "nd-palette-list-scale")
+    }
+
+    /// The old scrim fades out on its own; the handle has already let go of
+    /// it, so a reopen during the fade builds a fresh one beside it.
+    private func animateOut(_ old: NSView) {
+        guard let layer = old.layer else { old.removeFromSuperview(); return }
+        (old as? NDPaletteBackdrop)?.handle = nil
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { old.removeFromSuperview() }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        fade.duration = Self.closeDuration
+        fade.timingFunction = Self.easeOut
+        layer.add(fade, forKey: "nd-palette-out")
+        layer.opacity = 0
+        CATransaction.commit()
+    }
+
     private func buildUI(in content: NSView) {
         let backdrop = NDPaletteBackdrop(frame: content.bounds)
         backdrop.handle = self
         backdrop.autoresizingMask = [.width, .height]
         backdrop.wantsLayer = true
-        backdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(NDPaletteMetrics.dimAlpha).cgColor
+        content.effectiveAppearance.performAsCurrentDrawingAppearance {
+            backdrop.layer?.backgroundColor = NDPaletteColors.ground
+                .withAlphaComponent(NDPaletteMetrics.scrimAlpha).cgColor
+        }
         backdrop.setAccessibilityIdentifier("nd-command-palette-backdrop")
 
-        let card = NDPaletteCard()
+        // A plain holder for the two cards, so the pair is placed as one.
+        let card = NSView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.wantsLayer = true
-        card.layer?.shadowColor = NSColor.black.cgColor
-        card.layer?.shadowOpacity = 0.32
-        card.layer?.shadowRadius = 28
-        // Undirected: a layer's y axis follows its view's flippedness, so an
-        // offset shadow would fall the wrong way in one of the two geometries.
-        card.layer?.shadowOffset = .zero
         card.setAccessibilityElement(true)
         card.setAccessibilityRole(.group)
         card.setAccessibilityLabel(placeholder ?? "Command bar")
         backdrop.addSubview(card)
 
-        let glass = NSGlassEffectView()
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        glass.cornerRadius = NDRadius.palette
-        card.addSubview(glass)
-
-        // The chrome hangs off `body` but is constrained against `card`, whose
-        // height therefore falls out of this content. `body` is pinned rather
-        // than left to NSGlassEffectView's own contentView layout so the glass
-        // has a content rect the moment the card is measured.
-        let body = NSView()
-        body.translatesAutoresizingMaskIntoConstraints = false
-        glass.contentView = body
-
-        let icon = NSImageView()
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
-        icon.contentTintColor = .secondaryLabelColor
-        body.addSubview(icon)
+        let fieldCard = NDPaletteSurface(shadowAlpha: 0.06, shadowBlur: 24, shadowDrop: 8)
+        card.addSubview(fieldCard)
+        let listCard = NDPaletteSurface(shadowAlpha: 0.07, shadowBlur: 20, shadowDrop: 6)
+        card.addSubview(listCard)
 
         let field = NSTextField()
         field.translatesAutoresizingMaskIntoConstraints = false
@@ -371,31 +477,30 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .systemFont(ofSize: 20)
+        let font = NSFont.systemFont(ofSize: NDPaletteMetrics.fieldFontSize)
+        field.font = font
+        field.textColor = NDPaletteColors.ink
         field.cell?.isScrollable = true
         field.cell?.wraps = false
         field.cell?.usesSingleLineMode = true
         field.lineBreakMode = .byClipping
-        field.placeholderString = placeholder
+        field.placeholderAttributedString = placeholderText()
         field.setAccessibilityLabel(placeholder)
         field.stringValue = controlledQuery
         field.delegate = self
-        body.addSubview(field)
-
-        let separator = NSBox()
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.boxType = .separator
-        body.addSubview(separator)
+        fieldCard.addSubview(field)
 
         let table = NSTableView()
         let column = NSTableColumn(identifier: paletteColumnID)
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.headerView = nil
-        table.style = .inset
+        table.style = .plain
         table.rowHeight = NDPaletteMetrics.rowHeight
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.backgroundColor = .clear
+        table.gridStyleMask = []
+        table.selectionHighlightStyle = .regular
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -408,9 +513,10 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.documentView = table
-        body.addSubview(scroll)
+        listCard.addSubview(scroll)
 
         let m = NDPaletteMetrics.margin
+        let pad = NDPaletteMetrics.listPadding
         let cardWidth = card.widthAnchor.constraint(equalToConstant: NDPaletteMetrics.width)
         cardWidth.priority = .defaultHigh
         // The top edge rides a fixed fraction of the window height, so the field
@@ -424,6 +530,9 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         // there are more rows than the card may show.
         let listHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
         listHeight.priority = .defaultHigh
+        // The line box of the field's font, so the card's vertical inset is
+        // measured from the text rather than from a guessed control height.
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: backdrop.centerXAnchor),
             top,
@@ -432,63 +541,79 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
             card.widthAnchor.constraint(lessThanOrEqualTo: backdrop.widthAnchor, constant: -2 * m),
             card.bottomAnchor.constraint(lessThanOrEqualTo: backdrop.bottomAnchor, constant: -m),
 
-            glass.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            glass.topAnchor.constraint(equalTo: card.topAnchor),
-            glass.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            fieldCard.topAnchor.constraint(equalTo: card.topAnchor),
+            fieldCard.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            fieldCard.trailingAnchor.constraint(equalTo: card.trailingAnchor),
 
-            body.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            body.topAnchor.constraint(equalTo: card.topAnchor),
-            body.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            field.leadingAnchor.constraint(equalTo: fieldCard.leadingAnchor, constant: NDPaletteMetrics.fieldInsetX),
+            field.trailingAnchor.constraint(equalTo: fieldCard.trailingAnchor, constant: -NDPaletteMetrics.fieldInsetX),
+            field.topAnchor.constraint(equalTo: fieldCard.topAnchor, constant: NDPaletteMetrics.fieldInsetY),
+            field.bottomAnchor.constraint(equalTo: fieldCard.bottomAnchor, constant: -NDPaletteMetrics.fieldInsetY),
+            field.heightAnchor.constraint(equalToConstant: lineHeight),
 
-            icon.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
-            icon.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 20),
-            icon.heightAnchor.constraint(equalToConstant: 20),
+            listCard.topAnchor.constraint(equalTo: fieldCard.bottomAnchor, constant: NDPaletteMetrics.gap),
+            listCard.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            listCard.trailingAnchor.constraint(equalTo: card.trailingAnchor),
 
-            field.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
-            field.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
-            field.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
-
-            separator.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 14),
-            separator.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            separator.heightAnchor.constraint(equalToConstant: 1),
-
-            scroll.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 6),
-            scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
+            scroll.topAnchor.constraint(equalTo: listCard.topAnchor, constant: pad),
+            scroll.leadingAnchor.constraint(equalTo: listCard.leadingAnchor, constant: pad),
+            scroll.trailingAnchor.constraint(equalTo: listCard.trailingAnchor, constant: -pad),
+            scroll.bottomAnchor.constraint(equalTo: listCard.bottomAnchor, constant: -pad),
             scroll.heightAnchor.constraint(lessThanOrEqualToConstant: NDPaletteMetrics.maxListHeight),
             listHeight,
         ])
+
+        // The holder ends at the list card, or at the field when there is no list.
+        listBottom = listCard.bottomAnchor.constraint(equalTo: card.bottomAnchor)
+        fieldBottom = fieldCard.bottomAnchor.constraint(equalTo: card.bottomAnchor)
 
         content.addSubview(backdrop)
         table.reloadData()
         self.backdrop = backdrop
         self.card = card
+        self.listCard = listCard
         self.searchField = field
         self.tableView = table
         self.scrollView = scroll
-        self.separator = separator
         self.listHeight = listHeight
         updateListHeight()
     }
 
-    /// Height of the rendered rows, read back from the table so the row
-    /// metrics the style applies (inset margins) are the ones the card is
-    /// sized against. An empty result set collapses the list and its
-    /// separator, leaving the search field alone on the card.
+    private func placeholderText() -> NSAttributedString {
+        NSAttributedString(string: placeholder ?? "", attributes: [
+            .font: NSFont.systemFont(ofSize: NDPaletteMetrics.fieldFontSize),
+            .foregroundColor: NDPaletteColors.ink.withAlphaComponent(0.3),
+        ])
+    }
+
+    /// Selected text is a tenth of the ink rather than a block of accent,
+    /// which over a pale field would be the loudest thing in the window.
+    private func quietSelection() {
+        guard let editor = searchField?.currentEditor() as? NSTextView else { return }
+        editor.selectedTextAttributes = [
+            .backgroundColor: NDPaletteColors.ink.withAlphaComponent(0.12),
+            .foregroundColor: NDPaletteColors.ink,
+        ]
+    }
+
+    /// Height of the rendered rows, read back from the table. An empty result
+    /// set has no list card at all: the field stands alone, and the pair's
+    /// bottom is the field's.
     private func updateListHeight() {
-        separator?.isHidden = rows.isEmpty
-        scrollView?.isHidden = rows.isEmpty
         guard let listHeight else { return }
+        let wasHidden = listCard?.isHidden ?? true
+        listCard?.isHidden = rows.isEmpty
+        listBottom?.isActive = !rows.isEmpty
+        fieldBottom?.isActive = rows.isEmpty
         guard let table = tableView, !rows.isEmpty else {
-            listHeight.constant = -6 // cancels the list's top gap: the field alone, evenly padded
+            listHeight.constant = 0
             return
         }
         listHeight.constant = table.rect(ofRow: rows.count - 1).maxY
+        if wasHidden, presented, let list = listCard {
+            list.superview?.layoutSubtreeIfNeeded()
+            animateListIn(list)
+        }
     }
 
     // ---- highlight ----
@@ -506,6 +631,11 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
     private func moveHighlight(_ delta: Int) {
         guard !rows.isEmpty else { return }
         let cur = tableView?.selectedRow ?? -1
+        // An address bar walks back up out of the list into the field.
+        if !highlightFirst, delta < 0, cur <= 0 {
+            highlight(-1)
+            return
+        }
         let next = cur < 0 ? 0 : max(0, min(rows.count - 1, cur + delta))
         highlight(next)
     }
@@ -517,9 +647,11 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         ndEmitEvent(nodeID, "activate", "{\"text\":\(ndJsonString(rows[idx].id))}")
     }
 
-    /// The typed text, never an unaccepted completion.
-    func emitSubmit() {
-        ndEmitEvent(nodeID, "submit", "{\"text\":\(ndJsonString(presented ? typed : controlledQuery))}")
+    /// The field as shown: Return accepts a completion. `typedOnly` (Cmd or
+    /// Ctrl+Return) leaves an unaccepted completion out.
+    func emitSubmit(typedOnly: Bool = false) {
+        let text = presented ? (typedOnly ? typed : typed + suffix) : controlledQuery
+        ndEmitEvent(nodeID, "submit", "{\"text\":\(ndJsonString(text))}")
     }
 
     // ---- automation ----
@@ -700,19 +832,11 @@ final class NDPaletteCell: NSTableCellView {
         return cut(titleField) || cut(subtitleField)
     }
 
-    // NSTableCellView recolours `textField` over an emphasized selection fill
-    // but knows nothing about the subtitle, the hint or the symbol, which would
-    // keep their unselected colours against the accent.
+    // The highlight is a grey wash, so the texts keep their colours on it;
+    // this stops NSTableCellView recolouring the title for a selection.
     override var backgroundStyle: NSView.BackgroundStyle {
-        didSet {
-            let onFill = backgroundStyle == .emphasized
-            let secondary = onFill
-                ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
-                : NSColor.secondaryLabelColor
-            subtitleField.textColor = secondary
-            hintField.textColor = secondary
-            iconView.contentTintColor = onFill ? .alternateSelectedControlTextColor : .secondaryLabelColor
-        }
+        get { .normal }
+        set {}
     }
 
     override init(frame frameRect: NSRect) {
@@ -725,19 +849,19 @@ final class NDPaletteCell: NSTableCellView {
     }
 
     private func commonInit() {
-        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = .secondaryLabelColor
+        iconView.contentTintColor = NDPaletteColors.muted
         for f in [titleField, subtitleField, hintField] {
             f.translatesAutoresizingMaskIntoConstraints = false
-            f.font = font
+            f.font = .systemFont(ofSize: 12)
+            f.textColor = NDPaletteColors.muted
             f.lineBreakMode = .byTruncatingTail
             f.maximumNumberOfLines = 1
             f.cell?.usesSingleLineMode = true
         }
-        subtitleField.textColor = .secondaryLabelColor
-        hintField.textColor = .secondaryLabelColor
+        titleField.font = .systemFont(ofSize: 13)
+        titleField.textColor = NDPaletteColors.ink
         hintField.alignment = .right
 
         titleField.setContentCompressionResistancePriority(.init(740), for: .horizontal)
@@ -760,7 +884,7 @@ final class NDPaletteCell: NSTableCellView {
         // room to see which site it is on.
         let titleCap = titleField.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.62)
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: side),
             iconView.heightAnchor.constraint(equalToConstant: side),
@@ -773,7 +897,7 @@ final class NDPaletteCell: NSTableCellView {
             subtitleField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
 
             hintGap,
-            hintField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            hintField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             hintField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
         ])
     }
@@ -821,6 +945,7 @@ func makeCommandPalette(_ props: [String: Any]) -> NSView {
     let handle = NDCommandPaletteHandleView()
     if let ph = propStr(props, "placeholder") { handle.setPlaceholder(ph) }
     if let q = propStr(props, "query") { handle.setQuery(q) }
+    if let h = propBool(props, "highlightFirst") { handle.setHighlightFirst(h) }
     if let raw = propObjArray(props, "items") { handle.setRows(raw.map(paletteRow(from:))) }
     if propBool(props, "open") ?? false { handle.applyOpen(true) } // no window yet: pending
     return handle
@@ -836,6 +961,10 @@ func ndCommandPaletteApplyQuery(_ view: NSView, _ query: String) {
 
 func ndCommandPaletteApplyItems(_ view: NSView, _ raw: [[String: Any]]) {
     (view as? NDCommandPaletteHandleView)?.setRows(raw.map(paletteRow(from:)))
+}
+
+func ndCommandPaletteApplyHighlightFirst(_ view: NSView, _ on: Bool) {
+    (view as? NDCommandPaletteHandleView)?.setHighlightFirst(on)
 }
 
 func ndCommandPaletteApplyOpen(_ view: NSView, _ open: Bool) {

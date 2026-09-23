@@ -1550,6 +1550,7 @@ Automation role: `dialog`. Text source: none. Children: none.
 | `placeholder` | string | none | createAndUpdate |
 | `query` | string |  | createAndUpdate |
 | `items` | objectList | none | createAndUpdate |
+| `highlightFirst` | bool | true | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

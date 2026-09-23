@@ -25,17 +25,45 @@ enum NDRadius {
 /// ceiling rather than a size: the card's height follows its row count up to
 /// it, so four results produce a four-row card.
 enum NDPaletteMetrics {
-    static let width: CGFloat = 640
-    static let rowHeight: CGFloat = 40
-    static let maxListHeight: CGFloat = 400
-    /// The card's top edge sits at this fraction of the window height, so the
-    /// field stays put while the list below it grows and shrinks.
+    static let width: CGFloat = 560
+    static let rowHeight: CGFloat = 34
+    /// Ten rows; more scroll.
+    static let maxListHeight: CGFloat = 340
+    /// The top edge sits at this fraction of the window height, so the field
+    /// stays put while the list below it grows and shrinks.
     static let topFraction: CGFloat = 0.18
-    /// Clearance the card keeps from every window edge.
+    /// Clearance the bar keeps from every window edge.
     static let margin: CGFloat = 20
-    /// Black over the page behind the card.
-    static let dimAlpha: CGFloat = 0.15
+    /// The ground colour over the window behind the bar: the page stays
+    /// there, just out of the way.
+    static let scrimAlpha: CGFloat = 0.74
     static let iconSide: CGFloat = 16
+    static let cardRadius: CGFloat = 14
+    static let rowRadius: CGFloat = 9
+    /// Between the field's card and the list's.
+    static let gap: CGFloat = 8
+    static let listPadding: CGFloat = 6
+    static let fieldInsetX: CGFloat = 22
+    static let fieldInsetY: CGFloat = 14
+    static let fieldFontSize: CGFloat = 15.5
+}
+
+/// The palette's greys, each a light/dark pair resolved against the window's
+/// appearance. Quiet on purpose: the highlighted row is a wash of grey rather
+/// than the accent, and selected text is a tenth of the ink.
+enum NDPaletteColors {
+    static let ground = pair(1.0, 0.11)
+    static let ink = pair(0.09, 0.93)
+    static let muted = pair(0.55, 0.58)
+    static let hairline = pair(0.91, 0.20)
+    static let wash = pair(0.937, 0.175)
+
+    private static func pair(_ light: CGFloat, _ dark: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let dim = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(white: dim ? dark : light, alpha: 1)
+        }
+    }
 }
 
 /// Radius for a shape nested `inset` points inside a container whose corner
