@@ -63,10 +63,30 @@ private func ndButton(_ name: Any?) -> CGMouseButton {
     }
 }
 
-private func ndPost(_ type: CGEventType, _ at: CGPoint, _ button: CGMouseButton, clickCount: Int64 = 1) {
+/// A click's modifier keys ride on the event itself: the keyboard's own state
+/// is not consulted for a synthesized mouse event, so a cmd-click posted while
+/// nothing holds cmd down still has to say so.
+private func ndFlags(_ names: Any?) -> CGEventFlags {
+    var flags: CGEventFlags = []
+    for name in names as? [String] ?? [] {
+        switch name {
+        case "command": flags.insert(.maskCommand)
+        case "shift": flags.insert(.maskShift)
+        case "option": flags.insert(.maskAlternate)
+        case "control": flags.insert(.maskControl)
+        default: break
+        }
+    }
+    return flags
+}
+
+private func ndPost(
+    _ type: CGEventType, _ at: CGPoint, _ button: CGMouseButton, clickCount: Int64 = 1, flags: CGEventFlags = []
+) {
     guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: at, mouseButton: button)
     else { return }
     event.setIntegerValueField(.mouseEventClickState, value: clickCount)
+    if !flags.isEmpty { event.flags = flags }
     event.post(tap: .cghidEventTap)
 }
 
@@ -119,13 +139,15 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
     case "down":
         let button = ndButton(cmd["button"])
         state.clickCount = (cmd["clickCount"] as? NSNumber)?.int64Value ?? 1
-        ndPost(ndMouseTypes(button).down, state.position, button, clickCount: state.clickCount)
+        ndPost(ndMouseTypes(button).down, state.position, button, clickCount: state.clickCount,
+               flags: ndFlags(cmd["modifiers"]))
         state.held = button
         usleep(gap)
         return ["ok": true]
     case "up":
         let button = ndButton(cmd["button"])
-        ndPost(ndMouseTypes(button).up, state.position, button, clickCount: state.clickCount)
+        ndPost(ndMouseTypes(button).up, state.position, button, clickCount: state.clickCount,
+               flags: ndFlags(cmd["modifiers"]))
         state.held = nil
         usleep(gap)
         return ["ok": true]

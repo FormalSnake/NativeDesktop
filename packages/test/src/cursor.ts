@@ -15,6 +15,9 @@ export type CursorTarget = Locator | { x: number; y: number };
 export interface CursorButtonOptions {
   button?: "left" | "right" | "middle";
   clickCount?: number;
+  /** Modifier keys the press and release carry, for a cmd-click or a
+   * shift-click. */
+  modifiers?: ("command" | "shift" | "option" | "control")[];
 }
 
 export interface CursorMoveOptions {
@@ -66,8 +69,8 @@ export class Cursor {
     await this.move(target, opts);
     const clicks = opts.clickCount ?? 1;
     for (let n = 1; n <= clicks; n++) {
-      await this.down({ button: opts.button, clickCount: n });
-      await this.up({ button: opts.button, clickCount: n });
+      await this.down({ button: opts.button, clickCount: n, modifiers: opts.modifiers });
+      await this.up({ button: opts.button, clickCount: n, modifiers: opts.modifiers });
     }
   }
 
