@@ -1,5 +1,6 @@
 import {
   executeJavaScript,
+  getCookies,
   installExtension,
   listExtensionActions,
   listExtensions,
@@ -11,7 +12,10 @@ import {
   uninstallExtension,
   watchExtensions,
   onJavaScriptResult,
+  onCookiesResult,
+  onSessionSaved,
   render,
+  saveSession,
   sendCommand,
   useEffect,
   useRef,
@@ -122,7 +126,7 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "extensions", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "removedNode", "extensions", "twoRegistryViews", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -138,7 +142,7 @@ const REGISTRY_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 /// fifteen labels measures nothing the app would ever ship.
 const DIALOGS_PASS = (process.env.ND_CEF_PROBE_PASS ?? "") === "dialogs";
 /// The legs that mount extra views run once. GTK grows the window to fit them
-/// and never shrinks it back.
+/// and never shrinks it back, and the devtools pass sizes the window itself.
 const FIRST_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 type CheckName = (typeof CHECKS)[number];
 
@@ -215,6 +219,11 @@ function App(): React.ReactNode {
   const actionPage = useRef<NdNodeRef<"webview">>(null);
   const closing = useRef<NdNodeRef<"webview">>(null);
   const [closingKey, setClosingKey] = useState(0);
+  const remount = useRef<NdNodeRef<"webview">>(null);
+  const [remountKey, setRemountKey] = useState(0);
+  const registrySmall = useRef<NdNodeRef<"webview">>(null);
+  const registryTab = useRef<NdNodeRef<"webview">>(null);
+  const [registryPair, setRegistryPair] = useState(false);
   const [secondOpen, setSecondOpen] = useState(false);
   const [lateReady, setLateReady] = useState(false);
   const [actionPopupUrl, setActionPopupUrl] = useState("");
@@ -247,6 +256,11 @@ function App(): React.ReactNode {
       actionPage,
       closing,
       setClosingKey,
+      remount,
+      setRemountKey,
+      registrySmall,
+      registryTab,
+      setRegistryPair,
       setActionPopupUrl,
       setUrl,
       setResult,
@@ -319,6 +333,44 @@ function App(): React.ReactNode {
                 style={{ minHeight: 60 }}
                 onJavaScriptResult={onJavaScriptResult}
               />
+            ) : null}
+            {remountKey > 0 ? (
+              <webview
+                key={remountKey}
+                testID="wv-remount"
+                ref={remount}
+                engine="chromium"
+                url={`${BASE}/one`}
+                style={{ minHeight: 60 }}
+                onJavaScriptResult={onJavaScriptResult}
+                onCookiesResult={onCookiesResult}
+                onSessionSaved={onSessionSaved}
+              />
+            ) : null}
+            {/* The browser's own shape: a registry view kept at 2x2 on
+                chrome://extensions and a tab the user opened on the same
+                page. */}
+            {registryPair ? (
+              <box orientation="vertical">
+                <webview
+                  testID="wv-registry-small"
+                  ref={registrySmall}
+                  engine="chromium"
+                  url="chrome://extensions"
+                  style={{ minWidth: 2, minHeight: 2 }}
+                  onJavaScriptResult={onJavaScriptResult}
+                  onExtensionsList={onExtensionsList}
+                />
+                <webview
+                  testID="wv-registry-tab"
+                  ref={registryTab}
+                  engine="chromium"
+                  url="chrome://extensions"
+                  style={{ minHeight: 200 }}
+                  onJavaScriptResult={onJavaScriptResult}
+                  onExtensionsList={onExtensionsList}
+                />
+              </box>
             ) : null}
           </box>
           <box tabLabel="background" orientation="vertical">
@@ -415,6 +467,11 @@ async function run(ctx: {
   actionPage: React.RefObject<NdNodeRef<"webview"> | null>;
   closing: React.RefObject<NdNodeRef<"webview"> | null>;
   setClosingKey: (k: number) => void;
+  remount: React.RefObject<NdNodeRef<"webview"> | null>;
+  setRemountKey: (k: number) => void;
+  registrySmall: React.RefObject<NdNodeRef<"webview"> | null>;
+  registryTab: React.RefObject<NdNodeRef<"webview"> | null>;
+  setRegistryPair: (on: boolean) => void;
   setActionPopupUrl: (u: string) => void;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
@@ -658,6 +715,36 @@ async function run(ctx: {
     return `ok (${settled} calls settled over 5 closes, eval ${alive})`;
   });
 
+  // A command to a view that is gone has to be answered, never dropped: the
+  // app sent one to a node a keyed remount had just replaced and the host
+  // stopped answering altogether. Two shapes, both with the three commands that
+  // settle a promise: sent after the node was removed, and in flight while it
+  // is being torn down.
+  await step("removedNode", async () => {
+    if (!FIRST_PASS) return "skip: runs in the first pass";
+    ctx.setRemountKey(1);
+    await until(() => ctx.remount.current !== null, "the remount view mounts");
+    const first = ctx.remount.current!;
+    await pollValue(() => executeJavaScript(first, "location.pathname"), (v) => v === "/one", "the remount view loads");
+    ctx.setRemountKey(2);
+    await until(() => ctx.remount.current !== null && ctx.remount.current.id !== first.id, "the keyed remount lands");
+    const removed = await settleAll(first);
+    const second = ctx.remount.current!;
+    await pollValue(() => executeJavaScript(second, "location.pathname"), (v) => v === "/one", "the new view loads");
+    const pending = [
+      executeJavaScript(second, "new Promise((r) => setTimeout(() => r('late'), 2000))"),
+      getCookies(second),
+      saveSession(second),
+    ];
+    ctx.setRemountKey(0);
+    const teardown = await settleWithin(pending, 10000);
+    const silent = [...removed, ...teardown].filter((o) => o === "silent").length;
+    if (silent > 0) throw new Error(`${silent} command(s) never answered (removed: ${removed.join(",")}; mid-teardown: ${teardown.join(",")})`);
+    if (!ctx.view.current) throw new Error("no view ref");
+    const alive = await executeJavaScript(ctx.view.current, "String(2 + 2)");
+    return `ok (removed: ${removed.join(",")}; mid-teardown: ${teardown.join(",")}; eval ${alive})`;
+  });
+
   // Chromium's own extension runtime, which only Chrome style has: the gate
   // launches with --load-extension, so the fixture has to come back named,
   // enabled and with the icon the manifest declares.
@@ -671,6 +758,33 @@ async function run(ctx: {
     );
     const named = list.map((e) => `${e.name} ${e.enabled ? "enabled" : "disabled"} ${e.iconUrl ? "icon" : "no-icon"}`);
     return `ok (${named.join("; ")})`;
+  });
+
+  // Two views on chrome://extensions, one of them the app's 2x2 registry view,
+  // once took the host to where getTree stopped answering. Both have to load,
+  // both have to answer, and the page the user is looking at has to as well.
+  await step("twoRegistryViews", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!FIRST_PASS) return "skip: runs in the first pass";
+    ctx.setRegistryPair(true);
+    await until(() => ctx.registrySmall.current !== null && ctx.registryTab.current !== null, "both registry views mount");
+    const small = ctx.registrySmall.current!;
+    const tab = ctx.registryTab.current!;
+    for (const [name, node] of [["small", small], ["tab", tab]] as const) {
+      await pollValue(() => executeJavaScript(node, "location.href"), (v) => v.startsWith("chrome://extensions"), `the ${name} view loads`);
+    }
+    // Long enough for a focus fight to run away: each round trip moved X input
+    // focus, so thousands pile up in seconds.
+    await new Promise((r) => setTimeout(r, 4000));
+    const [fromSmall, fromTab] = await settleValues([listExtensions(small), listExtensions(tab)], 10000);
+    if (!ctx.view.current) throw new Error("no view ref");
+    const [alive] = await settleValues([executeJavaScript(ctx.view.current, "String(2 + 2)")], 5000);
+    ctx.setRegistryPair(false);
+    const counts = [fromSmall, fromTab].map((v) => (Array.isArray(v) ? `${v.length} extension(s)` : String(v)));
+    if (counts.some((c) => !c.endsWith("extension(s)")) || alive !== "4") {
+      throw new Error(`small: ${counts[0]}; tab: ${counts[1]}; main view eval: ${String(alive)}`);
+    }
+    return `ok (small: ${counts[0]}; tab: ${counts[1]}; eval ${alive})`;
   });
 
   // The registry is writable at runtime: an unpacked directory installs into
@@ -850,6 +964,30 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
     p,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`no answer within ${ms}ms`)), ms)),
   ]);
+}
+
+function settleAll(node: NdNodeRef<"webview">): Promise<string[]> {
+  return settleWithin([executeJavaScript(node, "1"), getCookies(node), saveSession(node)], 10000);
+}
+
+/// Each promise's value, or "rejected: ..." / "silent" when it failed or had
+/// not settled by the deadline.
+async function settleValues(promises: Promise<unknown>[], timeoutMs: number): Promise<unknown[]> {
+  const deadline = new Promise<string>((r) => setTimeout(() => r("silent"), timeoutMs));
+  return Promise.all(promises.map((p) => Promise.race([p.catch((e: unknown) => `rejected: ${String(e)}`), deadline])));
+}
+
+/// How each promise ended: "rejected", "resolved", or "silent" when it had not
+/// settled by the deadline.
+async function settleWithin(promises: Promise<unknown>[], timeoutMs: number): Promise<string[]> {
+  const outcomes = promises.map((p) =>
+    p.then(
+      () => "resolved",
+      () => "rejected",
+    ),
+  );
+  const deadline = new Promise<string>((r) => setTimeout(() => r("silent"), timeoutMs));
+  return Promise.all(outcomes.map((o) => Promise.race([o, deadline])));
 }
 
 /// Polls a value, treating a thrown eval (a document mid-navigation, a world

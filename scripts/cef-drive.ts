@@ -8,13 +8,36 @@
 // so this script only reads the accessibility tree.
 import { connectApp } from "@nativedesktop/test";
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "extensions", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "removedNode", "extensions", "twoRegistryViews", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 const app = await connectApp();
 
+// Commands sent to a removed view, and two views on chrome://extensions, each
+// once took the host down to where it answered nothing at all, so the host is
+// timed the moment each of those legs has run.
+const stalls: string[] = [];
+for (const [leg, what] of [["removedNode", "commands to a removed view"], ["twoRegistryViews", "two views on chrome://extensions"]]) {
+  for (let i = 0; i < 720; i++) {
+    const text = (await app.getByTestId(`chk-${leg}`).textContent()) ?? "";
+    if (/=(ok|skip|fail)/.test(text)) break;
+    await Bun.sleep(250);
+  }
+  const started = performance.now();
+  await app.tree();
+  const ms = Math.round(performance.now() - started);
+  console.log(`  treeAfter ${leg}: ${ms}ms`);
+  if (ms > 1000) stalls.push(`getTree took ${ms}ms right after ${what}`);
+}
+
 // Chromium's first browser costs a process launch, a GPU probe and a
 // SwiftShader fallback on this rig, so the ceiling is generous.
-await app.waitForText("phase=done", { timeoutMs: 180000 });
+try {
+  await app.waitForText("phase=done", { timeoutMs: 180000 });
+} catch (error) {
+  console.error(`ND_CEF_FAIL the probe never finished: ${(await app.getByTestId("probe-phase").textContent()) ?? "no phase"}`);
+  for (const name of CHECKS) console.error(`  ${(await app.getByTestId(`chk-${name}`).textContent()) ?? name}`);
+  throw error;
+}
 
 // Chrome asks before it removes an extension, in a dialog of its own that the
 // engine moves over the view and reports as `chromeDialog`. Nothing in the app
@@ -45,7 +68,7 @@ if (box) {
   }
 }
 
-const failures: string[] = [];
+const failures: string[] = [...stalls];
 for (const name of CHECKS) {
   const text = (await app.getByTestId(`chk-${name}`).textContent()) ?? "";
   const value = text.slice(text.indexOf("=") + 1);
