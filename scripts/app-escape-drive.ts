@@ -220,27 +220,52 @@ function focusApp(): void {
   if (id) sh("timeout", "3", "xdotool", "windowactivate", "--sync", id);
 }
 
-async function load(url: string): Promise<string> {
+/// Navigates the active tab through CDP's Page.navigate on its own target,
+/// which reaches chrome:// addresses too and needs no keyboard focus: under
+/// XWayland (wlr, hypr) keys go to the child window under the pointer, so
+/// typing into the address field is not a route every rig can take. Typing is
+/// the fallback for a tab with no page yet.
+async function navigateActive(url: string): Promise<boolean> {
+  const id = await activePage().catch(() => null);
+  if (!id) return false;
+  const current = await pageEval(id, "location.href").catch(() => null);
+  if (!current) return false;
+  const target = (await targets(cdpPort).catch(() => [])).find((t) => t.type === "page" && t.url === current && t.webSocketDebuggerUrl);
+  if (!target) return false;
+  const session = await Session.open(target.webSocketDebuggerUrl!);
+  try {
+    await session.send("Page.navigate", { url });
+  } finally {
+    session.close();
+  }
+  return true;
+}
+
+async function load(url: string, lands = url): Promise<string> {
+  let last = "";
   for (let attempt = 0; attempt < 3; attempt++) {
-    focusApp();
-    key("ctrl+l");
-    await Bun.sleep(400);
-    key("ctrl+a");
-    typeText(url);
-    key("Return");
+    if (!(await navigateActive(url))) {
+      focusApp();
+      key("ctrl+l");
+      await Bun.sleep(400);
+      key("ctrl+a");
+      typeText(url);
+      key("Return");
+    }
     const landed = await until(
       async () => {
         const id = await activePage();
-        return `${id}|${await pageEval(id, "location.href")}|${await pageEval(id, "document.readyState")}`;
+        last = `${id}|${await pageEval(id, "location.href")}|${await pageEval(id, "document.readyState")}`;
+        return last;
       },
-      (v) => v.split("|")[1]!.startsWith(url) && v.endsWith("|complete"),
+      (v) => v.split("|")[1]!.startsWith(lands) && v.endsWith("|complete"),
       15000,
     );
     if (landed) return landed.split("|")[0]!;
     key("ctrl+t");
     await Bun.sleep(800);
   }
-  throw new Error(`the address field never took ${url}`);
+  throw new Error(`the address field never took ${url} (last seen ${last.split("|").slice(1).join(" ") || "nothing"})`);
 }
 
 /// A point in the page in root pixels: an element id, or a fraction of the view.
@@ -504,12 +529,27 @@ const menuItem = (
     return menuRoute(page, where, label);
   },
 });
-const webui = (name: string, url: string, text: string | null, expect: Expect = {}): Route => ({
+const webui = (name: string, url: string, text: string | null, expect: Expect = {}, lands = url): Route => ({
   name,
   expect,
   run: async () => {
-    const page = await load(url);
+    const page = await load(url, lands);
     if (text) return webuiClick(page, text);
+  },
+});
+const outside = (name: string, id: string): Route => ({
+  name,
+  expect: NONE,
+  run: async (page) => {
+    const count = () => (hostLog ? readFileSync(hostLog, "utf8").split("\n").filter((l) => l.includes("externalScheme url=") && l.includes("gesture=true")).length : 0);
+    const before = count();
+    focusApp();
+    await clickAt(await pagePoint(page, id), 1, []);
+    const handed = await until(async () => count(), (n) => n > before, 8000);
+    const stayed = await pageEval(page, "location.href");
+    if (!handed) throw new Error(`#${id} was never handed to the desktop`);
+    if (stayed !== ESCAPE_URL) throw new Error(`the page left for ${stayed}`);
+    return "handed to the desktop";
   },
 });
 const ext = (name: string, code: string, expect: Expect = {}): Route => ({ name, expect, run: async () => inWorker(code) });
@@ -517,11 +557,14 @@ const ext = (name: string, code: string, expect: Expect = {}): Route => ({ name,
 const routes: Route[] = [
   // App-declared chords run the app's own action; the rest do nothing visible.
   chord("key.ctrlN", "ctrl+n", WINDOW),
-  chord("key.ctrlShiftN", "ctrl+shift+n"),
+  // The app's private window, through browserCommand newPrivateWindow.
+  chord("key.ctrlShiftN", "ctrl+shift+n", WINDOW),
   chord("key.ctrlT", "ctrl+t", TAB),
   chord("key.ctrlShiftT", "ctrl+shift+t", {}),
   chord("key.ctrlShiftB", "ctrl+shift+b"),
-  chord("key.ctrlH", "ctrl+h"),
+  // The app's history palette, through browserCommand history; it stands the
+  // page aside like ctrl+K.
+  chord("key.ctrlH", "ctrl+h", { viewport: false }),
   chord("key.ctrlJ", "ctrl+j"),
   chord("key.ctrlShiftO", "ctrl+shift+o"),
   chord("key.ctrlShiftDelete", "ctrl+shift+Delete"),
@@ -565,8 +608,10 @@ const routes: Route[] = [
   pageClick("page.middleClick", "plain", TAB, 2),
   pageClick("page.ctrlClick", "plain", TAB, 1, ["ctrl"]),
   pageClick("page.shiftClick", "plain", TAB, 1, ["shift"]),
-  pageClick("page.mailto", "mailto", NONE),
-  pageClick("page.externalProtocol", "extproto", NONE),
+  // Both go to the desktop's handler for the scheme (the engine traces the
+  // hand-off), never an app tab, and the page stays where it was.
+  outside("page.mailto", "mailto"),
+  outside("page.externalProtocol", "extproto"),
   pageClick("page.print", "print", NONE),
   pageClick("page.documentPip", "pip-doc", NONE),
   pageClick("page.geolocation", "geo", NONE),
@@ -621,8 +666,9 @@ const routes: Route[] = [
   webui("webui.extensionsWebStore", "chrome://extensions", "web store"),
   webui("webui.extensionsDetails", "chrome://extensions", "Details"),
   webui("webui.bookmarks", "chrome://bookmarks", null, NONE),
-  // The app keeps chrome://newtab for its own new-tab page.
-  webui("webui.newTabPage", "chrome://newtab", null, { windows: 0, viewport: false }),
+  // The app keeps chrome://newtab for its own new-tab page; Chrome rewrites it
+  // to chrome://new-tab-page/.
+  webui("webui.newTabPage", "chrome://newtab", null, { windows: 0, viewport: false }, "chrome://new-tab-page"),
 
   ext("ext.tabsCreate", "chrome.tabs.create({ url: 'https://example.invalid/tabs-create' })", TAB),
   ext("ext.windowsCreate", "chrome.windows.create({ url: 'https://example.invalid/windows-create' })"),
@@ -794,6 +840,7 @@ for (const route of routes) {
     } else note = outcome ?? "";
   } catch (error) {
     note = `run error: ${error instanceof Error ? error.message : String(error)}`;
+    routeProblems.push(note);
   }
   await Bun.sleep(2500);
   try {

@@ -364,8 +364,38 @@ interface Seen {
   newWindows: number;
   newTabs: number;
   surfaces: CensusWindow[];
+  appPopover: boolean;
   pages: number;
   viewport: string;
+}
+
+/// The app's own popovers on show, as the size of their content. On AppKit the
+/// Popover node is the anchor handle, not the popover window, so its content is
+/// what measures it (in the popover window's own space).
+async function appPopovers(): Promise<{ w: number; h: number }[]> {
+  type Sized = Node & { geometry?: { w: number; h: number } | null };
+  const found: { w: number; h: number }[] = [];
+  const largest = (node: Sized): { w: number; h: number } | null => {
+    let best = node.visible && node.geometry ? node.geometry : null;
+    for (const child of node.children) {
+      const g = largest(child as never);
+      if (g && (!best || g.w * g.h > best.w * best.h)) best = g;
+    }
+    return best;
+  };
+  for (const w of (await app.windows()).windows) {
+    const tree = await app.tree(w.ref);
+    const walk = (node: Sized) => {
+      if (node.type === "Popover") {
+        const g = largest(node);
+        if (g) found.push(g);
+        return;
+      }
+      for (const child of node.children) walk(child as never);
+    };
+    walk(tree.root as never);
+  }
+  return found;
 }
 
 /// What a route left behind. A census window that was not there before and is
@@ -376,16 +406,21 @@ async function diff(before: Snapshot): Promise<Seen> {
   const after = await snapshot();
   const own = (await app.windows()).windows.flatMap((w) => (w.geometry ? [w.geometry] : []));
   const known = new Set(before.census.map((w) => w.number));
-  const surfaces = after.census.filter(
+  const added = after.census.filter(
     (w) =>
       w.alpha > 0 &&
       !known.has(w.number) &&
       !own.some((f) => Math.abs(f.x - w.x) <= 1 && Math.abs(f.y - w.y) <= 1 && Math.abs(f.w - w.width) <= 1 && Math.abs(f.h - w.height) <= 1),
   );
+  // An NSPopover is a window of its own, a little larger than its content
+  // (the arrow and the frame), and the app's popovers are not in app.windows().
+  const popovers = added.length ? await appPopovers().catch(() => []) : [];
+  const ownPopover = (w: CensusWindow) => popovers.some((p) => Math.abs(p.w - w.width) <= 60 && Math.abs(p.h - w.height) <= 60);
   return {
     newWindows: after.windows - before.windows,
     newTabs: after.tabs - before.tabs,
-    surfaces,
+    surfaces: added.filter((w) => !ownPopover(w)),
+    appPopover: added.some(ownPopover),
     pages: after.pages - before.pages,
     viewport: `${before.viewport}->${after.viewport}`,
   };
@@ -460,6 +495,31 @@ const ext = (name: string, call: string, expect: Expect): Route => ({
   run: async () => `worker ${await inWorker(call)}`,
 });
 
+/// A link to a scheme no browser draws. Mail.app is quit again afterwards
+/// unless it was already running, since the hand-off launches it.
+const outside = (name: string, id: string): Route => ({
+  name,
+  expect: { windows: 0, tabs: 0 },
+  run: async (page) => {
+    const mailWasRunning = Bun.spawnSync(["pgrep", "-x", "Mail"]).exitCode === 0;
+    const href = (await pageEval(app, page, `document.getElementById(${JSON.stringify(id)}).href`)) ?? "";
+    const before = countTrace("openOutside");
+    await click(await pagePoint(page, id), "left");
+    const handed = await until("the host hands the link to the system", async () => countTrace("openOutside"), (n) => n > before, 8000).catch(() => before);
+    const stayed = await pageEval(app, page, "location.href");
+    if (!mailWasRunning) Bun.spawnSync(["osascript", "-e", 'if application "Mail" is running then tell application "Mail" to quit']);
+    assert(handed > before, `${href} was never handed to the system`);
+    assert(stayed === ESCAPE_URL, `the page left for ${stayed}`);
+    return `handed ${href} to the system`;
+  },
+});
+
+function countTrace(marker: string): number {
+  const path = process.env.ND_APP_HOST_LOG;
+  if (!path) return 0;
+  return Number(Bun.spawnSync(["rg", "-c", marker, path]).stdout.toString().trim()) || 0;
+}
+
 const NONE: Expect = { windows: 0, tabs: 0 };
 const TAB: Expect = { windows: 0, tabs: 1 };
 const WINDOW: Expect = { windows: 1, tabs: 0 };
@@ -472,7 +532,8 @@ const routes: Route[] = [
   // other Chrome accelerator has to do nothing visible, or reach the app as
   // `browserCommand`.
   key("key.cmdN", "n", ["command"], WINDOW),
-  key("key.cmdShiftN", "n", ["command", "shift"], NONE),
+  // The app's private window, through browserCommand newPrivateWindow.
+  key("key.cmdShiftN", "n", ["command", "shift"], WINDOW),
   key("key.cmdT", "t", ["command"], TAB),
   key("key.cmdShiftT", "t", ["command", "shift"], { windows: 0 }),
   key("key.cmdShiftB", "b", ["command", "shift"], NONE),
@@ -489,8 +550,10 @@ const routes: Route[] = [
   key("key.cmdD", "d", ["command"], NONE),
   key("key.cmdShiftD", "d", ["command", "shift"], NONE),
   key("key.cmdS", "s", ["command"], NONE),
-  key("key.cmdP", "p", ["command"], NONE),
-  key("key.cmdOptP", "p", ["command", "option"], NONE),
+  // The system print panel, as window.print() gives; cmd+opt+P is Chrome's
+  // "print using the system dialog", the same panel.
+  key("key.cmdP", "p", ["command"], NATIVE),
+  key("key.cmdOptP", "p", ["command", "option"], NATIVE),
   key("key.cmdO", "o", ["command"], NONE),
   key("key.cmdOptU", "u", ["command", "option"], NONE),
   key("key.cmdOptI", "i", ["command", "option"], { windows: 0, tabs: 0 }),
@@ -547,8 +610,10 @@ const routes: Route[] = [
   pageClick("page.middleClick", "plain", "middle", TAB),
   pageClick("page.cmdClick", "plain", "cmd", TAB),
   pageClick("page.shiftClick", "plain", "shift", TAB),
-  pageClick("page.mailto", "mailto", "left", { windows: 0 }),
-  pageClick("page.externalProtocol", "extproto", "left", { windows: 0 }),
+  // Both go to the scheme's own application (the host traces the hand-off),
+  // never an app tab, and the page stays where it was.
+  outside("page.mailto", "mailto"),
+  outside("page.externalProtocol", "extproto"),
   pageClick("page.print", "print", "left", NATIVE),
   pageClick("page.documentPip", "pip-doc", "left", NONE),
   pageClick("page.share", "share", "left", NATIVE),
@@ -673,6 +738,7 @@ for (const route of routes) {
     }
   }
   const seen = await diff(before);
+  if (seen.appPopover) note += " app popover on show";
   // Chromium's link status bubble (the URL shown while the pointer is over a
   // link) is a 22 pt strip inside the view: a hover hint, reported, allowed.
   const frames = (await app.windows().catch(() => ({ windows: [] as { geometry?: { x: number; y: number; w: number; h: number } }[] }))).windows.flatMap((w) => (w.geometry ? [w.geometry] : []));
