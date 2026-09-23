@@ -2363,30 +2363,75 @@ fn declaredAccel(spec: []const u8) ?[]u8 {
     var key: c_uint = 0;
     var mods: gdk.ModifierType = .{};
     if (gtk.acceleratorParse(owned, &key, &mods) == 0) return null;
+    // Shift+Tab is its own keyval to X, and the key event side spells it as
+    // the Tab key with shift held.
+    if (key == gdk.KEY_ISO_Left_Tab) return plainAccel(mods.control_mask, mods.alt_mask, true, "tab");
     const name = gdk.keyvalName(gdk.keyvalToLower(key)) orelse return null;
     return plainAccel(mods.control_mask, mods.alt_mask, mods.shift_mask, std.mem.span(name));
 }
 
-/// The accelerator a key event spells, or null for anything that is not one.
-/// Only what an app declares in a menu is worth building: a letter or digit, or
-/// a function key, with at least one of control or alt held.
-fn accelOf(event: *const c.cef_key_event_t) ?[]u8 {
+/// A non-alphanumeric key by its Windows key code, as the GTK keyval name of
+/// its unshifted and shifted symbol on a US layout. Chromium names keys this
+/// way on every platform, and the menu declared them by keyval: "primary+plus"
+/// is the equal key with shift held, "primary+shift+comma" the same key as
+/// "primary+less".
+const NamedKey = struct { vk: c_int, plain: []const u8, shifted: ?[]const u8 = null };
+const named_keys = [_]NamedKey{
+    .{ .vk = 0x08, .plain = "backspace" },
+    .{ .vk = 0x09, .plain = "tab" },
+    .{ .vk = 0x0D, .plain = "return" },
+    .{ .vk = 0x20, .plain = "space" },
+    .{ .vk = 0x21, .plain = "page_up" },
+    .{ .vk = 0x22, .plain = "page_down" },
+    .{ .vk = 0x23, .plain = "end" },
+    .{ .vk = 0x24, .plain = "home" },
+    .{ .vk = 0x25, .plain = "left" },
+    .{ .vk = 0x26, .plain = "up" },
+    .{ .vk = 0x27, .plain = "right" },
+    .{ .vk = 0x28, .plain = "down" },
+    .{ .vk = 0x2E, .plain = "delete" },
+    .{ .vk = 0x6B, .plain = "kp_add" },
+    .{ .vk = 0x6D, .plain = "kp_subtract" },
+    .{ .vk = 0xBA, .plain = "semicolon", .shifted = "colon" },
+    .{ .vk = 0xBB, .plain = "equal", .shifted = "plus" },
+    .{ .vk = 0xBC, .plain = "comma", .shifted = "less" },
+    .{ .vk = 0xBD, .plain = "minus", .shifted = "underscore" },
+    .{ .vk = 0xBE, .plain = "period", .shifted = "greater" },
+    .{ .vk = 0xBF, .plain = "slash", .shifted = "question" },
+    .{ .vk = 0xC0, .plain = "grave", .shifted = "asciitilde" },
+    .{ .vk = 0xDB, .plain = "bracketleft", .shifted = "braceleft" },
+    .{ .vk = 0xDC, .plain = "backslash", .shifted = "bar" },
+    .{ .vk = 0xDD, .plain = "bracketright", .shifted = "braceright" },
+    .{ .vk = 0xDE, .plain = "apostrophe", .shifted = "quotedbl" },
+};
+
+/// The accelerators a key event can spell, or none for anything that is not
+/// one: at least one of control or alt held, or a function key. A shifted
+/// symbol spells two, the way GTK matches it either by the symbol it types
+/// ("ctrl+plus") or by the key with shift held ("ctrl+shift+equal").
+fn accelsOf(event: *const c.cef_key_event_t) [2]?[]u8 {
+    const none: [2]?[]u8 = .{ null, null };
     const ctrl = (event.modifiers & c.EVENTFLAG_CONTROL_DOWN) != 0;
     const alt = (event.modifiers & c.EVENTFLAG_ALT_DOWN) != 0;
     const shift = (event.modifiers & c.EVENTFLAG_SHIFT_DOWN) != 0;
     const vk = event.windows_key_code;
     const is_fkey = vk >= 0x70 and vk <= 0x7B; // VK_F1..VK_F12
-    if (!ctrl and !alt and !is_fkey) return null;
+    if (!ctrl and !alt and !is_fkey) return none;
     if (is_fkey) {
         var num: [4]u8 = undefined;
-        const text = std.fmt.bufPrint(&num, "f{d}", .{vk - 0x6F}) catch return null;
-        return plainAccel(ctrl, alt, shift, text);
+        const text = std.fmt.bufPrint(&num, "f{d}", .{vk - 0x6F}) catch return none;
+        return .{ plainAccel(ctrl, alt, shift, text), null };
     }
     if ((vk >= 'A' and vk <= 'Z') or (vk >= '0' and vk <= '9')) {
         const ch = [_]u8{@intCast(vk)};
-        return plainAccel(ctrl, alt, shift, &ch);
+        return .{ plainAccel(ctrl, alt, shift, &ch), null };
     }
-    return null;
+    for (named_keys) |k| {
+        if (k.vk != vk) continue;
+        const as_symbol = if (shift) if (k.shifted) |sym| plainAccel(ctrl, alt, false, sym) else null else null;
+        return .{ plainAccel(ctrl, alt, shift, k.plain), as_symbol };
+    }
+    return none;
 }
 
 const AccelTask = struct { action: []u8 };
@@ -2405,12 +2450,24 @@ fn onPreKeyEvent(
     defer ref.releaseParam(browser);
     if (event == null) return 0;
     if (event.*.type != c.KEYEVENT_RAWKEYDOWN) return 0;
-    const accel = accelOf(event) orelse return 0;
-    defer alloc.free(accel);
+    const spelled = accelsOf(event);
+    defer for (spelled) |a| if (a) |x| alloc.free(x);
+    const accel = spelled[0] orelse return 0;
     accel_lock.lock();
-    const action = if (accel_actions.get(accel)) |a| alloc.dupe(u8, a) catch null else null;
+    var action: ?[]u8 = null;
+    for (spelled) |a| {
+        const name = a orelse continue;
+        if (accel_actions.get(name)) |found| {
+            action = alloc.dupe(u8, found) catch null;
+            break;
+        }
+    }
     accel_lock.unlock();
-    const owned = action orelse return 0;
+    const owned = action orelse {
+        tr("keyToPage {s}", .{accel});
+        return 0;
+    };
+    tr("appAccel {s} -> {s}", .{ accel, owned });
     const task = AccelObj.create(.{ .action = owned }) orelse {
         alloc.free(owned);
         return 0;
@@ -2454,6 +2511,7 @@ fn onChromeCommand(
     _: c.cef_window_open_disposition_t,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
+    tr("chromeCommand node={d} id={d}", .{ CommandObj.of(self).payload.node_id, command_id });
     // F12 and ctrl+shift+I arrive as IDC_DEV_TOOLS_TOGGLE, which only ever
     // opens: Chrome toggles a DevToolsWindow of its own, and the inspector on
     // this path is a second browser docked in the view instead. Closing it is
