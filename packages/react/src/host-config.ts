@@ -333,7 +333,11 @@ export const hostConfig = {
   unhideTextInstance() {},
 
   getPublicInstance: (i: Instance) => i,
-  detachDeletedInstance() {},
+  // removeChild only sees the root of a removed subtree; React calls this for
+  // every host instance under it as well.
+  detachDeletedInstance(inst: Instance) {
+    registry.unregister(inst.id);
+  },
   maySuspendCommit: () => false,
   preloadInstance: () => true,
   startSuspendingCommit() {},

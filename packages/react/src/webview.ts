@@ -4,6 +4,8 @@
 // modules hold the resolver until that event arrives.
 
 import type { NdNodeRef } from "./generated/intrinsics.ts";
+import { registry } from "./host-config.ts";
+import { onNodeRemoved } from "./ops.ts";
 import { sendCommand } from "./renderer.ts";
 
 interface Pending<T> {
@@ -24,17 +26,70 @@ function nextId(prefix: string): string {
   return `${prefix}${++seq}`;
 }
 
+/// The unanswered requests of each mounted view. A removed view answers
+/// nothing, and a result it had in flight has no prop left to land on, so its
+/// removal is what settles them.
+const inFlight = new Map<number, Map<string, (reason: Error) => void>>();
+
+onNodeRemoved((nodeId) => {
+  const calls = inFlight.get(nodeId);
+  if (!calls) return;
+  inFlight.delete(nodeId);
+  for (const [id, reject] of calls) reject(new Error(`the <webview> was removed before request ${id} was answered`));
+});
+
+/// Sends a command whose answer arrives as an event carrying `id`, and parks
+/// its resolver in `pending` until the matching result handler settles it.
+function request<T>(
+  node: NdNodeRef<"webview">,
+  pending: Map<string, Pending<T>>,
+  prefix: string,
+  command: string,
+  args: Record<string, unknown>,
+): Promise<T> {
+  const id = nextId(prefix);
+  return new Promise<T>((resolve, reject) => {
+    if (!registry.get(node.id)) {
+      reject(new Error(`${command}: the <webview> is no longer mounted`));
+      return;
+    }
+    let calls = inFlight.get(node.id);
+    if (!calls) inFlight.set(node.id, (calls = new Map()));
+    const forget = (): void => {
+      pending.delete(id);
+      calls.delete(id);
+      if (calls.size === 0 && inFlight.get(node.id) === calls) inFlight.delete(node.id);
+    };
+    pending.set(id, {
+      resolve: (value) => {
+        forget();
+        resolve(value);
+      },
+      reject: (reason) => {
+        forget();
+        reject(reason);
+      },
+    });
+    calls.set(id, (reason) => {
+      forget();
+      reject(reason);
+    });
+    try {
+      sendCommand(node, command as never, { id, ...args });
+    } catch (error) {
+      forget();
+      reject(error as Error);
+    }
+  });
+}
+
 /// Runs `code` in the given <webview>'s page. Resolves with the host's
 /// serialized result once the matching `javaScriptResult` event arrives;
 /// rejects with the host-reported error when `ok` is false. `world` names an
 /// isolated JavaScript world (the same names `addUserScript` uses); omit it to
 /// run in the page's own world.
 export function executeJavaScript(node: NdNodeRef<"webview">, code: string, world?: string): Promise<string> {
-  const id = nextId("js");
-  return new Promise<string>((resolve, reject) => {
-    pendingEvals.set(id, { resolve, reject });
-    sendCommand(node, "executeJavaScript", world ? { id, code, world } : { id, code });
-  });
+  return request(node, pendingEvals, "js", "executeJavaScript", world ? { code, world } : { code });
 }
 
 /// Pass as a <webview>'s `onJavaScriptResult` prop — resolves or rejects the
@@ -63,11 +118,7 @@ export interface Cookie {
 /// Reads the cookies visible to this <webview>'s profile. With `url`, only the
 /// cookies that apply to that URL's host. Requires the `onCookiesResult` prop.
 export function getCookies(node: NdNodeRef<"webview">, url?: string): Promise<Cookie[]> {
-  const id = nextId("ck");
-  return new Promise<Cookie[]>((resolve, reject) => {
-    pendingCookies.set(id, { resolve, reject });
-    sendCommand(node, "getCookies", url ? { id, url } : { id });
-  });
+  return request(node, pendingCookies, "ck", "getCookies", url ? { url } : {});
 }
 
 /// Pass as a <webview>'s `onCookiesResult` prop — settles the getCookies()
@@ -85,11 +136,7 @@ export function onCookiesResult(e: { data: unknown }): void {
 /// with `sendCommand(node, "restoreSession", { state })`. Requires the
 /// `onSessionSaved` prop.
 export function saveSession(node: NdNodeRef<"webview">): Promise<string> {
-  const id = nextId("ss");
-  return new Promise<string>((resolve, reject) => {
-    pendingSessions.set(id, { resolve, reject });
-    sendCommand(node, "saveSession", { id });
-  });
+  return request(node, pendingSessions, "ss", "saveSession", {});
 }
 
 /// Pass as a <webview>'s `onSessionSaved` prop — resolves the saveSession()
@@ -122,11 +169,7 @@ export interface InstalledExtension {
 /// Chromium refuses a renderer-initiated navigation to a `chrome-extension://`
 /// page.
 export function listExtensions(node: NdNodeRef<"webview">): Promise<InstalledExtension[]> {
-  const id = nextId("ext");
-  return new Promise<InstalledExtension[]>((resolve, reject) => {
-    pendingExtensions.set(id, { resolve, reject });
-    sendCommand(node, "listExtensions", { id });
-  });
+  return request(node, pendingExtensions, "ext", "listExtensions", {});
 }
 
 /// Pass as a <webview>'s `onExtensionsList` prop, which settles the
@@ -165,11 +208,7 @@ function extensionMutation(
   command: string,
   args: Record<string, unknown>,
 ): Promise<InstalledExtension[]> {
-  const id = nextId("ext");
-  return new Promise<InstalledExtension[]>((resolve, reject) => {
-    pendingExtensions.set(id, { resolve, reject });
-    sendCommand(node, command, { id, ...args });
-  });
+  return request(node, pendingExtensions, "ext", command, args);
 }
 
 /// Why the registry changed, as Chromium spelled it: `developerPrivate`'s own
@@ -200,12 +239,8 @@ export function watchExtensions(
   node: NdNodeRef<"webview">,
   listener: (change: ExtensionsChange) => void,
 ): Promise<string[]> {
-  const id = nextId("ext");
-  return new Promise<string[]>((resolve, reject) => {
-    pendingWatches.set(id, { resolve, reject });
-    extensionsWatchers.push(listener);
-    sendCommand(node, "watchExtensions", { id });
-  });
+  extensionsWatchers.push(listener);
+  return request(node, pendingWatches, "ext", "watchExtensions", {});
 }
 
 /// Pass as a <webview>'s `onExtensionsChanged` prop. It settles the
@@ -273,11 +308,7 @@ export interface ExtensionActionState {
 /// `<webview>` has no tab id an app could pass. The answer carries the `tabId`
 /// and `tabUrl` it was read for.
 export function readExtensionAction(node: NdNodeRef<"webview">): Promise<ExtensionActionState> {
-  const id = nextId("ext");
-  return new Promise<ExtensionActionState>((resolve, reject) => {
-    pendingActionState.set(id, { resolve, reject });
-    sendCommand(node, "readExtensionAction", { id });
-  });
+  return request(node, pendingActionState, "ext", "readExtensionAction", {});
 }
 
 /// The actions the installed extensions declare, for an app that draws its own
@@ -286,11 +317,7 @@ export function readExtensionAction(node: NdNodeRef<"webview">): Promise<Extensi
 /// is no toolbar button for Chromium to consider clicked, so `onClicked` never
 /// fires and no `activeTab` grant is issued.
 export function listExtensionActions(node: NdNodeRef<"webview">): Promise<ExtensionAction[]> {
-  const id = nextId("ext");
-  return new Promise<ExtensionAction[]>((resolve, reject) => {
-    pendingActions.set(id, { resolve, reject });
-    sendCommand(node, "listExtensionActions", { id });
-  });
+  return request(node, pendingActions, "ext", "listExtensionActions", {});
 }
 
 /// Pass as a <webview>'s `onExtensionActions` prop.
