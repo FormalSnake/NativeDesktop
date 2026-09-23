@@ -52,6 +52,9 @@ const gdk = @import("gdk");
 //  - a row's background is framework-owned: these selectors outrank a node's
 //    own `.nd-<id>` block, the same way `button.compact` above already does.
 //
+// The `nd-palette-*` rules are the command bar's (commandpalette.zig): a
+// borderless 20px field and 40px one-line rows with no separators.
+//
 // Installed once at display level; providers restyle retroactively, so a lazy
 // install is safe.
 var base_installed = false;
@@ -81,6 +84,10 @@ const nd_base_css =
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
+    \\.nd-palette-entry { font-size: 20px; min-height: 44px; padding: 0 6px; background: none; box-shadow: none; outline: none; }
+    \\.nd-palette-entry > image { -gtk-icon-size: 18px; }
+    \\list.nd-palette-list { background: none; }
+    \\list.nd-palette-list > row { min-height: 40px; padding: 0 10px; margin: 0 6px; border-radius: 9px; }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 

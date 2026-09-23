@@ -696,10 +696,12 @@ fn vtSemanticAction(
         ndtabs_gtk.closeNode(w);
         return 0;
     } else if (ndpalette_gtk.isPaletteHandle(w) and
-        (std.mem.eql(u8, action_s, "setValue") or std.mem.eql(u8, action_s, "type") or std.mem.eql(u8, action_s, "click")))
+        (std.mem.eql(u8, action_s, "setValue") or std.mem.eql(u8, action_s, "type") or std.mem.eql(u8, action_s, "click") or
+            std.mem.eql(u8, action_s, "paletteLayout")))
     {
-        // Palette: route setValue/type/click to the real entry/list; a11y and
-        // the rest fall through to the generic host-box handling below.
+        // Palette: route setValue/type/click/paletteLayout to the real
+        // entry/list; a11y and the rest fall through to the generic host-box
+        // handling below.
         return ndpalette_gtk.automationAction(w, node_id, action_s, args, result_json_out, err_json_out);
     } else if (std.mem.eql(u8, action_s, "click")) {
         return semanticClick(w, node_id, result_json_out, err_json_out);
