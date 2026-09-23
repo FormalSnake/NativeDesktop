@@ -101,6 +101,7 @@ private let ndSFSymbolMap: [String: String] = [
     // the extension vocabulary. `tab-new` is the one the Stage-1 review caught
     // as a missing `+` on the AppKit New Tab row.
     "tab-new": "plus",
+    "window-new": "macwindow.badge.plus",
     "folder-download": "arrow.down.circle",
     "channel-secure": "lock.fill",
     "channel-insecure": "lock.slash",
