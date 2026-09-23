@@ -272,6 +272,11 @@ func ndImageApplyPixelSize(_ iv: NSImageView, _ pixelSize: Int?) {
     }
 }
 
+/// The side `pixelSize` pinned an image to, for the box layout's measurement.
+func ndImagePixelSide(_ iv: NSImageView) -> CGFloat? {
+    ndImagePixelSizeConstraints[ObjectIdentifier(iv)]?.first?.constant
+}
+
 /// Replaced rather than stacked: a pixelSize update must not leave the old
 /// pair of constraints fighting the new one.
 nonisolated(unsafe) private var ndImagePixelSizeConstraints: [ObjectIdentifier: [NSLayoutConstraint]] = [:]

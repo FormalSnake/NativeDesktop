@@ -532,6 +532,9 @@ func ndNaturalChildSize(_ view: NSView) -> NSSize {
     // segmented-control-on-top style is a plain NSView wrapping the NSTabView
     // plus its strip, not the tab view itself.
     if let tabs = ndTabViewController(for: view)?.tabView { return ndTabViewNaturalSize(tabs, host: view) }
+    // `pixelSize` pins an image with constraints this manual layout never
+    // reads, and the symbol's own intrinsic size is shorter than the side.
+    if let image = view as? NSImageView, let side = ndImagePixelSide(image) { return NSSize(width: side, height: side) }
     // Intrinsic first, fitting only where there is no intrinsic answer: a
     // leaf's intrinsic size IS its natural size, while an NSHostingView's
     // fitting size is the size its SwiftUI body would ACCEPT, which for a
