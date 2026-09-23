@@ -685,10 +685,13 @@ async function focusRequest(label: string): Promise<void> {
 /// keyboard and the pointer left over it. The app moves focus from inside the
 /// accelerator, into its field or into the palette it opens, so this is the
 /// explicit request of `focusRequest` arriving while the key that caused it is
-/// still being delivered to the page.
+/// still being delivered to the page. Ctrl+L selects the whole address, as in
+/// every browser, so what is typed next replaces it: a field reading exactly
+/// the typed text is the proof that the selection covered all of it.
 async function focusShortcut(label: string): Promise<void> {
   if (!(await widgetToScreen("omnibox"))) {
     skip(`${label}.typesIntoTheWidget`, "no omnibox bounding box");
+    skip(`${label}.selectsTheAddress`, "no omnibox bounding box");
     return;
   }
   const pageAt = await pageToScreen("probe");
@@ -707,6 +710,11 @@ async function focusShortcut(label: string): Promise<void> {
   check(
     `${label}.typesIntoTheWidget`,
     fieldAfter.includes("SHORTCUT") && pageAfter === pageBefore,
+    `field "nd" -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfter)}`,
+  );
+  check(
+    `${label}.selectsTheAddress`,
+    fieldAfter === "SHORTCUT",
     `field "nd" -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfter)}`,
   );
   key("Escape");
@@ -1465,6 +1473,7 @@ if (hasApp) {
   skip("focusRequest.holdsTheWidget", "the app under test has no omnibox");
   skip("focusRequest.typesIntoTheWidget", "the app under test has no omnibox");
   skip("focusShortcut.typesIntoTheWidget", "the app under test has no omnibox");
+  skip("focusShortcut.selectsTheAddress", "the app under test has no omnibox");
 }
 
 if (hasApp) {
