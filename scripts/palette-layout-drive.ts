@@ -54,7 +54,7 @@ function checkLayout(l: PaletteLayout, where: string): void {
     const row = r.row as Geo;
     const tag = `${where} row ${i}`;
     check(inside(row, panel), `${tag}: row outside the panel`);
-    check(Math.abs(row.h - 40) <= 1, `${tag}: row ${row.h}px tall, want 40`);
+    check(Math.abs(row.h - 34) <= 1, `${tag}: row ${row.h}px tall, want 34`);
     const parts = [r.icon, r.title, r.subtitle, r.hint].filter(Boolean) as Geo[];
     for (const p of parts) {
       check(inside(p, row), `${tag}: part ${JSON.stringify(p)} outside row ${JSON.stringify(row)}`);
@@ -189,6 +189,16 @@ for (const width of WIDTHS) {
     await waitText(app, "Query: github.com");
     await press(app, "Return");
     await waitText(app, "Last: activate open:github.com");
+
+    // An address bar: nothing highlighted, and Enter takes the field as it
+    // reads, completion included.
+    await app.click("reopen-address");
+    await layoutWhen(app, (l) => l.presented && l.fieldText === "", `${where}: the address-bar open did not present empty`);
+    await typeText(app, "git");
+    const bar = await layoutWhen(app, (l) => l.fieldText === "github.com", `${where}: the address bar did not complete "git"`);
+    check(bar.rows.every((r) => !r.highlighted), `${where}: highlightFirst=false still highlighted a row`);
+    await press(app, "Return");
+    await waitText(app, "Last: submit github.com");
 
     await app.click("reopen");
     const seeded = await layoutWhen(

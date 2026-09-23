@@ -1,6 +1,6 @@
 // AdwDialog surface for the <commandpalette> widget: a floating command bar
-// over the window (a borderless GtkSearchEntry over a GtkListBox of one-line
-// rows). Peer of swift/Sources/NDShell/CommandPalette.swift. CONTROLLED: the
+// over the window (a borderless GtkEntry on one card, a GtkListBox of
+// one-line rows on a second card under it). Peer of swift/Sources/NDShell/CommandPalette.swift. CONTROLLED: the
 // app owns `query` and `items`; the widget never filters or reorders. Every
 // keystroke fires queryChanged with the text the user typed and the app feeds
 // back the next result set. A present always starts from the last `query` the
@@ -11,8 +11,9 @@
 //
 // Highlight is internal (Up/Down/Home/End clamp within the current results);
 // onActivate carries the highlighted/clicked row's stable id, onSubmit the
-// typed text (Enter on no highlight, or Ctrl+Enter regardless) so a directory
-// picker can accept a typed path that matches no listed row.
+// field text (Enter on no highlight, completion included; Ctrl+Enter sends only
+// what was typed) so a directory picker can accept a typed path that matches
+// no listed row.
 //
 // Inline autocompletion: the first row's `completion`, when it extends what
 // was typed and the last edit inserted text, is shown selected after the
@@ -48,9 +49,10 @@ const ROW_SUBTITLE_KEY = "nd-palette-subtitle";
 const ROW_HINT_KEY = "nd-palette-hint";
 
 /// Card geometry, the same numbers as NDPaletteMetrics on AppKit.
-const panel_width: c_int = 640;
+const panel_width: c_int = 560;
 const row_height: c_int = 40;
-const list_height: c_int = 400;
+/// Ten 34px rows; past that the list scrolls.
+const list_height: c_int = 340;
 /// The card's top edge sits at this fraction of the window height, so the
 /// field stays put while the list below it grows and shrinks.
 const top_fraction: f64 = 0.18;
@@ -81,8 +83,11 @@ const State = struct {
     close_timer: c_uint = 0,
     /// Resize notifications on `return_window`, dropped with it.
     resize_hids: [2]c_ulong = .{ 0, 0 },
-    entry: *gtk.SearchEntry,
-    separator: *gtk.Widget,
+    entry: *gtk.Entry,
+    /// The list's own card, gone when there are no rows.
+    list_card: *gtk.Widget,
+    /// Whether fresh rows highlight the first one (`highlightFirst`).
+    highlight_first: bool = true,
     list: *gtk.ListBox,
     scroller: *gtk.ScrolledWindow,
     ids: std.ArrayListUnmanaged([]u8) = .empty,
@@ -244,7 +249,7 @@ fn refocusEntry(state: *State) void {
     _ = gtk.Widget.grabFocus(entry_w);
 }
 
-fn rowLabel(text: [:0]const u8, dimmed: bool, ellipsize: bool) *gtk.Label {
+fn rowLabel(text: [:0]const u8, class: [:0]const u8, ellipsize: bool) *gtk.Label {
     const label = gtk.Label.new(text);
     gtk.Label.setXalign(label, 0.0);
     gtk.Label.setSingleLineMode(label, 1);
@@ -252,12 +257,12 @@ fn rowLabel(text: [:0]const u8, dimmed: bool, ellipsize: bool) *gtk.Label {
     gtk.Label.setUseMarkup(label, 0);
     if (ellipsize) gtk.Label.setEllipsize(label, .end);
     gtk.Widget.setValign(label.as(gtk.Widget), .baseline_center);
-    if (dimmed) gtk.Widget.addCssClass(label.as(gtk.Widget), "dimmed");
+    gtk.Widget.addCssClass(label.as(gtk.Widget), class);
     return label;
 }
 
-/// One line: a 16px icon, the title, the subtitle dimmed after it, and the
-/// hint dimmed at the trailing edge. The subtitle gives way first, then the
+/// One line: a 16px icon, the title, the subtitle muted after it, and the
+/// hint muted at the trailing edge. The subtitle gives way first, then the
 /// title; the hint never ellipsizes. An icon-less row keeps an empty 16px slot
 /// so titles line up down the list.
 fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8) *gtk.ListBoxRow {
@@ -289,20 +294,20 @@ fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8)
     gtk.Box.append(slot, img.as(gtk.Widget));
     gtk.Box.append(line, slot.as(gtk.Widget));
 
-    const title = rowLabel(dupeZ(objStr(obj, "title") orelse ""), false, true);
+    const title = rowLabel(dupeZ(objStr(obj, "title") orelse ""), "nd-palette-title", true);
     gtk.Label.setMaxWidthChars(title, title_max_chars);
     gtk.Box.append(line, title.as(gtk.Widget));
 
     const sub_text = objStr(obj, "subtitle") orelse "";
-    const subtitle = rowLabel(dupeZ(sub_text), true, true);
+    const subtitle = rowLabel(dupeZ(sub_text), "nd-palette-muted", true);
     gtk.Widget.setHexpand(subtitle.as(gtk.Widget), 1);
-    gtk.Widget.setMarginStart(subtitle.as(gtk.Widget), 8);
+    gtk.Widget.setMarginStart(subtitle.as(gtk.Widget), 10);
     if (sub_text.len == 0) gtk.Widget.setVisible(subtitle.as(gtk.Widget), 0);
     gtk.Box.append(line, subtitle.as(gtk.Widget));
 
     const hint_text = objStr(obj, "hint") orelse "";
-    const hint = rowLabel(dupeZ(hint_text), true, false);
-    gtk.Widget.setMarginStart(hint.as(gtk.Widget), 16);
+    const hint = rowLabel(dupeZ(hint_text), "nd-palette-muted", false);
+    gtk.Widget.setMarginStart(hint.as(gtk.Widget), 10);
     gtk.Widget.setHalign(hint.as(gtk.Widget), .end);
     if (hint_text.len == 0) gtk.Widget.setVisible(hint.as(gtk.Widget), 0);
     // With no subtitle nothing else expands, and the hint must still sit on
@@ -366,10 +371,10 @@ fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8
         }
     }
     const empty = state.ids.items.len == 0;
-    gtk.Widget.setVisible(state.separator, @intFromBool(!empty));
-    gtk.Widget.setVisible(state.scroller.as(gtk.Widget), @intFromBool(!empty));
-    // Fresh results: the top row is the highlighted default (Enter drills in).
-    setHighlight(state, if (!empty) 0 else -1);
+    gtk.Widget.setVisible(state.list_card, @intFromBool(!empty));
+    // Fresh results: the top row is the highlighted default (Enter drills in),
+    // unless the app asked for an address bar, where Enter takes the field.
+    setHighlight(state, if (!empty and state.highlight_first) 0 else -1);
     if (state.presented) {
         refocusEntry(state);
         scheduleCompletion(state);
@@ -566,7 +571,7 @@ fn present(state: *State) void {
     // open (the current address) wants.
     _ = gtk.Widget.grabFocus(state.entry.as(gtk.Widget));
     selectAllFromStart(state);
-    setHighlight(state, if (state.ids.items.len > 0) 0 else -1);
+    setHighlight(state, if (state.ids.items.len > 0 and state.highlight_first) 0 else -1);
 }
 
 /// Everything selected with the caret at the start, so a long seeded address
@@ -718,37 +723,36 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     adw.Dialog.setContentWidth(dialog, panel_width);
     gtk.Widget.addCssClass(dialog.as(gtk.Widget), "nd-palette");
 
-    const card = gtk.Box.new(.vertical, 0);
-    gtk.Widget.addCssClass(card.as(gtk.Widget), "nd-palette-card");
+    // Two cards 8px apart: the field, and under it the list, which is not
+    // there at all while there are no rows.
+    const card = gtk.Box.new(.vertical, 8);
     gtk.Widget.setHalign(card.as(gtk.Widget), .center);
     gtk.Widget.setValign(card.as(gtk.Widget), .start);
-    gtk.Widget.setOverflow(card.as(gtk.Widget), .hidden);
 
-    const entry = gtk.SearchEntry.new();
+    const field_card = gtk.Box.new(.vertical, 0);
+    gtk.Widget.addCssClass(field_card.as(gtk.Widget), "nd-palette-field");
+
+    const entry = gtk.Entry.new();
     gtk.Widget.addCssClass(entry.as(gtk.Widget), "nd-palette-entry");
-    gtk.Widget.setMarginTop(entry.as(gtk.Widget), 10);
-    gtk.Widget.setMarginBottom(entry.as(gtk.Widget), 10);
-    gtk.Widget.setMarginStart(entry.as(gtk.Widget), 12);
-    gtk.Widget.setMarginEnd(entry.as(gtk.Widget), 12);
-    if (propStr(props, "placeholder")) |ph| gtk.SearchEntry.setPlaceholderText(entry, dupeZ(ph));
+    if (propStr(props, "placeholder")) |ph| gtk.Entry.setPlaceholderText(entry, dupeZ(ph));
+    gtk.Box.append(field_card, entry.as(gtk.Widget));
 
-    const separator = gtk.Separator.new(.horizontal);
+    const list_card = gtk.Box.new(.vertical, 0);
+    gtk.Widget.addCssClass(list_card.as(gtk.Widget), "nd-palette-list-card");
+    gtk.Widget.setOverflow(list_card.as(gtk.Widget), .hidden);
 
     const scroller = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setPolicy(scroller, .never, .automatic);
     // The list follows its rows up to ten of them, then scrolls.
     gtk.ScrolledWindow.setPropagateNaturalHeight(scroller, 1);
     gtk.ScrolledWindow.setMaxContentHeight(scroller, list_height);
-    gtk.Widget.setMarginTop(scroller.as(gtk.Widget), 6);
-    gtk.Widget.setMarginBottom(scroller.as(gtk.Widget), 6);
 
     const list = gtk.ListBox.new();
-    gtk.ListBox.setSelectionMode(list, .browse);
+    gtk.ListBox.setSelectionMode(list, .single); // single, not browse: browse ignores unselect_all
     gtk.ListBox.setActivateOnSingleClick(list, 1);
-    gtk.Widget.addCssClass(list.as(gtk.Widget), "navigation-sidebar");
     gtk.Widget.addCssClass(list.as(gtk.Widget), "nd-palette-list");
     gtk.Widget.setValign(list.as(gtk.Widget), .start);
-    // Keyboard focus stays on the search entry, always: its capture-phase key
+    // Keyboard focus stays on the entry, always: its capture-phase key
     // controller is the ONLY keyboard route to `activate` (onKeyPressed). If the
     // list (or a row) could hold focus, a pointer click that drills into a folder
     // would move focus onto the list, and the next Return would fire GtkListBox's
@@ -759,10 +763,10 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     // so both still fire exactly once. Rows are made non-focusable in buildRow.
     gtk.Widget.setFocusable(list.as(gtk.Widget), 0);
     gtk.ScrolledWindow.setChild(scroller, list.as(gtk.Widget));
+    gtk.Box.append(list_card, scroller.as(gtk.Widget));
 
-    gtk.Box.append(card, entry.as(gtk.Widget));
-    gtk.Box.append(card, separator.as(gtk.Widget));
-    gtk.Box.append(card, scroller.as(gtk.Widget));
+    gtk.Box.append(card, field_card.as(gtk.Widget));
+    gtk.Box.append(card, list_card.as(gtk.Widget));
 
     const layer = gtk.Box.new(.vertical, 0);
     gtk.Widget.setHexpand(layer.as(gtk.Widget), 1);
@@ -777,11 +781,12 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
         .layer = layer.as(gtk.Widget),
         .card = card.as(gtk.Widget),
         .entry = entry,
-        .separator = separator.as(gtk.Widget),
+        .list_card = list_card.as(gtk.Widget),
         .list = list,
         .scroller = scroller,
     };
     if (propStr(props, "query")) |q| setOwned(&state.controlled, q);
+    if (propBool(props, "highlightFirst")) |h| state.highlight_first = h;
     rebuildRows(state, propArray(props, "items"), dupeZ);
     if (propBool(props, "open") orelse false) state.pending_open = true;
 
@@ -798,7 +803,8 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
 
 pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const state = stateOf(widget) orelse return;
-    if (propStr(props, "placeholder")) |ph| gtk.SearchEntry.setPlaceholderText(state.entry, dupeZ(ph));
+    if (propStr(props, "placeholder")) |ph| gtk.Entry.setPlaceholderText(state.entry, dupeZ(ph));
+    if (propBool(props, "highlightFirst")) |h| state.highlight_first = h;
     if (propStr(props, "query")) |q| {
         setOwned(&state.controlled, q);
         if (state.presented) {
@@ -836,7 +842,7 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     _ = gobject.signalConnectData(asObj(state.dialog), "close-attempt", @ptrCast(&cbCloseAttempt), state, null, .{});
 
     // Capture-phase key controller on the entry: intercept navigation/commit
-    // keys before GtkSearchEntry consumes them (its own Esc clears the text),
+    // keys before the entry consumes them,
     // let plain typing fall through to drive the entry's changed signal.
     const key_ctrl = gtk.EventControllerKey.new();
     gtk.EventController.setPropagationPhase(key_ctrl.as(gtk.EventController), .capture);
@@ -849,9 +855,11 @@ fn emitActivate(state: *State, idx: i32) void {
     if (emit) |f| f(state.node_id, "activate", .{ .text = state.ids.items[@intCast(idx)] });
 }
 
-/// The typed text, never an unaccepted completion.
-fn emitSubmit(state: *State) void {
-    if (emit) |f| f(state.node_id, "submit", .{ .text = if (state.presented) state.typed else state.controlled });
+/// `shown`: the field as it reads, a completion included (Return accepts
+/// it). Otherwise only what was typed (Ctrl+Return).
+fn emitSubmit(state: *State, shown: bool) void {
+    const text: []const u8 = if (!state.presented) state.controlled else if (shown) entryText(state) else state.typed;
+    if (emit) |f| f(state.node_id, "submit", .{ .text = text });
 }
 
 /// Enter. Row 0 whose completion the user just took away (Backspace) is not
@@ -859,10 +867,10 @@ fn emitSubmit(state: *State) void {
 /// completion, Enter submits what was typed.
 fn commitReturn(state: *State) void {
     const n: i32 = @intCast(state.ids.items.len);
-    if (state.highlight < 0 or state.highlight >= n) return emitSubmit(state);
+    if (state.highlight < 0 or state.highlight >= n) return emitSubmit(state, true);
     if (state.highlight == 0 and state.suffix.len == 0) {
         if (state.first_completion) |c| {
-            if (!std.ascii.eqlIgnoreCase(c, state.typed)) return emitSubmit(state);
+            if (!std.ascii.eqlIgnoreCase(c, state.typed)) return emitSubmit(state, false);
         }
     }
     emitActivate(state, state.highlight);
@@ -1044,7 +1052,7 @@ pub fn automationAction(handle: *gtk.Widget, node_id: u32, action: []const u8, a
             },
             .bool => |b| {
                 if (!b) return cpSetErr(err_out, node_id);
-                emitSubmit(state);
+                emitSubmit(state, true);
             },
             else => return cpSetErr(err_out, node_id),
         }
@@ -1072,7 +1080,7 @@ pub fn automationAction(handle: *gtk.Widget, node_id: u32, action: []const u8, a
 
 fn cbSearchChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(obj))).as(gtk.Editable);
+    const editable = @as(*gtk.Entry, @ptrCast(@alignCast(obj))).as(gtk.Editable);
     userEdited(state, std.mem.span(gtk.Editable.getText(editable)));
 }
 
@@ -1107,7 +1115,10 @@ fn onKeyPressed(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk
     const n: i32 = @intCast(state.ids.items.len);
     switch (keyval) {
         gdk.KEY_Up => {
-            if (n > 0) setHighlight(state, if (state.highlight <= 0) 0 else state.highlight - 1);
+            // With nothing highlighted by default, Up off the first row goes
+            // back to the field.
+            const floor: i32 = if (state.highlight_first) 0 else -1;
+            if (n > 0) setHighlight(state, if (state.highlight <= 0) floor else state.highlight - 1);
             return 1;
         },
         gdk.KEY_Down => {
@@ -1133,7 +1144,7 @@ fn onKeyPressed(_: *gtk.EventControllerKey, keyval: c_uint, _: c_uint, mods: gdk
             return 1;
         },
         gdk.KEY_Return, gdk.KEY_KP_Enter => {
-            if (mods.control_mask) emitSubmit(state) else commitReturn(state);
+            if (mods.control_mask) emitSubmit(state, false) else commitReturn(state);
             return 1;
         },
         else => return 0, // typing drives the entry's changed signal

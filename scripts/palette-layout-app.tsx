@@ -48,6 +48,7 @@ function App(): React.ReactNode {
   const [seed, setSeed] = useState("");
   const [query, setQuery] = useState("");
   const [last, setLast] = useState("(none)");
+  const [addressBar, setAddressBar] = useState(false);
   return (
     <window title="Palette layout" defaultWidth={Number(process.env.PALETTE_WIDTH ?? 1280)} defaultHeight={800}>
       <box orientation="vertical" spacing={8}>
@@ -63,11 +64,20 @@ function App(): React.ReactNode {
           }}
         />
         <button testID="reopen-empty" label="Open empty" onClick={() => setOpen(true)} />
+        <button
+          testID="reopen-address"
+          label="Open as an address bar"
+          onClick={() => {
+            setAddressBar(true);
+            setOpen(true);
+          }}
+        />
         <commandpalette
           testID="palette"
           open={open}
           placeholder="Search or enter address"
           query={seed}
+          highlightFirst={!addressBar}
           items={rank(query)}
           onQueryChanged={(e) => setQuery(e.text)}
           onActivate={(e) => {

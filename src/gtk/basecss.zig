@@ -52,11 +52,12 @@ const gdk = @import("gdk");
 //  - a row's background is framework-owned: these selectors outrank a node's
 //    own `.nd-<id>` block, the same way `button.compact` above already does.
 //
-// The `nd-palette-*` rules are the command bar's (commandpalette.zig): the
-// dialog's own sheet made transparent and its dimming a light scrim, the card
-// drawn in its place (fading and scaling in over 160ms, fading out over
-// 120ms; commandpalette.zig toggles the classes), a borderless 20px field and 40px one-line rows with no separators, and no
-// hover shade: the keyboard highlight is the only one.
+// The `nd-palette-*` rules are the command bar's (commandpalette.zig). The
+// dialog's own sheet is transparent and its dimming is the ground colour at
+// 74%; the field and the list are two cards on that ground, in grey pairs for
+// light and dark. The list card scales from 0.98 at its top edge over 240ms
+// and everything fades; commandpalette.zig toggles the classes. The
+// highlighted row is the wash, never the accent, and there is no hover shade.
 //
 // Installed once at display level; providers restyle retroactively, so a lazy
 // install is safe.
@@ -88,17 +89,27 @@ const nd_base_css =
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
     \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+    \\dialog.nd-palette { --nd-ground: rgb(255 255 255); --nd-ink: rgb(23 23 23); --nd-muted: rgb(140 140 140); --nd-hairline: rgb(232 232 232); --nd-wash: rgb(239 239 239); }
+    \\@media (prefers-color-scheme: dark) { dialog.nd-palette { --nd-ground: rgb(28 28 28); --nd-ink: rgb(237 237 237); --nd-muted: rgb(148 148 148); --nd-hairline: rgb(51 51 51); --nd-wash: rgb(45 45 45); } }
+    \\dialog.nd-palette floating-sheet > dimming { background-color: color-mix(in srgb, var(--nd-ground) 74%, transparent); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
     \\dialog.nd-palette.nd-palette-shown floating-sheet > dimming { opacity: 1; transition-duration: 160ms; }
     \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
-    \\.nd-palette-card { background-color: var(--dialog-bg-color); color: var(--dialog-fg-color); border-radius: 16px; box-shadow: 0 1px 3px 1px rgb(0 0 0 / 9%), 0 2px 14px 5px rgb(0 0 0 / 7%), 0 0 0 1px rgb(0 0 0 / 5%); opacity: 0; transform: scale(0.96); transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1); }
-    \\dialog.nd-palette-shown .nd-palette-card { opacity: 1; transform: none; transition-duration: 160ms; }
-    \\dialog.nd-palette-closing .nd-palette-card { transform: none; }
-    \\@media (prefers-reduced-motion: reduce) { .nd-palette-card { transform: none; } }
-    \\.nd-palette-entry { font-size: 20px; min-height: 44px; padding: 0 6px; background: none; box-shadow: none; outline: none; }
-    \\.nd-palette-entry > image { -gtk-icon-size: 18px; }
+    \\.nd-palette-field { background-color: var(--nd-ground); border: 1px solid var(--nd-hairline); border-radius: 14px; padding: 14px 22px; box-shadow: 0 8px 24px rgb(0 0 0 / 6%); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+    \\.nd-palette-list-card { background-color: var(--nd-ground); border: 1px solid var(--nd-hairline); border-radius: 14px; padding: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / 7%); opacity: 0; transform-origin: 50% 0; transform: scale(0.98); transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+    \\dialog.nd-palette-shown .nd-palette-field { opacity: 1; transition-duration: 160ms; }
+    \\dialog.nd-palette-shown .nd-palette-list-card { opacity: 1; transform: none; transition-duration: 240ms; }
+    \\dialog.nd-palette-closing .nd-palette-list-card { transform: none; }
+    \\@media (prefers-reduced-motion: reduce) { .nd-palette-list-card { transform: none; } }
+    \\entry.nd-palette-entry { font-size: 15.5px; min-height: 22px; padding: 0; margin: 0; background: none; border: none; box-shadow: none; outline: none; color: var(--nd-ink); caret-color: var(--nd-ink); }
+    \\entry.nd-palette-entry > text > placeholder { color: color-mix(in srgb, var(--nd-ink) 30%, transparent); }
+    \\entry.nd-palette-entry > text > selection { background-color: color-mix(in srgb, var(--nd-ink) 12%, transparent); color: var(--nd-ink); }
     \\list.nd-palette-list { background: none; }
-    \\list.nd-palette-list > row { min-height: 40px; padding: 0 10px; margin: 0 6px; border-radius: 9px; }
-    \\list.nd-palette-list > row:hover:not(:selected) { background: none; }
+    \\list.nd-palette-list > row { min-height: 34px; padding: 0 12px; margin: 0; border-radius: 9px; background: none; color: var(--nd-ink); outline: none; }
+    \\list.nd-palette-list > row:selected { background-color: var(--nd-wash); color: var(--nd-ink); }
+    \\list.nd-palette-list > row:hover:not(:selected), list.nd-palette-list > row:active:not(:selected) { background: none; }
+    \\.nd-palette-list-card image { color: var(--nd-muted); }
+    \\label.nd-palette-title { font-size: 13px; color: var(--nd-ink); }
+    \\label.nd-palette-muted { font-size: 12px; color: var(--nd-muted); }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 
