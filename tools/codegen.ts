@@ -2747,6 +2747,18 @@ fn ndDialogCreate(mode: adw.DialogPresentationMode) *gtk.Widget {
     return dlg.as(gtk.Widget);
 }
 
+/// A \`<dialog>\`'s content goes under a header bar, the way every libadwaita
+/// dialog is built: it is what draws the dialog's title and its close button.
+/// AppKit's sheet shows the title itself.
+fn ndDialogSetContent(parent: *gtk.Widget, child: ?*gtk.Widget) void {
+    const dlg: *adw.Dialog = @ptrCast(@alignCast(parent));
+    const content = child orelse return adw.Dialog.setChild(dlg, null);
+    const view = adw.ToolbarView.new();
+    adw.ToolbarView.addTopBar(view, adw.HeaderBar.new().as(gtk.Widget));
+    adw.ToolbarView.setContent(view, content);
+    adw.Dialog.setChild(dlg, view.as(gtk.Widget));
+}
+
 const ND_SHEET_EDGE = "nd-sheet-edge";
 const ND_SHEET_SIZE = "nd-sheet-size";
 
@@ -6339,8 +6351,8 @@ const STRUCTURAL: Record<string, StructuralTemplate> = {
   // its tree parent is the cross-cutting ndDialogAttach guard, same shape as
   // Popover's — parents need no Dialog/Sheet arms.)
   Dialog: {
-    append: () => "        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), child);\n",
-    remove: () => "        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), null);\n",
+    append: () => "        ndDialogSetContent(parent, child);\n",
+    remove: () => "        ndDialogSetContent(parent, null);\n",
   },
   Sheet: {
     append: () => "        adw.Dialog.setChild(@ptrCast(@alignCast(parent)), child);\n",
