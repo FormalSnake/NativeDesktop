@@ -52,8 +52,10 @@ const gdk = @import("gdk");
 //  - a row's background is framework-owned: these selectors outrank a node's
 //    own `.nd-<id>` block, the same way `button.compact` above already does.
 //
-// The `nd-palette-*` rules are the command bar's (commandpalette.zig): a
-// borderless 20px field and 40px one-line rows with no separators, and no
+// The `nd-palette-*` rules are the command bar's (commandpalette.zig): the
+// dialog's own sheet made transparent and its dimming a light scrim, the card
+// drawn in its place (fading and scaling in over 160ms, fading out over
+// 120ms; commandpalette.zig toggles the classes), a borderless 20px field and 40px one-line rows with no separators, and no
 // hover shade: the keyboard highlight is the only one.
 //
 // Installed once at display level; providers restyle retroactively, so a lazy
@@ -85,6 +87,13 @@ const nd_base_css =
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
+    \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+    \\dialog.nd-palette.nd-palette-shown floating-sheet > dimming { opacity: 1; transition-duration: 160ms; }
+    \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
+    \\.nd-palette-card { background-color: var(--dialog-bg-color); color: var(--dialog-fg-color); border-radius: 16px; box-shadow: 0 1px 3px 1px rgb(0 0 0 / 9%), 0 2px 14px 5px rgb(0 0 0 / 7%), 0 0 0 1px rgb(0 0 0 / 5%); opacity: 0; transform: scale(0.96); transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+    \\dialog.nd-palette-shown .nd-palette-card { opacity: 1; transform: none; transition-duration: 160ms; }
+    \\dialog.nd-palette-closing .nd-palette-card { transform: none; }
+    \\@media (prefers-reduced-motion: reduce) { .nd-palette-card { transform: none; } }
     \\.nd-palette-entry { font-size: 20px; min-height: 44px; padding: 0 6px; background: none; box-shadow: none; outline: none; }
     \\.nd-palette-entry > image { -gtk-icon-size: 18px; }
     \\list.nd-palette-list { background: none; }

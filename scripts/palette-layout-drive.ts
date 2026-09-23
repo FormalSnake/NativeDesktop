@@ -42,6 +42,13 @@ function checkLayout(l: PaletteLayout, where: string): void {
   check(Math.abs(off) <= 1, `${where}: panel off centre by ${off}px (panel ${JSON.stringify(panel)}, window ${win.w})`);
   check(panel.x >= 20 && right(panel) <= win.w - 20, `${where}: panel ${panel.x}..${right(panel)} within 20px of a ${win.w}px window edge`);
   check(inside(l.field as Geo, panel), `${where}: field outside the panel`);
+  const top = Math.max(20, Math.round(win.h * 0.18));
+  check(Math.abs(panel.y - top) <= 1, `${where}: panel top at ${panel.y}, want ${top} (18% of ${win.h})`);
+  const lastRow = l.rows.at(-1)?.row as Geo | undefined;
+  if (lastRow && l.rows.length < 10) {
+    const gap = panel.y + panel.h - (lastRow.y + lastRow.h);
+    check(gap >= 0 && gap <= 16, `${where}: ${gap}px of panel below the last row, the panel does not follow its rows`);
+  }
   check(l.dimmed, `${where}: page not dimmed`);
   for (const [i, r] of l.rows.entries()) {
     const row = r.row as Geo;
@@ -111,10 +118,15 @@ async function typeText(app: AppHandle, text: string): Promise<void> {
 }
 
 async function layoutWhen(app: AppHandle, ok: (l: PaletteLayout) => boolean, what: string): Promise<PaletteLayout> {
+  // Settled, not just matching: the card follows its rows, so a read taken
+  // while a new row set is being laid out catches it mid-resize.
   let last: PaletteLayout | undefined;
-  for (let i = 0; i < 25; i++) {
+  let previous = "";
+  for (let i = 0; i < 30; i++) {
     last = await app.paletteLayout({ testId: "palette" });
-    if (ok(last)) return last;
+    const now = JSON.stringify(last);
+    if (ok(last) && now === previous) return last;
+    previous = now;
     await Bun.sleep(120);
   }
   failures.push(`${what}: field ${JSON.stringify(last?.fieldText)} sel ${last?.selectionStart}+${last?.selectionLength}`);

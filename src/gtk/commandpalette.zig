@@ -18,10 +18,13 @@
 // was typed and the last edit inserted text, is shown selected after the
 // caret. It never reaches queryChanged until Tab or Right accepts it.
 //
-// AdwDialog always centres a floating dialog, so the card cannot hold a fixed
-// top edge the way the AppKit card does. The list area has a fixed height
-// instead, which keeps the field still while results change; only a result
-// set going to or from empty resizes the card.
+// Placement: AdwDialog is still what presents it, because a visible dialog is
+// what moves the Chromium page (an X11 child window no in-window widget can
+// draw over) out of the way, and it brings the modal focus handling. But its
+// own sheet is made transparent and window-sized, and the card inside it is
+// placed the way the AppKit card is: centred, its top edge at a fixed fraction
+// of the window height, its height following its rows. The dialog's dimming
+// layer, restyled, is the scrim over the whole window.
 const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
@@ -34,6 +37,7 @@ const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
 const ndicons = @import("icons.zig");
 const dialogsurface = @import("dialogsurface.zig");
+const ndmotion = @import("motion.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -47,6 +51,14 @@ const ROW_HINT_KEY = "nd-palette-hint";
 const panel_width: c_int = 640;
 const row_height: c_int = 40;
 const list_height: c_int = 400;
+/// The card's top edge sits at this fraction of the window height, so the
+/// field stays put while the list below it grows and shrinks.
+const top_fraction: f64 = 0.18;
+/// Clearance the card keeps from every window edge.
+const margin: c_int = 20;
+/// The close fade in basecss (`nd-palette-closing`); the dialog comes down
+/// once it has run.
+const close_ms: c_uint = 120;
 const icon_side: c_int = 16;
 /// Characters a title may take before it ellipsizes, so a long page title
 /// still leaves room to see which site it is on.
@@ -60,6 +72,15 @@ const State = struct {
     node_id: u32 = 0,
     handle: *gtk.Widget,
     dialog: *adw.Dialog,
+    /// The transparent, window-sized layer inside the dialog's sheet.
+    layer: *gtk.Widget,
+    /// The visible panel.
+    card: *gtk.Widget,
+    tick: c_uint = 0,
+    /// The close fade in flight: the dialog is still up, the palette is not.
+    close_timer: c_uint = 0,
+    /// Resize notifications on `return_window`, dropped with it.
+    resize_hids: [2]c_ulong = .{ 0, 0 },
     entry: *gtk.SearchEntry,
     separator: *gtk.Widget,
     list: *gtk.ListBox,
@@ -443,8 +464,55 @@ fn userEdited(state: *State, text: []const u8) void {
 
 // ---- present / dismiss -----------------------------------------------------
 
+/// Runs `f` with libadwaita's own dialog animation skipped. Its floating
+/// sheet springs in from 0.8 around the window centre, which is not this
+/// card's motion; the card fades and scales itself (basecss). An AdwAnimation
+/// started while `gtk-enable-animations` is off jumps to its end, so the
+/// setting is off for exactly the call that starts it.
+fn withoutAdwAnimation(f: *const fn (*State) void, state: *State) void {
+    const settings = gtk.Settings.getDefault() orelse return f(state);
+    var was = gobject.ext.Value.newFrom(true);
+    defer gobject.Value.unset(&was);
+    gobject.Object.getProperty(asObj(settings), "gtk-enable-animations", &was);
+    if (gobject.Value.getBoolean(&was) == 0) return f(state);
+    var off = gobject.ext.Value.newFrom(false);
+    defer gobject.Value.unset(&off);
+    gobject.Object.setProperty(asObj(settings), "gtk-enable-animations", &off);
+    f(state);
+    gobject.Object.setProperty(asObj(settings), "gtk-enable-animations", &was);
+}
+
+fn presentDialog(state: *State) void {
+    const win = state.return_window orelse return;
+    dialogsurface.present(state.dialog, win.as(gtk.Widget));
+}
+
+fn closeDialog(state: *State) void {
+    _ = adw.Dialog.forceClose(state.dialog);
+}
+
+fn setShown(state: *State, shown: bool) void {
+    const d = state.dialog.as(gtk.Widget);
+    if (shown) {
+        gtk.Widget.removeCssClass(d, "nd-palette-closing");
+        gtk.Widget.addCssClass(d, "nd-palette-shown");
+    } else {
+        gtk.Widget.removeCssClass(d, "nd-palette-shown");
+        gtk.Widget.addCssClass(d, "nd-palette-closing");
+    }
+    // A fading layer takes no clicks.
+    gtk.Widget.setCanTarget(state.layer, @intFromBool(shown));
+}
+
 fn present(state: *State) void {
     if (state.presented) return;
+    // Reopened while it was fading out: the same dialog comes straight back,
+    // and the transition turns around from wherever it had got to.
+    const reopening = state.close_timer != 0;
+    if (reopening) {
+        _ = glib.Source.remove(state.close_timer);
+        state.close_timer = 0;
+    }
     const root = gtk.Widget.getRoot(state.handle) orelse {
         state.pending_open = true; // not rooted yet: cbHandleMapped presents
         return;
@@ -460,19 +528,38 @@ fn present(state: *State) void {
         }
         break :blk win;
     };
-    releaseReturnFocus(state);
-    if (gtk.Window.getFocus(parent_win)) |fw| {
-        _ = gobject.Object.ref(asObj(fw));
-        state.return_focus = fw;
+    if (!reopening) {
+        releaseReturnFocus(state);
+        if (gtk.Window.getFocus(parent_win)) |fw| {
+            _ = gobject.Object.ref(asObj(fw));
+            state.return_focus = fw;
+        }
+        _ = gobject.Object.ref(asObj(parent_win));
+        state.return_window = parent_win;
+        state.resize_hids = .{
+            gobject.signalConnectData(asObj(parent_win), "notify::default-width", @ptrCast(&cbWindowResized), state, null, .{}),
+            gobject.signalConnectData(asObj(parent_win), "notify::default-height", @ptrCast(&cbWindowResized), state, null, .{}),
+        };
     }
-    _ = gobject.Object.ref(asObj(parent_win));
-    state.return_window = parent_win;
 
     setOwned(&state.typed, state.controlled);
     setOwned(&state.suffix, "");
     state.may_complete = false;
     writeEntry(state, state.controlled);
-    dialogsurface.present(state.dialog, parent_win.as(gtk.Widget));
+    adw.Dialog.setContentWidth(state.dialog, gtk.Widget.getWidth(parent_win.as(gtk.Widget)));
+    adw.Dialog.setContentHeight(state.dialog, gtk.Widget.getHeight(parent_win.as(gtk.Widget)));
+    if (reopening) {
+        setShown(state, true);
+    } else {
+        // Hidden until its first frame, when the tick adds `nd-palette-shown`:
+        // a class present from the first style pass would not transition.
+        gtk.Widget.removeCssClass(state.dialog.as(gtk.Widget), "nd-palette-shown");
+        gtk.Widget.removeCssClass(state.dialog.as(gtk.Widget), "nd-palette-closing");
+        gtk.Widget.setCanTarget(state.layer, 1);
+        withoutAdwAnimation(&presentDialog, state);
+    }
+    _ = place(state);
+    startPlacing(state);
     state.presented = true;
     state.pending_open = false;
     // Grabbing focus selects the entry's whole text, which is what a seeded
@@ -490,7 +577,93 @@ fn selectAllFromStart(state: *State) void {
     gtk.Editable.selectRegion(state.entry.as(gtk.Editable), charCount(entryText(state)), 0);
 }
 
+/// Sizes the dialog to its window and puts the card where the AppKit card
+/// sits. Returns whether anything had to move, so the tick that drives it
+/// can stop once the layout has settled.
+fn place(state: *State) bool {
+    const root = gtk.Widget.getRoot(state.layer) orelse return true;
+    const win = root.as(gtk.Widget);
+    const w = gtk.Widget.getWidth(win);
+    const h = gtk.Widget.getHeight(win);
+    if (w <= 0 or h <= 0) return true;
+    var moved = false;
+    if (adw.Dialog.getContentWidth(state.dialog) != w) {
+        adw.Dialog.setContentWidth(state.dialog, w);
+        moved = true;
+    }
+    if (adw.Dialog.getContentHeight(state.dialog) != h) {
+        adw.Dialog.setContentHeight(state.dialog, h);
+        moved = true;
+    }
+
+    const card_w = @max(0, @min(panel_width, w - 2 * margin));
+    var cur_w: c_int = 0;
+    gtk.Widget.getSizeRequest(state.card, &cur_w, null);
+    if (cur_w != card_w) {
+        gtk.Widget.setSizeRequest(state.card, card_w, -1);
+        moved = true;
+    }
+
+    // The layer may not start at the window's origin (the sheet keeps its
+    // own inset); the card's margin is what is left to reach the target.
+    var rect: graphene.Rect = undefined;
+    const layer_y: c_int = if (gtk.Widget.computeBounds(state.layer, win, &rect) != 0) @intFromFloat(@round(rect.f_origin.f_y)) else 0;
+    const target: c_int = @max(margin, @as(c_int, @intFromFloat(@round(@as(f64, @floatFromInt(h)) * top_fraction))));
+    const top = @max(0, target - layer_y);
+    if (gtk.Widget.getMarginTop(state.card) != top) {
+        gtk.Widget.setMarginTop(state.card, top);
+        moved = true;
+    }
+    return moved;
+}
+
+/// Runs from a present (or a window resize) until the card has stopped
+/// moving: the layer's own offset is only known after a layout pass.
+fn cbPlaceTick(_: *gtk.Widget, _: *gdk.FrameClock, data: ?*anyopaque) callconv(.c) c_int {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    const moved = place(state);
+    const d = state.dialog.as(gtk.Widget);
+    if (state.presented and gtk.Widget.hasCssClass(d, "nd-palette-shown") == 0) {
+        setShown(state, true);
+        return 1; // G_SOURCE_CONTINUE
+    }
+    if (moved) return 1;
+    state.tick = 0;
+    return 0; // G_SOURCE_REMOVE
+}
+
+fn startPlacing(state: *State) void {
+    if (state.tick == 0) state.tick = gtk.Widget.addTickCallback(state.layer, &cbPlaceTick, state, null);
+}
+
+fn cbWindowResized(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (state.presented) startPlacing(state);
+}
+
+fn stopPlacing(state: *State) void {
+    if (state.tick != 0) gtk.Widget.removeTickCallback(state.layer, state.tick);
+    state.tick = 0;
+}
+
+fn cbLayerPressed(gesture: *gtk.GestureClick, _: c_int, x: f64, y: f64, state: *State) callconv(.c) void {
+    var rect: graphene.Rect = undefined;
+    if (gtk.Widget.computeBounds(state.card, state.layer, &rect) != 0) {
+        const inside = x >= rect.f_origin.f_x and x < rect.f_origin.f_x + rect.f_size.f_width and
+            y >= rect.f_origin.f_y and y < rect.f_origin.f_y + rect.f_size.f_height;
+        if (inside) return;
+    }
+    _ = gtk.Gesture.setState(gesture.as(gtk.Gesture), .claimed);
+    dismiss(state, false);
+}
+
 fn releaseReturnFocus(state: *State) void {
+    if (state.return_window) |w| {
+        for (state.resize_hids) |hid| {
+            if (hid != 0) gobject.signalHandlerDisconnect(asObj(w), hid);
+        }
+    }
+    state.resize_hids = .{ 0, 0 };
     if (state.return_focus) |w| gobject.Object.unref(asObj(w));
     if (state.return_window) |w| gobject.Object.unref(asObj(w));
     state.return_focus = null;
@@ -508,11 +681,27 @@ fn restoreFocus(state: *State) void {
     releaseReturnFocus(state);
 }
 
+/// Fades the layer out, then takes the dialog down. The palette counts as
+/// closed from the first frame of the fade.
 fn dismiss(state: *State, programmatic: bool) void {
     state.pending_open = false;
     if (!state.presented) return;
+    state.presented = false;
     state.programmatic_close = programmatic;
-    _ = adw.Dialog.close(state.dialog);
+    setShown(state, false);
+    state.close_timer = glib.timeoutAdd(if (ndmotion.animationsEnabled()) close_ms else 0, &cbCloseTimer, state);
+}
+
+fn cbCloseAttempt(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    dismiss(state, false);
+}
+
+fn cbCloseTimer(data: ?*anyopaque) callconv(.c) c_int {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    state.close_timer = 0;
+    withoutAdwAnimation(&closeDialog, state);
+    return 0; // G_SOURCE_REMOVE
 }
 
 // ---- create / applyProps ---------------------------------------------------
@@ -525,11 +714,15 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     // window's ref, so without ours the dialog would be destroyed on the first
     // close and a re-present (open flipping true again) would use freed memory.
     _ = gobject.Object.refSink(asObj(dialog));
-    adw.Dialog.setPresentationMode(dialog, .floating); // centered + scrim, never a bottom sheet
+    adw.Dialog.setPresentationMode(dialog, .floating); // scrim, never a bottom sheet
     adw.Dialog.setContentWidth(dialog, panel_width);
     gtk.Widget.addCssClass(dialog.as(gtk.Widget), "nd-palette");
 
-    const content = gtk.Box.new(.vertical, 0);
+    const card = gtk.Box.new(.vertical, 0);
+    gtk.Widget.addCssClass(card.as(gtk.Widget), "nd-palette-card");
+    gtk.Widget.setHalign(card.as(gtk.Widget), .center);
+    gtk.Widget.setValign(card.as(gtk.Widget), .start);
+    gtk.Widget.setOverflow(card.as(gtk.Widget), .hidden);
 
     const entry = gtk.SearchEntry.new();
     gtk.Widget.addCssClass(entry.as(gtk.Widget), "nd-palette-entry");
@@ -543,9 +736,8 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
 
     const scroller = gtk.ScrolledWindow.new();
     gtk.ScrolledWindow.setPolicy(scroller, .never, .automatic);
-    // Fixed, not content-driven: AdwDialog centres the card, so a list that
-    // followed its row count would move the field on every keystroke.
-    gtk.ScrolledWindow.setMinContentHeight(scroller, list_height);
+    // The list follows its rows up to ten of them, then scrolls.
+    gtk.ScrolledWindow.setPropagateNaturalHeight(scroller, 1);
     gtk.ScrolledWindow.setMaxContentHeight(scroller, list_height);
     gtk.Widget.setMarginTop(scroller.as(gtk.Widget), 6);
     gtk.Widget.setMarginBottom(scroller.as(gtk.Widget), 6);
@@ -568,15 +760,22 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     gtk.Widget.setFocusable(list.as(gtk.Widget), 0);
     gtk.ScrolledWindow.setChild(scroller, list.as(gtk.Widget));
 
-    gtk.Box.append(content, entry.as(gtk.Widget));
-    gtk.Box.append(content, separator.as(gtk.Widget));
-    gtk.Box.append(content, scroller.as(gtk.Widget));
-    adw.Dialog.setChild(dialog, content.as(gtk.Widget));
+    gtk.Box.append(card, entry.as(gtk.Widget));
+    gtk.Box.append(card, separator.as(gtk.Widget));
+    gtk.Box.append(card, scroller.as(gtk.Widget));
+
+    const layer = gtk.Box.new(.vertical, 0);
+    gtk.Widget.setHexpand(layer.as(gtk.Widget), 1);
+    gtk.Widget.setVexpand(layer.as(gtk.Widget), 1);
+    gtk.Box.append(layer, card.as(gtk.Widget));
+    adw.Dialog.setChild(dialog, layer.as(gtk.Widget));
 
     const handle = gtk.Box.new(.vertical, 0);
     state.* = .{
         .handle = handle.as(gtk.Widget),
         .dialog = dialog,
+        .layer = layer.as(gtk.Widget),
+        .card = card.as(gtk.Widget),
         .entry = entry,
         .separator = separator.as(gtk.Widget),
         .list = list,
@@ -585,6 +784,11 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
     if (propStr(props, "query")) |q| setOwned(&state.controlled, q);
     rebuildRows(state, propArray(props, "items"), dupeZ);
     if (propBool(props, "open") orelse false) state.pending_open = true;
+
+    // A click on the layer outside the card is a click on the page behind it.
+    const click = gtk.GestureClick.new();
+    _ = gtk.GestureClick.signals.pressed.connect(click, *State, &cbLayerPressed, state, .{});
+    gtk.Widget.addController(layer.as(gtk.Widget), click.as(gtk.EventController));
 
     gobject.Object.setData(asObj(handle), STATE_KEY, state);
     _ = gobject.signalConnectData(asObj(handle), "map", @ptrCast(&cbHandleMapped), state, null, .{});
@@ -626,6 +830,10 @@ pub fn connectEvents(widget: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
     state.search_changed_hid = gobject.signalConnectData(asObj(state.entry), "changed", @ptrCast(&cbSearchChanged), state, null, .{});
     _ = gobject.signalConnectData(asObj(state.list), "row-activated", @ptrCast(&cbRowActivated), state, null, .{});
     _ = gobject.signalConnectData(asObj(state.dialog), "closed", @ptrCast(&cbDialogClosed), state, null, .{});
+    // A click on the scrim outside the sheet would close the dialog with
+    // libadwaita's own animation; it asks instead, and gets the palette's fade.
+    adw.Dialog.setCanClose(state.dialog, 0);
+    _ = gobject.signalConnectData(asObj(state.dialog), "close-attempt", @ptrCast(&cbCloseAttempt), state, null, .{});
 
     // Capture-phase key controller on the entry: intercept navigation/commit
     // keys before GtkSearchEntry consumes them (its own Esc clears the text),
@@ -754,19 +962,6 @@ fn labelEllipsized(w: ?*gtk.Widget) bool {
     return pango.Layout.isEllipsized(gtk.Label.getLayout(label)) != 0;
 }
 
-/// The card: libadwaita draws a floating dialog's surface on an internal
-/// `sheet` node between the dialog and its child (AdwFloatingSheet); the
-/// dialog and the floating-sheet above it span the whole window.
-fn panelWidget(state: *State) *gtk.Widget {
-    const dialog_w = state.dialog.as(gtk.Widget);
-    var w: *gtk.Widget = state.entry.as(gtk.Widget);
-    while (gtk.Widget.getParent(w)) |p| : (w = p) {
-        if (std.mem.eql(u8, std.mem.span(gtk.Widget.getCssName(p)), "sheet")) return p;
-        if (p == dialog_w) break;
-    }
-    return dialog_w;
-}
-
 fn layoutJson(state: *State, out: *?[*:0]u8) void {
     if (!state.presented) return cpSetResult(out, Layout{ .ref = state.node_id, .presented = false });
     const root = gtk.Widget.getRoot(state.entry.as(gtk.Widget)) orelse
@@ -810,12 +1005,12 @@ fn layoutJson(state: *State, out: *?[*:0]u8) void {
         .ref = state.node_id,
         .presented = true,
         .window = .{ .x = 0, .y = 0, .w = gtk.Widget.getWidth(win), .h = gtk.Widget.getHeight(win) },
-        .panel = geoIn(panelWidget(state), win),
+        .panel = geoIn(state.card, win),
         .field = geoIn(state.entry.as(gtk.Widget), win),
         .fieldText = text,
         .selectionStart = s16,
         .selectionLength = utf16Len(text, end) - s16,
-        // A floating AdwDialog always draws its dimming scrim.
+        // The dialog's dimming layer, restyled in basecss, spans the window.
         .dimmed = true,
         .rows = rows.items,
     });
@@ -895,6 +1090,11 @@ fn cbRowActivated(_: *gobject.Object, row: *gtk.ListBoxRow, data: ?*anyopaque) c
 fn cbDialogClosed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     state.presented = false;
+    if (state.close_timer != 0) {
+        _ = glib.Source.remove(state.close_timer);
+        state.close_timer = 0;
+    }
+    stopPlacing(state);
     restoreFocus(state);
     if (state.programmatic_close) {
         state.programmatic_close = false;
@@ -951,11 +1151,13 @@ fn cbHandleDestroyed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     // so destroying the handle never reaches it: close it explicitly (else an
     // unmount-while-open leaves an orphaned dialog on screen), then drop our
     // refSink so it (and its handlers) are destroyed before `state` is freed.
-    if (state.presented) {
+    if (state.presented or state.close_timer != 0) {
         state.programmatic_close = true;
         _ = adw.Dialog.forceClose(state.dialog);
     }
+    if (state.close_timer != 0) _ = glib.Source.remove(state.close_timer);
     if (state.completion_idle != 0) _ = glib.Source.remove(state.completion_idle);
+    stopPlacing(state);
     releaseReturnFocus(state);
     gobject.Object.unref(asObj(state.dialog));
     freeIds(state);
