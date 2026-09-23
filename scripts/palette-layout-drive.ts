@@ -117,6 +117,16 @@ async function typeText(app: AppHandle, text: string): Promise<void> {
   await Bun.sleep(300);
 }
 
+/// JSON with its keys sorted: AppKit builds the layout from dictionaries,
+/// whose key order changes from one read to the next.
+function canonical(v: unknown): string {
+  return JSON.stringify(v, (_, x) =>
+    x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, (x as Record<string, unknown>)[k]]))
+      : x,
+  );
+}
+
 async function layoutWhen(app: AppHandle, ok: (l: PaletteLayout) => boolean, what: string): Promise<PaletteLayout> {
   // Settled, not just matching: the card follows its rows, so a read taken
   // while a new row set is being laid out catches it mid-resize.
@@ -124,7 +134,7 @@ async function layoutWhen(app: AppHandle, ok: (l: PaletteLayout) => boolean, wha
   let previous = "";
   for (let i = 0; i < 30; i++) {
     last = await app.paletteLayout({ testId: "palette" });
-    const now = JSON.stringify(last);
+    const now = canonical(last);
     if (ok(last) && now === previous) return last;
     previous = now;
     await Bun.sleep(120);

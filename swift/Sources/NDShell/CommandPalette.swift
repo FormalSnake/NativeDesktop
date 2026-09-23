@@ -598,9 +598,12 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         let visible = table.rows(in: visibleRect)
         for i in visible.location..<(visible.location + visible.length) {
             guard visibleRect.contains(table.rect(ofRow: i)) else { continue }
-            guard let rowView = table.rowView(atRow: i, makeIfNecessary: false),
+            guard table.rowView(atRow: i, makeIfNecessary: false) != nil,
                   let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? NDPaletteCell else { continue }
-            var entry: [String: Any] = ["row": rect(rowView), "highlighted": table.selectedRow == i,
+            // The inset table style draws a row (and its highlight) inset from
+            // its row view, which spans the whole table; the cell covers what
+            // is drawn, so it is the row's rect.
+            var entry: [String: Any] = ["row": rect(cell), "highlighted": table.selectedRow == i,
                                         "truncated": cell.isTruncated]
             entry["icon"] = cell.iconShown ? rect(cell.iconSlot) : NSNull()
             entry["title"] = rect(cell.titleSlot)
