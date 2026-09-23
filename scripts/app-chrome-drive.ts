@@ -852,6 +852,212 @@ async function compositorWindowLegs(): Promise<void> {
   noStray("compositorWindows");
 }
 
+/// A page's file chooser is the host's GtkFileDialog, parented on the app
+/// window, never a toplevel of Chromium's own and never cancelled for want of
+/// one. The rig scripts the answers (one pick, one cancel), so what this reads
+/// is the page receiving them and the display gaining no window.
+/// ND_ACCEPT_LEGS=filedialog runs this alone.
+async function fileDialogLegs(): Promise<void> {
+  await resyncPage();
+  const pick = async (): Promise<string> => {
+    await page.eval("(() => { const u = document.getElementById('upload'); u.value = ''; u.click(); return 1; })()", true);
+    for (let i = 0; i < 20; i++) {
+      await Bun.sleep(250);
+      const got = await page.eval<string>("Array.from(document.getElementById('upload').files).map((f) => f.name).join(',')");
+      if (got) return got;
+    }
+    return "";
+  };
+  const picked = await pick();
+  check("pageFileDialogAnswers", picked === "icon16.png", `the page's input holds ${JSON.stringify(picked)}`);
+  noStray("pageFileDialogAnswers");
+  const cancelled = await pick();
+  const log = hostLog ? readFileSync(hostLog, "utf8") : "";
+  const done = (log.match(/pageFileDialog node=/g) ?? []).length;
+  check("pageFileDialogCancels", cancelled === "" && done >= 2, `the input holds ${JSON.stringify(cancelled)}, ${done} dialog request(s) reached the host`);
+  noStray("pageFileDialogCancels");
+}
+
+/// The owner's crash: a window tiled 1266 px wide, four tabs, one pinned
+/// extension, the compact row switched on and back off. Every GTK widget has a
+/// minimum, and a window whose content asks for more than the compositor gave
+/// it makes GTK log "Allocation width too small" on every frame; on the way
+/// back to the sidebar that turned into a content pane allocated INT_MIN wide.
+/// A tiling compositor never grows a window to its minimum, and a stacking
+/// window manager grows it past the width it was asked for, so both rigs see
+/// it: the tree's minSize has to fit the width asked for, the X window has to
+/// have that width, and the host log has to stay free of allocation failures.
+/// Then a minute of ordinary use with the child alive. ND_ACCEPT_LEGS=minwidth
+/// runs this alone.
+async function minWidthLegs(): Promise<void> {
+  const WIDTH = 1266;
+  if (!(await app.getByTestId("layout-toggle").isVisible().catch(() => false))) {
+    skip("narrowWindowFits", "the app under test has no layout toggle");
+    return;
+  }
+  const logFrom = hostLog ? readFileSync(hostLog, "utf8").length : 0;
+  const allocationFailures = (): string[] => {
+    if (!hostLog) return [];
+    return readFileSync(hostLog, "utf8")
+      .slice(logFrom)
+      .split("\n")
+      .filter((l) => /Allocation (width|height) too small|with width -\d|for_size >= -1|ND_CHILD_EXITED/.test(l));
+  };
+  const rootMin = async (): Promise<number> => {
+    const tree = (await app.tree()) as { root: { minSize?: { w: number } | null; children?: Array<{ minSize?: { w: number } | null }> } };
+    const win = tree.root.children?.[0] ?? tree.root;
+    return win.minSize?.w ?? tree.root.minSize?.w ?? -1;
+  };
+
+  // Four tabs, each with the fixture's favicon and a title too long for any
+  // tab the compact row can afford.
+  await page.send("Runtime.evaluate", {
+    expression: `window.open(${JSON.stringify(`${fixture}?three`)}, "_blank"); window.open(${JSON.stringify(`${fixture}?four`)}, "_blank"); 1`,
+    userGesture: true,
+  });
+  await Bun.sleep(4000);
+  for (const t of await targets(port)) {
+    if (t.type !== "page" || !t.url.startsWith(fixture) || !t.webSocketDebuggerUrl) continue;
+    const s = await Session.open(t.webSocketDebuggerUrl);
+    await s.send("Runtime.evaluate", {
+      expression: `document.title = "A page whose title is far longer than any tab in a compact row " + location.search; 1`,
+    });
+  }
+  await Bun.sleep(1500);
+
+  let monitor = "";
+  let monitorWas = "";
+  if (rig === "hypr") {
+    // Tiled, the way the owner's window was: a monitor exactly that wide.
+    const mons = JSON.parse(hyprctl("-j", "monitors")) as Array<{ name: string; width: number; height: number; refreshRate: number; x: number; y: number; scale: number }>;
+    const m = mons[0];
+    monitor = m.name;
+    monitorWas = `${m.name},${m.width}x${m.height}@${Math.round(m.refreshRate)},${m.x}x${m.y},${m.scale}`;
+    hyprctl("keyword", "monitor", `${monitor},${WIDTH}x1384@60,0x0,1`);
+    await Bun.sleep(1000);
+    maximize(top, true);
+  } else {
+    if (wayland) maximize(top, false);
+    resizeToplevel(top, WIDTH, 1000);
+  }
+  await Bun.sleep(2500);
+
+  const fits = async (name: string): Promise<void> => {
+    const min = await rootMin();
+    const g = geom(top);
+    const bad = allocationFailures();
+    check(
+      name,
+      min > 0 && min <= WIDTH && g?.w === WIDTH && bad.length === 0,
+      `window ${g?.w ?? "?"} px wide, its content needs ${min} px, ${bad.length} allocation failure(s)${bad.length > 0 ? `: ${bad[0].trim().slice(0, 160)}` : ""}`,
+    );
+  };
+  await fits("narrowWindowFits(sidebar)");
+
+  await app.getByTestId("layout-toggle").click();
+  await Bun.sleep(2500);
+  await fits("narrowWindowFits(compact)");
+
+  await app.getByTestId("layout-toggle").click();
+  await Bun.sleep(2500);
+  await fits("narrowWindowFits(backToSidebar)");
+
+  // A minute of the ordinary things: switch tabs, open the extensions list,
+  // close it.
+  const until = Date.now() + 60_000;
+  let rounds = 0;
+  while (Date.now() < until) {
+    const tab = rounds % 2 === 0 ? "t2" : "t1";
+    await app.callRpc("setValue", { testId: "tab-list", value: tab }).catch(() => {});
+    await Bun.sleep(1500);
+    await app.getByTestId("extensions-button").click().catch(() => {});
+    await Bun.sleep(1500);
+    await app.getByTestId("extensions-button").click().catch(() => {});
+    await Bun.sleep(1500);
+    rounds += 1;
+    lastProgress = Date.now();
+  }
+  let alive = true;
+  try {
+    process.kill(hostPid, 0);
+  } catch {
+    alive = false;
+  }
+  const bad = allocationFailures();
+  check(
+    "narrowWindowSurvivesAMinute",
+    alive && bad.length === 0,
+    `${rounds} round(s), host ${alive ? "alive" : "gone"}, ${bad.length} allocation failure(s) or child exit(s)${bad.length > 0 ? `: ${bad[0].trim().slice(0, 160)}` : ""}`,
+  );
+
+  if (rig === "hypr") {
+    hyprctl("keyword", "monitor", monitorWas);
+    await Bun.sleep(1000);
+    maximize(top, false);
+  }
+  resizeToplevel(top, 1280, 800);
+  await Bun.sleep(1500);
+  await resyncPage();
+}
+
+/// An accelerator the app declared is the app's, whichever of its widgets has
+/// the keyboard. The page is clicked first so the key arrives at Chromium's
+/// window, which is where the owner's Ctrl+Shift+S went on to Chromium's own
+/// Save Page As and a file dialog. The chord is the app's layout switch
+/// (ND_ACCEPT_LAYOUT_CHORD for an app that spells it differently), and what
+/// the leg reads is the layout flipping and no dialog request, no Chrome
+/// command and no window reaching the display. ND_ACCEPT_LEGS=accel runs this
+/// alone.
+async function accelLegs(): Promise<void> {
+  const chord = process.env.ND_ACCEPT_LAYOUT_CHORD ?? "ctrl+alt+s";
+  if (!(await app.getByTestId("layout-toggle").isVisible().catch(() => false))) {
+    skip("appAcceleratorFromPage", "the app under test has no layout toggle");
+    return;
+  }
+  await resyncPage();
+  const sidebar = async () => (await app.getByTestId("tab-list").isVisible().catch(() => false)) === true;
+  const logFrom = hostLog ? readFileSync(hostLog, "utf8").length : 0;
+  const leaks = (): string[] =>
+    hostLog
+      ? readFileSync(hostLog, "utf8").slice(logFrom).split("\n").filter((l) => /pageFileDialog node=|chromeCommand node=/.test(l))
+      : [];
+  // Page focused, then the address field focused with the pointer left over
+  // the page: under XWayland the key goes to the X window under the pointer,
+  // which is Chromium's however the focus sits in GTK.
+  for (const [round, from] of [["there", "page"], ["back", "page"], ["there", "field"], ["back", "field"]] as const) {
+    // The page moves with the layout, so where the probe is gets asked again.
+    const pageAt = await pageToScreen("probe");
+    if (from === "field") {
+      const field = await widgetToScreen("omnibox");
+      if (!field) {
+        skip(`appAcceleratorFromField(${round})`, "no omnibox bounding box");
+        continue;
+      }
+      pointerTo(field.x, field.y);
+      click(1);
+      await Bun.sleep(700);
+      pointerTo(pageAt.x, pageAt.y);
+    } else {
+      pointerTo(pageAt.x, pageAt.y);
+      click(1);
+    }
+    await Bun.sleep(900);
+    const before = await sidebar();
+    key(chord);
+    await Bun.sleep(2500);
+    const after = await sidebar();
+    const leaked = leaks();
+    const name = from === "page" ? `appAcceleratorFromPage(${round})` : `appAcceleratorFromField(${round})`;
+    check(
+      name,
+      after !== before && leaked.length === 0,
+      `${chord} with the ${from} focused: sidebar ${before} -> ${after}, ${leaked.length} request(s) reached Chromium${leaked.length > 0 ? `: ${leaked[0].trim().slice(0, 160)}` : ""}`,
+    );
+    noStray(name);
+    await resyncPage();
+  }
+}
+
 // ============================================================================
 // Legs
 // ============================================================================
@@ -877,6 +1083,21 @@ const hasApp = (await app.getByTestId("omnibox").isVisible().catch(() => false))
   const s = await settled();
   check("initialSize", s.ok, s.detail);
   noStray("initialSize");
+}
+
+if (legs === "filedialog") {
+  await fileDialogLegs();
+  finish();
+}
+
+if (legs === "accel") {
+  await accelLegs();
+  finish();
+}
+
+if (legs === "minwidth") {
+  await minWidthLegs();
+  finish();
 }
 
 if (legs === "menu") {
@@ -1403,6 +1624,10 @@ if (hasApp) {
 }
 
 await compositorWindowLegs();
+
+await fileDialogLegs();
+await accelLegs();
+await minWidthLegs();
 
 // Last: this set navigates the page and leaves it there.
 await paletteLegs();

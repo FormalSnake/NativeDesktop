@@ -84,10 +84,16 @@ seed_store() {
   cat >"$dir/session.json" <<EOF
 {"version":1,"data":{"tabs":[{"id":"t1","url":"$FIXTURE","title":"","pinned":false},{"id":"t2","url":"$FIXTURE?two","title":"","pinned":false}],"activeId":"t1","nextTabId":3,"windowWidth":1280,"windowHeight":800,"zoomByHost":{}}}
 EOF
-  cat >"$dir/settings.json" <<'EOF'
-{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"sidebar"}}
+  cat >"$dir/settings.json" <<EOF
+{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"sidebar","pinnedExtensions":["$EXTENSION_ID"]}}
 EOF
 }
+
+# One unpacked extension, pinned to the toolbar, because that is the shape the
+# owner's window had when its header stopped fitting. Chromium names an
+# unpacked extension after its path: sha256, first 32 hex digits, 0-f as a-p.
+EXTENSION="$FRAMEWORK/scripts/fixtures/chrome-ext"
+EXTENSION_ID="$(printf %s "$EXTENSION" | sha256sum | cut -c1-32 | tr '0-9a-f' 'a-p')"
 
 # One rig's worth of environment, exported for both the host and the drive.
 launch_host() {
@@ -106,6 +112,8 @@ launch_host() {
     export ND_SCRIPT="$APP_SCRIPT"
     export ND_DEMO_URL="$FIXTURE"
     export ND_WEBVIEW_TRACE=1
+    # The page's file chooser leg: one pick, then one cancel.
+    export ND_AUTOMATION_DIALOG_SCRIPT="{\"webview.fileDialog\":[{\"paths\":[\"$EXTENSION/icon16.png\"]},{\"paths\":[]}]}"
     # A distinct id per rig: both rigs run at once against one session bus, and
     # the second launch would otherwise activate the first app and exit. The
     # prefix is settable for the same reason: two runs of this gate share the
@@ -114,7 +122,8 @@ launch_host() {
     # setsid so the whole CEF process tree lands in one session, which is what
     # the orphan check at quit counts.
     exec setsid "$FRAMEWORK/zig-out/bin/nd-hello" \
-      --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*'
+      --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' \
+      --load-extension="$EXTENSION"
   ) >"$log" 2>&1 &
   HOST_PID=$!
   PIDS+=("$HOST_PID")
@@ -336,7 +345,7 @@ EOF
   # is the backstop for a drive that cannot even reach it.
   ND_ACCEPT_RIG="$rig" ND_AUTOMATION_SOCKET="$sock" ND_CDP_PORT="$CDP_PORT" ND_ACCEPT_LEGS="${legs:-all}" \
     ND_ACCEPT_FIXTURE="$FIXTURE" ND_ACCEPT_SHOTS="$SHOTS/$rig" ND_ACCEPT_SCALE="$SCALE" \
-    ND_ACCEPT_HOST_LOG="$log" ND_ACCEPT_HOST_PID="$HOST_PID" \
+    ND_ACCEPT_HOST_LOG="$log" ND_ACCEPT_HOST_PID="$HOST_PID" ND_ACCEPT_EXTENSION_ID="$EXTENSION_ID" \
     timeout --signal=KILL "${ND_ACCEPT_DRIVE_TIMEOUT:-1500}" \
     bun "$FRAMEWORK/$DRIVE" 2>&1 | tee "$WORK/$rig/drive.log" || true
 
