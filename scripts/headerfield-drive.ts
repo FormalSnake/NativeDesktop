@@ -7,9 +7,10 @@
 //          eye: the field's left edge within TOL of the rightmost start
 //          child's right edge, its right edge within TOL of the leftmost end
 //          child's left edge.
-//   leg 2  the leading icon inside the field is interactive: firing it
-//          delivers onLeadingIconClicked to the app, and the popover that
-//          named the icon slot opens against the icon rather than the field.
+//   leg 2  the leading icon inside the field is interactive: a click on it
+//          (the real cursor on AppKit) delivers onLeadingIconClicked to the
+//          app, and the popover that named the icon slot opens against the
+//          icon rather than the field.
 //   leg 3  the automation setValue path still emits `changed`, which is what
 //          the search-entry-to-entry swap in the GTK backend could have
 //          broken.
@@ -105,8 +106,16 @@ try {
   // Stage Manager draws a background app's windows as thumbnails and reports
   // their frames that way, and a transient popover closes when its app loses
   // focus, so the host comes forward before anything opens.
-  if (!gtk) activate(hostPid);
-  await app.getByTestId("fire-icon").click();
+  // On AppKit the real cursor clicks the padlock, so the window server's hit
+  // test has to land on the icon overlay rather than on the text field under
+  // it. GTK4 refuses synthesized pointer input, so there the app's own button
+  // fires the icon through activateLeadingIcon.
+  if (gtk) {
+    await app.getByTestId("fire-icon").click();
+  } else {
+    activate(hostPid);
+    await app.cursor.click({ x: field.x + 14, y: field.y + field.h / 2 });
+  }
   await poll(() => label("icon-count"), (v) => v === "icon clicks: 1", { timeoutMs: T });
   console.log("  ND_HEADERFIELD_ICON_OK the leading icon delivered onLeadingIconClicked");
 

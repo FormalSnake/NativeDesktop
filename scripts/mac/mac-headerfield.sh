@@ -11,6 +11,8 @@ set -euo pipefail
 # icon slot points at the icon rather than at the middle of the field, and a
 # box's `font` style reaches the header button under it. With ND_NDSHOT (or a
 # built tools/ndshot) it also captures the screen region with the popover up.
+# The icon click goes through app.cursor, which moves the real mouse: hold the
+# mac CEF gate lock, and grant the host once (`NDShell --nd-grant`, SIP off).
 # Marker: MAC_HEADERFIELD_OK.
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd -P)"
@@ -41,7 +43,7 @@ done
 grep -q ND_AUTOMATION_LISTENING "$LOG" || { echo "FAIL: no automation listener"; cat "$LOG"; exit 1; }
 SOCK=$(grep -m1 ND_AUTOMATION_LISTENING "$LOG" | sed 's/.*path=//')
 
-ND_HOST_PID="$PID" ND_BACKEND=appkit ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="${ND_SHOT_PATH:-/tmp/nd-headerfield-mac.png}" \
+ND_HOST_BINARY="$ROOT/swift/.build/release/NDShell" ND_HOST_PID="$PID" ND_BACKEND=appkit ND_AUTOMATION_SOCKET="$SOCK" ND_SHOT_PATH="${ND_SHOT_PATH:-/tmp/nd-headerfield-mac.png}" \
   ND_REGION_SHOT_PATH="${ND_REGION_SHOT_PATH:-/tmp/nd-headerfield-mac-region.png}" \
   bun scripts/headerfield-drive.ts >"$DRIVE_LOG" 2>&1 || { echo "FAIL: driver"; cat "$DRIVE_LOG"; tail -30 "$LOG"; exit 1; }
 cat "$DRIVE_LOG"
