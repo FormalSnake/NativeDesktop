@@ -32,7 +32,9 @@ opens). `packages/mcp` is a stdio MCP server that bridges this socket to MCP too
 `JsonNode` shape (from `getTree`/nested in `root`/`children`): `{ref: number, type: string, testID:
 string \| null, text: string \| null, visible: boolean, geometry: {x,y,w,h} \| null, children:
 JsonNode[], itemCount: number \| null, rows: {title: string, badge: string \| null, iconName:
-string \| null}[] \| null}`. `itemCount` is non-null only for data-driven widgets (currently
+string \| null}[] \| null, minSize: {w, h} \| null}`. `minSize` is the smallest size the backend's layout
+will give the node (GTK's `gtk_widget_measure` minimum, null on AppKit); a window whose root
+`minSize.w` exceeds its width is what GTK logs as "Allocation width too small". `itemCount` is non-null only for data-driven widgets (currently
 `ListView`); it is the row count, never a walk of GTK's recycled row widgets. `rows` is non-null
 only for row-driven widgets (currently `SourceList`, M11) and carries each row's ordered
 `{title, badge, iconName}`.

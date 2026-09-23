@@ -12,6 +12,12 @@ export interface Geometry {
   h: number;
 }
 
+/** The smallest size, in logical units, the backend's layout will give a node: GTK's gtk_widget_measure minimum on each axis. A window narrower than its root's minimum is what makes GTK log "Allocation width too small". */
+export interface MinSize {
+  w: number;
+  h: number;
+}
+
 /** The per-row shape on the wire, shared by every row-driven widget (SourceList `items`, SourceTree `nodes`, CommandPalette `items`) — camelCase iconName, matching the schema prop shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have none); id and subtitle carry the row's own identity and secondary line where the widget's item type has them (CommandPaletteItem, SourceTreeNode), so a drive can name a row instead of counting to it. */
 export interface RowJson {
   title: string;
@@ -22,7 +28,7 @@ export interface RowJson {
   subtitle: string | null;
 }
 
-/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind. */
+/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind. minSize comes from the same probe, null on backends that do not measure. */
 export interface JsonNode {
   ref: number;
   type: string;
@@ -43,6 +49,7 @@ export interface JsonNode {
   placeholder: string | null;
   label: string | null;
   options: string[] | null;
+  minSize: MinSize | null;
 }
 
 export interface GetTreeResult {

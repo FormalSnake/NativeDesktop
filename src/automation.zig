@@ -399,6 +399,7 @@ const A11yProbe = struct {
     placeholder: ?[]const u8 = null,
     label: ?[]const u8 = null,
     options: ?[]const []const u8 = null,
+    min_size: ?rpc.MinSize = null,
 };
 fn probeA11y(arena: std.mem.Allocator, widget: *Widget, id: u32) A11yProbe {
     var out = A11yProbe{};
@@ -439,6 +440,14 @@ fn probeA11y(arena: std.mem.Allocator, widget: *Widget, id: u32) A11yProbe {
                     }
                     if (p.object.get("options")) |v| {
                         if (v == .array) out.options = jsonStringArray(arena, v.array);
+                    }
+                    const mw = p.object.get("minWidth");
+                    const mh = p.object.get("minHeight");
+                    if (mw != null and mh != null and mw.? == .integer and mh.? == .integer) {
+                        out.min_size = .{
+                            .w = std.math.cast(i32, mw.?.integer) orelse std.math.maxInt(i32),
+                            .h = std.math.cast(i32, mh.?.integer) orelse std.math.maxInt(i32),
+                        };
                     }
                 }
             }
@@ -1090,6 +1099,7 @@ fn buildNode(
         .placeholder = probe.placeholder,
         .label = probe.label,
         .options = probe.options,
+        .minSize = probe.min_size,
     };
 }
 

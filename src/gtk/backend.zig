@@ -864,6 +864,13 @@ fn a11yExtrasJson(widget: *gtk.Widget, kind: []const u8, value_json: []const u8)
     if (a11yPlaceholder(widget)) |p| appendJsonField(&out, "placeholder", p);
     if (a11yLabel(widget)) |l| appendJsonField(&out, "label", l);
     if (gobject.ext.isA(widget, gtk.DropDown)) appendOptions(&out, @ptrCast(@alignCast(widget)));
+    var min_w: c_int = 0;
+    var min_h: c_int = 0;
+    var ignored: c_int = 0;
+    gtk.Widget.measure(widget, .horizontal, -1, &min_w, &ignored, &ignored, &ignored);
+    gtk.Widget.measure(widget, .vertical, -1, &min_h, &ignored, &ignored, &ignored);
+    const sizes = std.fmt.allocPrint(arena, ",\"minWidth\":{d},\"minHeight\":{d}", .{ min_w, min_h }) catch "";
+    out.appendSlice(arena, sizes) catch {};
     return out.items;
 }
 

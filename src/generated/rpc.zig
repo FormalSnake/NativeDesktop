@@ -69,6 +69,14 @@ pub const Geometry = struct {
     h: i32,
 };
 
+/// The smallest size, in logical units, the backend's layout will give a node: GTK's
+/// gtk_widget_measure minimum on each axis. A window narrower than its root's minimum is what
+/// makes GTK log "Allocation width too small".
+pub const MinSize = struct {
+    w: i32,
+    h: i32,
+};
+
 /// The per-row shape on the wire, shared by every row-driven widget (SourceList `items`,
 /// SourceTree `nodes`, CommandPalette `items`) — camelCase iconName, matching the schema prop
 /// shape. testID carries SourceTree's per-node testID (null for SourceList rows, which have
@@ -92,7 +100,8 @@ pub const RowJson = struct {
 /// on backends without the probe. checked/selected/expanded/placeholder/label/options come from
 /// the same probe and are null on every node the field does not apply to (a Label has no
 /// checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without
-/// first knowing its kind.
+/// first knowing its kind. minSize comes from the same probe, null on backends that do not
+/// measure.
 pub const JsonNode = struct {
     ref: u32,
     type: []const u8,
@@ -113,6 +122,7 @@ pub const JsonNode = struct {
     placeholder: ?[]const u8 = null,
     label: ?[]const u8 = null,
     options: ?[]const []const u8 = null,
+    minSize: ?MinSize = null,
 };
 
 pub const GetTreeResult = struct {
