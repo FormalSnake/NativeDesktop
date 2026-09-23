@@ -89,12 +89,15 @@ export interface SourceTreeNode {
   actionIds?: string[];
   testID?: string;
 }
-/** CommandPalette result row: stable string id (echoed in onActivate), title, optional subtitle + leading icon. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders. */
+/** CommandPalette result row, drawn on one line: leading icon, title, subtitle in secondary text after it, and `hint` right-aligned (the action Enter takes on the row, e.g. "Switch to Tab", or a shortcut). `id` is echoed in onActivate. `iconData` (a data: URL or bare base64 image, e.g. a favicon) wins over `iconName`. `completion` on the FIRST row is inline autocompletion: when it starts with what the user typed (case-insensitively) and their last edit inserted text, the field shows the rest of it selected after the caret; Tab or Right accepts it (queryChanged then carries the whole text), typing replaces it, Backspace removes it, after which Enter on that row submits the typed text instead of activating the row. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders. */
 export interface CommandPaletteItem {
   id: string;
   title: string;
   subtitle?: string;
   iconName?: string;
+  iconData?: string;
+  hint?: string;
+  completion?: string;
 }
 /** One datum. `x`/`y` are the numeric axes; `label` names the point on a category axis and names the slice on a pie. The OHLC quartet carries candlestick bodies and wicks and is ignored by every other chart type (which read `y`). */
 export interface ChartPoint {

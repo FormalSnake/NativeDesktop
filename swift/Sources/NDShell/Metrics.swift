@@ -27,7 +27,15 @@ enum NDRadius {
 enum NDPaletteMetrics {
     static let width: CGFloat = 640
     static let rowHeight: CGFloat = 40
-    static let maxListHeight: CGFloat = 320
+    static let maxListHeight: CGFloat = 400
+    /// The card's top edge sits at this fraction of the window height, so the
+    /// field stays put while the list below it grows and shrinks.
+    static let topFraction: CGFloat = 0.18
+    /// Clearance the card keeps from every window edge.
+    static let margin: CGFloat = 20
+    /// Black over the page behind the card.
+    static let dimAlpha: CGFloat = 0.15
+    static let iconSide: CGFloat = 16
 }
 
 /// Radius for a shape nested `inset` points inside a container whose corner

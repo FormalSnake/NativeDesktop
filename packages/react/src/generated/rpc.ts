@@ -157,6 +157,31 @@ export interface ScrollIntoViewResult {
   scrolled: boolean;
 }
 
+/** One visible palette row. `icon`/`title`/`subtitle`/`hint` are null when the row does not draw that part. `truncated` is true when the title or subtitle is drawn shorter than its text (an ellipsis). */
+export interface PaletteRowLayout {
+  row: Geometry;
+  icon: Geometry | null;
+  title: Geometry | null;
+  subtitle: Geometry | null;
+  hint: Geometry | null;
+  truncated: boolean;
+  highlighted: boolean;
+}
+
+/** `window` is the content area the panel is drawn over; `panel` the card itself; `field` the text field, whose `fieldText` and selection (`selectionStart`, `selectionLength`, in UTF-16 units) show inline autocompletion. `rows` lists the rows currently drawn, top to bottom. */
+export interface PaletteLayout {
+  ref: number;
+  presented: boolean;
+  window: Geometry | null;
+  panel: Geometry | null;
+  field: Geometry | null;
+  fieldText: string;
+  selectionStart: number;
+  selectionLength: number;
+  dimmed: boolean;
+  rows: PaletteRowLayout[];
+}
+
 /** Live page state read off the engine on the UI thread (WebKitGTK's uri/title/is-loading/can-go-back/can-go-forward, WKWebView's url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation. url/title are null before the first commit. */
 export interface WebViewInfo {
   ref: number;
@@ -308,6 +333,13 @@ export interface WebviewInfoParams {
   window?: number;
 }
 
+/** Live geometry of a CommandPalette's presented panel, so a drive can assert its layout (centring, row fit, truncation) instead of reading pixels. Rects use node Geometry units relative to the window the panel is presented over. A palette that is not presented answers {presented:false} with empty rows. Target by exactly one of ref / testId. */
+export interface PaletteLayoutParams {
+  ref?: number;
+  testId?: string;
+  window?: number;
+}
+
 /** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, or a TrayItem; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
 export interface MenuModelParams {
   ref?: number;
@@ -364,6 +396,7 @@ export interface RpcMethods {
   windows: { params: undefined; result: WindowsResult };
   pointer: { params: PointerParams; result: PointerResult };
   webviewInfo: { params: WebviewInfoParams; result: WebViewInfo };
+  paletteLayout: { params: PaletteLayoutParams; result: PaletteLayout };
   menuModel: { params: MenuModelParams; result: MenuModelResult };
   webviewEval: { params: WebviewEvalParams; result: WebViewEvalResult };
   drag: { params: DragParams; result: DragResult };

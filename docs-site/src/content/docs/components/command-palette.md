@@ -73,13 +73,29 @@ await render(<App />);
 | --- | --- | --- | --- | --- |
 | `open` | bool | `false` | createAndUpdate | Presentation state. Setting it `true` presents the overlay; `false` dismisses it programmatically (see [Cancel vs. programmatic close](#cancel-vs-programmatic-close)). |
 | `placeholder` | string | none | createAndUpdate | Search field placeholder text. |
-| `query` | string | `""` | createAndUpdate | The search field's text. Controlled: the field never edits itself out from under you. |
+| `query` | string | `""` | createAndUpdate | The search field's text. Controlled: the field never edits itself out from under you, and every present starts from the last `query` you set, not from what was typed into an earlier present. |
 | `items` | `CommandPaletteItem[]` | none | createAndUpdate | The result rows, already filtered, ranked, and ordered by the app. The widget renders them in order and never reorders or filters them. |
 | `testID` | string | none | meta | Automation identifier. |
 
 `CommandPaletteItem` (`schema/widgets.json`'s shared shape): `{ id: string, title: string,
-subtitle?: string, iconName?: string }`. `id` is a stable string the app assigns; it never needs
-to be a visible label. It is the value echoed back by `activate`.
+subtitle?: string, iconName?: string, iconData?: string, hint?: string, completion?: string }`.
+`id` is a stable string the app assigns; it never needs to be a visible label. It is the value
+echoed back by `activate`.
+
+A row is one line: the icon, the title, the subtitle in secondary text after it, and `hint`
+right-aligned (what Enter does on that row, "Switch to Tab", or a shortcut). `iconData` is a
+`data:` URL or bare base64 image, a favicon for example, and wins over `iconName`. When a row is
+too narrow the subtitle truncates first, then the title; the hint never does.
+
+## Inline completion
+
+`completion` on the first row completes what the user is typing, the way a browser's address bar
+does. When it starts with the typed text (case-insensitively) and the last edit inserted text, the
+field shows the rest of it selected after the caret. Typing replaces the selection and completes
+again; Backspace removes it and does not bring it back until the next insertion; Tab or Right
+accepts it, and only then does `queryChanged` carry the whole text. `submit` always carries the
+typed text, never an unaccepted completion, and Enter on a completion row whose completion was
+removed submits instead of activating it.
 
 ## Events
 
@@ -112,10 +128,13 @@ backdrop outside the card.
 
 | | Linux (GTK) | macOS (AppKit) |
 | --- | --- | --- |
-| Surface | `AdwDialog` in floating presentation mode: centered, scrimmed, non-bottom-sheet | A dimmed full-window scrim view with a centered `NSVisualEffectView` card |
-| Search field | `GtkSearchEntry` | `NSSearchField` |
-| Results | `GtkListBox` of `AdwActionRow`s (`boxed-list` style) | `NSTableView`, 40pt rows |
+| Surface | `AdwDialog` in floating presentation mode: centered, scrimmed, non-bottom-sheet | A full-window scrim (black at 15 percent) under a 640 pt Liquid Glass card, centered horizontally with its top edge at 18 percent of the window height, so the field stays put while rows change |
+| Search field | `GtkSearchEntry` | A borderless 20 pt `NSTextField` |
+| Results | `GtkListBox` of one-line rows, 40px | `NSTableView` (inset style), one-line 40 pt rows |
 | Submit shortcut | Ctrl+Return | Cmd+Return or Ctrl+Return |
+
+Neither backend animates the open or close: a palette is opened from the keyboard many times a
+day.
 
 Both backends present the overlay over the application's currently-active window rather than the
 window the `<commandpalette>` node is mounted under, so one palette mounted near the root works
@@ -131,6 +150,10 @@ going through the generic click/type dispatch:
 - `type` inserts text into the search field (fires `queryChanged`), appending at the cursor.
 - `setValue` is overloaded by argument type: a string replaces the query text, an integer activates
   the row at that index, and `true` submits the current query as-is.
+- `paletteLayout` (RPC, `app.paletteLayout(target)`) answers the presented panel's geometry: the
+  panel, the field with its text and selection, and each drawn row's icon, title, subtitle and hint
+  rects plus whether its text is truncated. A drive asserts centring and row fit with it instead
+  of reading pixels.
 - The palette is only actionable while presented (`open` is effectively `true`); `getTree` and the
   action dispatchers report it as not-actionable while closed.
 

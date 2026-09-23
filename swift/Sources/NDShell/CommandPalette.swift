@@ -1,20 +1,27 @@
 import AppKit
 
-/// CommandPalette: a centered, modal Cmd-K overlay (peer of
+/// CommandPalette: a floating command bar over the window (peer of
 /// src/gtk/commandpalette.zig's AdwDialog). The tracked handle is a host-only
 /// NSView (the Popover idiom) that lives in the tree only so `self.window`
-/// resolves the window to paint over; `open` toggles a transparent full-window
-/// backdrop plus a centered Liquid Glass card (a borderless search field over
-/// an NSTableView of results) whose height follows its row count.
+/// resolves the window to paint over; `open` toggles a dimmed full-window
+/// backdrop plus a Liquid Glass card (a borderless search field over an
+/// NSTableView of one-line results) whose top edge is fixed and whose height
+/// follows its row count.
 ///
 /// CONTROLLED: the app owns `query` and `items`; the widget never filters or
-/// reorders. Every keystroke fires queryChanged; the app feeds back the next
-/// result set. Highlight is internal (Up/Down/Home/End clamp within the
-/// current rows). onActivate carries the highlighted/clicked row's id;
-/// onSubmit the raw query text (plain Return with no highlight, or Cmd/Ctrl
-/// Return regardless) so a directory picker can accept a typed path that
-/// matches no listed row. onCancel fires on Esc / click-outside; a
-/// React-driven close (open=false) is flagged so it does not echo.
+/// reorders. Every keystroke fires queryChanged with the text the user typed;
+/// the app feeds back the next result set. A present always starts from the
+/// last `query` the app set, never from what was typed into an earlier
+/// present. Highlight is internal (Up/Down/Home/End clamp within the current
+/// rows). onActivate carries the highlighted/clicked row's id; onSubmit the
+/// typed text (plain Return with no highlight, or Cmd/Ctrl Return regardless)
+/// so a directory picker can accept a typed path that matches no listed row.
+/// onCancel fires on Esc / click-outside; a React-driven close (open=false)
+/// is flagged so it does not echo.
+///
+/// Inline autocompletion: the first row's `completion`, when it extends what
+/// was typed and the last edit inserted text, is shown selected after the
+/// caret. It never reaches queryChanged until Tab or Right accepts it.
 private let paletteColumnID = NSUserInterfaceItemIdentifier("nd-command-palette-column")
 private let paletteCellID = NSUserInterfaceItemIdentifier("nd-command-palette-cell")
 private let paletteRowID = NSUserInterfaceItemIdentifier("nd-command-palette-row")
@@ -28,6 +35,9 @@ struct PaletteRow: Sendable {
     var title: String
     var subtitle: String?
     var iconName: String?
+    var iconData: String?
+    var hint: String?
+    var completion: String?
 }
 
 private func paletteRow(from obj: [String: Any]) -> PaletteRow {
@@ -35,14 +45,15 @@ private func paletteRow(from obj: [String: Any]) -> PaletteRow {
         id: obj["id"] as? String ?? "",
         title: obj["title"] as? String ?? "",
         subtitle: obj["subtitle"] as? String,
-        iconName: obj["iconName"] as? String
+        iconName: obj["iconName"] as? String,
+        iconData: obj["iconData"] as? String,
+        hint: obj["hint"] as? String,
+        completion: obj["completion"] as? String
     )
 }
 
-/// Full-window hit target behind the card; a click on the bare backdrop
-/// cancels. Transparent: macOS does not dim behind an overlay panel, so this
-/// view exists for the outside-click contract, not as a scrim. Owns the
-/// Cmd/Ctrl+Return "submit as-is" key equivalent (a modifier-Return never
+/// Full-window scrim behind the card; a click on it cancels. Owns the
+/// Cmd/Ctrl+Return "submit as typed" key equivalent (a modifier-Return never
 /// reaches the field editor's doCommandBySelector).
 private final class NDPaletteBackdrop: NSView {
     weak var handle: NDCommandPaletteHandleView?
@@ -91,7 +102,15 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
     var nodeID: UInt32 = 0
     fileprivate var placeholder: String?
     fileprivate var rows: [PaletteRow] = []
-    private var pendingQuery = ""
+    /// The app's last `query`. Every present starts from it.
+    private var controlledQuery = ""
+    /// What the user typed, without any completion shown after it.
+    private var typed = ""
+    /// The completion currently drawn selected after `typed`.
+    private var suffix = ""
+    /// Set by an edit that inserted text, cleared by one that removed text:
+    /// Backspace over a completion must not bring it straight back.
+    private var mayComplete = false
     // Content fingerprint of the rendered rows. A controlled app hands back a
     // fresh `items` array on every render; without this the table would reload
     // and reset the highlight on each one, so reload only when rows change.
@@ -99,12 +118,14 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
 
     private var pendingOpen = false
     private var presented = false
-    private var programmaticClose = false
     private var suppressQueryEmit = false
+    private weak var returnFocus: NSResponder?
 
     private var backdrop: NDPaletteBackdrop?
+    private var card: NSView?
     private var searchField: NSTextField?
     private var tableView: NSTableView?
+    private var scrollView: NSScrollView?
     private var separator: NSBox?
     private var listHeight: NSLayoutConstraint?
 
@@ -131,42 +152,104 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
     func setPlaceholder(_ ph: String) {
         placeholder = ph
         searchField?.placeholderString = ph
+        searchField?.setAccessibilityLabel(ph)
     }
 
     func setQuery(_ q: String) {
-        pendingQuery = q
-        guard let field = searchField, field.stringValue != q else { return }
-        suppressQueryEmit = true
-        field.stringValue = q
-        suppressQueryEmit = false
+        controlledQuery = q
+        guard presented, let field = searchField else { return }
+        typed = q
+        suffix = ""
+        mayComplete = false
+        if field.stringValue != q {
+            suppressQueryEmit = true
+            field.stringValue = q
+            suppressQueryEmit = false
+        }
+        // A reseed while open reads like a fresh open: the whole text selected.
+        field.currentEditor()?.selectAll(nil)
     }
 
     func setRows(_ newRows: [PaletteRow]) {
         let sig = Self.rowsSignature(newRows)
-        if sig == rowsSig { return } // rows render identically: keep table, selection, focus
-        rowsSig = sig
-        rows = newRows
-        tableView?.reloadData()
-        updateListHeight()
-        // Fresh results: the top row is the highlighted default (Return drills in).
-        if presented {
-            highlight(rows.isEmpty ? -1 : 0)
-            reassertFieldFocus()
+        if sig != rowsSig {
+            rowsSig = sig
+            rows = newRows
+            tableView?.reloadData()
+            updateListHeight()
+            // Fresh results: the top row is the highlighted default (Return drills in).
+            if presented {
+                highlight(rows.isEmpty ? -1 : 0)
+                reassertFieldFocus()
+            }
         }
+        if presented { applyCompletion() }
     }
 
     private static func rowsSignature(_ rows: [PaletteRow]) -> String {
         var s = ""
-        for r in rows { s += "\(r.id)\u{1f}\(r.title)\u{1f}\(r.subtitle ?? "")\u{1f}\(r.iconName ?? "")\u{1e}" }
+        for r in rows {
+            for part in [r.id, r.title, r.subtitle ?? "", r.iconName ?? "", r.iconData ?? "", r.hint ?? "", r.completion ?? ""] {
+                s += part
+                s += "\u{1f}"
+            }
+            s += "\u{1e}"
+        }
         return s
     }
 
     // Keep the search field first responder across a reload, but never steal
-    // the field editor mid-edit (that would reselect the text) — only re-grab
+    // the field editor mid-edit (that would reselect the text); only re-grab
     // when nothing is editing it.
     private func reassertFieldFocus() {
         guard let field = searchField, let window = field.window, field.currentEditor() == nil else { return }
         window.makeFirstResponder(field)
+    }
+
+    // ---- inline completion ----
+
+    /// Draws the first row's completion after the typed text, or takes a stale
+    /// one away. Runs after every edit (against the rows already shown, so the
+    /// completion keeps up with fast typing) and again when new rows land.
+    private func applyCompletion() {
+        guard let field = searchField, let editor = field.currentEditor() as? NSTextView else { return }
+        var next = ""
+        if mayComplete, let full = rows.first?.completion {
+            let typed16 = (typed as NSString).length
+            let full16 = (full as NSString).length
+            if typed16 > 0, full16 > typed16,
+               (full as NSString).substring(to: typed16).caseInsensitiveCompare(typed) == .orderedSame {
+                next = (full as NSString).substring(from: typed16)
+            }
+        }
+        if next == suffix && field.stringValue == typed + suffix { return }
+        suffix = next
+        suppressQueryEmit = true
+        field.stringValue = typed + suffix
+        suppressQueryEmit = false
+        let start = (typed as NSString).length
+        editor.selectedRange = NSRange(location: start, length: (suffix as NSString).length)
+    }
+
+    /// Tab or Right over a completion: it becomes typed text.
+    private func acceptCompletion() -> Bool {
+        guard !suffix.isEmpty, let field = searchField else { return false }
+        typed += suffix
+        suffix = ""
+        mayComplete = false
+        field.currentEditor()?.selectedRange = NSRange(location: (typed as NSString).length, length: 0)
+        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(typed))}")
+        return true
+    }
+
+    /// One path for every change of the typed text, from a keystroke or from
+    /// automation, so both see the same completion rules.
+    private func userEdited(_ text: String) {
+        mayComplete = (text as NSString).length > (typed as NSString).length
+        typed = text
+        suffix = ""
+        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(text))}")
+        applyCompletion()
     }
 
     // ---- present / dismiss ----
@@ -204,9 +287,15 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         if !NSApp.isActive, ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1" {
             NSApp.activate(ignoringOtherApps: true)
         }
+        returnFocus = window.firstResponder
+        typed = controlledQuery
+        suffix = ""
+        mayComplete = false
         buildUI(in: content)
         presented = true
         highlight(rows.isEmpty ? -1 : 0)
+        // Becoming first responder selects the field's whole text, which is
+        // what a seeded open (the current address) wants.
         if let field = searchField { window.makeFirstResponder(field) }
     }
 
@@ -216,12 +305,21 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         pendingOpen = false
         guard presented else { return }
         presented = false
+        let window = backdrop?.window
         backdrop?.removeFromSuperview()
         backdrop = nil
+        card = nil
         searchField = nil
         tableView = nil
+        scrollView = nil
         separator = nil
         listHeight = nil
+        // Focus goes back where it was (the page, usually); a responder that
+        // left the window meanwhile leaves it with the window.
+        if let window, let back = returnFocus, (back as? NSView)?.window === window || back === window {
+            window.makeFirstResponder(back)
+        }
+        returnFocus = nil
         if !programmatic { ndEmitEvent(nodeID, "cancel", "{}") }
     }
 
@@ -229,6 +327,8 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         let backdrop = NDPaletteBackdrop(frame: content.bounds)
         backdrop.handle = self
         backdrop.autoresizingMask = [.width, .height]
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(NDPaletteMetrics.dimAlpha).cgColor
         backdrop.setAccessibilityIdentifier("nd-command-palette-backdrop")
 
         let card = NDPaletteCard()
@@ -240,6 +340,9 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         // Undirected: a layer's y axis follows its view's flippedness, so an
         // offset shadow would fall the wrong way in one of the two geometries.
         card.layer?.shadowOffset = .zero
+        card.setAccessibilityElement(true)
+        card.setAccessibilityRole(.group)
+        card.setAccessibilityLabel(placeholder ?? "Command bar")
         backdrop.addSubview(card)
 
         let glass = NSGlassEffectView()
@@ -269,8 +372,13 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 20)
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+        field.cell?.usesSingleLineMode = true
+        field.lineBreakMode = .byClipping
         field.placeholderString = placeholder
-        field.stringValue = pendingQuery
+        field.setAccessibilityLabel(placeholder)
+        field.stringValue = controlledQuery
         field.delegate = self
         body.addSubview(field)
 
@@ -286,31 +394,43 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         table.headerView = nil
         table.style = .inset
         table.rowHeight = NDPaletteMetrics.rowHeight
+        table.intercellSpacing = NSSize(width: 0, height: 0)
         table.backgroundColor = .clear
         table.dataSource = self
         table.delegate = self
         table.target = self
         table.action = #selector(rowClicked(_:))
+        table.setAccessibilityLabel("Results")
 
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.documentView = table
         body.addSubview(scroll)
 
+        let m = NDPaletteMetrics.margin
         let cardWidth = card.widthAnchor.constraint(equalToConstant: NDPaletteMetrics.width)
         cardWidth.priority = .defaultHigh
+        // The top edge rides a fixed fraction of the window height, so the field
+        // does not move while results change. The backdrop is flipped, which
+        // makes its `.bottom` its height.
+        let top = NSLayoutConstraint(item: card, attribute: .top, relatedBy: .equal,
+                                     toItem: backdrop, attribute: .bottom,
+                                     multiplier: NDPaletteMetrics.topFraction, constant: 0)
+        top.priority = .defaultHigh
         // Content-driven list height, broken by the required cap below it once
         // there are more rows than the card may show.
         let listHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
         listHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: backdrop.centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: backdrop.centerYAnchor),
+            top,
+            card.topAnchor.constraint(greaterThanOrEqualTo: backdrop.topAnchor, constant: m),
             cardWidth,
-            card.widthAnchor.constraint(lessThanOrEqualTo: backdrop.widthAnchor, constant: -40),
-            card.heightAnchor.constraint(lessThanOrEqualTo: backdrop.heightAnchor, constant: -80),
+            card.widthAnchor.constraint(lessThanOrEqualTo: backdrop.widthAnchor, constant: -2 * m),
+            card.bottomAnchor.constraint(lessThanOrEqualTo: backdrop.bottomAnchor, constant: -m),
 
             glass.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             glass.trailingAnchor.constraint(equalTo: card.trailingAnchor),
@@ -336,7 +456,7 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
             separator.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             separator.heightAnchor.constraint(equalToConstant: 1),
 
-            scroll.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 6),
             scroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
@@ -347,22 +467,25 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         content.addSubview(backdrop)
         table.reloadData()
         self.backdrop = backdrop
+        self.card = card
         self.searchField = field
         self.tableView = table
+        self.scrollView = scroll
         self.separator = separator
         self.listHeight = listHeight
         updateListHeight()
     }
 
     /// Height of the rendered rows, read back from the table so the row
-    /// metrics the style applies (intercell spacing, inset margins) are the
-    /// ones the card is sized against. An empty result set collapses the list
-    /// and its separator, leaving the search field alone on the card.
+    /// metrics the style applies (inset margins) are the ones the card is
+    /// sized against. An empty result set collapses the list and its
+    /// separator, leaving the search field alone on the card.
     private func updateListHeight() {
         separator?.isHidden = rows.isEmpty
+        scrollView?.isHidden = rows.isEmpty
         guard let listHeight else { return }
         guard let table = tableView, !rows.isEmpty else {
-            listHeight.constant = 0
+            listHeight.constant = -6 // cancels the list's top gap: the field alone, evenly padded
             return
         }
         listHeight.constant = table.rect(ofRow: rows.count - 1).maxY
@@ -394,8 +517,9 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         ndEmitEvent(nodeID, "activate", "{\"text\":\(ndJsonString(rows[idx].id))}")
     }
 
+    /// The typed text, never an unaccepted completion.
     func emitSubmit() {
-        ndEmitEvent(nodeID, "submit", "{\"text\":\(ndJsonString(searchField?.stringValue ?? pendingQuery))}")
+        ndEmitEvent(nodeID, "submit", "{\"text\":\(ndJsonString(presented ? typed : controlledQuery))}")
     }
 
     // ---- automation ----
@@ -408,15 +532,13 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
 
     func automationSetQuery(_ text: String) {
         searchField?.stringValue = text
-        pendingQuery = text
-        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(text))}")
+        userEdited(text)
     }
 
     func automationAppendQuery(_ text: String) -> String {
-        let full = (searchField?.stringValue ?? pendingQuery) + text
+        let full = typed + text
         searchField?.stringValue = full
-        pendingQuery = full
-        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(full))}")
+        userEdited(full)
         return full
     }
 
@@ -438,8 +560,62 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
 
     func automationSubmit() { emitSubmit() }
 
+    /// `paletteLayout`: the drawn geometry, relative to the backdrop (the
+    /// window's content area), as the JSON the RPC answers.
+    func automationLayout() -> String {
+        var out: [String: Any] = [
+            "ref": Int(nodeID), "presented": presented, "rows": [[String: Any]](),
+            "fieldText": "", "selectionStart": 0, "selectionLength": 0, "dimmed": false,
+        ]
+        guard presented, let backdrop, let card, let field = searchField, let table = tableView else {
+            return ndJSONObjectString(out)
+        }
+        backdrop.layoutSubtreeIfNeeded()
+        // Alignment rects: what Auto Layout placed, which for a symbol image
+        // excludes the padding its glyph carries outside the layout box.
+        func rect(_ v: NSView) -> [String: Int] {
+            let local = v.superview.map { _ in v.alignmentRect(forFrame: v.frame) } ?? v.frame
+            let r = (v.superview ?? v).convert(local, to: backdrop)
+            return ["x": Int(r.origin.x.rounded()), "y": Int(r.origin.y.rounded()),
+                    "w": Int(r.width.rounded()), "h": Int(r.height.rounded())]
+        }
+        out["window"] = rect(backdrop)
+        out["panel"] = rect(card)
+        out["field"] = rect(field)
+        out["fieldText"] = field.stringValue
+        let sel = field.currentEditor()?.selectedRange ?? NSRange(location: 0, length: 0)
+        out["selectionStart"] = sel.location
+        out["selectionLength"] = sel.length
+        out["dimmed"] = (backdrop.layer?.backgroundColor?.alpha ?? 0) > 0
+        var drawn: [[String: Any]] = []
+        // Rows the list shows whole; one half scrolled out is clipped by it.
+        let visibleRect = table.visibleRect
+        let visible = table.rows(in: visibleRect)
+        for i in visible.location..<(visible.location + visible.length) {
+            guard visibleRect.contains(table.rect(ofRow: i)) else { continue }
+            guard let rowView = table.rowView(atRow: i, makeIfNecessary: false),
+                  let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? NDPaletteCell else { continue }
+            var entry: [String: Any] = ["row": rect(rowView), "highlighted": table.selectedRow == i,
+                                        "truncated": cell.isTruncated]
+            entry["icon"] = cell.iconShown ? rect(cell.iconSlot) : NSNull()
+            entry["title"] = rect(cell.titleSlot)
+            entry["subtitle"] = cell.subtitleShown ? rect(cell.subtitleSlot) : NSNull()
+            entry["hint"] = cell.hintShown ? rect(cell.hintSlot) : NSNull()
+            drawn.append(entry)
+        }
+        out["rows"] = drawn
+        return ndJSONObjectString(out)
+    }
+
+    /// A first row carrying a completion stands for the completed text. Once
+    /// Backspace has taken the completion away, Enter means what was typed.
     private func commitReturn() {
         let sel = tableView?.selectedRow ?? -1
+        if sel == 0, suffix.isEmpty, let full = rows.first?.completion, !full.isEmpty,
+           full.caseInsensitiveCompare(typed) != .orderedSame {
+            emitSubmit()
+            return
+        }
         if sel >= 0 && sel < rows.count { emitActivate(sel) } else { emitSubmit() }
     }
 
@@ -454,8 +630,7 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
 
     func controlTextDidChange(_ obj: Notification) {
         guard !suppressQueryEmit, let field = obj.object as? NSTextField else { return }
-        pendingQuery = field.stringValue
-        ndEmitEvent(nodeID, "queryChanged", "{\"text\":\(ndJsonString(field.stringValue))}")
+        userEdited(field.stringValue)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -468,6 +643,12 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
         case #selector(NSResponder.moveToEndOfDocument(_:)):
             if !rows.isEmpty { highlight(rows.count - 1) }
             return true
+        // Tab never leaves the field: it accepts a completion or does nothing.
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+            _ = acceptCompletion()
+            return true
+        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToEndOfLine(_:)):
+            return acceptCompletion()
         case #selector(NSResponder.insertNewline(_:)): commitReturn(); return true
         case #selector(NSResponder.cancelOperation(_:)): userCancel(); return true
         default: return false
@@ -488,29 +669,49 @@ final class NDCommandPaletteHandleView: NSView, NSTextFieldDelegate, NSTableView
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: paletteCellID, owner: self) as? NDPaletteCell ?? NDPaletteCell()
         cell.identifier = paletteCellID
-        cell.configure(with: row < rows.count ? rows[row] : PaletteRow(id: "", title: "", subtitle: nil, iconName: nil))
+        cell.configure(with: row < rows.count ? rows[row] : PaletteRow(id: "", title: ""))
         return cell
     }
 }
 
-/// Result cell: optional leading SF Symbol, a title, and an optional subtitle
-/// (peer of the GTK backend's AdwActionRow title/subtitle/prefix-icon layout).
+/// Result cell, one line: a 16 pt icon, the title, the subtitle in secondary
+/// text after it, and the hint pinned to the trailing edge. The subtitle gives
+/// way first, then the title; the hint never truncates.
 final class NDPaletteCell: NSTableCellView {
     private let iconView = NSImageView()
     private let titleField = NSTextField(labelWithString: "")
     private let subtitleField = NSTextField(labelWithString: "")
-    private var iconWidthConstraint: NSLayoutConstraint!
+    private let hintField = NSTextField(labelWithString: "")
+    private var subtitleGap: NSLayoutConstraint!
+    private var hintGap: NSLayoutConstraint!
+
+    var iconSlot: NSView { iconView }
+    var titleSlot: NSView { titleField }
+    var subtitleSlot: NSView { subtitleField }
+    var hintSlot: NSView { hintField }
+    var iconShown: Bool { !iconView.isHidden }
+    var subtitleShown: Bool { !subtitleField.isHidden }
+    var hintShown: Bool { !hintField.isHidden }
+    var isTruncated: Bool {
+        layoutSubtreeIfNeeded()
+        func cut(_ f: NSTextField) -> Bool {
+            !f.isHidden && f.attributedStringValue.size().width > f.frame.width + 0.5
+        }
+        return cut(titleField) || cut(subtitleField)
+    }
 
     // NSTableCellView recolours `textField` over an emphasized selection fill
-    // but knows nothing about the subtitle or the symbol, which would keep
-    // their unselected colours against the accent.
+    // but knows nothing about the subtitle, the hint or the symbol, which would
+    // keep their unselected colours against the accent.
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
             let onFill = backgroundStyle == .emphasized
-            subtitleField.textColor = onFill
+            let secondary = onFill
                 ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.8)
-                : .secondaryLabelColor
-            iconView.contentTintColor = onFill ? .alternateSelectedControlTextColor : nil
+                : NSColor.secondaryLabelColor
+            subtitleField.textColor = secondary
+            hintField.textColor = secondary
+            iconView.contentTintColor = onFill ? .alternateSelectedControlTextColor : .secondaryLabelColor
         }
     }
 
@@ -524,34 +725,56 @@ final class NDPaletteCell: NSTableCellView {
     }
 
     private func commonInit() {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.imageScaling = .scaleProportionallyDown
-        titleField.translatesAutoresizingMaskIntoConstraints = false
-        titleField.lineBreakMode = .byTruncatingTail
-        subtitleField.translatesAutoresizingMaskIntoConstraints = false
-        subtitleField.lineBreakMode = .byTruncatingTail
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = .secondaryLabelColor
+        for f in [titleField, subtitleField, hintField] {
+            f.translatesAutoresizingMaskIntoConstraints = false
+            f.font = font
+            f.lineBreakMode = .byTruncatingTail
+            f.maximumNumberOfLines = 1
+            f.cell?.usesSingleLineMode = true
+        }
         subtitleField.textColor = .secondaryLabelColor
-        subtitleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hintField.textColor = .secondaryLabelColor
+        hintField.alignment = .right
+
+        titleField.setContentCompressionResistancePriority(.init(740), for: .horizontal)
+        titleField.setContentHuggingPriority(.init(760), for: .horizontal)
+        subtitleField.setContentCompressionResistancePriority(.init(730), for: .horizontal)
+        subtitleField.setContentHuggingPriority(.init(250), for: .horizontal)
+        hintField.setContentCompressionResistancePriority(.init(760), for: .horizontal)
+        hintField.setContentHuggingPriority(.init(760), for: .horizontal)
 
         addSubview(iconView)
         addSubview(titleField)
         addSubview(subtitleField)
+        addSubview(hintField)
         textField = titleField
 
-        iconWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: 18)
+        let side = NDPaletteMetrics.iconSide
+        subtitleGap = subtitleField.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 8)
+        hintGap = hintField.leadingAnchor.constraint(greaterThanOrEqualTo: subtitleField.trailingAnchor, constant: 16)
+        // The title may not take the whole row: a long page title still leaves
+        // room to see which site it is on.
+        let titleCap = titleField.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.62)
         NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconWidthConstraint,
-            iconView.heightAnchor.constraint(equalToConstant: 18),
+            iconView.widthAnchor.constraint(equalToConstant: side),
+            iconView.heightAnchor.constraint(equalToConstant: side),
 
-            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
-            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            titleField.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleCap,
 
-            subtitleField.leadingAnchor.constraint(equalTo: titleField.leadingAnchor),
-            subtitleField.trailingAnchor.constraint(equalTo: titleField.trailingAnchor),
-            subtitleField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 1),
+            subtitleGap,
+            subtitleField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
+
+            hintGap,
+            hintField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            hintField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
         ])
     }
 
@@ -560,15 +783,36 @@ final class NDPaletteCell: NSTableCellView {
         let sub = row.subtitle ?? ""
         subtitleField.stringValue = sub
         subtitleField.isHidden = sub.isEmpty
-        if let iconName = row.iconName {
-            let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName // NDShell/Icons.swift
-            iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: row.title)
-        } else {
-            iconView.image = nil
+        subtitleGap.constant = sub.isEmpty ? 0 : 8
+        let hint = row.hint ?? ""
+        hintField.stringValue = hint
+        hintField.isHidden = hint.isEmpty
+
+        var image: NSImage?
+        if let data = row.iconData, !data.isEmpty {
+            image = ndIconImageFromData(data, side: NDPaletteMetrics.iconSide, what: "CommandPalette")
         }
-        iconView.isHidden = iconView.image == nil
-        iconWidthConstraint.constant = iconView.isHidden ? 0 : 18
+        if image == nil, let iconName = row.iconName, !iconName.isEmpty {
+            let symbol = ndSFSymbol(forFreedesktop: iconName) ?? iconName // NDShell/Icons.swift
+            image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        }
+        iconView.image = image
+        // An empty slot still holds the column, so titles line up whether or
+        // not a row has an icon.
+        iconView.isHidden = image == nil
+        iconView.imageScaling = (row.iconData?.isEmpty == false && image != nil)
+            ? .scaleProportionallyUpOrDown : .scaleNone
+
+        let parts = [row.title, sub, hint].filter { !$0.isEmpty }
+        setAccessibilityLabel(parts.joined(separator: ", "))
     }
+}
+
+private func ndJSONObjectString(_ obj: [String: Any]) -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: obj),
+          let s = String(data: data, encoding: .utf8) else { return "{}" }
+    return s
 }
 
 // ---- generated-dispatch bridges (NDGen/Widgets.swift arms call these) -------

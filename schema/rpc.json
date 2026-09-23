@@ -188,6 +188,35 @@
       ]
     },
     {
+      "name": "PaletteRowLayout",
+      "doc": "One visible palette row. `icon`/`title`/`subtitle`/`hint` are null when the row does not draw that part. `truncated` is true when the title or subtitle is drawn shorter than its text (an ellipsis).",
+      "fields": [
+        { "name": "row", "type": "Geometry" },
+        { "name": "icon", "type": "Geometry", "nullable": true },
+        { "name": "title", "type": "Geometry", "nullable": true },
+        { "name": "subtitle", "type": "Geometry", "nullable": true },
+        { "name": "hint", "type": "Geometry", "nullable": true },
+        { "name": "truncated", "type": "bool" },
+        { "name": "highlighted", "type": "bool" }
+      ]
+    },
+    {
+      "name": "PaletteLayout",
+      "doc": "`window` is the content area the panel is drawn over; `panel` the card itself; `field` the text field, whose `fieldText` and selection (`selectionStart`, `selectionLength`, in UTF-16 units) show inline autocompletion. `rows` lists the rows currently drawn, top to bottom.",
+      "fields": [
+        { "name": "ref", "type": "u32" },
+        { "name": "presented", "type": "bool" },
+        { "name": "window", "type": "Geometry", "nullable": true },
+        { "name": "panel", "type": "Geometry", "nullable": true },
+        { "name": "field", "type": "Geometry", "nullable": true },
+        { "name": "fieldText", "type": "string" },
+        { "name": "selectionStart", "type": "i32" },
+        { "name": "selectionLength", "type": "i32" },
+        { "name": "dimmed", "type": "bool" },
+        { "name": "rows", "type": "PaletteRowLayout", "list": true }
+      ]
+    },
+    {
       "name": "WebViewInfo",
       "doc": "Live page state read off the engine on the UI thread (WebKitGTK's uri/title/is-loading/can-go-back/can-go-forward, WKWebView's url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation. url/title are null before the first commit.",
       "fields": [
@@ -400,6 +429,16 @@
         { "name": "window", "type": "u32", "optional": true }
       ],
       "result": "WebViewInfo"
+    },
+    {
+      "name": "paletteLayout",
+      "doc": "Live geometry of a CommandPalette's presented panel, so a drive can assert its layout (centring, row fit, truncation) instead of reading pixels. Rects use node Geometry units relative to the window the panel is presented over. A palette that is not presented answers {presented:false} with empty rows. Target by exactly one of ref / testId.",
+      "params": [
+        { "name": "ref", "type": "u32", "optional": true },
+        { "name": "testId", "type": "string", "optional": true },
+        { "name": "window", "type": "u32", "optional": true }
+      ],
+      "result": "PaletteLayout"
     },
     {
       "name": "menuModel",

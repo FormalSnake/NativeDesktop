@@ -1399,6 +1399,11 @@ private func numArg(_ args: [String: Any]?, _ key: String) -> Double? {
        action == "setValue" || action == "type" || action == "click" {
         return semanticPalette(palette, nodeID, action, args, resultOut, errOut)
     }
+    if action == "paletteLayout" {
+        guard let palette = view as? NDCommandPaletteHandleView else { return invalidValue(errOut, nodeID) }
+        setResultRaw(resultOut, palette.automationLayout())
+        return 0
+    }
     switch action {
     case "window.close":
         // Window-root unmount (tree.zig remove arm): close the native

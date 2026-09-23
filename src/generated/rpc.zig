@@ -4,7 +4,7 @@
 // Field DECLARATION ORDER in result structs is wire byte order.
 const std = @import("std");
 
-pub const Method = enum { getTree, screenshot, click, waitFor, setValue, type, scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, menuModel, webviewEval, drag, keys };
+pub const Method = enum { getTree, screenshot, click, waitFor, setValue, type, scroll, doubleClick, rightClick, hover, focus, scrollIntoView, snapshotNode, setWindowFrame, resolve, windows, pointer, webviewInfo, paletteLayout, menuModel, webviewEval, drag, keys };
 
 const MethodEntry = struct { name: []const u8, method: Method };
 pub const method_table = [_]MethodEntry{
@@ -26,6 +26,7 @@ pub const method_table = [_]MethodEntry{
     .{ .name = "windows", .method = .windows },
     .{ .name = "pointer", .method = .pointer },
     .{ .name = "webviewInfo", .method = .webviewInfo },
+    .{ .name = "paletteLayout", .method = .paletteLayout },
     .{ .name = "menuModel", .method = .menuModel },
     .{ .name = "webviewEval", .method = .webviewEval },
     .{ .name = "drag", .method = .drag },
@@ -247,6 +248,35 @@ pub const ScrollIntoViewResult = struct {
     scrolled: bool,
 };
 
+/// One visible palette row. `icon`/`title`/`subtitle`/`hint` are null when the row does not
+/// draw that part. `truncated` is true when the title or subtitle is drawn shorter than its
+/// text (an ellipsis).
+pub const PaletteRowLayout = struct {
+    row: Geometry,
+    icon: ?Geometry = null,
+    title: ?Geometry = null,
+    subtitle: ?Geometry = null,
+    hint: ?Geometry = null,
+    truncated: bool,
+    highlighted: bool,
+};
+
+/// `window` is the content area the panel is drawn over; `panel` the card itself; `field` the
+/// text field, whose `fieldText` and selection (`selectionStart`, `selectionLength`, in UTF-16
+/// units) show inline autocompletion. `rows` lists the rows currently drawn, top to bottom.
+pub const PaletteLayout = struct {
+    ref: u32,
+    presented: bool,
+    window: ?Geometry = null,
+    panel: ?Geometry = null,
+    field: ?Geometry = null,
+    fieldText: []const u8,
+    selectionStart: i32,
+    selectionLength: i32,
+    dimmed: bool,
+    rows: []PaletteRowLayout,
+};
+
 /// Live page state read off the engine on the UI thread (WebKitGTK's
 /// uri/title/is-loading/can-go-back/can-go-forward, WKWebView's
 /// url/title/isLoading/canGoBack/canGoForward) — no page JavaScript, no app cooperation.
@@ -448,6 +478,16 @@ pub const PointerParams = struct {
 /// the app forwarding its navigate/titleChanged events. Target by exactly one of ref / testId
 /// (window optionally scopes testId resolution); a target that is not a WebView answers -32602.
 pub const WebviewInfoParams = struct {
+    ref: ?u32 = null,
+    testId: ?[]const u8 = null,
+    window: ?u32 = null,
+};
+
+/// paletteLayout: Live geometry of a CommandPalette's presented panel, so a drive can assert
+/// its layout (centring, row fit, truncation) instead of reading pixels. Rects use node
+/// Geometry units relative to the window the panel is presented over. A palette that is not
+/// presented answers {presented:false} with empty rows. Target by exactly one of ref / testId.
+pub const PaletteLayoutParams = struct {
     ref: ?u32 = null,
     testId: ?[]const u8 = null,
     window: ?u32 = null,

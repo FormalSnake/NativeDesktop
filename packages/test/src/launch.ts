@@ -16,6 +16,7 @@ import {
   type GetTreeResult,
   type JsonNode,
   type KeysResult,
+  type PaletteLayout,
   RPC_ERRORS,
   type ScreenshotResult,
   type ScrollResult,
@@ -601,6 +602,12 @@ export class AppHandle implements LocatorClient {
 
   webviewInfo(target: Target, opts: { window?: number } = {}): Promise<WebViewInfo> {
     return this.rpc.call("webviewInfo", { ...resolveTarget(target), ...opts });
+  }
+
+  /** The presented CommandPalette's live geometry: panel, field, and each
+   * drawn row's parts, in window-relative logical units. */
+  paletteLayout(target: Target, opts: { window?: number } = {}): Promise<PaletteLayout> {
+    return this.rpc.call("paletteLayout", { ...resolveTarget(target), ...opts });
   }
 
   /** Evaluates `code` in the page (optionally in a named isolated world) and
