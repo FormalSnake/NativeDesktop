@@ -102,7 +102,7 @@ launch_host() {
   local rig="$1" log="$2"
   seed_store "$WORK/$rig/store"
   ( cd "$APP_DIR"
-    export XDG_RUNTIME_DIR="$WORK/$rig/xdg"
+    export XDG_RUNTIME_DIR="${HOST_XDG:-$WORK/$rig/xdg}"
     export XDG_DATA_HOME="$WORK/$rig/data"
     export NB_STORE_DIR="$WORK/$rig/store"
     export NB_DOWNLOAD_DIR="$WORK/$rig/downloads"
@@ -254,6 +254,11 @@ EOF
   done
   export HYPRLAND_INSTANCE_SIGNATURE
   [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ] || { echo "FAIL: Hyprland never came up"; tail -20 "$WORK/hypr/hypr.log"; return 1; }
+  # The host shares the compositor's runtime dir, as it does in a real
+  # session: Hyprland's request socket is found under it (the host pins the
+  # picture-in-picture window through it), and $WORK is too long a prefix for
+  # sun_path.
+  HOST_XDG="$rt"
   for _ in $(seq 1 300); do
     [ "$(hyprctl -j monitors 2>/dev/null)" = "[]" ] && break
     sleep 0.1
@@ -293,6 +298,7 @@ EOF
 
 run_rig() {
   local rig="$1"
+  HOST_XDG=""
   local log="$WORK/$rig/host.log"
   mkdir -p "$WORK/$rig/xdg" "$WORK/$rig/data" "$SHOTS/$rig"
   chmod 700 "$WORK/$rig/xdg"

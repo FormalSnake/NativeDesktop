@@ -33,6 +33,7 @@ const x11 = @import("x11.zig");
 const shape = @import("shape.zig");
 const cdp = @import("cdp.zig");
 const browser_pipe = @import("browser_pipe.zig");
+const hyprland = @import("hyprland.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
 const ndchrome = @import("../gtk/chrome.zig");
 const gtkmenu = @import("gtkmenu.zig");
@@ -741,6 +742,8 @@ var adopted_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 /// Windows already stamped with the app's class, so the stamp costs one X
 /// request per window rather than one per tick.
 var named_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
+/// Picture-in-picture windows already kept above under Hyprland.
+var pinned_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 var self_pid: u32 = 0;
 
 fn startChromeWindowWatch() void {
@@ -832,12 +835,31 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
     }
     for (gone.items) |w| _ = adopted_windows.remove(w);
+    // A reparenting window manager frames a client before this ever looks at
+    // the root, and the frame is what the root lists; the WM's own client list
+    // still names the window inside it.
+    var client_buf: [1024]x11.Window = undefined;
+    const clients = x11.clientList(&client_buf);
     gone.clearRetainingCapacity();
     var named_it = named_windows.keyIterator();
     while (named_it.next()) |key| {
-        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
+        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null and
+            std.mem.indexOfScalar(x11.Window, clients, key.*) == null) gone.append(alloc, key.*) catch {};
     }
     for (gone.items) |w| _ = named_windows.remove(w);
+    gone.clearRetainingCapacity();
+    var pinned_it = pinned_windows.keyIterator();
+    while (pinned_it.next()) |key| {
+        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
+    }
+    for (gone.items) |w| _ = pinned_windows.remove(w);
+    for (clients) |w| {
+        if (w == 0 or named_windows.contains(w)) continue;
+        if (x11.windowPid(w) != self_pid or x11.isGdkSurface(w)) continue;
+        if (anchorView()) |anchor| {
+            if (x11.copyClass(x11.toplevelXid(anchor.view.widget), w)) named_windows.put(alloc, w, {}) catch {};
+        }
+    }
     for (children) |w| {
         if (w == 0 or w == kept_window) continue;
         // A browser this engine is still waiting on a URL for is not a dialog
@@ -868,6 +890,14 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // before it could be used, and one opened from the keyboard sat in
         // the middle of the page.
         if (x11.isOverrideRedirect(w)) continue;
+        // The picture-in-picture window is the one Chromium keeps above every
+        // other: it belongs in the screen's corner, above other apps, and a
+        // dialog's treatment (transient for the app, centred on the page)
+        // would tie it to this window instead.
+        if (x11.pictureInPicture(w)) {
+            keepAbove(w);
+            continue;
+        }
         // A compositor that manages XWayland top-levels itself (Hyprland does)
         // places them by its own rules and discards the ConfigureRequest the
         // move below sends, so the hints go on before anything else: a dialog
@@ -882,6 +912,24 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         adoptChromeWindow(w);
     }
     return 1;
+}
+
+/// Under Hyprland, which reads no keep-above hint from an XWayland window, the
+/// picture-in-picture window is pinned instead; tried on every tick until
+/// Hyprland lists it.
+fn keepAbove(window: usize) void {
+    if (pinned_windows.contains(window)) return;
+    if (!hyprland.running()) {
+        pinned_windows.put(alloc, window, {}) catch {};
+        return;
+    }
+    var buf: [256]u8 = undefined;
+    const title = x11.windowName(window, &buf);
+    if (title.len == 0) return;
+    switch (hyprland.pinWindow(self_pid, title)) {
+        .pinned, .unavailable => pinned_windows.put(alloc, window, {}) catch {},
+        .not_yet => {},
+    }
 }
 
 /// The view a Chrome dialog is drawn over. A view that is not mapped sits at

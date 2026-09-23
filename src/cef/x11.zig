@@ -754,3 +754,107 @@ pub fn clearShape(window: Window) void {
     shape_mask.?(c.x, window, shape_bounding, 0, 0, 0, shape_set);
     c.pop();
 }
+
+/// The window manager's own list of the top-levels it manages
+/// (`_NET_CLIENT_LIST`), which names a client window whether or not the WM
+/// reparented it into a frame. The root's children are the frames under a
+/// reparenting WM (openbox, mutter, KWin), so a window Chromium maps and the
+/// WM frames before the next look at the root is only findable here.
+pub fn clientList(out: []Window) []Window {
+    const c = conn() orelse return out[0..0];
+    const atom = c.api.intern_atom(c.x, "_NET_CLIENT_LIST", 1);
+    if (atom == 0) return out[0..0];
+    const XA_WINDOW: c_ulong = 33;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    const root = c.api.default_root_window(c.x);
+    c.push();
+    const ok = c.api.get_window_property(c.x, root, atom, 0, @intCast(out.len), 0, XA_WINDOW, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or actual_format != 32) return out[0..0];
+    defer _ = c.api.free(@ptrCast(data));
+    // Format 32 is a C long per item on the client side.
+    const items: [*]const c_ulong = @ptrCast(@alignCast(data));
+    const n = @min(out.len, @as(usize, nitems));
+    for (0..n) |i| out[i] = items[i];
+    return out[0..n];
+}
+
+/// True for Chromium's picture-in-picture window, the one window it puts on
+/// the root that keeps a fixed aspect ratio, stays above every other and shows
+/// on every workspace. The aspect hint is there from the start; the other two
+/// are EWMH requests that reach the properties only once the window manager
+/// has acted on them (Hyprland never writes the keep-above one), and they
+/// cover a window that lost its hint.
+pub fn pictureInPicture(window: Window) bool {
+    const c = conn() orelse return false;
+    const XA_ATOM: c_ulong = 4;
+    const XA_CARDINAL: c_ulong = 6;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    // WM_NORMAL_HINTS with an aspect ratio (PAspect): the video's own shape,
+    // kept as the window is resized.
+    {
+        const XA_WM_NORMAL_HINTS: c_ulong = 40;
+        const XA_WM_SIZE_HINTS: c_ulong = 41;
+        const PAspect: c_ulong = 1 << 7;
+        c.push();
+        const ok = c.api.get_window_property(c.x, window, XA_WM_NORMAL_HINTS, 0, 18, 0, XA_WM_SIZE_HINTS, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+        c.pop();
+        if (ok == 0 and actual_format == 32) {
+            defer _ = c.api.free(@ptrCast(data));
+            if (nitems >= 1 and @as(*const c_ulong, @ptrCast(@alignCast(data))).* & PAspect != 0) return true;
+        }
+    }
+    const desktop = c.api.intern_atom(c.x, "_NET_WM_DESKTOP", 1);
+    if (desktop != 0) {
+        c.push();
+        const ok = c.api.get_window_property(c.x, window, desktop, 0, 1, 0, XA_CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+        c.pop();
+        if (ok == 0 and actual_format == 32) {
+            defer _ = c.api.free(@ptrCast(data));
+            if (nitems == 1 and @as(*const c_ulong, @ptrCast(@alignCast(data))).* == 0xFFFFFFFF) return true;
+        }
+    }
+    const state = c.api.intern_atom(c.x, "_NET_WM_STATE", 1);
+    const above = c.api.intern_atom(c.x, "_NET_WM_STATE_ABOVE", 1);
+    if (state == 0 or above == 0) return false;
+    c.push();
+    const ok = c.api.get_window_property(c.x, window, state, 0, 32, 0, XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or actual_format != 32) return false;
+    defer _ = c.api.free(@ptrCast(data));
+    const atoms: [*]const c_ulong = @ptrCast(@alignCast(data));
+    for (0..@as(usize, nitems)) |i| {
+        if (atoms[i] == above) return true;
+    }
+    return false;
+}
+
+/// The window's title (`_NET_WM_NAME`), copied into `out`; empty when it has
+/// none.
+pub fn windowName(window: Window, out: []u8) []u8 {
+    const c = conn() orelse return out[0..0];
+    const prop = c.api.intern_atom(c.x, "_NET_WM_NAME", 1);
+    const utf8 = c.api.intern_atom(c.x, "UTF8_STRING", 1);
+    if (prop == 0 or utf8 == 0) return out[0..0];
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, window, prop, 0, @intCast(out.len / 4), 0, utf8, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or actual_format != 8) return out[0..0];
+    defer _ = c.api.free(@ptrCast(data));
+    const n = @min(out.len, @as(usize, nitems));
+    @memcpy(out[0..n], data[0..n]);
+    return out[0..n];
+}

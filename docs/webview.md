@@ -656,7 +656,22 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   `hyprctl clients` entries, which is what a screenshot picker built on that
   list offers, and a rule keyed on an empty class and title (the owner has one)
   moves it to a corner. The window watcher copies the app toplevel's own
-  `WM_CLASS` onto each of them, once per window. The containers the pages are
+  `WM_CLASS` onto each of them, once per window. A reparenting window manager (openbox,
+  mutter, KWin) frames such a window before the watcher's next look at the
+  root, so the watcher also reads the WM's `_NET_CLIENT_LIST`, which names the
+  client inside the frame.
+- Video picture-in-picture (`requestPictureInPicture`, the app's shortcut
+  through `executeJavaScript`'s `userGesture`) is Chromium's own window on both
+  platforms: it keeps itself above every window, other apps' included
+  (`_NET_WM_STATE_ABOVE` on X11, a floating-level `NSWindow` on macOS), and
+  carries Chromium's own overlay controls. The watcher tells it apart by its
+  aspect-ratio size hint (the EWMH keep-above and all-workspaces requests land
+  too late, and Hyprland never writes the first), names it, and never treats it
+  as a dialog: made transient for the app and centred on the page it sat over
+  the page instead of in the screen corner. Hyprland reads no keep-above hint
+  from an XWayland window, so under Hyprland the host pins it through the
+  compositor's request socket (`src/cef/hyprland.zig`), once, unless a window
+  rule already did. The containers the pages are
   rendered into need nothing: they are children of the toplevel and the
   compositor never sees them.
 - Chrome's dialogs that belong to no browser (the install prompt, the
