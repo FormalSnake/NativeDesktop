@@ -2252,19 +2252,16 @@ fn clientGetRequestHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_requ
 // cef_command_handler_t: no Chrome window and no Chrome UI
 // ============================================================================
 
-/// Commands Chrome answers by opening a window, a tab or a Chrome UI surface.
-/// Only Chrome style routes anything through them, and this engine owns the
-/// window it was embedded in and nothing else, so each one is refused here.
-/// The ones that carry a URL reach the app as `newWindow` first
-/// (on_before_popup, on_open_urlfrom_tab, on_context_menu_command); this list
-/// is what catches a keyboard shortcut or a menu item that reaches Chrome's
-/// command handling without going through any of those. The devtools commands
-/// are deliberately absent: Chrome style docks the inspector inside the
-/// browser's own contents container, so they open no window, and IDC_DEV_TOOLS
-/// is how `openDevTools` itself is served.
-///
-/// The native context menu drops every item on this list that is not also an
-/// open-link one, so the menu never offers an entry that does nothing.
+/// Commands Chrome answers by opening a window, a tab or a Chrome UI surface,
+/// as the context menu offers them. `onChromeCommand` refuses these and every
+/// other id outside `allowed_chrome_commands`; this list is what the native
+/// context menu reads: it drops every item on it that is not also an open-link
+/// one, so the menu never offers an entry that does nothing. The ones that
+/// carry a URL reach the app as `newWindow` (on_before_popup,
+/// on_open_urlfrom_tab, on_context_menu_command). The devtools commands are
+/// deliberately absent: Chrome style docks the inspector inside the browser's
+/// own contents container, so they open no window, and IDC_DEV_TOOLS is how
+/// `openDevTools` itself is served.
 const blocked_chrome_commands = [_][*:0]const u8{
     "IDC_NEW_WINDOW",
     "IDC_NEW_INCOGNITO_WINDOW",
@@ -2298,6 +2295,10 @@ const blocked_chrome_commands = [_][*:0]const u8{
     "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
     "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE",
     "IDC_CONTENT_CONTEXT_TRANSLATE",
+    // Opens Chromium's own password manager page.
+    "IDC_CONTENT_CONTEXT_AUTOFILL_FALLBACK_PASSWORDS_IMPORT_PASSWORDS",
+    // "Use enhanced spell check" asks through a Chromium dialog window of its own.
+    "IDC_CONTENT_CONTEXT_SPELLING_TOGGLE",
 };
 
 /// Resolved once on the CEF UI thread, which is the only thread that asks.
@@ -2319,11 +2320,13 @@ fn chromeCommandBlocked(command_id: c_int) bool {
 }
 
 /// The subset of the list above that Chrome's own context menu offers for a
-/// link, and that the app gets as `newWindow` with the link's URL.
+/// link, and that the app gets as `newWindow` with the link's URL. The
+/// incognito item is not one of them: `newWindow` carries no privacy, so the
+/// app would open the link in an ordinary tab under a label that promised
+/// otherwise, and the item is dropped from the menu instead.
 const open_link_commands = [_][*:0]const u8{
     "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB",
     "IDC_CONTENT_CONTEXT_OPENLINKNEWWINDOW",
-    "IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD",
     "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE",
     "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
 };
@@ -2635,7 +2638,113 @@ fn onChromeCommand(
         closeDockedDevTools(view);
         return 1;
     }
-    return @intFromBool(chromeCommandBlocked(command_id));
+    if (chromeCommandAllowed(command_id)) return 0;
+    // Everything else would put Chromium's browser UI on screen: a window, a
+    // tab strip, the app menu, a bubble anchored to a toolbar this browser does
+    // not have. The ones an app has a meaning for reach it instead, so
+    // ctrl+shift+N from a page is the app's private window or nothing.
+    const routed = routedChromeCommand(command_id);
+    tr("chromeCommand node={d} id={d} refused routed={?s}", .{ view.node_id, command_id, routed });
+    if (routed) |name| {
+        if (alloc.dupe(u8, name)) |text| {
+            post(.{ .view = view, .name = "browserCommand", .text = text });
+        } else |_| {}
+    }
+    return 1;
+}
+
+/// The Chrome commands that act on the page in this browser and nothing else,
+/// plus the devtools ones, which this engine docks in the view. Every other
+/// command id is refused by `onChromeCommand`; the peer of
+/// `ndCefAllowedChromeCommands` on AppKit.
+const allowed_chrome_commands = [_][*:0]const u8{
+    "IDC_BACK",
+    "IDC_FORWARD",
+    "IDC_RELOAD",
+    "IDC_RELOAD_BYPASSING_CACHE",
+    "IDC_RELOAD_CLEARING_CACHE",
+    "IDC_STOP",
+    // Escape in a page: stops a load, or closes a find bar this browser never
+    // shows.
+    "IDC_CLOSE_FIND_OR_STOP",
+    "IDC_ZOOM_PLUS",
+    "IDC_ZOOM_NORMAL",
+    "IDC_ZOOM_MINUS",
+    "IDC_CUT",
+    "IDC_COPY",
+    "IDC_PASTE",
+    "IDC_DEV_TOOLS",
+    "IDC_DEV_TOOLS_TOGGLE",
+    "IDC_DEV_TOOLS_CONSOLE",
+    "IDC_DEV_TOOLS_INSPECT",
+    "IDC_DEV_TOOLS_DEVICES",
+};
+
+var allowed_chrome_ids: ?[allowed_chrome_commands.len]c_int = null;
+
+fn chromeCommandAllowed(command_id: c_int) bool {
+    if (allowed_chrome_ids == null) {
+        const api = loader.loaded() orelse return false;
+        var ids: [allowed_chrome_commands.len]c_int = undefined;
+        for (allowed_chrome_commands, 0..) |name, i| ids[i] = api.id_for_command_id_name(name);
+        allowed_chrome_ids = ids;
+    }
+    for (allowed_chrome_ids.?) |id| {
+        if (id >= 0 and id == command_id) return true;
+    }
+    return false;
+}
+
+/// Refused Chrome commands an app has its own meaning for, by the name the app
+/// receives as `browserCommand`. The names are the framework's and identical on
+/// AppKit (`ndCefRoutedChromeCommands`), so an app handles them once.
+const routed_chrome_commands = [_]struct { idc: [*:0]const u8, name: []const u8 }{
+    .{ .idc = "IDC_NEW_WINDOW", .name = "newWindow" },
+    .{ .idc = "IDC_NEW_INCOGNITO_WINDOW", .name = "newPrivateWindow" },
+    .{ .idc = "IDC_NEW_TAB", .name = "newTab" },
+    .{ .idc = "IDC_NEW_TAB_TO_RIGHT", .name = "newTab" },
+    .{ .idc = "IDC_RESTORE_TAB", .name = "reopenClosedTab" },
+    .{ .idc = "IDC_CLOSE_TAB", .name = "closeTab" },
+    .{ .idc = "IDC_CLOSE_WINDOW", .name = "closeWindow" },
+    .{ .idc = "IDC_SELECT_NEXT_TAB", .name = "nextTab" },
+    .{ .idc = "IDC_SELECT_PREVIOUS_TAB", .name = "previousTab" },
+    .{ .idc = "IDC_SHOW_HISTORY", .name = "history" },
+    .{ .idc = "IDC_SHOW_DOWNLOADS", .name = "downloads" },
+    .{ .idc = "IDC_SHOW_BOOKMARK_MANAGER", .name = "bookmarks" },
+    .{ .idc = "IDC_BOOKMARK_THIS_TAB", .name = "bookmarkPage" },
+    .{ .idc = "IDC_OPTIONS", .name = "settings" },
+    .{ .idc = "IDC_MANAGE_EXTENSIONS", .name = "extensions" },
+    .{ .idc = "IDC_CLEAR_BROWSING_DATA", .name = "clearBrowsingData" },
+    .{ .idc = "IDC_PRINT", .name = "print" },
+    .{ .idc = "IDC_BASIC_PRINT", .name = "print" },
+    .{ .idc = "IDC_SAVE_PAGE", .name = "savePage" },
+    .{ .idc = "IDC_VIEW_SOURCE", .name = "viewSource" },
+    .{ .idc = "IDC_OPEN_FILE", .name = "openFile" },
+    .{ .idc = "IDC_FIND", .name = "find" },
+    .{ .idc = "IDC_FIND_NEXT", .name = "findNext" },
+    .{ .idc = "IDC_FIND_PREVIOUS", .name = "findPrevious" },
+    .{ .idc = "IDC_FOCUS_LOCATION", .name = "focusAddress" },
+    .{ .idc = "IDC_FOCUS_SEARCH", .name = "focusAddress" },
+    .{ .idc = "IDC_FULLSCREEN", .name = "fullscreen" },
+    .{ .idc = "IDC_HOME", .name = "home" },
+    .{ .idc = "IDC_TASK_MANAGER", .name = "taskManager" },
+    .{ .idc = "IDC_TASK_MANAGER_SHORTCUT", .name = "taskManager" },
+    .{ .idc = "IDC_EXIT", .name = "quit" },
+};
+
+var routed_chrome_ids: ?[routed_chrome_commands.len]c_int = null;
+
+fn routedChromeCommand(command_id: c_int) ?[]const u8 {
+    if (routed_chrome_ids == null) {
+        const api = loader.loaded() orelse return null;
+        var ids: [routed_chrome_commands.len]c_int = undefined;
+        for (routed_chrome_commands, 0..) |entry, i| ids[i] = api.id_for_command_id_name(entry.idc);
+        routed_chrome_ids = ids;
+    }
+    for (routed_chrome_ids.?, 0..) |id, i| {
+        if (id >= 0 and id == command_id) return routed_chrome_commands[i].name;
+    }
+    return null;
 }
 
 fn isDevToolsToggle(command_id: c_int) bool {
@@ -3276,6 +3385,9 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "newWindow")) {
         const text = box.text orelse return 0;
         f(view.node_id, "newWindow", .{ .text = text });
+    } else if (std.mem.eql(u8, box.name, "browserCommand")) {
+        const text = box.text orelse return 0;
+        f(view.node_id, "browserCommand", .{ .text = text });
     } else if (std.mem.eql(u8, box.name, "loadProgress")) {
         f(view.node_id, "loadProgress", .{ .value = box.number });
     } else if (std.mem.eql(u8, box.name, "loadingChanged")) {

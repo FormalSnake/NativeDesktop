@@ -121,9 +121,14 @@ launch_host() {
     export ND_APP_ID="${ND_ACCEPT_APP_ID:-dev.nativedesktop.ndAccept}${rig}"
     # setsid so the whole CEF process tree lands in one session, which is what
     # the orphan check at quit counts.
+    # ND_ACCEPT_EXTENSIONS (comma list) loads more extensions beside the
+    # fixture, since a second --load-extension would replace it: the no-escape
+    # drive loads its probe extension through it. ND_ACCEPT_HOST_ARGS carries
+    # other host flags, word-split on purpose.
+    # shellcheck disable=SC2086
     exec setsid "$FRAMEWORK/zig-out/bin/nd-hello" \
       --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' \
-      --load-extension="$EXTENSION"
+      --load-extension="$EXTENSION${ND_ACCEPT_EXTENSIONS:+,$ND_ACCEPT_EXTENSIONS}" ${ND_ACCEPT_HOST_ARGS:-}
   ) >"$log" 2>&1 &
   HOST_PID=$!
   PIDS+=("$HOST_PID")
