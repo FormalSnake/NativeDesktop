@@ -87,6 +87,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 |---|---|---|---|
 | `text` | string |  | create |
 | `ellipsize` | bool | false | create |
+| `ellipsizeMode` | end \| middle \| start | end | create |
 | `variant` | body \| title1 \| title2 \| title3 \| title4 \| heading \| caption \| captionHeading \| monospace | body | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |

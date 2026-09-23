@@ -4075,7 +4075,9 @@ function genZigCreateBody(w: Widget): string {
     out += "            // The label must stop dictating its parent's width: .end caps the\n";
     out += "            // minimum at one ellipsis, max-width-chars(1) caps the natural\n";
     out += "            // request too, and hexpand still fills whatever the row has.\n";
-    out += "            gtk.Label.setEllipsize(label, .end);\n";
+    out += "            // A file name keeps its extension when the middle is what goes.\n";
+    out += "            const mode = propStr(props, \"ellipsizeMode\") orelse \"end\";\n";
+    out += "            gtk.Label.setEllipsize(label, if (std.mem.eql(u8, mode, \"middle\")) .middle else if (std.mem.eql(u8, mode, \"start\")) .start else .end);\n";
     out += "            gtk.Label.setMaxWidthChars(label, 1);\n";
     out += "            gtk.Widget.setHexpand(label.as(gtk.Widget), 1);\n";
     out += "        }\n";
@@ -8162,7 +8164,11 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        ndLabelApplyVariant(label, propStr(props, "variant") ?? ${swiftDefaultStr(w, "variant")})\n`;
     out += '        if propBool(props, "ellipsize") ?? false {\n';
     out += "            // Truncate instead of forcing the min width to the full text.\n";
-    out += "            label.lineBreakMode = .byTruncatingTail\n";
+    out += '            switch propStr(props, "ellipsizeMode") {\n';
+    out += '            case "middle": label.lineBreakMode = .byTruncatingMiddle\n';
+    out += '            case "start": label.lineBreakMode = .byTruncatingHead\n';
+    out += "            default: label.lineBreakMode = .byTruncatingTail\n";
+    out += "            }\n";
     out += "            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)\n";
     out += "        }\n";
     out += "        return label\n";

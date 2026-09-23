@@ -1582,7 +1582,11 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         ndLabelApplyVariant(label, propStr(props, "variant") ?? "body")
         if propBool(props, "ellipsize") ?? false {
             // Truncate instead of forcing the min width to the full text.
-            label.lineBreakMode = .byTruncatingTail
+            switch propStr(props, "ellipsizeMode") {
+            case "middle": label.lineBreakMode = .byTruncatingMiddle
+            case "start": label.lineBreakMode = .byTruncatingHead
+            default: label.lineBreakMode = .byTruncatingTail
+            }
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         return label

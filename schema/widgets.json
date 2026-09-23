@@ -222,6 +222,7 @@
       "props": [
         { "name": "text", "type": "string", "default": "", "appliesTo": "create" },
         { "name": "ellipsize", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "ellipsizeMode", "type": "enum", "values": ["end", "middle", "start"], "default": "end", "appliesTo": "create" },
         { "name": "variant", "type": "enum", "values": ["body", "title1", "title2", "title3", "title4", "heading", "caption", "captionHeading", "monospace"], "default": "body", "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },

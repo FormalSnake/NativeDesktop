@@ -3292,7 +3292,9 @@ fn createWidget(
             // The label must stop dictating its parent's width: .end caps the
             // minimum at one ellipsis, max-width-chars(1) caps the natural
             // request too, and hexpand still fills whatever the row has.
-            gtk.Label.setEllipsize(label, .end);
+            // A file name keeps its extension when the middle is what goes.
+            const mode = propStr(props, "ellipsizeMode") orelse "end";
+            gtk.Label.setEllipsize(label, if (std.mem.eql(u8, mode, "middle")) .middle else if (std.mem.eql(u8, mode, "start")) .start else .end);
             gtk.Label.setMaxWidthChars(label, 1);
             gtk.Widget.setHexpand(label.as(gtk.Widget), 1);
         }
