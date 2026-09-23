@@ -732,6 +732,12 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // on the root; moving one of those would be a good deal worse than
         // leaving a Chrome dialog where Views put it.
         if (x11.isGdkSurface(w)) continue;
+        // A popup Chromium draws for the page (a <select> list, autofill, the
+        // date picker) is placed against its control by Chromium itself.
+        // Centred on the view instead, a list opened by a click closed again
+        // before it could be used, and one opened from the keyboard sat in
+        // the middle of the page.
+        if (x11.isOverrideRedirect(w)) continue;
         // Whatever Chromium put up, the compositor is showing it as a window of
         // this app: it gets the app's class, so nothing enumerating windows
         // offers it as an untitled one of its own. Cheaper than the move below

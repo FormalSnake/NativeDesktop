@@ -72,6 +72,34 @@ const FnInternAtom = *const fn (*Display, [*:0]const u8, c_int) callconv(.c) c_u
 const FnGetProperty = *const fn (*Display, Window, c_ulong, c_long, c_long, c_int, c_ulong, *c_ulong, *c_int, *c_ulong, *c_ulong, *[*]u8) callconv(.c) c_int;
 const FnChangeProperty = *const fn (*Display, Window, c_ulong, c_ulong, c_int, c_int, [*]const u8, c_int) callconv(.c) c_int;
 const FnSetTransientFor = *const fn (*Display, Window, Window) callconv(.c) c_int;
+const FnGetAttributes = *const fn (*Display, Window, *WindowAttributes) callconv(.c) c_int;
+
+/// Xlib's XWindowAttributes. Only `override_redirect` is read.
+const WindowAttributes = extern struct {
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    border_width: c_int,
+    depth: c_int,
+    visual: ?*Visual,
+    root: Window,
+    class: c_int,
+    bit_gravity: c_int,
+    win_gravity: c_int,
+    backing_store: c_int,
+    backing_planes: c_ulong,
+    backing_pixel: c_ulong,
+    save_under: c_int,
+    colormap: c_ulong,
+    map_installed: c_int,
+    map_state: c_int,
+    all_event_masks: c_long,
+    your_event_mask: c_long,
+    do_not_propagate_mask: c_long,
+    override_redirect: c_int,
+    screen: ?*anyopaque,
+};
 
 const Api = struct {
     init_threads: FnInitThreads,
@@ -100,6 +128,7 @@ const Api = struct {
     get_window_property: FnGetProperty,
     change_property: FnChangeProperty,
     set_transient_for_hint: FnSetTransientFor,
+    get_window_attributes: FnGetAttributes,
     query_pointer: FnQueryPointer,
     display_get_xdisplay: FnGetXDisplay,
     surface_get_xid: FnGetXid,
@@ -158,6 +187,7 @@ fn loadApi() ?*const Api {
         .get_window_property = x.lookup(FnGetProperty, "XGetWindowProperty") orelse return missing(&x, &g, "XGetWindowProperty"),
         .change_property = x.lookup(FnChangeProperty, "XChangeProperty") orelse return missing(&x, &g, "XChangeProperty"),
         .set_transient_for_hint = x.lookup(FnSetTransientFor, "XSetTransientForHint") orelse return missing(&x, &g, "XSetTransientForHint"),
+        .get_window_attributes = x.lookup(FnGetAttributes, "XGetWindowAttributes") orelse return missing(&x, &g, "XGetWindowAttributes"),
         .query_pointer = x.lookup(FnQueryPointer, "XQueryPointer") orelse return missing(&x, &g, "XQueryPointer"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
@@ -483,6 +513,18 @@ pub fn isGdkSurface(window: Window) bool {
     const surface = c.api.surface_lookup(c.gdk, window);
     c.pop();
     return surface != null;
+}
+
+/// True for a window the window manager is told to leave alone: Chromium's
+/// menus, <select> lists, tooltips and autofill, which it places itself
+/// against the page.
+pub fn isOverrideRedirect(window: Window) bool {
+    const c = conn() orelse return false;
+    var attrs: WindowAttributes = undefined;
+    c.push();
+    const ok = c.api.get_window_attributes(c.x, window, &attrs);
+    c.pop();
+    return ok != 0 and attrs.override_redirect != 0;
 }
 
 pub const Geometry = struct { x: c_int, y: c_int, w: c_uint, h: c_uint };
