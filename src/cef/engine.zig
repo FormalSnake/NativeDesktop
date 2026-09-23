@@ -5844,16 +5844,18 @@ fn clientGetDialogHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_dialo
     return ClientObj.of(self).payload.dialog_handler.handOut();
 }
 
-/// Only the chooser `installExtension` armed is answered here. Everything else
-/// (a file input on a page, a save dialog) is left to CEF's own, which is the
-/// platform's: returning 0 means "not handled".
+/// The chooser `installExtension` armed is answered from the parked path.
+/// Every other one (a page's file input, Save Page As) is the host's own
+/// GtkFileDialog, transient for the window the view is in: Chrome style has no
+/// platform dialog of its own on Linux and cancels the request, and a dialog
+/// that is not the app window's child would be a free toplevel of its own.
 fn onFileDialog(
     self: [*c]c.cef_dialog_handler_t,
     browser: [*c]c.cef_browser_t,
-    _: c.cef_file_dialog_mode_t,
-    _: [*c]const c.cef_string_t,
-    _: [*c]const c.cef_string_t,
-    _: c.cef_string_list_t,
+    mode: c.cef_file_dialog_mode_t,
+    title: [*c]const c.cef_string_t,
+    default_file_path: [*c]const c.cef_string_t,
+    accept_filters: c.cef_string_list_t,
     _: c.cef_string_list_t,
     _: c.cef_string_list_t,
     callback: [*c]c.cef_file_dialog_callback_t,
@@ -5867,7 +5869,7 @@ fn onFileDialog(
     const installing = view.install_in_flight;
     view.dialog_lock.unlock();
     const answer = path orelse {
-        if (!installing) return 0;
+        if (!installing) return pageFileDialog(view, mode, title, default_file_path, accept_filters, callback);
         // Cancelled rather than left to CEF: `loadUnpacked` answers a cancelled
         // chooser with an error the app's promise carries, and opens a real
         // directory chooser over the app if this returns 0.
@@ -5887,6 +5889,212 @@ fn onFileDialog(
     api.string_list_append(list, &entry);
     if (callback.*.cont) |cont| cont(callback, list);
     return 1;
+}
+
+const PageFileDialog = struct {
+    view: *View,
+    mode: c.cef_file_dialog_mode_t,
+    title: ?[]u8,
+    default_path: ?[]u8,
+    filters: std.ArrayList([]u8),
+    callback: [*c]c.cef_file_dialog_callback_t,
+    dialog: ?*gtk.FileDialog = null,
+};
+
+/// CEF UI thread: copies what the request carries and hands it to the GTK
+/// thread, holding a reference on the callback until it is answered.
+fn pageFileDialog(
+    view: *View,
+    mode: c.cef_file_dialog_mode_t,
+    title: [*c]const c.cef_string_t,
+    default_file_path: [*c]const c.cef_string_t,
+    accept_filters: c.cef_string_list_t,
+    callback: [*c]c.cef_file_dialog_callback_t,
+) c_int {
+    const api = loader.loaded() orelse return 0;
+    const job = alloc.create(PageFileDialog) catch return 0;
+    job.* = .{
+        .view = view,
+        .mode = mode,
+        .title = dupeStr(title),
+        .default_path = dupeStr(default_file_path),
+        .filters = .empty,
+        .callback = callback,
+    };
+    if (accept_filters != null) {
+        var i: usize = 0;
+        while (i < api.string_list_size(accept_filters)) : (i += 1) {
+            var entry = std.mem.zeroes(c.cef_string_t);
+            defer api.string_utf16_clear(&entry);
+            if (api.string_list_value(accept_filters, i, &entry) == 0) continue;
+            const f = dupeStr(&entry) orelse continue;
+            job.filters.append(alloc, f) catch alloc.free(f);
+        }
+    }
+    ref.addRefParam(callback);
+    tr("pageFileDialog node={d} mode={d}", .{ view.node_id, mode });
+    _ = glib.idleAdd(&showPageFileDialog, job);
+    return 1;
+}
+
+fn freePageFileDialog(job: *PageFileDialog) void {
+    ref.releaseParam(job.callback);
+    if (job.title) |t| alloc.free(t);
+    if (job.default_path) |d| alloc.free(d);
+    for (job.filters.items) |f| alloc.free(f);
+    job.filters.deinit(alloc);
+    if (job.dialog) |d| gobject.Object.unref(d.as(gobject.Object));
+    alloc.destroy(job);
+}
+
+/// Answers the page with `paths`, or cancels it on an empty list. Any thread:
+/// CEF's callback hops to its own UI thread.
+fn answerPageFileDialog(job: *PageFileDialog, paths: []const []const u8) void {
+    const cb = job.callback;
+    if (paths.len == 0) {
+        if (cb.*.cancel) |cancel| cancel(cb);
+        return;
+    }
+    const api = loader.loaded() orelse {
+        if (cb.*.cancel) |cancel| cancel(cb);
+        return;
+    };
+    const list = api.string_list_alloc();
+    defer api.string_list_free(list);
+    for (paths) |p| {
+        var entry = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&entry);
+        if (setStr(&entry, p)) api.string_list_append(list, &entry);
+    }
+    if (cb.*.cont) |cont| cont(cb, list);
+}
+
+/// GTK thread.
+fn showPageFileDialog(data: ?*anyopaque) callconv(.c) c_int {
+    const job: *PageFileDialog = @ptrCast(@alignCast(data.?));
+    switch (automation_dialogs.take("webview.fileDialog")) {
+        .unscripted => {},
+        .exhausted => {
+            std.debug.print("ND_WARN WebView fileDialog: the automation dialog script ran out of answers; cancelling\n", .{});
+            answerPageFileDialog(job, &.{});
+            freePageFileDialog(job);
+            return 0;
+        },
+        .response => |raw| {
+            const P = struct { paths: []const []const u8 = &.{} };
+            const parsed = std.json.parseFromSlice(P, alloc, raw, .{ .ignore_unknown_fields = true }) catch null;
+            defer if (parsed) |pp| pp.deinit();
+            answerPageFileDialog(job, if (parsed) |pp| pp.value.paths else &.{});
+            freePageFileDialog(job);
+            return 0;
+        },
+    }
+    if (!live_views.contains(@intFromPtr(job.view))) {
+        answerPageFileDialog(job, &.{});
+        freePageFileDialog(job);
+        return 0;
+    }
+    const parent: ?*gtk.Window = blk: {
+        const root = gtk.Widget.getRoot(job.view.widget) orelse break :blk null;
+        break :blk gobject.ext.cast(gtk.Window, root);
+    };
+
+    const dialog = gtk.FileDialog.new();
+    job.dialog = dialog;
+    gtk.FileDialog.setModal(dialog, 1);
+    if (job.title) |t| {
+        if (alloc.dupeZ(u8, t)) |z| {
+            defer alloc.free(z);
+            gtk.FileDialog.setTitle(dialog, z.ptr);
+        } else |_| {}
+    }
+    if (job.default_path) |d| {
+        if (alloc.dupeZ(u8, d)) |z| {
+            defer alloc.free(z);
+            if (job.mode == c.FILE_DIALOG_SAVE) {
+                const base = std.fs.path.basename(z);
+                if (alloc.dupeZ(u8, base)) |bz| {
+                    defer alloc.free(bz);
+                    gtk.FileDialog.setInitialName(dialog, bz.ptr);
+                } else |_| {}
+            } else {
+                const file = gio.File.newForPath(z.ptr);
+                defer gobject.Object.unref(file.as(gobject.Object));
+                gtk.FileDialog.setInitialFile(dialog, file);
+            }
+        } else |_| {}
+    }
+    applyPageFilters(dialog, job.filters.items);
+
+    switch (job.mode) {
+        c.FILE_DIALOG_OPEN_MULTIPLE => gtk.FileDialog.openMultiple(dialog, parent, null, &onPageFileDialogDone, job),
+        c.FILE_DIALOG_OPEN_FOLDER => gtk.FileDialog.selectFolder(dialog, parent, null, &onPageFileDialogDone, job),
+        c.FILE_DIALOG_SAVE => gtk.FileDialog.save(dialog, parent, null, &onPageFileDialogDone, job),
+        else => gtk.FileDialog.open(dialog, parent, null, &onPageFileDialogDone, job),
+    }
+    return 0;
+}
+
+/// A page's accept list is extensions (".png") and MIME types ("image/*"),
+/// which is exactly what a GtkFileFilter matches on. One filter carries them
+/// all, the way Chrome's own dialog offers "the types this page asked for".
+fn applyPageFilters(dialog: *gtk.FileDialog, filters: []const []u8) void {
+    if (filters.len == 0) return;
+    const filter = gtk.FileFilter.new();
+    defer gobject.Object.unref(filter.as(gobject.Object));
+    for (filters) |f| {
+        const z = alloc.dupeZ(u8, f) catch continue;
+        defer alloc.free(z);
+        if (f.len > 1 and f[0] == '.') {
+            const pattern = std.fmt.allocPrintSentinel(alloc, "*{s}", .{f}, 0) catch continue;
+            defer alloc.free(pattern);
+            gtk.FileFilter.addPattern(filter, pattern.ptr);
+        } else if (std.mem.indexOfScalar(u8, f, '/') != null) {
+            gtk.FileFilter.addMimeType(filter, z.ptr);
+        }
+    }
+    gtk.FileDialog.setDefaultFilter(dialog, filter);
+}
+
+fn onPageFileDialogDone(_: ?*gobject.Object, res: *gio.AsyncResult, user_data: ?*anyopaque) callconv(.c) void {
+    const job: *PageFileDialog = @ptrCast(@alignCast(user_data.?));
+    defer freePageFileDialog(job);
+    const dialog = job.dialog.?;
+    var err: ?*glib.Error = null;
+    defer if (err) |e| e.free();
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (paths.items) |p| alloc.free(p);
+        paths.deinit(alloc);
+    }
+    const one: ?*gio.File = switch (job.mode) {
+        c.FILE_DIALOG_OPEN_MULTIPLE => null,
+        c.FILE_DIALOG_OPEN_FOLDER => gtk.FileDialog.selectFolderFinish(dialog, res, &err),
+        c.FILE_DIALOG_SAVE => gtk.FileDialog.saveFinish(dialog, res, &err),
+        else => gtk.FileDialog.openFinish(dialog, res, &err),
+    };
+    if (one) |f| {
+        defer gobject.Object.unref(f.as(gobject.Object));
+        if (gio.File.getPath(f)) |pz| {
+            defer glib.free(pz);
+            if (alloc.dupe(u8, std.mem.span(pz))) |d| paths.append(alloc, d) catch alloc.free(d) else |_| {}
+        }
+    } else if (job.mode == c.FILE_DIALOG_OPEN_MULTIPLE) {
+        if (gtk.FileDialog.openMultipleFinish(dialog, res, &err)) |lm| {
+            defer gobject.Object.unref(lm.as(gobject.Object));
+            var i: c_uint = 0;
+            while (i < gio.ListModel.getNItems(lm)) : (i += 1) {
+                const item = gio.ListModel.getItem(lm, i) orelse continue;
+                const file: *gio.File = @ptrCast(@alignCast(item));
+                defer gobject.Object.unref(@ptrCast(@alignCast(item)));
+                const pz = gio.File.getPath(file) orelse continue;
+                defer glib.free(pz);
+                if (alloc.dupe(u8, std.mem.span(pz))) |d| paths.append(alloc, d) catch alloc.free(d) else |_| {}
+            }
+        }
+    }
+    tr("pageFileDialogDone node={d} paths={d}", .{ job.view.node_id, paths.items.len });
+    answerPageFileDialog(job, paths.items);
 }
 
 // ============================================================================
