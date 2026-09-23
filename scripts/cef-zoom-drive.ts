@@ -129,14 +129,9 @@ await leg("setZoom", async () => {
 const page = await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"));
 const cdp = await Session.open(page.webSocketDebuggerUrl!);
 const chord = async (key: string, code: string, keyCode: number) => {
-  if (mac) {
-    await app.cursor.click(app.getByTestId("z-view"));
-    await app.keyboard.press(`Meta+${key}`);
-    return;
-  }
-  // Chromium answers an unhandled ctrl+= from the page with IDC_ZOOM_PLUS,
-  // exactly as for a real keypress.
-  const base = { modifiers: 2, key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+  // Chromium answers an unhandled cmd+= (ctrl+= on Linux) from the page with
+  // IDC_ZOOM_PLUS, exactly as for a real keypress.
+  const base = { modifiers: mac ? 4 : 2, key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
   await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
 };

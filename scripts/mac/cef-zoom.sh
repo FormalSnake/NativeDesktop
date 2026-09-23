@@ -20,7 +20,7 @@ NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TR
   "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 400); do
-  grep -q "ND_AUTOMATION_LISTENING" "$LOG" && break
+  grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
   sleep 0.1
 done
 grep -q "ND_AUTOMATION_LISTENING" "$LOG" || { echo "FAIL: no automation listener"; tail -40 "$LOG"; exit 1; }
