@@ -1,19 +1,28 @@
-import { render, useState } from "@nativedesktop/react";
+import { render, sendCommand, useRef, useState, type NdNodeRef } from "@nativedesktop/react";
 
 // A browser-shaped window for scripts/header-palette-drive.ts: a search field
 // packed straight into the header bar (the address field), and a command
 // palette opened from a menu accelerator while that field may hold the
-// keyboard.
+// keyboard. Cmd+L puts the caret in the field with its contents selected.
 
 function App(): React.ReactNode {
   const [open, setOpen] = useState(false);
   const [committed, setCommitted] = useState("");
   const [picked, setPicked] = useState("");
+  const omnibox = useRef<NdNodeRef<"searchinput"> | null>(null);
 
   return (
     <window title="Header Palette" defaultWidth={1280} defaultHeight={720}>
       <menubar defaults>
         <menu label="Go" testID="menu-go">
+          <menuitem
+            testID="menu-address"
+            label="Open Location"
+            accelerator="primary+l"
+            onSelect={() => {
+              if (omnibox.current) sendCommand(omnibox.current, "focus", { select: true });
+            }}
+          />
           <menuitem testID="menu-palette" label="Command Palette" accelerator="primary+k" onSelect={() => setOpen(true)} />
         </menu>
       </menubar>
@@ -33,6 +42,9 @@ function App(): React.ReactNode {
               <searchinput
                 slot="start"
                 testID="omnibox"
+                ref={(node) => {
+                  omnibox.current = node as NdNodeRef<"searchinput"> | null;
+                }}
                 placeholder="Search or enter address"
                 style={{ hexpand: true, minWidth: 240 }}
                 onActivate={(e) => {

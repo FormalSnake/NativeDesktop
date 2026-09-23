@@ -6,9 +6,10 @@
 // keyboard, and a real cursor click puts the caret in it so typed keys and
 // Return reach the app. Leg 2: with that field holding the keyboard, the
 // palette's Cmd+K accelerator presents the palette and its field takes the
-// keys. Region captures show both. Moves the user's cursor: hold the mac gate
-// lock and grant the host once (`NDShell --nd-grant`). Marker:
-// ND_HEADER_PALETTE_OK.
+// keys. Leg 3: Cmd+L on a field the user is already typing in selects all of
+// it, so the next keystrokes replace the address. Region captures show each.
+// Moves the user's cursor: hold the mac gate lock and grant the host once
+// (`NDShell --nd-grant`). Marker: ND_HEADER_PALETTE_OK.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, launchApp } from "../../packages/test/src/index.ts";
@@ -115,6 +116,26 @@ try {
   await expect(app.getByTestId("picked-label")).toHaveText("Picked: reload");
   await expect(palette).toBeHidden();
   console.log(`ND_HEADER_PALETTE_KEY_OK Cmd+K presented over the focused field, ${out}/02-palette.png`);
+
+  // ---- leg 3: Cmd+L selects the whole address ------------------------------
+  // The caret sits at the end of typed text with nothing selected, so a
+  // focus that only makes the field first responder (it already is) would
+  // leave the typing appended.
+  await omnibox.fill("");
+  await app.cursor.click(omnibox);
+  await expect(omnibox).toBeFocused();
+  await app.keyboard.type("old.example");
+  await app.keyboard.press("Meta+l");
+  // The selection is the app's answer to the menu item, a round trip later;
+  // keys typed inside that window reach the field before it and append. The
+  // Linux leg (focusShortcut) waits the same way.
+  await Bun.sleep(800);
+  await app.keyboard.type("new.dev");
+  await Bun.sleep(300);
+  const replaced = await omnibox.inputValue();
+  if (replaced !== "new.dev") throw new Error(`Cmd+L left ${JSON.stringify(replaced)}, want "new.dev"`);
+  await app.screenshot(`${out}/03-select-all.png`);
+  console.log(`ND_HEADER_SELECT_ALL_OK Cmd+L selected the whole field, ${out}/03-select-all.png`);
 
   console.log("ND_HEADER_PALETTE_OK");
 } finally {
