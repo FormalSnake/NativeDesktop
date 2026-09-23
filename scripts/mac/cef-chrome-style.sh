@@ -19,14 +19,24 @@ PORT="${ND_CEF_DEBUG_PORT:-9334}"
 EXTENSION="$(pwd)/examples/webview-probe/chrome-style-ext"
 HOST="$(./scripts/mac/dev-cef-bundle.sh | tail -1)"
 HOST_PID=""
+SECOND_PID=""
+# shellcheck source=scripts/mac/cef-gate-lock.sh
+. scripts/mac/cef-gate-lock.sh
 # Guarded, not `&& … ; true`: the trap runs under `set -e`, so a test that is
 # merely false ends the trap there and that status becomes the script's own.
-trap 'if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi' EXIT
+cleanup() {
+  if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi
+  if [ -n "${SECOND_PID:-}" ]; then kill -9 "$SECOND_PID" 2>/dev/null || true; fi
+  cef_gate_unlock
+}
+trap cleanup EXIT
+cef_gate_lock
+CACHE_DIR="${ND_CEF_CACHE:-$RUN_DIR/cef}"
 
 launch() {
-  LOG=$(mktemp)
+  LOG="$(mktemp "$RUN_DIR/host.XXXXXX")"
   NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
-    ND_SCRIPT=examples/webview-probe/cef-chrome.tsx "$HOST" \
+    ND_CEF_CACHE="$CACHE_DIR" ND_SCRIPT=examples/webview-probe/cef-chrome.tsx "$HOST" \
     "--load-extension=$EXTENSION" "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
   for _ in $(seq 1 400); do
@@ -80,4 +90,67 @@ STATUS=$?
 set -e
 [ "$STATUS" -eq 0 ] || { echo "FAIL: the host exited $STATUS instead of cleanly"; exit 1; }
 HOST_PID=""
+
+# The relaunch leg. A host killed mid-session comes back on the same cache, and
+# a second host is then started against the one holding it. Chrome answers both
+# with a startup browser of its own, and the second with "Restore pages?" on top
+# when the profile's last exit was a crash; neither may reach the screen.
+port_free() {
+  for _ in $(seq 1 100); do
+    curl -s --max-time 1 "http://127.0.0.1:$PORT/json/version" >/dev/null 2>&1 || return 0
+    sleep 0.2
+  done
+  return 1
+}
+relaunch_drive() {
+  ND_RELAUNCH_STEP="$1" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" ND_HOST_LOG="$LOG" ND_RELAUNCH_SHOT_DIR="$SHOT_DIR" \
+    ND_AUTOMATION_SOCKET="$SOCK" bun scripts/cef-relaunch-drive.ts || RELAUNCH_FAILED=1
+}
+RELAUNCH_FAILED=0
+CACHE_DIR="$RUN_DIR/relaunch"
+# Outside RUN_DIR, which goes with the lock: the shots outlive the run.
+SHOT_DIR="$(mktemp -d /tmp/nd-cef-relaunch-shots.XXXXXX)"
+echo "relaunch shots: $SHOT_DIR"
+export ND_AUTOMATION_CAPTURE=region
+launch
+relaunch_drive navigate
+kill -9 "$HOST_PID" 2>/dev/null || true
+wait "$HOST_PID" 2>/dev/null || true
+HOST_PID=""
+port_free || { echo "FAIL: the killed host's debugging port never came back"; exit 1; }
+launch
+relaunch_drive relaunch
+
+SECOND_LOG="$RUN_DIR/second.log"
+NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
+  ND_CEF_CACHE="$CACHE_DIR" ND_SCRIPT=examples/webview-probe/cef-chrome.tsx "$HOST" \
+  "--load-extension=$EXTENSION" "--remote-debugging-port=$((PORT + 1))" --remote-allow-origins='*' \
+  >"$SECOND_LOG" 2>&1 &
+SECOND_PID=$!
+for _ in $(seq 1 300); do
+  grep -qE "ND_CEF_PROFILE_IN_USE|cef_initialize failed" "$SECOND_LOG" && break
+  kill -0 "$SECOND_PID" 2>/dev/null || break
+  sleep 0.1
+done
+relaunch_drive collision
+if grep -q "ND_CEF_PROFILE_IN_USE" "$SECOND_LOG"; then
+  echo "ND_CEF_RELAUNCH_CHECK collision/second: ok ($(grep -m1 ND_CEF_PROFILE_IN_USE "$SECOND_LOG"))"
+else
+  echo "ND_CEF_RELAUNCH_CHECK collision/second: FAIL (the second host never said the profile is in use:" \
+    "$(grep -m1 -E "ND_WARN|ND_WEBVIEW_ENGINE" "$SECOND_LOG" || echo "no engine line")))"
+  RELAUNCH_FAILED=1
+fi
+kill -9 "$SECOND_PID" 2>/dev/null || true
+wait "$SECOND_PID" 2>/dev/null || true
+SECOND_PID=""
+
+kill "$HOST_PID"
+set +e
+wait "$HOST_PID"
+STATUS=$?
+set -e
+HOST_PID=""
+[ "$STATUS" -eq 0 ] || { echo "FAIL: the relaunched host exited $STATUS instead of cleanly"; exit 1; }
+[ "$RELAUNCH_FAILED" -eq 0 ] || { echo "FAIL: relaunch leg"; exit 1; }
+echo "ND_CEF_CHROME_RELAUNCH_OK a killed host relaunches and a second host on its cache open no Chromium window"
 echo "cef chrome style: OK"

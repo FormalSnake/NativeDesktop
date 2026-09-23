@@ -42,8 +42,10 @@ EXTENSION="$PWD/scripts/fixtures/chrome-ext"
 # its worker turns that popup off, which is the state an app reading the
 # manifest off disk gets wrong.
 ACTION_EXTENSION="$PWD/scripts/fixtures/chrome-ext-action"
-# One data home across both passes: the restart leg is the whole point.
-XDG_DATA_HOME="$(mktemp -d)"
+# Everything the run writes, removed on exit. One data home across the passes:
+# the restart leg is the whole point.
+RUN_DIR="$(mktemp -d)"
+XDG_DATA_HOME="$RUN_DIR/data"
 export XDG_DATA_HOME
 
 XVFB_PID=""
@@ -54,7 +56,8 @@ fi
 # Never `kill "${HOST_PID:-0}"`: the success path clears HOST_PID, and `kill 0`
 # signals the whole process group, which on a remote shell takes the session
 # down with it.
-trap '[ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null; [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; true' EXIT
+SECOND_PID=""
+trap '[ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null; [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; [ -n "$SECOND_PID" ] && kill -9 "$SECOND_PID" 2>/dev/null; rm -rf "$RUN_DIR"; true' EXIT
 
 for _ in $(seq 1 100); do
   xwininfo -root >/dev/null 2>&1 && break
@@ -73,7 +76,7 @@ toplevels() {
 }
 BEFORE_X11="$(toplevels | wc -l)"
 
-LOG=$(mktemp)
+LOG="$RUN_DIR/host.log"
 
 run_pass() {
   local pass="$1"
@@ -206,5 +209,71 @@ fi
 # below depends on.
 run_pass devtools
 quit_host devtools
+
+# The relaunch leg, on a data home of its own. A host killed mid-session comes
+# back on the same cache, and a second host is then started against the one
+# holding it. Chrome answers both with a startup browser of its own, and the
+# second with "Restore pages?" on top when the last exit was a crash; neither
+# may reach the X server, the sink or the window watcher.
+launch_relaunch_host() {
+  : >"$LOG"
+  ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
+    --load-extension="$EXTENSION" --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
+  HOST_PID=$!
+  for _ in $(seq 1 900); do
+    grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" && break
+    sleep 0.1
+  done
+  grep -q "ND_WEBVIEW_ENGINE chromium" "$LOG" || { echo "FAIL(relaunch): the chromium engine did not load"; tail -40 "$LOG"; exit 1; }
+  SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
+}
+relaunch_drive() {
+  ND_RELAUNCH_STEP="$1" ND_HOST_PID="$HOST_PID" ND_CDP_PORT="$CDP_PORT" ND_HOST_LOG="$LOG" \
+    ND_AUTOMATION_SOCKET="$SOCK" bun scripts/cef-relaunch-drive.ts || RELAUNCH_FAILED=1
+}
+RELAUNCH_FAILED=0
+GATE_DATA_HOME="$XDG_DATA_HOME"
+XDG_DATA_HOME="$RUN_DIR/relaunch-data"
+export XDG_DATA_HOME
+launch_relaunch_host
+relaunch_drive navigate
+kill -9 "$HOST_PID" 2>/dev/null || true
+wait "$HOST_PID" 2>/dev/null || true
+HOST_PID=""
+for _ in $(seq 1 100); do
+  curl -s --max-time 1 "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 || break
+  sleep 0.2
+done
+launch_relaunch_host
+relaunch_drive relaunch
+
+SECOND_LOG="$RUN_DIR/relaunch-second.log"
+# An app id of its own: with the same one GApplication hands the launch to the
+# running host before Chromium is reached at all, and the cache directory is
+# what the two share.
+ND_APP_ID="$ND_APP_ID.second" ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
+  --load-extension="$EXTENSION" --remote-debugging-port="$((CDP_PORT + 1))" --remote-allow-origins='*' \
+  >"$SECOND_LOG" 2>&1 &
+SECOND_PID=$!
+for _ in $(seq 1 300); do
+  grep -qE "ND_CEF_PROFILE_IN_USE|cef_initialize failed" "$SECOND_LOG" && break
+  kill -0 "$SECOND_PID" 2>/dev/null || break
+  sleep 0.1
+done
+relaunch_drive collision
+if grep -q "ND_CEF_PROFILE_IN_USE" "$SECOND_LOG"; then
+  echo "ND_CEF_RELAUNCH_CHECK collision/second: ok ($(grep -m1 ND_CEF_PROFILE_IN_USE "$SECOND_LOG"))"
+else
+  echo "ND_CEF_RELAUNCH_CHECK collision/second: FAIL (the second host never said the profile is in use:" \
+    "$(grep -m1 -E "ND_WARN|ND_WEBVIEW_ENGINE" "$SECOND_LOG" || echo "no engine line"))"
+  RELAUNCH_FAILED=1
+fi
+kill -9 "$SECOND_PID" 2>/dev/null || true
+wait "$SECOND_PID" 2>/dev/null || true
+SECOND_PID=""
+quit_host relaunch
+XDG_DATA_HOME="$GATE_DATA_HOME"
+[ "$RELAUNCH_FAILED" -eq 0 ] || { echo "FAIL(relaunch): a relaunch put Chrome's own browser up"; exit 1; }
+echo "ND_CEF_CHROME_RELAUNCH_OK a killed host relaunches and a second host on its cache open no Chromium window"
 
 echo "ND_CEF_CHROME_OK chrome style: extension runtime, no window of its own, docked devtools, state across a restart"

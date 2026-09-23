@@ -62,7 +62,8 @@ cleanup() {
     kill "$pid" 2>/dev/null || true
   done
 }
-trap 'cleanup; for d in "${HYPR_RUNTIME_DIRS[@]:-}"; do [ -n "$d" ] && rm -rf "$d"; done' EXIT
+# The Chrome profiles go with the run; the captures stay for whoever reads them.
+trap 'cleanup; for d in "${HYPR_RUNTIME_DIRS[@]:-}"; do [ -n "$d" ] && rm -rf "$d"; done; rm -rf "$WORK"/*/data' EXIT
 
 bun "$FRAMEWORK/scripts/app-chrome-fixture.ts" "$FIXTURE_PORT" >"$WORK/fixture.log" 2>&1 &
 PIDS+=($!)

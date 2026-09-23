@@ -28,7 +28,11 @@ HOST="$(env -u SDKROOT -u DEVELOPER_DIR ./scripts/mac/dev-cef-bundle.sh | tail -
 # One throwaway tree for the whole run: the app's session/settings/history
 # store and CEF's profile both hang off it, so nothing here can reach the
 # machine owner's own browser data.
-PROFILE="$(mktemp -d /tmp/nd-app-chrome.XXXXXX)"
+# shellcheck source=scripts/mac/cef-gate-lock.sh
+. scripts/mac/cef-gate-lock.sh
+trap cef_gate_unlock EXIT
+cef_gate_lock
+PROFILE="$RUN_DIR"
 mkdir -p "$PROFILE/store" "$PROFILE/cef" "$PROFILE/shots"
 
 # Every new NDShell*.ips under ~/Library/Logs/DiagnosticReports is a crash the
@@ -74,6 +78,7 @@ cleanup() {
   # Chromium's helpers outlive a -9'd host; they are children of this run and
   # nobody else's, so they go with it.
   pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null || true
+  cef_gate_unlock
 }
 trap cleanup EXIT
 

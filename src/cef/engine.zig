@@ -243,9 +243,83 @@ fn appGetBrowserProcessHandler(_: [*c]c.cef_app_t) callconv(.c) [*c]c.cef_browse
         const h = BrowserProcessObj.create({}) orelse return null;
         h.cef.on_before_child_process_launch = &onBeforeChildProcessLaunch;
         h.cef.get_default_client = &getDefaultClient;
+        h.cef.on_already_running_app_relaunch = &onAlreadyRunningAppRelaunch;
+        h.cef.on_context_initialized = &onContextInitialized;
         browser_process_obj = h;
     }
     return browser_process_obj.?.handOut();
+}
+
+/// Another launch on this cache directory. Chromium's process singleton has
+/// forwarded its command line here and will make that process's
+/// cef_initialize fail; left unanswered, Chrome's StartupBrowserCreator opens a
+/// "New Tab" browser window in this process, with "Restore pages?" over it when
+/// the profile's last exit was a crash. Answered as handled, so nothing opens.
+fn onAlreadyRunningAppRelaunch(
+    _: [*c]c.cef_browser_process_handler_t,
+    command_line: [*c]c.cef_command_line_t,
+    _: [*c]const c.cef_string_t,
+) callconv(.c) c_int {
+    ref.releaseParam(command_line);
+    std.debug.print("ND_CEF_RELAUNCH_REFUSED another launch on this cache directory was turned away\n", .{});
+    return 1;
+}
+
+fn onContextInitialized(_: [*c]c.cef_browser_process_handler_t) callconv(.c) void {
+    const api = loader.loaded() orelse return;
+    const ctx = api.request_context_get_global_context();
+    if (ctx == null) return;
+    defer ref.releaseParam(ctx);
+    writeStartupPrefs(ctx);
+}
+
+const StartupPrefsObj = ref.Counted(c.cef_request_context_handler_t, void);
+var startup_prefs_handler: ?*StartupPrefsObj = null;
+
+/// The handler every profile context is created with, so each Chrome profile
+/// gets the same startup prefs as the global one.
+fn startupPrefsHandler() [*c]c.cef_request_context_handler_t {
+    if (startup_prefs_handler == null) {
+        const h = StartupPrefsObj.create({}) orelse return null;
+        h.cef.on_request_context_initialized = &onRequestContextInitialized;
+        startup_prefs_handler = h;
+    }
+    return startup_prefs_handler.?.handOut();
+}
+
+fn onRequestContextInitialized(_: [*c]c.cef_request_context_handler_t, ctx: [*c]c.cef_request_context_t) callconv(.c) void {
+    defer ref.releaseParam(ctx);
+    if (ctx != null) writeStartupPrefs(ctx);
+}
+
+/// Chrome restores the profile's last session into the first browser window
+/// it tracks when `session.restore_on_startup` is 1 ("continue where you left
+/// off"), and a profile this engine creates on CEF 151.3.23 carries 1 in its
+/// Preferences. Every view is such a window, so after a kill the previous
+/// run's pages came back as browsers Chrome built for itself. 5 is "open the new tab page",
+/// which under an embedder that opens no startup window means nothing at all
+/// (chrome/browser/prefs/session_startup_pref.h, kPrefValueNewTab). Written on
+/// every context initialization, on the UI thread, before any view exists in
+/// it.
+fn writeStartupPrefs(ctx: [*c]c.cef_request_context_t) void {
+    const api = loader.loaded() orelse return;
+    const set = ctx.*.base.set_preference orelse return;
+    const value = api.value_create();
+    if (value == null) return;
+    if (value.*.set_int) |set_int| _ = set_int(value, 5);
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    var err = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&err);
+    if (!setStr(&name, "session.restore_on_startup")) return;
+    // `value` is consumed by the call.
+    if (set(&ctx.*.base, &name, value, &err) == 0) {
+        const why = dupeStr(&err);
+        defer if (why) |w| alloc.free(w);
+        std.debug.print("ND_WARN CEF: session.restore_on_startup was not written: {?s}\n", .{why});
+        return;
+    }
+    tr("startupPrefs session.restore_on_startup=5", .{});
 }
 
 // ============================================================================
@@ -798,6 +872,11 @@ fn onBeforeCommandLine(
         // `newWindow` event per attempt on both engines, so the decision
         // belongs to the app, not to the engine.
         appendFlag(command_line, append, "disable-popup-blocking");
+        // Read by StartupBrowserCreator, which CEF skips at startup and a
+        // refused relaunch never reaches; this covers any other route into it.
+        // Not --no-startup-window: it holds a keep-alive, and CefShutdown then
+        // waits forever for a UI thread that never quits.
+        appendFlag(command_line, append, "hide-crash-restore-bubble");
     }
 }
 
@@ -911,6 +990,9 @@ fn ensureInitialized() bool {
 
     var args = mainArgs();
     if (api.initialize(&args, &settings, app.handOut(), null) == 0) {
+        if (cache_root) |root| {
+            if (reportProfileInUse(root)) return false;
+        }
         std.debug.print("ND_WARN CEF: cef_initialize failed; falling back to the system engine\n", .{});
         return false;
     }
@@ -928,6 +1010,27 @@ var on_initialized: ?*const fn () callconv(.c) void = null;
 /// Called on the thread that ran cef_initialize, right after it succeeds.
 pub fn setOnInitialized(cb: *const fn () callconv(.c) void) void {
     on_initialized = cb;
+}
+
+/// Chromium's process singleton names its holder in `SingletonLock`, a symlink
+/// to "<hostname>-<pid>" in the root cache directory. A failed cef_initialize
+/// with a live holder that is not this process is another host on the same
+/// profile, which Chromium has already handed this launch to.
+extern "c" fn kill(pid: c_int, sig: c_int) c_int;
+
+fn reportProfileInUse(root: [:0]const u8) bool {
+    var path_buf: [4096]u8 = undefined;
+    const lock = std.fmt.bufPrintZ(&path_buf, "{s}/SingletonLock", .{root}) catch return false;
+    var target_buf: [256]u8 = undefined;
+    const n = std.c.readlink(lock.ptr, &target_buf, target_buf.len);
+    if (n <= 0) return false;
+    const target = target_buf[0..@intCast(n)];
+    const dash = std.mem.lastIndexOfScalar(u8, target, '-') orelse return false;
+    const pid = std.fmt.parseInt(c_int, target[dash + 1 ..], 10) catch return false;
+    // Signal 0 is the liveness probe, which std's SIG enum has no member for.
+    if (pid == std.c.getpid() or kill(pid, 0) != 0) return false;
+    std.debug.print("ND_CEF_PROFILE_IN_USE root={s} holder={s}; the chromium engine is not started\n", .{ root, target });
+    return true;
 }
 
 /// Per-profile cache directories hang off this in M2; M1 only needs CEF to
@@ -5483,7 +5586,7 @@ fn requestContext(profile: []const u8) ?*c.cef_request_context_t {
         settings.persist_session_cookies = 1;
     }
 
-    const ctx = api.request_context_create_context(&settings, null);
+    const ctx = api.request_context_create_context(&settings, startupPrefsHandler());
     if (ctx == null) {
         std.debug.print("ND_WARN WebView engine=chromium: could not create a request context for profile \"{s}\"\n", .{profile});
         return null;

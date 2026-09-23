@@ -120,11 +120,29 @@ enum NDCefRuntime {
 
         var args = cef_main_args_t(argc: CommandLine.argc, argv: CommandLine.unsafeArgv)
         guard nd_cef_initialize(&args, &settings, application, nil) != 0 else {
-            ndCefWarn("cef_initialize failed; using the system engine")
+            if !reportProfileInUse(paths.rootCache) {
+                ndCefWarn("cef_initialize failed; using the system engine")
+            }
             isActive = false
             return false
         }
         FileHandle.standardError.write("ND_WEBVIEW_ENGINE chromium (\(paths.frameworkDirectory))\n".data(using: .utf8)!)
+        return true
+    }
+
+    /// Chromium's process singleton names its holder in `SingletonLock`, a
+    /// symlink to "<hostname>-<pid>" in the root cache directory. A failed
+    /// cef_initialize with a live holder that is not this process is another
+    /// host on the same profile, which Chromium has already handed this launch
+    /// to.
+    private static func reportProfileInUse(_ root: String) -> Bool {
+        guard let holder = try? FileManager.default.destinationOfSymbolicLink(atPath: "\(root)/SingletonLock"),
+              let dash = holder.lastIndex(of: "-"),
+              let pid = pid_t(holder[holder.index(after: dash)...]),
+              pid != getpid(), kill(pid, 0) == 0
+        else { return false }
+        FileHandle.standardError.write(
+            "ND_CEF_PROFILE_IN_USE root=\(root) holder=\(holder); the chromium engine is not started\n".data(using: .utf8)!)
         return true
     }
 

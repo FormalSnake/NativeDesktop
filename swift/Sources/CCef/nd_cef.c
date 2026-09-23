@@ -310,11 +310,46 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       // of them has a client callback to answer; the switch is the only hook.
       append_switch(command_line, "no-first-run");
       append_switch(command_line, "no-default-browser-check");
-      append_switch(command_line, "disable-session-crashed-bubble");
       append_switch(command_line, "disable-print-preview");
     }
+    // Read by StartupBrowserCreator, which CEF skips at startup and a refused
+    // relaunch (below) never reaches; this covers any other route into it.
+    // Not --no-startup-window: on Linux it holds a keep-alive that stops
+    // CefShutdown from returning.
+    append_switch(command_line, "hide-crash-restore-bubble");
   }
   nd_cef_ref_release(command_line);
+}
+
+// Another launch on this root cache path. Chromium's process singleton has
+// forwarded its command line here and will make that process's cef_initialize
+// fail; left unanswered, Chrome's StartupBrowserCreator opens a "New Tab"
+// browser window in this process, with "Restore pages?" over it when the
+// profile's last exit was a crash. Answered as handled, so nothing opens.
+static int CEF_CALLBACK browser_process_relaunch(cef_browser_process_handler_t *self,
+                                                 cef_command_line_t *command_line,
+                                                 const cef_string_t *current_directory) {
+  (void)self;
+  (void)current_directory;
+  nd_cef_ref_release(command_line);
+  fprintf(stderr, "ND_CEF_RELAUNCH_REFUSED another launch on this cache directory was turned away\n");
+  return 1;
+}
+
+static cef_browser_process_handler_t *browser_process_handler;
+
+static cef_browser_process_handler_t *CEF_CALLBACK app_browser_process_handler(cef_app_t *self) {
+  (void)self;
+  if (!browser_process_handler) {
+    browser_process_handler = (cef_browser_process_handler_t *)nd_cef_ref_alloc(
+        sizeof(cef_browser_process_handler_t), NULL, NULL);
+    if (!browser_process_handler) {
+      return NULL;
+    }
+    browser_process_handler->on_already_running_app_relaunch = browser_process_relaunch;
+  }
+  nd_cef_ref_add(browser_process_handler);
+  return browser_process_handler;
 }
 
 cef_app_t *nd_cef_app_create(int browser_process) {
@@ -325,6 +360,7 @@ cef_app_t *nd_cef_app_create(int browser_process) {
   app->on_register_custom_schemes = app_register_schemes;
   if (browser_process) {
     app->on_before_command_line_processing = app_command_line;
+    app->get_browser_process_handler = app_browser_process_handler;
   }
   return app;
 }

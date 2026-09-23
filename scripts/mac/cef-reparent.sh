@@ -10,7 +10,11 @@ ROOT="$(pwd)"
 
 PORT="${ND_CEF_DEBUG_PORT:-9337}"
 HOST="$(env -u SDKROOT -u DEVELOPER_DIR ./scripts/mac/dev-cef-bundle.sh | tail -1)"
-PROFILE="$(mktemp -d /tmp/nd-cef-reparent.XXXXXX)"
+# shellcheck source=scripts/mac/cef-gate-lock.sh
+. scripts/mac/cef-gate-lock.sh
+trap cef_gate_unlock EXIT
+cef_gate_lock
+PROFILE="$RUN_DIR"
 
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
 crash_reports() { ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort; }
@@ -45,6 +49,7 @@ HOST_PID=""
 cleanup() {
   if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; fi
   pkill -9 -f "$ROOT/swift/.build/NDShellDev.app" 2>/dev/null || true
+  cef_gate_unlock
 }
 trap cleanup EXIT
 
