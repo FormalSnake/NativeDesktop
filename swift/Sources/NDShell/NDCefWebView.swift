@@ -1039,10 +1039,14 @@ final class NDCefHandlerBox {
         // is the same answer the WKWebView surface gives by returning nil from
         // createWebViewWith.
         lifeSpan.pointee.on_before_popup = {
-            selfPointer, browser, frame, _, targetUrl, _, _, _, _, _, _, _, _, _ in
+            selfPointer, browser, frame, _, targetUrl, _, _, gesture, _, _, _, _, _, _ in
             let url = ndCefString(targetUrl)
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
+            if ndCefExternalScheme(url) {
+                ndCefOpenOutside(url, gesture: gesture != 0)
+                return 1
+            }
             ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
             return 1
         }
@@ -1339,14 +1343,21 @@ final class NDCefHandlerBox {
     /// `copy:`/`paste:`/`selectAll:`/`undo:` against that same first responder.
     private func wireKeyboard() {
         guard let keyboard else { return }
-        keyboard.pointee.on_key_event = { _, browser, event, osEvent in
+        keyboard.pointee.on_key_event = { selfPointer, browser, event, osEvent in
             nd_cef_ref_release(browser)
             guard let event, event.pointee.type == KEYEVENT_RAWKEYDOWN, let osEvent,
                   Thread.isMainThread else { return 0 }
             // The NSEvent crosses the isolation boundary as a bit pattern, the
             // same way every other pointer in this file does.
             let token = UInt(bitPattern: osEvent)
-            return MainActor.assumeIsolated { ndCefMenuKeyEquivalent(token) }
+            if MainActor.assumeIsolated({ ndCefMenuKeyEquivalent(token) }) == 1 { return 1 }
+            // Chrome on macOS runs its shortcuts from its own main menu, which
+            // this host does not have, so a chord the app did not claim reaches
+            // no command at all. The ones with an app meaning are named here,
+            // the same way `on_chrome_command` names them on GTK.
+            guard let name = MainActor.assumeIsolated({ ndCefChromeChord(token) }) else { return 0 }
+            ndCefDeliver(selfPointer) { $0?.emitText("browserCommand", name) }
+            return 1
         }
     }
 
@@ -1362,11 +1373,31 @@ final class NDCefHandlerBox {
         // here rather than on_before_popup. Under Chrome style an allowed one
         // would become a Chromium tab in a window the user is not supposed to
         // have; the app gets the same `newWindow` event a popup produces.
-        request.pointee.on_open_urlfrom_tab = { selfPointer, browser, frame, targetUrl, _, _ in
+        request.pointee.on_open_urlfrom_tab = { selfPointer, browser, frame, targetUrl, _, gesture in
             let url = ndCefString(targetUrl)
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
+            if ndCefExternalScheme(url) {
+                ndCefOpenOutside(url, gesture: gesture != 0)
+                return 1
+            }
             ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
+            return 1
+        }
+        // A navigation to a scheme no browser draws (mailto:, tel:, zoommtg:)
+        // goes to the scheme's own application and the page stays put. Chrome
+        // style would answer it with its own "Open …?" dialog.
+        request.pointee.on_before_browse = { _, browser, frame, request, gesture, _ in
+            var url = ""
+            if let request, let raw = request.pointee.get_url?(request) {
+                url = ndCefString(raw)
+                nd_cef_string_free(raw)
+            }
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(frame)
+            nd_cef_ref_release(request)
+            guard ndCefExternalScheme(url) else { return 0 }
+            ndCefOpenOutside(url, gesture: gesture != 0)
             return 1
         }
         // Chrome style answers an HTTP auth challenge with Chromium's own login
@@ -1435,6 +1466,71 @@ final class NDCefHandlerBox {
             }
         }
     }
+}
+
+/// Chrome's own macOS shortcuts that `browserCommand` has a name for, keyed by
+/// modifiers and the unmodified character. Only reached for a chord the app's
+/// menu did not claim.
+@MainActor private func ndCefChromeChord(_ token: UInt) -> String? {
+    guard let raw = UnsafeMutableRawPointer(bitPattern: token) else { return nil }
+    let event = Unmanaged<NSEvent>.fromOpaque(raw).takeUnretainedValue()
+    guard event.type == .keyDown, let chars = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+    let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+    guard flags.contains(.command) else { return nil }
+    var mods = ""
+    if flags.contains(.control) { mods += "ctrl+" }
+    if flags.contains(.option) { mods += "opt+" }
+    if flags.contains(.shift) { mods += "shift+" }
+    let chords: [String: String] = [
+        "n": "newWindow", "shift+n": "newPrivateWindow", "t": "newTab",
+        "shift+t": "reopenClosedTab", "w": "closeTab", "shift+w": "closeWindow",
+        "y": "history", "opt+l": "downloads", "shift+j": "downloads", "opt+b": "bookmarks",
+        "d": "bookmarkPage", ",": "settings", "p": "print", "opt+p": "print", "s": "savePage",
+        "opt+u": "viewSource", "o": "openFile", "f": "find", "g": "findNext",
+        "shift+g": "findPrevious", "l": "focusAddress", "shift+}": "nextTab", "shift+{": "previousTab",
+        "opt+right": "nextTab", "opt+left": "previousTab", "ctrl+f": "fullscreen",
+        "shift+h": "home",
+    ]
+    var key = chars
+    if let scalar = chars.unicodeScalars.first {
+        switch Int(scalar.value) {
+        case NSRightArrowFunctionKey: key = "right"
+        case NSLeftArrowFunctionKey: key = "left"
+        default: break
+        }
+    }
+    return chords[mods + key]
+}
+
+/// Schemes a browser view renders itself. Anything else is another
+/// application's to open; the peer of `internal_schemes` in src/cef/engine.zig.
+private let ndCefInternalSchemes: Set<String> = [
+    "http", "https", "file", "data", "blob", "about", "javascript", "chrome", "chrome-extension",
+    "chrome-untrusted", "devtools", "view-source", "filesystem", "ws", "wss",
+]
+
+func ndCefExternalScheme(_ url: String) -> Bool {
+    guard let colon = url.firstIndex(of: ":") else { return false }
+    let scheme = url[..<colon].lowercased()
+    guard !scheme.isEmpty,
+          scheme.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "+" || $0 == "-" || $0 == "." })
+    else { return false }
+    if ndCefInternalSchemes.contains(scheme) { return false }
+    return !NDCefSchemes.handles("\(scheme):")
+}
+
+/// Only a navigation the user asked for launches anything: a page cannot start
+/// another application on its own, which is Chrome's rule too.
+func ndCefOpenOutside(_ url: String, gesture: Bool) {
+    guard gesture else {
+        ndCefWarn("\(url) not opened: no user gesture")
+        return
+    }
+    guard let target = URL(string: url) else { return }
+    if ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" {
+        FileHandle.standardError.write("ND_WV cef openOutside \(url)\n".data(using: .utf8)!)
+    }
+    DispatchQueue.main.async { NSWorkspace.shared.open(target) }
 }
 
 /// Runs one key-down NSEvent against the app's main menu.

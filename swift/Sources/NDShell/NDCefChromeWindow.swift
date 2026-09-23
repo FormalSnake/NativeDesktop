@@ -1051,6 +1051,9 @@ let ndCefAllowedChromeCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_ZOOM_MINUS", "IDC_CUT", "IDC_COPY", "IDC_PASTE",
     // Escape in a page: stops a load or closes the find bar, and nothing more.
     "IDC_CLOSE_FIND_OR_STOP",
+    // Print preview is switched off (nd_cef.c), so these open the system's
+    // own print panel, the same one window.print() does.
+    "IDC_PRINT", "IDC_BASIC_PRINT",
 ])
 
 /// Refused Chrome commands an app has its own meaning for, by the name the app
@@ -1074,8 +1077,6 @@ let ndCefRoutedChromeCommands: [Int32: String] = {
         ("IDC_OPTIONS", "settings"),
         ("IDC_MANAGE_EXTENSIONS", "extensions"),
         ("IDC_CLEAR_BROWSING_DATA", "clearBrowsingData"),
-        ("IDC_PRINT", "print"),
-        ("IDC_BASIC_PRINT", "print"),
         ("IDC_SAVE_PAGE", "savePage"),
         ("IDC_VIEW_SOURCE", "viewSource"),
         ("IDC_OPEN_FILE", "openFile"),

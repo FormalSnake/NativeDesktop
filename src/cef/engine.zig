@@ -1541,6 +1541,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     command_handler.cef.is_chrome_page_action_icon_visible = &isChromePageActionIconVisible;
     command_handler.cef.is_chrome_toolbar_button_visible = &isChromeToolbarButtonVisible;
     request_handler.cef.on_open_urlfrom_tab = &onOpenUrlFromTab;
+    request_handler.cef.on_before_browse = &onBeforeBrowse;
     request_handler.cef.get_auth_credentials = &onGetAuthCredentials;
     permission_handler.cef.on_show_permission_prompt = &onShowPermissionPrompt;
     permission_handler.cef.on_request_media_access_permission = &onRequestMediaAccessPermission;
@@ -2802,12 +2803,95 @@ fn onOpenUrlFromTab(
     frame: [*c]c.cef_frame_t,
     target_url: [*c]const c.cef_string_t,
     _: c.cef_window_open_disposition_t,
+    user_gesture: c_int,
+) callconv(.c) c_int {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    const url = dupeStr(target_url);
+    if (url) |u| {
+        if (externalScheme(u)) {
+            handOutside(u, user_gesture != 0);
+            return 1;
+        }
+    }
+    post(.{ .view = RequestHandlerObj.of(self).payload, .name = "newWindow", .text = url });
+    return 1;
+}
+
+/// A navigation to a scheme no browser draws (mailto:, tel:, zoommtg:, …).
+/// Chrome style answers it with its own "Open …?" dialog or a blank tab; here
+/// it goes to the desktop's handler for the scheme and the page stays put.
+fn onBeforeBrowse(
+    _: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    user_gesture: c_int,
     _: c_int,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
-    post(.{ .view = RequestHandlerObj.of(self).payload, .name = "newWindow", .text = dupeStr(target_url) });
+    defer ref.releaseParam(request);
+    if (request == null) return 0;
+    const get_url = request.*.get_url orelse return 0;
+    const raw = get_url(request);
+    if (raw == null) return 0;
+    defer freeUserfree(raw);
+    const url = dupeStr(raw) orelse return 0;
+    if (!externalScheme(url)) {
+        alloc.free(url);
+        return 0;
+    }
+    handOutside(url, user_gesture != 0);
     return 1;
+}
+
+/// Schemes a browser view renders itself. Anything else is another
+/// application's to open.
+const internal_schemes = [_][]const u8{
+    "http",     "https",     "file",       "data",     "blob",   "about",
+    "javascript", "chrome",  "chrome-extension", "chrome-untrusted", "devtools",
+    "view-source", "filesystem", "ws",    "wss",
+};
+
+fn externalScheme(url: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, url, ':') orelse return false;
+    const scheme = url[0..colon];
+    if (scheme.len == 0) return false;
+    for (scheme) |ch| {
+        if (!std.ascii.isAlphanumeric(ch) and ch != '+' and ch != '-' and ch != '.') return false;
+    }
+    for (internal_schemes) |known| {
+        if (std.ascii.eqlIgnoreCase(scheme, known)) return false;
+    }
+    for (custom_schemes.items) |spec| {
+        if (std.ascii.eqlIgnoreCase(scheme, spec.name)) return false;
+    }
+    return true;
+}
+
+/// Adopts `url`. Only a navigation the user asked for launches anything: a page
+/// cannot start another application on its own, which is Chrome's rule too.
+fn handOutside(url: []u8, user_gesture: bool) void {
+    tr("externalScheme url={s} gesture={}", .{ url, user_gesture });
+    if (!user_gesture) {
+        std.debug.print("ND_WARN WebView engine=chromium: {s} not opened, no user gesture\n", .{url});
+        alloc.free(url);
+        return;
+    }
+    const owned = alloc.dupeZ(u8, url) catch {
+        alloc.free(url);
+        return;
+    };
+    alloc.free(url);
+    _ = glib.idleAdd(&launchOutside, owned.ptr);
+}
+
+fn launchOutside(data: ?*anyopaque) callconv(.c) c_int {
+    const uri: [*:0]u8 = @ptrCast(data.?);
+    defer alloc.free(std.mem.span(uri));
+    gio.AppInfo.launchDefaultForUriAsync(uri, null, null, null, null);
+    return 0;
 }
 
 /// Chrome style answers an HTTP auth challenge with Chromium's own login
@@ -2992,7 +3076,7 @@ fn onBeforePopup(
     target_url: [*c]const c.cef_string_t,
     _: [*c]const c.cef_string_t,
     _: c.cef_window_open_disposition_t,
-    _: c_int,
+    user_gesture: c_int,
     _: [*c]const c.cef_popup_features_t,
     _: [*c]c.cef_window_info_t,
     _: [*c][*c]c.cef_client_t,
@@ -3012,7 +3096,14 @@ fn onBeforePopup(
     // Chrome-style popup, measured on 151.3.23), and the gate's census caught
     // it both times. The Chrome-created-browser path below is a different
     // mechanism and is not affected.
-    post(.{ .view = LifeObj.of(self).payload, .name = "newWindow", .text = dupeStr(target_url) });
+    const url = dupeStr(target_url);
+    if (url) |u| {
+        if (externalScheme(u)) {
+            handOutside(u, user_gesture != 0);
+            return 1;
+        }
+    }
+    post(.{ .view = LifeObj.of(self).payload, .name = "newWindow", .text = url });
     return 1;
 }
 
