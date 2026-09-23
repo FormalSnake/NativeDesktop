@@ -417,6 +417,10 @@ func buildVTable() -> nd_backend {
     ndCodeEditorPurge(view)
     ndPaneInstallPurge(view)
     ndPanedTeardown(view)
+    // A dialog or sheet leaving the tree while it is up ends its sheet: the
+    // node is gone, and a sheet left on the window blocks the next one.
+    (view as? NDDialogHandleView)?.applyOpen(false)
+    (view as? NDSheetHandleView)?.applyOpen(false)
     #if canImport(CCef)
     ndCefPurge(view)
     #endif

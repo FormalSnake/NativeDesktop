@@ -99,12 +99,17 @@ class NDRowView: NDHostedLeaf {
                             Image(nsImage: icon)
                         }
                     }
+                    // One line each, cut at the end, the way the sidebar's
+                    // rows are. A zero ideal width is what lets the text give
+                    // way: the row's intrinsic width is its ideal, and a long
+                    // title otherwise pushed the whole card past its column.
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
+                        Text(title).lineLimit(1)
                         if !subtitle.isEmpty {
-                            Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                            Text(subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
+                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
             }
             .labeledContentStyle(NDRowLabeledContentStyle()))
