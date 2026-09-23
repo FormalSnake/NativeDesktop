@@ -478,8 +478,16 @@ fn present(state: *State) void {
     // Grabbing focus selects the entry's whole text, which is what a seeded
     // open (the current address) wants.
     _ = gtk.Widget.grabFocus(state.entry.as(gtk.Widget));
-    gtk.Editable.selectRegion(state.entry.as(gtk.Editable), 0, -1);
+    selectAllFromStart(state);
     setHighlight(state, if (state.ids.items.len > 0) 0 else -1);
+}
+
+/// Everything selected with the caret at the start, so a long seeded address
+/// reads from its beginning (the entry scrolls to the caret, and a plain
+/// select-all leaves it at the end). GtkText puts the caret on the second
+/// bound.
+fn selectAllFromStart(state: *State) void {
+    gtk.Editable.selectRegion(state.entry.as(gtk.Editable), charCount(entryText(state)), 0);
 }
 
 fn releaseReturnFocus(state: *State) void {
@@ -595,7 +603,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
             setOwned(&state.suffix, "");
             state.may_complete = false;
             if (!std.mem.eql(u8, entryText(state), q)) writeEntry(state, q);
-            gtk.Editable.selectRegion(state.entry.as(gtk.Editable), 0, -1);
+            selectAllFromStart(state);
         }
     }
     if (propArray(props, "items")) |arr| rebuildRows(state, arr, dupeZ);

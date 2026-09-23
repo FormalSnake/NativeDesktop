@@ -53,7 +53,8 @@ const gdk = @import("gdk");
 //    own `.nd-<id>` block, the same way `button.compact` above already does.
 //
 // The `nd-palette-*` rules are the command bar's (commandpalette.zig): a
-// borderless 20px field and 40px one-line rows with no separators.
+// borderless 20px field and 40px one-line rows with no separators, and no
+// hover shade: the keyboard highlight is the only one.
 //
 // Installed once at display level; providers restyle retroactively, so a lazy
 // install is safe.
@@ -88,6 +89,7 @@ const nd_base_css =
     \\.nd-palette-entry > image { -gtk-icon-size: 18px; }
     \\list.nd-palette-list { background: none; }
     \\list.nd-palette-list > row { min-height: 40px; padding: 0 10px; margin: 0 6px; border-radius: 9px; }
+    \\list.nd-palette-list > row:hover:not(:selected) { background: none; }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 
