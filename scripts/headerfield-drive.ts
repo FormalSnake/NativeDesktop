@@ -11,6 +11,8 @@
 //          (the real cursor on AppKit) delivers onLeadingIconClicked to the
 //          app, and the popover that named the icon slot opens against the
 //          icon rather than the field.
+//   leg 2b the same for the trailing icon at the other end of the field, and
+//          an emptied trailingIconName stops firing.
 //   leg 3  the automation setValue path still emits `changed`, which is what
 //          the search-entry-to-entry swap in the GTK backend could have
 //          broken.
@@ -71,6 +73,21 @@ const rectOf = async (testId: string): Promise<Rect> => {
   return g;
 };
 const label = async (testId: string) => (await mustFind(testId)).text ?? "";
+// A GTK popover under a seatless compositor is never placed, so getTree has no
+// geometry for it; the host logs the rectangle the popover points at, in the
+// anchor entry's own coordinates.
+const pointing = async (slot: "leadingIcon" | "trailingIcon") => {
+  const log = process.env.ND_HOST_LOG;
+  if (!log) throw new Error("ND_HOST_LOG is not set; run the GTK leg through scripts/headless-headerfield.sh");
+  const line = await poll(async () => {
+    const lines = (await Bun.file(log).text()).split("\n").filter((l) => l.includes(`ND_POPOVER_POINTING slot=${slot} `));
+    return lines.at(-1) ?? null;
+  }, (l) => l != null, { timeoutMs: T }).catch(() => {
+    throw new Error(`the ${slot} popover never pointed at its icon`);
+  });
+  const num = (k: string) => Number(new RegExp(`${k}=(-?\\d+)`).exec(line!)![1]);
+  return { x: num("x"), w: num("w"), entryW: num("entryW") };
+};
 
 try {
   // ---- leg 1: the field fills the free run at three widths ----------------
@@ -133,7 +150,11 @@ try {
     if (panel!.x > field.x + field.w / 4) {
       throw new Error(`the site-info panel opened at ${panel!.x}, past the field's leading quarter (field ${field.x}..${field.x + field.w})`);
     }
-    console.log(`  ND_HEADERFIELD_ANCHOR_OK the panel opened at ${panel!.x}, on the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
+    const lead = await pointing("leadingIcon");
+    if (lead.w <= 0 || lead.x + lead.w > lead.entryW / 4) {
+      throw new Error(`the site-info popover points at ${lead.x}..${lead.x + lead.w}, outside the field's leading quarter (field width ${lead.entryW})`);
+    }
+    console.log(`  ND_HEADERFIELD_ANCHOR_OK the panel opened at ${panel!.x} and points at ${lead.x}..${lead.x + lead.w}, the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
   } else {
     // AppKit presents the panel in a popover window of its own and getTree
     // reports its content in that window's space, so the readable signal is
@@ -187,6 +208,55 @@ try {
       console.log(`  capture ${path}`);
     }
   }
+
+  // ---- leg 2b: the trailing icon is interactive, and anchors the popover ---
+  // Same contract at the other end of the field: the magnifier a browser shows
+  // there while a page is zoomed. The leading popover closes first so the
+  // census below finds one popover window.
+  if (!gtk) {
+    Bun.spawnSync(["osascript", "-e", 'tell application "System Events" to key code 53']);
+    await poll(async () => (await census(hostPid)).filter((w) => w.alpha > 0 && w.layer === 0).length, (n) => n === 1, { timeoutMs: 20000 })
+      .catch(() => {});
+  }
+  if (gtk) {
+    await app.getByTestId("fire-trailing").click();
+  } else {
+    activate(hostPid);
+    await app.cursor.click({ x: field.x + field.w - 12, y: field.y + field.h / 2 });
+  }
+  await poll(() => label("trailing-count"), (v) => v === "trailing clicks: 1", { timeoutMs: T });
+  if ((await app.getByTestId("address").inputValue()) === "") throw new Error("the trailing icon click cleared the field");
+  console.log("  ND_HEADERFIELD_TRAILING_OK the trailing icon delivered onTrailingIconClicked and left the text alone");
+  if (gtk) {
+    const { x, w, entryW } = await pointing("trailingIcon");
+    if (w <= 0 || x < (entryW * 3) / 4 || x + w > entryW) {
+      throw new Error(`the zoom popover points at ${x}..${x + w}, outside the field's trailing quarter (field width ${entryW})`);
+    }
+    console.log(`  ND_HEADERFIELD_TRAILING_ANCHOR_OK the popover points at ${x}..${x + w}, inside the field's trailing quarter (field width ${entryW})`);
+  } else {
+    const main = (await app.windows()).windows[0]?.geometry;
+    if (!main) throw new Error("the app reports no window geometry");
+    let seen: CensusWindow[] = [];
+    const popover = await poll(async () => {
+      seen = await census(hostPid);
+      return seen.find((w) => w.alpha > 0 && w.layer === 0 && w.width < main.w) ?? null;
+    }, (w) => w != null, { timeoutMs: 20000 }).catch(() => {
+      throw new Error(`no zoom popover window on screen (host windows: ${JSON.stringify(seen)})`);
+    });
+    const mid = popover!.x + popover!.width / 2 - main.x;
+    if (mid < field.x + (field.w * 3) / 4 || mid > field.x + field.w) {
+      throw new Error(`the zoom popover points at ${mid}, outside the field's trailing quarter (field ${field.x}..${field.x + field.w})`);
+    }
+    console.log(`  ND_HEADERFIELD_TRAILING_ANCHOR_OK the popover points at ${mid}, on the icon at the field's trailing edge (field ${field.x}..${field.x + field.w})`);
+    Bun.spawnSync(["osascript", "-e", 'tell application "System Events" to key code 53']);
+  }
+  // Dropping the icon hands the slot back: no click on the trailing end
+  // reaches the app any more.
+  await app.getByTestId("toggle-trailing").click();
+  await app.getByTestId("fire-trailing").click();
+  await Bun.sleep(300);
+  if ((await label("trailing-count")) !== "trailing clicks: 1") throw new Error("an emptied trailing icon still fired");
+  console.log("  ND_HEADERFIELD_TRAILING_CLEAR_OK an empty trailingIconName removes the icon");
 
   // ---- leg 3: setValue still emits `changed` -----------------------------
   await app.getByTestId("address").fill("nativedesktop.dev");

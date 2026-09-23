@@ -1610,6 +1610,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let ph = propStr(props, "placeholder") { field.placeholderString = ph }
         if let e = propBool(props, "editable") { field.isEditable = e }
         ndApplyLeadingIcon(field, props)
+        ndApplyTrailingIcon(field, props)
         return field
     } else if kind == "TextArea" {
         let scroll = NSScrollView()
@@ -1779,6 +1780,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         let search = NDSearchField(string: propStr(props, "text") ?? "")
         if let ph = propStr(props, "placeholder") { search.placeholderString = ph }
         ndApplyLeadingIcon(search, props)
+        ndApplyTrailingIcon(search, props)
         return search
     } else if kind == "SourceList" {
         return makeSourceList(props)  // NSScrollView+NSTableView(.sourceList) (M11 Wave 2, NDGen/SourceList.swift)
@@ -1946,7 +1948,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "Box": ["spacing": -1, "windowHandle": false, "tileMinWidth": 0, "tileMaxColumns": 0, "tileAspect": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Label": ["variant": "body", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "destructive": false, "badge": "", "size": "regular"],
-    "TextInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "TextInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "trailingIconName": "", "trailingIconTooltip": "", "trailingIconLabel": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "TextArea": ["text": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Checkbox": ["checked": false, "label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Radio": ["checked": false, "label": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -1965,7 +1967,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "SplitView": ["collapsed": false, "edgeReveal": false, "contentStyle": "plain", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "HeaderBar": ["title": "", "subtitle": "", "canGoBack": false, "canGoForward": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "ToolbarView": ["topBarsAutoHide": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "SearchInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "SearchInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "trailingIconName": "", "trailingIconTooltip": "", "trailingIconLabel": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SourceList": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SourceTree": ["nodes": [Any](), "actions": [Any](), "selectedId": "", "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Menubar": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2073,6 +2075,9 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         ndApplyLeadingIcon(view, props)  // leadingIconName/Tooltip/Label merged
         // "leadingIconTooltip" handled by ndApplyLeadingIcon above (merged).
         // "leadingIconLabel" handled by ndApplyLeadingIcon above (merged).
+        ndApplyTrailingIcon(view, props)  // trailingIconName/Tooltip/Label merged
+        // "trailingIconTooltip" handled by ndApplyTrailingIcon above (merged).
+        // "trailingIconLabel" handled by ndApplyTrailingIcon above (merged).
         if let e = propBool(props, "editable"), let field = view as? NSTextField {
             field.isEditable = e
         }
@@ -2175,6 +2180,9 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         ndApplyLeadingIcon(view, props)  // leadingIconName/Tooltip/Label merged
         // "leadingIconTooltip" handled by ndApplyLeadingIcon above (merged).
         // "leadingIconLabel" handled by ndApplyLeadingIcon above (merged).
+        ndApplyTrailingIcon(view, props)  // trailingIconName/Tooltip/Label merged
+        // "trailingIconTooltip" handled by ndApplyTrailingIcon above (merged).
+        // "trailingIconLabel" handled by ndApplyTrailingIcon above (merged).
     } else if kind == "SourceList" {
         if let raw = propObjArray(props, "items") {
             ndSourceListSetItems(view, raw)  // NDGen/SourceList.swift (M11 Wave 2, hand-written)
@@ -2413,6 +2421,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         ndLeadingIconConnect(view, nodeID: nodeID)
+        ndTrailingIconConnect(view, nodeID: nodeID)
     } else if kind == "TextArea" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
     } else if kind == "Checkbox" {
@@ -2438,6 +2447,7 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "changed", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "activate", payload: .text, action: #selector(EventDispatcher.fireText(_:)))
         ndLeadingIconConnect(view, nodeID: nodeID)
+        ndTrailingIconConnect(view, nodeID: nodeID)
     } else if kind == "SourceList" {
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "selectionChanged", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))
         EventDispatcher.shared.wire(view, nodeID: nodeID, name: "rowActivated", payload: .index, action: #selector(EventDispatcher.fireIndex(_:)))

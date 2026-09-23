@@ -343,6 +343,7 @@ final class NDTextField: NSTextField {
     override func layout() {
         super.layout()
         ndLayoutLeadingIcon(self)
+        ndLayoutTrailingIcon(self)
     }
 
     /// The colour the tree asked for; inside a popover panel the secondary

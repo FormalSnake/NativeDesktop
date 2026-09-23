@@ -1341,11 +1341,13 @@ pub fn ndHeaderBarSetFillTitle(hb: *adw.HeaderBar, child: *gtk.Widget) void {
 // a NAME for every state rather than dropping the prop.
 fn cbEntryClearIcon(entry: *gtk.Entry, pos: gtk.EntryIconPosition, _: ?*anyopaque) callconv(.c) void {
     if (pos != .secondary) return;
+    if (ndEntryHasTrailingIcon(entry)) return; // the slot is the app's icon, not the clear button
     gtk.Editable.setText(entry.as(gtk.Editable), "");
 }
 
 fn cbEntryClearVisible(obj: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
     const entry: *gtk.Entry = @ptrCast(@alignCast(obj));
+    if (ndEntryHasTrailingIcon(entry)) return;
     const has_text = std.mem.span(gtk.Editable.getText(entry.as(gtk.Editable))).len > 0;
     gtk.Entry.setIconFromIconName(entry, .secondary, if (has_text) "edit-clear-symbolic" else null);
 }
@@ -1384,20 +1386,70 @@ pub fn ndEntryApplyLeadingIcon(entry: *gtk.Entry, props: ?std.json.Value, dupeZ:
 /// the only way a Linux gate can reach an icon that is not a widget of its
 /// own; on a keyboard it is what an app binds a shortcut to.
 pub fn ndEntryCommand(widget: *gtk.Widget, command: []const u8) void {
-    if (!std.mem.eql(u8, command, "activateLeadingIcon")) return;
+    const pos: gtk.EntryIconPosition = if (std.mem.eql(u8, command, "activateLeadingIcon"))
+        .primary
+    else if (std.mem.eql(u8, command, "activateTrailingIcon"))
+        .secondary
+    else
+        return;
     if (!gobject.ext.isA(widget, gtk.Entry)) return;
     const entry: *gtk.Entry = @ptrCast(@alignCast(widget));
-    if (gtk.Entry.getIconName(entry, .primary) == null) return;
-    gobject.signalEmitByName(asObject(entry), "icon-press", @intFromEnum(gtk.EntryIconPosition.primary));
+    if (pos == .secondary and !ndEntryHasTrailingIcon(entry)) return;
+    if (gtk.Entry.getIconName(entry, pos) == null) return;
+    gobject.signalEmitByName(asObject(entry), "icon-press", @intFromEnum(pos));
 }
 
 /// The primary icon's rectangle in the entry's own coordinates, for a popover
 /// that asked to point at the icon rather than at the whole field
 /// (Popover.anchorSlot = "leadingIcon").
 pub fn ndEntryLeadingIconArea(entry: *gtk.Entry, out: *gdk.Rectangle) bool {
-    if (gtk.Entry.getIconName(entry, .primary) == null) return false;
-    gtk.Entry.getIconArea(entry, .primary, out);
+    return ndEntryIconArea(entry, .primary, out);
+}
+
+fn ndEntryIconArea(entry: *gtk.Entry, pos: gtk.EntryIconPosition, out: *gdk.Rectangle) bool {
+    if (gtk.Entry.getIconName(entry, pos) == null) return false;
+    gtk.Entry.getIconArea(entry, pos, out);
     return out.f_width > 0 and out.f_height > 0;
+}
+
+// ---- trailing icon inside a text/search field ------------------------------
+// The SECONDARY icon: where a browser shows page state at the end of the
+// address bar (the zoom magnifier). On a SearchInput built as a GtkEntry that
+// slot is also the clear button (ndEntryDressAsSearch), so the app's icon
+// takes it over while it is set and the clear button comes back when the name
+// goes empty. As with the leading icon, a SearchInput only has the slot when
+// it was mounted with `trailingIconName` (an empty name counts).
+const ND_ENTRY_TRAILING = "nd-entry-trailing-icon";
+
+fn ndEntryHasTrailingIcon(entry: *gtk.Entry) bool {
+    return gobject.Object.getData(asObject(entry), ND_ENTRY_TRAILING) != null;
+}
+
+/// Merged create + applyProps arm for trailingIconName/Tooltip/Label.
+pub fn ndEntryApplyTrailingIcon(entry: *gtk.Entry, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (propStr(props, "trailingIconName")) |name| {
+        if (name.len == 0) {
+            gobject.Object.setData(asObject(entry), ND_ENTRY_TRAILING, null);
+            gtk.Entry.setIconFromIconName(entry, .secondary, null);
+            gtk.Entry.setIconTooltipText(entry, .secondary, null);
+            // A search-dressed entry gets its clear button back.
+            if (gtk.Widget.hasCssClass(entry.as(gtk.Widget), "search") != 0) cbEntryClearVisible(asObject(entry), null);
+        } else {
+            gobject.Object.setData(asObject(entry), ND_ENTRY_TRAILING, @ptrFromInt(1));
+            gtk.Entry.setIconFromIconName(entry, .secondary, ndicons.symbolic(dupeZ(name)));
+            gtk.Entry.setIconActivatable(entry, .secondary, 1);
+            gtk.Entry.setIconSensitive(entry, .secondary, 1);
+        }
+    }
+    if (!ndEntryHasTrailingIcon(entry)) return;
+    const tip = propStr(props, "trailingIconTooltip") orelse propStr(props, "trailingIconLabel");
+    if (tip) |t| gtk.Entry.setIconTooltipText(entry, .secondary, if (t.len == 0) null else dupeZ(t));
+}
+
+/// The secondary icon's rectangle, for Popover.anchorSlot = "trailingIcon".
+pub fn ndEntryTrailingIconArea(entry: *gtk.Entry, out: *gdk.Rectangle) bool {
+    if (!ndEntryHasTrailingIcon(entry)) return false;
+    return ndEntryIconArea(entry, .secondary, out);
 }
 
 /// backend.zig routes a non-widget node handle's semantic click here.
@@ -1517,8 +1569,9 @@ const ND_POPOVER_ICON_SLOT = "nd-popover-icon-slot";
 /// which is what puts a site-info panel under the padlock instead of under the
 /// middle of the address bar.
 fn ndPopoverApplyAnchorSlot(child: *gtk.Widget, slot: []const u8) void {
-    const want_icon = std.mem.eql(u8, slot, "leadingIcon");
-    gobject.Object.setData(asObject(child), ND_POPOVER_ICON_SLOT, if (want_icon) @ptrFromInt(1) else null);
+    // 1 is the leading icon, 2 the trailing one, null the whole widget.
+    const which: usize = if (std.mem.eql(u8, slot, "leadingIcon")) 1 else if (std.mem.eql(u8, slot, "trailingIcon")) 2 else 0;
+    gobject.Object.setData(asObject(child), ND_POPOVER_ICON_SLOT, if (which == 0) null else @ptrFromInt(which));
     ndPopoverPointAtSlot(child);
 }
 
@@ -1527,11 +1580,18 @@ fn ndPopoverApplyAnchorSlot(child: *gtk.Widget, slot: []const u8) void {
 /// a primary icon, so a popover on any other widget keeps GtkPopover's own
 /// "whole parent" rectangle.
 fn ndPopoverPointAtSlot(child: *gtk.Widget) void {
-    if (gobject.Object.getData(asObject(child), ND_POPOVER_ICON_SLOT) == null) return;
+    const which = @intFromPtr(gobject.Object.getData(asObject(child), ND_POPOVER_ICON_SLOT) orelse return);
     const parent = gtk.Widget.getParent(child) orelse return;
     if (!gobject.ext.isA(parent, gtk.Entry)) return;
+    const entry: *gtk.Entry = @ptrCast(@alignCast(parent));
     var area: gdk.Rectangle = undefined;
-    if (!ndEntryLeadingIconArea(@ptrCast(@alignCast(parent)), &area)) return;
+    const found = if (which == 2) ndEntryTrailingIconArea(entry, &area) else ndEntryLeadingIconArea(entry, &area);
+    if (!found) return;
+    // A popover under a compositor with no seat is never placed, so this line
+    // is the only record of where it points; the header-field gate reads it.
+    std.debug.print("ND_POPOVER_POINTING slot={s} x={d} y={d} w={d} h={d} entryW={d}\n", .{
+        if (which == 2) "trailingIcon" else "leadingIcon", area.f_x, area.f_y, area.f_width, area.f_height, gtk.Widget.getWidth(parent),
+    });
     gtk.Popover.setPointingTo(@ptrCast(@alignCast(child)), &area);
 }
 
@@ -1566,6 +1626,7 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
     gtk.Widget.setHexpand(child, 0);
     gtk.Widget.setVexpand(child, 0);
     ndPopoverEnsureAnchor(child);
+    ndPopoverPointAtSlot(child);
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) ndPopoverOpenWhenRooted(child);
 }
 
@@ -3295,6 +3356,7 @@ fn createWidget(
         if (propStr(props, "placeholder")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(editable, @intFromBool(e));
         ndEntryApplyLeadingIcon(entry, props, dupeZ);
+        ndEntryApplyTrailingIcon(entry, props, dupeZ);
         return entry.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         const view = gtk.TextView.new();
@@ -3519,7 +3581,7 @@ fn createWidget(
         if (propBool(props, "topBarsAutoHide")) |a| ndchrome_gtk.setTopBarsAutoHide(tv.as(gtk.Widget), a);
         return tv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
-        if (propStr(props, "leadingIconName")) |_| {
+        if (propStr(props, "leadingIconName") != null or propStr(props, "trailingIconName") != null) {
             // A leading icon needs GtkEntry's icon API, which GtkSearchEntry
             // does not have; ndEntryDressAsSearch puts the search look and the
             // clear button back (the type choice is create-time).
@@ -3530,6 +3592,7 @@ fn createWidget(
             if (propStr(props, "placeholder")) |p| gtk.Entry.setPlaceholderText(entry, dupeZ(p));
             ndEntryDressAsSearch(entry);
             ndEntryApplyLeadingIcon(entry, props, dupeZ);
+            ndEntryApplyTrailingIcon(entry, props, dupeZ);
             ndNoteSearchInput(entry.as(gtk.Widget));
             return entry.as(gtk.Widget);
         }
@@ -3759,6 +3822,8 @@ fn createWidget(
         const anchor_id: u32 = @intCast(@max(0, propInt(props, "anchor") orelse 0));
         if (anchor_id != 0) gobject.Object.setData(asObject(pop), ND_POPOVER_ANCHOR_ID, @ptrFromInt(anchor_id));
         if (propBool(props, "open") orelse false) gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
+        // Recorded now, pointed once the popover has its anchor (ndPopoverAttach).
+        if (propStr(props, "anchorSlot")) |sl| ndPopoverApplyAnchorSlot(pop.as(gtk.Widget), sl);
         return pop.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Expander")) {
         const ex = gtk.Expander.new(dupeZ(propStr(props, "label") orelse ""));
@@ -3994,6 +4059,9 @@ const nd_resets_TextInput = [_]NdPropReset{
     .{ .key = "leadingIconName", .value = .{ .string = "" } },
     .{ .key = "leadingIconTooltip", .value = .{ .string = "" } },
     .{ .key = "leadingIconLabel", .value = .{ .string = "" } },
+    .{ .key = "trailingIconName", .value = .{ .string = "" } },
+    .{ .key = "trailingIconTooltip", .value = .{ .string = "" } },
+    .{ .key = "trailingIconLabel", .value = .{ .string = "" } },
     .{ .key = "editable", .value = .{ .bool = true } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
@@ -4162,6 +4230,9 @@ const nd_resets_SearchInput = [_]NdPropReset{
     .{ .key = "leadingIconName", .value = .{ .string = "" } },
     .{ .key = "leadingIconTooltip", .value = .{ .string = "" } },
     .{ .key = "leadingIconLabel", .value = .{ .string = "" } },
+    .{ .key = "trailingIconName", .value = .{ .string = "" } },
+    .{ .key = "trailingIconTooltip", .value = .{ .string = "" } },
+    .{ .key = "trailingIconLabel", .value = .{ .string = "" } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -4784,6 +4855,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         } else if (propStr(props, "leadingIconName")) |_| std.debug.print("ND_WARN <textinput> leadingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state instead of dropping the prop\n", .{});
         // "leadingIconTooltip" handled by ndEntryApplyLeadingIcon above (merged).
         // "leadingIconLabel" handled by ndEntryApplyLeadingIcon above (merged).
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            ndEntryApplyTrailingIcon(@ptrCast(@alignCast(widget)), props, dupeZ);
+        } else if (propStr(props, "trailingIconName")) |_| std.debug.print("ND_WARN <textinput> trailingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state, an empty one while hidden\n", .{});
+        // "trailingIconTooltip" handled by ndEntryApplyTrailingIcon above (merged).
+        // "trailingIconLabel" handled by ndEntryApplyTrailingIcon above (merged).
         if (propBool(props, "editable")) |e| gtk.Editable.setEditable(@as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable), @intFromBool(e));
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (propStr(props, "text")) |t| {
@@ -4933,6 +5009,11 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         } else if (propStr(props, "leadingIconName")) |_| std.debug.print("ND_WARN <searchinput> leadingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state instead of dropping the prop\n", .{});
         // "leadingIconTooltip" handled by ndEntryApplyLeadingIcon above (merged).
         // "leadingIconLabel" handled by ndEntryApplyLeadingIcon above (merged).
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            ndEntryApplyTrailingIcon(@ptrCast(@alignCast(widget)), props, dupeZ);
+        } else if (propStr(props, "trailingIconName")) |_| std.debug.print("ND_WARN <searchinput> trailingIconName only takes effect when it is set at mount (GtkSearchEntry has no icon slot); pass a name for every state, an empty one while hidden\n", .{});
+        // "trailingIconTooltip" handled by ndEntryApplyTrailingIcon above (merged).
+        // "trailingIconLabel" handled by ndEntryApplyTrailingIcon above (merged).
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         {
             const box: *gtk.ListBox = @ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?));
@@ -5293,6 +5374,13 @@ fn cbEntryIconPress(entry: *gtk.Entry, pos: gtk.EntryIconPosition, data: ?*anyop
     if (emit) |f| f(node_id, "leadingIconClicked", .{});
 }
 
+fn cbEntryTrailingIconPress(entry: *gtk.Entry, pos: gtk.EntryIconPosition, data: ?*anyopaque) callconv(.c) void {
+    // The secondary slot is the clear button unless the app set its own icon.
+    if (pos != .secondary or !ndEntryHasTrailingIcon(entry)) return;
+    const node_id: u32 = @intCast(@intFromPtr(data));
+    if (emit) |f| f(node_id, "trailingIconClicked", .{});
+}
+
 fn cbBufferChanged(obj: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const node_id: u32 = @intCast(@intFromPtr(data));
     const buf: *gtk.TextBuffer = @ptrCast(@alignCast(obj));
@@ -5523,6 +5611,9 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         if (gobject.ext.isA(widget, gtk.Entry)) {
             _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryIconPress), data, null, .{});
         }
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryTrailingIconPress), data, null, .{});
+        }
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         const obj_TextArea_changed = asObject(gtk.TextView.getBuffer(@ptrCast(@alignCast(scrolledWindowInner(@ptrCast(@alignCast(widget))).?))));
         const hid_TextArea_changed = gobject.signalConnectData(obj_TextArea_changed, "changed", @ptrCast(&cbBufferChanged), data, null, .{});
@@ -5566,6 +5657,9 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
         _ = hid_SearchInput_activate;
         if (gobject.ext.isA(widget, gtk.Entry)) {
             _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryIconPress), data, null, .{});
+        }
+        if (gobject.ext.isA(widget, gtk.Entry)) {
+            _ = gobject.signalConnectData(asObject(widget), "icon-press", @ptrCast(&cbEntryTrailingIconPress), data, null, .{});
         }
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         const obj_SourceList_selectionChanged = asObject(scrolledWindowInner(@ptrCast(@alignCast(widget))).?);

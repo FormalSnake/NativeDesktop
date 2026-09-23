@@ -135,6 +135,9 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `leadingIconName` | string | none | createAndUpdate |
 | `leadingIconTooltip` | string | none | createAndUpdate |
 | `leadingIconLabel` | string | none | createAndUpdate |
+| `trailingIconName` | string | none | createAndUpdate |
+| `trailingIconTooltip` | string | none | createAndUpdate |
+| `trailingIconLabel` | string | none | createAndUpdate |
 | `editable` | bool | true | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
@@ -148,12 +151,13 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
 | `leadingIconClicked` | `onLeadingIconClicked` | none |
+| `trailingIconClicked` | `onTrailingIconClicked` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
 ## TextArea (`<textarea>`)
 
@@ -534,6 +538,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `chromeDialog` | `onChromeDialog` | data |
 | `permissionRequest` | `onPermissionRequest` | data |
 | `permissionRequestDismissed` | `onPermissionRequestDismissed` | data |
+| `zoomChanged` | `onZoomChanged` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
@@ -681,6 +686,9 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `leadingIconName` | string | none | createAndUpdate |
 | `leadingIconTooltip` | string | none | createAndUpdate |
 | `leadingIconLabel` | string | none | createAndUpdate |
+| `trailingIconName` | string | none | createAndUpdate |
+| `trailingIconTooltip` | string | none | createAndUpdate |
+| `trailingIconLabel` | string | none | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -693,12 +701,13 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `changed` | `onChanged` | text |
 | `activate` | `onActivate` | text |
 | `leadingIconClicked` | `onLeadingIconClicked` | none |
+| `trailingIconClicked` | `onTrailingIconClicked` | none |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
 ## SourceList (`<sourcelist>`)
 
@@ -1203,7 +1212,7 @@ Automation role: `popover`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `anchor` | int | 0 | createAndUpdate |
-| `anchorSlot` | widget \| leadingIcon | widget | createAndUpdate |
+| `anchorSlot` | widget \| leadingIcon \| trailingIcon | widget | createAndUpdate |
 | `open` | bool | false | createAndUpdate |
 | `position` | top \| bottom \| left \| right | top | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |

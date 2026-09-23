@@ -79,9 +79,10 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         if treeParent === parent { treeParent = nil }
     }
 
-    /// `anchorSlot`: "leadingIcon" points the popover at the anchor field's
-    /// leading icon (the padlock) rather than at the whole field, so a
-    /// site-info panel opens under the glyph the user clicked.
+    /// `anchorSlot`: "leadingIcon" or "trailingIcon" points the popover at
+    /// that icon of the anchor field (the padlock, the zoom magnifier) rather
+    /// than at the whole field, so a panel opens under the glyph the user
+    /// clicked.
     var anchorSlot = "widget"
 
     func applyAnchor(_ nodeID: UInt32) {
@@ -135,7 +136,12 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
                 return
             }
             sizeContent()
-            let rect = (anchorSlot == "leadingIcon" ? ndLeadingIconRect(of: anchor) : nil) ?? anchor.bounds
+            let slotRect: NSRect? = switch anchorSlot {
+            case "leadingIcon": ndLeadingIconRect(of: anchor)
+            case "trailingIcon": ndTrailingIconRect(of: anchor)
+            default: nil
+            }
+            let rect = slotRect ?? anchor.bounds
             let (kept, view) = keptInWindow(rect, of: anchor)
             if view !== anchor, position == "top" || position == "bottom", let window = anchor.window {
                 let onScreen = window.convertToScreen(anchor.convert(rect, to: nil))

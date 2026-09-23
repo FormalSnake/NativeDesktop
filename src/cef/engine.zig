@@ -323,7 +323,20 @@ fn writeStartupPrefs(ctx: [*c]c.cef_request_context_t) void {
     }
     tr("startupPrefs session.restore_on_startup=5", .{});
     writeBoolPref(ctx, "download_bubble.partial_view_enabled", false);
+    for (bubble_prefs) |key| writeBoolPref(ctx, key, false);
 }
+
+/// Features that raise a Chrome bubble from the page itself, anchored to a
+/// location bar this embedding does not have: the password manager (save and
+/// update password; password extensions fill without it), autofill saving
+/// (save card, save address) and translate. BUBBLES.md has the full table.
+const bubble_prefs = [_][]const u8{
+    "credentials_enable_service",
+    "credentials_enable_autosignin",
+    "autofill.profile_enabled",
+    "autofill.credit_card_enabled",
+    "translate.enabled",
+};
 
 /// Chrome style pops its download bubble whenever a download it runs
 /// finishes, anchored to a toolbar this embedding does not have; the app's own
@@ -1478,6 +1491,9 @@ const View = struct {
     /// released with it. Every CDP call goes through it, and re-deriving it per
     /// call would churn a reference on whichever thread happened to ask.
     host: std.atomic.Value(usize) = .init(0),
+    /// The zoom level (CEF's log scale) last reported as `zoomChanged`. CEF UI
+    /// thread only.
+    reported_zoom: f64 = 0,
 
     // GTK thread only from here down.
     container: x11.Window = 0,
@@ -2970,6 +2986,7 @@ fn onChromeCommand(
     // this engine's to do, and doing it here is what makes the shortcut the
     // toggle the docs describe.
     const view = CommandObj.of(self).payload;
+    if (serveZoomCommand(view, command_id)) return 1;
     if (isDevToolsToggle(command_id) and view.devtools_window.load(.acquire) != 0) {
         closeDockedDevTools(view);
         return 1;
@@ -3121,6 +3138,94 @@ fn isChromeToolbarButtonVisible(
     _: c.cef_chrome_toolbar_button_type_t,
 ) callconv(.c) c_int {
     return 0;
+}
+
+// ============================================================================
+// Page zoom reported to the app
+// ============================================================================
+//
+// Every zoom change in Chrome style raises Chrome's zoom bubble, anchored to
+// the location bar's zoom icon. This browser has no location bar, so the bubble
+// comes up anchored to nothing, over the page. The app draws its own indicator
+// from `zoomChanged`, so every zoom change goes through this engine: the chords
+// and ctrl+wheel arrive as IDC_ZOOM_* commands and are served here, and the
+// level is read back and reported.
+//
+// On Linux the bubble is not a window of its own: Views draws it inside the
+// browser's X window, at the view's top right, so nothing here can take it
+// away. It closes itself after 1.5s. docs/webview.md lists it as a known gap;
+// on macOS it is a window, and NDCefZoom.swift closes it.
+
+const ZoomTask = struct {
+    view: *View,
+    host: *c.cef_browser_host_t,
+    command: ?c.cef_zoom_command_t = null,
+    level: ?f64 = null,
+    source: []const u8,
+};
+const ZoomObj = ref.Counted(c.cef_task_t, ZoomTask);
+
+const zoom_commands = [_]struct { idc: [*:0]const u8, command: c.cef_zoom_command_t }{
+    .{ .idc = "IDC_ZOOM_PLUS", .command = c.CEF_ZOOM_COMMAND_IN },
+    .{ .idc = "IDC_ZOOM_MINUS", .command = c.CEF_ZOOM_COMMAND_OUT },
+    .{ .idc = "IDC_ZOOM_NORMAL", .command = c.CEF_ZOOM_COMMAND_RESET },
+};
+var zoom_command_ids: ?[zoom_commands.len]c_int = null;
+
+/// CEF UI thread. `host.zoom` steps through the preset levels Chrome's own
+/// command uses, so a chord lands where it would in Chrome.
+fn serveZoomCommand(view: *View, command_id: c_int) bool {
+    if (zoom_command_ids == null) {
+        const api = loader.loaded() orelse return false;
+        var ids: [zoom_commands.len]c_int = undefined;
+        for (zoom_commands, 0..) |entry, i| ids[i] = api.id_for_command_id_name(entry.idc);
+        zoom_command_ids = ids;
+    }
+    for (zoom_command_ids.?, 0..) |id, i| {
+        if (id < 0 or id != command_id) continue;
+        const host = hostOf(view) orelse return true;
+        changeZoom(.{ .view = view, .host = host, .command = zoom_commands[i].command, .source = "page" });
+        return true;
+    }
+    return false;
+}
+
+/// The zoom calls run on the CEF UI thread so the level can be read back in
+/// the same step; `setZoom` arrives on the GTK one.
+fn postZoomChange(task: ZoomTask) void {
+    const api = loader.loaded() orelse return;
+    if (api.currently_on(c.TID_UI) != 0) return changeZoom(task);
+    const obj = ZoomObj.create(task) orelse return;
+    obj.cef.execute = &runZoomTask;
+    if (api.post_task(c.TID_UI, obj.handOut()) == 0) obj.drop();
+    obj.drop();
+}
+
+fn runZoomTask(self: [*c]c.cef_task_t) callconv(.c) void {
+    changeZoom(ZoomObj.of(self).payload);
+}
+
+/// CEF UI thread.
+fn changeZoom(task: ZoomTask) void {
+    if (task.command) |step| {
+        if (task.host.zoom) |zoom| zoom(task.host, step);
+    } else if (task.level) |level| {
+        if (task.host.set_zoom_level) |set| set(task.host, level);
+    }
+    reportZoom(task.view, task.source);
+}
+
+/// CEF UI thread. Emits `zoomChanged` when the level differs from the one last
+/// reported.
+fn reportZoom(view: *View, source: []const u8) void {
+    const host = hostOf(view) orelse return;
+    const get = host.get_zoom_level orelse return;
+    const level = get(host);
+    if (@abs(level - view.reported_zoom) < 1e-6) return;
+    view.reported_zoom = level;
+    const factor = @round(std.math.pow(f64, 1.2, level) * 1000) / 1000;
+    tr("zoomChanged node={d} factor={d} source={s}", .{ view.node_id, factor, source });
+    post(.{ .view = view, .name = "zoomChanged", .number = factor, .text = alloc.dupe(u8, source) catch null });
 }
 
 // ============================================================================
@@ -3372,6 +3477,8 @@ fn onLoadingStateChange(
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     const view = LoadObj.of(self).payload;
+    // Chromium restores a host's saved zoom level when a page of it commits.
+    if (is_loading == 0) reportZoom(view, "navigation");
     post(.{ .view = view, .name = "loadingChanged", .flag = is_loading != 0 });
     post(.{ .view = view, .name = "backAvailable", .flag = can_go_back != 0 });
     post(.{ .view = view, .name = "forwardAvailable", .flag = can_go_forward != 0 });
@@ -3819,6 +3926,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;
         f(view.node_id, "browserCommand", .{ .text = text });
+    } else if (std.mem.eql(u8, box.name, "zoomChanged")) {
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "factor", .{ .float = box.number }) catch return 0;
+        payload.put(alloc, "source", .{ .string = box.text orelse "app" }) catch return 0;
+        f(view.node_id, "zoomChanged", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "loadProgress")) {
         f(view.node_id, "loadProgress", .{ .value = box.number });
     } else if (std.mem.eql(u8, box.name, "loadingChanged")) {
@@ -6354,7 +6467,6 @@ fn cmdSetMuted(view: *View, arg: ?std.json.Value) void {
 
 fn cmdSetZoom(view: *View, arg: ?std.json.Value) void {
     const host = hostOf(view) orelse return;
-    const set_zoom = host.set_zoom_level orelse return;
     const factor: f64 = switch (arg orelse return) {
         .float => |x| x,
         .integer => |x| @floatFromInt(x),
@@ -6365,7 +6477,7 @@ fn cmdSetZoom(view: *View, arg: ?std.json.Value) void {
     };
     if (factor <= 0) return;
     // CEF's zoom level is logarithmic (0 is 100%), the prop is a linear factor.
-    set_zoom(host, std.math.log2(factor) / std.math.log2(1.2));
+    postZoomChange(.{ .view = view, .host = host, .level = std.math.log2(factor) / std.math.log2(1.2), .source = "app" });
 }
 
 /// A live view's user agent is a CDP override: the request context's own

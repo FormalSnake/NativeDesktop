@@ -1030,6 +1030,7 @@ extension NDCefHandlerBox {
         guard let command else { return }
         command.pointee.on_chrome_command = { selfPointer, browser, commandID, _ in
             nd_cef_ref_release(browser)
+            if ndCefServeZoomCommand(selfPointer, commandID) { return 1 }
             if ndCefAllowedChromeCommands.contains(commandID) { return 0 }
             let routed = ndCefRoutedChromeCommands[commandID]
             ndCefDeliver(selfPointer) { view in

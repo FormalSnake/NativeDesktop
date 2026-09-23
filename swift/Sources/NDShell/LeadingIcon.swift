@@ -42,12 +42,14 @@ final class NDLeadingIconButton: NSButton {
 /// `NSTextFieldCell` that leaves room at the leading edge for the icon button.
 final class NDTextFieldCell: NSTextFieldCell {
     var ndLeadingInset: CGFloat = 0
+    /// Room for the trailing icon (TrailingIcon.swift).
+    var ndTrailingInset: CGFloat = 0
 
     private func inset(_ rect: NSRect) -> NSRect {
-        guard ndLeadingInset > 0 else { return rect }
+        guard ndLeadingInset > 0 || ndTrailingInset > 0 else { return rect }
         var r = rect
         r.origin.x += ndLeadingInset
-        r.size.width = max(0, r.size.width - ndLeadingInset)
+        r.size.width = max(0, r.size.width - ndLeadingInset - ndTrailingInset)
         return r
     }
 
@@ -173,8 +175,11 @@ func ndLeadingIconConnect(_ view: NSView, nodeID: UInt32) {
 /// app can open the same panel from a keyboard shortcut and a gate can reach
 /// the icon without a pointer.
 func ndEntryCommand(_ view: NSView, _ command: String) {
-    guard command == "activateLeadingIcon" else { return }
-    ndLeadingIconButton(of: view)?.performClick(nil)
+    switch command {
+    case "activateLeadingIcon": ndLeadingIconButton(of: view)?.performClick(nil)
+    case "activateTrailingIcon": ndTrailingIconButton(of: view)?.performClick(nil)
+    default: break
+    }
 }
 
 func ndLeadingIconAdoptNodeID(_ field: NSTextField) {

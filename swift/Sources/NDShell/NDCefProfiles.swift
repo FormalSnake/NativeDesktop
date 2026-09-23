@@ -41,8 +41,9 @@ enum NDCefProfiles {
     /// Chrome style pops its download bubble (and the download-started
     /// animation) whenever a download it runs finishes, anchored to a toolbar
     /// this embedding does not have, so it lands as a window of its own. The
-    /// app's own panel reports downloads instead. Written once per context,
-    /// from the first browser created in it, on the UI thread.
+    /// app's own panel reports downloads instead. The same goes for the
+    /// bubbles in `ndCefBubblePrefs`. Written once per context, from the first
+    /// browser created in it, on the UI thread.
     static func writePrefs(for browser: UnsafeMutablePointer<cef_browser_t>) {
         guard let host = browser.pointee.get_host?(browser) else { return }
         defer { nd_cef_ref_release(host) }
@@ -54,7 +55,7 @@ enum NDCefProfiles {
         // which is harmless.
         guard !prefsWritten.contains(key) else { return }
         prefsWritten.insert(key)
-        for name in ["download_bubble.partial_view_enabled"] {
+        for name in ["download_bubble.partial_view_enabled"] + ndCefBubblePrefs {
             guard let value = nd_cef_value_create() else { continue }
             _ = value.pointee.set_bool?(value, 0)
             var pref = cef_string_t()

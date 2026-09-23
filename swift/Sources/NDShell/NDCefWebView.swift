@@ -88,6 +88,8 @@ final class NDCefWebView: NSView {
     var lastMenuHit = NDContextMenuHit()
     var lastHoveredLink = ""
     var pendingFindText = ""
+    /// The zoom level (CEF's log scale) last reported as `zoomChanged`.
+    var reportedZoomLevel: Double = 0
     /// The app's context-menu items keyed by the command id they were given.
     /// CEF reserves MENU_ID_USER_FIRST upward for the client, so nothing here
     /// can collide with Chromium's own commands.
@@ -592,9 +594,8 @@ final class NDCefWebView: NSView {
 
     /// CEF zoom is a log scale around 1.0; the widget's factor is linear.
     private func setZoom(_ factor: Double) {
-        guard factor > 0, let browserHost = browserHost() else { return }
-        defer { nd_cef_ref_release(browserHost) }
-        browserHost.pointee.set_zoom_level?(browserHost, log(factor) / log(1.2))
+        guard factor > 0 else { return }
+        ndChangeZoom(source: "app") { $0.pointee.set_zoom_level?($0, log(factor) / log(1.2)) }
     }
 
     // MARK: - Find
@@ -1012,7 +1013,10 @@ final class NDCefHandlerBox {
             ndCefDeliver(selfPointer) { view in
                 view?.retryDeferredLoad()
                 view?.updateLoadState(loading: loading, canGoBack: back, canGoForward: forward)
-                if !loading { view?.didFinishLoad() }
+                if !loading {
+                    view?.didFinishLoad()
+                    view?.ndReportZoom(source: "navigation")
+                }
             }
         }
         // The initial blank document starting to load is the earliest point a

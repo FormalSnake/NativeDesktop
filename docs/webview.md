@@ -363,6 +363,20 @@ a synthesized cookie never matches.
 `setZoom` takes a number, the page zoom factor. `setUserAgent` takes a string,
 and an empty string restores the engine default.
 
+`zoomChanged` carries `{ data: { factor, source } }` whenever the page's zoom
+factor changes on the Chromium engine. `source` is `"app"` for `setZoom`,
+`"page"` for a zoom chord (ctrl or cmd with `+`, `-`, `0`) or ctrl+wheel inside
+the page, which the engine serves itself with Chrome's preset steps, and
+`"navigation"` when Chromium restores a level it saved for the host. It exists
+because Chrome style would otherwise answer every zoom change with its own zoom
+bubble, anchored to a location bar this embedding does not have: an app shows
+its own indicator from this event (a trailing icon in the address field, see
+`trailingIconName`). On macOS the bubble is a window of its own and the engine
+closes it the moment it appears. On Linux Views draws it inside the browser's X
+window, at the view's top right, where nothing can reach it; it closes itself
+after 1.5s. That is a known gap. A trackpad pinch is page scale, not zoom, and
+reports nothing.
+
 `openDevTools` opens the WebKit inspector window on GTK. macOS has no
 programmatic open, so it sets `isInspectable` and the inspector attaches through
 Safari's Develop menu.
@@ -604,6 +618,14 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   reports it to the app as `chromeDialog`
   with `{x, y, width, height}`. The dialog is still Chrome's, drawn by Views, but
   it lands on the app's content instead of wherever Views put it.
+- Chrome's bubbles anchor to the location bar, the toolbar or the tab strip, none
+  of which exist here, so each would come up over the page. The command handler
+  refuses the shortcuts that raise one (find, bookmark, tab search, reading
+  list, send tab, QR code, sharing, install as app, translate, manage passwords,
+  the avatar menu), and each page browser's profile has Chrome's password
+  manager, autofill saving and translate switched off, which are the bubbles a
+  page raises by itself. Zoom is reported instead (`zoomChanged`). BUBBLES.md at
+  the repo root is the full table, including the ones still drawn by Chromium.
 - The kept browser is closed first by `closeBrowsersInOrder`, before the views
   and before `cef_shutdown`. Left for CEF's own teardown to unwind, with the
   post-install dialog still anchored to it, it took the host down on the way out

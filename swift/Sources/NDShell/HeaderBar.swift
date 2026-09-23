@@ -312,6 +312,7 @@ final class NDSearchField: NSSearchField {
     override func layout() {
         super.layout()
         ndLayoutLeadingIcon(self)
+        ndLayoutTrailingIcon(self)
     }
 }
 

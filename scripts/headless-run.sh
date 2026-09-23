@@ -72,7 +72,7 @@ grep -q "ND_COMMIT_APPLIED" "$LOG" || { echo "FAIL: no commit applied"; tail -40
 SOCK=$(grep -m1 "ND_AUTOMATION_LISTENING" "$LOG" | sed 's/.*path=//')
 
 DRIVE_LOG="$XDG_RUNTIME_DIR/drive-$TAG.log"
-ND_BACKEND=gtk ND_AUTOMATION_SOCKET="$SOCK" bun "$DRIVE" >"$DRIVE_LOG" 2>&1 \
+ND_BACKEND=gtk ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_LOG="$LOG" bun "$DRIVE" >"$DRIVE_LOG" 2>&1 \
   || { echo "FAIL: driver"; cat "$DRIVE_LOG"; tail -60 "$LOG"; exit 1; }
 cat "$DRIVE_LOG"
 grep -q "$MARKER" "$DRIVE_LOG" || { echo "FAIL: driver did not report $MARKER"; exit 1; }

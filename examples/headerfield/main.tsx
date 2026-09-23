@@ -3,7 +3,8 @@ import type { NdNodeRef } from "@nativedesktop/react";
 
 // The browser-toolbar shape: nav buttons at the start, an address field that
 // takes the whole run between the packs, actions at the end, and a site-info
-// padlock INSIDE the field opening a popover anchored to the icon itself.
+// padlock INSIDE the field opening a popover anchored to the icon itself, and
+// a zoom magnifier at the field's trailing end doing the same.
 // Driven by scripts/headerfield-drive.ts on both backends.
 
 function App(): React.ReactNode {
@@ -11,6 +12,9 @@ function App(): React.ReactNode {
   const [url, setUrl] = useState("example.com");
   const [icons, setIcons] = useState(0);
   const [info, setInfo] = useState(false);
+  const [zoomed, setZoomed] = useState(true);
+  const [trailing, setTrailing] = useState(0);
+  const [zoom, setZoom] = useState(false);
 
   return (
     <window title="ND Header Field" defaultWidth={1100} defaultHeight={420}>
@@ -41,6 +45,14 @@ function App(): React.ReactNode {
               setIcons((n) => n + 1);
               setInfo(true);
             }}
+            trailingIconName={zoomed ? "zoom-in-symbolic" : ""}
+            trailingIconTooltip="Zoom: 125%"
+            trailingIconLabel="Page zoom"
+            onTrailingIconClicked={() => {
+              setTrailing((n) => n + 1);
+              setInfo(false);
+              setZoom(true);
+            }}
           />
           <button slot="end" testID="end-menu" iconName="open-menu-symbolic" />
           <button slot="end" testID="end-add" iconName="list-add-symbolic" />
@@ -48,6 +60,7 @@ function App(): React.ReactNode {
         <box orientation="vertical" spacing={8} style={{ padding: 16 }}>
           <label testID="url-label" text={url} />
           <label testID="icon-count" text={`icon clicks: ${icons}`} />
+          <label testID="trailing-count" text={`trailing clicks: ${trailing}`} />
           {/* The icon is not a widget of its own on either backend, so this is
               how an app (and the gate on GTK, where GTK4 refuses synthesized
               input) reaches it without a pointer. */}
@@ -58,6 +71,14 @@ function App(): React.ReactNode {
               if (field.current) sendCommand(field.current, "activateLeadingIcon");
             }}
           />
+          <button
+            testID="fire-trailing"
+            label="Open zoom"
+            onClick={() => {
+              if (field.current) sendCommand(field.current, "activateTrailingIcon");
+            }}
+          />
+          <button testID="toggle-trailing" label="Toggle zoom icon" onClick={() => setZoomed((z) => !z)} />
         </box>
       </toolbarview>
       {createPortal(
@@ -71,6 +92,20 @@ function App(): React.ReactNode {
         >
           <box testID="site-info-body" orientation="vertical" spacing={8}>
             <label testID="site-info-label" text="Connection is secure" />
+          </box>
+        </popover>,
+      )}
+      {createPortal(
+        <popover
+          testID="zoom"
+          anchorRef={field}
+          anchorSlot="trailingIcon"
+          open={zoom}
+          position="bottom"
+          onClosed={() => setZoom(false)}
+        >
+          <box testID="zoom-body" orientation="horizontal" spacing={8}>
+            <label testID="zoom-label" text="125%" />
           </box>
         </popover>,
       )}
