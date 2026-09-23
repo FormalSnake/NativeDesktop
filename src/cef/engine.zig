@@ -1878,13 +1878,18 @@ fn syncBrowserFocus(view: *View) void {
     const cef_window = view.cef_window.load(.acquire);
     if (mine and active) {
         if (cef_window != 0) x11.focus(@intCast(cef_window));
-    } else if (view.page_focused or (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window)))) {
+    } else if (active and (view.page_focused or (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))))) {
         // Back to the app, and only from the view that is holding the
         // keyboard: the others share this toplevel and would take it off
         // whichever one has it. `page_focused` as well as the X comparison,
         // because Chromium can move input focus below the window this engine
         // reparented, and the comparison then answers false while the keyboard
         // is very much the page's.
+        //
+        // Only in the active window: returning focus activates the toplevel,
+        // and a page in a window that just lost to another one would take the
+        // activation straight back. Two windows with a page each did that
+        // 1.2 million times in one engine gate run and starved GTK of layout.
         returnFocusToApp(view);
     }
     const host = hostOf(view) orelse return;
