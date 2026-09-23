@@ -4434,7 +4434,6 @@ const nd_resets_CommandPalette = [_]NdPropReset{
     .{ .key = "placeholder", .value = .{ .string = "" } },
     .{ .key = "query", .value = .{ .string = "" } },
     .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
-    .{ .key = "highlightFirst", .value = .{ .bool = true } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },

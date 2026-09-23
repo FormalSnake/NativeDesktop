@@ -8848,8 +8848,6 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let q = propStr(props, "query") { ndCommandPaletteApplyQuery(view, q) }\n';
     } else if (w.name === "CommandPalette" && p.name === "items") {
       out += '        if let raw = propObjArray(props, "items") { ndCommandPaletteApplyItems(view, raw) }\n';
-    } else if (w.name === "CommandPalette" && p.name === "highlightFirst") {
-      out += '        if let h = propBool(props, "highlightFirst") { ndCommandPaletteApplyHighlightFirst(view, h) }\n';
     } else if (w.name === "CommandPalette" && p.name === "open") {
       out += '        if let o = propBool(props, "open") { ndCommandPaletteApplyOpen(view, o) }\n';
     } else if (w.name === "RichText" && p.name === "markdown") {

@@ -106,7 +106,7 @@
     },
     {
       "name": "CommandPaletteItem",
-      "doc": "CommandPalette result row, drawn on one line: leading icon, title, subtitle in secondary text after it, and `hint` right-aligned (the action Enter takes on the row, e.g. \"Switch to Tab\", or a shortcut). `id` is echoed in onActivate. `iconData` (a data: URL or bare base64 image, e.g. a favicon) wins over `iconName`. `completion` on the FIRST row is inline autocompletion: when it starts with what the user typed (case-insensitively) and their last edit inserted text, the field shows the rest of it selected after the caret; Tab or Right accepts it (queryChanged then carries the whole text), typing replaces it, Backspace removes it, after which Enter on that row submits the typed text instead of activating the row. `submit` carries the field as shown, a completion included (Return accepts it); Cmd/Ctrl+Return submits only what was typed. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders.",
+      "doc": "CommandPalette result row, drawn on one line: leading icon, title, subtitle in secondary text after it, and `hint` right-aligned (the action Enter takes on the row, e.g. \"Switch to Tab\", or a shortcut). `id` is echoed in onActivate. `iconData` (a data: URL or bare base64 image, e.g. a favicon) wins over `iconName`. `completion` on the FIRST row is inline autocompletion: when it starts with what the user typed (case-insensitively) and their last edit inserted text, the field shows the rest of it selected after the caret; Tab or Right accepts it (queryChanged then carries the whole text), typing replaces it, Backspace removes it, after which Enter on that row submits the typed text instead of activating the row. The app supplies rows already filtered and ordered; the widget renders them in order and never filters or reorders.",
       "fields": [
         { "name": "id", "type": "string" },
         { "name": "title", "type": "string" },
@@ -1671,7 +1671,6 @@
         { "name": "placeholder", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "query", "type": "string", "default": "", "appliesTo": "createAndUpdate" },
         { "name": "items", "type": "objectList", "itemShape": "CommandPaletteItem", "appliesTo": "createAndUpdate" },
-        { "name": "highlightFirst", "type": "bool", "default": true, "appliesTo": "createAndUpdate", "doc": "Fresh rows highlight the first one, so Enter takes it. False leaves nothing highlighted until an arrow key walks into the list, and Enter submits the field (an address bar)." },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },

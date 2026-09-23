@@ -1992,7 +1992,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "ShareButton": ["label": "", "items": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Terminal": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Paned": ["position": 0.5, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "CommandPalette": ["open": false, "placeholder": "", "query": "", "items": [Any](), "highlightFirst": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "CommandPalette": ["open": false, "placeholder": "", "query": "", "items": [Any](), "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Avatar": ["text": "", "imagePath": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Badge": ["label": "", "variant": "neutral", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Tag": ["label": "", "variant": "neutral", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2300,7 +2300,6 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let ph = propStr(props, "placeholder") { ndCommandPaletteApplyPlaceholder(view, ph) }
         if let q = propStr(props, "query") { ndCommandPaletteApplyQuery(view, q) }
         if let raw = propObjArray(props, "items") { ndCommandPaletteApplyItems(view, raw) }
-        if let h = propBool(props, "highlightFirst") { ndCommandPaletteApplyHighlightFirst(view, h) }
     } else if kind == "Avatar" {
         if let t = propStr(props, "text"), let av = view as? NDAvatarView { av.setText(t) }
         if let ip = propStr(props, "imagePath"), let av = view as? NDAvatarView { av.setImagePath(ip) }

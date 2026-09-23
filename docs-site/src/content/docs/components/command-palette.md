@@ -75,7 +75,6 @@ await render(<App />);
 | `placeholder` | string | none | createAndUpdate | Search field placeholder text. |
 | `query` | string | `""` | createAndUpdate | The search field's text. Controlled: the field never edits itself out from under you, and every present starts from the last `query` you set, not from what was typed into an earlier present. |
 | `items` | `CommandPaletteItem[]` | none | createAndUpdate | The result rows, already filtered, ranked, and ordered by the app. The widget renders them in order and never reorders or filters them. |
-| `highlightFirst` | bool | `true` | createAndUpdate | Fresh rows highlight the first one, so Enter takes it (a picker). `false` leaves nothing highlighted until Down walks into the list, Up from the first row walks back out, and Enter submits the field (an address bar). |
 | `testID` | string | none | meta | Automation identifier. |
 
 `CommandPaletteItem` (`schema/widgets.json`'s shared shape): `{ id: string, title: string,
@@ -94,10 +93,9 @@ too narrow the subtitle truncates first, then the title; the hint never does.
 does. When it starts with the typed text (case-insensitively) and the last edit inserted text, the
 field shows the rest of it selected after the caret. Typing replaces the selection and completes
 again; Backspace removes it and does not bring it back until the next insertion; Tab or Right
-accepts it, and only then does `queryChanged` carry the whole text. Return accepts it too:
-`submit` carries the field as shown, completion included, while Cmd/Ctrl+Return submits only what
-was typed. Enter on a completion row whose completion was removed submits the typed text instead
-of activating the row.
+accepts it, and only then does `queryChanged` carry the whole text. `submit` always carries the
+typed text, never an unaccepted completion, and Enter on a completion row whose completion was
+removed submits instead of activating it.
 
 ## Events
 
@@ -130,22 +128,13 @@ backdrop outside the card.
 
 | | Linux (GTK) | macOS (AppKit) |
 | --- | --- | --- |
-| Surface | A window-sized `AdwDialog` whose sheet is transparent, holding the cards | A scrim over the whole window, toolbar and sidebar included |
-| Search field | A plain `GtkEntry` in its own card | A borderless `NSTextField` in its own card |
-| Results | `GtkListBox` of one-line rows in a second card | `NSTableView` of one-line rows in a second card |
+| Surface | A window-sized `AdwDialog` with a transparent sheet; its scrim dims the window and the 640 px card inside it is centered horizontally with its top edge at 18 percent of the window height | A scrim (black at 15 percent) over the whole window, toolbar and sidebar included, under a 640 pt Liquid Glass card, centered horizontally with its top edge at 18 percent of the window height |
+| Search field | `GtkSearchEntry` | A borderless 20 pt `NSTextField` |
+| Results | `GtkListBox` of one-line rows, 40px | `NSTableView` (inset style), one-line 40 pt rows |
 | Submit shortcut | Ctrl+Return | Cmd+Return or Ctrl+Return |
 
-Both backends draw the same quiet look: two cards 560 wide, 8 apart, on the window's ground colour
-with a hairline edge (the list card only when there are rows), the field's text at 15.5, rows 34
-tall with a 13 title and 12 secondary text, a grey wash (never the accent) on the highlighted row,
-and the window's ground colour at 74 percent as the scrim. The cards are centered horizontally
-with their top edge at 18 percent of the window height, so the field stays put while rows change.
-
-| | Linux (GTK) | macOS (AppKit) |
-| --- | --- | --- |
-| Motion | The scrim and field fade in; the list card fades and scales from 0.98 at its top edge; closing fades out in 120 ms | Same, the list on a spring (response 0.30 s, damping 0.86) |
-
-Reduced motion keeps the fades and drops the scale.
+On both, the field stays put while rows change and the card follows its row count. Neither
+backend animates the open or close: a palette is opened from the keyboard many times a day.
 
 Both backends present the overlay over the application's currently-active window rather than the
 window the `<commandpalette>` node is mounted under, so one palette mounted near the root works
