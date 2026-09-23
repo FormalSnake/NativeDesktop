@@ -17,7 +17,7 @@ trap 'if [ -n "${HOST_PID:-}" ]; then kill -9 "$HOST_PID" 2>/dev/null || true; f
 LOG=$(mktemp)
 NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
   ND_SCRIPT=examples/webview-probe/cef-zoom.tsx "$HOST" \
-  "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
+  "--load-extension=$(pwd)/scripts/fixtures/password-filler" "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 400); do
   grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break

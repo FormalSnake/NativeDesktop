@@ -129,14 +129,37 @@ await leg("setZoom", async () => {
 const page = await waitForTarget(port, (t) => t.type === "page" && t.url.startsWith("http://127.0.0.1"));
 const cdp = await Session.open(page.webSocketDebuggerUrl!);
 const chord = async (key: string, code: string, keyCode: number) => {
-  // Chromium answers an unhandled cmd+= (ctrl+= on Linux) from the page with
-  // IDC_ZOOM_PLUS, exactly as for a real keypress.
-  const base = { modifiers: mac ? 4 : 2, key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+  if (mac) {
+    // A real keypress: Chromium's accelerator table on macOS answers the key
+    // equivalent the window server delivers, not a debugger key event.
+    await app.cursor.click(app.getByTestId("z-view"));
+    await app.cursor.press(`Meta+${key}`);
+    return;
+  }
+  // Chromium answers an unhandled ctrl+= from the page with IDC_ZOOM_PLUS,
+  // exactly as for a real keypress.
+  const base = { modifiers: 2, key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
   await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
 };
 
-await leg("chords", async () => {
+if (mac) {
+  // Chrome on macOS maps the zoom chords through its main menu, which this
+  // embedding does not have: a real Cmd+= in the page reaches nothing, and
+  // the app's own View menu accelerators are what zoom (nativebrowser
+  // scripts/zoom-shots.ts drives that). What has to hold here is that the
+  // chord raises nothing of Chromium's either.
+  await leg("chords", async () => {
+    const since = (await logText()).length;
+    await app.cursor.click(app.getByTestId("z-view"));
+    await app.cursor.press("Meta+=");
+    await Bun.sleep(800);
+    const shown = await label("z-zoom");
+    if (!/changes=1$/.test(shown)) throw new Error(`Cmd+=: the page zoomed with no app accelerator (${shown})`);
+    await noBubble("Cmd+=", since);
+    console.log("  ND_CEF_ZOOM_CHORDS_OK a real Cmd+= in the page raises nothing of Chromium's; zoom chords are the app's menu");
+  });
+} else await leg("chords", async () => {
   let since = (await logText()).length;
   await chord("=", "Equal", 187);
   const up = await zoomTo(/^zoom=1\.75\/page changes=2$/, "ctrl+=");
@@ -168,6 +191,25 @@ if (!mac) {
     console.log(`  ND_CEF_ZOOM_WHEEL_OK ${shown} from ctrl+wheel, no bubble window`);
   });
 }
+
+await leg("extension fills", async () => {
+  // Chrome's password manager is off (the prefs leg), and an extension still
+  // fills a login form: that is the owner's setup with 1Password.
+  const since = (await logText()).length;
+  await cdp.send("Page.navigate", { url: page.url.replace(/\/?$/, "/login") });
+  const value = await poll(async () => {
+    const r = (await cdp.send("Runtime.evaluate", { expression: "document.querySelector('input[type=password]')?.value ?? ''", returnByValue: true })) as { result: { value: string } };
+    return r.result.value;
+  }, (v) => v === "filled-by-extension", { timeoutMs: T }).catch(() => {
+    throw new Error("extension fills: the extension's content script never filled the password field");
+  });
+  await cdp.send("Runtime.evaluate", { expression: "document.getElementById('go').click()" });
+  await Bun.sleep(1500);
+  const fresh = (await logText()).slice(since);
+  if (/chrome surface adopted|chromeDialog node=/.test(fresh)) throw new Error("extension fills: a Chromium surface came up after the sign-in");
+  if (mac && (await smallWindows()).length > 0) throw new Error("extension fills: a bubble-sized window is on screen after the sign-in");
+  console.log(`  ND_CEF_EXTENSION_FILL_OK the extension filled "${value}" and signing in raised no save-password bubble`);
+});
 
 await leg("prefs", async () => {
   // The password manager, autofill saving and translate raise their bubbles

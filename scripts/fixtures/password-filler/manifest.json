@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "ND password filler",
+  "version": "1.0",
+  "description": "Gate fixture: fills a login form the way a password manager extension does, from its service worker.",
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }]
+}

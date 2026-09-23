@@ -28,7 +28,7 @@ trailing icon and its popover anchor).
 
 | Bubble | Raised by | Answer | How |
 | --- | --- | --- | --- |
-| Zoom | Cmd/Ctrl `+` `-` `0`, ctrl+wheel, `setZoom`, an extension's `chrome.tabs.setZoom` | Native | The engine serves `IDC_ZOOM_PLUS/MINUS/NORMAL` itself (Chrome's preset steps) and reports every change as `zoomChanged {factor, source}`. The app shows a magnifier as the address field's trailing icon while zoom is not 100% and a popover under it (minus, value, plus, Reset); a chord or a menu step shows the popover for 1.5s. macOS: the bubble window is closed the moment it appears, before it is placed. **Linux: stopgap**, the bubble is drawn inside the browser's X window at the view's top right, where nothing can reach it (no CEF API, not an X window); it closes itself after 1.5s. A trackpad pinch is page scale and raises nothing. |
+| Zoom | Cmd/Ctrl `+` `-` `0` (on macOS Chrome maps them through its main menu, which this embedding lacks, so there they are the app's own View menu accelerators), ctrl+wheel, `setZoom`, an extension's `chrome.tabs.setZoom` | Native | The engine serves `IDC_ZOOM_PLUS/MINUS/NORMAL` itself (Chrome's preset steps) and reports every change as `zoomChanged {factor, source}`. The app shows a magnifier as the address field's trailing icon while zoom is not 100% and a popover under it (minus, value, plus, Reset); a chord or a menu step shows the popover for 1.5s. macOS: the bubble window is closed the moment it appears, before it is placed. **Linux: blocked on our own CEF build**, see below. A trackpad pinch is page scale and raises nothing. |
 | Find bar | Cmd/Ctrl+F, F3, Cmd/Ctrl+G | Native | The app's own find popover (`findStart`/`findNext`, `findResult`). `IDC_FIND`, `IDC_FIND_NEXT`, `IDC_FIND_PREVIOUS` are refused, so a chord the app did not bind raises nothing. The `no-escape` branch routes them to the app as `browserCommand` instead. |
 | Downloads | a download starting | Native | Owned by the `pages` branch (chrome://downloads and the bubble). The engine already cancels Chrome's download and reports `downloadRequested`. |
 | Save / update password | submitting a login form | Suppressed | Profile preferences `credentials_enable_service` and `credentials_enable_autosignin` off (Chrome's password manager; the owner uses an extension). `IDC_MANAGE_PASSWORDS_FOR_PAGE` refused, and the key icon is hidden. |
@@ -47,6 +47,41 @@ trailing icon and its popover anchor).
 | Bookmark star | Cmd/Ctrl+D (`IDC_BOOKMARK_THIS_TAB`), `IDC_BOOKMARK_ALL_TABS` | Suppressed | Commands refused, star hidden. `no-escape` routes Cmd/Ctrl+D to the app as `browserCommand` `bookmarkPage`. |
 | Tab search | Cmd/Ctrl+Shift+A (`IDC_TAB_SEARCH`) | Suppressed | Command refused; the app's command palette is the native tab search. |
 | Avatar / profile menu | `IDC_SHOW_AVATAR_MENU` | Suppressed | Command refused. |
+
+## Linux zoom bubble: why stock CEF cannot remove it
+
+On Linux Views draws the zoom bubble inside the browser's own X window (no X
+top-level appears, so the window watch never sees it), at the view's top right,
+for 1.5s. Tried, none of them removes it:
+
+- `is_chrome_page_action_icon_visible(CEF_CPAIT_ZOOM)` false (the shipped
+  answer) and true: the bubble does not hang off the icon. `ZoomViewController`
+  shows it from `ToolbarView::ZoomChangedForActiveTab(can_show_bubble)`, which
+  runs with no location bar at all.
+- Preferences: there is no zoom-bubble preference, and Chrome reads the
+  per-host zoom preferences only at profile load
+  (`ChromeZoomLevelPrefs::InitHostZoomMap`), so a zoom cannot be applied
+  through them.
+- The engine's own zoom path: `set_zoom_level` and `zoom` both go through
+  `ZoomController::SetZoomLevel`, which sets `can_show_bubble` from
+  `can_show_bubble_`. That flag defaults to true and only
+  `ZoomController::SetShowsNotificationBubble` (C++) changes it.
+- Zooming without the controller: the only CDP route is
+  `Emulation.setDeviceMetricsOverride`, which emulates a device (layout shrinks
+  to a box in the corner of the view), not a page zoom.
+
+The fix is one call in our own CEF build (already planned for
+`GetChromeToolbarType`): `ZoomController::FromWebContents(contents)->SetShowsNotificationBubble(false)`
+when CEF creates a Chrome-style browser, or a `cef_browser_settings_t` flag
+that does it. Until then the bubble shows for 1.5s after a zoom on Linux, and
+`scripts/cef-zoom-drive.ts` reports it as `ND_CEF_ZOOM_BUBBLE_IN_VIEW`.
+
+## Password manager off, extensions still fill
+
+`scripts/cef-zoom-drive.ts` loads `scripts/fixtures/password-filler`, an
+extension that fills a login form from its service worker the way 1Password's
+does, with Chrome's password manager off, and signs in: the form fills and no
+save-password bubble comes up (`ND_CEF_EXTENSION_FILL_OK`, both platforms).
 
 ## App integration
 

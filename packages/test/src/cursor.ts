@@ -96,6 +96,23 @@ export class Cursor {
     await this.send({ op: "scroll", dx: delta.dx ?? 0, dy: delta.dy ?? 0 });
   }
 
+  /** Presses one key chord on the real keyboard, "Meta+=" or "Control+Shift+t":
+   * whatever has keyboard focus gets it the way it gets a physical key, so a
+   * page, the menu bar and Chromium's accelerators all see it. */
+  async press(chord: string): Promise<void> {
+    const parts = chord.split("+");
+    // "Meta++" is the plus key: an empty trailing part means the separator.
+    const key = (parts.at(-1) === "" ? "+" : parts.at(-1)!).toLowerCase();
+    const modifiers = parts.slice(0, -1).filter((m) => m !== "").map((m) => {
+      const name = MODIFIERS[m.toLowerCase()];
+      if (!name) throw new Error(`app.cursor.press: unknown modifier "${m}" in "${chord}"`);
+      return name;
+    });
+    const keyCode = MAC_KEY_CODES[key];
+    if (keyCode === undefined) throw new Error(`app.cursor.press: no key code for "${key}" in "${chord}"`);
+    await this.send({ op: "key", keyCode, modifiers });
+  }
+
   /** The cursor's current position in global logical points. */
   async position(): Promise<{ x: number; y: number }> {
     const r = await this.send({ op: "position" });
@@ -156,6 +173,20 @@ export class Cursor {
     return JSON.parse(next.value) as Reply;
   }
 }
+
+const MODIFIERS: Record<string, string> = {
+  meta: "command", cmd: "command", command: "command",
+  shift: "shift", alt: "option", option: "option", control: "control", ctrl: "control",
+};
+
+/// macOS virtual key codes (HIToolbox Events.h, ANSI layout).
+const MAC_KEY_CODES: Record<string, number> = {
+  a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9, b: 11, q: 12, w: 13, e: 14, r: 15,
+  y: 16, t: 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "+": 24, "9": 25,
+  "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, o: 31, u: 32, "[": 33, i: 34, p: 35, enter: 36,
+  l: 37, j: 38, "'": 39, k: 40, ";": 41, "\\": 42, ",": 43, "/": 44, n: 45, m: 46, ".": 47,
+  tab: 48, space: 49, "`": 50, backspace: 51, escape: 53, left: 123, right: 124, down: 125, up: 126,
+};
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const decoder = new TextDecoder();

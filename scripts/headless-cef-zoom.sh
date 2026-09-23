@@ -48,7 +48,7 @@ xwininfo -root >/dev/null 2>&1 || { echo "FAIL: no X server on $DISPLAY"; exit 1
 
 LOG="$XDG_RUNTIME_DIR/host-cef-zoom.log"
 ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/cef-zoom.tsx ./zig-out/bin/nd-hello \
-  --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
+  --load-extension="$PWD/scripts/fixtures/password-filler" --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 900); do
   grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break

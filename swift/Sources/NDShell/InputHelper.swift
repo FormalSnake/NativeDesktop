@@ -161,6 +161,29 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
         event.post(tap: .cghidEventTap)
         usleep(gap)
         return ["ok": true]
+    case "key":
+        // A keypress at the HID level, so it reaches whatever has the keyboard
+        // the way a physical key does: a page's own shortcut handling, the
+        // menu bar's key equivalents, Chromium's accelerator table.
+        guard let code = (cmd["keyCode"] as? NSNumber)?.uint16Value else { return ["ok": false, "error": "key needs keyCode"] }
+        var flags: CGEventFlags = []
+        for name in cmd["modifiers"] as? [String] ?? [] {
+            switch name {
+            case "command": flags.insert(.maskCommand)
+            case "shift": flags.insert(.maskShift)
+            case "option": flags.insert(.maskAlternate)
+            case "control": flags.insert(.maskControl)
+            default: break
+            }
+        }
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)
+            else { return ["ok": false, "error": "could not create key event"] }
+            event.flags = flags
+            event.post(tap: .cghidEventTap)
+            usleep(gap)
+        }
+        return ["ok": true]
     default:
         return ["ok": false, "error": "unknown op '\(op)'"]
     }

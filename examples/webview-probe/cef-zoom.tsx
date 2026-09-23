@@ -18,10 +18,21 @@ const PAGE = `<!doctype html>
 </script>
 </body></html>`;
 
+// A login form: the password manager's save bubble would come up when it is
+// submitted, and an extension has to be able to fill it with that manager off.
+const LOGIN = `<!doctype html>
+<html><head><meta charset="utf-8" /><title>ND login</title></head><body>
+<form id="f" action="/" method="get" onsubmit="event.preventDefault(); history.pushState({}, '', '/signed-in'); document.title = 'signed in'">
+<input name="user" autocomplete="username" />
+<input name="password" type="password" autocomplete="current-password" />
+<button id="go">Sign in</button>
+</form></body></html>`;
+
 const fixture = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
-  fetch() {
+  fetch(request) {
+    if (new URL(request.url).pathname === "/login") return new Response(LOGIN, { headers: { "content-type": "text/html; charset=utf-8" } });
     return new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
   },
 });
