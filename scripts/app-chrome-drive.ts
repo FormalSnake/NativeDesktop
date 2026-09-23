@@ -680,6 +680,39 @@ async function focusRequest(label: string): Promise<void> {
   await Bun.sleep(300);
 }
 
+/// The app's own accelerator for its address (Ctrl+L, which is also
+/// Chromium's focus-the-location-bar chord), pressed with the page holding the
+/// keyboard and the pointer left over it. The app moves focus from inside the
+/// accelerator, into its field or into the palette it opens, so this is the
+/// explicit request of `focusRequest` arriving while the key that caused it is
+/// still being delivered to the page.
+async function focusShortcut(label: string): Promise<void> {
+  if (!(await widgetToScreen("omnibox"))) {
+    skip(`${label}.typesIntoTheWidget`, "no omnibox bounding box");
+    return;
+  }
+  const pageAt = await pageToScreen("probe");
+  await page.eval("document.getElementById('probe').value=''; 'reset'");
+  await app.getByTestId("omnibox").fill("nd").catch(() => {});
+  pointerTo(pageAt.x, pageAt.y);
+  click(1);
+  await Bun.sleep(900);
+  const pageBefore = (await metrics()).probe;
+  key("ctrl+l");
+  await Bun.sleep(1600);
+  typeText("SHORTCUT");
+  await Bun.sleep(900);
+  const fieldAfter = await addressText();
+  const pageAfter = (await metrics()).probe;
+  check(
+    `${label}.typesIntoTheWidget`,
+    fieldAfter.includes("SHORTCUT") && pageAfter === pageBefore,
+    `field "nd" -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfter)}`,
+  );
+  key("Escape");
+  await Bun.sleep(300);
+}
+
 /// The debugger session has to be on the view that is on screen. Switching
 /// tabs moves which of the app's browsers that is, and a session left on a
 /// parked one reports the park size and sees none of the input the legs send.
@@ -1240,6 +1273,7 @@ if (legs === "focus") {
   }
   await focusRouting("focusRouting");
   await focusRequest("focusRequest");
+  await focusShortcut("focusShortcut");
   finish();
 }
 
@@ -1425,9 +1459,12 @@ if (hasApp) {
 if (hasApp) {
   await focusRequest("focusRequest");
   noStray("focusRequest");
+  await focusShortcut("focusShortcut");
+  noStray("focusShortcut");
 } else {
   skip("focusRequest.holdsTheWidget", "the app under test has no omnibox");
   skip("focusRequest.typesIntoTheWidget", "the app under test has no omnibox");
+  skip("focusShortcut.typesIntoTheWidget", "the app under test has no omnibox");
 }
 
 if (hasApp) {
