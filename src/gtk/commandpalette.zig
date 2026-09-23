@@ -305,7 +305,9 @@ fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8)
     const joined = std.mem.join(alloc, ", ", parts[0..n]) catch null;
     if (joined) |j| {
         defer alloc.free(j);
-        gtk.Accessible.updateProperty(row.as(gtk.Accessible), .label, dupeZ(j).ptr);
+        // Variadic: the -1 ends the property list. Without it GTK reads past
+        // the label into garbage and wedges the main loop.
+        gtk.Accessible.updateProperty(row.as(gtk.Accessible), .label, dupeZ(j).ptr, @as(c_int, -1));
     }
     return row;
 }
@@ -769,6 +771,9 @@ fn layoutJson(state: *State, out: *?[*:0]u8) void {
     var i: c_int = 0;
     while (gtk.ListBox.getRowAtIndex(state.list, i)) |row| : (i += 1) {
         const rg = geoIn(row.as(gtk.Widget), win) orelse continue;
+        // A row built since the last frame has no allocation yet: nothing of
+        // it is drawn, and its labels would read as ellipsized at width 0.
+        if (rg.h == 0) continue;
         if (view) |v| {
             if (rg.y + rg.h <= v.y or rg.y >= v.y + v.h) continue; // scrolled out of the list
         }
