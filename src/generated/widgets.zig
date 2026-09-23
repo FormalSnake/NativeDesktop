@@ -102,6 +102,26 @@ pub fn scrolledWindowInner(sw: *gtk.ScrolledWindow) ?*gtk.Widget {
     return child;
 }
 
+/// show-sidebar for a slot being filled or emptied, never a reveal the user
+/// asked for, so it lands without the spring. The animated path divides its
+/// initial velocity by the sidebar's current width, and a sidebar starved to
+/// 0 px (a window narrower than the content's minimum) turns that into 0/0:
+/// show-progress goes NaN and libadwaita allocates the content
+/// width - (int)NaN, which wraps to INT_MIN + width. The public setter always
+/// animates, so the desktop's animation switch is held off for the one call.
+fn ndSplitViewSetShowSidebar(sv: *adw.OverlaySplitView, show: bool) void {
+    const settings = gtk.Widget.getSettings(sv.as(gtk.Widget));
+    const obj: *gobject.Object = @ptrCast(@alignCast(settings));
+    var was = gobject.ext.Value.newFrom(true);
+    defer gobject.Value.unset(&was);
+    gobject.Object.getProperty(obj, "gtk-enable-animations", &was);
+    var off = gobject.ext.Value.newFrom(false);
+    defer gobject.Value.unset(&off);
+    gobject.Object.setProperty(obj, "gtk-enable-animations", &off);
+    adw.OverlaySplitView.setShowSidebar(sv, @intFromBool(show));
+    gobject.Object.setProperty(obj, "gtk-enable-animations", &was);
+}
+
 /// Returns the lazily-created inner `AdwOverlaySplitView` that hosts a
 /// three-pane SplitView's `list`/`content` panes (M13). `AdwOverlaySplitView`
 /// is strictly two-pane, so the third pane nests a second instance inside the
@@ -127,7 +147,7 @@ fn ndSplitViewInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
     // Same empty-gutter guard as the create arm: show-sidebar defaults TRUE,
     // and a NULL sidebar still allocates min-sidebar-width. The structural
     // arm that fills the slot flips it back on.
-    adw.OverlaySplitView.setShowSidebar(inner, 0);
+    ndSplitViewSetShowSidebar(inner, false);
     if (split_list_widths.get(@intFromPtr(sv))) |lw| {
         if (lw > 0) adw.OverlaySplitView.setSidebarWidthFraction(inner, lw);
     }
@@ -159,7 +179,7 @@ fn ndSplitViewInspectorInner(sv: *adw.OverlaySplitView) *adw.OverlaySplitView {
         host = cur_sv;
     }
     const inner = adw.OverlaySplitView.new();
-    adw.OverlaySplitView.setShowSidebar(inner, 0); // see ndSplitViewInner
+    ndSplitViewSetShowSidebar(inner, false); // see ndSplitViewInner
     adw.OverlaySplitView.setSidebarPosition(inner, .end);
     if (adw.OverlaySplitView.getContent(host)) |cur| {
         // Same detach-before-reattach ref bracket as ndSplitViewInner.
@@ -325,7 +345,12 @@ fn ndButtonApplyIconData(button: *gtk.Button, data: []const u8, dupeZ: *const fn
     } else blk: {
         const box = gtk.Box.new(.horizontal, 6);
         gtk.Box.append(box, img.as(gtk.Widget));
-        gtk.Box.append(box, gtk.Label.new(dupeZ(label)).as(gtk.Widget));
+        const text = gtk.Label.new(dupeZ(label));
+        // can-shrink only reaches the label GtkButton or AdwButtonContent own,
+        // so an ellipsizing button would otherwise have its whole title as
+        // its minimum the moment an icon arrives.
+        if (gtk.Button.getCanShrink(button) != 0) gtk.Label.setEllipsize(text, .end);
+        gtk.Box.append(box, text.as(gtk.Widget));
         break :blk box.as(gtk.Widget);
     };
     ndButtonReplaceContent(button, content);
@@ -3071,6 +3096,13 @@ fn createWidget(
             gtk.Button.setCanShrink(button, 1);
             if (gtk.Button.getChild(button)) |child| {
                 if (gobject.ext.isA(child, adw.ButtonContent)) adw.ButtonContent.setCanShrink(@ptrCast(@alignCast(child)), 1);
+                // iconData ran first and built an image+label box of its own,
+                // whose label can-shrink never reaches.
+                if (gobject.ext.isA(child, gtk.Box)) {
+                    if (gtk.Widget.getLastChild(child)) |last| {
+                        if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setEllipsize(@ptrCast(@alignCast(last)), .end);
+                    }
+                }
             }
         }
         // prominent -> the Adwaita accent treatment (AppKit peer:
@@ -3267,7 +3299,7 @@ fn createWidget(
         // still allocated sidebar-width-fraction clamped up by
         // min-sidebar-width (an empty 180px gutter). The structural arms
         // flip it on when a sidebar child actually lands.
-        adw.OverlaySplitView.setShowSidebar(sv, 0);
+        ndSplitViewSetShowSidebar(sv, false);
         if (propFloat(props, "sidebarWidth")) |sw| {
             if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw);
         }
@@ -5499,17 +5531,17 @@ pub fn appendChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
-                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot
+                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot
             } else if (std.mem.eql(u8, sl, "list")) {
                 const inner = ndSplitViewInner(sv);
                 adw.OverlaySplitView.setSidebar(inner, child);
-                adw.OverlaySplitView.setShowSidebar(inner, 1);
+                ndSplitViewSetShowSidebar(inner, true);
             } else if (std.mem.eql(u8, sl, "inspector")) {
                 // Inspector pane: an end-positioned inner split's sidebar
                 // (AppKit peer: NSSplitViewItem inspector).
                 const inspector = ndSplitViewInspectorInner(sv);
                 adw.OverlaySplitView.setSidebar(inspector, child);
-                adw.OverlaySplitView.setShowSidebar(inspector, 1);
+                ndSplitViewSetShowSidebar(inspector, true);
             } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
@@ -5623,15 +5655,15 @@ pub fn insertBefore(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wi
         if (attached.slot) |sl| {
             if (std.mem.eql(u8, sl, "sidebar")) {
                 adw.OverlaySplitView.setSidebar(sv, child);
-                adw.OverlaySplitView.setShowSidebar(sv, 1); // the create arm hid the empty slot
+                ndSplitViewSetShowSidebar(sv, true); // the create arm hid the empty slot
             } else if (std.mem.eql(u8, sl, "list")) {
                 const inner = ndSplitViewInner(sv);
                 adw.OverlaySplitView.setSidebar(inner, child);
-                adw.OverlaySplitView.setShowSidebar(inner, 1);
+                ndSplitViewSetShowSidebar(inner, true);
             } else if (std.mem.eql(u8, sl, "inspector")) {
                 const inspector = ndSplitViewInspectorInner(sv);
                 adw.OverlaySplitView.setSidebar(inspector, child);
-                adw.OverlaySplitView.setShowSidebar(inspector, 1);
+                ndSplitViewSetShowSidebar(inspector, true);
             } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
         } else adw.OverlaySplitView.setContent(ndSplitViewContentTarget(sv), child);
     } else if (std.mem.eql(u8, parent_kind, "HeaderBar")) {
@@ -5727,7 +5759,7 @@ pub fn removeChild(parent: *gtk.Widget, parent_kind: []const u8, child: *gtk.Wid
         while (true) {
             if (adw.OverlaySplitView.getSidebar(host) == child) {
                 adw.OverlaySplitView.setSidebar(host, null);
-                adw.OverlaySplitView.setShowSidebar(host, 0); // an empty slot still allocates min-sidebar-width
+                ndSplitViewSetShowSidebar(host, false); // an empty slot still allocates min-sidebar-width
                 break;
             }
             const cur = adw.OverlaySplitView.getContent(host) orelse break;
