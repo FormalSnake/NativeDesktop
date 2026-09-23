@@ -21,6 +21,10 @@ func doctorInstructions() -> String {
              the binary path above, select ndshot, and enable its toggle.
           3. Re-run the command -- no restart needed on macOS 14+.
 
+        With SIP disabled, `ndshot doctor --grant` writes the grant straight
+        into the system TCC database instead, keyed to the signing identifier
+        so it survives rebuilds.
+
         The grant is tied to this binary's on-disk path and code signature, not
         to the name "ndshot". Rebuilding via tools/ndshot/build.sh re-signs the
         binary ad hoc under the stable identifier com.nativedesktop.ndshot, so

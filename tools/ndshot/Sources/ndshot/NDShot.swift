@@ -5,9 +5,11 @@ let usageText = """
     Usage: ndshot <command> [options]
 
     Commands:
-      doctor
+      doctor [--grant]
           Report Screen Recording permission state for this binary.
           Exit 0 if granted, 2 if not (grant instructions on stderr).
+          --grant writes the grant into the system TCC database instead
+          (SIP disabled only; runs sqlite3 through sudo).
 
       list
           Enumerate capturable windows, one JSON object per line:
@@ -49,7 +51,7 @@ struct NDShot {
         let code: Int32
         switch command {
         case "doctor":
-            code = await cmdDoctor()
+            code = rest.contains("--grant") ? await cmdGrant() : await cmdDoctor()
         case "list":
             code = await cmdList()
         case "capture":

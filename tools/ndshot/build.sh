@@ -52,6 +52,7 @@ else
   codesign -f -s - -i com.nativedesktop.ndshot "$bin"
   echo "WARNING: identity signing unavailable (locked keychain / no GUI session) — ad-hoc signed." >&2
   echo "WARNING: the Screen Recording grant will break on the next binary change; run" >&2
-  echo "WARNING: tools/ndshot/build.sh once from a normal terminal to get a durable signature." >&2
+  echo "WARNING: tools/ndshot/build.sh once from a normal terminal to get a durable signature," >&2
+  echo "WARNING: or, with SIP disabled, bin/ndshot doctor --grant once." >&2
   echo "ndshot built, ad-hoc signed: $(cd bin && pwd)/ndshot"
 fi

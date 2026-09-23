@@ -185,3 +185,10 @@ interactive, and only the machine's owner can complete it. Grant it via
 System Settings → Privacy & Security → Screen Recording once; the grant then sticks to this binary's
 path and ad hoc signature (see above) across future runs and rebuilds. Do not script around this or
 loop retrying it; `ndshot doctor` exists so an agent can check the state instead of guessing.
+
+**SIP disabled:** `ndshot doctor --grant` skips System Settings and writes the Screen Recording row
+into `/Library/Application Support/com.apple.TCC/TCC.db` itself, through `sudo sqlite3`. It refuses
+unless `csrutil status` reports disabled, since that file is SIP-protected. The row's code
+requirement is `identifier "com.nativedesktop.ndshot"` rather than the cdhash Settings stores for an
+ad hoc binary, so the grant survives rebuilds that change the compiled bytes. Run it once per
+checkout path; the grant is keyed to the binary's path.
