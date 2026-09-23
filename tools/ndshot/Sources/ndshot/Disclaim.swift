@@ -17,6 +17,7 @@ private typealias SetDisclaimFn = @convention(c) (
 ) -> Int32
 
 private let disclaimMarker = "NDSHOT_DISCLAIMED"
+private nonisolated(unsafe) var disclaimedChild: pid_t = 0
 
 /// Re-spawns this exact invocation with the responsibility disclaim set and
 /// exits with the child's status. Returns normally (without re-spawning) when
@@ -45,6 +46,17 @@ func respawnDisclaimedIfNeeded() {
     var pid: pid_t = 0
     guard posix_spawn(&pid, executablePath(), nil, &attr, argv, envp) == 0 else {
         return // spawn failed; run undisclaimed
+    }
+
+    // `timeout` and Ctrl-C signal this parent only; without forwarding, the
+    // child lives on as an orphan still holding its replayd connection.
+    disclaimedChild = pid
+    for sig in [SIGTERM, SIGINT, SIGHUP] {
+        signal(sig) { sig in
+            kill(disclaimedChild, sig)
+            signal(sig, SIG_DFL)
+            raise(sig)
+        }
     }
 
     var status: Int32 = 0

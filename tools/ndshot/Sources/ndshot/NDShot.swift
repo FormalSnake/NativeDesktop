@@ -26,7 +26,10 @@ let usageText = """
           The window is brought forward and made key first, so the capture
           shows its focused state; --no-focus captures it as it is.
           Exit codes: 0 success, 2 no permission, 3 no matching window,
-          4 capture/write failure.
+          4 capture/write failure, 5 ScreenCaptureKit did not answer in 15s.
+
+    One ndshot talks to ScreenCaptureKit at a time; concurrent invocations
+    queue for up to 60s (exit 5 past that).
 
     Examples:
       ndshot doctor
@@ -51,6 +54,10 @@ struct NDShot {
             exit(64)
         }
         let rest = Array(arguments.dropFirst())
+        if ["doctor", "list", "capture"].contains(command) && !rest.contains("--grant") {
+            acquireCaptureLock()
+            armDeadline(command)
+        }
 
         let code: Int32
         switch command {

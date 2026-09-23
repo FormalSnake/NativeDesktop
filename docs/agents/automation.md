@@ -181,7 +181,13 @@ tools/ndshot/bin/ndshot capture --title "ND Notes" --out /tmp/nd.png
 
 Exit codes across all three subcommands: `0` success, `2` no Screen Recording access (grant
 instructions printed to stderr), `3` no window matched the given filters (the candidate window list
-is printed to stderr so an agent can self-correct), `4` capture or PNG-write failure.
+is printed to stderr so an agent can self-correct), `4` capture or PNG-write failure, `5`
+ScreenCaptureKit gave no answer within 15s (or another ndshot held the queue for 60s).
+
+replayd tracks ScreenCaptureKit clients by executable path, so a second ndshot connecting drops
+the first one's in-flight request without ever completing it. ndshot therefore runs one at a time
+(a lock in the per-user temp dir; concurrent invocations queue), and the host's `--nd-capture`
+helpers do the same per host binary.
 
 **One-time grant flow:** the first invocation of `list` or `capture` calls
 `CGRequestScreenCaptureAccess()`, which triggers the system permission prompt. That prompt is

@@ -77,8 +77,13 @@ func probeAccess() async -> Bool {
     do {
         _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         return true
-    } catch {
+    } catch let error as SCStreamError where error.code == .userDeclined {
         return false
+    } catch {
+        // Anything else (replayd refusing a request while a host is still
+        // starting) is not a missing grant; the capture itself reports it.
+        eprint("ndshot: ScreenCaptureKit probe failed: \(error.localizedDescription)")
+        return true
     }
 }
 

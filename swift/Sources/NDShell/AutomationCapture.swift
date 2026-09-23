@@ -136,6 +136,27 @@ func ndCaptureRegionSCK(windowID: CGWindowID, to path: String) async -> Bool {
 
 private typealias NDSetDisclaimFn = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
 
+// replayd keys its clients by executable path: a second helper of the same
+// binary connecting (two hosts screenshotting at once) cancels the first one's
+// connection, and the request in flight on it never completes. ReplayKit
+// reconnects and evicts the other helper in turn. So helpers of one binary take
+// turns, holding the lock until exit; the kernel drops it when the host kills a
+// helper at its deadline.
+private func ndTakeCaptureLock(_ exe: String, waitingUpTo seconds: TimeInterval) -> Bool {
+    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+    for byte in exe.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("nd-capture-\(String(hash, radix: 16)).lock").path
+    let fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+    guard fd >= 0 else { return true }
+    let until = Date().addingTimeInterval(seconds)
+    while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+        if Date() > until { return false }
+        usleep(20_000)
+    }
+    return true
+}
+
 /// Entry point for `NDShell --nd-capture <windowID> <out.png> <WxH> [--region]`,
 /// dispatched from main.swift before any app setup. Exit 0 on a written PNG,
 /// 2 when Screen Recording is not granted or the window is gone, 4 otherwise.
@@ -147,6 +168,11 @@ func ndCaptureHelperMain(_ args: [String]) -> Int32 {
     // SCK asserts in CGS machinery that was never initialised in a process
     // spawned outside a GUI app context.
     _ = CGMainDisplayID()
+    // Exit 4 lets the host retry; its 5s kill bounds the whole helper.
+    if let exe = Bundle.main.executablePath, !ndTakeCaptureLock(exe, waitingUpTo: 3) {
+        FileHandle.standardError.write("ND_SNAPSHOT_SCK another capture helper of this binary is running\n".data(using: .utf8)!)
+        return 4
+    }
     final class Box: @unchecked Sendable { var code: Int32? }
     let box = Box()
     Task.detached {
