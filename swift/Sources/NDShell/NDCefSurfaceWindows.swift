@@ -80,6 +80,12 @@ import CCef
             let key = ObjectIdentifier(window)
             if adopted[key] != nil { continue }
             if anchors.contains(key) || hosts.contains(key) { continue }
+            // A browser window Chrome made for itself is never a surface to
+            // adopt: it is kept off screen, however often Views shows it.
+            if NDCefChromeCreated.owns(window) {
+                if window.isVisible || window.alphaValue > 0 { NDCefChromeCreated.hide(window) }
+                continue
+            }
             guard window.isVisible, window.alphaValue > 0 else { continue }
             if described.insert(key).inserted {
                 owners.first?.traceSurface(

@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "include/capi/cef_app_capi.h"
+#include "include/capi/cef_browser_process_handler_capi.h"
 #include "include/capi/cef_browser_capi.h"
 #include "include/capi/cef_command_handler_capi.h"
 #include "include/capi/cef_command_line_capi.h"
@@ -150,6 +151,10 @@ int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
 /// cef_initialize to be standard, secure and CORS enabled, and no app code has
 /// run by then, so the env var is the only channel that reaches every process.
 cef_app_t *nd_cef_app_create(int browser_process);
+
+/// The client every browser Chrome creates on its own is given (see
+/// get_default_client). NULL leaves those browsers unmanaged.
+void nd_cef_set_default_client(cef_client_t *client);
 
 // MARK: - Refcounting
 

@@ -347,7 +347,35 @@ static int CEF_CALLBACK browser_process_relaunch(cef_browser_process_handler_t *
   return 1;
 }
 
-static cef_browser_process_handler_t *browser_process_handler;
+
+// MARK: - Browsers Chrome creates on its own
+
+// Chrome style answers chrome.windows.create, chrome.tabs.create into such a
+// window and chrome.runtime.openOptionsPage by building a Chrome browser window,
+// which goes through no popup, open-URL or command callback. get_default_client
+// is the one seam, and the client it hands out is the host's (set from Swift);
+// with none set CEF builds the window unmanaged and puts it on screen.
+static cef_client_t *default_client = NULL;
+static cef_browser_process_handler_t *browser_process_handler = NULL;
+
+void nd_cef_set_default_client(cef_client_t *client) {
+  if (client) {
+    nd_cef_ref_add(client);
+  }
+  if (default_client) {
+    nd_cef_ref_release(default_client);
+  }
+  default_client = client;
+}
+
+static cef_client_t *CEF_CALLBACK process_default_client(cef_browser_process_handler_t *self) {
+  (void)self;
+  if (!default_client) {
+    return NULL;
+  }
+  nd_cef_ref_add(default_client);
+  return default_client;
+}
 
 static cef_browser_process_handler_t *CEF_CALLBACK app_browser_process_handler(cef_app_t *self) {
   (void)self;
@@ -358,6 +386,7 @@ static cef_browser_process_handler_t *CEF_CALLBACK app_browser_process_handler(c
       return NULL;
     }
     browser_process_handler->on_already_running_app_relaunch = browser_process_relaunch;
+    browser_process_handler->get_default_client = process_default_client;
   }
   nd_cef_ref_add(browser_process_handler);
   return browser_process_handler;
