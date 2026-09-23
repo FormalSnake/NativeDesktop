@@ -42,6 +42,8 @@ private let ndSFSymbolMap: [String: String] = [
     "edit-undo": "arrow.uturn.backward",
     "edit-redo": "arrow.uturn.forward",
     "edit-clear": "xmark.circle.fill",
+    "security-high": "lock.shield.fill",
+    "security-low": "exclamationmark.shield.fill",
     // CanaryOrchestrator sidebar host glyphs + run-row status icons.
     "computer": "laptopcomputer",
     "network-server": "server.rack",

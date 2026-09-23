@@ -219,10 +219,13 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
           let theme = win.contentView?.superview,
           let content = ndLiveContentView(ofWindow: win),
           let control = ndFindControl(in: theme, target: adapter) else { return nil }
-    return control.convert(control.bounds, to: content)
+    // Integral outward: a title item is as wide as its text, so it sits on
+    // half points, and truncating both origin and width to Int32 drops its
+    // trailing edge a point short of where it draws.
+    return NSIntegralRect(control.convert(control.bounds, to: content))
 }
 
-@MainActor private func ndFindControl(in root: NSView, target: AnyObject) -> NSControl? {
+func ndFindControl(in root: NSView, target: AnyObject) -> NSControl? {
     for sub in root.subviews {
         if let control = sub as? NSControl, control.target === target { return control }
         if let found = ndFindControl(in: sub, target: target) { return found }

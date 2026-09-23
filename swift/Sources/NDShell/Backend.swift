@@ -366,6 +366,7 @@ func buildVTable() -> nd_backend {
 @MainActor func ndPurgeNodeRegistries(_ view: NSView) {
     let id = ObjectIdentifier(view)
     ndNodeTypography[id] = nil
+    ndInheritedFontViews.remove(id)
     ndDisabledViews.remove(id)
     ndNavigationSidebars.remove(id)
     ndBoxedLists.remove(id)
@@ -1144,8 +1145,53 @@ func ndRecomputeTypography(_ view: NSView) {
     if let fontObj = typography.fontObj {
         applyFont(view, fontObj)
     }
+    ndApplyInheritedFont(view)
     if let colorStr = typography.colorStr, let color = nsColor(fromHexOrName: colorStr) {
         applyTextColor(view, color)
+    }
+}
+
+/// Buttons and labels whose font currently comes from a styled box above them,
+/// so dropping that box's font puts the system font back.
+nonisolated(unsafe) private var ndInheritedFontViews: Set<ObjectIdentifier> = []
+
+/// The `font` of the nearest styled box above `view`. A box's font reaches the
+/// buttons and labels under it and beats their own, the same precedence the
+/// GTK descendant rule has (src/gtk/style.zig, emitFontDescendants).
+func ndInheritedFont(_ view: NSView) -> [String: Any]? {
+    var node = view.superview
+    while let v = node {
+        if v is NDBoxView, let font = ndNodeTypography[ObjectIdentifier(v)]?.fontObj { return font }
+        node = v.superview
+    }
+    return nil
+}
+
+/// Whether `view` draws a `font` style of its own or one handed down by a box.
+func ndHasStyleFont(_ view: NSView) -> Bool {
+    ndNodeTypography[ObjectIdentifier(view)]?.fontObj != nil || ndInheritedFont(view) != nil
+}
+
+private func ndApplyInheritedFont(_ view: NSView) {
+    guard view is NSButton || view is NSTextField else { return }
+    let key = ObjectIdentifier(view)
+    if let font = ndInheritedFont(view) {
+        applyFont(view, font)
+        ndInheritedFontViews.insert(key)
+    } else if ndInheritedFontViews.remove(key) != nil, let button = view as? NSButton,
+              ndNodeTypography[key]?.fontObj == nil {
+        // A label's baseline already went back in ndRecomputeTypography; a
+        // button's font is never part of that baseline.
+        button.font = .systemFont(ofSize: NSFont.systemFontSize)
+    }
+}
+
+/// Replays the cascade over the buttons and labels under `root`, for a box
+/// whose font changed or a subtree that just moved under one.
+func ndRecomputeDescendantTypography(_ root: NSView) {
+    for sub in root.subviews {
+        if sub is NSButton || sub is NSTextField { ndRecomputeTypography(sub) }
+        ndRecomputeDescendantTypography(sub)
     }
 }
 
@@ -1226,6 +1272,7 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     typography.colorStr = style["color"] as? String
     ndNodeTypography[ObjectIdentifier(view)] = typography
     ndRecomputeTypography(view)
+    if view is NDBoxView { ndRecomputeDescendantTypography(view) }
     let borderObj = style["border"] as? [String: Any]
     let borderWidth = (borderObj?["borderWidth"] as? NSNumber)?.doubleValue ?? 0
     let borderColor = (borderObj?["borderColor"] as? String).flatMap { nsColor(fromHexOrName: $0) }

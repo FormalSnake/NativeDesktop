@@ -14,14 +14,14 @@ import AppKit
 /// inset instead.
 final class NDLeadingIconButton: NSButton {
     var nodeID: UInt32 = 0
+    /// The symbol a search field's own search-button cell draws in its place.
+    var ndSearchImage: NSImage?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         isBordered = false
-        bezelStyle = .shadowlessSquare
         imagePosition = .imageOnly
         setButtonType(.momentaryChange)
-        focusRingType = .default
         target = self
         action = #selector(fire)
         // Keyboard activation: the button is a real key view, so Tab reaches
@@ -106,6 +106,7 @@ func ndApplyLeadingIcon(_ view: NSView, _ props: [String: Any]) {
         // so the symbol goes there too and the overlay stays transparent.
         if let cell = field.cell as? NSSearchFieldCell {
             cell.searchButtonCell?.image = image
+            button.ndSearchImage = image
             button.image = nil
         } else if let cell = field.cell as? NDTextFieldCell {
             cell.ndLeadingInset = ndLeadingIconWidth
@@ -114,9 +115,11 @@ func ndApplyLeadingIcon(_ view: NSView, _ props: [String: Any]) {
     if let tip = propStr(props, "leadingIconTooltip") {
         button.toolTip = tip.isEmpty ? nil : tip
     }
-    if let label = propStr(props, "leadingIconLabel") {
-        button.setAccessibilityLabel(label.isEmpty ? nil : label)
-    } else if button.accessibilityLabel() == nil, let tip = button.toolTip {
+    // The accessible name falls back to the tooltip, which is the same
+    // pairing GTK gets from the entry icon's tooltip text.
+    if let label = propStr(props, "leadingIconLabel"), !label.isEmpty {
+        button.setAccessibilityLabel(label)
+    } else if let tip = button.toolTip {
         button.setAccessibilityLabel(tip)
     }
     field.needsDisplay = true
@@ -124,8 +127,7 @@ func ndApplyLeadingIcon(_ view: NSView, _ props: [String: Any]) {
 
 private func ndRemoveLeadingIcon(_ field: NSTextField) {
     ndLeadingIconButton(of: field)?.removeFromSuperview()
-    (field.cell as? NSSearchFieldCell)?.searchButtonCell?.image =
-        NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+    (field.cell as? NSSearchFieldCell)?.resetSearchButtonCell()
     (field.cell as? NDTextFieldCell)?.ndLeadingInset = 0
     field.needsDisplay = true
 }
@@ -142,7 +144,18 @@ func ndLayoutLeadingIcon(_ field: NSTextField) {
         let h = min(bounds.height, ndLeadingIconWidth)
         rect = NSRect(x: bounds.minX + 3, y: bounds.midY - h / 2, width: ndLeadingIconWidth - 3, height: h)
     }
-    button.frame = rect.isEmpty ? NSRect(x: bounds.minX, y: bounds.minY, width: ndLeadingIconWidth, height: bounds.height) : rect
+    let want = rect.isEmpty ? NSRect(x: bounds.minX, y: bounds.minY, width: ndLeadingIconWidth, height: bounds.height) : rect
+    // Only on a real change: this runs from the field's own layout(), and
+    // assigning the frame unconditionally re-dirties the field every pass,
+    // which spins the main thread instead of settling.
+    if button.frame != want { button.frame = want }
+    // The search field puts its own magnifier back on the way into the
+    // toolbar, after the apply ran, so the symbol is restored here.
+    if let cell = field.cell as? NSSearchFieldCell, let image = button.ndSearchImage,
+       cell.searchButtonCell?.image !== image {
+        cell.searchButtonCell?.image = image
+        field.needsDisplay = true
+    }
 }
 
 /// Generated ndConnectEvents arm for SearchInput/TextInput's

@@ -300,6 +300,13 @@ final class NDSearchField: NSSearchField {
         return s
     }
 
+    // Items inserted before the toolbar reaches a window have nothing to
+    // measure, so the run is settled once this one lands in it.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        (window?.toolbar?.delegate as? NDToolbarManager)?.searchFieldDidMoveToWindow()
+    }
+
     // The search-button rect moves with the field's width, and the leading
     // icon's overlay sits on top of it (LeadingIcon.swift).
     override func layout() {
@@ -855,6 +862,10 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         return 38
     }
 
+    func searchFieldDidMoveToWindow() {
+        if !rebuilding { scheduleRebuild() }
+    }
+
     func updateSearchFieldWidths() {
         guard let win = resolveOwnerWindow() else { return }
         var searches: [NDSearchField] = []
@@ -862,15 +873,22 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         for item in toolbar.items {
             if let s = item.view as? NDSearchField { searches.append(s); continue }
             if item.itemIdentifier == .flexibleSpace { continue }
-            others += estimatedItemWidth(item) + 12 // + inter-item gap
+            others += estimatedItemWidth(item) + 16 // + inter-item gap
         }
         guard !searches.isEmpty else { return }
-        let lightsAndMargins: CGFloat = 116
-        // Floor is Apple's own default for a toolbar search field
-        // (`NSSearchToolbarItem.preferredWidthForSearchField`, 240pt measured
-        // on 26.5.1): a crowded toolbar shrinks the run, but never below the
-        // width the system itself would hand a search item.
-        let free = max(240, (win.frame.width - lightsAndMargins - others) / CGFloat(searches.count))
+        // Traffic lights, the toolbar's own leading and trailing insets, and
+        // the room the overflow chevron takes the moment anything does not
+        // fit. Underestimating it is not a cosmetic error: the field simply
+        // takes the width and pushes the trailing items into the overflow
+        // menu (measured: 116 left a 1100pt window with both end items in the
+        // chevron).
+        let lightsAndMargins: CGFloat = 172
+        // The floor keeps the field usable in a crowded toolbar. It sits below
+        // Apple's own 240pt search-item default on purpose: at 760pt a
+        // browser-shaped start pack leaves the field ~225, and holding 240
+        // there pushes the end items into the overflow menu.
+        let estimate = max(120, ((win.frame.width - lightsAndMargins - others) / CGFloat(searches.count)).rounded(.down))
+        let free = measuredSearchWidth(searches, in: win) ?? estimate
         let changed = lastSearchWidth.map { abs($0 - free) > 1 } ?? true
         lastSearchWidth = free
         for s in searches { s.ndPreferredWidth = free }
@@ -887,12 +905,56 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         }
     }
 
+    /// The field width that takes up the toolbar's trailing slack, read off
+    /// the laid-out toolbar. The content header drops its flexible space when
+    /// it carries a search field (defaultItemIdentifiers), so the items pack
+    /// from the leading edge and whatever the field lacks shows up after the
+    /// last item. The last item ends one item gap short of the trailing edge,
+    /// the same gap the field keeps from its leading neighbour. nil while an
+    /// item sits in overflow (the run is then unknown, and the estimate has
+    /// to pull the field back first) or before the field has a window.
+    private func measuredSearchWidth(_ searches: [NDSearchField], in win: NSWindow) -> CGFloat? {
+        guard let theme = win.contentView?.superview else { return nil }
+        theme.layoutSubtreeIfNeeded()
+        let items = toolbar.items
+        guard !items.contains(where: { $0.itemIdentifier == .flexibleSpace }),
+              toolbar.visibleItems?.count == items.count,
+              searches.allSatisfy({ $0.window === win }),
+              let search = searches.first,
+              let idx = items.firstIndex(where: { $0.view === search }), idx > 0,
+              let before = itemFrame(items[idx - 1], in: win),
+              let last = items.last.flatMap({ itemFrame($0, in: win) }) else { return nil }
+        let field = search.convert(search.bounds, to: nil)
+        let gap = field.minX - before.maxX
+        let slack = theme.bounds.width - gap - last.maxX
+        // Whole points: the item centres a fractional width in its slot,
+        // which puts the field's leading edge on a half point.
+        return (field.width + slack / CGFloat(searches.count)).rounded(.down)
+    }
+
+    /// An item's frame in window space: its view when it has one, else the
+    /// control AppKit draws for it, found by the target it copied off the item.
+    private func itemFrame(_ item: NSToolbarItem, in win: NSWindow) -> NSRect? {
+        if let group = item as? NSToolbarItemGroup {
+            let frames = group.subitems.compactMap { itemFrame($0, in: win) }
+            return frames.dropFirst().reduce(frames.first) { $0?.union($1) }
+        }
+        if let view = item.view {
+            return view.window === win ? view.convert(view.bounds, to: nil) : nil
+        }
+        guard let target = item.target, let theme = win.contentView?.superview,
+              let control = ndFindControl(in: theme, target: target) else { return nil }
+        return control.convert(control.bounds, to: nil)
+    }
+
     /// Whether a header child is promoted to a system-drawn toolbar item
     /// (#1). NDButton only — a ToggleButton (also NDButton-classed, marked
     /// `ndIsToggle`) keeps its view so its on/off state stays visible.
     private func ndPromotable(_ view: NSView) -> Bool {
         guard let b = view as? NDButton else { return false }
-        return !b.ndIsToggle
+        // A system-drawn item has no font of its own to set, so a button
+        // carrying a `font` style keeps its view to draw the title in it.
+        return !b.ndIsToggle && !ndHasStyleFont(b)
     }
 
     /// Identifiers for one slot array, collapsing each run of 2+ consecutive
@@ -1002,7 +1064,10 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             // (System Settings' small leading title), before any app start items.
             if showsTitleItem(h) { ids.append(identifier(for: h.titleField)) }
             ids += identifiers(for: h.startViews)
-            ids.append(.flexibleSpace)
+            // A search field takes the free run itself (updateSearchFieldWidths).
+            // The system flexible space keeps an 8pt minimum it will not give
+            // up, which would hold the field that far short of the end pack.
+            if !(h.startViews + h.endViews).contains(where: { $0 is NDSearchField }) { ids.append(.flexibleSpace) }
             ids += identifiers(for: h.endViews)
         }
         // Inspector items trail everything (#9), behind a tracking separator
@@ -1123,7 +1188,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         if let box = view as? NDBoxView {
             box.translatesAutoresizingMaskIntoConstraints = true
             let size = box.ndNaturalSize()
-            box.setFrameSize(NSSize(width: max(size.width, 1), height: max(size.height, 1)))
+            // Whole points, or every item after it lands on a half point.
+            box.setFrameSize(NSSize(width: max(size.width.rounded(.up), 1), height: max(size.height.rounded(.up), 1)))
             box.layoutSubtreeIfNeeded()
         }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)

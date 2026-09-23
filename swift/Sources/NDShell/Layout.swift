@@ -1062,6 +1062,11 @@ func ndBoxChildAttached(_ box: NDBoxView, _ child: NSView) {
     if let btn = child as? NSButton, ndIsToolbarStrip(box) {
         ndNormalizeToolbarStripButton(btn)
     }
+    // Same ordering: a box's font lands before the children it reaches.
+    if ndInheritedFont(child) != nil {
+        if child is NSButton || child is NSTextField { ndRecomputeTypography(child) }
+        ndRecomputeDescendantTypography(child)
+    }
 }
 
 /// Pins a `<scrollview>`'s single child inside the document view (the generated

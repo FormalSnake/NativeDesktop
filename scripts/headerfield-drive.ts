@@ -24,14 +24,36 @@ const backend = process.argv[2] as Backend | undefined;
 const gtk = process.env.ND_BACKEND === "gtk";
 const attached = process.env.ND_AUTOMATION_SOCKET != null;
 const T = 6000;
-// The packs sit one header spacing away from the field on GTK (6px measured)
-// and one toolbar gap away on AppKit; 8 is the budget the gate allows for
-// that, and it is far below the ~460px the centred title used to waste.
+// The packs sit one header spacing away from the field: 6px on GTK, and on
+// AppKit the toolbar's own item gap, 8. Both are far below the ~460px the
+// centred title used to waste.
 const TOL = 8;
-const START = ["nav-back", "nav-forward", "nav-reload", "weight-box", "weight-plain-box"];
+// The two weight buttons ride a wrapping <box> so the font leg has a
+// container to style. GTK measures that box; AppKit promotes the plain button
+// inside it to a system-drawn toolbar item and measures the item, leaving the
+// box itself at zero, so each backend names the node it can answer for.
+const START = gtk
+  ? ["nav-back", "nav-forward", "nav-reload", "weight-box", "weight-plain-box"]
+  : ["nav-back", "nav-forward", "nav-reload", "weight-styled", "weight-plain"];
 const END = ["end-menu", "end-add"];
 
 const app = attached ? await connectApp() : await launchApp({ entry: "examples/headerfield/main.tsx", backend });
+const hostPid = Number(process.env.ND_HOST_PID ?? ("pid" in app ? app.pid : 0));
+
+type CensusWindow = { layer: number; alpha: number; x: number; y: number; width: number; height: number };
+// The window server's view of the host's on-screen windows (scripts/mac/window-census.swift).
+const census = async (pid: number): Promise<CensusWindow[]> => {
+  const proc = Bun.spawn(["swift", "scripts/mac/window-census.swift", String(pid)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined },
+  });
+  const text = await new Response(proc.stdout).text();
+  return text.split("\n").filter((l) => l.trim().startsWith("{")).map((l) => JSON.parse(l) as CensusWindow);
+};
+const activate = (pid: number) => {
+  Bun.spawnSync(["osascript", "-e", `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`]);
+};
 
 type Rect = { x: number; y: number; w: number; h: number };
 const mustFind = async (testId: string) => {
@@ -79,6 +101,10 @@ try {
   // ---- leg 2: the leading icon is interactive, and anchors the popover ----
   if ((await label("icon-count")) !== "icon clicks: 0") throw new Error("the icon fired before anything touched it");
   const field = await rectOf("address");
+  // Stage Manager draws a background app's windows as thumbnails and reports
+  // their frames that way, and a transient popover closes when its app loses
+  // focus, so the host comes forward before anything opens.
+  if (!gtk) activate(hostPid);
   await app.getByTestId("fire-icon").click();
   await poll(() => label("icon-count"), (v) => v === "icon clicks: 1", { timeoutMs: T });
   console.log("  ND_HEADERFIELD_ICON_OK the leading icon delivered onLeadingIconClicked");
@@ -89,31 +115,57 @@ try {
   // headless compositor with no seat, so the readable signal there is the
   // geometry getTree reports for the panel: none at all when it is unplaced
   // (the popover-anchor gate's finding), an origin on the anchor when placed.
-  const panel = await poll(async () => findNode((await app.tree()).root, "site-info-body")?.geometry ?? null,
-    (g) => g != null, { timeoutMs: T });
-  if (panel!.x > field.x + field.w / 4) {
-    throw new Error(`the site-info panel opened at ${panel!.x}, past the field's leading quarter (field ${field.x}..${field.x + field.w})`);
+  if (gtk) {
+    const panel = await poll(async () => findNode((await app.tree()).root, "site-info-body")?.geometry ?? null,
+      (g) => g != null, { timeoutMs: T });
+    if (panel!.x > field.x + field.w / 4) {
+      throw new Error(`the site-info panel opened at ${panel!.x}, past the field's leading quarter (field ${field.x}..${field.x + field.w})`);
+    }
+    console.log(`  ND_HEADERFIELD_ANCHOR_OK the panel opened at ${panel!.x}, on the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
+  } else {
+    // AppKit presents the panel in a popover window of its own and getTree
+    // reports its content in that window's space, so the readable signal is
+    // where the window server put that window. Its midpoint is where the arrow
+    // points, and it has to land in the field's leading quarter.
+    const main = (await app.windows()).windows[0]?.geometry;
+    if (!main) throw new Error("the app reports no window geometry");
+    // Each census compiles its Swift script, so the budget is several reads.
+    let seen: CensusWindow[] = [];
+    const popover = await poll(async () => {
+      seen = await census(hostPid);
+      return seen.find((w) => w.alpha > 0 && w.layer === 0 && w.width < main.w) ?? null;
+    }, (w) => w != null, { timeoutMs: 20000 }).catch(() => {
+      throw new Error(`no popover window on screen (host windows: ${JSON.stringify(seen)})`);
+    });
+    const mid = popover!.x + popover!.width / 2 - main.x;
+    if (mid < field.x || mid > field.x + field.w / 4) {
+      throw new Error(`the site-info popover points at ${mid}, outside the field's leading quarter (field ${field.x}..${field.x + field.w})`);
+    }
+    console.log(`  ND_HEADERFIELD_ANCHOR_OK the popover points at ${mid}, on the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
+    if (process.env.ND_NDSHOT && process.env.ND_REGION_SHOT_PATH) {
+      const shot = Bun.spawnSync([process.env.ND_NDSHOT, "capture", "--pid", String(hostPid), "--region", "--out", process.env.ND_REGION_SHOT_PATH]);
+      if (shot.exitCode !== 0) throw new Error(`ndshot capture failed: ${shot.stderr.toString().trim()}`);
+      console.log(`  capture ${process.env.ND_REGION_SHOT_PATH}`);
+    }
   }
-  console.log(`  ND_HEADERFIELD_ANCHOR_OK the panel opened at ${panel!.x}, on the icon at the field's leading edge (field ${field.x}..${field.x + field.w})`);
 
   // ---- leg 3: setValue still emits `changed` -----------------------------
   await app.getByTestId("address").fill("nativedesktop.dev");
   await poll(() => label("url-label"), (v) => v === "nativedesktop.dev", { timeoutMs: T });
   console.log("  ND_HEADERFIELD_SETVALUE_OK setValue still round-trips through `changed`");
 
-  // ---- leg 4 (GTK): a `font` style reaches the button's label child -------
+  // ---- leg 4: a `font` style reaches the button under the styled box -----
   // Adwaita declares `font-weight: bold` on the button NODE, and an explicit
   // declaration beats a value inherited from an ancestor, so a `font` style on
-  // the wrapping <box> used to leave the button bold. Same string in both
-  // buttons, so the allocated widths differ only by the weight drawn.
-  if (gtk) {
-    const styled = await rectOf("weight-styled");
-    const plain = await rectOf("weight-plain");
-    if (styled.w >= plain.w) {
-      throw new Error(`fontWeight "normal" on the wrapping box did not reach the button: styled=${styled.w}px, bold=${plain.w}px`);
-    }
-    console.log(`  ND_HEADERFIELD_FONT_OK a header button under a box at fontWeight normal measures ${styled.w}px against ${plain.w}px at the theme's bold`);
+  // the wrapping <box> used to leave the button bold. AppKit's toolbar draws
+  // its item titles heavier than the system font too. Same string in both
+  // buttons, so the widths differ by the weight drawn.
+  const styled = await rectOf("weight-styled");
+  const plain = await rectOf("weight-plain");
+  if (styled.w >= plain.w) {
+    throw new Error(`fontWeight "normal" on the wrapping box did not reach the button: styled=${styled.w}px, default=${plain.w}px`);
   }
+  console.log(`  ND_HEADERFIELD_FONT_OK a header button under a box at fontWeight normal measures ${styled.w}px against ${plain.w}px at the header's default`);
 
   if (process.env.ND_SHOT_PATH) {
     await app.screenshot(process.env.ND_SHOT_PATH);
