@@ -483,15 +483,25 @@ async function pressReport(page: string, at: { x: number; y: number }): Promise<
 /// that this app's menus do not have: its Inspect item is Chromium's, and that
 /// one only ever opens an inspector.
 async function closeFrontend(page: string): Promise<void> {
-  const at = await frontendPoint(page, DEVTOOLS_CLOSE);
+  // The frontend draws its close button only once it has been told it is
+  // docked, which is a poll on the host side that can land after the dock.
+  const at = await until(
+    "the frontend's toolbar shows its close button",
+    () => frontendPoint(page, DEVTOOLS_CLOSE),
+    (point) => point !== null,
+    10000,
+  ).catch(() => null);
   assert(at !== null, "the frontend's toolbar has no close button");
   await app.cursor.click(at!);
-  await until(
+  const gone = await until(
     "the inspector goes away",
     async () => (await targets(DEBUG_PORT)).filter((t) => t.url.startsWith("devtools://")).length,
     (n) => n === 0,
     20000,
-  );
+  ).catch(() => null);
+  if (gone === null) {
+    throw new LegFailure(`the inspector stayed after its close button; ${await pressReport(page, at!)}`);
+  }
 }
 
 async function frontendGeometry(): Promise<{ bounds: Box | null; width: number; height: number }> {
@@ -1644,6 +1654,50 @@ const legs: Leg[] = [
       await dockTiles(page, "reopened");
       await closeFrontend(page);
       await censusHolds(app, "dockTiling");
+    },
+  },
+  {
+    name: "navigateWithDevToolsDocked",
+    run: async () => {
+      if (skipDevTools) return;
+      // The inspected page navigates while the inspector is docked: same
+      // origin, then another origin, which is a new site instance for the
+      // inspected contents.
+      activateApp();
+      await Bun.sleep(600);
+      const page = await loadFixture();
+      const before = await pageNumber(app, page, "innerWidth");
+      // The field commits what it holds, as https, when the docking inspector
+      // takes focus; Escape hands it back its URL first.
+      await main.keyboard.press("Escape");
+      await Bun.sleep(300);
+      await main.getByTestId(page).focus();
+      await Bun.sleep(500);
+      await openInspector(page);
+      await until(
+        "the dock takes a share of the viewport",
+        () => pageNumber(app, page, "innerWidth"),
+        (w) => w > 0 && w < before - 40,
+        25000,
+      );
+      // From the page itself rather than the address bar: the app's field
+      // commits what it holds again on blur, which reloads the old address
+      // over the new one. Either way it is a load of the inspected contents,
+      // which is what used to trap.
+      const other = FIXTURE_ORIGIN.replace("127.0.0.1", "localhost");
+      for (const target of [`${FIXTURE_ORIGIN}/page2.html`, `${other}/index.html`]) {
+        await pageEval(app, page, `location.assign(${JSON.stringify(target)})`).catch(() => null);
+        await until(
+          `${target} loads`,
+          async () => `${await pageEval(app, page, "location.href")}|${await pageEval(app, page, "document.readyState")}`,
+          (v) => v.startsWith(target) && v.endsWith("|complete"),
+          15000,
+        );
+      }
+      await main.keyboard.press("Escape");
+      await Bun.sleep(300);
+      await closeFrontend(page);
+      await censusHolds(app, "navigateWithDevToolsDocked");
     },
   },
 ];
