@@ -403,8 +403,11 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
 /// The symbol name each button last resolved. React re-sends a node's whole
 /// prop set whenever anything about it changes, and reseeding a promoted item
 /// removes and re-inserts it in the live NSToolbar — repeating that for an
-/// icon that did not actually change is churn nothing benefits from.
-nonisolated(unsafe) private var ndButtonIconNames: [ObjectIdentifier: String] = [:]
+/// icon that did not actually change is churn nothing benefits from. Weak
+/// keys: an ObjectIdentifier outlives its button, and a new button allocated
+/// at a freed one's address inherited its name here and was never given its
+/// icon (a glyph missing from the sidebar's foot after a layout switch).
+nonisolated(unsafe) private let ndButtonIconNames = NSMapTable<NSButton, NSString>.weakToStrongObjects()
 
 /// `Button.iconName` on update (generated Button applyProps arm). An
 /// NSToolbarItem snapshots the control it was seeded with, so a promoted
@@ -416,9 +419,8 @@ nonisolated(unsafe) private var ndButtonIconNames: [ObjectIdentifier: String] = 
 /// button keeps its leading image, and neither shape changes underneath the
 /// app on a symbol swap.
 func ndButtonApplyIconName(_ b: NSButton, _ iconName: String) {
-    let key = ObjectIdentifier(b)
-    guard ndButtonIconNames[key] != iconName else { return }
-    ndButtonIconNames[key] = iconName
+    guard ndButtonIconNames.object(forKey: b) as String? != iconName else { return }
+    ndButtonIconNames.setObject(iconName as NSString, forKey: b)
     ndApplyButtonIcon(b, iconName: iconName, label: b.imagePosition == .imageOnly ? "" : b.title)
     ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
