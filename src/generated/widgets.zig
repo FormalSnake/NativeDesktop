@@ -270,20 +270,47 @@ fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
 /// gtk_button_set_label) is what keeps the badge suffix, label alignment and
 /// size classes the create arm installed.
 ///
-/// An icon-only button is left alone: rebuilding it as an icon+label pair
-/// would need the icon name, which nothing retains, and set_label would drop
-/// the icon.
+/// A themed icon-only button is left alone: rebuilding it as an icon+label
+/// pair would need the icon name, which nothing retains, and set_label would
+/// drop the icon. An iconData image is retained, so that button moves between
+/// image-only and image+label as its label comes and goes.
 fn ndButtonSetLabel(button: *gtk.Button, label: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const content = ndButtonContent(button) orelse return;
+    const data_img: ?*gtk.Image = if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE)) |ptr| @ptrCast(@alignCast(ptr)) else null;
     if (gobject.ext.isA(content, adw.ButtonContent)) {
         adw.ButtonContent.setLabel(@ptrCast(@alignCast(content)), dupeZ(label));
     } else if (gobject.ext.isA(content, gtk.Label)) {
         gtk.Label.setText(@ptrCast(@alignCast(content)), dupeZ(label));
+    } else if (data_img != null and content == data_img.?.as(gtk.Widget)) {
+        if (label.len == 0) return;
+        const img = ndButtonCopyImage(data_img.?);
+        const box = gtk.Box.new(.horizontal, 6);
+        gtk.Box.append(box, img.as(gtk.Widget));
+        gtk.Box.append(box, gtk.Label.new(dupeZ(label)).as(gtk.Widget));
+        gtk.Widget.removeCssClass(button.as(gtk.Widget), "image-button");
+        ndButtonReplaceContent(button, box.as(gtk.Widget));
+        gobject.Object.setData(asObject(button), ND_BUTTON_ICON_IMAGE, img);
     } else if (gobject.ext.isA(content, gtk.Box)) {
+        if (label.len == 0) if (data_img) |old| {
+            const img = ndButtonCopyImage(old);
+            gtk.Widget.addCssClass(button.as(gtk.Widget), "image-button");
+            gtk.Widget.removeCssClass(button.as(gtk.Widget), "text-button");
+            ndButtonReplaceContent(button, img.as(gtk.Widget));
+            gobject.Object.setData(asObject(button), ND_BUTTON_ICON_IMAGE, img);
+            return;
+        };
         if (gtk.Widget.getLastChild(content)) |last| {
             if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setText(@ptrCast(@alignCast(last)), dupeZ(label));
         }
     }
+}
+
+/// A second GtkImage on the same paintable, for a content rebuild: the old
+/// one goes with the content it sits in, and moving it would reparent it.
+fn ndButtonCopyImage(img: *gtk.Image) *gtk.Image {
+    const copy = gtk.Image.newFromPaintable(gtk.Image.getPaintable(img));
+    gtk.Image.setPixelSize(copy, gtk.Image.getPixelSize(img));
+    return copy;
 }
 
 /// Button.iconName update. The create arm leaves the icon in one of two
@@ -315,6 +342,11 @@ fn ndButtonLabelText(button: *gtk.Button) []const u8 {
     if (gobject.ext.isA(content, gtk.Label)) {
         return std.mem.span(gtk.Label.getText(@ptrCast(@alignCast(content))));
     }
+    if (gobject.ext.isA(content, gtk.Box)) {
+        if (gtk.Widget.getLastChild(content)) |last| {
+            if (gobject.ext.isA(last, gtk.Label)) return std.mem.span(gtk.Label.getText(@ptrCast(@alignCast(last))));
+        }
+    }
     return "";
 }
 
@@ -327,8 +359,18 @@ const ND_BUTTON_ICON_IMAGE = "nd-button-icon-image";
 /// iconName arm, so image bytes win. Unlike iconName this updates: the first
 /// call rebuilds the content around the decoded image, keeping whatever label
 /// the button already shows, and later calls retarget that image's paintable.
-/// An undecodable payload leaves the button as it was (ndicons warns).
+/// An undecodable payload leaves the button as it was (ndicons warns); an
+/// empty one (the prop dropped) takes the image out and leaves the label.
 fn ndButtonApplyIconData(button: *gtk.Button, data: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (data.len == 0) {
+        if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE) == null) return;
+        const text = dupeZ(ndButtonLabelText(button));
+        gobject.Object.setData(asObject(button), ND_BUTTON_ICON_IMAGE, null);
+        gtk.Widget.removeCssClass(button.as(gtk.Widget), "image-button");
+        gtk.Widget.addCssClass(button.as(gtk.Widget), "text-button");
+        ndButtonReplaceContent(button, gtk.Label.new(text).as(gtk.Widget));
+        return;
+    }
     if (gobject.Object.getData(asObject(button), ND_BUTTON_ICON_IMAGE)) |ptr| {
         const texture = ndicons.textureFromData(data, "Button") orelse return;
         defer gobject.Object.unref(texture.as(gobject.Object));
