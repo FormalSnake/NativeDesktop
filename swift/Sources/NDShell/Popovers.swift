@@ -30,11 +30,24 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         return treeParent
     }
 
-    /// The window NSPopover draws the panel in while it is shown.
+    /// The window the panel is drawn in while it is shown.
     var shownWindow: NSWindow? {
+        if anchoredPanel.isShown { return anchoredPanel.window }
         guard isPopoverCreated, popover.isShown else { return nil }
         return contentContainer.window
     }
+
+    private var isUp: Bool { anchoredPanel.isShown || (isPopoverCreated && popover.isShown) }
+
+    /// Stands in for the NSPopover where a centred one would leave the window.
+    private lazy var anchoredPanel: NDAnchoredPanel = {
+        let panel = NDAnchoredPanel()
+        panel.onDismiss = { [weak self] in
+            guard let self else { return }
+            ndEmitEvent(self.nodeID, "closed", "{}")
+        }
+        return panel
+    }()
     private var isPopoverCreated = false
 
     private lazy var popover: NSPopover = {
@@ -58,6 +71,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     }
 
     func detachFromParent(_ parent: NSView) {
+        anchoredPanel.close()
         if popover.isShown {
             programmaticClose = true
             popover.close()
@@ -73,6 +87,11 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     func applyAnchor(_ nodeID: UInt32) {
         guard nodeID != anchorNodeID else { return }
         anchorNodeID = nodeID
+        if anchoredPanel.isShown {
+            anchoredPanel.close()
+            applyOpen(true)
+            return
+        }
         guard popover.isShown else { return }
         // Already up against the old anchor: NSPopover cannot be moved, so
         // close it and present again from the new one.
@@ -83,7 +102,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
 
     func applyOpen(_ open: Bool) {
         if open {
-            guard !popover.isShown else { return }
+            guard !isUp else { return }
             // A header-bar anchor box never joins the view hierarchy: its
             // button is promoted to a system-drawn toolbar item, and the
             // item's internal control is not reliably locatable either
@@ -118,9 +137,16 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             sizeContent()
             let rect = (anchorSlot == "leadingIcon" ? ndLeadingIconRect(of: anchor) : nil) ?? anchor.bounds
             let (kept, view) = keptInWindow(rect, of: anchor)
+            if view !== anchor, position == "top" || position == "bottom", let window = anchor.window {
+                let onScreen = window.convertToScreen(anchor.convert(rect, to: nil))
+                anchoredPanel.show(content: contentContainer, size: popover.contentSize, anchor: onScreen,
+                                   above: position == "top", in: window)
+                return
+            }
             popover.show(relativeTo: kept, of: view, preferredEdge: preferredEdge(for: view))
         } else {
             pendingOpen = false
+            anchoredPanel.close()
             guard popover.isShown else { return }
             programmaticClose = true
             popover.performClose(nil)
