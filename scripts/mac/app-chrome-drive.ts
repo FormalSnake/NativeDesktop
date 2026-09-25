@@ -415,10 +415,11 @@ async function openInspector(page: string): Promise<void> {
   await pickMenuItem(items, label);
 }
 
-/// The same item again: `openDevTools` toggles, and the Chrome command handler
-/// refuses F12 and cmd+alt+I, so Inspect Element is the only way in and out.
+/// From the frontend's own close button. Chromium's Inspect item on a page
+/// that already has an inspector inspects again rather than closing it, and
+/// the Chrome command handler refuses F12 and cmd+alt+I.
 async function closeInspector(page: string): Promise<void> {
-  await openInspector(page);
+  await closeFrontend(page);
 }
 
 /// What the frontend reserved for the page, with the frontend's own viewport
