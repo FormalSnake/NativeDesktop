@@ -459,11 +459,14 @@ fn withinClips(w: *gtk.Widget) bool {
         if (gtk.Widget.computeBounds(w, a, &rect) == 0) continue;
         if (!intersectsBox(rect, gtk.Widget.getWidth(a), gtk.Widget.getHeight(a))) return false;
     }
-    const root = gtk.Widget.getRoot(w) orelse return true;
-    const root_widget = root.as(gtk.Widget);
-    if (root_widget == w) return true;
-    if (gtk.Widget.computeBounds(w, root_widget, &rect) == 0) return true;
-    return intersectsBox(rect, gtk.Widget.getWidth(root_widget), gtk.Widget.getHeight(root_widget));
+    // The surface the node is drawn on: a popover is its own, and GTK places
+    // it partly outside its window where the window's edge leaves no room, so
+    // the window's bounds are not what clips it.
+    const native = gtk.Widget.getNative(w) orelse return true;
+    const clip: *gtk.Widget = @ptrCast(@alignCast(native));
+    if (clip == w) return true;
+    if (gtk.Widget.computeBounds(w, clip, &rect) == 0) return true;
+    return intersectsBox(rect, gtk.Widget.getWidth(clip), gtk.Widget.getHeight(clip));
 }
 
 fn intersectsBox(rect: graphene.Rect, width: c_int, height: c_int) bool {
