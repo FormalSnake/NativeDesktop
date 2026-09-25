@@ -363,12 +363,22 @@ import Foundation
         return ndCefDockFrontend(frame)
     }
 
+    /// Both arrive from inside CEF's walk over its message observers
+    /// (CefDevToolsController::DispatchProtocolMessage), and answering a result
+    /// sends the next method, whose notifications CEF dispatches through the
+    /// same list while it is still being walked: "Check failed:
+    /// !check_reentrancy" (base/observer_list.h) on every dock. Each is taken
+    /// on a turn of its own, in the order it arrived.
     func frontendResult(id: Int32, ok: Bool) {
-        frontend.handleResult(id: id, ok: ok)
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.frontend.handleResult(id: id, ok: ok) }
+        }
     }
 
     func frontendEvent(method: String, json: String) {
-        frontend.handleEvent(method: method, json: json)
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.frontend.handleEvent(method: method, json: json) }
+        }
     }
 
     /// Undoes `dockDevTools`. The page takes the whole width back at once; the
