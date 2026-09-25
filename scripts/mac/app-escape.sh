@@ -64,7 +64,7 @@ launch() {
   LOG="$profile/host.log"
   cd "$APP_DIR"
   NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE=chrome ND_WEBVIEW_TRACE=1 \
-    ND_SCRIPT=src/main.tsx NB_STORE_DIR="$profile/store" ND_CEF_CACHE="$profile/cef" \
+    ND_SCRIPT=src/main.tsx NB_STORE_DIR="$profile/store" NB_DOWNLOAD_DIR="$profile/downloads" ND_CEF_CACHE="$profile/cef" \
     "$HOST" "--load-extension=$EXTENSIONS" "--remote-debugging-port=$PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
   cd "$ROOT"

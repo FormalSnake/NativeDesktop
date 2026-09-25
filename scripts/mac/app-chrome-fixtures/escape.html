@@ -26,6 +26,8 @@
       <button id="print">window.print</button>
       <button id="pip-doc">document pip</button>
       <button id="share">navigator.share</button>
+      <a id="download" href="/download.bin">download</a>
+      <a id="download-blob" download="nd-fixture-blob.txt">blob download</a>
       <button id="geo">geolocation</button>
       <button id="notif">notification</button>
       <button id="fullscreen">fullscreen</button>
@@ -56,6 +58,7 @@
       });
       on("open-noopener", () => window.open("/page2.html", "_blank", "noopener"));
       on("print", () => window.print());
+      document.getElementById("download-blob").href = URL.createObjectURL(new Blob(["nd fixture blob payload"], { type: "text/plain" }));
       on("pip-doc", async () => {
         try {
           await documentPictureInPicture.requestWindow({ width: 200, height: 120 });

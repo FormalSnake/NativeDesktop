@@ -13,6 +13,7 @@
 //
 // ND_ESCAPE_ROUTES=<comma separated> runs a subset; ND_ESCAPE_EXPLORE=1 prints
 // every observation and never fails.
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { Cursor, connectApp, type LocatorFactory } from "@nativedesktop/test";
 
 import { Session, targets } from "../cdp.ts";
@@ -514,6 +515,54 @@ const outside = (name: string, id: string): Route => ({
   },
 });
 
+/// A real download, clicked. The app runs it into NB_DOWNLOAD_DIR; Chromium
+/// must neither draw its download bubble nor write a copy of its own into
+/// ~/Downloads, which is where Chrome style puts one when the host lets it.
+const download = (name: string, id: string): Route => ({
+  name,
+  expect: { windows: 0, tabs: 0 },
+  run: async (page) => {
+    const home = `${process.env.HOME}/Downloads`;
+    const chromeCopies = () =>
+      (existsSync(home) ? readdirSync(home) : []).filter((f) => f.startsWith("nd-fixture") && statSync(`${home}/${f}`).mtimeMs >= started);
+    const started = Date.now() - 1000;
+    const known = new Set((await census()).map((w) => w.number));
+    await click(await pagePoint(page, id), "left");
+    const traced = await until("the host hands the download to the app", async () => countTrace("ND_WV cef node=[0-9]+ downloadRequested"), (n) => n > 0, 8000).catch(() => 0);
+    // Chrome's bubble shows once its own copy is written and closes itself
+    // again, so the census is polled rather than read once at the end. The
+    // app's own popover is a new window too, told apart by its size.
+    const seen = new Map<number, CensusWindow>();
+    const settled = Date.now() + 6000;
+    while (Date.now() < settled) {
+      for (const w of await census()) {
+        if (w.alpha === 0 || known.has(w.number) || seen.has(w.number)) continue;
+        seen.set(w.number, w);
+        // The link status bubble while the pointer rests on the link.
+        if (w.height > 26) regionShot(`${name}.${w.width}x${w.height}`, true);
+      }
+      await Bun.sleep(250);
+    }
+    const popovers = await appPopovers().catch(() => []);
+    // The app's toast ("Saved …") is a 36 pt window of its own inside the
+    // app's frame; Chromium's download bubble hangs off the frame's edge.
+    const frames = (await app.windows()).windows.flatMap((w) => (w.geometry ? [w.geometry] : []));
+    const toast = (w: CensusWindow) =>
+      w.height <= 44 && frames.some((f) => w.x >= f.x && w.y >= f.y && w.x + w.width <= f.x + f.w && w.y + w.height <= f.y + f.h);
+    const foreign = [...seen.values()].filter(
+      (w) => w.height > 26 && !toast(w) && !popovers.some((p) => Math.abs(p.w - w.width) <= 60 && Math.abs(p.h - w.height) <= 60),
+    );
+    const copies = chromeCopies();
+    for (const f of copies) Bun.spawnSync(["rm", "-f", `${home}/${f}`]);
+    assert(foreign.length === 0, `a surface not the app's appeared: ${foreign.map((w) => `L${w.layer} ${w.width}x${w.height}@${w.x},${w.y}`).join(" ")}`);
+    assert(copies.length === 0, `Chromium saved its own copy: ${copies.join(", ")}`);
+    assert(traced > 0, "the download never reached the app");
+    const stayed = await pageEval(app, page, "location.href");
+    assert(stayed === ESCAPE_URL, `the page left for ${stayed}`);
+    return "downloaded by the app";
+  },
+});
+
 function countTrace(marker: string): number {
   const path = process.env.ND_APP_HOST_LOG;
   if (!path) return 0;
@@ -617,6 +666,8 @@ const routes: Route[] = [
   pageClick("page.print", "print", "left", NATIVE),
   pageClick("page.documentPip", "pip-doc", "left", NONE),
   pageClick("page.share", "share", "left", NATIVE),
+  download("page.download", "download"),
+  download("page.downloadBlob", "download-blob"),
   pageClick("page.geolocation", "geo", "left", BUBBLE("permission prompt")),
   pageClick("page.notification", "notif", "left", BUBBLE("permission prompt")),
   pageClick("page.openChromeUrl", "open-chrome", "left", { windows: 0 }),
