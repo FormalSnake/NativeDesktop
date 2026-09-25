@@ -774,6 +774,7 @@ final class NDCefWebView: NSView {
     }
 
     fileprivate func emitDownload(url: String, suggestedName: String) {
+        ndTrace("downloadRequested \(url)")
         var fields: [String: Any] = ["url": url]
         if !suggestedName.isEmpty { fields["suggestedFilename"] = suggestedName }
         emitData("downloadRequested", fields)
@@ -1104,9 +1105,11 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(browser)
             return 1
         }
-        // Cancelled by never continuing the callback: the app owns downloading,
-        // exactly as on the WebKit surface where the response policy is
-        // .cancel and the URL is handed to Bun.
+        // The app owns downloading, exactly as on the WebKit surface where the
+        // response policy is .cancel and the URL is handed to Bun. Returning 1
+        // claims the download and releasing the callback without cont()
+        // cancels it; 0 would be Chrome's default, which saves its own copy
+        // to ~/Downloads and shows its download bubble.
         download.pointee.on_before_download = { selfPointer, browser, item, suggestedName, callback in
             let name = ndCefString(suggestedName)
             var url = ""
@@ -1118,7 +1121,7 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(item)
             nd_cef_ref_release(callback)
             ndCefDeliver(selfPointer) { $0?.emitDownload(url: url, suggestedName: name) }
-            return 0
+            return 1
         }
     }
 
