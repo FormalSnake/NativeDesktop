@@ -93,7 +93,7 @@ for _ in $(seq 1 40); do
   launch
   set +e
   ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" \
-    ND_APP_FIXTURE_PORT="$FIXTURE_PORT" ND_APP_HOST_LOG="$LOG" ND_INPUT_BINARY="$INPUT" \
+    ND_APP_FIXTURE_PORT="$FIXTURE_PORT" ND_APP_HOST_LOG="$LOG" ND_APP_DOWNLOADS="$RUN_DIR/run-$RUN/downloads" ND_INPUT_BINARY="$INPUT" \
     ND_ESCAPE_SKIP="$DONE" ND_ESCAPE_SHOTS="$SHOTS" ND_ESCAPE_BUDGET_S="$LEFT" ND_NDSHOT="${ND_NDSHOT:-$ROOT/tools/ndshot/bin/ndshot}" \
     timeout --kill-after=10 "$LEFT" bun scripts/mac/app-escape-drive.ts 2>&1 | tee "$OUT"
   STATUS=${PIPESTATUS[0]}

@@ -528,7 +528,7 @@ const download = (name: string, id: string): Route => ({
     const started = Date.now() - 1000;
     const known = new Set((await census()).map((w) => w.number));
     await click(await pagePoint(page, id), "left");
-    const traced = await until("the host hands the download to the app", async () => countTrace("ND_WV cef node=[0-9]+ downloadRequested"), (n) => n > 0, 8000).catch(() => 0);
+    const traced = await until("the host hands the download to the app", async () => countTrace("ND_WV cef node=[0-9]+ downloadRequested id="), (n) => n > 0, 8000).catch(() => 0);
     // Chrome's bubble shows once its own copy is written and closes itself
     // again, so the census is polled rather than read once at the end. The
     // app's own popover is a new window too, told apart by its size.
@@ -554,14 +554,35 @@ const download = (name: string, id: string): Route => ({
     );
     const copies = chromeCopies();
     for (const f of copies) Bun.spawnSync(["rm", "-f", `${home}/${f}`]);
+    // The file the app asked for, whole, and the app's own panel saying so.
+    const dir = process.env.ND_APP_DOWNLOADS ?? "";
+    const landed = (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.startsWith("nd-fixture") && !f.endsWith(".crdownload") && statSync(`${dir}/${f}`).size > 0);
+    const statuses = await downloadStatuses();
+    const shot = regionShot(`${name}.panel`, true);
     assert(foreign.length === 0, `a surface not the app's appeared: ${foreign.map((w) => `L${w.layer} ${w.width}x${w.height}@${w.x},${w.y}`).join(" ")}`);
     assert(copies.length === 0, `Chromium saved its own copy: ${copies.join(", ")}`);
     assert(traced > 0, "the download never reached the app");
+    assert(landed.length > 0, `nothing complete in the app's download folder (${dir})`);
+    assert(statuses.length > 0 && !statuses.some((t) => /fail|Downloading/i.test(t)), `the app's panel reads ${JSON.stringify(statuses)}`);
     const stayed = await pageEval(app, page, "location.href");
     assert(stayed === ESCAPE_URL, `the page left for ${stayed}`);
-    return "downloaded by the app";
+    return `downloaded ${landed.join(", ")} (${statuses.join(" | ")}) panel ${shot}`;
   },
 });
+
+/// The status line of every row in the app's Downloads panel.
+async function downloadStatuses(): Promise<string[]> {
+  const found: string[] = [];
+  for (const w of (await app.windows()).windows) {
+    const tree = await app.tree(w.ref);
+    const walk = (node: Node & { text?: string | null }) => {
+      if (node.testID?.includes("downloads-status-") && node.visible) found.push(node.text ?? "");
+      for (const child of node.children) walk(child as never);
+    };
+    walk(tree.root as never);
+  }
+  return found;
+}
 
 function countTrace(marker: string): number {
   const path = process.env.ND_APP_HOST_LOG;
