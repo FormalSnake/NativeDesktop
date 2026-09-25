@@ -165,6 +165,9 @@ final class NDSplitReveal {
             ])
             chrome = effect
         }
+        // Sized before the chrome goes in: autoresizing adds the panel's own
+        // growth from zero to the chrome, which doubled it.
+        panel.frame = NSRect(x: 0, y: 0, width: width, height: height)
         chrome.frame = NSRect(x: 0, y: 0, width: width, height: height)
         chrome.autoresizingMask = [.width, .height]
         panel.addSubview(chrome)
