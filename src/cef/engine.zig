@@ -1568,6 +1568,15 @@ fn onToplevelFocusChanged(_: *gobject.Object, _: *gobject.ParamSpec, data: ?*any
 
 fn syncBrowserFocus(view: *View) void {
     if (gtk.Widget.getMapped(view.widget) == 0) return;
+    if (!focusEligible(view)) {
+        // Never granted, and never told otherwise either: every set_focus is a
+        // round trip that a second browser in the window answers by taking the
+        // focus back. X input focus Chromium moved there on its own still
+        // comes home.
+        const cef_window = view.cef_window.load(.acquire);
+        if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) x11.focusToplevel(view.widget);
+        return;
+    }
     const root = gtk.Widget.getRoot(view.widget) orelse return;
     const window = gobject.ext.cast(gtk.Window, root) orelse return;
     const mine = if (gtk.Window.getFocus(window)) |focused| focused == view.widget else false;
@@ -1592,6 +1601,20 @@ fn syncBrowserFocus(view: *View) void {
     }
     const host = hostOf(view) orelse return;
     if (host.set_focus) |set| set(host, @intFromBool(active and mine));
+}
+
+/// Smallest side, in device pixels, of a view the keyboard can belong to. Apps
+/// keep functional-but-invisible browsers at 2x2 (Chromium will not run a page
+/// whose window has a side of 1), such as the one an extension registry is
+/// read from. With an extension loaded, chrome://extensions has something
+/// focusable, and that view and the page on show took the focus from each
+/// other without end: each grant posts to the CEF UI thread, whose wakeup pipe
+/// filled until both it and the GTK thread blocked writing to it.
+const focusable_min_px: u32 = 32;
+
+/// Read from the atomics `syncBounds` keeps, because the CEF UI thread asks.
+fn focusEligible(view: *View) bool {
+    return view.size_w.load(.acquire) >= focusable_min_px and view.size_h.load(.acquire) >= focusable_min_px;
 }
 
 fn disconnectLayout(view: *View) void {
@@ -7040,7 +7063,9 @@ fn clientGetFocusHandler(self: [*c]c.cef_client_t) callconv(.c) [*c]c.cef_focus_
 /// only gets the keyboard when the user gives it (FOCUS_SOURCE_SYSTEM).
 fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, source: c.cef_focus_source_t) callconv(.c) c_int {
     defer ref.releaseParam(browser);
-    focused_view = FocusObj.of(self).payload;
+    const view = FocusObj.of(self).payload;
+    focused_view = view;
+    if (!focusEligible(view)) return 1;
     return @intFromBool(source == c.FOCUS_SOURCE_NAVIGATION);
 }
 
@@ -7049,7 +7074,9 @@ fn onSetFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, sou
 /// native chrome to the page, so it is what moves GTK's focus widget to match.
 fn onGotFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) void {
     defer ref.releaseParam(browser);
-    post(.{ .view = FocusObj.of(self).payload, .name = "", .grab_focus = true });
+    const view = FocusObj.of(self).payload;
+    if (!focusEligible(view)) return;
+    post(.{ .view = view, .name = "", .grab_focus = true });
 }
 
 fn onTakeFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, next: c_int) callconv(.c) void {
