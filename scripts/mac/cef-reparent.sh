@@ -16,8 +16,14 @@ trap cef_gate_unlock EXIT
 cef_gate_lock
 PROFILE="$RUN_DIR"
 
-REPORTS="$HOME/Library/Logs/DiagnosticReports"
-crash_reports() { ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort || true; }
+# ReportCrash writes to the system directory on this macOS rather than the
+# user one, so both are read.
+REPORTS="$HOME/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports"
+crash_reports() {
+  for dir in $REPORTS; do
+    ls -1 "$dir" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sed "s|^|$dir/|" || true
+  done | sort
+}
 BASELINE_REPORTS="$(crash_reports)"
 
 # ScreenCaptureKit through the signed `ndshot` binary is the only capture path

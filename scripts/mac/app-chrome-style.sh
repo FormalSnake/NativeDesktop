@@ -35,12 +35,15 @@ cef_gate_lock
 PROFILE="$RUN_DIR"
 mkdir -p "$PROFILE/store" "$PROFILE/cef" "$PROFILE/shots"
 
-# Every new NDShell*.ips under ~/Library/Logs/DiagnosticReports is a crash the
-# machine owner sees as a "quit unexpectedly" dialog. The run fails on one even
-# if every leg passed.
-REPORTS="$HOME/Library/Logs/DiagnosticReports"
+# Every new NDShell*.ips is a crash the machine owner sees as a "quit
+# unexpectedly" dialog. The run fails on one even if every leg passed.
+# ReportCrash writes to the system directory on this macOS rather than the
+# user one, so both are read.
+REPORTS="$HOME/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports"
 crash_reports() {
-  ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort || true
+  for dir in $REPORTS; do
+    ls -1 "$dir" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sed "s|^|$dir/|" || true
+  done | sort
 }
 BASELINE_REPORTS="$(crash_reports)"
 new_crash_reports() {
