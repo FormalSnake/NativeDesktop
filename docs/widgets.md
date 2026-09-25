@@ -510,6 +510,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `newWindow` | `onNewWindow` | text |
 | `browserCommand` | `onBrowserCommand` | text |
 | `downloadRequested` | `onDownloadRequested` | data |
+| `downloadUpdated` | `onDownloadUpdated` | data |
 | `javaScriptResult` | `onJavaScriptResult` | data |
 | `scriptMessage` | `onScriptMessage` | data |
 | `schemeRequest` | `onSchemeRequest` | data |
@@ -533,7 +534,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
 
-Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `focus`.
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `respondDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `focus`.
 
 ## NativeView (`<nativeview>`)
 

@@ -94,6 +94,15 @@ import CCef
             }
             guard window.level == .normal else { continue }
             guard NSStringFromClass(type(of: window)).contains(viewsWindowClass) else { continue }
+            // Chrome's download-started animation: an arrow drawn in a
+            // parentless, click-through Views window of its own as a download
+            // begins. The download bubble pref does not cover it, and the app's
+            // panel is the report, so it is taken off screen.
+            if window.parent == nil, window.ignoresMouseEvents, NDCefDownloads.startedRecently {
+                window.orderOut(nil)
+                owners.first?.traceSurface("download animation hidden \(window.frame.size)")
+                continue
+            }
             guard let owner = self.owner(of: window, among: owners) else { continue }
             adopt(window, owner: owner)
         }

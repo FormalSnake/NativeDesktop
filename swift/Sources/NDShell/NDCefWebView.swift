@@ -479,6 +479,7 @@ final class NDCefWebView: NSView {
         case "unregisterScriptMessage": ndUnregisterScriptMessage(obj)
         case "respondScheme": NDCefSchemes.respond(obj)
         case "respondPermission": NDCefPermissions.respond(obj)
+        case "respondDownload": NDCefDownloads.respond(obj)
         case "getCookies": ndGetCookies(obj)
         case "setCookie": ndSetCookie(obj)
         case "deleteCookie": ndDeleteCookie(obj)
@@ -773,12 +774,6 @@ final class NDCefWebView: NSView {
         emitData("faviconChanged", ["pageUrl": committedURL, "iconUrl": icon])
     }
 
-    fileprivate func emitDownload(url: String, suggestedName: String) {
-        ndTrace("downloadRequested \(url)")
-        var fields: [String: Any] = ["url": url]
-        if !suggestedName.isEmpty { fields["suggestedFilename"] = suggestedName }
-        emitData("downloadRequested", fields)
-    }
 
     fileprivate func didFinishLoad() {
         emitSecurity()
@@ -1075,6 +1070,7 @@ final class NDCefHandlerBox {
             let kept = UInt(bitPattern: browser)
             ndCefDeliver(selfPointer) { view in
                 guard let created = ndCefBrowser(kept) else { return }
+                NDCefProfiles.writePrefs(for: created)
                 if let view {
                     view.adoptBrowser(created)
                 } else {
@@ -1105,23 +1101,39 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(browser)
             return 1
         }
-        // The app owns downloading, exactly as on the WebKit surface where the
-        // response policy is .cancel and the URL is handed to Bun. Returning 1
-        // claims the download and releasing the callback without cont()
-        // cancels it; 0 would be Chrome's default, which saves its own copy
-        // to ~/Downloads and shows its download bubble.
+        // Chrome style's default (returning 0) saves a copy of its own to
+        // ~/Downloads and shows its download bubble. The download is claimed
+        // instead and parked until the app answers `respondDownload`: a path
+        // lets Chromium run the transfer there (so blob:, data:, POST and
+        // cookie-bound downloads work, which the app could not fetch again),
+        // no path cancels it.
         download.pointee.on_before_download = { selfPointer, browser, item, suggestedName, callback in
             let name = ndCefString(suggestedName)
             var url = ""
-            if let item, let raw = item.pointee.get_url?(item) {
-                url = ndCefString(raw)
-                nd_cef_string_free(raw)
+            var itemID: UInt32 = 0
+            if let item {
+                if let raw = item.pointee.get_url?(item) {
+                    url = ndCefString(raw)
+                    nd_cef_string_free(raw)
+                }
+                itemID = item.pointee.get_id?(item) ?? 0
             }
             nd_cef_ref_release(browser)
             nd_cef_ref_release(item)
-            nd_cef_ref_release(callback)
-            ndCefDeliver(selfPointer) { $0?.emitDownload(url: url, suggestedName: name) }
+            guard let callback else { return 0 }
+            let token = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in
+                NDCefDownloads.request(view: view, itemID: itemID, url: url, suggestedName: name, callback: token)
+            }
             return 1
+        }
+        download.pointee.on_download_updated = { selfPointer, browser, item, callback in
+            nd_cef_ref_release(browser)
+            nd_cef_ref_release(callback)
+            guard let item else { return }
+            defer { nd_cef_ref_release(item) }
+            let update = NDCefDownloads.Update(item)
+            ndCefDeliver(selfPointer) { view in NDCefDownloads.updated(view: view, update) }
         }
     }
 

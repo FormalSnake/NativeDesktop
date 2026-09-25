@@ -131,6 +131,9 @@ void nd_cef_string_list_free(cef_string_list_t list);
 /// An empty dictionary for DevTools method params.
 cef_dictionary_value_t *nd_cef_dict_create(void);
 
+/// An empty value, for preference writes.
+cef_value_t *nd_cef_value_create(void);
+
 /// One request context, which is what a `profile` resolves to.
 cef_request_context_t *nd_cef_request_context_create(
     const cef_request_context_settings_t *settings,

@@ -28,7 +28,7 @@ function BrowserTab({ url, onOpenTab }: { url: string; onOpenTab: (u: string) =>
       onLoadProgress={({ value }) => setProgress(value)}          // 0..1
       onLoadFailed={({ data }) => showErrorPage(data)}            // { url, error }
       onNewWindow={({ text }) => onOpenTab(text)}                 // target=_blank / window.open
-      onDownloadRequested={({ data }) => download(data)}          // { url, suggestedFilename? }
+      onDownloadRequested={({ data }) => download(data)}          // { url, suggestedFilename?, id? }
       onJavaScriptResult={onJavaScriptResult}                     // wires the promise helper
     />
   );
@@ -207,11 +207,21 @@ is ignored for a Chrome-style popup, so the window sat on screen at 1050x880
 until the browser closed. Measured twice on 151.3.23, against the gate's own
 top-level census.
 
-`downloadRequested` carries `{ data: { url, suggestedFilename? } }` when the
-engine hits a response it cannot render, or an attachment. The engine-side
-download is cancelled and the app performs it. The Bun process has full network
-and filesystem access, so `fetch` with `node:fs` and `getAppDataDir()` is the
-intended path. `data:` URLs report `suggestedFilename: "Unknown"`.
+`downloadRequested` carries `{ data: { url, suggestedFilename?, id? } }` when the
+engine hits a response it cannot render, or an attachment.
+
+- Without `id` (WebKit), the engine-side download is cancelled and the app
+  performs it. The Bun process has full network and filesystem access, so
+  `fetch` with `node:fs` and `getAppDataDir()` is the intended path. `data:`
+  URLs report `suggestedFilename: "Unknown"`.
+- With `id` (Chromium on AppKit), the download waits for
+  `sendCommand(view, "respondDownload", { id, path })`. A `path` has Chromium
+  run the transfer to that file, which is the only way `blob:`, `data:`, POST
+  and cookie-bound downloads land, and `downloadUpdated`
+  `{ data: { id, state, received, total, path } }` follows (`state` is
+  `running`, `done`, `failed` or `cancelled`; `total` is -1 while unknown). No
+  `path` cancels it. Chromium's download bubble and download-started animation
+  never show; the app's own UI is the report.
 
 The event fires ONCE per download, on the view that asked for it, however many
 views are alive. That is worth stating because the signal it rides on GTK

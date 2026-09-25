@@ -503,4 +503,116 @@ enum NDCefCapture {
         for child in view.subviews { collect(child, into: &found) }
     }
 }
+
+// MARK: - Downloads
+
+/// Downloads, parked until the app answers `respondDownload`, then reported to
+/// it as `downloadUpdated` until they end. The CEF download item id names a
+/// download from `on_before_download` to its last update.
+enum NDCefDownloads {
+    struct Update {
+        let itemID: UInt32
+        let received: Int64
+        let total: Int64
+        let path: String
+        let state: String
+
+        init(_ item: UnsafeMutablePointer<cef_download_item_t>) {
+            itemID = item.pointee.get_id?(item) ?? 0
+            received = item.pointee.get_received_bytes?(item) ?? 0
+            total = item.pointee.get_total_bytes?(item) ?? -1
+            var full = ""
+            if let raw = item.pointee.get_full_path?(item) {
+                full = ndCefString(raw)
+                nd_cef_string_free(raw)
+            }
+            path = full
+            if item.pointee.is_complete?(item) == 1 {
+                state = "done"
+            } else if item.pointee.is_canceled?(item) == 1 {
+                state = "cancelled"
+            } else if item.pointee.is_interrupted?(item) == 1 {
+                state = "failed"
+            } else {
+                state = "running"
+            }
+        }
+    }
+
+    @MainActor private static var pending: [String: UInt] = [:]
+    /// Downloads the app gave a path, with the last state reported, so an
+    /// update that changes nothing is not sent again.
+    @MainActor private static var running: [String: String] = [:]
+
+    @MainActor private static var lastStarted: Date?
+
+    /// A download began within the last few seconds, while Chrome may still
+    /// be putting up its download-started animation.
+    @MainActor static var startedRecently: Bool {
+        guard let lastStarted else { return false }
+        return Date().timeIntervalSince(lastStarted) < 5
+    }
+
+    private static func key(_ itemID: UInt32) -> String { "cefdownload-\(itemID)" }
+
+    @MainActor static func request(view: NDCefWebView?, itemID: UInt32, url: String, suggestedName: String, callback token: UInt) {
+        guard let view else {
+            release(token)
+            return
+        }
+        let id = key(itemID)
+        if let stale = pending.removeValue(forKey: id) { release(stale) }
+        pending[id] = token
+        view.ndTrace("downloadRequested id=\(id) \(url)")
+        var fields: [String: Any] = ["id": id, "url": url]
+        if !suggestedName.isEmpty { fields["suggestedFilename"] = suggestedName }
+        view.emitData("downloadRequested", fields)
+    }
+
+    /// `respondDownload`, on the UI thread. `path` is the full destination;
+    /// without one the download is cancelled.
+    @MainActor static func respond(_ obj: [String: Any]) {
+        guard let id = obj["id"] as? String else {
+            ndCefWarn("respondDownload: missing id")
+            return
+        }
+        guard let token = pending.removeValue(forKey: id),
+              let raw = UnsafeMutableRawPointer(bitPattern: token) else {
+            ndCefWarn("respondDownload: unknown download id \(id)")
+            return
+        }
+        let callback = raw.assumingMemoryBound(to: cef_before_download_callback_t.self)
+        if let path = obj["path"] as? String, !path.isEmpty {
+            running[id] = ""
+            lastStarted = Date()
+            var target = cef_string_t()
+            ndCefSetString(path, &target)
+            callback.pointee.cont?(callback, &target, 0)
+            nd_cef_string_clear(&target)
+        }
+        nd_cef_ref_release(callback)
+    }
+
+    @MainActor static func updated(view: NDCefWebView?, _ update: Update) {
+        let id = key(update.itemID)
+        guard let last = running[id] else { return }
+        let signature = "\(update.state)/\(update.received)"
+        guard signature != last else { return }
+        if update.state == "running" {
+            running[id] = signature
+        } else {
+            running.removeValue(forKey: id)
+        }
+        guard let view else { return }
+        view.ndTrace("downloadUpdated id=\(id) state=\(update.state) received=\(update.received)")
+        view.emitData("downloadUpdated", [
+            "id": id, "state": update.state, "received": update.received, "total": update.total, "path": update.path,
+        ])
+    }
+
+    private static func release(_ token: UInt) {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: token) else { return }
+        nd_cef_ref_release(raw.assumingMemoryBound(to: cef_before_download_callback_t.self))
+    }
+}
 #endif

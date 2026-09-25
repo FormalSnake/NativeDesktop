@@ -36,6 +36,37 @@ enum NDCefProfiles {
         return context
     }
 
+    nonisolated(unsafe) private static var prefsWritten: Set<UInt> = []
+
+    /// Chrome style pops its download bubble (and the download-started
+    /// animation) whenever a download it runs finishes, anchored to a toolbar
+    /// this embedding does not have, so it lands as a window of its own. The
+    /// app's own panel reports downloads instead. Written once per context,
+    /// from the first browser created in it, on the UI thread.
+    static func writePrefs(for browser: UnsafeMutablePointer<cef_browser_t>) {
+        guard let host = browser.pointee.get_host?(browser) else { return }
+        defer { nd_cef_ref_release(host) }
+        guard let context = host.pointee.get_request_context?(host) else { return }
+        defer { nd_cef_ref_release(context) }
+        guard let set = context.pointee.base.set_preference else { return }
+        let key = UInt(bitPattern: context)
+        // By pointer: a context seen through a new wrapper is written again,
+        // which is harmless.
+        guard !prefsWritten.contains(key) else { return }
+        prefsWritten.insert(key)
+        for name in ["download_bubble.partial_view_enabled"] {
+            guard let value = nd_cef_value_create() else { continue }
+            _ = value.pointee.set_bool?(value, 0)
+            var pref = cef_string_t()
+            var error = cef_string_t()
+            ndCefSetString(name, &pref)
+            let ok = withUnsafeMutablePointer(to: &context.pointee.base) { set($0, &pref, value, &error) }
+            if ok == 0 { ndCefWarn("CEF: \(name) was not written: \(ndCefString(&error))") }
+            nd_cef_string_clear(&pref)
+            nd_cef_string_clear(&error)
+        }
+    }
+
     /// Every live context, for the process-wide operations (scheme
     /// registration) that must reach all of them.
     static var all: [UnsafeMutablePointer<cef_request_context_t>] {

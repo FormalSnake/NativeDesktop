@@ -29,6 +29,7 @@ static struct {
   void (*string_list_free)(cef_string_list_t);
   int (*string_list_value)(cef_string_list_t, size_t, cef_string_t *);
   cef_dictionary_value_t *(*dict_create)(void);
+  cef_value_t *(*value_create)(void);
   cef_request_context_t *(*request_context_create)(const cef_request_context_settings_t *,
                                                    cef_request_context_handler_t *);
   int (*register_scheme_handler_factory)(const cef_string_t *,
@@ -95,6 +96,7 @@ int nd_cef_load(const char *framework_binary_path) {
   g.string_list_append = bind_symbol("cef_string_list_append");
   g.string_list_free = bind_symbol("cef_string_list_free");
   g.dict_create = bind_symbol("cef_dictionary_value_create");
+  g.value_create = bind_symbol("cef_value_create");
   g.request_context_create = bind_symbol("cef_request_context_create_context");
   g.register_scheme_handler_factory = bind_symbol("cef_register_scheme_handler_factory");
   g.browser_view_create = bind_symbol("cef_browser_view_create");
@@ -238,6 +240,10 @@ void nd_cef_string_list_free(cef_string_list_t list) {
 
 cef_dictionary_value_t *nd_cef_dict_create(void) {
   return g.dict_create ? g.dict_create() : NULL;
+}
+
+cef_value_t *nd_cef_value_create(void) {
+  return g.value_create ? g.value_create() : NULL;
 }
 
 cef_request_context_t *nd_cef_request_context_create(
