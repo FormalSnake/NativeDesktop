@@ -161,6 +161,10 @@ func buildVTable() -> nd_backend {
             // is its attachment. Reporting nil meant a <menuitem> could leave
             // the React tree while the NSMenu kept drawing it.
             if let node = ndMenuNode(view) { return node.isAttached }
+            // A pane's `<headerbar>` lives in the window toolbar as items, and
+            // its own view never has a superview either; without this a header
+            // unmounted from the tree left its items in the toolbar.
+            if let header = view as? NDHeaderBarView, header.pane != nil { return true }
             return view.superview != nil
         }
     }
