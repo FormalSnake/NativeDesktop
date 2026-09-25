@@ -157,6 +157,11 @@ func ndLayoutPurge(_ view: NSView) {
 /// below); `.flexiblePush` actually stretches to fill the frame, so a
 /// non-zero padding switches to it (a real AppKit bezel style change).
 final class NDButton: NSButton {
+    override class var cellClass: AnyClass? {
+        get { NDButtonCell.self }
+        set {}
+    }
+
     /// A button promoted into a native source-list row remains the React/tree
     /// model and semantic-action target, but must not compete with the visible
     /// NSTableView for physical hit testing. Its padded stack-layout frame does
@@ -222,6 +227,32 @@ final class NDButton: NSButton {
             size.width = max(size.width, side)
             size.height = max(size.height, side)
         }
+        return size
+    }
+}
+
+/// A borderless button with a leading icon and a title draws the title about
+/// 2 pt after the glyph, which reads as the two touching; Adwaita's
+/// button content keeps 6 px between them, so the title moves over by the
+/// difference.
+final class NDButtonCell: NSButtonCell {
+    private static let iconGap: CGFloat = 4
+
+    private var gapped: Bool {
+        !isBordered && image != nil && imagePosition == .imageLeading && !title.isEmpty
+    }
+
+    override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
+        guard gapped else { return super.drawTitle(title, withFrame: frame, in: controlView) }
+        var shifted = frame
+        shifted.origin.x += Self.iconGap
+        shifted.size.width = max(shifted.size.width - Self.iconGap, 0)
+        return super.drawTitle(title, withFrame: shifted, in: controlView)
+    }
+
+    override var cellSize: NSSize {
+        var size = super.cellSize
+        if gapped { size.width += Self.iconGap }
         return size
     }
 }
