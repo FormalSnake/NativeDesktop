@@ -1530,6 +1530,14 @@ const legs: Leg[] = [
       await newTab();
       const page = await loadFixture();
       const full = (await viewBox(page)).width;
+      // The address field still holds the keyboard from loadFixture, and the
+      // app commits what it holds, as https, when it loses focus. The inspector
+      // takes focus as it docks, and the page would renavigate to a scheme the
+      // fixture does not serve. Escape hands the field back its URL first.
+      await main.keyboard.press("Escape");
+      await Bun.sleep(300);
+      await main.getByTestId(page).focus();
+      await Bun.sleep(500);
       await openInspector(page);
       await until(
         "the dock takes a share of the viewport",
@@ -1542,14 +1550,6 @@ const legs: Leg[] = [
 
       // Device mode: the hole stops being a column and becomes the device's
       // rectangle, which is what puts the phone in the page area.
-      // The address field still holds the keyboard from loadFixture, and the
-      // app commits what it holds, as https, when it loses focus: the first
-      // real click would renavigate the page to a scheme the fixture does not
-      // serve. Escape hands the field back its URL first.
-      await main.keyboard.press("Escape");
-      await Bun.sleep(300);
-      await main.getByTestId(page).focus();
-      await Bun.sleep(500);
       const phone = await frontendPoint(page, DEVICE_TOOLBAR);
       assert(phone !== null, "the frontend has no device-toolbar toggle");
       await frontendPresses();
@@ -1572,6 +1572,10 @@ const legs: Leg[] = [
 
       // The user drags the frontend's own splitter: the hole moves and the
       // page has to move with it.
+      // A capture can bring a system window forward (the Screen Recording
+      // prompt, its notification), and a real drag goes to whatever is on top.
+      activateApp();
+      await Bun.sleep(600);
       const column = (await frontendGeometry()).bounds;
       const splitter = await frontendPoint(page, FRONTEND_SPLITTER);
       assert(splitter !== null, "the frontend has no splitter to drag");
@@ -1590,6 +1594,27 @@ const legs: Leg[] = [
       await app.setWindowSize(1180, 880);
       await Bun.sleep(1500);
       await dockTiles(page, "resized");
+
+      // Device mode again at the narrowest width the app's window takes, with
+      // the toggle found afresh: the frontend's toolbar reflows as it narrows.
+      await app.setWindowSize(1000, 720);
+      await Bun.sleep(1500);
+      await dockTiles(page, "narrow");
+      const narrowPhone = await frontendPoint(page, DEVICE_TOOLBAR);
+      assert(narrowPhone !== null, "the narrow frontend has no device-toolbar toggle");
+      await app.cursor.click(narrowPhone!);
+      await Bun.sleep(2000);
+      const narrowDevice = (await frontendGeometry()).bounds;
+      assert(
+        narrowDevice !== null && narrowDevice.y > 0,
+        `device mode is not on at the narrow width: the hole is ${JSON.stringify(narrowDevice)}; `
+          + await pressReport(page, narrowPhone!),
+      );
+      await dockTiles(page, "narrowDeviceMode", true);
+      capture("dock-device-narrow", (await appWindowRect()).number);
+      await app.cursor.click(narrowPhone!);
+      await Bun.sleep(2000);
+      await dockTiles(page, "narrowDeviceModeOff");
 
       // Back to the first tab and forward again: every other webview in the
       // overlay is hidden rather than gone, and the one that comes back has to
