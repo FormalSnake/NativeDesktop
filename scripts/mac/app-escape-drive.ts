@@ -526,24 +526,46 @@ const download = (name: string, id: string): Route => ({
     const chromeCopies = () =>
       (existsSync(home) ? readdirSync(home) : []).filter((f) => f.startsWith("nd-fixture") && statSync(`${home}/${f}`).mtimeMs >= started);
     const started = Date.now() - 1000;
-    const known = new Set((await census()).map((w) => w.number));
-    await click(await pagePoint(page, id), "left");
-    const traced = await until("the host hands the download to the app", async () => countTrace("ND_WV cef node=[0-9]+ downloadRequested id="), (n) => n > 0, 8000).catch(() => 0);
-    // Chrome's bubble shows once its own copy is written and closes itself
-    // again, so the census is polled rather than read once at the end. The
-    // app's own popover is a new window too, told apart by its size.
+    // Every window of the host sampled at 16 ms from before the click to 3 s
+    // after the download reached the app: the start animation is on screen for
+    // a few frames only, and not on every download, so the click is repeated.
     const seen = new Map<number, CensusWindow>();
-    const settled = Date.now() + 6000;
-    while (Date.now() < settled) {
-      for (const w of await census()) {
-        if (w.alpha === 0 || known.has(w.number) || seen.has(w.number)) continue;
-        seen.set(w.number, w);
-        // The link status bubble while the pointer rests on the link.
-        if (w.height > 26) regionShot(`${name}.${w.width}x${w.height}`, true);
+    const popovers: { w: number; h: number }[] = [];
+    let traced = 0;
+    for (let round = 0; round < 4; round++) {
+      const watch = Bun.spawn(["swift", "scripts/mac/window-watch.swift", String(HOST_PID), "9000", "16"], {
+        stdout: "pipe",
+        env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined },
+      });
+      const lines = watch.stdout.pipeThrough(new TextDecoderStream()).getReader();
+      let buffered = "";
+      while (!buffered.includes("ready\n")) {
+        const { value, done } = await lines.read();
+        if (done) break;
+        buffered += value;
       }
-      await Bun.sleep(250);
+      const before = countTrace("ND_WV cef node=[0-9]+ downloadRequested id=");
+      await click(await pagePoint(page, id), "left");
+      traced = (await until("the host hands the download to the app", async () => countTrace("ND_WV cef node=[0-9]+ downloadRequested id="), (n) => n > before, 5000).catch(() => before)) - before;
+      await Bun.sleep(3000);
+      watch.kill();
+      for (;;) {
+        const { value, done } = await lines.read();
+        if (done) break;
+        buffered += value;
+      }
+      for (const line of buffered.split("\n")) {
+        if (!line.startsWith("{")) continue;
+        const w = JSON.parse(line) as CensusWindow;
+        if (w.alpha > 0) seen.set(w.number, w);
+      }
+      // The Downloads popover grows a row per round.
+      popovers.push(...(await appPopovers().catch(() => [])));
+      if (traced === 0) break;
     }
-    const popovers = await appPopovers().catch(() => []);
+    // The last round's "Saved" toast would read as a new surface to the
+    // route's own diff.
+    await Bun.sleep(4000);
     // The app's toast ("Saved …") is a 36 pt window of its own inside the
     // app's frame; Chromium's download bubble hangs off the frame's edge.
     const frames = (await app.windows()).windows.flatMap((w) => (w.geometry ? [w.geometry] : []));
