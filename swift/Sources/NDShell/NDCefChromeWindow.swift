@@ -32,17 +32,9 @@ import Foundation
     private weak var view: NDCefWebView?
     private var cefWindow: UnsafeMutablePointer<cef_window_t>?
     private var browserView: UnsafeMutablePointer<cef_browser_view_t>?
-    /// The panel the page and a docked inspector share. The inspector fills it
-    /// and the page sits over it at exactly the rectangle the frontend keeps for
-    /// it, which is Chrome's own dock. A page container filling the window with
-    /// the page inset inside it looked the same and took every press meant for
-    /// the inspector's toolbar, splitter and panels. A CEF panel always has a
-    /// layout (FillLayout by default) and CEF has no absolute one, so the
-    /// children are placed by bounds after each of its layout passes, from
-    /// `stageLaidOut`.
-    private var pageHost: UnsafeMutablePointer<cef_panel_t>?
-    /// Where the frontend last said the page belongs, in window coordinates.
-    /// Nil while no inspector is docked, which is the page filling the window.
+    /// Where the frontend last said the page belongs, in the webview's own
+    /// coordinates with the origin at the top left, the frontend's own. Nil
+    /// while no inspector is docked, which is the page filling the webview.
     private var pageRect: cef_rect_t?
     private lazy var frontend = NDCefDockFrontend(window: self)
     private var devToolsView: UnsafeMutablePointer<cef_browser_view_t>?
@@ -51,12 +43,21 @@ import Foundation
     private var devToolsClosing: UnsafeMutablePointer<cef_browser_view_t>?
     private var devToolsCloseTimer: Timer?
     private var dockFrontendTimer: Timer?
-    /// Inspector views whose browser has gone. They stay children of the window
-    /// for the rest of its life: `remove_child_view` on one of these poisons the
-    /// next `show_dev_tools` or `close_dev_tools`, which then hangs the UI
-    /// thread outright. Asking the box layout for a width of zero instead leaves
-    /// them costing a pointer each and nothing on screen.
-    private var closedDevToolsViews: [UnsafeMutablePointer<cef_browser_view_t>] = []
+    /// The docked inspector's own Views window. A Chrome style window hosts at
+    /// most one Chrome style BrowserView (cef_types_runtime.h), and DevTools can
+    /// only be Chrome style. With the inspector added to the page's window, its
+    /// BrowserView took over the widget's `kBrowserViewKey`, so every later tab
+    /// update of the page looked itself up in the inspector's tab strip and hit
+    /// `NOTREACHED() << "Tab view not found for handle"` in
+    /// HorizontalTabStripRegionView::GetTabData: any navigation, reload or stop
+    /// of an inspected page killed the process. The inspector gets a window and
+    /// an anchor of its own, lifted into the host under the page. Chrome's own
+    /// dock has the same shape: the inspector fills the webview and draws its
+    /// panels around the hole it keeps for the page, and the page is drawn in
+    /// that hole (`pageRect`).
+    private var toolsWindow: UnsafeMutablePointer<cef_window_t>?
+    private weak var toolsAnchor: NSWindow?
+    private weak var toolsLifted: NSView?
     private weak var anchor: NSWindow?
     /// The Chromium subtree now living in `view`, and the superview it came
     /// from. Chromium re-attaches its own native view host on some layout and
@@ -161,8 +162,7 @@ import Foundation
         if let layout = panel.pointee.set_to_fill_layout?(panel) {
             nd_cef_ref_release(UnsafeMutableRawPointer(layout))
         }
-        if let browserView, let host = nd_cef_panel_create(view?.box.stageDelegate) {
-            pageHost = host
+        if let browserView {
             // add_child_view TAKES the reference it is passed, the same
             // hand-over contract as the create calls, so the one this object
             // keeps has to be added first. Without it the BrowserView is freed
@@ -170,23 +170,39 @@ import Foundation
             // holds it, and every later window operation faults.
             nd_cef_ref_add(browserView)
             let child = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
-            host.pointee.add_child_view?(host, child)
-            nd_cef_ref_add(host)
-            panel.pointee.add_child_view?(panel, UnsafeMutableRawPointer(host).assumingMemoryBound(to: cef_view_t.self))
-            applyPageRect()
+            panel.pointee.add_child_view?(panel, child)
         }
 
-        guard let view else { return }
+        guard let view, let anchorWindow = Self.anchorWindow(of: window) else { return }
+        anchor = anchorWindow
+        Self.makeImperceptible(anchorWindow)
+        // Chromium's views hierarchy only produces frames for a widget it
+        // believes is showing, so the window is shown for real and made
+        // imperceptible instead of being left hidden.
+        let wasKey = view.window?.isKeyWindow ?? false
+        window.pointee.show?(window)
+        if wasKey { view.window?.makeKey() }
+        syncAnchor()
+        observeGeometry()
+        NDCefSurfaceWindows.start()
+        view.ndTrace("chrome anchored \(anchorWindow.frame) target=\(targetScreenFrame().map(\.debugDescription) ?? "none")")
+        if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
+    }
+
+    private static func anchorWindow(of window: UnsafeMutablePointer<cef_window_t>) -> NSWindow? {
         guard let handle = window.pointee.get_window_handle?(window) else {
             ndCefWarn("chrome style: the Views window reported no native handle")
-            return
+            return nil
         }
         let content = Unmanaged<NSView>.fromOpaque(handle).takeUnretainedValue()
         guard let anchorWindow = content.window else {
             ndCefWarn("chrome style: the Views window has no NSWindow")
-            return
+            return nil
         }
-        anchor = anchorWindow
+        return anchorWindow
+    }
+
+    private static func makeImperceptible(_ anchorWindow: NSWindow) {
         anchorWindow.alphaValue = 0
         anchorWindow.hasShadow = false
         anchorWindow.ignoresMouseEvents = true
@@ -200,17 +216,6 @@ import Foundation
         anchorWindow.setAccessibilityElement(false)
         anchorWindow.animationBehavior = .none
         anchorWindow.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
-        // Chromium's views hierarchy only produces frames for a widget it
-        // believes is showing, so the window is shown for real and made
-        // imperceptible instead of being left hidden.
-        let wasKey = view.window?.isKeyWindow ?? false
-        window.pointee.show?(window)
-        if wasKey { view.window?.makeKey() }
-        syncAnchor()
-        observeGeometry()
-        NDCefSurfaceWindows.start()
-        view.ndTrace("chrome anchored \(anchorWindow.frame) target=\(targetScreenFrame().map(\.debugDescription) ?? "none")")
-        if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
     }
 
     /// `on_after_created`, once the browser behind the BrowserView exists.
@@ -232,28 +237,21 @@ import Foundation
 
     // MARK: - DevTools
 
-    /// Docks the DevTools BrowserView beside the page inside the same Views
-    /// window, which is what puts its web contents under the NSView already
-    /// lifted into the host. Chrome's own dock is a WebContents split inside
-    /// the browser window; this is the same shape, drawn by CEF's box layout.
+    /// Docks the DevTools BrowserView in a Views window of its own (see
+    /// `toolsWindow`).
     func dockDevTools(_ popup: UnsafeMutablePointer<cef_browser_view_t>) -> Bool {
-        guard !closed, cefWindow != nil, browserView != nil else { return false }
+        guard !closed, cefWindow != nil, browserView != nil,
+              let delegate = view?.box.devToolsWindowDelegate else { return false }
         if let devToolsView {
             nd_cef_ref_release(devToolsView)
             self.devToolsView = nil
         }
-        guard let pageHost else { return false }
-        // Two references: one for `add_child_view`, which takes the one it is
-        // passed, and one for the field below. The reference the callback
-        // arrived with is balanced by its own release, so without this the
-        // field owns nothing and releasing it later lands on freed memory.
+        // A window still held by an inspector on its way out goes now: this
+        // one takes the column.
+        closeToolsWindow()
+        // The field's own reference. The one the callback arrived with is
+        // balanced by its own release.
         nd_cef_ref_add(popup)
-        nd_cef_ref_add(popup)
-        let tools = UnsafeMutableRawPointer(popup).assumingMemoryBound(to: cef_view_t.self)
-        // Below the page's container, which the fill layout leaves covering the
-        // window: the inspector is the backdrop the page is drawn on top of,
-        // the same shape Chrome's own dock has.
-        pageHost.pointee.add_child_view_at?(pageHost, tools, 0)
         devToolsView = popup
         // Where the page goes until the frontend says otherwise: Chrome's own
         // right-dock default, so the page is in its usual column for the frame
@@ -263,51 +261,74 @@ import Foundation
         let width = Int32(bounds.width.rounded())
         let height = Int32(bounds.height.rounded())
         pageRect = cef_rect_t(x: 0, y: 0, width: max(1, width - Self.dockWidth(width)), height: max(1, height))
-        applyPageRect()
+        nd_cef_ref_add(delegate)
+        if nd_cef_window_create_top_level(delegate) == nil {
+            ndCefWarn("cef_window_create_top_level failed for the inspector")
+        }
+        syncAnchor()
+        layoutLifted()
         pointFrontendAtDock()
         view?.ndTrace("chrome devtools docked")
         return true
     }
 
-    /// Puts the page where the frontend asked for it. The inspector fills the
-    /// window either way; this is the hole in its layout, and it is also what
-    /// device mode reports, so the phone is drawn in the page area instead of
-    /// inside the inspector's own column.
+    /// `on_window_created` for the inspector's window. The reference on
+    /// |window| is this object's.
+    func devToolsWindowCreated(_ window: UnsafeMutablePointer<cef_window_t>) {
+        guard !closed, let devToolsView else {
+            window.pointee.close?(window)
+            nd_cef_ref_release(window)
+            return
+        }
+        toolsWindow = window
+        let panel = UnsafeMutableRawPointer(window).assumingMemoryBound(to: cef_panel_t.self)
+        if let layout = panel.pointee.set_to_fill_layout?(panel) {
+            nd_cef_ref_release(UnsafeMutableRawPointer(layout))
+        }
+        // add_child_view takes the reference it is passed.
+        nd_cef_ref_add(devToolsView)
+        let child = UnsafeMutableRawPointer(devToolsView).assumingMemoryBound(to: cef_view_t.self)
+        panel.pointee.add_child_view?(panel, child)
+        guard let anchorWindow = Self.anchorWindow(of: window) else { return }
+        toolsAnchor = anchorWindow
+        Self.makeImperceptible(anchorWindow)
+        let wasKey = view?.window?.isKeyWindow ?? false
+        window.pointee.show?(window)
+        if wasKey { view?.window?.makeKey() }
+        observeGeometry()
+        syncAnchor()
+    }
+
+    /// The inspector's window, closed and handed back to CEF.
+    private func closeToolsWindow() {
+        if let toolsLifted, let toolsAnchor {
+            toolsLifted.removeFromSuperview()
+            toolsAnchor.contentView = toolsLifted
+        }
+        toolsLifted = nil
+        if let toolsAnchor {
+            toolsAnchor.parent?.removeChildWindow(toolsAnchor)
+            toolsAnchor.orderOut(nil)
+        }
+        toolsAnchor = nil
+        if let toolsWindow {
+            self.toolsWindow = nil
+            toolsWindow.pointee.close?(toolsWindow)
+            nd_cef_ref_release(toolsWindow)
+        }
+    }
+
+    /// Puts the page where the frontend asked for it. This is the hole in the
+    /// inspector's layout, and it is also what device mode reports, so the
+    /// phone is drawn in the page area instead of inside the inspector.
     func pageBoundsAnnounced(_ rect: cef_rect_t) {
         guard !closed, devToolsView != nil, rect.width > 0, rect.height > 0 else { return }
         if let current = pageRect, current.x == rect.x, current.y == rect.y,
            current.width == rect.width, current.height == rect.height { return }
         pageRect = rect
-        applyPageRect()
+        syncAnchor()
+        layoutLifted()
         view?.ndTrace("chrome devtools page rect \(rect.width)x\(rect.height)@\(rect.x),\(rect.y)")
-    }
-
-    /// Lays the stage out again, which ends in `stageLaidOut` placing its
-    /// children.
-    private func applyPageRect() {
-        guard let pageHost else { return }
-        let base = UnsafeMutableRawPointer(pageHost).assumingMemoryBound(to: cef_view_t.self)
-        base.pointee.invalidate_layout?(base)
-        pageHost.pointee.layout?(pageHost)
-    }
-
-    /// The stage's fill layout has just sized every child to the whole stage.
-    /// The inspector keeps that; the page is moved into its rectangle. Setting
-    /// a child's bounds does not lay the stage out again, so this holds until
-    /// the next pass, which lands here too.
-    func stageLaidOut(_ bounds: cef_rect_t) {
-        let width = max(1, bounds.width)
-        let height = max(1, bounds.height)
-        var whole = cef_rect_t(x: 0, y: 0, width: width, height: height)
-        for tools in [devToolsView, devToolsClosing].compactMap({ $0 }) {
-            let base = UnsafeMutableRawPointer(tools).assumingMemoryBound(to: cef_view_t.self)
-            base.pointee.set_bounds?(base, &whole)
-        }
-        if let browserView {
-            var rect = pageRect ?? whole
-            let base = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
-            base.pointee.set_bounds?(base, &rect)
-        }
     }
 
     /// Tells the frontend it is docked, so it draws its own close button. The
@@ -350,10 +371,8 @@ import Foundation
         frontend.handleEvent(method: method, json: json)
     }
 
-    /// Undoes `dockDevTools`. Nothing in the window's layout is touched here:
-    /// `devToolsView` going nil is already enough for the delegate to ask the
-    /// box layout for a width of zero, and the page fills the window again as
-    /// soon as `devToolsBrowserClosed` relays it out.
+    /// Undoes `dockDevTools`. The page takes the whole width back at once; the
+    /// inspector's window goes once its browser has (`retire`).
     func closeDevTools() {
         guard let docked = devToolsView else { return }
         devToolsView = nil
@@ -362,6 +381,8 @@ import Foundation
             browserHost.pointee.close_dev_tools?(browserHost)
             nd_cef_ref_release(browserHost)
         }
+        syncAnchor()
+        layoutLifted()
         view?.ndTrace("chrome devtools closing")
         awaitDevToolsBrowser()
     }
@@ -445,25 +466,19 @@ import Foundation
     }
 
     private func retire(_ closing: UnsafeMutablePointer<cef_browser_view_t>) {
-        closedDevToolsViews.append(closing)
-        // Out of the box layout's flow, rather than merely asking for a width
-        // of zero: the layout caches what a child asked for last, so a view
-        // left visible keeps claiming the dock's share and the next inspector
-        // is squeezed to nothing beside a blank half. Hidden, not removed,
-        // because `remove_child_view` on one of these poisons the next
-        // show_dev_tools and hangs the UI thread.
-        let base = UnsafeMutableRawPointer(closing).assumingMemoryBound(to: cef_view_t.self)
-        base.pointee.set_visible?(base, 0)
         devToolsClosing = nil
         devToolsCloseTimer?.invalidate()
         devToolsCloseTimer = nil
-        // Only when nothing took its place: an inspector docked since owns the
-        // page rectangle, and the session behind it is that one's.
+        // Only when nothing took its place: a dock since owns the window, the
+        // page rectangle and the session behind it.
         if devToolsView == nil {
+            closeToolsWindow()
             frontend.stop()
             pageRect = nil
         }
-        applyPageRect()
+        nd_cef_ref_release(closing)
+        syncAnchor()
+        layoutLifted()
         view?.ndTrace("chrome devtools closed")
     }
 
@@ -476,21 +491,26 @@ import Foundation
         return min(max(wanted, 400), width > 240 ? width - 240 : width / 2)
     }
 
-    /// The docked inspector is the whole webview: it draws its panels around
-    /// the hole it keeps for the page, and the page is that hole's size.
-    func dockedSize(devTools: Bool) -> cef_size_t {
-        let bounds = view?.bounds ?? .zero
-        let width = max(1, Int32(bounds.width.rounded()))
-        let height = max(1, Int32(bounds.height.rounded()))
-        // A view left behind by a closed inspector takes no size at all: the
-        // layout caches what a child asked for last, and one that keeps asking
-        // for the window is one that keeps covering it.
-        guard devToolsView != nil else {
-            return cef_size_t(width: devTools ? 0 : width, height: devTools ? 0 : height)
-        }
-        if devTools { return cef_size_t(width: width, height: height) }
-        let rect = pageRect ?? cef_rect_t(x: 0, y: 0, width: width, height: height)
-        return cef_size_t(width: max(1, rect.width), height: max(1, rect.height))
+    /// The page's and the inspector's rectangles in the webview's own
+    /// coordinates. The inspector fills the webview; the page is the hole the
+    /// frontend keeps for it, clamped to the webview.
+    private func columns(_ bounds: NSRect) -> (page: NSRect, tools: NSRect) {
+        guard devToolsView != nil, let rect = pageRect else { return (bounds, bounds) }
+        let x = min(max(0, CGFloat(rect.x)), bounds.width - 1)
+        let top = min(max(0, CGFloat(rect.y)), bounds.height - 1)
+        let width = max(1, min(CGFloat(rect.width), bounds.width - x))
+        let height = max(1, min(CGFloat(rect.height), bounds.height - top))
+        let y = view?.isFlipped == true ? top : bounds.height - top - height
+        return (NSRect(x: bounds.minX + x, y: bounds.minY + y, width: width, height: height), bounds)
+    }
+
+    /// Both lifted subtrees at their rectangle. The page's Views window is the
+    /// page rectangle's size too (`syncAnchor`), so the page lays out at it.
+    private func layoutLifted() {
+        guard let view else { return }
+        let (page, tools) = columns(view.bounds)
+        if let lifted, lifted.superview === view, lifted.frame != page { lifted.frame = page }
+        if let toolsLifted, toolsLifted.superview === view, toolsLifted.frame != tools { toolsLifted.frame = tools }
     }
 
     // MARK: - Lifting the web contents
@@ -502,32 +522,77 @@ import Foundation
     /// WebContentsViewCocoa. Chromium's views are not NSViews: the only NSViews
     /// under a Views window are the compositor superview and whatever a
     /// views::NativeViewHost attaches, so the content view is the one node that
-    /// holds all of them. Docked DevTools is a second WebContents in the same
-    /// container, and lifting the container is what brings it along instead of
-    /// leaving it drawing into a window nobody can see.
+    /// holds all of them. A docked inspector's window is lifted the same way,
+    /// under the page.
     private func liftWebContents() {
         guard !closed, let anchor, let view else { return }
+        let (page, tools) = columns(view.bounds)
         if let lifted {
-            guard lifted.superview !== view else { return }
-            reliftCount += 1
-            view.ndTrace("chrome relift #\(reliftCount)")
-            lifted.removeFromSuperview()
-            lifted.frame = view.bounds
-            view.addSubview(lifted)
+            if lifted.superview !== view {
+                reliftCount += 1
+                view.ndTrace("chrome relift #\(reliftCount)")
+                lifted.removeFromSuperview()
+                lifted.frame = page
+                view.addSubview(lifted)
+            }
+        } else {
+            if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
+            guard let content = anchor.contentView else { return }
+            view.ndTrace("chrome lift \(NSStringFromClass(type(of: content)))")
+            lifted = Self.lift(content, from: anchor, into: view, at: page)
+        }
+        liftDevTools(into: view, at: tools)
+    }
+
+    /// The inspector's subtree, once Chromium has attached its web contents
+    /// view. One attached after the lift is parented to the empty content view
+    /// the anchor is left with, in a window that is alpha 0 and click-through:
+    /// it draws, since its pixels come through the compositor, and takes no
+    /// press at all.
+    private func liftDevTools(into view: NSView, at frame: NSRect) {
+        guard let toolsAnchor, let devToolsView else { return }
+        if let toolsLifted {
+            guard toolsLifted.superview !== view else { return }
+            toolsLifted.removeFromSuperview()
+            toolsLifted.frame = frame
+            view.addSubview(toolsLifted, positioned: .below, relativeTo: lifted?.superview === view ? lifted : nil)
             return
         }
-        if ProcessInfo.processInfo.environment["ND_CEF_DUMP_VIEWS"] == "1" { dumpViews() }
-        guard let content = anchor.contentView else { return }
-        view.ndTrace("chrome lift \(NSStringFromClass(type(of: content)))")
-        lifted = content
+        guard let content = toolsAnchor.contentView,
+              content.subviews.contains(where: { NSStringFromClass(type(of: $0)).contains("WebContentsView") })
+        else { return }
+        toolsLifted = Self.lift(content, from: toolsAnchor, into: view, at: frame, below: lifted)
+        self.view?.ndTrace("chrome devtools lifted \(frame)")
+    }
+
+    private static func lift(
+        _ content: NSView, from anchor: NSWindow, into view: NSView, at frame: NSRect, below: NSView? = nil
+    ) -> NSView {
         // AppKit keeps a content view either way, so the anchor is handed an
         // empty one rather than left pointing at a view in another window.
-        let placeholder = NDCefLiftPlaceholder(frame: content.frame)
-        placeholder.lifted = content
-        anchor.contentView = placeholder
-        content.frame = view.bounds
-        content.autoresizingMask = [.width, .height]
-        view.addSubview(content)
+        anchor.contentView = NSView(frame: content.frame)
+        content.frame = frame
+        content.autoresizingMask = []
+        // The inspector goes under the page: the page is drawn in its hole.
+        view.addSubview(content, positioned: .below, relativeTo: below?.superview === view ? below : nil)
+        return content
+    }
+
+    /// The inspector's own render widget under a point of the webview, for
+    /// `hitTest`. Its BridgedContentView asks its Views widget what is under the
+    /// point, and the inspector's Chrome style window answers with its root view
+    /// everywhere, so every press on the inspector went to a widget nobody sees.
+    /// The page's column is left to AppKit.
+    func devToolsHit(at point: NSPoint) -> NSView? {
+        guard let view, let toolsLifted, toolsLifted.superview === view,
+              toolsLifted.frame.contains(point) else { return nil }
+        if let lifted, lifted.superview === view, lifted.frame.contains(point) { return nil }
+        let local = toolsLifted.convert(point, from: view)
+        for child in toolsLifted.subviews.reversed()
+        where NSStringFromClass(type(of: child)).contains("WebContentsView") {
+            if let hit = child.hitTest(local) { return hit }
+        }
+        return nil
     }
 
     /// Chromium's keyboard target. It is an ordinary subview of the host window
@@ -545,6 +610,7 @@ import Foundation
         if view?.window !== observedWindow { observeGeometry() }
         syncAnchor()
         liftWebContents()
+        layoutLifted()
     }
 
     /// The webview's own rectangle in AppKit screen coordinates, or nil when
@@ -555,10 +621,27 @@ import Foundation
         return (rect.width >= 1 && rect.height >= 1) ? rect : nil
     }
 
+    /// One column of the webview in screen coordinates.
+    private func screenFrame(of column: NSRect) -> NSRect? {
+        guard let view, let host = view.window, column.width >= 1, column.height >= 1 else { return nil }
+        return host.convertToScreen(view.convert(column, to: nil))
+    }
+
     private func syncAnchor() {
-        guard !closed, let anchor, let cefWindow else { return }
-        guard let host = view?.window, let rect = targetScreenFrame() else {
-            if anchor.isVisible { cefWindow.pointee.hide?(cefWindow) }
+        guard !closed, let view else { return }
+        let visible = targetScreenFrame() != nil
+        let (page, tools) = columns(view.bounds)
+        if let anchor, let cefWindow {
+            place(anchor, window: cefWindow, at: visible ? screenFrame(of: page) : nil)
+        }
+        if let toolsAnchor, let toolsWindow {
+            place(toolsAnchor, window: toolsWindow, at: visible ? screenFrame(of: tools) : nil)
+        }
+    }
+
+    private func place(_ anchor: NSWindow, window: UnsafeMutablePointer<cef_window_t>, at rect: NSRect?) {
+        guard let host = view?.window, let rect else {
+            if anchor.isVisible { window.pointee.hide?(window) }
             return
         }
         if anchor.parent !== host {
@@ -566,15 +649,10 @@ import Foundation
             host.addChildWindow(anchor, ordered: .above)
         }
         if anchor.frame != rect {
-            let resized = anchor.frame.size != rect.size
             anchor.setFrame(rect, display: false)
             if anchor.frame != rect { view?.ndTrace("chrome anchor clamped want=\(rect) got=\(anchor.frame)") }
-            // The stage has no layout to follow the window, so every resize
-            // places its children again. The frontend answers a resize with a
-            // page rectangle of its own; until it does the page keeps the last.
-            if resized { applyPageRect() }
         }
-        if !anchor.isVisible { cefWindow.pointee.show?(cefWindow) }
+        if !anchor.isVisible { window.pointee.show?(window) }
     }
 
     /// `ND_CEF_DUMP_VIEWS=1`. Chromium's views are not NSViews, so the only
@@ -606,7 +684,7 @@ import Foundation
         // so it needs no key window of its own. Refusing key through the
         // NSWindow subclass is not an option: Chromium's activation path
         // segfaults on a window whose canBecomeKeyWindow is NO.
-        if let anchorWindow = anchor {
+        for anchorWindow in [anchor, toolsAnchor].compactMap({ $0 }) {
             observers.append(
                 center.addObserver(
                     forName: NSWindow.didBecomeKeyNotification, object: anchorWindow, queue: nil
@@ -646,18 +724,6 @@ import Foundation
         devToolsCloseTimer = nil
         dockFrontendTimer?.invalidate()
         dockFrontendTimer = nil
-        // The views closed inspectors left behind come out of the window here,
-        // with nothing else in flight: leaving one in the layout means Chromium
-        // walks a BrowserView with no browser while it destroys the window, and
-        // the quit dies in its own activation path.
-        if let pageHost {
-            for stale in closedDevToolsViews {
-                let tools = UnsafeMutableRawPointer(stale).assumingMemoryBound(to: cef_view_t.self)
-                pageHost.pointee.remove_child_view?(pageHost, tools)
-            }
-        }
-        for stale in closedDevToolsViews { nd_cef_ref_release(stale) }
-        closedDevToolsViews = []
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers = []
         // The lifted subtree goes back first: it is the Views window's content
@@ -668,6 +734,15 @@ import Foundation
             anchor.contentView = lifted
         }
         lifted = nil
+        if let toolsLifted, let toolsAnchor {
+            toolsLifted.removeFromSuperview()
+            toolsAnchor.contentView = toolsLifted
+        }
+        toolsLifted = nil
+        if let toolsAnchor {
+            toolsAnchor.parent?.removeChildWindow(toolsAnchor)
+            toolsAnchor.orderOut(nil)
+        }
         closeDevTools()
         if let anchor {
             anchor.parent?.removeChildWindow(anchor)
@@ -688,14 +763,11 @@ import Foundation
             self.browserView = nil
             nd_cef_ref_release(browserView)
         }
-        if let pageHost {
-            self.pageHost = nil
-            nd_cef_ref_release(pageHost)
-        }
     }
 
     /// Closes the Views window, once the browser it belonged to has gone.
     func closeWindow() {
+        closeToolsWindow()
         guard let cefWindow else { return }
         self.cefWindow = nil
         cefWindow.pointee.close?(cefWindow)
@@ -720,13 +792,12 @@ extension NDCefHandlerBox {
         windowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
         browserViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
         devToolsViewDelegate = ndCefAlloc(cef_browser_view_delegate_t.self, self)
-        stageDelegate = ndCefAlloc(cef_panel_delegate_t.self, self)
+        devToolsWindowDelegate = ndCefAlloc(cef_window_delegate_t.self, self)
         dockObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
         command = ndCefAlloc(cef_command_handler_t.self, self)
         wireWindowDelegate()
         wireBrowserViewDelegate()
         wireDevToolsViewDelegate()
-        wireStageDelegate()
         wireDockObserver()
         wireCommand()
     }
@@ -748,8 +819,7 @@ extension NDCefHandlerBox {
         }
     }
 
-    /// The docked DevTools is the second BrowserView in the page's window, and
-    /// it has to be a Chrome style one: CEF refuses an Alloy DevTools popup
+    /// The docked DevTools has to be a Chrome style BrowserView: CEF refuses an Alloy DevTools popup
     /// ("only Chrome style is supported for DevTools popups",
     /// libcef/browser/views/browser_view_impl.cc) and the BrowserView it hands
     /// back is then half-built, which is what made the inspector impossible to
@@ -760,10 +830,6 @@ extension NDCefHandlerBox {
         devToolsViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
             nd_cef_ref_release(browserView)
             return CEF_CTT_NONE
-        }
-        devToolsViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
-            nd_cef_ref_release(cefView)
-            return ndCefPreferredSize(selfPointer, devTools: true)
         }
         // The inspector's browser is CEF's own, so this client's
         // `on_before_close` never reports it. This is the one callback that
@@ -776,42 +842,38 @@ extension NDCefHandlerBox {
         }
     }
 
-    private func wireStageDelegate() {
-        guard let stageDelegate else { return }
-        stageDelegate.pointee.base.on_layout_changed = { selfPointer, cefView, newBounds in
-            nd_cef_ref_release(cefView)
-            guard let newBounds else { return }
-            let bounds = newBounds.pointee
-            ndCefDeliver(selfPointer) { $0?.chrome?.stageLaidOut(bounds) }
-        }
-    }
-
     private func wireWindowDelegate() {
         guard let windowDelegate else { return }
-        windowDelegate.pointee.get_window_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
-        windowDelegate.pointee.is_frameless = { _, window in
+        Self.wireAnchorWindow(windowDelegate, devTools: false)
+        if let devToolsWindowDelegate { Self.wireAnchorWindow(devToolsWindowDelegate, devTools: true) }
+    }
+
+    /// A frameless, fixed Chrome style window placed where its column of the
+    /// webview already is, so the anchor never appears at the screen origin
+    /// before the first sync.
+    private static func wireAnchorWindow(_ delegate: UnsafeMutablePointer<cef_window_delegate_t>, devTools: Bool) {
+        delegate.pointee.get_window_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
+        delegate.pointee.is_frameless = { _, window in
             nd_cef_ref_release(window)
             return 1
         }
-        windowDelegate.pointee.with_standard_window_buttons = { _, window in
+        delegate.pointee.with_standard_window_buttons = { _, window in
             nd_cef_ref_release(window)
             return 0
         }
-        windowDelegate.pointee.can_resize = { _, window in
+        delegate.pointee.can_resize = { _, window in
             nd_cef_ref_release(window)
             return 0
         }
-        windowDelegate.pointee.can_maximize = { _, window in
+        delegate.pointee.can_maximize = { _, window in
             nd_cef_ref_release(window)
             return 0
         }
-        windowDelegate.pointee.can_minimize = { _, window in
+        delegate.pointee.can_minimize = { _, window in
             nd_cef_ref_release(window)
             return 0
         }
-        // Placed where the webview already is, so the anchor never appears at
-        // the screen origin before the first sync.
-        windowDelegate.pointee.get_initial_bounds = { selfPointer, window in
+        delegate.pointee.get_initial_bounds = { selfPointer, window in
             nd_cef_ref_release(window)
             var bounds = cef_rect_t(x: 0, y: 0, width: 800, height: 600)
             ndCefDeliver(selfPointer) { view in
@@ -822,30 +884,45 @@ extension NDCefHandlerBox {
             }
             return bounds
         }
-        windowDelegate.pointee.on_window_created = { selfPointer, window in
-            guard let window else { return }
-            nd_cef_ref_add(window)
-            let kept = UInt(bitPattern: window)
-            ndCefDeliver(selfPointer) { view in
-                guard let created = UnsafeMutableRawPointer(bitPattern: kept)?
-                    .assumingMemoryBound(to: cef_window_t.self) else { return }
-                if let chrome = view?.chrome {
-                    chrome.windowCreated(created)
-                } else {
-                    nd_cef_ref_release(created)
+        if devTools {
+            delegate.pointee.on_window_created = { selfPointer, window in
+                guard let window else { return }
+                nd_cef_ref_add(window)
+                let kept = UInt(bitPattern: window)
+                ndCefDeliver(selfPointer) { view in
+                    guard let created = UnsafeMutableRawPointer(bitPattern: kept)?
+                        .assumingMemoryBound(to: cef_window_t.self) else { return }
+                    if let chrome = view?.chrome {
+                        chrome.devToolsWindowCreated(created)
+                    } else {
+                        created.pointee.close?(created)
+                        nd_cef_ref_release(created)
+                    }
                 }
+                nd_cef_ref_release(window)
             }
-            nd_cef_ref_release(window)
+        } else {
+            delegate.pointee.on_window_created = { selfPointer, window in
+                guard let window else { return }
+                nd_cef_ref_add(window)
+                let kept = UInt(bitPattern: window)
+                ndCefDeliver(selfPointer) { view in
+                    guard let created = UnsafeMutableRawPointer(bitPattern: kept)?
+                        .assumingMemoryBound(to: cef_window_t.self) else { return }
+                    if let chrome = view?.chrome {
+                        chrome.windowCreated(created)
+                    } else {
+                        nd_cef_ref_release(created)
+                    }
+                }
+                nd_cef_ref_release(window)
+            }
         }
     }
 
     private func wireBrowserViewDelegate() {
         guard let browserViewDelegate else { return }
         browserViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
-        browserViewDelegate.pointee.base.get_preferred_size = { selfPointer, cefView in
-            nd_cef_ref_release(cefView)
-            return ndCefPreferredSize(selfPointer, devTools: false)
-        }
         browserViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
             nd_cef_ref_release(browserView)
             return CEF_CTT_NONE
@@ -866,7 +943,7 @@ extension NDCefHandlerBox {
             return 0
         }
         // DevTools is the one popup BrowserView that is allowed to exist, and
-        // it is taken into the page's own window rather than given one.
+        // it goes into a frameless window of this host's, not a default one.
         browserViewDelegate.pointee.get_delegate_for_popup_browser_view = {
             selfPointer, browserView, _, client, isDevTools in
             nd_cef_ref_release(browserView)
@@ -935,45 +1012,6 @@ let ndCefBlockedChromeCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_CONTENT_CONTEXT_PRINT", "IDC_ROUTE_MEDIA", "IDC_CONTENT_CONTEXT_GENERATE_QR_CODE",
     "IDC_CONTENT_CONTEXT_SEARCHLENSFORIMAGE", "IDC_CONTENT_CONTEXT_TRANSLATE",
 ])
-
-/// The anchor's content view once the real one is lifted. A web contents
-/// Chromium attaches after the lift (the docked inspector) is parented to the
-/// window's current content view, which is this one, in a window that is alpha
-/// 0 and click-through: it drew, since its pixels come through the compositor,
-/// and took no press at all. Each attach goes straight into the lifted view
-/// instead. Moving the NSView there afterwards trips a reentrancy check in
-/// Chromium (`base/observer_list.h`, "Check failed: !check_reentrancy").
-private final class NDCefLiftPlaceholder: NSView {
-    weak var lifted: NSView?
-
-    override func addSubview(_ view: NSView) {
-        guard let lifted else { return super.addSubview(view) }
-        // Under the page's own view and above the compositor surface, the order
-        // Chrome stacks its dock in.
-        let floor = lifted.subviews.first { NSStringFromClass(type(of: $0)).contains("CompositorSuperview") }
-        lifted.addSubview(view, positioned: .above, relativeTo: floor)
-    }
-
-    override func addSubview(
-        _ view: NSView, positioned place: NSWindow.OrderingMode, relativeTo other: NSView?
-    ) {
-        guard let lifted else { return super.addSubview(view, positioned: place, relativeTo: other) }
-        guard let other, other.superview === lifted else { return addSubview(view) }
-        lifted.addSubview(view, positioned: place, relativeTo: other)
-    }
-}
-
-/// The size one of the window's two BrowserViews asks the box layout for.
-private func ndCefPreferredSize(
-    _ handler: UnsafeMutableRawPointer?, devTools: Bool
-) -> cef_size_t {
-    var size = cef_size_t(width: 0, height: 0)
-    ndCefDeliver(handler) { view in
-        guard let chrome = view?.chrome else { return }
-        size = chrome.dockedSize(devTools: devTools)
-    }
-    return size
-}
 
 /// AppKit screen coordinates to the DIP screen rectangle CEF's Views layer
 /// uses: same unit on this platform, but Chromium's origin is the top-left of

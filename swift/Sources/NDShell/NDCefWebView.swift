@@ -192,6 +192,11 @@ final class NDCefWebView: NSView {
         return browser.pointee.get_identifier?(browser) == identifier
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let superview, let hit = chrome?.devToolsHit(at: convert(point, from: superview)) { return hit }
+        return super.hitTest(point)
+    }
+
     // MARK: - Browser lifetime
 
     override func viewDidMoveToWindow() {
@@ -808,7 +813,7 @@ final class NDCefHandlerBox {
     var windowDelegate: UnsafeMutablePointer<cef_window_delegate_t>?
     var browserViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
     var devToolsViewDelegate: UnsafeMutablePointer<cef_browser_view_delegate_t>?
-    var stageDelegate: UnsafeMutablePointer<cef_panel_delegate_t>?
+    var devToolsWindowDelegate: UnsafeMutablePointer<cef_window_delegate_t>?
     /// The observer on the docked inspector's own browser, which is CEF's and
     /// not this client's (NDCefDockFrontend.swift).
     var dockObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
@@ -872,7 +877,7 @@ final class NDCefHandlerBox {
             windowDelegate.map(UnsafeMutableRawPointer.init),
             browserViewDelegate.map(UnsafeMutableRawPointer.init),
             devToolsViewDelegate.map(UnsafeMutableRawPointer.init),
-            stageDelegate.map(UnsafeMutableRawPointer.init),
+            devToolsWindowDelegate.map(UnsafeMutableRawPointer.init),
             dockObserver.map(UnsafeMutableRawPointer.init),
         ] {
             nd_cef_ref_release(object)
@@ -896,7 +901,7 @@ final class NDCefHandlerBox {
         windowDelegate = nil
         browserViewDelegate = nil
         devToolsViewDelegate = nil
-        stageDelegate = nil
+        devToolsWindowDelegate = nil
         dockObserver = nil
     }
 
@@ -1051,8 +1056,8 @@ final class NDCefHandlerBox {
             }
             // Chrome style takes the Views-hosted route unconditionally, which
             // is what routes the devtools BrowserView through
-            // on_popup_browser_view_created and into the page's own window as a
-            // docked split. A default window there would be the stray Chromium
+            // on_popup_browser_view_created and into a docked window of the
+            // host's (NDCefChromeWindow.dockDevTools). A default window there would be the stray Chromium
             // window this whole file exists to prevent.
             useDefaultWindow?.pointee = (wanted && !NDCefRuntime.isChromeStyle) ? 1 : 0
         }
