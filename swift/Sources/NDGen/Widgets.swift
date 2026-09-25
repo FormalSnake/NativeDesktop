@@ -1185,7 +1185,9 @@ final class NDSpinnerView: NDHostedLeaf {
     }
 
     override func leafContent() -> AnyView {
-        AnyView(Group { if spinning { ProgressView() } })
+        // Small, GtkSpinner's 16 px: the regular size is 32 pt, taller than
+        // the rows a spinner usually sits in.
+        AnyView(Group { if spinning { ProgressView().controlSize(.small) } })
     }
 
     override var ndA11yValueJSON: String { spinning ? "true" : "false" }
