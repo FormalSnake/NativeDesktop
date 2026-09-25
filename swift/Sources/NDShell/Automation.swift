@@ -191,6 +191,8 @@ func ndAutomationApplyWindowPolicy(_ win: NSWindow) {
         guard let live = ndToolbarPaneLiveView(pane) else { return false }
         return ndNodeVisible(live)
     }
+    // A popover's handle never enters a window; the panel it shows does.
+    if let handle = view as? NDPopoverHandleView { return handle.shownWindow?.isVisible ?? false }
     // `view.window != nil` alone isn't enough for a dismissed Dialog/Sheet:
     // the handle's `dismiss()` closes the NDModalSheetWindow but the content
     // stays isReleasedWhenClosed=false and keeps its `window` link, so a
@@ -301,6 +303,20 @@ func ndFindControl(in root: NSView, target: AnyObject) -> NSControl? {
         guard let live = ndToolbarPaneLiveView(pane) else { return false }
         return ndNodeBounds(live, &out)
     }
+    // A popover reports its panel's frame, and anything inside a popover its
+    // frame, in the space of the window the popover hangs from: an NSPopover
+    // is a child window of its own, and its local coordinates said nothing
+    // about where on the app's window it is.
+    if let handle = view as? NDPopoverHandleView {
+        guard let panel = handle.shownWindow, let r = ndRectInParentWindow(panel.contentView ?? view, panel) else { return false }
+        out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
+        return true
+    }
+    if let panel = view.window, panel.parent != nil, String(describing: type(of: panel)).contains("Popover"),
+       let r = ndRectInParentWindow(view, panel) {
+        out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
+        return true
+    }
     // Resolve the LIVE, flipped content — see
     // SplitController.swift's ndLiveContentView for the full rationale.
     // Multi-window: convert into the widget's OWN window's content view, not the
@@ -311,6 +327,14 @@ func ndFindControl(in root: NSView, target: AnyObject) -> NSControl? {
     let r = view.convert(view.bounds, to: content)
     out = nd_rect(x: Int32(r.origin.x), y: Int32(r.origin.y), w: Int32(r.width), h: Int32(r.height))
     return true
+}
+
+/// `view`'s bounds, drawn in the child window `panel`, in the live content
+/// space of the window `panel` hangs from.
+@MainActor func ndRectInParentWindow(_ view: NSView, _ panel: NSWindow) -> NSRect? {
+    guard let owner = panel.parent, let content = ndLiveContentView(ofWindow: owner) else { return nil }
+    let onScreen = panel.convertToScreen(view.convert(view.bounds, to: nil))
+    return content.convert(owner.convertFromScreen(onScreen), from: nil)
 }
 
 // MARK: - snapshot: the fidelity ladder

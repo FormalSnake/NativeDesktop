@@ -30,7 +30,15 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         return treeParent
     }
 
+    /// The window NSPopover draws the panel in while it is shown.
+    var shownWindow: NSWindow? {
+        guard isPopoverCreated, popover.isShown else { return nil }
+        return contentContainer.window
+    }
+    private var isPopoverCreated = false
+
     private lazy var popover: NSPopover = {
+        isPopoverCreated = true
         let controller = NSViewController()
         controller.view = contentContainer
         let p = NSPopover()
