@@ -9,7 +9,9 @@ build of the same day for the baseline column.
   cursor (`app.cursor`, now with modifier keys) and real keystrokes, one route
   group per lock hold: `ND_ESCAPE_GROUPS=key|page|menu|webui|ext`.
 - Linux: `ND_ACCEPT_DRIVE=scripts/app-escape-drive.ts scripts/headless-app-chrome.sh`
-  on g815, x11 rig (`bash ~/Developer/nd-noesc-run.sh nd-no-escape <tag>`).
+  on g815, rigs x11, wlr and hypr (`ND_ACCEPT_RIGS`). The drive navigates with
+  CDP `Page.navigate` on the active tab, since under XWayland keys go to the
+  child window under the pointer and typing into the address field fails.
 
 Each route asserts: no new window of the host process that is not the app's
 (window server census on mac, X toplevels on Linux), the app's window and tab
@@ -20,9 +22,10 @@ submenu, no item that opens Chromium UI). Captures of every surface seen are
 written to `$ND_ESCAPE_SHOTS` (default `/tmp/nd-escape-shots`); the ones cited
 below are kept under `.dev/` in this worktree (not committed).
 
-Last mac runs on the branch: key 40 of 41 (cmd+P, below), page 18 of 18 (plus
-two known bubble routes), ext 7 of 7, webui 11 of 11, menu 10 of 15 (the five
-reds are the app's duplicate "Open Link in New Tab").
+Last runs on the branch (2026-09-25, app branch `escape`): mac key 41 of 41
+(cmd+shift+S known, crash branch), menu 13 of 15; Linux x11 96 of 96, hypr 96
+of 96, wlr 91 of 96 in one run and the five reds green alone. Earlier mac runs:
+page 18 of 18 (plus two known bubble routes), ext 7 of 7, webui 11 of 11.
 
 ## The fixes
 
@@ -43,14 +46,15 @@ reds are the app's duplicate "Open Link in New Tab").
 | cmd+N | app window | app window |
 | cmd+T, cmd+shift+T | app tab | app tab |
 | cmd+comma | app Settings window | app Settings window |
-| cmd+shift+N | nothing (Chromium refused it) | nothing, `browserCommand newPrivateWindow` (app has no handler yet, see below) |
-| cmd+shift+B/A/M/D/O/L/K/H/W, cmd+Y, cmd+D, cmd+S, cmd+O, cmd+E, cmd+opt+B/L/U/N/P, cmd+opt+shift+I, cmd+1/9, F1, ctrl+F2, shift+Esc, cmd+shift+Delete, cmd+opt+Right | nothing | nothing |
-| cmd+P | page zoom goes to 110% (no Chromium surface; capture `.dev/shots-key/key.cmdP.png`) | same, cause not found: only one Chrome command id (40260) reached `on_chrome_command` in the whole key group, so on AppKit Chrome's accelerators mostly never fire at all |
+| cmd+shift+N | nothing (Chromium refused it) | app private window, through `browserCommand newPrivateWindow` |
+| cmd+shift+B/A/M/D/O/L/K/H/W, cmd+Y, cmd+D, cmd+S, cmd+O, cmd+E, cmd+opt+B/L/U/N, cmd+opt+shift+I, cmd+1/9, F1, ctrl+F2, shift+Esc, cmd+shift+Delete, cmd+opt+Right | nothing | nothing |
+| cmd+P, cmd+opt+P | page zoom goes to 110% (the app menu's "primary+plus" became the key equivalent "p") | macOS print panel, through `browserCommand print` (capture `.dev/r2/shots-j/key.cmdP.png`) |
+| cmd+shift+J | nothing | the app's own Downloads popover |
 | cmd+shift+S | app's layout toggle (crash agent owns the save dialog report) | same |
 | ctrl+cmd+F | AppKit full screen (menu bar strip only, app's own) | same |
 | window.open (gesture, popup features, noopener, no gesture), target=_blank, middle click, cmd-click, shift-click | app tab | app tab |
 | window.open("about:blank") then navigate | nothing (refused by design, `onBeforePopup`) | same |
-| mailto:, unknown protocol | no Chromium surface; the app opens a `mailto:` tab of its own (app-side) | same |
+| mailto:, unknown protocol | no Chromium surface; the app opens a `mailto:` tab of its own (app-side) | handed to the system (NSWorkspace), the page stays |
 | window.print() | macOS print panel (native, allowed) | same |
 | navigator.share | macOS share sheet (native, allowed) | same |
 | document PiP | refused, nothing | same |
@@ -85,8 +89,8 @@ geolocation/notification (the app's own site-info popover on GTK).
 
 | Context | Items | Finding |
 |---|---|---|
-| link, link on image | Open Link in New Tab, Open Link in New Window, Save Link As…, Copy Link Address, Copy, Copy Link to Highlight, Search Google for, ND probe item, Inspect, Open Link in New Tab, Speech | "Open Link in New Tab" twice: Chromium's plus the app's own item. App-side. Same on GTK. |
-| image | Save Image As…, Copy Image, Copy Image Address, probe, Inspect, Save Image | the app adds "Save Image" next to Chromium's "Save Image As…" (app-side); on GTK it also lands on audio/video menus |
+| link, link on image | Open Link in New Tab, Open Link in New Window, Save Link As…, Copy Link Address, Copy, Copy Link to Highlight, Search Google for, ND probe item, Inspect, Open Link in New Tab, Speech | "Open Link in New Tab" twice: Chromium's plus the app's own item. App-side, fixed on the app's `escape` branch. |
+| image | Save Image As…, Copy Image, Copy Image Address, probe, Inspect, Save Image | the app added "Save Image" next to Chromium's "Save Image As…"; dropped on the app's `escape` branch |
 | page | Back, Forward, Reload, Save As…, probe, Inspect | clean |
 | editable empty / with text / misspelled | Emoji & Symbols, Undo…Select All, Search Google for, Language Settings, Writing Direction, Speech | clean; "Search Google" although the app's engine is DuckDuckGo (Chromium default search engine, app-side setting) |
 | audio / video (wav fixture) | Loop, Show All Controls, Save Audio As…, Copy Audio Address, probe, Inspect | clean |
@@ -94,17 +98,16 @@ geolocation/notification (the app's own site-info popover on GTK).
 
 ## Still open
 
-- App-side (nativebrowser, not edited here): handle `onBrowserCommand` on every
-  page webview, at least `newPrivateWindow` -> `openPrivate()`, `newWindow`,
-  `newTab`, `reopenClosedTab`, `closeTab`, `history`, `downloads`,
-  `settings`, `find*`, `focusAddress`, `print`; drop the app's own
-  "Open Link in New Tab" and "Save Image" context items (Chromium already offers
-  both); decide what a `mailto:` link does instead of opening a tab on it.
+- mac menu.linkImage and menu.video: the right-click on the linked image and on
+  the video opens no menu, on the branch and on a `main` baseline alike (both
+  were green on 2026-09-23). A drive or machine problem, not an escape.
+- Linux wlr: in the full run page.windowOpenNoopener, page.externalProtocol,
+  menu.openLinkNewTab and two ctx routes can miss (viewport 613 px wide there);
+  all five pass alone.
+- Linux ctrl+P reaches no `on_chrome_command` at all and shows nothing, like
+  window.print() on Linux (print preview is disabled).
 - Permission bubbles, zoom bubble, find bar, downloads and password bubbles:
   owned by the `bubbles` branch.
-- wlr and hypr rigs: the drive could not type into the address field
-  (`SETUP ... never took`) on either, before any route ran; the known XWayland
-  key routing gap (`focusRouting*` on wlr). Only x11 is proven on Linux.
 - The kept Chrome-created browser on mac can reach the screen for one sweep
   tick (200 ms) if it is shown without being activated; activation is hidden
   synchronously.
