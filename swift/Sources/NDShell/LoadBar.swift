@@ -30,6 +30,10 @@ struct NDLoadBarView: View {
                 .animation(restart ? nil : .easeOut(duration: ndLoadBarFade).delay(ndLoadBarFadeDelay), value: clamped >= 1)
         }
         .frame(height: ndLoadBarThickness)
+        // Under a full-size-content title bar the hosting view reports the
+        // title bar's height as a top safe area, which would draw the bar that
+        // far down the page instead of on its edge.
+        .ignoresSafeArea()
         .accessibilityHidden(true)
     }
 }
