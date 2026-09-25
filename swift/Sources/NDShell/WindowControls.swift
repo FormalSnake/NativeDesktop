@@ -154,6 +154,7 @@ final class NDTrafficLights {
             for b in bs { b.isHidden = true }
             return
         }
+        recheck(window, placedAt: rect)
         // Window coordinates are bottom-up; the slot's centre as a distance
         // from the top is what the title bar band has to be twice of, so the
         // buttons sit vertically centred on the slot.
@@ -182,6 +183,30 @@ final class NDTrafficLights {
             let origin = NSPoint(x: x, y: y)
             if b.frame.origin != origin { b.setFrameOrigin(origin) }
             b.isHidden = false
+        }
+    }
+
+    /// A split's safe area settling after a toolbar band goes (a layout switch)
+    /// moves the slot with its whole column, so the slot's own frame never
+    /// changes and nothing above reports it. The slot is read again a moment
+    /// after each placement until it holds still.
+    private var rechecks: [ObjectIdentifier: Int] = [:]
+
+    private func recheck(_ window: NSWindow, placedAt rect: NSRect) {
+        let key = ObjectIdentifier(window)
+        let n = rechecks[key] ?? 0
+        guard n < 20 else { return }
+        rechecks[key] = n + 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak window] in
+            MainActor.assumeIsolated {
+                guard let window else { return }
+                let lights = NDTrafficLights.shared
+                if let (_, now) = lights.activeSlot(window), now != rect {
+                    lights.schedule(window)
+                } else {
+                    lights.rechecks[key] = 0
+                }
+            }
         }
     }
 
