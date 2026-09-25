@@ -1521,10 +1521,35 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
     }
     gtk.Widget.setParent(child, parent);
     ndPopoverEnsureAnchor(child);
-    if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) {
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) ndPopoverOpenWhenRooted(child);
+}
+
+/// Pops the popover up now if its anchor is in a window, or once it is. A
+/// popover popped up under an anchor that is not yet in a window has no
+/// surface to be a popup of, and GTK then aborts on a NULL parent surface
+/// (a subtree remounted into a header bar that lands in the window later in
+/// the same batch).
+fn ndPopoverOpenWhenRooted(child: *gtk.Widget) void {
+    const anchor = gtk.Widget.getParent(child) orelse {
+        gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
+        return;
+    };
+    if (gtk.Widget.getMapped(anchor) != 0) {
         gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
         gtk.Popover.popup(@ptrCast(@alignCast(child)));
+        return;
     }
+    gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
+    _ = gobject.signalConnectData(asObject(anchor), "map", @ptrCast(&cbPopoverAnchorMapped), child, null, .{});
+}
+
+fn cbPopoverAnchorMapped(anchor: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const child: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    _ = gobject.signalHandlersDisconnectMatched(anchor, .{ .func = true, .data = true }, 0, 0, null, @ptrCast(@constCast(&cbPopoverAnchorMapped)), child);
+    if (gtk.Widget.getParent(child) != @as(?*gtk.Widget, @ptrCast(@alignCast(anchor)))) return;
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) == null) return;
+    gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
+    gtk.Popover.popup(@ptrCast(@alignCast(child)));
 }
 
 fn ndPositionFromString(s: []const u8) gtk.PositionType {
@@ -4949,12 +4974,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             if (o and !up) {
                 ndPopoverEnsureAnchor(widget); // an anchor created later in the batch resolves here
                 ndPopoverPointAtSlot(widget); // the icon rect is only real once the entry has laid out
-                if (gtk.Widget.getParent(widget) != null) {
-                    gtk.Popover.popup(pop);
-                } else {
-                    // Not anchored yet: open on attach.
-                    gobject.Object.setData(asObject(pop), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
-                }
+                ndPopoverOpenWhenRooted(widget); // not anchored, or anchored out of any window: opens once it is in one
             } else if (!o and up) {
                 blockEcho(asObject(widget)); // programmatic popdown: `closed` must not echo
                 gtk.Popover.popdown(pop);
