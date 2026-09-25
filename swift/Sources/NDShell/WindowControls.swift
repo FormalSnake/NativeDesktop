@@ -28,6 +28,7 @@ final class NDTrafficLights {
     private var slots: [ObjectIdentifier: [WeakSlot]] = [:]
     private var defaults: [ObjectIdentifier: NDTrafficLightDefaults] = [:]
     private var observed: Set<ObjectIdentifier> = []
+    private var layoutObservers: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private var applying = false
     private var scheduled: Set<ObjectIdentifier> = []
     /// Windows whose buttons are held hidden while their slot is mid-animation
@@ -102,6 +103,12 @@ final class NDTrafficLights {
         if let d = defaults[key] { return d }
         let bs = buttons(window)
         guard bs.count == 3, let container = bs[0].superview?.superview else { return nil }
+        // Read while AppKit is halfway through putting the buttons back (one
+        // moved, the next not yet) the three are closer than their own width,
+        // and every placement after would copy that overlap. Not kept then;
+        // the next pass reads again.
+        let steps = zip(bs.dropFirst(), bs).map { $0.frame.minX - $1.frame.minX }
+        guard steps.allSatisfy({ (16...32).contains($0) }) else { return nil }
         let d = NDTrafficLightDefaults(container: container.frame, buttons: bs.map(\.frame))
         defaults[key] = d
         return d
@@ -230,10 +237,16 @@ final class NDTrafficLights {
                 }
             }
         }
+        // A toolbar band coming or going moves the slot on the window without
+        // moving it in its superview, so nothing above reports it.
+        layoutObservers[key] = window.observe(\.contentLayoutRect, options: [.new]) { window, _ in
+            MainActor.assumeIsolated { NDTrafficLights.shared.schedule(window) }
+        }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
             MainActor.assumeIsolated {
                 NDTrafficLights.shared.slots[key] = nil
                 NDTrafficLights.shared.defaults[key] = nil
+                NDTrafficLights.shared.layoutObservers[key] = nil
             }
         }
     }
