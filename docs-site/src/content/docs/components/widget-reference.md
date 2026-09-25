@@ -680,6 +680,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `topBarStyle` | flat \| raised \| raised-border | flat | create |
 | `bottomBarStyle` | flat \| raised \| raised-border | flat | create |
 | `extendContentToTopEdge` | bool | false | create |
+| `topBarsAutoHide` | bool | false | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |
@@ -693,6 +694,8 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+
+Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `revealTopBars`, `concealTopBars`.
 
 Attached props (set on children):
 

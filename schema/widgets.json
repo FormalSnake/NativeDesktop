@@ -779,6 +779,7 @@
         { "name": "topBarStyle", "type": "enum", "values": ["flat", "raised", "raised-border"], "default": "flat", "appliesTo": "create" },
         { "name": "bottomBarStyle", "type": "enum", "values": ["flat", "raised", "raised-border"], "default": "flat", "appliesTo": "create" },
         { "name": "extendContentToTopEdge", "type": "bool", "default": false, "appliesTo": "create" },
+        { "name": "topBarsAutoHide", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
@@ -786,6 +787,7 @@
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
+      "commands": ["revealTopBars", "concealTopBars"],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },

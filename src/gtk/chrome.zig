@@ -12,6 +12,8 @@
 //                                  overlay), and out when it leaves
 //   <splitview contentStyle=card>  the content pane is a rounded card inset on
 //                                  the sidebar's surface
+//   <toolbarview topBarsAutoHide>  the top bars slide away over the content and
+//                                  back when the pointer reaches the top edge
 const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
@@ -192,6 +194,23 @@ fn isRevealed(sv: *gtk.Widget) bool {
 }
 
 fn pointerX(sv: *gtk.Widget) ?f64 {
+    return (pointerIn(sv) orelse return null).f_x;
+}
+
+/// The pointer in `w`'s coordinates, read off the device rather than from
+/// motion events: an embedded engine's native child window takes those.
+fn pointerIn(sv: *gtk.Widget) ?graphene.Point {
+    return pointerAt(sv, false);
+}
+
+/// As pointerIn, and null unless the pointer is over the window's own surface,
+/// its frame included: an undecorated window's top edge is its resize border
+/// (a few px above the content) as much as its first row.
+fn pointerOnWindow(w: *gtk.Widget) ?graphene.Point {
+    return pointerAt(w, true);
+}
+
+fn pointerAt(sv: *gtk.Widget, on_surface: bool) ?graphene.Point {
     const native = gtk.Widget.getNative(sv) orelse return null;
     const surface = gtk.Native.getSurface(native) orelse return null;
     const display = gtk.Widget.getDisplay(sv);
@@ -200,13 +219,15 @@ fn pointerX(sv: *gtk.Widget) ?f64 {
     var x: f64 = 0;
     var y: f64 = 0;
     if (gdk.Surface.getDevicePosition(surface, pointer, &x, &y, null) == 0) return null;
+    if (on_surface and (x < 0 or y < 0 or x > @as(f64, @floatFromInt(gdk.Surface.getWidth(surface))) or
+        y > @as(f64, @floatFromInt(gdk.Surface.getHeight(surface))))) return null;
     var sx: f64 = 0;
     var sy: f64 = 0;
     gtk.Native.getSurfaceTransform(native, &sx, &sy);
     var in = graphene.Point{ .f_x = @floatCast(x - sx), .f_y = @floatCast(y - sy) };
     var out: graphene.Point = undefined;
     if (gtk.Widget.computePoint(native.as(gtk.Widget), sv, &in, &out) == 0) return null;
-    return out.f_x;
+    return out;
 }
 
 fn cbRevealPoll(data: ?*anyopaque) callconv(.c) c_int {
@@ -234,6 +255,37 @@ fn startRevealPoll(sv: *gtk.Widget) void {
     gobject.Object.setData(asObject(sv), K_REVEAL_AWAY, null);
     const id = glib.timeoutAdd(reveal_poll_ms, &cbRevealPoll, sv);
     gobject.Object.setData(asObject(sv), K_REVEAL_POLL, @ptrFromInt(@as(usize, id)));
+}
+
+/// Collapsed, the content fills the window edge to edge, so no GTK-drawn
+/// margin is left for the motion controller to see the pointer arrive at the
+/// leading edge over an engine's page; the device is read instead.
+const K_EDGE_POLL = "nd-edge-reveal-edge-poll";
+
+fn cbEdgePoll(data: ?*anyopaque) callconv(.c) c_int {
+    const sv: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    const s = splitOf(sv);
+    if (!getFlag(sv, K_REVEAL) or adw.OverlaySplitView.getCollapsed(s) == 0 or gtk.Widget.getRoot(sv) == null) {
+        gobject.Object.setData(asObject(sv), K_EDGE_POLL, null);
+        gobject.Object.unref(asObject(sv));
+        return 0;
+    }
+    if (!isRevealed(sv)) {
+        if (pointerOnWindow(sv)) |pt| {
+            const w: f64 = @floatFromInt(gtk.Widget.getWidth(sv));
+            const h: f64 = @floatFromInt(gtk.Widget.getHeight(sv));
+            const rtl = gtk.Widget.getDirection(sv) == .rtl;
+            const from_edge = if (rtl) w - pt.f_x else pt.f_x;
+            if (from_edge <= reveal_edge_px and pt.f_y >= 0 and pt.f_y <= h) reveal(sv, true);
+        }
+    }
+    return 1;
+}
+
+fn startEdgePoll(sv: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(sv), K_EDGE_POLL) != null) return;
+    const id = glib.timeoutAdd(reveal_poll_ms, &cbEdgePoll, gobject.Object.ref(asObject(sv)));
+    gobject.Object.setData(asObject(sv), K_EDGE_POLL, @ptrFromInt(@as(usize, id)));
 }
 
 fn reveal(sv: *gtk.Widget, pointer_driven: bool) void {
@@ -269,6 +321,7 @@ fn cbShowSidebar(obj: *gobject.Object, _: ?*anyopaque, _: ?*anyopaque) callconv(
         // and off screen. Checked once the slide has had time to end.
         _ = glib.timeoutAdd(450, &cbShowSidebarHeal, gobject.Object.ref(obj));
     }
+    if (adw.OverlaySplitView.getCollapsed(s) != 0 and getFlag(sv, K_REVEAL)) startEdgePoll(sv);
     const was = getFlag(sv, "nd-revealed");
     const now = isRevealed(sv);
     applyContentCard(sv);
@@ -315,6 +368,7 @@ fn wireReveal(sv: *gtk.Widget) void {
 pub fn setEdgeReveal(sv: *gtk.Widget, on: bool) void {
     setFlag(sv, K_REVEAL, on);
     wireReveal(sv);
+    if (on and adw.OverlaySplitView.getCollapsed(splitOf(sv)) != 0) startEdgePoll(sv);
 }
 
 pub fn connectSplitReveal(sv: *gtk.Widget, node_id: u32, emit_fn: EmitFn) void {
@@ -397,6 +451,7 @@ pub fn applyContentCard(sv: *gtk.Widget) void {
         const old: *gtk.Widget = @ptrCast(@alignCast(raw));
         if (!on or content == null or content.? != old) {
             gtk.Widget.removeCssClass(old, "nd-card-content");
+            gtk.Widget.removeCssClass(old, "nd-card-immersive");
             gtk.Widget.setOverflow(old, .visible);
             setMargins(old, 0, 0, 0, 0);
             gobject.Object.setData(asObject(sv), K_CARD_CHILD, null);
@@ -410,7 +465,14 @@ pub fn applyContentCard(sv: *gtk.Widget) void {
     const beside = !collapsed and adw.OverlaySplitView.getShowSidebar(s) != 0 and adw.OverlaySplitView.getSidebar(s) != null;
     // A top bar over the card is its own spacing: the card starts under it.
     const top: c_int = if (bars) |tv| (if (adw.ToolbarView.getTopBarHeight(tv) > 0) 0 else card_margin) else card_margin;
-    setMargins(child, if (beside) 0 else card_margin, top, card_margin, card_margin);
+    // With the sidebar away the page is immersive: edge to edge, no frame.
+    if (beside) {
+        gtk.Widget.removeCssClass(child, "nd-card-immersive");
+        setMargins(child, 0, top, card_margin, card_margin);
+    } else {
+        gtk.Widget.addCssClass(child, "nd-card-immersive");
+        setMargins(child, 0, 0, 0, 0);
+    }
 }
 
 const K_CARD_BARS_WIRED = "nd-card-bars-wired";
@@ -455,6 +517,16 @@ pub fn coversOver(w: *gtk.Widget, out: []*gtk.Widget) usize {
                 }
             }
         }
+        if (gobject.ext.isA(cur, adw.ToolbarView) and getFlag(cur, K_AUTOHIDE)) {
+            var child = gtk.Widget.getFirstChild(cur);
+            while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
+                if (gtk.Widget.hasCssClass(c, "top-bar") == 0 or gtk.Widget.getMapped(c) == 0) continue;
+                if (n < out.len) {
+                    out[n] = c;
+                    n += 1;
+                }
+            }
+        }
         if (gobject.ext.isA(cur, adw.OverlaySplitView)) {
             const s = splitOf(cur);
             if (adw.OverlaySplitView.getCollapsed(s) == 0) continue;
@@ -467,6 +539,70 @@ pub fn coversOver(w: *gtk.Widget, out: []*gtk.Widget) usize {
         }
     }
     return n;
+}
+
+// ---- <toolbarview topBarsAutoHide> -------------------------------------------
+// Zen's hidden title bar: AdwToolbarView's own reveal-top-bars slide, with the
+// content extended under the bars so it never moves when they come and go.
+// The trigger is the pointer at the top edge and the leave is the pointer off
+// the bars for 250 ms, both read off the device (see pointerIn).
+
+const K_AUTOHIDE = "nd-top-autohide";
+const K_AUTOHIDE_POLL = "nd-top-autohide-poll";
+const K_AUTOHIDE_AWAY = "nd-top-autohide-away";
+/// Revealed by a command rather than the pointer: stays until concealed.
+const K_AUTOHIDE_HELD = "nd-top-autohide-held";
+const top_edge_px: f64 = 6;
+
+fn tvOf(w: *gtk.Widget) *adw.ToolbarView {
+    return @ptrCast(@alignCast(w));
+}
+
+fn cbAutoHidePoll(data: ?*anyopaque) callconv(.c) c_int {
+    const w: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    if (!getFlag(w, K_AUTOHIDE) or gtk.Widget.getRoot(w) == null) {
+        gobject.Object.setData(asObject(w), K_AUTOHIDE_POLL, null);
+        gobject.Object.unref(asObject(w));
+        return 0;
+    }
+    const tv = tvOf(w);
+    const shown = adw.ToolbarView.getRevealTopBars(tv) != 0;
+    const zone: f64 = if (shown) @as(f64, @floatFromInt(adw.ToolbarView.getTopBarHeight(tv))) + reveal_slack_px else top_edge_px;
+    const inside = if (pointerOnWindow(w)) |pt| pt.f_y <= zone else false;
+    if (inside) {
+        gobject.Object.setData(asObject(w), K_AUTOHIDE_AWAY, null);
+        if (!shown) adw.ToolbarView.setRevealTopBars(tv, 1);
+    } else if (shown and !getFlag(w, K_AUTOHIDE_HELD)) {
+        const away = @intFromPtr(gobject.Object.getData(asObject(w), K_AUTOHIDE_AWAY)) + 1;
+        gobject.Object.setData(asObject(w), K_AUTOHIDE_AWAY, @ptrFromInt(away));
+        if (away >= reveal_away_ticks) {
+            gobject.Object.setData(asObject(w), K_AUTOHIDE_AWAY, null);
+            adw.ToolbarView.setRevealTopBars(tv, 0);
+        }
+    }
+    return 1;
+}
+
+pub fn setTopBarsAutoHide(w: *gtk.Widget, on: bool) void {
+    if (getFlag(w, K_AUTOHIDE) == on) return;
+    setFlag(w, K_AUTOHIDE, on);
+    setFlag(w, K_AUTOHIDE_HELD, false);
+    const tv = tvOf(w);
+    adw.ToolbarView.setExtendContentToTopEdge(tv, @intFromBool(on));
+    adw.ToolbarView.setRevealTopBars(tv, @intFromBool(!on));
+    if (on) gtk.Widget.addCssClass(w, "nd-top-autohide") else gtk.Widget.removeCssClass(w, "nd-top-autohide");
+    if (on and gobject.Object.getData(asObject(w), K_AUTOHIDE_POLL) == null) {
+        const id = glib.timeoutAdd(reveal_poll_ms, &cbAutoHidePoll, gobject.Object.ref(asObject(w)));
+        gobject.Object.setData(asObject(w), K_AUTOHIDE_POLL, @ptrFromInt(@as(usize, id)));
+    }
+}
+
+pub fn toolbarCommand(w: *gtk.Widget, command: []const u8) void {
+    if (!getFlag(w, K_AUTOHIDE)) return;
+    const reveal_bars = std.mem.eql(u8, command, "revealTopBars");
+    if (!reveal_bars and !std.mem.eql(u8, command, "concealTopBars")) return;
+    setFlag(w, K_AUTOHIDE_HELD, reveal_bars);
+    adw.ToolbarView.setRevealTopBars(tvOf(w), @intFromBool(reveal_bars));
 }
 
 // ---- <progressbar cssClasses={["osd"]}> as a page-load bar -------------------

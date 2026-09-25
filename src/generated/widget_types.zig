@@ -230,6 +230,8 @@ pub const host_commands: []const []const u8 = &.{
     "webview.focus",
     "splitview.revealSidebar",
     "splitview.concealSidebar",
+    "toolbarview.revealTopBars",
+    "toolbarview.concealTopBars",
     "searchinput.focus",
     "searchinput.activateLeadingIcon",
     "switch.focus",

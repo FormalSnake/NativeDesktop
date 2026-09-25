@@ -79,6 +79,8 @@ const nd_base_css =
     \\progressbar.osd.dimmed { opacity: 1; }
     \\progressbar.osd.dimmed > trough > progress { background-color: alpha(currentColor, 0.3); }
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
+    \\.nd-card-content.nd-card-immersive { box-shadow: none; }
+    \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
 ;
 

@@ -343,7 +343,7 @@ export const widgetCommands: Record<string, readonly string[]> = {
   "nativeview": [],
   "splitview": ["revealSidebar", "concealSidebar"],
   "headerbar": [],
-  "toolbarview": [],
+  "toolbarview": ["revealTopBars", "concealTopBars"],
   "searchinput": ["focus", "activateLeadingIcon"],
   "sourcelist": [],
   "sourcetree": [],
@@ -406,6 +406,7 @@ export type WidgetCommandNames = {
   "select": "focus";
   "webview": "goBack" | "goForward" | "reload" | "stop" | "executeJavaScript" | "setZoom" | "setUserAgent" | "openDevTools" | "addUserScript" | "removeUserScript" | "clearUserScripts" | "registerScriptMessage" | "unregisterScriptMessage" | "respondScheme" | "respondPermission" | "respondDownload" | "getCookies" | "setCookie" | "deleteCookie" | "findStart" | "findNext" | "findPrevious" | "findStop" | "saveSession" | "restoreSession" | "setMuted" | "setContextMenuItems" | "listExtensions" | "watchExtensions" | "listExtensionActions" | "readExtensionAction" | "installExtension" | "uninstallExtension" | "setExtensionEnabled" | "focus";
   "splitview": "revealSidebar" | "concealSidebar";
+  "toolbarview": "revealTopBars" | "concealTopBars";
   "searchinput": "focus" | "activateLeadingIcon";
   "switch": "focus";
   "numberinput": "focus";

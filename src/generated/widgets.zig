@@ -3391,6 +3391,7 @@ fn createWidget(
         adw.ToolbarView.setTopBarStyle(tv, ndToolbarStyleFromString(propStr(props, "topBarStyle") orelse "flat"));
         adw.ToolbarView.setBottomBarStyle(tv, ndToolbarStyleFromString(propStr(props, "bottomBarStyle") orelse "flat"));
         if (propBool(props, "extendContentToTopEdge") orelse false) adw.ToolbarView.setExtendContentToTopEdge(tv, 1);
+        if (propBool(props, "topBarsAutoHide")) |a| ndchrome_gtk.setTopBarsAutoHide(tv.as(gtk.Widget), a);
         return tv.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         if (propStr(props, "leadingIconName")) |_| {
@@ -4020,6 +4021,7 @@ const nd_resets_HeaderBar = [_]NdPropReset{
     .{ .key = "dropTarget", .value = .{ .bool = false } },
 };
 const nd_resets_ToolbarView = [_]NdPropReset{
+    .{ .key = "topBarsAutoHide", .value = .{ .bool = false } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -4779,6 +4781,8 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "subtitle")) |st| ndHeaderBarSetSubtitle(@ptrCast(@alignCast(widget)), dupeZ(st));
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), propBool(props, "canGoBack"), null);
         ndHeaderBarApplyNav(@ptrCast(@alignCast(widget)), null, propBool(props, "canGoForward"));
+    } else if (std.mem.eql(u8, kind, "ToolbarView")) {
+        if (propBool(props, "topBarsAutoHide")) |a| ndchrome_gtk.setTopBarsAutoHide(widget, a);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         if (propStr(props, "text")) |t| {
             const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
@@ -5558,6 +5562,8 @@ pub fn widgetCommand(widget: *gtk.Widget, kind: []const u8, command: []const u8,
         ndweb_gtk.command(widget, command, arg);
     } else if (std.mem.eql(u8, kind, "SplitView")) {
         ndchrome_gtk.splitCommand(widget, command);
+    } else if (std.mem.eql(u8, kind, "ToolbarView")) {
+        ndchrome_gtk.toolbarCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         ndEntryCommand(widget, command);
     } else if (std.mem.eql(u8, kind, "ToastOverlay")) {

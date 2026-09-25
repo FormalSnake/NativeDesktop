@@ -3509,6 +3509,7 @@ const ZIG_COMMANDS: Record<string, string> = {
   SearchInput: "        ndEntryCommand(widget, command);\n",
   WebView: "        ndweb_gtk.command(widget, command, arg);\n",
   SplitView: "        ndchrome_gtk.splitCommand(widget, command);\n",
+  ToolbarView: "        ndchrome_gtk.toolbarCommand(widget, command);\n",
   Terminal: "        ndterm_gtk.runCommand(widget, command, arg);\n",
   // Dialogs parent on the Window node's OWN handle (multi-window correct);
   // tab commands route to tabs.zig first.
@@ -4191,6 +4192,7 @@ function genZigCreateBody(w: Widget): string {
     out += `        adw.ToolbarView.setTopBarStyle(tv, ndToolbarStyleFromString(propStr(props, "topBarStyle") orelse ${zigDefaultStr(w, "topBarStyle")}));\n`;
     out += `        adw.ToolbarView.setBottomBarStyle(tv, ndToolbarStyleFromString(propStr(props, "bottomBarStyle") orelse ${zigDefaultStr(w, "bottomBarStyle")}));\n`;
     out += `        if (propBool(props, "extendContentToTopEdge") orelse ${dflt(w, "extendContentToTopEdge")}) adw.ToolbarView.setExtendContentToTopEdge(tv, 1);\n`;
+    out += "        if (propBool(props, \"topBarsAutoHide\")) |a| ndchrome_gtk.setTopBarsAutoHide(tv.as(gtk.Widget), a);\n";
     out += "        return tv.as(gtk.Widget);\n";
   } else if (w.name === "Menubar") {
     out += `        const defaults = propBool(props, "defaults") orelse ${dflt(w, "defaults")};\n`;
@@ -4552,6 +4554,8 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"edgeReveal\")) |r| ndchrome_gtk.setEdgeReveal(widget, r);\n";
     } else if (w.name === "SplitView" && p.name === "contentStyle") {
       out += "        if (propStr(props, \"contentStyle\")) |cs| ndchrome_gtk.setContentStyle(widget, cs);\n";
+    } else if (w.name === "ToolbarView" && p.name === "topBarsAutoHide") {
+      out += "        if (propBool(props, \"topBarsAutoHide\")) |a| ndchrome_gtk.setTopBarsAutoHide(widget, a);\n";
     } else if (w.name === "Box" && p.name === "spacing") {
       out += "        if (propInt(props, \"spacing\")) |s| {\n";
       out += "            const box: *gtk.Box = @ptrCast(@alignCast(widget));\n";
@@ -8775,6 +8779,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        ndProgressCircleApply(view, props)  // fraction/lineWidth/showLabel merged into one refresh\n";
     } else if (w.name === "ProgressCircle" && (p.name === "lineWidth" || p.name === "showLabel")) {
       out += `        // "${p.name}" handled by ndProgressCircleApply above (merged).\n`;
+    } else if (w.name === "ToolbarView" && p.name === "topBarsAutoHide") {
+      out += '        // "topBarsAutoHide": AppKit has no bar row over the page to hide (the window\n';
+      out += '        // controls sit in the sidebar), so the prop is GTK\'s alone.\n';
     } else if (w.name === "Skeleton" && p.name === "width") {
       out += '        if let wd = propInt(props, "width") { (view as? NDSkeletonView)?.contentWidth = wd }\n';
     } else if (w.name === "Skeleton" && p.name === "height") {
@@ -9097,6 +9104,8 @@ const SWIFT_COMMANDS: Record<string, string> = {
   SearchInput: "        ndEntryCommand(view, command)\n",
   WebView: "        ndWebViewCommand(view, command, argJson)\n",
   SplitView: "        ndSplitRevealCommand(view, command)\n",
+  // No auto-hiding top bars on AppKit (see topBarsAutoHide), so nothing to reveal.
+  ToolbarView: "        return\n",
   Terminal: "        ndTerminalCommand(view, command, argJson)\n",
   // Dialogs resolve the owning NSWindow from the node's OWN handle
   // (ndWindow(for:)) — multi-window correct, no gWindow (M15). Tab commands

@@ -1957,7 +1957,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     "NativeView": ["props": "{}", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SplitView": ["collapsed": false, "edgeReveal": false, "contentStyle": "plain", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "HeaderBar": ["title": "", "subtitle": "", "canGoBack": false, "canGoForward": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "ToolbarView": ["enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "ToolbarView": ["topBarsAutoHide": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SearchInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SourceList": ["items": [Any](), "selectedIndex": -1, "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "SourceTree": ["nodes": [Any](), "actions": [Any](), "selectedId": "", "emptyIconName": "", "emptyTitle": "", "emptyDescription": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2153,6 +2153,9 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         if let bar = view as? NDHeaderBarView {
             ndHeaderBarApplyNav(bar, canGoBack: propBool(props, "canGoBack"), canGoForward: propBool(props, "canGoForward"))
         }
+    } else if kind == "ToolbarView" {
+        // "topBarsAutoHide": AppKit has no bar row over the page to hide (the window
+        // controls sit in the sidebar), so the prop is GTK's alone.
     } else if kind == "SearchInput" {
         if let t = propStr(props, "text"), let field = view as? NSTextField, field.stringValue != t {
             withEchoSuppressed(view) { field.stringValue = t }
@@ -2509,6 +2512,8 @@ func ndConnectEvents(_ view: NSView, _ kind: String, _ nodeID: UInt32) {
         ndWebViewCommand(view, command, argJson)
     } else if kind == "SplitView" {
         ndSplitRevealCommand(view, command)
+    } else if kind == "ToolbarView" {
+        return
     } else if kind == "SearchInput" {
         ndEntryCommand(view, command)
     } else if kind == "ToastOverlay" {
