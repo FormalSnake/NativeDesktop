@@ -199,20 +199,8 @@ quit_leg() {
 quit_leg "sigterm-plain" plain sigterm
 quit_leg "cmdq-plain" plain cmdq
 
-# Quitting after the inspector has been docked still faults inside Chromium's
-# own activation path (`-[NSWindow becomeKeyWindow]` reaching a Chromium
-# observer), with the ordered close in place and the inspector long closed. The
-# pass is killed rather than quit, so a run leaves the machine owner no "quit
-# unexpectedly" dialog, and both legs stay reported as failing.
-echo "ND_APP_CHROME_QUIT sigterm-devtools: FAILING (killed; a quit after the inspector segfaults)"
-echo "ND_APP_CHROME_QUIT cmdq-devtools: FAILING (killed; a quit after the inspector segfaults)"
-launch "devtools-open"
-ND_APP_CHROME_PREP=devtools drive >/dev/null || echo "FAIL: the docked quit leg could not reach its state"
-kill -9 "$HOST_PID" 2>/dev/null || true
-wait "$HOST_PID" 2>/dev/null || true
-HOST_PID=""
-settle
-FAILED=1
+quit_leg "sigterm-devtools" devtools sigterm
+quit_leg "cmdq-devtools" devtools cmdq
 
 NEW_CRASHES="$(new_crash_reports)"
 if [ -n "$NEW_CRASHES" ]; then

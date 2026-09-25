@@ -1723,7 +1723,20 @@ function countTrace(marker: string): number {
 // page (and, for two of the four, on a docked inspector) before it signals it.
 const prep = process.env.ND_APP_CHROME_PREP ?? "";
 if (prep) {
-  const page = await loadFixture();
+  // A quit leg's host reopens the session the legs left, so the fixture is
+  // usually on show already. Typing its address again would be the app's own
+  // "same address reloads" path, which its field then races on blur.
+  const restored = await until(
+    "the restored tab shows a fixture page",
+    async () => {
+      const id = await activePage().catch(() => "");
+      const at = id ? await pageEval(app, id, "location.port+'|'+document.readyState").catch(() => null) : null;
+      return at === `${FIXTURE_PORT}|complete` ? id : "";
+    },
+    (id) => id !== "",
+    15000,
+  ).catch(() => "");
+  const page = restored || (await loadFixture());
   if (prep === "devtools") {
     const before = await pageNumber(app, page, "innerWidth");
     await openInspector(page);
