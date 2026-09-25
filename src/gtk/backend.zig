@@ -1309,6 +1309,11 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
     } else if (std.mem.eql(u8, kind, "Select")) {
         if (value != .integer) return invalidValue(err_json_out, node_id);
         gtk.DropDown.setSelected(@ptrCast(@alignCast(widget)), @intCast(value.integer)); // fires notify::selected
+    } else if (std.mem.eql(u8, kind, "SegmentedControl")) {
+        if (value != .integer) return invalidValue(err_json_out, node_id);
+        const group: *adw.ToggleGroup = @ptrCast(@alignCast(widget));
+        if (value.integer < 0 or value.integer >= adw.ToggleGroup.getNToggles(group)) return invalidValue(err_json_out, node_id);
+        adw.ToggleGroup.setActive(group, @intCast(value.integer)); // fires notify::active
     } else if (std.mem.eql(u8, kind, "SourceList")) {
         if (value != .integer) return invalidValue(err_json_out, node_id);
         const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
@@ -1434,6 +1439,7 @@ fn widgetKind(widget: *gtk.Widget) []const u8 {
     if (std.mem.eql(u8, type_name, "AdwActionRow")) return "Row";
     if (std.mem.eql(u8, type_name, "GtkScale")) return "Slider";
     if (std.mem.eql(u8, type_name, "GtkDropDown")) return "Select";
+    if (std.mem.eql(u8, type_name, "AdwToggleGroup")) return "SegmentedControl";
     if (std.mem.eql(u8, type_name, "GtkScrolledWindow")) {
         // ScrollView and SourceList are both tracked
         // by their GtkScrolledWindow wrapper — disambiguate by sniffing the
