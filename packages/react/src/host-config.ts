@@ -299,6 +299,12 @@ export const hostConfig = {
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(newProps)) {
       if (!wire(k)) continue; // "text" on a label is routed through setText above
+      // `label={cond ? x : undefined}` keeps the key with no value, which JSON
+      // drops from the op: it is a removal like a key the render left out.
+      if (newProps[k] === undefined) {
+        if (oldProps[k] !== undefined) changed[k] = REMOVAL_VALUE[k] ?? null;
+        continue;
+      }
       if (!propsEqual(newProps[k], oldProps[k])) changed[k] = newProps[k];
     }
     // A prop the new render dropped has to reach the host too, or the widget

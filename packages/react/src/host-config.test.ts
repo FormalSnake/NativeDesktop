@@ -53,6 +53,15 @@ test("a prop the new render dropped reaches the host as null", () => {
   ]);
 });
 
+// `label={icon ? undefined : letter}` keeps the key with an undefined value,
+// which JSON drops from the op, so the host kept the old label.
+test("a prop set to undefined reaches the host as null", () => {
+  expect(updateOps("button", { label: "I", iconName: "x" }, { label: undefined, iconName: "x" })).toEqual([
+    { op: "update", id: expect.any(Number), props: { label: null } },
+  ]);
+  expect(updateOps("button", { label: undefined }, { label: undefined })).toEqual([]);
+});
+
 // `style`/`cssClasses` are applied by a set-replace pass over the whole value,
 // so the empty value is what resets them; a null falls through the object/array
 // type guards on both backends and leaves the widget styled.
