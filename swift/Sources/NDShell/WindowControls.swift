@@ -150,17 +150,23 @@ final class NDTrafficLights {
         // Window coordinates are bottom-up; the slot's centre as a distance
         // from the top is what the title bar band has to be twice of, so the
         // buttons sit vertically centred on the slot.
-        let windowHeight = window.frame.height
-        let centreFromTop = windowHeight - rect.midY
-        let bandHeight = max(d.container.height, (centreFromTop * 2).rounded())
+        let centreFromTop = window.frame.height - rect.midY
+        place(window, d, bs, container, centreFromTop: centreFromTop, leading: rect.minX,
+              bandHeight: max(d.container.height, (centreFromTop * 2).rounded()))
+    }
+
+    /// The close button's leading edge at `leading`, the row centred
+    /// `centreFromTop` down from the window's top, AppKit's own spacing kept.
+    private func place(_ window: NSWindow, _ d: NDTrafficLightDefaults, _ bs: [NSButton], _ container: NSView,
+                       centreFromTop: CGFloat, leading: CGFloat, bandHeight: CGFloat) {
         var frame = container.frame
         frame.size.height = bandHeight
-        frame.origin.y = windowHeight - bandHeight
+        frame.origin.y = window.frame.height - bandHeight
         if frame != container.frame { container.frame = frame }
         let first = d.buttons[0].minX
         for (i, b) in bs.enumerated() {
             let stock = d.buttons[i]
-            let x = (rect.minX + (stock.minX - first)).rounded()
+            let x = (leading + (stock.minX - first)).rounded()
             // The title bar view fills the band; its y axis runs either way
             // depending on the OS release, so it is asked rather than assumed.
             let flipped = b.superview?.isFlipped ?? false
@@ -173,6 +179,16 @@ final class NDTrafficLights {
     }
 
     private func restore(_ window: NSWindow, _ d: NDTrafficLightDefaults, _ bs: [NSButton], _ container: NSView) {
+        // A toolbar band taller than the stock title bar (a header bar row):
+        // the close button goes as far in from the left edge as from the top,
+        // centred on the band, the way a unified toolbar sets them. The stock
+        // frames were read before any toolbar existed and would pin the
+        // buttons to the band's top-left corner.
+        let band = (window.frame.height - window.contentLayoutRect.maxY).rounded()
+        if !window.styleMask.contains(.fullScreen), window.toolbar?.isVisible == true, band > d.container.height + 1 {
+            place(window, d, bs, container, centreFromTop: band / 2, leading: band / 2 - d.buttons[0].width / 2, bandHeight: band)
+            return
+        }
         var frame = container.frame
         frame.size.height = d.container.height
         frame.origin.y = window.frame.height - d.container.height
