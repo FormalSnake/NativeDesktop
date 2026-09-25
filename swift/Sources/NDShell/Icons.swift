@@ -227,6 +227,12 @@ func ndIconImageFromData(_ value: String, side: CGFloat, what: String) -> NSImag
 /// icon and a themed one match in one row of buttons. Unlike `iconName` this
 /// also runs on update, and rewriting `image` is the whole swap.
 func ndApplyButtonIconData(_ b: NSButton, iconData: String, label: String) {
+    // The prop dropped (its reset is ""): the image goes and the title stays.
+    if iconData.isEmpty {
+        b.image = nil
+        b.imagePosition = .noImage
+        return
+    }
     let config = NSImage.SymbolConfiguration(
         pointSize: b.font?.pointSize ?? NSFont.systemFontSize,
         weight: .regular,
