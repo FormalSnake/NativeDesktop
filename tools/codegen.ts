@@ -7514,6 +7514,13 @@ final class NDSegmentedControlView: NDHostedLeaf {
         withEchoSuppressed(self) { setSelectedIndex(idx, emit: false) }
     }
 
+    /// automation \`setValue\`: a pick the way a click makes one, so the app hears it.
+    func selectFromAutomation(_ idx: Int) -> Bool {
+        guard idx >= 0, idx < options.count else { return false }
+        setSelectedIndex(idx, emit: true)
+        return true
+    }
+
     private func setSelectedIndex(_ idx: Int, emit: Bool) {
         selectedIndex = idx
         refreshLeaf()

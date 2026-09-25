@@ -959,6 +959,15 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
         setResultRaw(resultOut, "{\"ref\":\(nodeID),\"applied\":true}")
         return 0
     }
+    if let segmented = view as? NDSegmentedControlView {
+        // An NSNumber 0 or 1 also passes `is Bool`; only a CFBoolean is a bool.
+        guard let num = value as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID(),
+              segmented.selectFromAutomation(num.intValue) else {
+            return invalidValue(errOut, nodeID)
+        }
+        setResultRaw(resultOut, "{\"ref\":\(nodeID),\"applied\":true}")
+        return 0
+    }
     let kind = widgetKind(view)
 
     switch kind {
