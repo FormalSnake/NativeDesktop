@@ -40,7 +40,7 @@ mkdir -p "$PROFILE/store" "$PROFILE/cef" "$PROFILE/shots"
 # if every leg passed.
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
 crash_reports() {
-  ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort
+  ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort || true
 }
 BASELINE_REPORTS="$(crash_reports)"
 new_crash_reports() {

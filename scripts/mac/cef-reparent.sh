@@ -17,7 +17,7 @@ cef_gate_lock
 PROFILE="$RUN_DIR"
 
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
-crash_reports() { ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort; }
+crash_reports() { ls -1 "$REPORTS" 2>/dev/null | grep -E "^NDShell( Helper.*)?-" | sort || true; }
 BASELINE_REPORTS="$(crash_reports)"
 
 # ScreenCaptureKit through the signed `ndshot` binary is the only capture path
