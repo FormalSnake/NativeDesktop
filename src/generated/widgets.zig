@@ -1537,6 +1537,7 @@ fn ndPopoverOpenWhenRooted(child: *gtk.Widget) void {
     if (gtk.Widget.getMapped(anchor) != 0) {
         gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
         gtk.Popover.popup(@ptrCast(@alignCast(child)));
+        ndPopoverKeepInWindow(child);
         return;
     }
     gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, @ptrFromInt(1));
@@ -1550,6 +1551,56 @@ fn cbPopoverAnchorMapped(anchor: *gobject.Object, data: ?*anyopaque) callconv(.c
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) == null) return;
     gobject.Object.setData(asObject(child), ND_POPOVER_PENDING_OPEN, null);
     gtk.Popover.popup(@ptrCast(@alignCast(child)));
+    ndPopoverKeepInWindow(child);
+}
+
+const ND_POPOVER_KEPT = "nd-popover-kept-in-window";
+
+/// GTK slides a popover along the monitor's edge, never the window's, so a
+/// panel from a button near the window's edge (a sidebar's foot) hung past
+/// it. Each layout the popup gets is checked against its window and the
+/// popover's offset moves it back in by the overflow.
+fn ndPopoverKeepInWindow(child: *gtk.Widget) void {
+    if (gobject.Object.getData(asObject(child), ND_POPOVER_KEPT) != null) return;
+    const surface = gtk.Native.getSurface(@ptrCast(@alignCast(child))) orelse return;
+    gobject.Object.setData(asObject(child), ND_POPOVER_KEPT, @ptrFromInt(1));
+    _ = gobject.signalConnectData(asObject(surface), "layout", @ptrCast(&cbPopoverLayout), child, null, .{ .after = true });
+}
+
+fn cbPopoverLayout(surface: *gdk.Surface, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
+    const child: *gtk.Widget = @ptrCast(@alignCast(data.?));
+    const pop: *gtk.Popover = @ptrCast(@alignCast(child));
+    const root = gtk.Widget.getRoot(child) orelse return;
+    const root_w = root.as(gtk.Widget);
+    var tx: f64 = 0;
+    var ty: f64 = 0;
+    gtk.Native.getSurfaceTransform(@ptrCast(@alignCast(root_w)), &tx, &ty);
+    var px: f64 = 0;
+    var py: f64 = 0;
+    gtk.Native.getSurfaceTransform(@ptrCast(@alignCast(child)), &px, &py);
+    const popup: *gdk.Popup = @ptrCast(@alignCast(surface));
+    const margin: f64 = 8;
+    const left = @as(f64, @floatFromInt(gdk.Popup.getPositionX(popup))) + px;
+    const top = @as(f64, @floatFromInt(gdk.Popup.getPositionY(popup))) + py;
+    const w: f64 = @floatFromInt(gtk.Widget.getWidth(child));
+    const h: f64 = @floatFromInt(gtk.Widget.getHeight(child));
+    const win_l = tx + margin;
+    const win_t = ty + margin;
+    const win_r = tx + @as(f64, @floatFromInt(gtk.Widget.getWidth(root_w))) - margin;
+    const win_b = ty + @as(f64, @floatFromInt(gtk.Widget.getHeight(root_w))) - margin;
+    var dx: f64 = 0;
+    var dy: f64 = 0;
+    if (w <= win_r - win_l) {
+        if (left < win_l) dx = win_l - left else if (left + w > win_r) dx = win_r - (left + w);
+    }
+    if (h <= win_b - win_t) {
+        if (top < win_t) dy = win_t - top else if (top + h > win_b) dy = win_b - (top + h);
+    }
+    if (@abs(dx) < 1 and @abs(dy) < 1) return;
+    var ox: c_int = 0;
+    var oy: c_int = 0;
+    gtk.Popover.getOffset(pop, &ox, &oy);
+    gtk.Popover.setOffset(pop, ox + @as(c_int, @intFromFloat(@round(dx))), oy + @as(c_int, @intFromFloat(@round(dy))));
 }
 
 fn ndPositionFromString(s: []const u8) gtk.PositionType {

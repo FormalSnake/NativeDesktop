@@ -109,13 +109,41 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             }
             sizeContent()
             let rect = (anchorSlot == "leadingIcon" ? ndLeadingIconRect(of: anchor) : nil) ?? anchor.bounds
-            popover.show(relativeTo: rect, of: anchor, preferredEdge: preferredEdge(for: anchor))
+            let (kept, view) = keptInWindow(rect, of: anchor)
+            popover.show(relativeTo: kept, of: view, preferredEdge: preferredEdge(for: view))
         } else {
             pendingOpen = false
             guard popover.isShown else { return }
             programmaticClose = true
             popover.performClose(nil)
         }
+    }
+
+    /// NSPopover centres itself on the anchor and only keeps clear of the
+    /// screen's edges, so a panel from a button near the window's edge (the
+    /// sidebar's foot) hung past the window. The rect it points at moves by the
+    /// overflow instead, which brings the panel in; the arrow moves with it.
+    private func keptInWindow(_ rect: NSRect, of anchor: NSView) -> (NSRect, NSView) {
+        guard let content = anchor.window?.contentView else { return (rect, anchor) }
+        let margin: CGFloat = 8
+        let size = popover.contentSize
+        var r = anchor.convert(rect, to: content)
+        let bounds = content.bounds
+        var moved = false
+        if position == "left" || position == "right" {
+            let lo = r.midY - size.height / 2
+            let hi = r.midY + size.height / 2
+            if lo < bounds.minY + margin { r.origin.y += bounds.minY + margin - lo; moved = true }
+            else if hi > bounds.maxY - margin { r.origin.y += bounds.maxY - margin - hi; moved = true }
+        } else {
+            let lo = r.midX - size.width / 2
+            let hi = r.midX + size.width / 2
+            if lo < bounds.minX + margin { r.origin.x += bounds.minX + margin - lo; moved = true }
+            else if hi > bounds.maxX - margin { r.origin.x += bounds.maxX - margin - hi; moved = true }
+        }
+        // A rect off the anchor's own bounds is presented from the content
+        // view, which contains it.
+        return moved ? (r, content) : (rect, anchor)
     }
 
     /// `position` names the side of the anchor the popover appears on;
