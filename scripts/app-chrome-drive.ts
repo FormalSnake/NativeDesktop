@@ -446,6 +446,20 @@ async function widgetToScreen(testId: string): Promise<{ x: number; y: number } 
   return { x: Math.round(origin.x + (box.x + box.width / 2) * scale), y: Math.round(origin.y + (box.y + box.height / 2) * scale) };
 }
 
+/// What the keyboard typed into after a click on the omnibox. An Arc-style app
+/// shows the address as a button that opens its command palette seeded with
+/// it, and the typing lands in the palette's field.
+async function addressText(): Promise<string> {
+  const l = (await app.callRpc("paletteLayout", { testId: "palette" }).catch(() => null)) as { presented?: boolean; fieldText?: string } | null;
+  if (l?.presented) return l.fieldText ?? "";
+  return (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+}
+
+async function paletteShown(): Promise<boolean> {
+  const l = (await app.callRpc("paletteLayout", { testId: "palette" }).catch(() => null)) as { presented?: boolean } | null;
+  return l?.presented === true;
+}
+
 /// Puts the keyboard on the app's own chrome rather than the page, the way a
 /// user does: the pointer goes to the address field and clicks it.
 async function focusNativeChrome(at: { x: number; y: number }): Promise<void> {
@@ -562,17 +576,19 @@ async function focusRouting(label: string): Promise<void> {
   click(1);
   await Bun.sleep(700);
   key("End");
-  const fieldBefore = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const fieldBefore = await addressText();
+  // A palette opens with its seeded address selected, so typing replaces it.
+  const expected = (await paletteShown()) ? "URLBAR" : `${fieldBefore}URLBAR`;
   const pageBefore = (await metrics()).probe;
   pointerTo(pageAt.x, pageAt.y);
   await Bun.sleep(300);
   typeText("URLBAR");
   await Bun.sleep(900);
-  const fieldAfter = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const fieldAfter = await addressText();
   const pageAfterField = (await metrics()).probe;
   check(
     `${label}.toField`,
-    fieldAfter === `${fieldBefore}URLBAR` && pageAfterField === pageBefore,
+    fieldAfter === expected && pageAfterField === pageBefore,
     `field ${JSON.stringify(fieldBefore)} -> ${JSON.stringify(fieldAfter)}, page ${JSON.stringify(pageBefore)} -> ${JSON.stringify(pageAfterField)}, pointer over the page`,
   );
   key("Escape");
@@ -584,13 +600,13 @@ async function focusRouting(label: string): Promise<void> {
   click(1);
   await Bun.sleep(900);
   key("End");
-  const fieldBefore2 = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const fieldBefore2 = await addressText();
   const pageBefore2 = (await metrics()).probe;
   pointerTo(field.x, field.y);
   await Bun.sleep(300);
   typeText("INPAGE");
   await Bun.sleep(900);
-  const fieldAfter2 = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+  const fieldAfter2 = await addressText();
   const pageAfter2 = (await metrics()).probe;
   check(
     `${label}.toPage`,
@@ -1255,7 +1271,7 @@ if (hasApp) {
     await Bun.sleep(600);
     typeText("nd-address");
     await Bun.sleep(800);
-    const value = (await app.getByTestId("omnibox").inputValue().catch(() => "")) ?? "";
+    const value = await addressText();
     const m = await metrics();
     check(
       "addressFieldTyping",
@@ -1449,8 +1465,14 @@ if (hasApp) {
     await focusNativeChrome(chromeAt);
     await Bun.sleep(700);
   }
+  // A palette the click opened parks the page under it; the chord is the
+  // app's either way.
+  if (await paletteShown()) {
+    key("Escape");
+    await Bun.sleep(700);
+  }
   const before = shownView()!;
-  key("ctrl+shift+p");
+  key("ctrl+n");
   await Bun.sleep(2500);
   const afterOpen = shownView();
   const openOk = !!afterOpen && (rig === "x11" || afterOpen.container.w !== before.container.w);
