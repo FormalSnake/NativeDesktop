@@ -66,18 +66,26 @@ func ndCaptureGrantMain() -> Int32 {
     guard let csreq = ndRequirementHex("identifier \"\(identifier)\"") else {
         return fail("could not compile the code requirement", 4)
     }
-    let client = path.replacingOccurrences(of: "'", with: "''")
+    // TCC keys an executable inside an .app bundle (the CEF dev bundle) by
+    // its bundle identifier (client_type 0), not by its path, so a bundled
+    // host gets both rows.
+    var clients = [(path, 1)]
+    if Bundle.main.bundleURL.pathExtension == "app", let bundleID = Bundle.main.bundleIdentifier {
+        clients.append((bundleID, 0))
+    }
     let now = Int(Date().timeIntervalSince1970)
     // Screen Recording for the capture helper, Accessibility and PostEvent for
     // the input helper (InputHelper.swift).
-    let sql = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"].map { service in
-        """
-        INSERT OR REPLACE INTO access
-          (service, client, client_type, auth_value, auth_reason, auth_version, csreq,
-           indirect_object_identifier, flags, last_modified, last_reminded)
-        VALUES ('\(service)', '\(client)', 1, 2, 4, 1, X'\(csreq)',
-           'UNUSED', 0, \(now), \(now));
-        """
+    let sql = clients.flatMap { client, type in
+        ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"].map { service in
+            """
+            INSERT OR REPLACE INTO access
+              (service, client, client_type, auth_value, auth_reason, auth_version, csreq,
+               indirect_object_identifier, flags, last_modified, last_reminded)
+            VALUES ('\(service)', '\(client.replacingOccurrences(of: "'", with: "''"))', \(type), 2, 4, 1, X'\(csreq)',
+               'UNUSED', 0, \(now), \(now));
+            """
+        }
     }.joined(separator: "\n")
     let (status, _) = ndRun("/usr/bin/sudo", ["/usr/bin/sqlite3", ndTCCDatabase, sql])
     guard status == 0 else { return fail("writing \(ndTCCDatabase) failed (exit \(status))", 4) }
