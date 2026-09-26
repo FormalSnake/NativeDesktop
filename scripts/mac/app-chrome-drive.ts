@@ -443,7 +443,25 @@ async function onFrontend<T>(body: (session: Session) => Promise<T>): Promise<T>
 
 /// Where a control of the docked frontend is, as a point in the window: the
 /// frontend fills the page's view, so its viewport origin is the view's.
+/// Every inspector the host has docked is also in the host view by now. A
+/// frontend answers over the protocol, button boxes and all, before its
+/// subtree is lifted into the host view, and a press in that gap lands on
+/// nothing.
+async function inspectorShown(): Promise<void> {
+  const path = process.env.ND_APP_HOST_LOG;
+  if (!path) return;
+  const count = (pattern: string) =>
+    Number(Bun.spawnSync(["rg", "-c", pattern, path]).stdout.toString().trim() || "0");
+  await until(
+    "the inspector is in the host view",
+    async () => count("chrome devtools lifted") >= count("chrome devtools docked"),
+    (shown) => shown,
+    10000,
+  );
+}
+
 async function frontendPoint(page: string, finder: string): Promise<{ x: number; y: number } | null> {
+  await inspectorShown();
   const box = await onFrontend((session) => frontendBox(session, finder));
   if (box === null) return null;
   const view = await viewBox(page);
@@ -1671,6 +1689,10 @@ const legs: Leg[] = [
     name: "navigateWithDevToolsDocked",
     run: async () => {
       if (skipDevTools) return;
+      // An inspector left open by a leg that failed before its close.
+      if ((await targets(DEBUG_PORT)).some((t) => t.url.startsWith("devtools://"))) {
+        await closeFrontend(await activePage());
+      }
       // The inspected page navigates while the inspector is docked: same
       // origin, then another origin, which is a new site instance for the
       // inspected contents.
