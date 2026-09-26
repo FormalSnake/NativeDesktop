@@ -42,7 +42,15 @@ import Foundation
           return original(message);
         };
         host.__ndDockHook = true;
-        window.dispatchEvent(new Event('resize'));
+        // A frontend that laid out before the hook went in has announced its
+        // hole already and says nothing more until it moves, and a synthetic
+        // resize does not move it. Its own placeholder is asked instead; the
+        // module is the one the frontend already loaded, so this is the live
+        // instance, and one that is not showing yet announces on its own.
+        import(new URL('panels/emulation/emulation.js', location.href).href).then((module) => {
+          const placeholder = module.InspectedPagePlaceholder.InspectedPagePlaceholder.instance();
+          if (placeholder.isShowing()) placeholder.update(false);
+        }).catch(() => {});
       };
       install(0);
     })()
