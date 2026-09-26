@@ -65,6 +65,11 @@ import Foundation
     private weak var lifted: NSView?
     private var reliftCount = 0
     private var reliftTimer: Timer?
+    /// Frame-rate poll from a dock until the inspector's subtree is in the
+    /// host view. Until then the inspector draws nowhere a user can see or
+    /// click, and the page-wide relift poll would leave it so for up to its
+    /// whole period.
+    private var toolsLiftTimer: Timer?
     private var observers: [NSObjectProtocol] = []
     /// The host window the observers are registered on. A `<webview>` moved
     /// between windows (`moveNode`) keeps this object, so the notifications
@@ -297,10 +302,25 @@ import Foundation
         if wasKey { view?.window?.makeKey() }
         observeGeometry()
         syncAnchor()
+        toolsLiftTimer?.invalidate()
+        let deadline = Date().addingTimeInterval(5)
+        toolsLiftTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard !self.closed, self.toolsWindow != nil, self.toolsLifted == nil, Date() < deadline else {
+                    self.toolsLiftTimer?.invalidate()
+                    self.toolsLiftTimer = nil
+                    return
+                }
+                self.liftWebContents()
+            }
+        }
     }
 
     /// The inspector's window, closed and handed back to CEF.
     private func closeToolsWindow() {
+        toolsLiftTimer?.invalidate()
+        toolsLiftTimer = nil
         if let toolsLifted, let toolsAnchor {
             toolsLifted.removeFromSuperview()
             toolsAnchor.contentView = toolsLifted
@@ -730,6 +750,8 @@ import Foundation
         frontend.stop()
         reliftTimer?.invalidate()
         reliftTimer = nil
+        toolsLiftTimer?.invalidate()
+        toolsLiftTimer = nil
         devToolsCloseTimer?.invalidate()
         devToolsCloseTimer = nil
         dockFrontendTimer?.invalidate()
