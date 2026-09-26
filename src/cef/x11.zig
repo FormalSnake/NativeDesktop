@@ -72,9 +72,11 @@ const FnInternAtom = *const fn (*Display, [*:0]const u8, c_int) callconv(.c) c_u
 const FnGetProperty = *const fn (*Display, Window, c_ulong, c_long, c_long, c_int, c_ulong, *c_ulong, *c_int, *c_ulong, *c_ulong, *[*]u8) callconv(.c) c_int;
 const FnChangeProperty = *const fn (*Display, Window, c_ulong, c_ulong, c_int, c_int, [*]const u8, c_int) callconv(.c) c_int;
 const FnSetTransientFor = *const fn (*Display, Window, Window) callconv(.c) c_int;
+const FnSelectInput = *const fn (*Display, Window, c_long) callconv(.c) c_int;
 const FnGetAttributes = *const fn (*Display, Window, *WindowAttributes) callconv(.c) c_int;
 
-/// Xlib's XWindowAttributes. Only `override_redirect` is read.
+/// Xlib's XWindowAttributes. Only `your_event_mask` and `override_redirect`
+/// are read.
 const WindowAttributes = extern struct {
     x: c_int,
     y: c_int,
@@ -128,6 +130,7 @@ const Api = struct {
     get_window_property: FnGetProperty,
     change_property: FnChangeProperty,
     set_transient_for_hint: FnSetTransientFor,
+    select_input: FnSelectInput,
     get_window_attributes: FnGetAttributes,
     query_pointer: FnQueryPointer,
     display_get_xdisplay: FnGetXDisplay,
@@ -189,6 +192,7 @@ fn loadApi() ?*const Api {
         .set_transient_for_hint = x.lookup(FnSetTransientFor, "XSetTransientForHint") orelse return missing(&x, &g, "XSetTransientForHint"),
         .get_window_attributes = x.lookup(FnGetAttributes, "XGetWindowAttributes") orelse return missing(&x, &g, "XGetWindowAttributes"),
         .query_pointer = x.lookup(FnQueryPointer, "XQueryPointer") orelse return missing(&x, &g, "XQueryPointer"),
+        .select_input = x.lookup(FnSelectInput, "XSelectInput") orelse return missing(&x, &g, "XSelectInput"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
         .surface_lookup = g.lookup(FnSurfaceLookup, "gdk_x11_surface_lookup_for_display") orelse return missing(&x, &g, "gdk_x11_surface_lookup_for_display"),
@@ -650,4 +654,40 @@ pub fn destroy(window: Window) void {
     c.push();
     _ = c.api.destroy_window(c.x, window);
     c.pop();
+}
+
+const SUBSTRUCTURE_NOTIFY_MASK: c_long = 1 << 19;
+const MAP_NOTIFY: c_int = 19;
+const CONFIGURE_NOTIFY: c_int = 22;
+
+/// Adds SubstructureNotify to what this connection already selects on the
+/// root, so a top-level Chromium maps or resizes reaches GDK's `xevent` signal
+/// the moment it happens. XSelectInput replaces the client's
+/// whole mask, hence the read first.
+pub fn watchRootMaps() bool {
+    const c = conn() orelse return false;
+    const root = c.api.default_root_window(c.x);
+    var attrs: WindowAttributes = undefined;
+    c.push();
+    defer c.pop();
+    if (c.api.get_window_attributes(c.x, root, &attrs) == 0) return false;
+    _ = c.api.select_input(c.x, root, attrs.your_event_mask | SUBSTRUCTURE_NOTIFY_MASK);
+    return true;
+}
+
+/// The window a MapNotify or ConfigureNotify is about, or 0 for any other
+/// event. Both put the window at the same offset on LP64: type, serial,
+/// send_event, display, event, window.
+pub fn mappedWindow(xevent: *const anyopaque) Window {
+    const bytes: [*]const u8 = @ptrCast(xevent);
+    const kind = std.mem.readInt(c_int, bytes[0..4], .little);
+    if (kind != MAP_NOTIFY and kind != CONFIGURE_NOTIFY) return 0;
+    return std.mem.readInt(c_ulong, bytes[40..48], .little);
+}
+
+/// GDK's X display object, whose `xevent` signal carries every event read
+/// off its connection.
+pub fn gdkDisplay() ?*gdk.Display {
+    const c = conn() orelse return null;
+    return c.gdk;
 }

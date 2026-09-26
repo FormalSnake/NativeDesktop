@@ -320,6 +320,28 @@ fn writeStartupPrefs(ctx: [*c]c.cef_request_context_t) void {
         return;
     }
     tr("startupPrefs session.restore_on_startup=5", .{});
+    writeBoolPref(ctx, "download_bubble.partial_view_enabled", false);
+}
+
+/// Chrome style pops its download bubble whenever a download it runs
+/// finishes, anchored to a toolbar this embedding does not have; the app's own
+/// UI reports downloads instead.
+fn writeBoolPref(ctx: [*c]c.cef_request_context_t, key: []const u8, on: bool) void {
+    const api = loader.loaded() orelse return;
+    const set = ctx.*.base.set_preference orelse return;
+    const value = api.value_create();
+    if (value == null) return;
+    if (value.*.set_bool) |set_bool| _ = set_bool(value, @intFromBool(on));
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    var err = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&err);
+    if (!setStr(&name, key)) return;
+    if (set(&ctx.*.base, &name, value, &err) == 0) {
+        const why = dupeStr(&err);
+        defer if (why) |w| alloc.free(w);
+        std.debug.print("ND_WARN CEF: {s} was not written: {?s}\n", .{ key, why });
+    }
 }
 
 // ============================================================================
@@ -690,8 +712,60 @@ fn isPendingSinkWindow(window: usize) bool {
     return false;
 }
 
+/// Chrome's download-started animation: an arrow in a small top-level of its
+/// own, mapped as a download begins, which the watch below would otherwise
+/// move onto the view as a dialog. No feature, switch or pref in CEF 151 turns
+/// it off (the partial-view pref covers the bubble only). For a few seconds
+/// after the app accepts a download, every top-level this process maps or
+/// resizes is checked from GDK's `xevent` as the event is read (Views maps the
+/// window at 1x1 and sizes it after), and one of that shape is unmapped there,
+/// before the next frame.
+const download_watch_us: i64 = 5 * std.time.us_per_s;
+const download_animation_max: c_uint = 96;
+var download_watch_until_us: i64 = 0;
+var download_map_hook = false;
+
+fn watchDownloadAnimation() void {
+    if (!chromeStyle()) return;
+    download_watch_until_us = glib.getMonotonicTime() + download_watch_us;
+    if (download_map_hook) return;
+    const display = x11.gdkDisplay() orelse return;
+    if (!x11.watchRootMaps()) return;
+    _ = gobject.signalConnectData(display.as(gobject.Object), "xevent", @ptrCast(&onXEvent), null, null, .{});
+    download_map_hook = true;
+}
+
+fn onXEvent(_: *gdk.Display, xevent: *const anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    const w = x11.mappedWindow(xevent);
+    if (w != 0) hideDownloadAnimation(w);
+    return 0;
+}
+
+fn hideDownloadAnimation(w: usize) void {
+    if (glib.getMonotonicTime() >= download_watch_until_us) return;
+    if (w == 0 or w == kept_window or isPendingSinkWindow(w)) return;
+    if (x11.isGdkSurface(w)) return;
+    if (x11.windowPid(w) != self_pid) return;
+    const geo = x11.geometry(w) orelse return;
+    if (geo.w > download_animation_max or geo.h > download_animation_max or geo.w < chrome_dialog_min_w) return;
+    if (!adopted_windows.contains(w)) {
+        adopted_windows.put(alloc, w, {}) catch {};
+        tr("download animation kept off screen window={x} {d}x{d}", .{ w, geo.w, geo.h });
+    }
+    x11.hide(w);
+}
+
+/// Backstop for a MapNotify the hook missed.
+fn hideDownloadAnimations() void {
+    if (glib.getMonotonicTime() >= download_watch_until_us) return;
+    var buf: [1024]x11.Window = undefined;
+    var truncated = false;
+    for (x11.rootChildren(&buf, &truncated)) |w| hideDownloadAnimation(w);
+}
+
 fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     if (kept_window != 0) x11.hide(kept_window);
+    hideDownloadAnimations();
     for (pending_sink.items) |entry| {
         if (entry.window != 0) x11.hide(entry.window);
     }
@@ -1526,6 +1600,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     find_handler.cef.on_find_result = &onFindResult;
     download_handler.cef.on_before_download = &onBeforeDownload;
     download_handler.cef.can_download = &onCanDownload;
+    download_handler.cef.on_download_updated = &onDownloadUpdated;
     jsdialog_handler.cef.on_jsdialog = &onJsDialog;
     jsdialog_handler.cef.on_before_unload_dialog = &onBeforeUnloadDialog;
     dialog_handler.cef.on_file_dialog = &onFileDialog;
@@ -2143,6 +2218,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "setUserAgent")) return cmdSetUserAgent(view, arg);
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
     if (std.mem.eql(u8, cmd, "respondPermission")) return cmdRespondPermission(arg);
+    if (std.mem.eql(u8, cmd, "respondDownload")) return cmdRespondDownload(arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
@@ -3318,6 +3394,10 @@ const Emission = struct {
     permission: ?*PermissionRequest = null,
     /// Chromium's own id for a prompt it has finished with.
     permission_dismissed: ?u64 = null,
+    /// A download waiting for `respondDownload`. It holds the callback, so the
+    /// GTK side owns continuing or cancelling it from here on.
+    download: ?*DownloadRequest = null,
+    download_update: ?DownloadUpdate = null,
 };
 
 fn post(e: Emission) void {
@@ -3364,6 +3444,7 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     if (!live_views.contains(@intFromPtr(box.view))) {
         if (box.menu_request) |req| cancelMenuRequest(req);
         if (box.permission) |req| answerPermissionRequest(req, false);
+        if (box.download) |req| answerDownload(req, null);
         return 0;
     }
     const view = box.view;
@@ -3530,11 +3611,49 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         payload.put(alloc, "done", .{ .bool = box.flag }) catch return 0;
         f(view.node_id, "findResult", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "downloadRequested")) {
+        const req = box.download orelse return 0;
+        const id = std.fmt.allocPrint(alloc, "cefdownload-{d}", .{req.item_id}) catch {
+            answerDownload(req, null);
+            return 0;
+        };
+        if (pending_downloads.fetchRemove(id)) |stale| {
+            alloc.free(stale.key);
+            answerDownload(stale.value, null);
+        }
+        pending_downloads.put(alloc, id, req) catch {
+            alloc.free(id);
+            answerDownload(req, null);
+            return 0;
+        };
+        tr("downloadRequested node={d} id={s}", .{ view.node_id, id });
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
+        payload.put(alloc, "id", .{ .string = id }) catch return 0;
         payload.put(alloc, "url", .{ .string = if (box.text) |t| t else "" }) catch return 0;
         if (box.extra) |name| payload.put(alloc, "suggestedFilename", .{ .string = name }) catch return 0;
         f(view.node_id, "downloadRequested", .{ .data = .{ .object = payload } });
+    } else if (std.mem.eql(u8, box.name, "downloadUpdated")) {
+        const u = box.download_update orelse return 0;
+        var key_buf: [40]u8 = undefined;
+        const id = std.fmt.bufPrint(&key_buf, "cefdownload-{d}", .{u.item_id}) catch return 0;
+        const entry = running_downloads.getEntry(id) orelse return 0;
+        const signature = (@as(u64, @intFromEnum(u.state)) << 60) | (@as(u64, @bitCast(u.received)) & ((1 << 60) - 1));
+        if (entry.value_ptr.* == signature) return 0;
+        entry.value_ptr.* = signature;
+        if (u.state != .running) {
+            const owned = entry.key_ptr.*;
+            _ = running_downloads.remove(id);
+            alloc.free(owned);
+        }
+        tr("downloadUpdated node={d} id={s} state={s} received={d}", .{ view.node_id, id, @tagName(u.state), u.received });
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "id", .{ .string = id }) catch return 0;
+        payload.put(alloc, "state", .{ .string = @tagName(u.state) }) catch return 0;
+        payload.put(alloc, "received", .{ .integer = u.received }) catch return 0;
+        payload.put(alloc, "total", .{ .integer = u.total }) catch return 0;
+        payload.put(alloc, "path", .{ .string = if (box.text) |t| t else "" }) catch return 0;
+        f(view.node_id, "downloadUpdated", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "loadFailed")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
@@ -6136,9 +6255,29 @@ fn onFaviconUrlChange(
     });
 }
 
-/// Downloads are the app's to run: cancelling and emitting is what the WebKit
-/// backend does, and an engine that silently wrote to ~/Downloads would be a
-/// surprise on either.
+/// Chrome style's default (returning 0) saves a copy of its own to
+/// ~/Downloads and shows its download bubble. The download is claimed instead
+/// and parked until the app answers `respondDownload`: a path lets Chromium
+/// run the transfer there (so blob:, data:, POST and cookie-bound downloads
+/// work, which the app could not fetch again), no path cancels it.
+const DownloadRequest = struct {
+    item_id: u32,
+    callback: usize,
+};
+
+const DownloadUpdate = struct {
+    item_id: u32,
+    state: enum { running, done, failed, cancelled },
+    received: i64,
+    total: i64,
+};
+
+/// GTK thread only. Keys are owned by the maps.
+var pending_downloads: std.StringHashMapUnmanaged(*DownloadRequest) = .empty;
+/// Downloads the app gave a path, with the last state reported, so an update
+/// that changes nothing is not sent again.
+var running_downloads: std.StringHashMapUnmanaged(u64) = .empty;
+
 fn onBeforeDownload(
     self: [*c]c.cef_download_handler_t,
     browser: [*c]c.cef_browser_t,
@@ -6148,9 +6287,10 @@ fn onBeforeDownload(
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(download_item);
-    defer ref.releaseParam(callback);
+    if (callback == null) return 0;
     const view = DownloadObj.of(self).payload;
     var url: ?[]u8 = null;
+    var item_id: u32 = 0;
     if (download_item != null) {
         if (download_item.*.get_url) |get_url| {
             const raw = get_url(download_item);
@@ -6159,15 +6299,93 @@ fn onBeforeDownload(
                 url = dupeStr(raw);
             }
         }
+        if (download_item.*.get_id) |get_id| item_id = get_id(download_item);
     }
+    const req = alloc.create(DownloadRequest) catch {
+        ref.releaseParam(callback);
+        if (url) |u| alloc.free(u);
+        return 1;
+    };
+    req.* = .{ .item_id = item_id, .callback = @intFromPtr(callback) };
     post(.{
         .view = view,
         .name = "downloadRequested",
         .text = url,
         .extra = dupeStr(suggested_name),
+        .download = req,
     });
-    // 0 means "do not continue": no path is chosen, so the download never runs.
-    return 0;
+    return 1;
+}
+
+/// Continues the download to `path`, or cancels it without one (a callback
+/// released without cont() is a cancelled download), and frees the request.
+fn answerDownload(req: *DownloadRequest, path: ?[]const u8) void {
+    defer alloc.destroy(req);
+    const cb: [*c]c.cef_before_download_callback_t = @ptrFromInt(req.callback);
+    defer ref.releaseParam(cb);
+    const p = path orelse return;
+    var target = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&target);
+    if (!setStr(&target, p)) return;
+    if (cb.*.cont) |cont| cont(cb, &target, 0);
+}
+
+fn cmdRespondDownload(arg: ?std.json.Value) void {
+    const obj_arg = argObject(arg) orelse return;
+    const id = objStr(obj_arg, "id") orelse {
+        std.debug.print("ND_WARN WebView respondDownload: missing id\n", .{});
+        return;
+    };
+    const entry = pending_downloads.fetchRemove(id) orelse {
+        std.debug.print("ND_WARN WebView respondDownload: unknown download id {s}\n", .{id});
+        return;
+    };
+    const path = objStr(obj_arg, "path");
+    if (path != null and path.?.len > 0) {
+        running_downloads.put(alloc, entry.key, 0) catch alloc.free(entry.key);
+        watchDownloadAnimation();
+        answerDownload(entry.value, path);
+    } else {
+        alloc.free(entry.key);
+        answerDownload(entry.value, null);
+    }
+}
+
+fn onDownloadUpdated(
+    self: [*c]c.cef_download_handler_t,
+    browser: [*c]c.cef_browser_t,
+    item: [*c]c.cef_download_item_t,
+    callback: [*c]c.cef_download_item_callback_t,
+) callconv(.c) void {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(item);
+    defer ref.releaseParam(callback);
+    if (item == null) return;
+    const view = DownloadObj.of(self).payload;
+    const is = struct {
+        fn flag(f: ?*const fn ([*c]c.cef_download_item_t) callconv(.c) c_int, it: [*c]c.cef_download_item_t) bool {
+            return if (f) |g| g(it) != 0 else false;
+        }
+    };
+    var path: ?[]u8 = null;
+    if (item.*.get_full_path) |get_path| {
+        const raw = get_path(item);
+        if (raw != null) {
+            defer freeUserfree(raw);
+            path = dupeStr(raw);
+        }
+    }
+    post(.{
+        .view = view,
+        .name = "downloadUpdated",
+        .text = path,
+        .download_update = .{
+            .item_id = if (item.*.get_id) |g| g(item) else 0,
+            .state = if (is.flag(item.*.is_complete, item)) .done else if (is.flag(item.*.is_canceled, item)) .cancelled else if (is.flag(item.*.is_interrupted, item)) .failed else .running,
+            .received = if (item.*.get_received_bytes) |g| g(item) else 0,
+            .total = if (item.*.get_total_bytes) |g| g(item) else -1,
+        },
+    });
 }
 
 fn freeUserfree(s: c.cef_string_userfree_t) void {
