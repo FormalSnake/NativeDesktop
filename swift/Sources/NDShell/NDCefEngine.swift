@@ -121,7 +121,10 @@ enum NDCefRuntime {
 
         // Before cef_initialize: Chrome can create a browser of its own as soon
         // as it starts (session restore, an extension's first run).
-        if isChromeStyle { MainActor.assumeIsolated { NDCefChromeCreated.install() } }
+        if isChromeStyle {
+            MainActor.assumeIsolated { NDCefChromeCreated.install() }
+            NDCefFrameworkExtension.install(rootCache: paths.rootCache)
+        }
         var args = cef_main_args_t(argc: CommandLine.argc, argv: CommandLine.unsafeArgv)
         guard nd_cef_initialize(&args, &settings, application, nil) != 0 else {
             if !reportProfileInUse(paths.rootCache) {

@@ -301,6 +301,58 @@ static void append_switch(cef_command_line_t *command_line, const char *name) {
   }
 }
 
+// ND_CEF_FRAMEWORK_EXTENSION joins whatever --load-extension the launch
+// already carries: Chromium reads one comma-separated switch, and a second
+// append would replace the app's list rather than add to it.
+static void append_framework_extension(cef_command_line_t *command_line) {
+  const char *dir = getenv("ND_CEF_FRAMEWORK_EXTENSION");
+  if (!dir || !dir[0] || !command_line->append_switch_with_value) {
+    return;
+  }
+  cef_string_t name = {0};
+  if (!nd_cef_string_set("load-extension", strlen("load-extension"), &name)) {
+    return;
+  }
+  char joined[8192];
+  joined[0] = '\0';
+  if (command_line->get_switch_value) {
+    cef_string_userfree_t existing = command_line->get_switch_value(command_line, &name);
+    if (existing) {
+      size_t n = 0;
+      for (size_t i = 0; i < existing->length && n + 4 < sizeof(joined); i++) {
+        char16_t ch = existing->str[i];
+        if (ch < 0x80) {
+          joined[n++] = (char)ch;
+        } else if (ch < 0x800) {
+          joined[n++] = (char)(0xC0 | (ch >> 6));
+          joined[n++] = (char)(0x80 | (ch & 0x3F));
+        } else {
+          joined[n++] = (char)(0xE0 | (ch >> 12));
+          joined[n++] = (char)(0x80 | ((ch >> 6) & 0x3F));
+          joined[n++] = (char)(0x80 | (ch & 0x3F));
+        }
+      }
+      joined[n] = '\0';
+      nd_cef_string_free(existing);
+    }
+  }
+  size_t used = strlen(joined);
+  if (used + strlen(dir) + 2 >= sizeof(joined)) {
+    nd_cef_string_clear(&name);
+    return;
+  }
+  if (used > 0) {
+    strcat(joined, ",");
+  }
+  strcat(joined, dir);
+  cef_string_t value = {0};
+  if (nd_cef_string_set(joined, strlen(joined), &value)) {
+    command_line->append_switch_with_value(command_line, &name, &value);
+    nd_cef_string_clear(&value);
+  }
+  nd_cef_string_clear(&name);
+}
+
 static void CEF_CALLBACK app_command_line(cef_app_t *self,
                                           const cef_string_t *process_type,
                                           cef_command_line_t *command_line) {
@@ -317,6 +369,7 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       append_switch(command_line, "no-first-run");
       append_switch(command_line, "no-default-browser-check");
       append_switch(command_line, "disable-print-preview");
+      append_framework_extension(command_line);
     }
     // Read by StartupBrowserCreator, which CEF skips at startup and a refused
     // relaunch (below) never reaches; this covers any other route into it.
