@@ -500,7 +500,12 @@ async function closeFrontend(page: string): Promise<void> {
     20000,
   ).catch(() => null);
   if (gone === null) {
-    throw new LegFailure(`the inspector stayed after its close button; ${await pressReport(page, at!)}`);
+    const frontendSize = await onFrontend((session) => session.eval<string>("innerWidth+'x'+innerHeight")).catch(() => "?");
+    const view = await viewBox(page);
+    throw new LegFailure(
+      `the inspector stayed after its close button; frontend ${frontendSize}, view ${view.width}x${view.height}@${view.x},${view.y}; `
+        + await pressReport(page, at!),
+    );
   }
 }
 
