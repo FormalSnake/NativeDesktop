@@ -103,6 +103,7 @@ launch_host() {
     export XDG_RUNTIME_DIR="$WORK/$rig/xdg"
     export XDG_DATA_HOME="$WORK/$rig/data"
     export NB_STORE_DIR="$WORK/$rig/store"
+    export NB_DOWNLOAD_DIR="$WORK/$rig/downloads"
     export GDK_BACKEND=x11
     export GSK_RENDERER=cairo
     export GDK_SCALE="$SCALE"
@@ -351,6 +352,7 @@ EOF
   ND_ACCEPT_RIG="$rig" ND_AUTOMATION_SOCKET="$sock" ND_CDP_PORT="$CDP_PORT" ND_ACCEPT_LEGS="${legs:-all}" \
     ND_ACCEPT_FIXTURE="$FIXTURE" ND_ACCEPT_SHOTS="$SHOTS/$rig" ND_ACCEPT_SCALE="$SCALE" \
     ND_ACCEPT_HOST_LOG="$log" ND_ACCEPT_HOST_PID="$HOST_PID" ND_ACCEPT_EXTENSION_ID="$EXTENSION_ID" \
+    ND_ACCEPT_DOWNLOADS="$WORK/$rig/downloads" \
     timeout --signal=KILL "${ND_ACCEPT_DRIVE_TIMEOUT:-1500}" \
     bun "$FRAMEWORK/$DRIVE" 2>&1 | tee "$WORK/$rig/drive.log" || true
 

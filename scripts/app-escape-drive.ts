@@ -17,7 +17,7 @@
 // The escape extension (examples/webview-probe/escape-ext) has to be loaded:
 // the rig passes ND_ACCEPT_EXTENSIONS to the host. ND_ESCAPE_ROUTES runs a
 // subset; ND_ESCAPE_EXPLORE=1 reports without failing.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { connectApp } from "@nativedesktop/test";
 import { Session, targets } from "./cdp.ts";
@@ -39,6 +39,11 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path === "/download.bin") {
+      return new Response("nd fixture download payload", {
+        headers: { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="nd-fixture.bin"' },
+      });
+    }
     const file = Bun.file(join(fixtureDir, path === "/" ? "escape.html" : path));
     if (!(await file.exists())) return new Response("not found", { status: 404 });
     return new Response(file);
@@ -552,6 +557,99 @@ const outside = (name: string, id: string): Route => ({
     return "handed to the desktop";
   },
 });
+/// A real download, clicked. The app runs it into NB_DOWNLOAD_DIR; Chromium
+/// must neither show its download bubble (a new toplevel, which the census
+/// catches) nor write a copy of its own into ~/Downloads.
+const download = (name: string, id: string): Route => ({
+  name,
+  expect: NONE,
+  run: async (page) => {
+    const home = join(process.env.HOME ?? "", "Downloads");
+    const started = Date.now() - 1000;
+    const count = () => (hostLog ? readFileSync(hostLog, "utf8").split("\n").filter((l) => l.includes("downloadRequested node=")).length : 0);
+    // Every mapped child of the root, sampled at 16 ms from before the click to
+    // 3 s after the download reached the app, so a bubble or an animation that
+    // is up for a few frames is still seen. The start animation does not come
+    // on every download, so the click is repeated.
+    // By pid as well as by pattern: a window Chromium has just mapped carries
+    // no name or class yet, only _NET_WM_PID.
+    const visible = () => [
+      ...new Set([
+        ...sh("xdotool", "search", "--maxdepth", "1", "--onlyvisible", "").split("\n"),
+        ...sh("xdotool", "search", "--maxdepth", "1", "--onlyvisible", "--pid", String(hostPid)).split("\n"),
+      ]),
+    ].filter((l) => l.length > 0);
+    const dialogs = () => (hostLog ? readFileSync(hostLog, "utf8").split("\n").filter((l) => l.includes("chromeDialog node=")) : []);
+    const dialogsBefore = dialogs().length;
+    const seen = new Map<string, Win>();
+    const popovers: { w: number; h: number }[] = [];
+    let handed = false;
+    for (let round = 0; round < 4; round++) {
+      const baseline = new Set(visible());
+      const before = count();
+      focusApp();
+      // The Downloads popover the last round opened is an autohide GTK
+      // popover, which swallows the click that dismisses it.
+      if (round > 0) {
+        key("Escape");
+        await Bun.sleep(400);
+      }
+      await clickAt(await pagePoint(page, id), 1, []);
+      let reached = 0;
+      for (let end = Date.now() + 8000; Date.now() < end; ) {
+        for (const w of visible()) {
+          if (baseline.has(w) || seen.has(w)) continue;
+          const g = geom(w);
+          if (g?.mapped) seen.set(w, { id: w, x: g.x, y: g.y, w: g.w, h: g.h, or: g.or, name: "" });
+        }
+        if (!reached && count() > before) {
+          reached = Date.now();
+          end = reached + 3000;
+        }
+        await Bun.sleep(16);
+      }
+      popovers.push(...(await appPopovers().catch(() => [])));
+      handed = reached > 0;
+      if (!handed) break;
+    }
+    // Chromium's link status bubble (the hovered URL, 22 px high) is a hint,
+    // allowed as on every other route; windows under 40x30 are X plumbing.
+    const hint = (w: Win) => w.h <= 26 || (w.w < 40 && w.h < 30);
+    const foreign = [...seen.values()].filter((w) => !hint(w) && !(w.or && popovers.some((p) => Math.abs(p.w - w.w) <= 60 && Math.abs(p.h - w.h) <= 60)));
+    const shown = [...seen.values()].filter((w) => !hint(w)).map((w) => `${w.or ? "OR " : ""}${w.w}x${w.h}`);
+    const copies = (existsSync(home) ? readdirSync(home) : []).filter((f) => f.startsWith("nd-fixture") && statSync(join(home, f)).mtimeMs >= started);
+    for (const f of copies) rmSync(join(home, f), { force: true });
+    const dir = process.env.ND_ACCEPT_DOWNLOADS ?? "";
+    const landed = (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.startsWith("nd-fixture") && !f.endsWith(".crdownload") && statSync(join(dir, f)).size > 0);
+    const statuses = await downloadStatuses();
+    // The engine's own record of a Chromium surface it moved onto the view.
+    const adopted = dialogs().slice(dialogsBefore).map((l) => l.replace(/^.*chromeDialog /, ""));
+    if (foreign.length || adopted.length) {
+      throw new Error(`a surface not the app's appeared: ${[...foreign.map((w) => `${w.or ? "OR " : ""}${w.w}x${w.h}+${w.x}+${w.y}`), ...adopted].join(" ")}`);
+    }
+    if (copies.length) throw new Error(`Chromium saved its own copy: ${copies.join(", ")}`);
+    if (!handed) throw new Error("the download never reached the app");
+    if (!landed.length) throw new Error(`nothing complete in the app's download folder (${dir})`);
+    if (!statuses.length || statuses.some((t) => /fail|Downloading/i.test(t))) throw new Error(`the app's panel reads ${JSON.stringify(statuses)}`);
+    const stayed = await pageEval(page, "location.href");
+    if (stayed !== ESCAPE_URL) throw new Error(`the page left for ${stayed}`);
+    return `downloaded ${landed.join(", ")} (${statuses.join(" | ")})${shown.length ? `; app popover ${shown.join(", ")}` : ""}`;
+  },
+});
+
+/// The status line of every row in the app's Downloads panel.
+async function downloadStatuses(): Promise<string[]> {
+  const found: string[] = [];
+  for (const w of (await app.windows()).windows) {
+    const tree = await app.tree(w.ref);
+    const walk = (node: Node & { text?: string | null }) => {
+      if (node.testID?.includes("downloads-status-") && node.visible) found.push(node.text ?? "");
+      for (const child of node.children) walk(child as never);
+    };
+    walk(tree.root as never);
+  }
+  return found;
+}
 const ext = (name: string, code: string, expect: Expect = {}): Route => ({ name, expect, run: async () => inWorker(code) });
 
 const routes: Route[] = [
@@ -612,6 +710,8 @@ const routes: Route[] = [
   // hand-off), never an app tab, and the page stays where it was.
   outside("page.mailto", "mailto"),
   outside("page.externalProtocol", "extproto"),
+  download("page.download", "download"),
+  download("page.downloadBlob", "download-blob"),
   pageClick("page.print", "print", NONE),
   pageClick("page.documentPip", "pip-doc", NONE),
   pageClick("page.geolocation", "geo", NONE),
