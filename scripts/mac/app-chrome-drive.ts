@@ -54,6 +54,7 @@ import {
   pageNumber,
   probePng,
   shownMenu,
+  trackedMenus,
   startFixtureServer,
   systemKey,
   until,
@@ -380,6 +381,7 @@ async function openPageMenu(page: string, atY?: number): Promise<ShownMenuItem[]
     Math.min(box.width, pageWidth!) / 2,
     Math.min(atY ?? box.height / 2, pageHeight! - 20),
   );
+  const tracked = trackedMenus();
   realPointer(spot.x, spot.y, "right");
   await until(
     "the context menu opens",
@@ -387,6 +389,9 @@ async function openPageMenu(page: string, atY?: number): Promise<ShownMenuItem[]
     (windows) => windows.length > 0,
     15000,
   );
+  // On screen is not yet taking keys: a Down sent before the menu tracks goes
+  // to the page, and the Return after it then closes the menu on nothing.
+  await until("the context menu takes keys", async () => trackedMenus(), (n) => n > tracked, 5000);
   const items = shownMenu();
   assert(items.length > 0, "the host drew a menu window but reported no items");
   return items;

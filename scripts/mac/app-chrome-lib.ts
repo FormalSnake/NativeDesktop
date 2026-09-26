@@ -118,6 +118,14 @@ export interface ShownMenuItem {
 /// What the host drew for the most recent menu, read off its own trace. AppKit
 /// publishes no accessibility element for a contextual menu, so this is the only
 /// handle on the items; the peer of the Linux gate's `ND_CEF menuShown`.
+/// How many menus the host has started tracking, from its own trace.
+export function trackedMenus(): number {
+  const path = process.env.ND_APP_HOST_LOG;
+  if (!path) return 0;
+  return Bun.spawnSync(["rg", "-c", "chrome menuTracking$", path]).stdout.toString().trim().split("\n")
+    .reduce((sum, line) => sum + (Number(line) || 0), 0);
+}
+
 export function shownMenu(): ShownMenuItem[] {
   const path = process.env.ND_APP_HOST_LOG;
   if (!path) return [];

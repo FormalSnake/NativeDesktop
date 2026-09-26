@@ -32,7 +32,7 @@ struct NDCefMenuEntry {
 /// One menu in flight, from `run_context_menu` to the pick or the dismissal.
 /// The `cef_run_context_menu_callback_t` reference `run_context_menu` was handed
 /// is this object's, and `answer` is the only place it is given back.
-@MainActor final class NDCefContextMenuRun: NSObject {
+@MainActor final class NDCefContextMenuRun: NSObject, NSMenuDelegate {
     private var callback: UnsafeMutablePointer<cef_run_context_menu_callback_t>?
     private let menu: NSMenu
     private weak var view: NDCefWebView?
@@ -47,6 +47,7 @@ struct NDCefMenuEntry {
         // A contextual menu asks its target to validate every item at display
         // time, which would overwrite what the model said about each one.
         menu.autoenablesItems = false
+        menu.delegate = self
         build(entries, into: menu)
         guard !menu.items.isEmpty else { return nil }
     }
@@ -89,6 +90,14 @@ struct NDCefMenuEntry {
                     + " enabled=\(entry.enabled ? 1 : 0) checked=\(entry.checked ? 1 : 0) label=\(entry.label)")
             if !entry.children.isEmpty { trace(entry.children, depth: depth + 1) }
         }
+    }
+
+    /// Where the menu starts taking keys. The window is on screen a moment
+    /// before that, and a key sent in between goes to the view under the menu;
+    /// a drive that picks with the keyboard waits for this line.
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        view?.ndTrace("chrome menuTracking")
     }
 
     /// `point` is in the host view's own coordinates.
