@@ -1572,40 +1572,43 @@ fn ndPopoverKeepInWindow(child: *gtk.Widget) void {
     _ = gobject.signalConnectData(asObject(surface), "layout", @ptrCast(&cbPopoverLayout), child, null, .{ .after = true });
 }
 
-fn cbPopoverLayout(surface: *gdk.Surface, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
+fn cbPopoverLayout(_: *gdk.Surface, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
     const child: *gtk.Widget = @ptrCast(@alignCast(data.?));
     const pop: *gtk.Popover = @ptrCast(@alignCast(child));
     const root = gtk.Widget.getRoot(child) orelse return;
     const root_w = root.as(gtk.Widget);
-    var tx: f64 = 0;
-    var ty: f64 = 0;
-    gtk.Native.getSurfaceTransform(@ptrCast(@alignCast(root_w)), &tx, &ty);
-    var px: f64 = 0;
-    var py: f64 = 0;
-    gtk.Native.getSurfaceTransform(@ptrCast(@alignCast(child)), &px, &py);
-    const popup: *gdk.Popup = @ptrCast(@alignCast(surface));
+    const anchor = gtk.Widget.getParent(child) orelse return;
+    // Worked out from the anchor, not from where the popup was last put: a
+    // layout can arrive before a new offset has taken effect, and correcting
+    // the reported position again added the correction up.
+    var r: @import("graphene").Rect = undefined;
+    if (gtk.Widget.computeBounds(anchor, root_w, &r) == 0) return;
     const margin: f64 = 8;
-    const left = @as(f64, @floatFromInt(gdk.Popup.getPositionX(popup))) + px;
-    const top = @as(f64, @floatFromInt(gdk.Popup.getPositionY(popup))) + py;
     const w: f64 = @floatFromInt(gtk.Widget.getWidth(child));
     const h: f64 = @floatFromInt(gtk.Widget.getHeight(child));
-    const win_l = tx + margin;
-    const win_t = ty + margin;
-    const win_r = tx + @as(f64, @floatFromInt(gtk.Widget.getWidth(root_w))) - margin;
-    const win_b = ty + @as(f64, @floatFromInt(gtk.Widget.getHeight(root_w))) - margin;
-    var dx: f64 = 0;
-    var dy: f64 = 0;
-    if (w <= win_r - win_l) {
-        if (left < win_l) dx = win_l - left else if (left + w > win_r) dx = win_r - (left + w);
+    const root_wd: f64 = @floatFromInt(gtk.Widget.getWidth(root_w));
+    const root_ht: f64 = @floatFromInt(gtk.Widget.getHeight(root_w));
+    const side = gtk.Popover.getPosition(pop);
+    var want_x: c_int = 0;
+    var want_y: c_int = 0;
+    if (side == .top or side == .bottom) {
+        const base = @as(f64, r.f_origin.f_x) + @as(f64, r.f_size.f_width) / 2 - w / 2;
+        if (w <= root_wd - 2 * margin) {
+            if (base < margin) want_x = @intFromFloat(@round(margin - base))
+            else if (base + w > root_wd - margin) want_x = @intFromFloat(@round(root_wd - margin - (base + w)));
+        }
+    } else {
+        const base = @as(f64, r.f_origin.f_y) + @as(f64, r.f_size.f_height) / 2 - h / 2;
+        if (h <= root_ht - 2 * margin) {
+            if (base < margin) want_y = @intFromFloat(@round(margin - base))
+            else if (base + h > root_ht - margin) want_y = @intFromFloat(@round(root_ht - margin - (base + h)));
+        }
     }
-    if (h <= win_b - win_t) {
-        if (top < win_t) dy = win_t - top else if (top + h > win_b) dy = win_b - (top + h);
-    }
-    if (@abs(dx) < 1 and @abs(dy) < 1) return;
     var ox: c_int = 0;
     var oy: c_int = 0;
     gtk.Popover.getOffset(pop, &ox, &oy);
-    gtk.Popover.setOffset(pop, ox + @as(c_int, @intFromFloat(@round(dx))), oy + @as(c_int, @intFromFloat(@round(dy))));
+    if (want_x == ox and want_y == oy) return;
+    gtk.Popover.setOffset(pop, want_x, want_y);
 }
 
 fn ndPositionFromString(s: []const u8) gtk.PositionType {
