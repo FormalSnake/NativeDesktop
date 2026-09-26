@@ -742,6 +742,19 @@ const routes: Route[] = [
   webui("webui.history", "chrome://history", null),
   webui("webui.historyClearData", "chrome://history", "Delete browsing data"),
   webui("webui.downloads", "chrome://downloads", null),
+  // The framework's own extension (setUiOptions) is loaded unpacked, so it is
+  // in chrome://extensions too; this reports what that page lists and shows.
+  {
+    name: "webui.extensionsFrameworkEntry",
+    expect: { windows: 0 },
+    run: async () => {
+      const page = await load("chrome://extensions");
+      await pageEval(app, page, "chrome.developerPrivate.getExtensionsInfo({ includeDisabled: true }, (l) => { window.__ndList = l.map((e) => `${e.id}:${e.name}:${e.location}`).join(' | '); })");
+      await Bun.sleep(1000);
+      const list = await pageEval(app, page, "window.__ndList");
+      return `listed ${list} capture ${regionShot("webui.extensionsFrameworkEntry")}`;
+    },
+  },
   webui("webui.extensionsWebStore", "chrome://extensions", "Chrome Web Store"),
   webui("webui.extensionsDetails", "chrome://extensions", "Details"),
   webui("webui.bookmarks", "chrome://bookmarks", null),
