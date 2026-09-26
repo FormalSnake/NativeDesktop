@@ -958,6 +958,69 @@ fn onBeforeCommandLine(
         // waits forever for a UI thread that never quits.
         appendFlag(command_line, append, "hide-crash-restore-bubble");
     }
+    if (chromeStyle()) appendFrameworkExtension(command_line);
+}
+
+/// The framework's own extension, loaded into Chrome style beside the app's.
+/// Its only job is `chrome.downloads.setUiOptions({ enabled: false })`, the one
+/// switch that keeps Chromium's download bubble and download-started animation
+/// from being created at all (no feature, command-line switch or pref in CEF
+/// 151 does, and --load-component-extension is not in the release build).
+/// The AppKit host writes the same files (NDCefFrameworkExtension.swift).
+pub const framework_extension_id = "pfbmaghgajhpjaobhbamhamgbcelckhd";
+const framework_extension_manifest = @embedFile("framework-extension/manifest.json");
+const framework_extension_background = @embedFile("framework-extension/background.js");
+var framework_extension_dir: ?[:0]u8 = null;
+
+fn writeFrameworkExtension(root: []const u8) void {
+    const dir = std.fmt.allocPrintSentinel(alloc, "{s}/nd-framework-extension", .{root}, 0) catch return;
+    _ = glib.mkdirWithParents(dir.ptr, 0o700);
+    const files = [_]struct { name: []const u8, body: []const u8 }{
+        .{ .name = "manifest.json", .body = framework_extension_manifest },
+        .{ .name = "background.js", .body = framework_extension_background },
+    };
+    for (files) |f| {
+        const path = std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, f.name }, 0) catch {
+            alloc.free(dir);
+            return;
+        };
+        defer alloc.free(path);
+        var err: ?*glib.Error = null;
+        if (glib.fileSetContents(path.ptr, f.body.ptr, @intCast(f.body.len), &err) == 0) {
+            std.debug.print("ND_WARN CEF: the framework extension was not written to {s}\n", .{path});
+            if (err) |e| e.free();
+            alloc.free(dir);
+            return;
+        }
+    }
+    framework_extension_dir = dir;
+}
+
+/// Joins whatever --load-extension the launch already carries: Chromium reads
+/// one comma-separated switch, and a second append would replace the app's
+/// list rather than add to it.
+fn appendFrameworkExtension(cl: [*c]c.cef_command_line_t) void {
+    const dir = framework_extension_dir orelse return;
+    const append = cl.*.append_switch_with_value orelse return;
+    var joined: std.ArrayList(u8) = .empty;
+    defer joined.deinit(alloc);
+    if (cl.*.get_switch_value) |get| {
+        var name = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&name);
+        if (setStr(&name, "load-extension")) {
+            const raw = get(cl, &name);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                if (dupeStr(raw)) |existing| {
+                    defer alloc.free(existing);
+                    joined.appendSlice(alloc, existing) catch return;
+                }
+            }
+        }
+    }
+    if (joined.items.len > 0) joined.append(alloc, ',') catch return;
+    joined.appendSlice(alloc, dir) catch return;
+    appendSwitch(cl, append, "load-extension", joined.items);
 }
 
 fn appendSwitch(
@@ -1069,6 +1132,9 @@ fn ensureInitialized() bool {
 
     cdp.setSink(.{ .result = &cdpResultSink, .event = &cdpEventSink });
 
+    if (chromeStyle()) {
+        if (cache_root) |root| writeFrameworkExtension(root);
+    }
     var args = mainArgs();
     if (api.initialize(&args, &settings, app.handOut(), null) == 0) {
         if (cache_root) |root| {
@@ -5295,7 +5361,7 @@ const list_extensions_js =
     \\  }
     \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
     \\    { includeDisabled: true, includeTerminated: true }, resolve));
-    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
     \\    id: e.id,
     \\    name: e.name,
     \\    version: e.version,
@@ -5409,7 +5475,7 @@ const list_extension_actions_js =
     \\  }
     \\  const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
     \\    { includeDisabled: true, includeTerminated: true }, resolve));
-    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\  return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
     \\    id: e.id,
     \\    name: e.name,
     \\    version: e.version,
@@ -5639,7 +5705,7 @@ const extension_mutation_prefix =
     \\  const listed = async () => {
     \\    const list = await new Promise((resolve) => chrome.developerPrivate.getExtensionsInfo(
     \\      { includeDisabled: true, includeTerminated: true }, resolve));
-    \\    return JSON.stringify(list.filter((e) => e.type === "EXTENSION").map((e) => ({
+    \\    return JSON.stringify(list.filter((e) => e.type === "EXTENSION" && e.id !== "pfbmaghgajhpjaobhbamhamgbcelckhd").map((e) => ({
     \\      id: e.id,
     \\      name: e.name,
     \\      version: e.version,

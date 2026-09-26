@@ -10,7 +10,7 @@ import Foundation
 /// nd_cef.c, which adds it to --load-extension. The same files are
 /// src/cef/framework-extension/ for the GTK engine.
 enum NDCefFrameworkExtension {
-    /// Fixed by the manifest's "key"; apps filter it out of their extension lists.
+    /// Fixed by the manifest's "key"; the registry commands leave it out of their lists.
     static let id = "pfbmaghgajhpjaobhbamhamgbcelckhd"
 
     private static let manifest = #"""
