@@ -650,9 +650,28 @@ async function downloadStatuses(): Promise<string[]> {
   }
   return found;
 }
+/// The framework's own extension (it turns Chromium's download UI off) is
+/// never in what listExtensions and listExtensionActions answer. Their answers
+/// are in the host's CDP trace, one JSON list per call.
+const FRAMEWORK_EXTENSION = "pfbmaghgajhpjaobhbamhamgbcelckhd";
+const registryHidesFramework: Route = {
+  name: "registry.frameworkExtensionHidden",
+  expect: NONE,
+  run: async () => {
+    const answers = (hostLog ? readFileSync(hostLog, "utf8").split("\n") : []).filter(
+      (l) => l.includes("ND_CEF cdp <- ") && l.includes('\\"version\\":') && l.includes('\\"enabled\\":'),
+    );
+    if (answers.length === 0) throw new Error("no extension list answer in the host trace");
+    if (!answers.some((l) => l.includes("ND escape probe"))) throw new Error("the list answers never named the app's own test extension");
+    const leaked = answers.filter((l) => l.includes(FRAMEWORK_EXTENSION));
+    if (leaked.length) throw new Error(`${leaked.length} of ${answers.length} list answers carry the framework extension`);
+    return `${answers.length} list answers, none with the framework extension`;
+  },
+};
 const ext = (name: string, code: string, expect: Expect = {}): Route => ({ name, expect, run: async () => inWorker(code) });
 
 const routes: Route[] = [
+  registryHidesFramework,
   // App-declared chords run the app's own action; the rest do nothing visible.
   chord("key.ctrlN", "ctrl+n", WINDOW),
   // The app's private window, through browserCommand newPrivateWindow.
