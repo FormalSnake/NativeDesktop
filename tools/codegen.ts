@@ -1863,6 +1863,11 @@ fn ndPopoverAttach(child: *gtk.Widget, parent: *gtk.Widget) void {
         gtk.Widget.unparent(child);
     }
     gtk.Widget.setParent(child, parent);
+    // A popover is no layout child, but GTK still folds its content's expand
+    // flags into the parent's: an ellipsizing label in a downloads panel made
+    // the box holding the button take half the free width of its row.
+    gtk.Widget.setHexpand(child, 0);
+    gtk.Widget.setVexpand(child, 0);
     ndPopoverEnsureAnchor(child);
     if (gobject.Object.getData(asObject(child), ND_POPOVER_PENDING_OPEN) != null) ndPopoverOpenWhenRooted(child);
 }
