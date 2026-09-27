@@ -116,7 +116,7 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "extensions", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "extensions", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
@@ -131,6 +131,9 @@ const REGISTRY_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 /// placed against the browser's own bounds, so a view sharing the window with
 /// fifteen labels measures nothing the app would ever ship.
 const DIALOGS_PASS = (process.env.ND_CEF_PROBE_PASS ?? "") === "dialogs";
+/// The legs that mount extra views run once. GTK grows the window to fit them
+/// and never shrinks it back.
+const FIRST_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 type CheckName = (typeof CHECKS)[number];
 
 const received: Record<string, unknown[]> = {};
@@ -198,6 +201,8 @@ function App(): React.ReactNode {
   const second = useRef<NdNodeRef<"webview">>(null);
   const extensions = useRef<NdNodeRef<"webview">>(null);
   const actionPage = useRef<NdNodeRef<"webview">>(null);
+  const closing = useRef<NdNodeRef<"webview">>(null);
+  const [closingKey, setClosingKey] = useState(0);
   const [secondOpen, setSecondOpen] = useState(false);
   const [lateReady, setLateReady] = useState(false);
   const [actionPopupUrl, setActionPopupUrl] = useState("");
@@ -228,6 +233,8 @@ function App(): React.ReactNode {
       second,
       extensions,
       actionPage,
+      closing,
+      setClosingKey,
       setActionPopupUrl,
       setUrl,
       setResult,
@@ -290,6 +297,17 @@ function App(): React.ReactNode {
         <tabview selectedIndex={0}>
           <box tabLabel="front" orientation="vertical">
             <label text="front tab" />
+            {closingKey > 0 ? (
+              <webview
+                key={closingKey}
+                testID="wv-closing"
+                ref={closing}
+                engine="chromium"
+                url={`${BASE}/one`}
+                style={{ minHeight: 60 }}
+                onJavaScriptResult={onJavaScriptResult}
+              />
+            ) : null}
           </box>
           <box tabLabel="background" orientation="vertical">
             {/* Three at once, all with their address present in the very
@@ -383,6 +401,8 @@ async function run(ctx: {
   second: React.RefObject<NdNodeRef<"webview"> | null>;
   extensions: React.RefObject<NdNodeRef<"webview"> | null>;
   actionPage: React.RefObject<NdNodeRef<"webview"> | null>;
+  closing: React.RefObject<NdNodeRef<"webview"> | null>;
+  setClosingKey: (k: number) => void;
   setActionPopupUrl: (u: string) => void;
   setUrl: (u: string) => void;
   setResult: (name: CheckName, value: string) => void;
@@ -591,6 +611,41 @@ async function run(ctx: {
     return `ok (host alive after the window closed, eval ${alive})`;
   });
 
+  // A browser Chromium closes on its own, here the page's own window.close()
+  // on a tab with one history entry, while the app keeps sending it
+  // DevTools calls. The view's host reference goes when the browser does, and
+  // a call already on its way to the CEF UI thread with that host must still
+  // land on a live object: this crashed the host at startup on x11 and wlr.
+  await step("closedBrowser", async () => {
+    if (!FIRST_PASS) return "skip: runs in the first pass";
+    let settled = 0;
+    for (let round = 1; round <= 5; round++) {
+      ctx.setClosingKey(round);
+      await until(() => ctx.closing.current !== null, `round ${round}: the view mounts`);
+      const node = ctx.closing.current!;
+      await pollValue(() => executeJavaScript(node, "location.pathname"), (v) => v === "/one", `round ${round}: the view loads`);
+      const burst: Promise<unknown>[] = [];
+      burst.push(executeJavaScript(node, "setTimeout(() => window.close(), 20); 'closing'"));
+      const stopAt = Date.now() + 2500;
+      while (Date.now() < stopAt) {
+        for (let i = 0; i < 4; i++) burst.push(executeJavaScript(node, "document.title"));
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const outcomes = await Promise.allSettled(burst.map((p) => withTimeout(p, 15000)));
+      const unanswered = outcomes.filter((o) => o.status === "rejected" && String(o.reason).includes("no answer within")).length;
+      if (unanswered > 0) throw new Error(`round ${round}: ${unanswered} of ${outcomes.length} calls never answered`);
+      settled += outcomes.length;
+    }
+    ctx.setClosingKey(0);
+    if (!ctx.view.current) throw new Error("no view ref");
+    const alive = await pollValue(
+      () => executeJavaScript(ctx.view.current!, "String(2 + 2)"),
+      (v) => v === "4",
+      "the host survives browsers closing under in-flight calls",
+    );
+    return `ok (${settled} calls settled over 5 closes, eval ${alive})`;
+  });
+
   // Chromium's own extension runtime, which only Chrome style has: the gate
   // launches with --load-extension, so the fixture has to come back named,
   // enabled and with the icon the manifest declares.
@@ -767,6 +822,22 @@ async function run(ctx: {
   });
 
   ctx.setPhase("done");
+}
+
+async function until(pred: () => boolean, what: string, timeoutMs = 15000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error(`${what} never held within ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/// A call the host never answers fails the leg rather than hanging it.
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`no answer within ${ms}ms`)), ms)),
+  ]);
 }
 
 /// Polls a value, treating a thrown eval (a document mid-navigation, a world
