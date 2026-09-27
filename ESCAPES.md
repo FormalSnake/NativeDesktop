@@ -9,6 +9,9 @@ build of the same day for the baseline column.
   cursor (`app.cursor`, now with modifier keys) and real keystrokes, one route
   group per lock hold: `ND_ESCAPE_GROUPS=key|page|menu|webui|ext`.
 - Linux: `ND_ACCEPT_DRIVE=scripts/app-escape-drive.ts scripts/headless-app-chrome.sh`
+  with `ND_ACCEPT_EXTENSIONS=examples/webview-probe/escape-ext,examples/webview-probe/chrome-style-ext`
+  (absolute paths) and `ND_ACCEPT_DIALOG_SCRIPT='{"webview.fileDialog":[]}'`, so Save as
+  is cancelled instead of answered with the file chooser leg's pick (an answered Save as traps the host),
   on g815, rigs x11, wlr and hypr (`ND_ACCEPT_RIGS`). The drive navigates with
   CDP `Page.navigate` on the active tab, since under XWayland keys go to the
   child window under the pointer and typing into the address field fails.

@@ -113,8 +113,15 @@ launch_host() {
     export ND_SCRIPT="$APP_SCRIPT"
     export ND_DEMO_URL="$FIXTURE"
     export ND_WEBVIEW_TRACE=1
-    # The page's file chooser leg: one pick, then one cancel.
-    export ND_AUTOMATION_DIALOG_SCRIPT="{\"webview.fileDialog\":[{\"paths\":[\"$EXTENSION/icon16.png\"]},{\"paths\":[]}]}"
+    # The page's file chooser leg: one pick, then one cancel. A drive that
+    # opens other file dialogs (the no-escape drive's Save as) brings its own
+    # script through ND_ACCEPT_DIALOG_SCRIPT: Save as answered with any path
+    # traps the host in SavePackage (GetMimeTypeForSaveType), .html included.
+    if [ -n "${ND_ACCEPT_DIALOG_SCRIPT:-}" ]; then
+      export ND_AUTOMATION_DIALOG_SCRIPT="$ND_ACCEPT_DIALOG_SCRIPT"
+    else
+      export ND_AUTOMATION_DIALOG_SCRIPT="{\"webview.fileDialog\":[{\"paths\":[\"$EXTENSION/icon16.png\"]},{\"paths\":[]}]}"
+    fi
     # A distinct id per rig: both rigs run at once against one session bus, and
     # the second launch would otherwise activate the first app and exit. The
     # prefix is settable for the same reason: two runs of this gate share the
