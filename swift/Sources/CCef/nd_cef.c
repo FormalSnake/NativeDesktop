@@ -317,6 +317,17 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
     // Not --no-startup-window: on Linux it holds a keep-alive that stops
     // CefShutdown from returning.
     append_switch(command_line, "hide-crash-restore-bubble");
+    // A test host on a throwaway profile keeps Chromium's cookie key out of
+    // the login keychain. A host started with HOME pointed at a fixture dir
+    // has no default keychain, and storing "Chromium Safe Storage" then puts
+    // up a system "keychain cannot be found" dialog over the gate. The
+    // ND_CEF_CACHE requirement keeps the mock key out of a real profile: its
+    // existing cookies were encrypted with the keychain key.
+    const char *automation = getenv("NATIVE_AUTOMATION");
+    const char *cache = getenv("ND_CEF_CACHE");
+    if (automation && strcmp(automation, "1") == 0 && cache && cache[0]) {
+      append_switch(command_line, "use-mock-keychain");
+    }
   }
   nd_cef_ref_release(command_line);
 }
