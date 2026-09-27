@@ -975,6 +975,7 @@ fn ensureInitialized() bool {
     if (defaultCacheRoot()) |p| {
         cache_root = p;
         _ = setStr(&settings.root_cache_path, p);
+        linkNativeMessagingHosts(p);
         // The profile-less case needs a cache path of its own: a global
         // context with none is in-memory, so every cookie, every login and
         // every consent is forgotten at quit. The WebKitGTK backend names a
@@ -1037,6 +1038,83 @@ fn reportProfileInUse(root: [:0]const u8) bool {
     if (pid == std.c.getpid() or kill(pid, 0) != 0) return false;
     std.debug.print("ND_CEF_PROFILE_IN_USE root={s} holder={s}; the chromium engine is not started\n", .{ root, target });
     return true;
+}
+
+// Chromium looks for a native messaging host manifest in
+// <user-data-dir>/NativeMessagingHosts and /etc/chromium/native-messaging-hosts
+// only, and there is no switch to add a directory. Desktop apps (1Password,
+// Bitwarden, KeePassXC) install theirs for the browsers they know, so each
+// start links those into the root cache. A name already present is left
+// alone; a link whose target is gone is dropped first, so a manifest removed
+// or moved upstream is picked up again from the next source that has it.
+const native_messaging_user_dirs = [_][]const u8{
+    "google-chrome",
+    "google-chrome-beta",
+    "google-chrome-unstable",
+    "chromium",
+    "BraveSoftware/Brave-Browser",
+    "microsoft-edge",
+    "microsoft-edge-beta",
+    "microsoft-edge-dev",
+    "vivaldi",
+    "net.imput.helium",
+};
+const native_messaging_system_dirs = [_][]const u8{
+    "/etc/opt/chrome/native-messaging-hosts",
+    "/etc/opt/edge/native-messaging-hosts",
+};
+
+extern "c" fn g_dir_open(path: [*:0]const u8, flags: c_uint, err: ?*anyopaque) ?*anyopaque;
+extern "c" fn g_dir_read_name(dir: *anyopaque) ?[*:0]const u8;
+extern "c" fn g_dir_close(dir: *anyopaque) void;
+extern "c" fn g_file_test(path: [*:0]const u8, tests: c_uint) c_int;
+const g_file_test_is_symlink: c_uint = 1 << 1;
+const g_file_test_exists: c_uint = 1 << 4;
+
+fn linkNativeMessagingHosts(root: [:0]const u8) void {
+    var dest_buf: [4096]u8 = undefined;
+    const dest = std.fmt.bufPrintZ(&dest_buf, "{s}/NativeMessagingHosts", .{root}) catch return;
+    _ = glib.mkdirWithParents(dest.ptr, 0o700);
+
+    var path_buf: [4096]u8 = undefined;
+    if (g_dir_open(dest.ptr, 0, null)) |dir| {
+        defer g_dir_close(dir);
+        while (g_dir_read_name(dir)) |name| {
+            const path = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dest, std.mem.span(name) }) catch continue;
+            if (g_file_test(path.ptr, g_file_test_is_symlink) != 0 and g_file_test(path.ptr, g_file_test_exists) == 0)
+                _ = std.c.unlink(path.ptr);
+        }
+    }
+
+    const config = std.mem.span(glib.getUserConfigDir());
+    var linked: usize = 0;
+    var src_buf: [4096]u8 = undefined;
+    for (native_messaging_user_dirs) |sub| {
+        const src = std.fmt.bufPrintZ(&src_buf, "{s}/{s}/NativeMessagingHosts", .{ config, sub }) catch continue;
+        linked += linkManifestsFrom(src, dest);
+    }
+    for (native_messaging_system_dirs) |src| {
+        const z = std.fmt.bufPrintZ(&src_buf, "{s}", .{src}) catch continue;
+        linked += linkManifestsFrom(z, dest);
+    }
+    if (linked > 0) std.debug.print("ND_CEF_NATIVE_MESSAGING linked={d} dir={s}\n", .{ linked, dest });
+}
+
+fn linkManifestsFrom(src: [:0]const u8, dest: [:0]const u8) usize {
+    const dir = g_dir_open(src.ptr, 0, null) orelse return 0;
+    defer g_dir_close(dir);
+    var linked: usize = 0;
+    var from_buf: [4096]u8 = undefined;
+    var to_buf: [4096]u8 = undefined;
+    while (g_dir_read_name(dir)) |name_z| {
+        const name = std.mem.span(name_z);
+        if (!std.mem.endsWith(u8, name, ".json")) continue;
+        const to = std.fmt.bufPrintZ(&to_buf, "{s}/{s}", .{ dest, name }) catch continue;
+        if (g_file_test(to.ptr, g_file_test_exists | g_file_test_is_symlink) != 0) continue;
+        const from = std.fmt.bufPrintZ(&from_buf, "{s}/{s}", .{ src, name }) catch continue;
+        if (std.c.symlink(from.ptr, to.ptr) == 0) linked += 1;
+    }
+    return linked;
 }
 
 /// Per-profile cache directories hang off this in M2; M1 only needs CEF to
