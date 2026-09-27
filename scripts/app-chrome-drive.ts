@@ -1052,6 +1052,13 @@ async function accelLegs(): Promise<void> {
       pointerTo(field.x, field.y);
       click(1);
       await Bun.sleep(700);
+      // An address shown as a button opens a modal palette, which parks the
+      // page; closing it hands the keyboard back to the button, still the
+      // app's chrome.
+      if (await paletteShown()) {
+        key("Escape");
+        await Bun.sleep(700);
+      }
       pointerTo(pageAt.x, pageAt.y);
     } else {
       pointerTo(pageAt.x, pageAt.y);
