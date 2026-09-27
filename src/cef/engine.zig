@@ -1261,6 +1261,17 @@ fn linkManifestsFrom(src: [:0]const u8, dest: [:0]const u8) usize {
 /// Per-profile cache directories hang off this in M2; M1 only needs CEF to
 /// have somewhere of its own that is not the app's data root.
 fn defaultCacheRoot() ?[:0]u8 {
+    // ND_CEF_CACHE names the root, as on AppKit (NDCefEngine.swift). A run
+    // that sets it expects its own profile; without this a Linux rig opened
+    // the user's own CEF profile under the data dir, extensions and all.
+    if (std.c.getenv("ND_CEF_CACHE")) |raw| {
+        const override = std.mem.span(raw);
+        if (override.len > 0) {
+            const path = alloc.dupeZ(u8, override) catch return null;
+            _ = glib.mkdirWithParents(path.ptr, 0o700);
+            return path;
+        }
+    }
     const base = glib.getUserDataDir();
     const path = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-cef", .{std.mem.span(base)}, 0) catch return null;
     _ = glib.mkdirWithParents(path.ptr, 0o700);
