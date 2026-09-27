@@ -42,7 +42,13 @@ function evaluate(wsUrl: string, expression: string): Promise<unknown> {
 }
 
 const target = await workerTarget();
-const reply = await evaluate(target.webSocketDebuggerUrl!, "ndPing()");
+// The target is listed before background.js has finished running on a slow
+// host, so the call waits for the worker to define it.
+let reply: unknown = "not-ready";
+for (let i = 0; i < 40 && reply === "not-ready"; i++) {
+  reply = await evaluate(target.webSocketDebuggerUrl!, "typeof ndPing === 'function' ? ndPing() : 'not-ready'");
+  if (reply === "not-ready") await Bun.sleep(250);
+}
 if (reply === '{"pong":true}') {
   console.log(`ND_NATIVE_MESSAGING_OK reply=${reply}`);
 } else {
