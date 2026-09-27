@@ -110,6 +110,7 @@ enum NDCefRuntime {
         set(\.framework_dir_path, paths.frameworkDirectory)
         set(\.main_bundle_path, paths.mainBundle)
         set(\.root_cache_path, paths.rootCache)
+        linkNativeMessagingHosts(into: paths.rootCache)
         defer {
             for slot in owned {
                 nd_cef_string_clear(slot)
@@ -128,6 +129,51 @@ enum NDCefRuntime {
         }
         FileHandle.standardError.write("ND_WEBVIEW_ENGINE chromium (\(paths.frameworkDirectory))\n".data(using: .utf8)!)
         return true
+    }
+
+    /// Chromium looks for a native messaging host manifest in
+    /// <user-data-dir>/NativeMessagingHosts and
+    /// /Library/Application Support/Chromium/NativeMessagingHosts only, and
+    /// there is no switch to add a directory. Desktop apps (1Password,
+    /// Bitwarden, KeePassXC) install theirs for the browsers they know, so each
+    /// start links those into the root cache. A name already present is left
+    /// alone; a link whose target is gone is dropped first, so a manifest
+    /// removed upstream is picked up again from the next source that has it.
+    /// HOME rather than NSHomeDirectory() so a gate can stand in a fixture home.
+    private static func linkNativeMessagingHosts(into root: String) {
+        let fm = FileManager.default
+        let dest = root + "/NativeMessagingHosts"
+        try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+        for name in (try? fm.contentsOfDirectory(atPath: dest)) ?? [] {
+            let path = dest + "/" + name
+            if (try? fm.destinationOfSymbolicLink(atPath: path)) != nil, !fm.fileExists(atPath: path) {
+                try? fm.removeItem(atPath: path)
+            }
+        }
+
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        let support = home + "/Library/Application Support"
+        let sources = [
+            "Google/Chrome", "Google/Chrome Beta", "Google/Chrome Dev", "Google/Chrome Canary",
+            "Chromium", "BraveSoftware/Brave-Browser", "Microsoft Edge", "Vivaldi", "Arc/User Data",
+            "net.imput.helium",
+        ].map { support + "/" + $0 + "/NativeMessagingHosts" } + [
+            "/Library/Google/Chrome/NativeMessagingHosts",
+            "/Library/Microsoft/Edge/NativeMessagingHosts",
+        ]
+        var linked = 0
+        for source in sources {
+            for name in (try? fm.contentsOfDirectory(atPath: source)) ?? [] where name.hasSuffix(".json") {
+                let target = dest + "/" + name
+                if (try? fm.attributesOfItem(atPath: target)) != nil { continue }
+                if (try? fm.createSymbolicLink(atPath: target, withDestinationPath: source + "/" + name)) != nil {
+                    linked += 1
+                }
+            }
+        }
+        if linked > 0 {
+            FileHandle.standardError.write("ND_CEF_NATIVE_MESSAGING linked=\(linked) dir=\(dest)\n".data(using: .utf8)!)
+        }
     }
 
     /// Chromium's process singleton names its holder in `SingletonLock`, a

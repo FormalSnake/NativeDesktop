@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "ND Native Messaging Fixture",
+  "version": "1.0",
+  "description": "Fixture for the native messaging gates.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxEeUvgAdU4Cy0i+HLlgqfIBcUTT8I0nYhlvy9c74OIcs1gCTSW1MouQJ5GRl6bPH2RtRHfUWxf34RtjoPnqK8QxA16u+ODUvouaOHb1O7TMvC0iCI/Wmbpwm/o5sMQQwG1McQV5ly0Ripwrrld2gC7bYDchSW+X9Df/nUS5BkTozTeit5v8mVlzSMJ5gj2gexkASWFZOWjI4zpnYy79/X2gsHBginDxtNNdN3xySKHDpY9j4HcgiYFu4QmnrdYz4j/r0OoFcgwJgsjffwaq044ZESSb3gR5YcsxQlCws6nSDDa6D9OWT17NH+9r8F61/rAosEPbP/5e2ALVGuVJuwQIDAQAB",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["nativeMessaging"]
+}
