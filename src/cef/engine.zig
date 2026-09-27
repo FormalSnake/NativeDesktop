@@ -1274,6 +1274,11 @@ const View = struct {
     /// and every command the app issues between create and on_after_created
     /// arrives before that, so calls are parked rather than sent or dropped.
     cdp_ready: bool = false,
+    /// The browser closed and will not come back: Chromium can close one on
+    /// its own (a page's window.close(), a tab it tears down), and every call
+    /// after that, or parked before it, is answered with an error here rather
+    /// than waiting on an agent that will never attach again.
+    browser_gone: std.atomic.Value(bool) = .init(false),
     queued: std.ArrayList(Queued) = .empty,
     /// Per-script-id install counter. A script identifier comes back
     /// asynchronously, so an id that is re-added (or removed) while its own
@@ -2273,12 +2278,19 @@ fn executeChromeCommand(host: *c.cef_browser_host_t, command_id: c_int) void {
     }
     const task = ChromeCommandObj.create(.{ .host = host, .command_id = command_id }) orelse return;
     task.cef.execute = &runChromeCommandTask;
-    if (api.post_task(c.TID_UI, task.handOut()) == 0) task.drop();
+    // Same as cdp.send: the view's reference can go before the task runs.
+    ref.addRefParam(host);
+    if (api.post_task(c.TID_UI, task.handOut()) == 0) {
+        ref.releaseParam(host);
+        task.drop();
+        return;
+    }
     task.drop();
 }
 
 fn runChromeCommandTask(self: [*c]c.cef_task_t) callconv(.c) void {
     const call = ChromeCommandObj.of(self).payload;
+    defer ref.releaseParam(call.host);
     if (call.host.execute_chrome_command) |exec| exec(call.host, call.command_id, c.CEF_WOD_CURRENT_TAB);
 }
 
@@ -2925,6 +2937,19 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
     post(.{ .view = view, .name = "", .settle = true });
 }
 
+/// A view's host reference, released on the GTK thread. That thread reads the
+/// pointer and posts calls on it (cdp.send, executeChromeCommand), which take a
+/// reference of their own; releasing ours from here, on the CEF UI thread,
+/// could free the host between that read and that reference.
+fn releaseHostOnGtk(raw: usize) void {
+    _ = glib.idleAdd(&releaseHostIdle, @ptrFromInt(raw));
+}
+
+fn releaseHostIdle(data: ?*anyopaque) callconv(.c) c_int {
+    ref.releaseParam(@as([*c]c.cef_browser_host_t, @ptrCast(@alignCast(data.?))));
+    return 0;
+}
+
 fn onDoClose(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser_t) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     return 0;
@@ -2946,9 +2971,7 @@ fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser
                         view.devtools_window.store(0, .release);
                         cdp.detach(&view.dock_session);
                         const devtools_host = view.devtools_host.swap(0, .acq_rel);
-                        if (devtools_host != 0) {
-                            ref.releaseParam(@as([*c]c.cef_browser_host_t, @ptrFromInt(devtools_host)));
-                        }
+                        if (devtools_host != 0) releaseHostOnGtk(devtools_host);
                         view.page_w.store(0, .release);
                         const dock = view.devtools_container.swap(0, .acq_rel);
                         if (dock != 0) x11.hide(@intCast(dock));
@@ -2962,12 +2985,15 @@ fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser
         }
     }
     view.cef_window.store(0, .release);
+    // Before the host goes, so a GTK-side send that finds no host knows why.
+    view.browser_gone.store(true, .release);
     cdp.detach(&view.session);
     const host = view.host.swap(0, .acq_rel);
-    if (host != 0) ref.releaseParam(@as([*c]c.cef_browser_host_t, @ptrFromInt(host)));
+    if (host != 0) releaseHostOnGtk(host);
     const held = view.browser.swap(0, .acq_rel);
     if (held != 0) ref.releaseParam(@as([*c]c.cef_browser_t, @ptrFromInt(held)));
     ref.releaseParam(browser);
+    post(.{ .view = view, .name = "", .browser_closed = true });
 }
 
 // ============================================================================
@@ -2997,6 +3023,7 @@ const Emission = struct {
     take_focus: bool = false,
     grab_focus: bool = false,
     relayout: bool = false,
+    browser_closed: bool = false,
     /// A parked scheme request being handed from the IO thread to the GTK one.
     scheme_obj: ?*ResourceObj = null,
     /// Non-zero on the hop that records a new browser's identifier.
@@ -3062,6 +3089,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         return 0;
     }
     const view = box.view;
+
+    if (box.browser_closed) {
+        failAllCalls(view);
+        return 0;
+    }
 
     if (box.menu_request) |req| {
         openNativeMenu(view, req);
@@ -3649,6 +3681,10 @@ fn hostOf(view: *View) ?*c.cef_browser_host_t {
 /// Sends now, without waiting for the agent. Only Page.enable itself and the
 /// drain below use this.
 fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
+    if (view.browser_gone.load(.acquire)) {
+        failCall(view, call, browser_gone_message);
+        return true;
+    }
     const host = hostOf(view) orelse {
         callFree(call);
         return false;
@@ -3682,7 +3718,7 @@ fn cdpSendRaw(view: *View, method: []const u8, params_json: []const u8, call: Ca
 /// Queues one CDP call behind the agent handshake and records what to do with
 /// its answer. Everything above this line in the file goes through here.
 fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call) bool {
-    if (view.cdp_ready) return cdpSendRaw(view, method, params_json, call);
+    if (view.cdp_ready or view.browser_gone.load(.acquire)) return cdpSendRaw(view, method, params_json, call);
     const method_copy = alloc.dupe(u8, method) catch {
         callFree(call);
         return false;
@@ -3699,6 +3735,31 @@ fn cdpSend(view: *View, method: []const u8, params_json: []const u8, call: Call)
         return false;
     };
     return true;
+}
+
+const browser_gone_message = "the page's browser has closed";
+
+/// GTK thread, once the browser is gone for good: everything parked behind the
+/// agent and everything sent and not yet answered fails now.
+fn failAllCalls(view: *View) void {
+    view.cdp_ready = false;
+    const items = view.queued.toOwnedSlice(alloc) catch &.{};
+    defer alloc.free(items);
+    for (items) |q| {
+        alloc.free(q.method);
+        alloc.free(q.params);
+        failCall(view, q.call, browser_gone_message);
+    }
+    var mine: std.ArrayList(c_int) = .empty;
+    defer mine.deinit(alloc);
+    var it = pending_calls.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.view == view) mine.append(alloc, entry.key_ptr.*) catch {};
+    }
+    for (mine.items) |id| {
+        const entry = pending_calls.fetchRemove(id) orelse continue;
+        failCall(view, entry.value.call, browser_gone_message);
+    }
 }
 
 /// Page and Runtime, once per browser. Runtime is what makes worlds tractable:

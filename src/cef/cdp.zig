@@ -154,8 +154,9 @@ const TaskObj = ref.Counted(c.cef_task_t, CallTask);
 /// Queues one CDP method call and returns the id its result will carry.
 /// `params_json` is a JSON object (or empty for none) and is copied.
 ///
-/// `host` must be a reference the caller keeps alive until the call runs; the
-/// view's own long-lived host reference is what every caller passes.
+/// `host` only has to be alive for this call: a hop to the UI thread carries a
+/// reference of its own, because the view's reference is released when the
+/// browser closes, which can land between this post and the task running.
 pub fn send(host: *c.cef_browser_host_t, method: []const u8, params_json: []const u8) ?c_int {
     const api = loader.loaded() orelse return null;
     const id = nextId();
@@ -182,8 +183,10 @@ pub fn send(host: *c.cef_browser_host_t, method: []const u8, params_json: []cons
         return null;
     };
     task.cef.execute = &runTask;
+    ref.addRefParam(host);
     // post_task consumes the reference it is given.
     if (api.post_task(c.TID_UI, task.handOut()) == 0) {
+        ref.releaseParam(host);
         task.drop();
         return null;
     }
@@ -196,6 +199,7 @@ fn runTask(self: [*c]c.cef_task_t) callconv(.c) void {
     const call = obj.payload;
     defer alloc.free(call.method);
     defer alloc.free(call.params);
+    defer ref.releaseParam(call.host);
     execute(call.host, call.message_id, call.method, call.params);
 }
 
