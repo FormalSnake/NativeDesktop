@@ -1886,6 +1886,12 @@ const park_h: c_uint = 768;
 /// way it will when the view is shown.
 fn parkContainer(view: *View) void {
     if (view.container == 0) return;
+    // A page parked while it holds X input focus (a tab switched away from, a
+    // page standing aside for a palette) keeps it on a window nobody sees, and
+    // no focus-widget change brings it home: every key after that, Escape
+    // included, went to the parked page.
+    const cef_window = view.cef_window.load(.acquire);
+    if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) x11.focusToplevel(view.widget);
     x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
     x11.show(view.container);
     layoutContents(view, park_w, park_h);
@@ -2690,10 +2696,28 @@ fn armAccelTimer() void {
 /// hold whatever the user clicked last.
 fn onEngineTick(_: ?*anyopaque) callconv(.c) c_int {
     refreshAccels();
+    var xfocus: ?x11.Window = null;
     var it = live_views.keyIterator();
     while (it.next()) |key| {
         const view: *View = @ptrFromInt(key.*);
-        if (gtk.Widget.getMapped(view.widget) == 0) continue;
+        if (gtk.Widget.getMapped(view.widget) == 0) {
+            // Chromium gives a new browser's window X input focus even when it
+            // is a background tab created hidden, and no focus sync runs for an
+            // unmapped view: the keyboard then sat on a page nobody could see,
+            // and the palette opened over it never got a key.
+            const cef_window = view.cef_window.load(.acquire);
+            if (cef_window == 0) continue;
+            const focused = xfocus orelse blk: {
+                const f = x11.focused();
+                xfocus = f;
+                break :blk f;
+            };
+            if (focused == @as(x11.Window, @intCast(cef_window))) {
+                x11.focusToplevel(view.widget);
+                xfocus = null;
+            }
+            continue;
+        }
         syncBrowserFocus(view);
         // A page that stood aside for a dialog nobody told the engine about
         // closing would otherwise stay there.
