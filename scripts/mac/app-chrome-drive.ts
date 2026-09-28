@@ -269,7 +269,10 @@ async function tabCount(): Promise<number> {
   const tree = await app.tree(mainWindow);
   let count = 0;
   const walk = (node: { testID: string | null; rows: unknown[] | null; children: unknown[] }) => {
-    if (node.testID === "tab-list") count = node.rows?.length ?? 0;
+    // An older app lists tabs as rows of one list; the current one gives each
+    // tab a slot of its own, in the sidebar and in the compact strip alike.
+    if (node.testID === "tab-list" && node.rows) count = node.rows.length;
+    else if (/^tab-slot-t\d+$/.test(node.testID ?? "")) count++;
     for (const child of node.children) walk(child as never);
   };
   walk(tree.root as never);
