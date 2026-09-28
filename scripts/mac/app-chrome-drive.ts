@@ -518,6 +518,10 @@ async function closeFrontend(page: string): Promise<void> {
     10000,
   ).catch(() => null);
   assert(at !== null, "the frontend's toolbar has no close button");
+  // Both recorders go in before the click: the first read installs them, so a
+  // read taken only after it always reports an empty list.
+  await frontendPresses().catch(() => []);
+  await pagePresses(page).catch(() => "");
   await app.cursor.click(at!);
   const gone = await until(
     "the inspector goes away",
