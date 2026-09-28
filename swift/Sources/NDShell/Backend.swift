@@ -906,6 +906,11 @@ func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
     ndSurfaceCardBackings[id] = backing
 }
 
+/// A glass tile's content view: flipped like the box whose children it holds.
+final class NDTileContentView: NSView {
+    override nonisolated var isFlipped: Bool { true }
+}
+
 enum NDTileStyle: Equatable {
     case none, fill, glass, raisedGlass
 }
@@ -926,6 +931,7 @@ func ndApplyTileFill(_ box: NDBoxView, style: NDTileStyle) {
             ndTileFills[id] = (style, glass)
             return
         }
+        if box.ndChildHost != nil { box.ndChildHost = nil }
         current.backing.removeFromSuperview()
         ndTileFills[id] = nil
     }
@@ -946,6 +952,11 @@ func ndApplyTileFill(_ box: NDBoxView, style: NDTileStyle) {
         let glass = NSGlassEffectView()
         glass.cornerRadius = radius
         ndStyleGlassTile(glass, raised: style == .raisedGlass)
+        // The tile's children go in the glass, not over it: interactive glass
+        // answers the presses on what it contains.
+        let content = NDTileContentView()
+        glass.contentView = content
+        box.ndChildHost = content
         backing = glass
     }
     backing.translatesAutoresizingMaskIntoConstraints = false
@@ -966,6 +977,8 @@ func ndStyleGlassTile(_ glass: NSGlassEffectView, raised: Bool) {
     glass.style = raised ? .regular : .clear
     glass.tintColor = raised ? ndGlassTileRaisedTint : ndGlassTileRestingTint
     // effectIsInteractive is in the macOS 27 SDK only; release CI builds against 26.5.
+    // macOS 26 has no interactive switch for AppKit glass, and SwiftUI's
+    // `.interactive()` glass does not answer presses on AppKit views inside it.
     let interactive = NSSelectorFromString("setEffectIsInteractive:")
     if #available(macOS 27.0, *), glass.responds(to: interactive) {
         glass.setValue(true, forKey: "effectIsInteractive")

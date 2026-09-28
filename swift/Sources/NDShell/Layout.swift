@@ -728,6 +728,20 @@ final class NDBoxView: NSView {
         }
     }
 
+    /// Where the children sit: the box itself, or a view inside a decoration
+    /// that has to hold them (a glass tile's content view, which is how the
+    /// glass sees the presses on them). It covers the box and is flipped, so
+    /// the frames placed here are the same in either.
+    var ndChildHost: NSView? {
+        didSet {
+            guard ndChildHost !== oldValue else { return }
+            for child in ndChildren { childParent.addSubview(child) }
+            needsLayout = true
+        }
+    }
+
+    private var childParent: NSView { ndChildHost ?? self }
+
     /// The React child list in document order. Decoration subviews (a card
     /// backing, the source-list table, the hover overlay) are ordinary
     /// constraint-pinned subviews and are deliberately not in here.
@@ -765,7 +779,7 @@ final class NDBoxView: NSView {
 
     func ndRemove(_ child: NSView) {
         detachFromList(child)
-        if child.superview === self { child.removeFromSuperview() }
+        if child.superview === self || child.superview === ndChildHost { child.removeFromSuperview() }
         ndInvalidateChildMeasure(child)
         ndBoxChildDetached(self, child)
         ndInvalidateBoxChain(from: self)
@@ -778,7 +792,7 @@ final class NDBoxView: NSView {
 
     private func ndAdopt(_ child: NSView) {
         child.translatesAutoresizingMaskIntoConstraints = true
-        if child.superview !== self { addSubview(child) }
+        if child.superview !== childParent { childParent.addSubview(child) }
         ndInvalidateBoxChain(from: self)
         ndBoxChildAttached(self, child)
     }
@@ -874,7 +888,18 @@ final class NDBoxView: NSView {
 
     override func layout() {
         super.layout()
+        ndUpdateClipping()
         ndPlaceChildren()
+    }
+
+    /// A box clips what does not fit, except around glass tiles: a pressed
+    /// glass pill swells a few points past its cell, so the tile itself (its
+    /// glass clips its content to its own shape), the tile grid, and the box
+    /// holding the grid leave that edge alone.
+    private func ndUpdateClipping() {
+        let holdsGrid = ndChildren.contains { (($0 as? NDBoxView)?.ndTileMinWidth ?? 0) > 0 }
+        let clips = !(ndChildHost != nil || ndTileMinWidth > 0 || holdsGrid)
+        if clipsToBounds != clips { clipsToBounds = clips }
     }
 
     private func ndPlaceChildren() {

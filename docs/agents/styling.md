@@ -51,7 +51,7 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable.
   | `activatable` | on a box, an `NSTrackingArea`-driven quaternary-fill hover highlight at the concentric radius |
   | `card` | on a box, a raised `NSBox` backing (white in light mode, a white veil in dark) with a hairline, and the box clips its children to the card's corner |
   | `view` | on a box, a quaternary-fill tile (GTK: `box.view` is a 7% `currentColor` tile in the framework base CSS, not Adwaita's view background) |
-  | `view` + `glass` | on a box, a Liquid Glass pill of its own (`NSGlassEffectView`, the clear kind toned to a faint slot); with `raised` too, the regular kind tinted toward white, the brighter pill that marks the one on show. GTK has no glass and keeps the `view` tile |
+  | `view` + `glass` | on a box, a Liquid Glass pill of its own (`NSGlassEffectView`, the clear kind toned to a faint slot); with `raised` too, the regular kind tinted toward white, the brighter pill that marks the one on show. The box's children sit inside the glass, so on macOS 27 the pill answers a press with the system's interactive glass (`effectIsInteractive`); macOS 26 has no interactive AppKit glass and draws it still. GTK has no glass and keeps the `view` tile |
   | `osd` | on a progress bar, the thin page-load bar: an accent line that slides to each value and fades out at 1 (GTK: Adwaita's own `progressbar.osd`, animated by the framework) |
   | `osd` + `dimmed` | the same bar in the secondary ink rather than the accent, for a quiet chrome |
   | `toolbar` | on a box, an `NSVisualEffectView` `.headerView` backing plus a 1pt `.separatorColor` bottom hairline |
