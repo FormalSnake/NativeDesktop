@@ -28,7 +28,7 @@ export interface RowJson {
   subtitle: string | null;
 }
 
-/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind. minSize comes from the same probe, null on backends that do not measure. */
+/** One tree-snapshot node. itemCount is ListView's row count (M5c-D4), null for every widget that isn't data-driven; rows is SourceList's ordered row data, null for every widget that isn't row-driven. role/enabled/focused/value are the accessibility-tree fields (M16): role is the widget's schema-declared automation role (null when the type declares none); enabled/focused/value come from a live per-node backend probe and default to true/false/null on backends without the probe. checked/selected/expanded/placeholder/label/options come from the same probe and are null on every node the field does not apply to (a Label has no checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without first knowing its kind. minSize comes from the same probe, null on backends that do not measure. material is what a tile box is drawn with (glass, raised-glass or fill), from the same probe, null on every other node and on backends that draw tiles one way. */
 export interface JsonNode {
   ref: number;
   type: string;
@@ -50,6 +50,7 @@ export interface JsonNode {
   label: string | null;
   options: string[] | null;
   minSize: MinSize | null;
+  material: string | null;
 }
 
 export interface GetTreeResult {

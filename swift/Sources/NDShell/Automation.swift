@@ -1246,6 +1246,7 @@ private let ndCheckableKinds: Set<String> = ["Checkbox", "Radio", "Switch", "Swi
     if let label = ndA11yLabel(view), !label.isEmpty {
         out += ",\"label\":\"\(escapeJSONString(label))\""
     }
+    if let material = ndTileMaterial(view) { out += ",\"material\":\"\(material)\"" }
     if let options = ndA11yOptions(view) {
         out += ",\"options\":[" + options.map { "\"\(escapeJSONString($0))\"" }.joined(separator: ",") + "]"
     }

@@ -101,7 +101,8 @@ pub const RowJson = struct {
 /// the same probe and are null on every node the field does not apply to (a Label has no
 /// checked state), so a locator can ask isChecked/isSelected/isExpanded of any node without
 /// first knowing its kind. minSize comes from the same probe, null on backends that do not
-/// measure.
+/// measure. material is what a tile box is drawn with (glass, raised-glass or fill), from the
+/// same probe, null on every other node and on backends that draw tiles one way.
 pub const JsonNode = struct {
     ref: u32,
     type: []const u8,
@@ -123,6 +124,7 @@ pub const JsonNode = struct {
     label: ?[]const u8 = null,
     options: ?[]const []const u8 = null,
     minSize: ?MinSize = null,
+    material: ?[]const u8 = null,
 };
 
 pub const GetTreeResult = struct {

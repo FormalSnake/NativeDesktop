@@ -42,7 +42,7 @@ export const styleKeySpec: Record<string, string[] | null> = {
   "minHeight": null,
   "border": ["borderWidth","borderColor","borderRadius"],
 };
-export const cssClassSpec: string[] = ["suggested-action","destructive-action","flat","raised","circular","pill","linked","toolbar","spacer","title-1","title-2","title-3","title-4","heading","document","body","caption-heading","caption","monospace","numeric","accent","success","warning","error","boxed-list","boxed-list-separate","card","activatable","navigation-sidebar","nd-native-sidebar","selection-mode","osd","dimmed","dim-label","background","view","frame","compact","menu","inline","large-title","property","round","opaque","devel","icon-dropshadow","lowres-icon"];
+export const cssClassSpec: string[] = ["suggested-action","destructive-action","flat","raised","circular","pill","linked","toolbar","spacer","title-1","title-2","title-3","title-4","heading","document","body","caption-heading","caption","monospace","numeric","accent","success","warning","error","boxed-list","boxed-list-separate","card","activatable","navigation-sidebar","nd-native-sidebar","selection-mode","osd","dimmed","dim-label","background","view","glass","frame","compact","menu","inline","large-title","property","round","opaque","devel","icon-dropshadow","lowres-icon"];
 /** Table's per-column shape: stable string id (echoed in sortChanged), header title, optional fixed width in px. */
 export interface TableColumn {
   id: string;

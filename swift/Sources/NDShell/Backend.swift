@@ -759,8 +759,14 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
 
     // `view` on a box: a tile of content colour on a sidebar surface, drawn
     // the way macOS fills a source-list tile (quaternary fill, no hairline).
+    // With `glass` the tile is a Liquid Glass pill instead, and `raised`
+    // lifts it into the brighter pill that marks the one on show.
     if let box = view as? NDBoxView {
-        ndApplyTileFill(box, enabled: classes.contains("view") && !classes.contains("card"))
+        let tile = classes.contains("view") && !classes.contains("card")
+        let style: NDTileStyle = !tile ? .none
+            : !classes.contains("glass") ? .fill
+            : classes.contains("raised") ? .raisedGlass : .glass
+        ndApplyTileFill(box, style: style)
     }
 
     // `pill` on a text label: the capsule count badge apps hand-roll on GTK.
@@ -900,26 +906,48 @@ func ndApplySurfaceCard(_ box: NSView, enabled: Bool) {
     ndSurfaceCardBackings[id] = backing
 }
 
-nonisolated(unsafe) private var ndTileFills: [ObjectIdentifier: NSBox] = [:]
+enum NDTileStyle: Equatable {
+    case none, fill, glass, raisedGlass
+}
+
+nonisolated(unsafe) private var ndTileFills: [ObjectIdentifier: (style: NDTileStyle, backing: NSView)] = [:]
 
 /// A box's `view` tile (see ndApplyCssClasses). Same backing idiom as the
-/// card, with a translucent system fill that reads on any sidebar material.
-func ndApplyTileFill(_ box: NDBoxView, enabled: Bool) {
+/// card, with a translucent system fill that reads on any sidebar material,
+/// or a glass pill of its own on the glass sidebar.
+func ndApplyTileFill(_ box: NDBoxView, style: NDTileStyle) {
     let id = ObjectIdentifier(box)
-    guard enabled else {
-        ndTileFills[id]?.removeFromSuperview()
+    if let current = ndTileFills[id] {
+        if current.style == style { return }
+        // Resting and raised glass are one view restyled, so the tile that
+        // comes on show brightens in place rather than being rebuilt.
+        if let glass = current.backing as? NSGlassEffectView, style == .glass || style == .raisedGlass {
+            ndStyleGlassTile(glass, raised: style == .raisedGlass)
+            ndTileFills[id] = (style, glass)
+            return
+        }
+        current.backing.removeFromSuperview()
         ndTileFills[id] = nil
-        return
     }
-    if ndTileFills[id] != nil { return }
-    let backing = NSBox()
-    backing.boxType = .custom
-    backing.borderWidth = 0
-    backing.borderColor = .clear
-    backing.fillColor = .quaternarySystemFill
-    backing.cornerRadius = ndConcentricRadius(in: box, fallback: NDRadius.card)
-    backing.titlePosition = .noTitle
-    backing.contentViewMargins = .zero
+    if style == .none { return }
+    let radius = ndConcentricRadius(in: box, fallback: NDRadius.card)
+    let backing: NSView
+    if style == .fill {
+        let fill = NSBox()
+        fill.boxType = .custom
+        fill.borderWidth = 0
+        fill.borderColor = .clear
+        fill.fillColor = .quaternarySystemFill
+        fill.cornerRadius = radius
+        fill.titlePosition = .noTitle
+        fill.contentViewMargins = .zero
+        backing = fill
+    } else {
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = radius
+        ndStyleGlassTile(glass, raised: style == .raisedGlass)
+        backing = glass
+    }
     backing.translatesAutoresizingMaskIntoConstraints = false
     box.addSubview(backing, positioned: .below, relativeTo: nil)
     NSLayoutConstraint.activate([
@@ -928,7 +956,37 @@ func ndApplyTileFill(_ box: NDBoxView, enabled: Bool) {
         backing.topAnchor.constraint(equalTo: box.topAnchor),
         backing.bottomAnchor.constraint(equalTo: box.bottomAnchor),
     ])
-    ndTileFills[id] = backing
+    ndTileFills[id] = (style, backing)
+}
+
+/// Resting glass is the clear kind, toned down to a faint pill so it reads
+/// as a slot on the sidebar; the tile on show is the regular kind tinted
+/// toward white, the brighter raised pill.
+func ndStyleGlassTile(_ glass: NSGlassEffectView, raised: Bool) {
+    glass.style = raised ? .regular : .clear
+    glass.tintColor = raised ? ndGlassTileRaisedTint : ndGlassTileRestingTint
+    if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
+}
+
+private let ndGlassTileRestingTint = NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ? NSColor.black.withAlphaComponent(0.18) : NSColor.black.withAlphaComponent(0.06)
+}
+
+private let ndGlassTileRaisedTint = NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ? NSColor.white.withAlphaComponent(0.18) : NSColor.white.withAlphaComponent(0.7)
+}
+
+/// What a box's tile is drawn with, for the automation tree: `glass`,
+/// `raised-glass`, `fill`, or nil for a box that is no tile.
+@MainActor func ndTileMaterial(_ view: NSView) -> String? {
+    switch ndTileFills[ObjectIdentifier(view)]?.style {
+    case .glass: return "glass"
+    case .raisedGlass: return "raised-glass"
+    case .fill: return "fill"
+    default: return nil
+    }
 }
 
 /// Native header-strip treatment for a `toolbar` box: an `NDToolbarStripBacking`
