@@ -1,6 +1,6 @@
 {
   "name": "@nativedesktop/host",
-  "version": "0.4.26",
+  "version": "0.4.27",
   "description": "Resolves the prebuilt NativeDesktop host binary for the current platform",
   "type": "module",
   "license": "MIT",
