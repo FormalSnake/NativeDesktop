@@ -493,6 +493,9 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
 }
 
 private func ndMenuEmitSelected(_ nodeID: UInt32) {
+    // What the app does for the item comes a turn later; keys typed right
+    // behind its chord wait for a field it opens (TypeAhead.swift).
+    MainActor.assumeIsolated { NDTypeAhead.arm() }
     "selected".withCString { cName in
         "{}".withCString { cJson in
             nd_emit_event(gCtx, nodeID, cName, cJson)
