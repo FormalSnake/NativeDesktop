@@ -73,23 +73,24 @@ final class NDAnchoredPanel {
         p.backgroundColor = .clear
         p.hasShadow = true
         p.level = parent.level
+        // A borderless panel takes the system's appearance, not the window's;
+        // in a dark window under a light system the material and its labels
+        // come out light grey on grey.
+        p.appearance = parent.effectiveAppearance
         p.isReleasedWhenClosed = false
         let root = NSView(frame: NSRect(origin: .zero, size: frame.size))
         root.wantsLayer = true
+        let outline = ndPanelShape(body: body, arrowX: arrowX, edge: above ? .minY : .maxY)
+        let glass = NSGlassEffectView(frame: root.bounds)
+        // Untinted glass lets a bright page straight through and the rows
+        // lose their contrast; NSPopover's glass is dimmed about this much.
+        glass.tintColor = NSColor.windowBackgroundColor.withAlphaComponent(0.7)
         let shape = CAShapeLayer()
-        shape.path = ndPanelShape(body: body, arrowX: arrowX, edge: above ? .minY : .maxY)
-        let chrome: NSView
-        if #available(macOS 26.0, *) {
-            chrome = NSGlassEffectView(frame: root.bounds)
-        } else {
-            let effect = NSVisualEffectView(frame: root.bounds)
-            effect.material = .popover
-            effect.state = .active
-            chrome = effect
-        }
+        shape.path = outline
+        glass.wantsLayer = true
+        glass.layer?.mask = shape
+        let chrome: NSView = glass
         chrome.autoresizingMask = [.width, .height]
-        chrome.wantsLayer = true
-        chrome.layer?.mask = shape
         root.addSubview(chrome)
         content.removeFromSuperview()
         content.frame = body
@@ -99,6 +100,9 @@ final class NDAnchoredPanel {
         p.contentView = root
         parent.addChildWindow(p, ordered: .above)
         p.makeKeyAndOrderFront(nil)
+        // The shadow follows the drawn outline, which exists only once drawn.
+        p.display()
+        p.invalidateShadow()
         panel = p
         watch(p, parent)
     }
