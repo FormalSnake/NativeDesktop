@@ -127,28 +127,31 @@ async function openAddress(url: string): Promise<void> {
   await submitCommandBar(url);
 }
 
-/// Types into the command bar that is up and presses Return. The bar's rows
-/// follow its query a turn later, and Return runs the row on top: pressed
-/// straight after the typing it ran the default list's first command (New Tab)
-/// instead of going to the address. The address row on top, its title the
-/// address as shown (scheme dropped), says the query landed.
+/// Types into the command bar that is up and submits it. The bar's rows follow
+/// its query a turn later, and Return runs the row on top: pressed straight
+/// after the typing it ran the default list's first command (New Tab), and an
+/// address already open in another tab puts "switch to that tab" on top. So
+/// Return is pressed once the address row is on top, and otherwise the bar's
+/// query is submitted through the automation socket, the way the app's own
+/// drive does.
 async function submitCommandBar(url: string): Promise<void> {
   await main.keyboard.type(url);
-  await until(
-    "the command bar's top row is the address",
-    async () => {
-      let rows: { id?: string; title?: string }[] = [];
-      const walk = (node: { testID: string | null; rows?: unknown[] | null; children: unknown[] }) => {
-        if (node.testID === "palette" && node.rows) rows = node.rows as never;
-        for (const child of node.children) walk(child as never);
-      };
-      walk((await app.tree(mainWindow)).root as never);
-      const top = rows[0];
-      return top?.id === "url" && !!top.title && url.includes(String(top.title));
-    },
-    (landed) => landed,
-    5000,
-  ).catch(() => false);
+  const rows = async () => {
+    let found: { ref: number; rows: { id?: string; title?: string }[] } | null = null;
+    const walk = (node: { ref: number; testID: string | null; rows?: unknown[] | null; children: unknown[] }) => {
+      if (node.testID === "palette" && node.rows) found = { ref: node.ref, rows: node.rows as never };
+      for (const child of node.children) walk(child as never);
+    };
+    walk((await app.tree(mainWindow)).root as never);
+    return found as { ref: number; rows: { id?: string; title?: string }[] } | null;
+  };
+  const isAddress = (row?: { id?: string; title?: string }) =>
+    row?.id === "url" && !!row.title && url.includes(String(row.title));
+  const bar = await until("the command bar lists the address", rows, (b) => !!b?.rows.some(isAddress), 5000).catch(() => null);
+  if (bar && !isAddress(bar.rows[0])) {
+    await app.rpc.call("setValue", { ref: bar.ref, value: true });
+    return;
+  }
   await main.keyboard.press("Enter");
 }
 
@@ -171,7 +174,14 @@ async function loadFixture(page = "index.html"): Promise<string> {
       (v) => v.startsWith(url) && v.endsWith("|complete"),
       15000,
     ).catch(() => null);
-    if (landed !== null) return id;
+    if (landed === null) continue;
+    // An address already open in another tab can end on that tab instead: the
+    // bar switches to it a moment after the current one was read.
+    await Bun.sleep(400);
+    const shown = await activePage().catch(() => id);
+    if (shown === id) return id;
+    const there = await pageEval(app, shown, "location.href").catch(() => "");
+    if (String(there).startsWith(url)) return shown;
   }
   throw new LegFailure(`the address bar never took ${url}`);
 }
