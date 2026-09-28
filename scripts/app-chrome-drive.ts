@@ -980,15 +980,17 @@ async function minWidthLegs(): Promise<void> {
       `window ${g?.w ?? "?"} px wide, its content needs ${min} px, ${bad.length} allocation failure(s)${bad.length > 0 ? `: ${bad[0].trim().slice(0, 160)}` : ""}`,
     );
   };
-  await fits("narrowWindowFits(sidebar)");
-
-  await app.getByTestId("layout-toggle").click();
-  await Bun.sleep(2500);
+  // The rig starts in compact; the toggle is compact's own, so the menu item
+  // brings it back.
   await fits("narrowWindowFits(compact)");
 
   await app.getByTestId("layout-toggle").click();
   await Bun.sleep(2500);
-  await fits("narrowWindowFits(backToSidebar)");
+  await fits("narrowWindowFits(sidebar)");
+
+  await app.getByTestId("menu-layout").click();
+  await Bun.sleep(2500);
+  await fits("narrowWindowFits(backToCompact)");
 
   // A minute of the ordinary things: switch tabs, open the extensions list,
   // close it.
@@ -1089,6 +1091,13 @@ async function accelLegs(): Promise<void> {
       `${chord} with the ${from} focused: sidebar ${before} -> ${after}, ${leaked.length} request(s) reached Chromium${leaked.length > 0 ? `: ${leaked[0].trim().slice(0, 160)}` : ""}`,
     );
     noStray(name);
+    await resyncPage();
+  }
+  // The sidebar layout has no address field, so the last round skips there
+  // and would leave the legs after this one without their layout toggle.
+  if (!(await app.getByTestId("layout-toggle").isVisible().catch(() => false))) {
+    await app.getByTestId("menu-layout").click().catch(() => {});
+    await Bun.sleep(1200);
     await resyncPage();
   }
 }
@@ -1208,24 +1217,32 @@ for (const [w, h] of [[1500, 950], [820, 620], [1760, 1080], [700, 520]] as Arra
 }
 
 if (hasApp) {
+  // The rig starts the app in compact, the layout with an address field and a
+  // layout toggle. The toggle is compact's own, so the way back from the
+  // sidebar is the menu item.
   const before = shownView()!;
-  await app.getByTestId("layout-toggle").click();
+  await app.getByTestId("menu-layout").click();
   await Bun.sleep(1200);
   const s1 = await settled();
-  const compact = shownView()!;
+  const side = shownView()!;
   check(
-    "compactLayout",
-    s1.ok && compact.container.x < before.container.x && compact.container.w > before.container.w,
-    `container ${before.container.w}@${before.container.x} -> ${compact.container.w}@${compact.container.x}; ${s1.detail}`,
+    "sidebarLayout",
+    s1.ok && side.container.x > before.container.x && side.container.w < before.container.w,
+    `container ${before.container.w}@${before.container.x} -> ${side.container.w}@${side.container.x}; ${s1.detail}`,
   );
-  await app.getByTestId("layout-toggle").click();
+  await app.getByTestId("menu-layout").click();
   await Bun.sleep(1200);
   const s2 = await settled();
-  check("sidebarLayout", s2.ok, s2.detail);
+  const back = shownView()!;
+  check(
+    "compactLayout",
+    s2.ok && back.container.x === before.container.x && back.container.w === before.container.w,
+    `container ${side.container.w}@${side.container.x} -> ${back.container.w}@${back.container.x}; ${s2.detail}`,
+  );
   noStray("compactLayout");
 } else {
-  skip("compactLayout", "the app under test has no layout-toggle");
-  skip("sidebarLayout", "the app under test has no layout-toggle");
+  skip("sidebarLayout", "the app under test has no address field");
+  skip("compactLayout", "the app under test has no address field");
 }
 
 if (hasApp) {

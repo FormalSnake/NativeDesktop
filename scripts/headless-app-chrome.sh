@@ -84,8 +84,10 @@ seed_store() {
   cat >"$dir/session.json" <<EOF
 {"version":1,"data":{"tabs":[{"id":"t1","url":"$FIXTURE","title":"","pinned":false},{"id":"t2","url":"$FIXTURE?two","title":"","pinned":false}],"activeId":"t1","nextTabId":3,"windowWidth":1280,"windowHeight":800,"zoomByHost":{}}}
 EOF
+  # Compact: the layout with an address field and a layout toggle, which the
+  # app legs drive. The sidebar layout has neither.
   cat >"$dir/settings.json" <<EOF
-{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"sidebar","pinnedExtensions":["$EXTENSION_ID"]}}
+{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"compact","pinnedExtensions":["$EXTENSION_ID"]}}
 EOF
 }
 
