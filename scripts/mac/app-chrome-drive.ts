@@ -827,6 +827,76 @@ const legs: Leg[] = [
     },
   },
   {
+    name: "titleBarStrips",
+    run: async () => {
+      // The strip a window is moved by: the sidebar layout's top row, and the
+      // compact layout's toolbar outside its controls. A real press there has
+      // to drag the window and a double click has to zoom it (the system's
+      // default for a title bar double click), while the controls in the bar
+      // keep their own clicks. A toolbar band or an overlay sitting on top of
+      // the row took these presses before.
+      activateApp();
+      await Bun.sleep(600);
+      const threshold = Number(
+        Bun.spawnSync(["defaults", "read", "-g", "com.apple.mouse.doubleClickThreshold"]).stdout.toString().trim(),
+      );
+      const pastDoubleClick = ((Number.isFinite(threshold) && threshold > 0 ? threshold : 0.5) + 0.4) * 1000;
+      const geometry = async () => (await app.windows()).windows[0]!.geometry;
+      const find = async (id: string) => {
+        let found: { geometry: { x: number; y: number; w: number; h: number }; focused?: boolean; visible: boolean } | null = null;
+        const walk = (node: { testID: string | null; children: unknown[] }) => {
+          if (node.testID === id) found ??= node as never;
+          for (const child of node.children) walk(child as never);
+        };
+        walk((await app.tree(mainWindow)).root as never);
+        return found as { geometry: { x: number; y: number; w: number; h: number }; focused?: boolean; visible: boolean } | null;
+      };
+      const layout = (label: string) => {
+        const run = Bun.spawnSync(["osascript", "-e",
+          `tell application "System Events" to tell (first process whose unix id is ${HOST_PID}) to click menu item "${label}" of menu "View" of menu bar item "View" of menu bar 1`]);
+        assert(run.exitCode === 0, `View > ${label} failed: ${run.stderr.toString().trim()}`);
+      };
+      const strip = async (name: string, at: { x: number; y: number }) => {
+        const before = await geometry();
+        await app.cursor.drag(at, { x: at.x - 80, y: at.y + 40 });
+        const moved = await until(`a drag on the ${name} moves the window`, geometry,
+          (g) => g.x === before.x - 80 && g.y === before.y + 40, 5000).catch(async () => geometry());
+        assert(moved.x === before.x - 80 && moved.y === before.y + 40,
+          `a drag on the ${name} at ${at.x},${at.y} moved the window by ${moved.x - before.x},${moved.y - before.y}`);
+        // Dragged back the same way. Each press waits out the system's
+        // double-click interval (a user setting, 1.8 s on this Mac): two
+        // presses on the strip inside it are a double click, and that zooms.
+        await Bun.sleep(pastDoubleClick);
+        await app.cursor.drag(at, { x: at.x + 80, y: at.y - 40 });
+        await until(`a drag back on the ${name}`, geometry, (g) => g.x === before.x && g.y === before.y, 5000);
+        await Bun.sleep(pastDoubleClick);
+        await app.cursor.dblclick(at);
+        const zoomed = await until(`a double click on the ${name} zooms the window`, geometry,
+          (g) => g.w > before.w, 5000).catch(() => null);
+        assert(zoomed !== null, `a double click on the ${name} at ${at.x},${at.y} did not zoom the window`);
+        await Bun.sleep(pastDoubleClick);
+        await app.cursor.dblclick(at);
+        await until(`a second double click on the ${name} puts it back`, geometry, (g) => g.w === before.w, 5000);
+      };
+      if (!(await find("omnibox"))) {
+        const controls = await find("controls-start");
+        assert(controls !== null, "the sidebar layout has no window controls slot");
+        await strip("sidebar's top row", { x: controls!.geometry.x + controls!.geometry.w + 80, y: 14 });
+        layout("Use Compact Layout");
+        await until("the compact layout's address field", () => find("omnibox"), (n) => n !== null, 10000);
+      }
+      const field = (await find("omnibox"))!.geometry;
+      // Above the address field: inside the toolbar, outside every control.
+      await strip("compact toolbar", { x: field.x + field.w / 2, y: 3 });
+      await app.cursor.click({ x: field.x + field.w / 2, y: field.y + field.h / 2 });
+      await until("a click on the address field focuses it", async () => (await find("omnibox"))?.focused === true,
+        (v) => v, 5000);
+      await main.keyboard.press("Escape");
+      layout("Use Sidebar Layout");
+      await until("back in the sidebar layout", () => find("omnibox"), (n) => n === null, 10000).catch(() => null);
+    },
+  },
+  {
     name: "twoTabs",
     run: async () => {
       await newTab();
