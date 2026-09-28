@@ -7516,6 +7516,11 @@ func ndProgressCircleApply(_ view: NSView, _ props: [String: Any]) {
 
 /// \`<progressbar>\`: SwiftUI \`ProgressView\`, the system determinate bar.
 final class NDProgressBarView: NDHostedLeaf {
+    /// Only drawn, never pressed: a load bar laid over the top of a page took
+    /// the page's clicks there, and in a window's title bar band dragged the
+    /// window instead.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     private var fraction: Double = 0
     private var lastShown: Double = 0
     /// \`osd\` class: Adwaita's thin page-load bar, drawn as one here
