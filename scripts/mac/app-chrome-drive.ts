@@ -897,6 +897,23 @@ const legs: Leg[] = [
     },
   },
   {
+    name: "commandBarTypeAhead",
+    run: async () => {
+      // Typed straight after cmd+T, the way a keyboard-first user does: every
+      // key has to land in the bar's field, in order, however soon after the
+      // chord it comes.
+      await main.keyboard.press("Meta+t");
+      await main.keyboard.type("abc");
+      await until("the command bar comes up", commandBarShown, (shown) => shown, 10000);
+      const field = async () =>
+        ((await app.rpc.call("paletteLayout", { testId: "palette" }).catch(() => null)) as { fieldText?: string } | null)?.fieldText ?? "";
+      const text = await until("the bar's field holds what was typed", field, (v) => v === "abc", 3000).catch(async () => field());
+      await main.keyboard.press("Escape");
+      await until("the command bar goes away", commandBarShown, (shown) => !shown, 5000).catch(() => null);
+      assert(text === "abc", `the bar's field read ${JSON.stringify(text)} after cmd+T and "abc"`);
+    },
+  },
+  {
     name: "twoTabs",
     run: async () => {
       await newTab();
