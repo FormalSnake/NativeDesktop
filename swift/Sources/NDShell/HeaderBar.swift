@@ -598,6 +598,8 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
         if let split { self.split = split }
         guard win.toolbar !== toolbar else { return }
         win.toolbar = toolbar
+        // Attaching shows the toolbar whatever its isVisible said before.
+        applyVisibility()
         // Window.toolbarStyle (#8): the create-only prop recorded by the
         // generated Window create arm decides the chrome shape; `unified`
         // keeps today's treatment.
@@ -798,11 +800,20 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             cursor += 1
         }
         rebuilding = false
-        // Visible iff it has items (see init) — plain apps keep the standard
-        // titlebar; headerbar apps get the unified toolbar strip.
-        toolbar.isVisible = !toolbar.items.isEmpty
+        applyVisibility()
         applySubtitles()
         updateSearchFieldWidths()
+    }
+
+    /// Visible iff it has items (see init): plain apps keep the standard
+    /// titlebar, headerbar apps get the unified toolbar strip. A tracking
+    /// separator alone draws nothing, but a visible toolbar still takes every
+    /// click in its band, so a pane that starts at the top edge (a window
+    /// with its own <windowcontrols>) lost its top 52pt to it.
+    private func applyVisibility() {
+        let separators: Set<NSToolbarItem.Identifier> = [trackingSeparatorID0, trackingSeparatorID1, trackingSeparatorIDInspector]
+        let visible = toolbar.items.contains { !separators.contains($0.itemIdentifier) }
+        if toolbar.isVisible != visible { toolbar.isVisible = visible }
     }
 
     /// User customization bookkeeping (both fire during our own rebuild too,
