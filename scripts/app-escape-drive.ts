@@ -16,7 +16,8 @@
 //
 // The escape extension (examples/webview-probe/escape-ext) has to be loaded:
 // the rig passes ND_ACCEPT_EXTENSIONS to the host. ND_ESCAPE_ROUTES runs a
-// subset; ND_ESCAPE_EXPLORE=1 reports without failing.
+// subset; ND_ESCAPE_EXPLORE=1 reports without failing. ND_ESCAPE_WIDTH=<px>
+// sizes the app's window first, for captures at a narrow width.
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { connectApp } from "@nativedesktop/test";
@@ -169,6 +170,11 @@ function toplevelId(): string {
 
 const app = await connectApp();
 await until(async () => (await app.windows()).windows.length, (n) => n > 0, 45000);
+if (process.env.ND_ESCAPE_WIDTH) {
+  await app.setWindowSize(Number(process.env.ND_ESCAPE_WIDTH), 800);
+  await Bun.sleep(1500);
+  await until(async () => (await app.windows()).windows.length, (n) => n > 0, 45000);
+}
 const mainRef = (await app.windows()).windows[0]!.ref;
 
 type Node = { type: string; testID: string | null; visible: boolean; rows: unknown[] | null; children: Node[] };
@@ -622,6 +628,9 @@ const download = (name: string, id: string): Route => ({
     const dir = process.env.ND_ACCEPT_DOWNLOADS ?? "";
     const landed = (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.startsWith("nd-fixture") && !f.endsWith(".crdownload") && statSync(join(dir, f)).size > 0);
     const statuses = await downloadStatuses();
+    const panelShot = `${shots}/${name}.panel.png`;
+    if (rig === "x11") sh("import", "-window", "root", panelShot);
+    else sh("grim", panelShot);
     // The engine's own record of a Chromium surface it moved onto the view.
     const adopted = dialogs().slice(dialogsBefore).map((l) => l.replace(/^.*chromeDialog /, ""));
     if (foreign.length || adopted.length) {
@@ -633,7 +642,7 @@ const download = (name: string, id: string): Route => ({
     if (!statuses.length || statuses.some((t) => /fail|Downloading/i.test(t))) throw new Error(`the app's panel reads ${JSON.stringify(statuses)}`);
     const stayed = await pageEval(page, "location.href");
     if (stayed !== ESCAPE_URL) throw new Error(`the page left for ${stayed}`);
-    return `downloaded ${landed.join(", ")} (${statuses.join(" | ")})${shown.length ? `; app popover ${shown.join(", ")}` : ""}`;
+    return `downloaded ${landed.join(", ")} (${statuses.join(" | ")})${shown.length ? `; app popover ${shown.join(", ")}` : ""}; capture ${panelShot}`;
   },
 });
 

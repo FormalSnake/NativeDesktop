@@ -12,7 +12,8 @@
 // Chromium browser the census cannot see still has one).
 //
 // ND_ESCAPE_ROUTES=<comma separated> runs a subset; ND_ESCAPE_EXPLORE=1 prints
-// every observation and never fails.
+// every observation and never fails. ND_ESCAPE_WIDTH=<px> sizes the app's
+// window first, for captures of every surface at a narrow width.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { Cursor, connectApp, type LocatorFactory } from "@nativedesktop/test";
 
@@ -54,6 +55,10 @@ const fixtures = startFixtureServer();
 await until("the app's first window", async () => (await app.windows()).windows.length, (n) => n > 0, 45000);
 const mainWindow = (await app.windows()).windows[0]!.ref;
 const main: LocatorFactory = await app.window(0);
+if (process.env.ND_ESCAPE_WIDTH) {
+  await app.setWindowSize(Number(process.env.ND_ESCAPE_WIDTH), 800);
+  await Bun.sleep(1500);
+}
 
 /// HID-level pointer events through the host binary's `--nd-input` helper, so
 /// Chromium's own hit testing, context menu and modifier-click routing see a
