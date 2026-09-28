@@ -728,12 +728,17 @@ const routes: Route[] = [
       key("ctrl+t");
       const bar = await until(paletteRows, (b) => b !== null, 5000);
       if (!bar) return { note: "", problems: ["ctrl+T brought up no command bar"] };
+      // A key sent in the first moments after the bar is presented can land
+      // before GTK has given its field the keyboard, and it is lost; the bar
+      // is given as long as a person would take to look at it.
+      await Bun.sleep(300);
       key("Escape");
-      await until(paletteRows, (b) => b === null, 5000);
+      const gone = await until(async () => (await paletteRows()) === null, (v) => v, 5000);
+      if (!gone) return { note: "", problems: ["Escape left the command bar up"] };
       // The page waits out the bar off to the side, as it does for any dialog
       // over it, and comes back at its own size once the bar goes.
       const back = await until(size, (v) => v === before, 8000);
-      return back ? "the command bar came up" : { note: "", problems: [`the page came back at ${await size()}, was ${before}`] };
+      return back ? "the command bar came up and went" : { note: "", problems: [`the page came back at ${await size()}, was ${before}`] };
     },
   },
   chord("key.ctrlShiftT", "ctrl+shift+t", {}),
