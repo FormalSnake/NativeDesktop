@@ -125,6 +125,25 @@ async function openCommandBar(chord: string): Promise<void> {
 async function openAddress(url: string): Promise<void> {
   await openCommandBar("Meta+l");
   await main.keyboard.type(url);
+  // The bar's rows follow its query a turn later, and Return runs the row
+  // on top: pressed straight after the typing it ran the default list's first
+  // command (New Tab) instead of going to the address. The address row on top,
+  // its title the address as shown (scheme dropped), says the query landed.
+  await until(
+    "the command bar's top row is the address",
+    async () => {
+      let rows: { id?: string; title?: string }[] = [];
+      const walk = (node: { testID: string | null; rows?: unknown[] | null; children: unknown[] }) => {
+        if (node.testID === "palette" && node.rows) rows = node.rows as never;
+        for (const child of node.children) walk(child as never);
+      };
+      walk((await app.tree(mainWindow)).root as never);
+      const top = rows[0];
+      return top?.id === "url" && !!top.title && url.includes(String(top.title));
+    },
+    (landed) => landed,
+    5000,
+  ).catch(() => false);
   await main.keyboard.press("Enter");
 }
 
