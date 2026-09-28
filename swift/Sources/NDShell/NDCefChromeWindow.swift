@@ -648,10 +648,16 @@ import Foundation
 
     /// The webview's own rectangle in AppKit screen coordinates, or nil when
     /// the view is not on screen.
+    private let ndCefShownMinimum: CGFloat = 10
+
     private func targetScreenFrame() -> NSRect? {
         guard let view, let host = view.window, !view.isHiddenOrHasHiddenAncestor else { return nil }
         let rect = host.convertToScreen(view.convert(view.bounds, to: nil))
-        return (rect.width >= 1 && rect.height >= 1) ? rect : nil
+        // A view a few points across shows nothing: an app keeps one like that
+        // only to have a live browser (an extension registry, a probe). Its
+        // anchor stays hidden like a background tab's rather than standing on
+        // screen as a window no one can see or click.
+        return (rect.width >= ndCefShownMinimum && rect.height >= ndCefShownMinimum) ? rect : nil
     }
 
     /// One column of the webview in screen coordinates.

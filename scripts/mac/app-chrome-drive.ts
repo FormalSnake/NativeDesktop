@@ -835,6 +835,10 @@ const legs: Leg[] = [
       // The hidden tab's anchor has to be off screen, and exactly one anchor
       // is left for the tab on show.
       await until("one anchor for two tabs", anchors, (a) => a.length === 1, 10000);
+      // A view kept only for its browser (the app's 2pt extension registry)
+      // has no window on screen either.
+      const specks = (await census()).filter((w) => w.width < 10 || w.height < 10);
+      assert(specks.length === 0, `the app has windows under 10x10 on screen: ${JSON.stringify(specks)}`);
       await viewportMatchesView(second, "second tab");
       const frames = await pageNumber(app, mainPage, "window.__ndFrames").catch(() => -1);
       assert(frames !== 0, "the hidden tab never ran a frame at all");
