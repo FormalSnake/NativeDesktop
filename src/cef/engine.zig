@@ -2125,6 +2125,10 @@ fn syncBounds(view: *View) void {
     view.bounds = next;
     view.size_w.store(next.w, .release);
     view.size_h.store(next.h, .release);
+    // GTK focus follows X focus off a view too small to hold the keyboard:
+    // Tab out of the page otherwise walked onto an app's 2x2 helper browser
+    // and every key after that went to a view nobody can see.
+    gtk.Widget.setFocusable(view.widget, @intFromBool(focusEligible(view)));
     if (view.container == 0) return;
     // The widget can have been relocated into another window since the last
     // pass (`moveNode`); GTK moves its own hierarchy and knows nothing about
