@@ -20,7 +20,7 @@ rm -rf "$workdir"
 
 LOG=/tmp/nd-menuorder.log
 DRIVE_LOG=/tmp/nd-menuorder-drive.log
-pkill -f 'swift/.build/release/NDShell' 2>/dev/null || true
+pkill -f "$ROOT/swift/.build/release/NDShell" 2>/dev/null || true
 rm -f "$LOG" "$DRIVE_LOG"
 ND_SCRIPT=examples/notes/menu-order-probe.tsx NATIVE_AUTOMATION=1 swift/.build/release/NDShell >"$LOG" 2>&1 &
 PID=$!
