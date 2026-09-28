@@ -1169,6 +1169,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
             // the free run. Glass: isBordered opts the view item into the
             // system toolbar treatment (the Tahoe capsule) a bare view item
             // lacks.
+            // Rounded, as NSSearchToolbarItem's own field is: a field built in
+            // code starts at NSTextField's square bezel, and in the 36pt
+            // capsule macOS 26 lays a square search field's text, placeholder
+            // and glyphs out 3pt above the middle.
+            search.bezelStyle = .roundedBezel
             if search.ndPreferredWidth == nil { search.ndPreferredWidth = lastSearchWidth ?? 320 }
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = search
