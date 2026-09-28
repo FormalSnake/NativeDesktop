@@ -142,13 +142,17 @@ import CCef
         }
     }
 
-    /// The app hears it from the webview in the key window, the one a user reads
-    /// as "this window"; any live one if no app window is key.
+    /// The app hears it from the webview on show in the key window, the one a
+    /// user reads as "this window"; any live one if no app window is key. On
+    /// show, not merely in that window: an app keeps hidden webviews there too
+    /// (an extension registry, a background tab), and one of those took the
+    /// event where nothing listens for it, so chrome.tabs.create opened no tab.
     private static func report(_ url: String) {
         let owners = NDCefChromeWindow.liveWindows
         let key = NSApp.keyWindow ?? NSApp.mainWindow
-        let target = owners.first { $0.hostWindow != nil && $0.hostWindow === key }?.webView
-            ?? owners.lazy.compactMap(\.webView).first
+        let inKey = owners.filter { $0.hostWindow != nil && $0.hostWindow === key }
+        let target = (inKey.first { $0.surfaceTargetFrame != nil } ?? inKey.first
+            ?? owners.first { $0.surfaceTargetFrame != nil } ?? owners.first)?.webView
         trace("newWindow \(url) to node \(target?.host?.ndNodeID ?? 0)")
         target?.emitText("newWindow", url)
     }
