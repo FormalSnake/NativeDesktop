@@ -1,6 +1,6 @@
 {
   "name": "@nativedesktop/cli",
-  "version": "0.4.21",
+  "version": "0.4.22",
   "description": "The nd CLI: dev-runs, builds, and packages NativeDesktop apps",
   "type": "module",
   "license": "MIT",
