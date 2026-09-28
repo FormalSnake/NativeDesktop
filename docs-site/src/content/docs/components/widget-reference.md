@@ -57,6 +57,9 @@ Automation role: `group`. Text source: none. Children: multi.
 | `orientation` | vertical \| horizontal | vertical | create |
 | `spacing` | int | -1 | createAndUpdate |
 | `windowHandle` | bool | false | createAndUpdate |
+| `tileMinWidth` | int | 0 | createAndUpdate |
+| `tileMaxColumns` | int | 0 | createAndUpdate |
+| `tileAspect` | float | 0 | createAndUpdate |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

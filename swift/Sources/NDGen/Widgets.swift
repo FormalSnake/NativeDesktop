@@ -1559,6 +1559,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         let spacingRaw = propInt(props, "spacing") ?? -1
         box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)
         box.ndWindowHandle = propBool(props, "windowHandle") ?? false
+        box.ndApplyTileProps(minWidth: propInt(props, "tileMinWidth"), maxColumns: propInt(props, "tileMaxColumns"), aspect: propDouble(props, "tileAspect"))
         return box
     } else if kind == "Label" {
         let text = propStr(props, "text") ?? ""
@@ -1936,7 +1937,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
 /// none (empty string, 0, false, empty list).
 @MainActor let ndPropResets: [String: [String: Any]] = [
     "Window": ["title": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
-    "Box": ["spacing": -1, "windowHandle": false, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
+    "Box": ["spacing": -1, "windowHandle": false, "tileMinWidth": 0, "tileMaxColumns": 0, "tileAspect": 0.0, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Label": ["variant": "body", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
     "Button": ["label": "", "iconName": "", "iconData": "", "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false, "prominent": false, "destructive": false, "badge": "", "size": "regular"],
     "TextInput": ["text": "", "placeholder": "", "leadingIconName": "", "leadingIconTooltip": "", "leadingIconLabel": "", "editable": true, "enabled": true, "tooltip": "", "draggable": false, "dragPayload": "", "dropTarget": false],
@@ -2039,6 +2040,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
             box.ndSpacing = sp < 0 ? ndStandardSpacing : CGFloat(sp)
         }
         if let h = propBool(props, "windowHandle"), let box = view as? NDBoxView { box.ndWindowHandle = h }
+        // The three tile keys land together (absent keys keep prior state).
+        (view as? NDBoxView)?.ndApplyTileProps(minWidth: propInt(props, "tileMinWidth"), maxColumns: propInt(props, "tileMaxColumns"), aspect: propDouble(props, "tileAspect"))
     } else if kind == "Label" {
         if let v = propStr(props, "variant"), let tf = view as? NSTextField { ndLabelApplyVariant(tf, v) }
     } else if kind == "Button" {

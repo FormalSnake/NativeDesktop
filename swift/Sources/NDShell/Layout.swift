@@ -827,7 +827,7 @@ final class NDBoxView: NSView {
     /// spacing, margins and padding.
     func ndNaturalSize() -> NSSize {
         if let cached = naturalCache { return cached }
-        let size = aggregate { naturalSize(of: $0) }
+        let size = ndTileMinWidth > 0 ? tileSize(natural: true) : aggregate { naturalSize(of: $0) }
         naturalCache = size
         return size
     }
@@ -837,7 +837,7 @@ final class NDBoxView: NSView {
     /// content needs, and used as the shrink floor below.
     func ndMinimumSize() -> NSSize {
         if let cached = minimumCache { return cached }
-        let size = aggregate { minimumSize(of: $0) }
+        let size = ndTileMinWidth > 0 ? tileSize(natural: false) : aggregate { minimumSize(of: $0) }
         minimumCache = size
         return size
     }
@@ -880,6 +880,7 @@ final class NDBoxView: NSView {
     private func ndPlaceChildren() {
         let visible = ndChildren.filter { !$0.isHidden }
         guard !visible.isEmpty else { return }
+        if ndTileMinWidth > 0 { return ndPlaceTiles(visible) }
         // A box with no size of its own yet (created, not installed) has
         // nothing meaningful to place, and handing children a zero frame is
         // not free: a hosted SwiftUI body collapses and does not come back
@@ -1047,6 +1048,116 @@ final class NDBoxView: NSView {
             }
             if !NSEqualRects(visible[i].frame, placed) { visible[i].frame = placed }
             cursor += mainSizes[i] + mainTrails[i] + ndSpacing
+        }
+    }
+
+    // MARK: tile grid
+
+    /// `tileMinWidth` above 0 makes the box a grid of equal cells, the peer of
+    /// src/gtk/tilegrid.zig. The row always spans the box's width: as many
+    /// columns as fit at the minimum width (and a child's own minimum), at
+    /// most `tileMaxColumns`, share it after the spacing. A short last row
+    /// keeps the column pitch. With `tileAspect` a cell is that fraction of
+    /// its width tall, so the box's height follows its width. Margins and
+    /// expand/align flags of the children do not apply.
+    private(set) var ndTileMinWidth: CGFloat = 0
+    private var ndTileMaxColumns = 0
+    private var ndTileAspect: CGFloat = 0
+
+    func ndApplyTileProps(minWidth: Int?, maxColumns: Int?, aspect: Double?) {
+        var changed = false
+        if let v = minWidth, CGFloat(max(0, v)) != ndTileMinWidth { ndTileMinWidth = CGFloat(max(0, v)); changed = true }
+        if let v = maxColumns, max(0, v) != ndTileMaxColumns { ndTileMaxColumns = max(0, v); changed = true }
+        if let v = aspect, CGFloat(max(0, v)) != ndTileAspect { ndTileAspect = CGFloat(max(0, v)); changed = true }
+        guard changed else { return }
+        childNaturals.removeAll(keepingCapacity: true)
+        childMinimums.removeAll(keepingCapacity: true)
+        ndInvalidateBoxChain(from: self)
+    }
+
+    /// The height depends on the width, and the parent box re-asks for the
+    /// natural size after handing this box its width (`ndReflows`), so the
+    /// totals measured at the old width go.
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.width) > 0.01
+        super.setFrameSize(newSize)
+        if ndTileMinWidth > 0 && widthChanged {
+            naturalCache = nil
+            minimumCache = nil
+        }
+    }
+
+    private struct TileGrid {
+        var columns: Int
+        var rows: Int
+        var cellWidth: CGFloat
+        var cellHeight: CGFloat
+    }
+
+    private func tileGrid(_ visible: [NSView], width: CGFloat) -> TileGrid {
+        var tallest: CGFloat = 0
+        var lowest: CGFloat = 0
+        for child in visible {
+            lowest = max(lowest, minimumSize(of: child).height)
+            tallest = max(tallest, naturalSize(of: child).height)
+        }
+        let floor = tileUnit(visible)
+        var columns = max(1, Int(((width + ndSpacing) / (floor + ndSpacing)).rounded(.down)))
+        if ndTileMaxColumns > 0 { columns = min(columns, ndTileMaxColumns) }
+        let cellWidth = max(0, (width - ndSpacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let cellHeight = max(lowest, ndTileAspect > 0 ? (cellWidth * ndTileAspect).rounded() : tallest)
+        let rows = (visible.count + columns - 1) / columns
+        return TileGrid(columns: columns, rows: rows, cellWidth: cellWidth, cellHeight: cellHeight)
+    }
+
+    /// The narrowest a column may be: the box's minimum, a child's minimum
+    /// width, and, with an aspect, the width at which a child's minimum
+    /// height is still the aspect's height (a cell is never stretched taller).
+    private func tileUnit(_ visible: [NSView]) -> CGFloat {
+        var unit = ndTileMinWidth
+        for child in visible {
+            let minimum = minimumSize(of: child)
+            unit = max(unit, minimum.width)
+            if ndTileAspect > 0 { unit = max(unit, (minimum.height / ndTileAspect).rounded(.up)) }
+        }
+        return unit
+    }
+
+    /// Natural: the columns the children fill at the minimum width. Minimum:
+    /// one column. Both as tall as the grid is at the width the box has now,
+    /// or at the natural width before it has one.
+    private func tileSize(natural: Bool) -> NSSize {
+        let visible = ndChildren.filter { !$0.isHidden }
+        let own = ndLayoutFlags[ObjectIdentifier(self)] ?? NDLayoutFlags()
+        let padX = ndPadding.left + ndPadding.right
+        let padY = ndPadding.top + ndPadding.bottom
+        guard !visible.isEmpty else { return NSSize(width: max(padX, own.minWidth), height: max(padY, own.minHeight)) }
+        let unit = tileUnit(visible)
+        var span = min(visible.count, ndTileMaxColumns > 0 ? ndTileMaxColumns : visible.count)
+        if !natural { span = 1 }
+        let width = CGFloat(span) * unit + ndSpacing * CGFloat(span - 1)
+        let laidOut = frame.width - padX
+        let grid = tileGrid(visible, width: laidOut > 0 ? laidOut : width)
+        let height = CGFloat(grid.rows) * grid.cellHeight + ndSpacing * CGFloat(grid.rows - 1)
+        return NSSize(width: max(width + padX, own.minWidth), height: max(height + padY, own.minHeight))
+    }
+
+    private func ndPlaceTiles(_ visible: [NSView]) {
+        let width = max(0, bounds.width - ndPadding.left - ndPadding.right)
+        let grid = tileGrid(visible, width: width)
+        let rightToLeft = userInterfaceLayoutDirection == .rightToLeft
+        for (i, child) in visible.enumerated() {
+            let row = i / grid.columns
+            var column = i % grid.columns
+            if rightToLeft { column = grid.columns - 1 - column }
+            let rect = NSRect(x: ndPadding.left + CGFloat(column) * (grid.cellWidth + ndSpacing),
+                              y: ndPadding.top + CGFloat(row) * (grid.cellHeight + ndSpacing),
+                              width: grid.cellWidth, height: grid.cellHeight)
+            // Every edge to its nearest pixel: cells differ by at most one,
+            // and the last column still ends on the box's trailing edge.
+            let placed = backingAlignedRect(rect, options: .alignAllEdgesNearest)
+            if !child.translatesAutoresizingMaskIntoConstraints { child.translatesAutoresizingMaskIntoConstraints = true }
+            if !NSEqualRects(child.frame, placed) { child.frame = placed }
         }
     }
 

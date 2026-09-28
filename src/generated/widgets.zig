@@ -24,6 +24,7 @@ const ndempty_gtk = @import("../gtk/emptystate.zig");
 const ndchart_gtk = @import("../gtk/chart.zig");
 const ndmotion_gtk = @import("../gtk/motion.zig");
 const ndchrome_gtk = @import("../gtk/chrome.zig");
+const ndtilegrid_gtk = @import("../gtk/tilegrid.zig");
 const nddnd_gtk = @import("../gtk/dnd.zig");
 const ndcode_gtk = @import("../gtk/codeeditor.zig");
 const nd_plugin = @import("../plugin.zig");
@@ -3176,6 +3177,7 @@ fn createWidget(
         const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);
         const box = gtk.Box.new(orientation, spacing);
         if (propBool(props, "windowHandle")) |h| ndchrome_gtk.setWindowHandle(box.as(gtk.Widget), h);
+        ndtilegrid_gtk.applyProps(box.as(gtk.Widget), propInt(props, "tileMinWidth"), propInt(props, "tileMaxColumns"), propFloat(props, "tileAspect"));
         return box.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Label")) {
         const text = propStr(props, "text") orelse "";
@@ -3920,6 +3922,9 @@ const nd_resets_Window = [_]NdPropReset{
 const nd_resets_Box = [_]NdPropReset{
     .{ .key = "spacing", .value = .{ .integer = -1 } },
     .{ .key = "windowHandle", .value = .{ .bool = false } },
+    .{ .key = "tileMinWidth", .value = .{ .integer = 0 } },
+    .{ .key = "tileMaxColumns", .value = .{ .integer = 0 } },
+    .{ .key = "tileAspect", .value = .{ .float = 0.0 } },
     .{ .key = "enabled", .value = .{ .bool = true } },
     .{ .key = "tooltip", .value = .{ .string = "" } },
     .{ .key = "draggable", .value = .{ .bool = false } },
@@ -4695,11 +4700,13 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
         if (propStr(props, "title")) |t| ndtabs_gtk.setTitle(widget, dupeZ(t));
     } else if (std.mem.eql(u8, kind, "Box")) {
         if (propInt(props, "spacing")) |s| {
-            const box: *gtk.Box = @ptrCast(@alignCast(widget));
             // -1 sentinel = platform standard (6), same as the create arm.
-            gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));
+            // Through tilegrid.zig: a tile box has no GtkBoxLayout to hold it.
+            ndtilegrid_gtk.setSpacing(widget, if (s < 0) 6 else @intCast(s));
         }
         if (propBool(props, "windowHandle")) |h| ndchrome_gtk.setWindowHandle(widget, h);
+        // The three tile keys land together (tilegrid.zig; absent keys keep prior state).
+        ndtilegrid_gtk.applyProps(widget, propInt(props, "tileMinWidth"), propInt(props, "tileMaxColumns"), propFloat(props, "tileAspect"));
     } else if (std.mem.eql(u8, kind, "Label")) {
         if (propStr(props, "variant")) |v| ndLabelApplyVariant(widget, v);
     } else if (std.mem.eql(u8, kind, "Button")) {

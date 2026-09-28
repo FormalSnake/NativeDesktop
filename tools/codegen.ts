@@ -3481,6 +3481,7 @@ function genZig(s: Schema): string {
   out += "const ndchart_gtk = @import(\"../gtk/chart.zig\");\n";
   out += "const ndmotion_gtk = @import(\"../gtk/motion.zig\");\n";
   out += "const ndchrome_gtk = @import(\"../gtk/chrome.zig\");\n";
+  out += "const ndtilegrid_gtk = @import(\"../gtk/tilegrid.zig\");\n";
   out += "const nddnd_gtk = @import(\"../gtk/dnd.zig\");\n";
   out += "const ndcode_gtk = @import(\"../gtk/codeeditor.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
@@ -3896,6 +3897,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        const spacing: c_int = if (spacing_raw < 0) 6 else @intCast(spacing_raw);\n";
     out += "        const box = gtk.Box.new(orientation, spacing);\n";
     out += "        if (propBool(props, \"windowHandle\")) |h| ndchrome_gtk.setWindowHandle(box.as(gtk.Widget), h);\n";
+    out += "        ndtilegrid_gtk.applyProps(box.as(gtk.Widget), propInt(props, \"tileMinWidth\"), propInt(props, \"tileMaxColumns\"), propFloat(props, \"tileAspect\"));\n";
     out += "        return box.as(gtk.Widget);\n";
   } else if (w.name === "Paned") {
     // Distinct from SplitView's AdwOverlaySplitView (collapsible sidebar):
@@ -4638,6 +4640,11 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
   for (const p of updProps) {
     if (w.name === "Box" && p.name === "windowHandle") {
       out += "        if (propBool(props, \"windowHandle\")) |h| ndchrome_gtk.setWindowHandle(widget, h);\n";
+    } else if (w.name === "Box" && p.name === "tileMinWidth") {
+      out += "        // The three tile keys land together (tilegrid.zig; absent keys keep prior state).\n";
+      out += "        ndtilegrid_gtk.applyProps(widget, propInt(props, \"tileMinWidth\"), propInt(props, \"tileMaxColumns\"), propFloat(props, \"tileAspect\"));\n";
+    } else if (w.name === "Box" && (p.name === "tileMaxColumns" || p.name === "tileAspect")) {
+      // Applied by the tileMinWidth arm, which reads all three keys.
     } else if (w.name === "SplitView" && p.name === "edgeReveal") {
       out += "        if (propBool(props, \"edgeReveal\")) |r| ndchrome_gtk.setEdgeReveal(widget, r);\n";
     } else if (w.name === "SplitView" && p.name === "contentStyle") {
@@ -4646,9 +4653,9 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "        if (propBool(props, \"topBarsAutoHide\")) |a| ndchrome_gtk.setTopBarsAutoHide(widget, a);\n";
     } else if (w.name === "Box" && p.name === "spacing") {
       out += "        if (propInt(props, \"spacing\")) |s| {\n";
-      out += "            const box: *gtk.Box = @ptrCast(@alignCast(widget));\n";
       out += "            // -1 sentinel = platform standard (6), same as the create arm.\n";
-      out += "            gtk.Box.setSpacing(box, if (s < 0) 6 else @intCast(s));\n";
+      out += "            // Through tilegrid.zig: a tile box has no GtkBoxLayout to hold it.\n";
+      out += "            ndtilegrid_gtk.setSpacing(widget, if (s < 0) 6 else @intCast(s));\n";
       out += "        }\n";
     } else if (w.name === "SettingsGroup" && p.name === "title") {
       out += "        if (propStr(props, \"title\")) |t| adw.PreferencesGroup.setTitle(@ptrCast(@alignCast(widget)), dupeZ(t));\n";
@@ -7971,6 +7978,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += `        let spacingRaw = propInt(props, "spacing") ?? ${swiftDefaultInt(w, "spacing")}\n`;
     out += "        box.ndSpacing = spacingRaw < 0 ? ndStandardSpacing : CGFloat(spacingRaw)\n";
     out += '        box.ndWindowHandle = propBool(props, "windowHandle") ?? false\n';
+    out += '        box.ndApplyTileProps(minWidth: propInt(props, "tileMinWidth"), maxColumns: propInt(props, "tileMaxColumns"), aspect: propDouble(props, "tileAspect"))\n';
     out += "        return box\n";
   } else if (w.name === "Paned") {
     // Bare NSSplitView (not NSSplitViewController-based — see SplitView's
@@ -8489,6 +8497,11 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       out += '        if let t = propStr(props, "title"), let win = ndWindow(for: view) { win.title = t }\n';
     } else if (w.name === "Box" && p.name === "windowHandle") {
       out += '        if let h = propBool(props, "windowHandle"), let box = view as? NDBoxView { box.ndWindowHandle = h }\n';
+    } else if (w.name === "Box" && p.name === "tileMinWidth") {
+      out += "        // The three tile keys land together (absent keys keep prior state).\n";
+      out += '        (view as? NDBoxView)?.ndApplyTileProps(minWidth: propInt(props, "tileMinWidth"), maxColumns: propInt(props, "tileMaxColumns"), aspect: propDouble(props, "tileAspect"))\n';
+    } else if (w.name === "Box" && (p.name === "tileMaxColumns" || p.name === "tileAspect")) {
+      // Applied by the tileMinWidth arm, which reads all three keys.
     } else if (w.name === "SplitView" && p.name === "edgeReveal") {
       out += '        if let r = propBool(props, "edgeReveal"), let split = view as? NSSplitView,\n';
       out += "           let controller = ndSplitViewController(for: split) { controller.edgeReveal = r }\n";

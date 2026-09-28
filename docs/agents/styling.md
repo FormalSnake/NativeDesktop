@@ -9,6 +9,13 @@ Unknown or web-only keys are rejected at the React renderer with a Levenshtein f
 (`validateStyle`) and defensively rejected host-side too, so a bad key fails loudly at commit time
 rather than silently doing nothing.
 
+A tile grid is a box prop, not a style: `<box tileMinWidth={40} tileMaxColumns={4}
+tileAspect={0.74} spacing={6}>` lays its children out as equal cells that span the box's width,
+as many columns as fit at the minimum width (never narrower than a child's own minimum, or than
+keeps a child's minimum height at the aspect), a short last row on the column pitch, each cell
+`tileAspect` of its width tall. The box's height follows its width, so a resized pane reflows it in
+the same layout pass (AppKit `NDBoxView`, GTK `src/gtk/tilegrid.zig`).
+
 This file is intentionally short and is not kept in sync with schema changes by hand. Treat
 `docs/styling.md` as the source of truth and this file as the "start here" pointer to it.
 
