@@ -22,12 +22,27 @@ const arena = arena_state.allocator();
 /// allocated, same leak-tolerant contract as the backend's `dupeZ`).
 pub fn symbolic(name: [:0]const u8) [:0]const u8 {
     if (name.len == 0) return name;
-    if (std.mem.endsWith(u8, name, "-symbolic")) return name;
     const display = gdk.Display.getDefault() orelse return name;
     const theme = gtk.IconTheme.getForDisplay(display);
+    if (std.mem.endsWith(u8, name, "-symbolic")) {
+        if (gtk.IconTheme.hasIcon(theme, name) == 0) warnMissing(name);
+        return name;
+    }
     const candidate = std.fmt.allocPrintSentinel(arena, "{s}-symbolic", .{name}, 0) catch return name;
     if (gtk.IconTheme.hasIcon(theme, candidate) != 0) return candidate;
+    if (gtk.IconTheme.hasIcon(theme, name) == 0) warnMissing(name);
     return name;
+}
+
+var warned: std.StringHashMapUnmanaged(void) = .empty;
+
+/// A name the theme does not have draws GTK's missing-image glyph; said once
+/// per name, so a drive (or a developer) can tell the icon is not there.
+fn warnMissing(name: [:0]const u8) void {
+    if (warned.contains(name)) return;
+    const key = arena.dupe(u8, name) catch return;
+    warned.put(arena, key, {}) catch return;
+    std.debug.print("ND_WARN icon \"{s}\" is not in the icon theme\n", .{name});
 }
 
 /// Every `iconData` slot renders at this size: GTK's own icon-name paths
