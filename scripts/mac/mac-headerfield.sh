@@ -10,7 +10,9 @@ set -euo pipefail
 # leading icon inside the field delivers its event, a popover that named the
 # icon slot points at the icon rather than at the middle of the field, and a
 # box's `font` style reaches the header button under it. With ND_NDSHOT (or a
-# built tools/ndshot) it also captures the screen region with the popover up.
+# built tools/ndshot) it also captures the screen region with the popover up,
+# and the window filled and empty to prove the field's text and glyph sit on
+# the middle of its capsule (ND_CENTRE_SHOT_DIR, default /tmp).
 # The icon click goes through app.cursor, which moves the real mouse: hold the
 # mac CEF gate lock, and grant the host once (`NDShell --nd-grant`, SIP off).
 # Marker: MAC_HEADERFIELD_OK.

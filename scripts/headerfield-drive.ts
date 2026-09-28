@@ -14,6 +14,8 @@
 //   leg 3  the automation setValue path still emits `changed`, which is what
 //          the search-entry-to-entry swap in the GTK backend could have
 //          broken.
+//   leg 3b AppKit with ND_NDSHOT: the text and the leading glyph sit on the
+//          middle of the capsule, filled and empty, read off a capture.
 //
 // Runs either way round: scripts/headless-headerfield.sh owns the host and
 // hands the socket over in ND_AUTOMATION_SOCKET, and a bare
@@ -190,6 +192,48 @@ try {
   await app.getByTestId("address").fill("nativedesktop.dev");
   await poll(() => label("url-label"), (v) => v === "nativedesktop.dev", { timeoutMs: T });
   console.log("  ND_HEADERFIELD_SETVALUE_OK setValue still round-trips through `changed`");
+
+  // ---- leg 3b: the field's content sits on the middle of its capsule -----
+  // AppKit only: the toolbar draws the capsule itself and lays the field out
+  // inside it, which is where the content used to ride 3pt high. Read off a
+  // capture of the live window, since getTree knows the field's frame but not
+  // where the cell draws inside it: the capsule's rows, the leading glyph's
+  // ink and the text's caps (top to baseline) must share a middle within 1px.
+  if (!gtk && process.env.ND_NDSHOT) {
+    const shots = process.env.ND_CENTRE_SHOT_DIR ?? "/tmp";
+    const states: [string, string][] = [
+      ["filled", "https://www.example.com/articles/2026/09/a-rather-long-path-that-runs-past-the-end-of-the-field?utm_source=gate"],
+      ["empty", ""],
+    ];
+    for (const [state, text] of states) {
+      await app.getByTestId("address").fill(text);
+      await poll(() => label("url-label"), (v) => v === text, { timeoutMs: T });
+      const f = await rectOf("address");
+      const main = (await app.windows()).windows[0]?.geometry;
+      if (!main) throw new Error("the app reports no window geometry");
+      const path = `${shots}/nd-headerfield-centre-${state}.png`;
+      const shot = Bun.spawnSync([process.env.ND_NDSHOT, "capture", "--pid", String(hostPid), "--out", path]);
+      if (shot.exitCode !== 0) throw new Error(`ndshot capture failed: ${shot.stderr.toString().trim()}`);
+      const s = (await pngSize(path)).width / main.w;
+      const px = (v: number) => String(Math.round(v * s));
+      // Glyph columns from 10pt in, clear of the capsule's round end; text from
+      // the cell's 30pt text inset to 40pt short of the end, where the
+      // cancel button starts.
+      const probe = Bun.spawnSync(
+        ["swift", "scripts/mac/field-ink.swift", path, px(f.x), px(f.y), px(f.w), px(f.h), px(f.x + 10), px(f.x + 30), px(f.x + f.w - 40)],
+        { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
+      );
+      if (probe.exitCode !== 0) throw new Error(`field-ink failed: ${probe.stderr.toString().trim()}`);
+      const ink = JSON.parse(probe.stdout.toString()) as { bezel: [number, number]; icon: [number, number] | null; text: [number, number, number] };
+      if (!ink.icon) throw new Error(`no leading glyph ink in the ${state} field (${path})`);
+      const mid = (ink.bezel[0] + ink.bezel[1]) / 2;
+      const textOff = (ink.text[0] + ink.text[1]) / 2 - mid;
+      const iconOff = (ink.icon[0] + ink.icon[1]) / 2 - mid;
+      const line = `${state}: capsule rows ${ink.bezel.join("..")}, caps ${ink.text[0]}..${ink.text[1]} off ${textOff.toFixed(1)}px, glyph ${ink.icon.join("..")} off ${iconOff.toFixed(1)}px`;
+      if (Math.abs(textOff) > 1 || Math.abs(iconOff) > 1) throw new Error(`the field's content is off its capsule's middle: ${line} (${path})`);
+      console.log(`  ND_HEADERFIELD_CENTRE_OK ${line}`);
+    }
+  }
 
   // ---- leg 4: a `font` style reaches the button under the styled box -----
   // Adwaita declares `font-weight: bold` on the button NODE, and an explicit
