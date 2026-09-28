@@ -75,5 +75,14 @@ await app.getByTestId("probe-insert").click();
 await app.waitForText("order=Bravo|Echo|Alpha|Delta");
 await assertBothMatch("inserted-middle");
 
+// ---- no menu draws the same title twice ---------------------------------------
+{
+  const items = await poll(() => nativeItems(menubarRef), (items) => items.some((i) => i.startsWith("Edit > ")));
+  const seen = new Set<string>();
+  const doubled = items.filter((i) => i !== "---" && (seen.has(i) || !seen.add(i)));
+  if (doubled.length > 0) throw new Error(`the menubar draws these twice: ${[...new Set(doubled)].join(", ")}`);
+  console.log(`ND_MENU_ORDER_STEP no duplicates: ${items.filter((i) => i.startsWith("Edit > ")).join(", ")}`);
+}
+
 console.log("ND_MENU_ORDER_OK the native menu matched React after a move, a middle remove and a middle insert");
 await app.close();

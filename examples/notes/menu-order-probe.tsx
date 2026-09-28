@@ -17,7 +17,7 @@ function App(): React.ReactNode {
   const [items, setItems] = useState(INITIAL);
   return (
     <window title="ND Menu Order Probe" defaultWidth={520} defaultHeight={320}>
-      <menubar defaults={false} testID="probe-menubar">
+      <menubar testID="probe-menubar">
         <menu label="Tabs" testID="probe-tabs-menu">
           {items.map((name) => (
             <menuitem key={name} testID={`bar-${name}`} label={name} />

@@ -1126,6 +1126,9 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     // opening with one must not fence itself off from its own title.
     let start = out.count
     for item in menu.items {
+        // Hidden items are not drawn: AppKit keeps its own alternate
+        // shortcuts for Emoji & Symbols and Start Dictation as hidden copies.
+        if item.isHidden { continue }
         if item.isSeparatorItem {
             if out.count > start, out.last != "---" { out.append("---") }
             continue
