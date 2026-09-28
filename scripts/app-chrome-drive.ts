@@ -1638,12 +1638,21 @@ if (hasApp) {
   await Bun.sleep(700);
   const focusedNow = await app.tree();
   let focusedType = "none";
-  const walk = (n: { type?: string; focused?: boolean; children?: unknown[] }): void => {
-    if (n.focused) focusedType = `${n.type}`;
+  let focusedId = "";
+  const walk = (n: { type?: string; testID?: string; id?: number; focused?: boolean; children?: unknown[] }): void => {
+    if (n.focused) {
+      focusedType = `${n.type}`;
+      focusedId = n.testID ?? `#${n.id}`;
+    }
     for (const child of (n.children ?? []) as never[]) walk(child);
   };
   walk((focusedNow as { root: never }).root);
-  check("tabTraversalLeavesThePage", focusedType !== "none" && focusedType !== "WebView", `GTK focus widget is ${focusedType}`);
+  const pageFocused = (await metrics().catch(() => null))?.focus;
+  check(
+    "tabTraversalLeavesThePage",
+    focusedType !== "none" && focusedType !== "WebView",
+    `GTK focus widget is ${focusedType} ${focusedId}, page focused ${pageFocused}`,
+  );
   // Tab walks through the app's own chrome once it leaves the page, and a
   // later key can activate whatever it landed on; put the page back in front
   // before the next leg reads it.
