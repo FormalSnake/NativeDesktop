@@ -151,8 +151,15 @@ async function loadFixture(page = "index.html"): Promise<string> {
   const url = `${FIXTURE_ORIGIN}/${page}`;
   for (let attempt = 0; attempt < 3; attempt++) {
     await openAddress(url);
-    const id = await until("a webview for the loaded page", activePage, () => true, 15000).catch(() => null);
+    const from = newTabFrom;
+    const id = await until(
+      from === null ? "a webview for the loaded page" : "a webview for the new tab's page",
+      activePage,
+      (shown) => shown !== from,
+      15000,
+    ).catch(() => null);
     if (id === null) continue;
+    newTabFrom = null;
     const landed = await until(
       `${page} finishes loading`,
       async () => `${await pageEval(app, id, "location.href")}|${await pageEval(app, id, "document.readyState")}`,
@@ -317,8 +324,14 @@ async function tabCount(): Promise<number> {
 /// cmd+T opens an empty command bar, and the tab only comes with the address
 /// typed into it: the loadFixture that follows every newTab does that part.
 async function newTab(): Promise<void> {
+  newTabFrom = await activePage().catch(() => "");
   await openCommandBar("Meta+t");
 }
+
+/// The page on show when newTab opened its bar. The next loadFixture has to
+/// land on a different one: the tab it came from often shows the same fixture
+/// address, and reading that one back passed for the new tab.
+let newTabFrom: string | null = null;
 
 /// The webview's rectangle inside a window capture, in image pixels.
 async function captureViewRect(name: string, testId: string) {
