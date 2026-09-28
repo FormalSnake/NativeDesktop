@@ -31,19 +31,59 @@ final class NDTrafficLights {
     private var layoutObservers: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private var applying = false
     private var scheduled: Set<ObjectIdentifier> = []
-    /// Windows whose buttons are held hidden while their slot is mid-animation
-    /// (a sidebar sliding in), so they appear where the slot lands rather than
-    /// jumping there ahead of it.
-    private var suspended: Set<ObjectIdentifier> = []
+    /// Windows whose buttons are riding with a slot that is mid-animation (a
+    /// sidebar sliding in or out). The ride owns the buttons until it ends:
+    /// a title bar pass in between would read the slot's landing place, or
+    /// find it clipped and hide them.
+    private var riding: [ObjectIdentifier: NSRect] = [:]
 
-    func setSuspended(_ window: NSWindow, _ on: Bool) {
-        let key = ObjectIdentifier(window)
-        if on { suspended.insert(key) } else { suspended.remove(key) }
-        if on {
-            for b in buttons(window) { b.isHidden = true }
-        } else {
-            schedule(window)
+    /// Starts a ride: the buttons go where the slot is now, which has to be
+    /// where it rests (the title bar will not keep a button outside its
+    /// bounds, so the travel itself is drawn by `slide`), and stay there
+    /// until the ride ends, wherever the slot's container is meanwhile.
+    func beginRide(_ window: NSWindow) {
+        guard let slot = (slots[ObjectIdentifier(window)] ?? []).lazy.compactMap(\.view).first(where: { $0.window === window && $0.bounds.width > 0 })
+        else { return }
+        riding[ObjectIdentifier(window)] = slot.convert(slot.bounds, to: nil)
+        apply(window)
+    }
+
+    /// Draws the buttons `from` points off their place, travelling to `to`,
+    /// on the timing the slot's container moves with. An additive animation
+    /// on the layers: the buttons' frames stay where the title bar allows,
+    /// and added in the same transaction as the container's, it starts on
+    /// the same frame.
+    func slide(_ window: NSWindow, from: CGFloat, to: CGFloat, duration: TimeInterval, timing: CAMediaTimingFunction) {
+        for b in buttons(window) {
+            b.wantsLayer = true
+            let a = CABasicAnimation(keyPath: "position.x")
+            a.isAdditive = true
+            a.fromValue = from
+            a.toValue = to
+            a.duration = duration
+            a.timingFunction = timing
+            a.fillMode = .both
+            a.isRemovedOnCompletion = false
+            b.layer?.add(a, forKey: "ndRide")
         }
+    }
+
+    /// Reduced motion: the buttons fade with the panel instead of travelling.
+    func fade(_ window: NSWindow, from: CGFloat, to: CGFloat) {
+        for b in buttons(window) {
+            b.alphaValue = from
+            b.animator().alphaValue = to
+        }
+    }
+
+    /// Ends a ride and hands the buttons back to the slot's normal placement.
+    func endRide(_ window: NSWindow) {
+        riding[ObjectIdentifier(window)] = nil
+        for b in buttons(window) {
+            b.layer?.removeAnimation(forKey: "ndRide")
+            b.alphaValue = 1
+        }
+        apply(window)
     }
 
     private struct WeakSlot { weak var view: NDWindowControlsView? }
@@ -146,15 +186,19 @@ final class NDTrafficLights {
             restore(window, d, bs, container)
             return
         }
-        if suspended.contains(ObjectIdentifier(window)) {
-            for b in bs { b.isHidden = true }
-            return
+        let rect: NSRect
+        if let resting = riding[ObjectIdentifier(window)] {
+            // The title bar puts the buttons back on its own passes (one
+            // runs when they are unhidden), so a ride keeps asserting them.
+            rect = resting
+        } else {
+            guard let (_, slot) = activeSlot(window) else {
+                for b in bs { b.isHidden = true }
+                return
+            }
+            rect = slot
+            recheck(window, placedAt: rect)
         }
-        guard let (_, rect) = activeSlot(window) else {
-            for b in bs { b.isHidden = true }
-            return
-        }
-        recheck(window, placedAt: rect)
         // Window coordinates are bottom-up; the slot's centre as a distance
         // from the top is what the title bar band has to be twice of, so the
         // buttons sit vertically centred on the slot.
@@ -251,14 +295,17 @@ final class NDTrafficLights {
                 }
             }
         }
-        // AppKit moves the buttons back on its own title bar layouts; the
-        // close button's frame change is the one signal every such pass sends.
-        if let close = window.standardWindowButton(.closeButton) {
-            close.postsFrameChangedNotifications = true
-            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: close, queue: .main) { [weak window] _ in
+        // AppKit moves the buttons back on its own title bar layouts, and a
+        // button's frame change is the signal every such pass sends. During a
+        // ride the placement is put back at once, inside that same pass: a
+        // turn later the frame between has already been drawn.
+        for button in buttons(window) {
+            button.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: button, queue: nil) { [weak window] _ in
                 MainActor.assumeIsolated {
                     guard let window else { return }
-                    NDTrafficLights.shared.schedule(window)
+                    let lights = NDTrafficLights.shared
+                    if lights.riding[ObjectIdentifier(window)] != nil { lights.apply(window) } else { lights.schedule(window) }
                 }
             }
         }

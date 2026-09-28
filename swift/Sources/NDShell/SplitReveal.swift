@@ -11,6 +11,10 @@ import QuartzCore
 // root: it is lifted out of the item's host into the panel while shown, and
 // installed back into the host when the panel goes, the same install the
 // generated structural arms use.
+//
+// A `<windowcontrols>` slot in the sidebar takes the traffic lights along:
+// hidden while the sidebar is, they slide in and out with the panel on the
+// same timing, on the slot's place in it.
 
 /// How far the pointer has to be from the leading edge to reveal. Narrow
 /// enough that it never sits over anything the content draws.
@@ -200,24 +204,37 @@ final class NDSplitReveal {
             NDTrafficLights.shared.schedule(window)
             return
         }
-        NDTrafficLights.shared.setSuspended(window, true)
+        // The traffic lights ride with the panel: placed on its slot where it
+        // lands, then drawn along the same slide on the same timing.
+        panel.layoutSubtreeIfNeeded()
+        let lights = NDTrafficLights.shared
+        lights.beginRide(window)
+        let duration = 0.2 * ndAnimationSlowdown
+        let timing = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        let start = ndRevealFrame(stage: stage, x: -width - ndRevealInset, width: width, height: height)
         if reduceMotion {
             panel.alphaValue = 0
         } else {
-            panel.frame = ndRevealFrame(stage: stage, x: -width - ndRevealInset, width: width, height: height)
+            panel.frame = start
         }
+        let trace = NDRevealTrace.start(panel: panel, direction: "in")
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            ctx.duration = duration
+            ctx.timingFunction = timing
             ctx.allowsImplicitAnimation = true
             if self.reduceMotion {
                 panel.animator().alphaValue = 1
+                lights.fade(window, from: 0, to: 1)
             } else {
                 panel.animator().frame = shown
+                lights.slide(window, from: start.minX - shown.minX, to: 0, duration: duration, timing: timing)
             }
-        }, completionHandler: {
+        }, completionHandler: { [weak self, weak panel] in
             MainActor.assumeIsolated {
-                NDTrafficLights.shared.setSuspended(window, false)
+                trace?.stop()
+                // A conceal that began mid-slide owns the ride now.
+                guard let self, let panel, self.panel === panel, self.revealed else { return }
+                lights.endRide(window)
             }
         })
     }
@@ -249,19 +266,33 @@ final class NDSplitReveal {
             finishConceal(panel)
             return
         }
-        if let window = panel.window { NDTrafficLights.shared.setSuspended(window, true) }
+        let window = panel.window
+        let lights = NDTrafficLights.shared
         let width = panel.frame.width
+        let from = panel.layer?.presentation()?.frame.minX ?? panel.frame.minX
+        let end = ndRevealFrame(stage: stage, x: -width - ndRevealInset, width: width, height: panel.frame.height)
+        let duration = 0.15 * ndAnimationSlowdown
+        let timing = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        // Placed where the panel rests, and drawn from wherever the panel is
+        // now, so a slide in still running turns round from where it got to.
+        if let window { lights.beginRide(window) }
+        let trace = NDRevealTrace.start(panel: panel, direction: "out")
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.15
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            ctx.duration = duration
+            ctx.timingFunction = timing
             ctx.allowsImplicitAnimation = true
             if self.reduceMotion {
                 panel.animator().alphaValue = 0
+                if let window { lights.fade(window, from: 1, to: 0) }
             } else {
-                panel.animator().frame = ndRevealFrame(stage: stage, x: -width - ndRevealInset, width: width, height: panel.frame.height)
+                panel.animator().frame = end
+                if let window {
+                    lights.slide(window, from: from - ndRevealInset, to: end.minX - ndRevealInset, duration: duration, timing: timing)
+                }
             }
         }, completionHandler: { [weak self, weak panel] in
             MainActor.assumeIsolated {
+                trace?.stop()
                 guard let self, let panel else { return }
                 self.finishConceal(panel)
             }
@@ -282,10 +313,60 @@ final class NDSplitReveal {
         }
         lifted = nil
         liftedHost = nil
-        if let window {
-            NDTrafficLights.shared.setSuspended(window, false)
-            NDTrafficLights.shared.schedule(window)
-        }
+        if let window { NDTrafficLights.shared.endRide(window) }
+    }
+}
+
+/// Stretches the reveal's slide by this factor (`ND_ANIMATION_SLOWDOWN`), so a
+/// test can capture the frames in between. 1 unless set.
+private let ndAnimationSlowdown: Double = {
+    guard let raw = ProcessInfo.processInfo.environment["ND_ANIMATION_SLOWDOWN"], let v = Double(raw), v >= 1 else { return 1 }
+    return v
+}()
+
+/// `ND_REVEAL_TRACE=1`: while the panel slides, prints on every display frame
+/// where the panel and the close button are on screen (their presentation
+/// layers), as `ND_REVEAL_FRAME` lines, so a test can hold the two together
+/// frame by frame. `panel` and `close` are the panel's and the close
+/// button's leading edges in window points.
+@MainActor
+private final class NDRevealTrace: NSObject {
+    private weak var panel: NSView?
+    private let direction: String
+    private var link: CADisplayLink?
+    private let begin = CACurrentMediaTime()
+
+    private init(panel: NSView, direction: String) {
+        self.panel = panel
+        self.direction = direction
+    }
+
+    static func start(panel: NSView, direction: String) -> NDRevealTrace? {
+        guard ProcessInfo.processInfo.environment["ND_REVEAL_TRACE"] == "1" else { return nil }
+        let trace = NDRevealTrace(panel: panel, direction: direction)
+        let link = panel.displayLink(target: trace, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        trace.link = link
+        return trace
+    }
+
+    @objc private func tick() {
+        guard let panel, let window = panel.window, let layer = panel.layer,
+              let close = window.standardWindowButton(.closeButton), let closeLayer = close.layer else { return }
+        let dx = (layer.presentation()?.position.x ?? layer.position.x) - layer.position.x
+        let panelX = panel.convert(panel.bounds, to: nil).minX + dx
+        let closeDx = (closeLayer.presentation()?.position.x ?? closeLayer.position.x) - closeLayer.position.x
+        let closeX = close.convert(close.bounds, to: nil).minX + closeDx
+        let alpha = closeLayer.presentation()?.opacity ?? closeLayer.opacity
+        let line = String(format: "ND_REVEAL_FRAME dir=%@ t=%.4f panel=%.2f close=%.2f alpha=%.2f hidden=%d\n",
+                          direction, CACurrentMediaTime() - begin, panelX, closeX, alpha, close.isHidden ? 1 : 0)
+        FileHandle.standardError.write(line.data(using: .utf8)!)
+    }
+
+    func stop() {
+        tick()
+        link?.invalidate()
+        link = nil
     }
 }
 
