@@ -547,18 +547,39 @@ fn takePendingSink(browser_id: c_int) ?PendingSink {
 /// Hands the app the URL as `newWindow`, the contract every other
 /// window-opening route uses. `url` is adopted.
 fn reportSinkUrl(url: ?[]u8) void {
-    // Any live view rather than only the focused one: a view is destroyed with
-    // the window that held it and takes the focus record with it, and a tab an
-    // extension asked for must not be dropped because nothing has taken focus
-    // since.
-    const target = focused_view orelse anyLiveView();
-    if (target) |view| {
+    // The view on show, the one a user reads as "this window": an app keeps
+    // hidden views too (an extension registry a few pixels across, a
+    // background tab), and the first browser created, which is often such a
+    // view, was also the first focus record, so the tab went where nothing
+    // listens for it. Any live view after that rather than none: a view is
+    // destroyed with the window that held it and takes the focus record with
+    // it, and a tab an extension asked for must not be dropped because nothing
+    // has taken focus since.
+    const target = if (focused_view) |v| (if (viewOnShow(v)) v else null) else null;
+    const chosen = target orelse anyShownView() orelse focused_view orelse anyLiveView();
+    if (chosen) |view| {
         tr("sinkNewWindow node={d} url={?s}", .{ view.node_id, url });
         post(.{ .view = view, .name = "newWindow", .text = url });
         return;
     }
     tr("sinkNewWindow dropped url={?s}", .{url});
     if (url) |u| alloc.free(u);
+}
+
+/// Mapped and big enough to show a page: a view a few pixels across is kept
+/// only for its browser.
+fn viewOnShow(view: *View) bool {
+    if (view.container == 0 or gtk.Widget.getMapped(view.widget) == 0) return false;
+    return view.size_w.load(.acquire) >= 10 and view.size_h.load(.acquire) >= 10;
+}
+
+fn anyShownView() ?*View {
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (viewOnShow(view)) return view;
+    }
+    return null;
 }
 
 fn anyLiveView() ?*View {
