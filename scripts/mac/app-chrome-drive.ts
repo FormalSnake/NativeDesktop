@@ -935,22 +935,21 @@ const legs: Leg[] = [
       // cmd+T, cmd+W and cmd+R have to reach the APP's menu, not Chromium's:
       // the Chrome command handler refuses its own and the app's key
       // equivalents are what run.
-      // A new tab is the app's own page with no WebView in it, so the count of
-      // WebViews says nothing about whether cmd+T has landed. What does is the
-      // page going off screen, and cmd+W bringing it back.
-      const tabs = countWebViews((await app.tree(mainWindow)).root as never);
+      // cmd+T brings up the command bar and opens no tab until an address is
+      // given, so the bar coming up is what proves the app's menu took the
+      // chord. The tab the address opens is the page going off screen, and
+      // cmd+W brings it back.
+      const tabs = await tabCount();
       const before = await activePage();
       const shown = async () => await activePage().catch(() => "");
-      await main.keyboard.press("Meta+t");
-      await until("cmd+T opens an app tab", shown, (id) => id !== before, 10000);
+      await openCommandBar("Meta+t");
+      assert((await tabCount()) === tabs, "cmd+T opened a tab before the command bar was given an address");
+      await main.keyboard.type(`${FIXTURE_ORIGIN}/page2.html`);
+      await main.keyboard.press("Enter");
+      await until("the address from cmd+T opens a tab", shown, (id) => id !== before, 10000);
       await main.keyboard.press("Meta+w");
       await until("cmd+W closes it again", shown, (id) => id === before, 10000);
-      await until(
-        "the tab count is back",
-        async () => countWebViews((await app.tree(mainWindow)).root as never),
-        (n) => n === tabs,
-        10000,
-      );
+      await until("the tab count is back", tabCount, (n) => n === tabs, 10000);
       const page = before;
       const frames = await pageNumber(app, page, "window.__ndFrames");
       await main.keyboard.press("Meta+r");
