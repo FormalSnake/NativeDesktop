@@ -95,19 +95,35 @@ async function activePage(): Promise<string> {
   return found!;
 }
 
-/// cmd+L, the address, return. The app's own address bar, so this is the same
-/// path a user takes and it exercises native-field focus on the way.
-///
-/// The field's own state is not readable: a SearchInput inside a HeaderBar
-/// reports `visible: false` with a placeholder geometry and never echoes what
-/// was typed into it, so the address landing is read from where the page ends
-/// up instead.
+/// Whether the app's command bar is up. getTree reports a palette as visible
+/// only while it is presented, and presenting it makes its field first
+/// responder in the same turn.
+async function commandBarShown(): Promise<boolean> {
+  let shown = false;
+  const walk = (node: { testID: string | null; visible: boolean; children: unknown[] }) => {
+    if (node.testID === "palette" && node.visible) shown = true;
+    for (const child of node.children) walk(child as never);
+  };
+  walk((await app.tree(mainWindow)).root as never);
+  return shown;
+}
+
+/// A chord that opens the command bar (cmd+L for the address, cmd+T for a new
+/// tab), then the wait for it to hold the keyboard. A key typed before that
+/// goes to the window itself, and AppKit routes an unhandled plain "e" there to
+/// Edit > Emoji & Symbols (fn+E). cmd+L while the bar is up puts it away, so an
+/// open bar is typed into as it is.
+async function openCommandBar(chord: string): Promise<void> {
+  if (await commandBarShown()) return;
+  await main.keyboard.press(chord);
+  await until("the command bar comes up", commandBarShown, (shown) => shown, 10000);
+}
+
+/// cmd+L, the address, return. The app's own address path, the command bar
+/// seeded with the page's address and all of it selected, so typing replaces
+/// it. What the bar held is read from where the page ends up.
 async function openAddress(url: string): Promise<void> {
-  await main.keyboard.press("Meta+l");
-  await Bun.sleep(500);
-  // cmd+L focuses the field without selecting what is in it, so a second
-  // address types itself onto the end of the first.
-  await main.keyboard.press("Meta+a");
+  await openCommandBar("Meta+l");
   await main.keyboard.type(url);
   await main.keyboard.press("Enter");
 }
@@ -279,27 +295,10 @@ async function tabCount(): Promise<number> {
   return count;
 }
 
-/// cmd+T, retried. The first key event after the app is activated can be eaten
-/// by the activation itself, and a cmd+L that follows a cmd+T which did nothing
-/// re-navigates the tab that was already there instead of opening a new one.
+/// cmd+T opens an empty command bar, and the tab only comes with the address
+/// typed into it: the loadFixture that follows every newTab does that part.
 async function newTab(): Promise<void> {
-  const before = await tabCount();
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await main.keyboard.press("Meta+t");
-    const grew = await until("a new tab", tabCount, (n) => n > before, 4000).catch(() => null);
-    if (grew === null) continue;
-    // The app shows its new-tab page for the tab with no URL yet, and that is
-    // the signal that the NEW tab is the active one. Without it the address
-    // bar still aims at the tab that was active when cmd+T was pressed.
-    await until(
-      "the new tab becomes the active one",
-      () => main.getByTestId("new-tab-page").isVisible(),
-      (visible) => visible === true,
-      8000,
-    );
-    return;
-  }
-  throw new LegFailure(`cmd+T opened no tab (the app still has ${before})`);
+  await openCommandBar("Meta+t");
 }
 
 /// The webview's rectangle inside a window capture, in image pixels.
@@ -912,8 +911,7 @@ const legs: Leg[] = [
       const page = await activePage();
       await pageEval(app, page, "document.getElementById('text').value='keep'");
       const target = `${FIXTURE_ORIGIN}/page2.html`;
-      await main.keyboard.press("Meta+l");
-      await Bun.sleep(500);
+      await openCommandBar("Meta+l");
       await main.keyboard.type(target);
       const stillThere = await pageEval(app, page, "document.getElementById('text').value");
       assert(
@@ -1110,8 +1108,7 @@ const legs: Leg[] = [
       // address that ends up loading are what prove it.
       const page = await activePage();
       const here = await pageEval(app, page, "location.href");
-      await main.keyboard.press("Meta+l");
-      await Bun.sleep(500);
+      await openCommandBar("Meta+l");
       await main.keyboard.press("Meta+a");
       pasteboard("nd-not-copied-yet");
       await main.keyboard.press("Meta+c");
