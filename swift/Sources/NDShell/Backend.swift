@@ -965,7 +965,11 @@ func ndApplyTileFill(_ box: NDBoxView, style: NDTileStyle) {
 func ndStyleGlassTile(_ glass: NSGlassEffectView, raised: Bool) {
     glass.style = raised ? .regular : .clear
     glass.tintColor = raised ? ndGlassTileRaisedTint : ndGlassTileRestingTint
-    if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
+    // effectIsInteractive is in the macOS 27 SDK only; release CI builds against 26.5.
+    let interactive = NSSelectorFromString("setEffectIsInteractive:")
+    if #available(macOS 27.0, *), glass.responds(to: interactive) {
+        glass.setValue(true, forKey: "effectIsInteractive")
+    }
 }
 
 private let ndGlassTileRestingTint = NSColor(name: nil) { appearance in
