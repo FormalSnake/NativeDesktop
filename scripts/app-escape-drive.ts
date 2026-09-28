@@ -177,7 +177,7 @@ if (process.env.ND_ESCAPE_WIDTH) {
 }
 const mainRef = (await app.windows()).windows[0]!.ref;
 
-type Node = { type: string; testID: string | null; visible: boolean; rows: unknown[] | null; children: Node[] };
+type Node = { ref: number; type: string; testID: string | null; visible: boolean; rows: unknown[] | null; children: Node[] };
 
 async function activePage(): Promise<string> {
   const tree = await app.tree(mainRef);
@@ -191,15 +191,53 @@ async function activePage(): Promise<string> {
   return found;
 }
 
+/// The app's tab count. An older app lists tabs as rows of one list; the
+/// current one gives each tab a slot of its own, in the sidebar and in the
+/// compact strip alike, and its `tab-list` is a plain box with no rows.
 async function tabCount(): Promise<number> {
   const tree = await app.tree(mainRef);
-  let count = 0;
+  let rows = -1;
+  let slots = 0;
   const walk = (node: Node) => {
-    if (node.testID === "tab-list") count = node.rows?.length ?? 0;
+    if (node.testID === "tab-list" && node.rows) rows = node.rows.length;
+    if (/^tab-slot-t\d+$/.test(node.testID ?? "")) slots++;
     for (const child of node.children) walk(child);
   };
   walk(tree.root as never);
-  return count;
+  return rows >= 0 ? rows : slots;
+}
+
+/// The command bar's rows while it is up, null while it is not.
+async function paletteRows(): Promise<{ ref: number; rows: { id?: string; title?: string }[] } | null> {
+  let found: { ref: number; rows: { id?: string; title?: string }[] } | null = null;
+  const walk = (node: Node) => {
+    if (node.testID === "palette" && node.visible) found = { ref: node.ref, rows: (node.rows ?? []) as never };
+    for (const child of node.children) walk(child);
+  };
+  walk((await app.tree(mainRef)).root as never);
+  return found;
+}
+
+/// The app's address is its command bar: ctrl+L brings it up holding the
+/// page's address, all of it selected, so the typing replaces it. Return runs
+/// the row on top once the rows follow the query; an address already open in
+/// another tab puts "switch to that tab" there instead, and then the bar's
+/// query is submitted through the socket.
+async function typeAddress(url: string): Promise<void> {
+  focusApp();
+  if (!(await paletteRows())) {
+    key("ctrl+l");
+    await until(paletteRows, (bar) => bar !== null, 8000);
+  }
+  typeText(url);
+  const isAddress = (row?: { id?: string; title?: string }) =>
+    row?.id === "url" && !!row.title && url.includes(String(row.title));
+  const bar = await until(paletteRows, (b) => !!b?.rows.some(isAddress), 5000);
+  if (bar && !isAddress(bar.rows[0])) {
+    await app.rpc.call("setValue", { ref: bar.ref, value: true });
+    return;
+  }
+  key("Return");
 }
 
 /// The app's own popovers on show. GTK draws a popover as an override-redirect
@@ -255,14 +293,7 @@ async function navigateActive(url: string): Promise<boolean> {
 async function load(url: string, lands = url): Promise<string> {
   let last = "";
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (!(await navigateActive(url))) {
-      focusApp();
-      key("ctrl+l");
-      await Bun.sleep(400);
-      key("ctrl+a");
-      typeText(url);
-      key("Return");
-    }
+    if (!(await navigateActive(url))) await typeAddress(url);
     const landed = await until(
       async () => {
         const id = await activePage();
@@ -273,7 +304,7 @@ async function load(url: string, lands = url): Promise<string> {
       15000,
     );
     if (landed) return landed.split("|")[0]!;
-    key("ctrl+t");
+    if (await paletteRows()) key("Escape");
     await Bun.sleep(800);
   }
   throw new Error(`the address field never took ${url} (last seen ${last.split("|").slice(1).join(" ") || "nothing"})`);
@@ -685,7 +716,26 @@ const routes: Route[] = [
   chord("key.ctrlN", "ctrl+n", WINDOW),
   // The app's private window, through browserCommand newPrivateWindow.
   chord("key.ctrlShiftN", "ctrl+shift+n", WINDOW),
-  chord("key.ctrlT", "ctrl+t", TAB),
+  // ctrl+T brings up the app's command bar and opens no tab until it is given
+  // an address.
+  {
+    name: "key.ctrlT",
+    expect: NONE,
+    run: async (page) => {
+      await focusPage(page);
+      const size = () => pageEval(page, "innerWidth + 'x' + innerHeight");
+      const before = await size();
+      key("ctrl+t");
+      const bar = await until(paletteRows, (b) => b !== null, 5000);
+      if (!bar) return { note: "", problems: ["ctrl+T brought up no command bar"] };
+      key("Escape");
+      await until(paletteRows, (b) => b === null, 5000);
+      // The page waits out the bar off to the side, as it does for any dialog
+      // over it, and comes back at its own size once the bar goes.
+      const back = await until(size, (v) => v === before, 8000);
+      return back ? "the command bar came up" : { note: "", problems: [`the page came back at ${await size()}, was ${before}`] };
+    },
+  },
   chord("key.ctrlShiftT", "ctrl+shift+t", {}),
   chord("key.ctrlShiftB", "ctrl+shift+b"),
   // The app's history palette, through browserCommand history; it stands the
