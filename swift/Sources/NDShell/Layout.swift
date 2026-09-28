@@ -202,6 +202,33 @@ final class NDButton: NSButton {
         ndIsSidebarRowModel ? nil : super.hitTest(point)
     }
 
+    /// The tint the tree asked for; inside a popover panel a flat button with
+    /// none takes the label ink (PopoverPanel.swift's ndPanelInk).
+    private var ndRequestedTint: NSColor?
+    private var ndPanelTinted = false
+
+    override var contentTintColor: NSColor? {
+        get { super.contentTintColor }
+        set {
+            ndRequestedTint = newValue
+            ndPanelTinted = false
+            super.contentTintColor = newValue
+            ndApplyPanelInk()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ndApplyPanelInk()
+    }
+
+    private func ndApplyPanelInk() {
+        let wanted = window is NDPopoverPanel && !isBordered && ndRequestedTint == nil
+        guard wanted != ndPanelTinted else { return }
+        ndPanelTinted = wanted
+        super.contentTintColor = wanted ? .labelColor : ndRequestedTint
+    }
+
     var ndPadding = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) {
         didSet {
             invalidateIntrinsicContentSize()
@@ -316,6 +343,23 @@ final class NDTextField: NSTextField {
     override func layout() {
         super.layout()
         ndLayoutLeadingIcon(self)
+    }
+
+    /// The colour the tree asked for; inside a popover panel the secondary
+    /// ink is swapped for the panel's darker one (PopoverPanel.swift).
+    private var ndRequestedColor: NSColor?
+
+    override var textColor: NSColor? {
+        get { ndRequestedColor ?? super.textColor }
+        set {
+            ndRequestedColor = newValue
+            super.textColor = ndPanelInk(for: newValue, in: window)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let requested = ndRequestedColor { super.textColor = ndPanelInk(for: requested, in: window) }
     }
 }
 

@@ -17,6 +17,22 @@ final class NDPopoverPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// The ink a label or a flat button uses inside a popover panel. The glass
+/// gives the rows no vibrancy, so the secondary ink a real NSPopover darkens
+/// comes out at about 3.9:1 on light glass; here it is darker, and a flat
+/// button's title (drawn in that secondary ink while it has no border)
+/// takes the full label ink, the way a popover's menu rows read. Dark glass
+/// keeps the system's inks, which already clear 4.5:1.
+private let ndPanelSecondaryInk = NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ? .secondaryLabelColor : NSColor.black.withAlphaComponent(0.64)
+}
+
+@MainActor func ndPanelInk(for requested: NSColor?, in window: NSWindow?) -> NSColor? {
+    guard window is NDPopoverPanel, requested == .secondaryLabelColor else { return requested }
+    return ndPanelSecondaryInk
+}
+
 /// The body with its arrow, as one outline in the panel's own coordinates.
 private func ndPanelShape(body: NSRect, arrowX: CGFloat, edge: NSRectEdge) -> CGPath {
     let path = CGMutablePath()
