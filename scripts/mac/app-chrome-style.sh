@@ -33,7 +33,9 @@ HOST="$(env -u SDKROOT -u DEVELOPER_DIR ./scripts/mac/dev-cef-bundle.sh | tail -
 trap cef_gate_unlock EXIT
 cef_gate_lock
 PROFILE="$RUN_DIR"
-mkdir -p "$PROFILE/store" "$PROFILE/cef" "$PROFILE/shots"
+# ND_APP_SHOTS_DIR keeps the captures past the run; the default goes with it.
+SHOTS_DIR="${ND_APP_SHOTS_DIR:-$PROFILE/shots}"
+mkdir -p "$PROFILE/store" "$PROFILE/cef" "$SHOTS_DIR"
 
 # Every new NDShell*.ips is a crash the machine owner sees as a "quit
 # unexpectedly" dialog. The run fails on one even if every leg passed.
@@ -125,7 +127,7 @@ launch() {
 
 drive() {
   ND_AUTOMATION_SOCKET="$SOCK" ND_HOST_PID="$HOST_PID" ND_CEF_DEBUG_PORT="$PORT" \
-    ND_APP_FIXTURE_PORT="$FIXTURE_PORT" ND_APP_SHOTS="$PROFILE/shots" ND_APP_HOST_LOG="$LOG" \
+    ND_APP_FIXTURE_PORT="$FIXTURE_PORT" ND_APP_SHOTS="$SHOTS_DIR" ND_APP_HOST_LOG="$LOG" \
     "$@" bun scripts/mac/app-chrome-drive.ts
 }
 

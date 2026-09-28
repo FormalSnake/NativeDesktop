@@ -507,7 +507,9 @@ async function pressReport(page: string, at: { x: number; y: number }): Promise<
 /// The inspector's own close button, which is the one path off the frontend
 /// that this app's menus do not have: its Inspect item is Chromium's, and that
 /// one only ever opens an inspector.
+let closeShots = 0;
 async function closeFrontend(page: string): Promise<void> {
+  closeShots++;
   // The frontend draws its close button only once it has been told it is
   // docked, which is a poll on the host side that can land after the dock.
   const at = await until(
@@ -521,6 +523,7 @@ async function closeFrontend(page: string): Promise<void> {
   // read taken only after it always reports an empty list.
   await frontendPresses().catch(() => []);
   await pagePresses(page).catch(() => "");
+  capture(`close-before-${closeShots}`, (await appWindowRect()).number);
   await app.cursor.click(at!);
   const gone = await until(
     "the inspector goes away",
@@ -528,6 +531,7 @@ async function closeFrontend(page: string): Promise<void> {
     (n) => n === 0,
     20000,
   ).catch(() => null);
+  capture(`close-after-${closeShots}`, (await appWindowRect()).number);
   if (gone === null) {
     const frontendSize = await onFrontend((session) => session.eval<string>("innerWidth+'x'+innerHeight")).catch(() => "?");
     const view = await viewBox(page);
