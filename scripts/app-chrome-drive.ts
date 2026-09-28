@@ -340,6 +340,10 @@ function shownView(): { node: number; container: Geom; cef: Geom; ids: { contain
     const cef = geom(ids.cef);
     if (!container || !cef) continue;
     if (container.x < -1000 || !container.mapped) continue;
+    // Apps keep functional-but-invisible browsers at 2x2 (an extension
+    // registry, say), and while the page stands aside for a dialog that one
+    // is the only view left on screen.
+    if (container.w < 32 || container.h < 32) continue;
     return { node, container, cef, ids };
   }
   return null;
@@ -784,12 +788,20 @@ async function paletteLegs(): Promise<void> {
   await Bun.sleep(3000);
   await resyncPage();
   let search = "";
+  let evalError = "";
   for (let i = 0; i < 20; i++) {
-    search = await fixtureEval<string>("JSON.stringify(location.search)").catch(() => "");
-    if (search === "?palette") break;
+    search = await fixtureEval<string>("JSON.stringify(location.href)").catch((e) => {
+      evalError = String(e).slice(0, 120);
+      return "";
+    });
+    if (search.endsWith("?palette")) break;
     await Bun.sleep(500);
   }
-  check("paletteTakesKeys", search === "?palette", `page location.search=${JSON.stringify(search)} after typing an address into the palette`);
+  check(
+    "paletteTakesKeys",
+    search.endsWith("?palette"),
+    `page location=${JSON.stringify(search)} (view ${shownView()?.node}${evalError ? `, ${evalError}` : ""}) after typing an address into the palette`,
+  );
 
   // A fresh baseline: the page the palette will cover is the one the leg above
   // navigated to.
