@@ -124,11 +124,16 @@ async function openCommandBar(chord: string): Promise<void> {
 /// it. What the bar held is read from where the page ends up.
 async function openAddress(url: string): Promise<void> {
   await openCommandBar("Meta+l");
+  await submitCommandBar(url);
+}
+
+/// Types into the command bar that is up and presses Return. The bar's rows
+/// follow its query a turn later, and Return runs the row on top: pressed
+/// straight after the typing it ran the default list's first command (New Tab)
+/// instead of going to the address. The address row on top, its title the
+/// address as shown (scheme dropped), says the query landed.
+async function submitCommandBar(url: string): Promise<void> {
   await main.keyboard.type(url);
-  // The bar's rows follow its query a turn later, and Return runs the row
-  // on top: pressed straight after the typing it ran the default list's first
-  // command (New Tab) instead of going to the address. The address row on top,
-  // its title the address as shown (scheme dropped), says the query landed.
   await until(
     "the command bar's top row is the address",
     async () => {
@@ -980,8 +985,7 @@ const legs: Leg[] = [
       const shown = async () => await activePage().catch(() => "");
       await openCommandBar("Meta+t");
       assert((await tabCount()) === tabs, "cmd+T opened a tab before the command bar was given an address");
-      await main.keyboard.type(`${FIXTURE_ORIGIN}/page2.html`);
-      await main.keyboard.press("Enter");
+      await submitCommandBar(`${FIXTURE_ORIGIN}/page2.html`);
       await until("the address from cmd+T opens a tab", shown, (id) => id !== before, 10000);
       await main.keyboard.press("Meta+w");
       await until("cmd+W closes it again", shown, (id) => id === before, 10000);
@@ -1829,6 +1833,12 @@ let passed = 0;
 /// window on top, and without this every later leg reports that instead of its
 /// own result.
 async function ensureFixturePage(): Promise<void> {
+  // A leg that failed with the command bar up leaves its backdrop over the
+  // window, and every click after it lands on the backdrop.
+  if (await commandBarShown().catch(() => false)) {
+    await main.keyboard.press("Escape");
+    await until("the command bar goes away", commandBarShown, (shown) => !shown, 5000).catch(() => null);
+  }
   // The app's cmd+W is one menu item acting on the main window's active tab,
   // so a second window closes through its own close button.
   for (let attempt = 0; attempt < 3 && (await app.windows()).windows.length > 1; attempt++) {
