@@ -14,9 +14,14 @@
 // spacing lives here then (`setSpacing`).
 const std = @import("std");
 const gtk = @import("gtk");
+const gdk = @import("gdk");
 const gobject = @import("gobject");
+const ndmotion = @import("motion.zig");
 
 const K_STATE = "nd-tile-grid";
+const K_CELL = "nd-tile-cell";
+/// A reorder's slide, the AppKit peer's 0.2 s ease-out.
+const slide_us: f64 = 200_000;
 
 const State = struct {
     min_width: c_int = 0,
@@ -24,7 +29,54 @@ const State = struct {
     aspect: f64 = 0,
     spacing: c_int = 0,
     orientation: gtk.Orientation = .horizontal,
+    last_width: c_int = -1,
+    last_count: c_int = -1,
+    tick: c_uint = 0,
+    sliding: bool = false,
 };
+
+/// Where a child's cell is, and where it was drawn last: a child whose cell
+/// moves while the grid keeps its width and its count (a reorder) slides from
+/// where it was drawn.
+const Cell = struct {
+    x: c_int,
+    y: c_int,
+    shown_x: c_int,
+    shown_y: c_int,
+    from_x: c_int = 0,
+    from_y: c_int = 0,
+    start_us: i64 = -1,
+};
+
+fn cellOf(c: *gtk.Widget) ?*Cell {
+    const raw = gobject.Object.getData(asObject(c), K_CELL) orelse return null;
+    return @ptrCast(@alignCast(raw));
+}
+
+fn freeCell(data: ?*anyopaque) callconv(.c) void {
+    const cell: *Cell = @ptrCast(@alignCast(data.?));
+    std.heap.c_allocator.destroy(cell);
+}
+
+fn nowUs(w: *gtk.Widget) i64 {
+    const clock = gtk.Widget.getFrameClock(w) orelse return 0;
+    return gdk.FrameClock.getFrameTime(clock);
+}
+
+fn cbTick(w: *gtk.Widget, _: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) c_int {
+    const s = stateOf(w) orelse return 0;
+    if (!s.sliding) {
+        s.tick = 0;
+        return 0;
+    }
+    gtk.Widget.queueAllocate(w);
+    return 1;
+}
+
+fn eased(p: f64) f64 {
+    const inv = 1.0 - p;
+    return 1.0 - inv * inv * inv;
+}
 
 fn asObject(p: anytype) *gobject.Object {
     return @ptrCast(@alignCast(p));
@@ -195,6 +247,12 @@ fn allocate(w: *gtk.Widget, width: c_int, _: c_int, _: c_int) callconv(.c) void 
     const g = grid(w, s, kids, width);
     const pitch = g.cell_width + @as(f64, @floatFromInt(s.spacing));
     const rtl = gtk.Widget.getDirection(w) == .rtl;
+    const same_shape = s.last_width == width and s.last_count == kids.count;
+    const may_slide = same_shape and gtk.Widget.getMapped(w) != 0 and ndmotion.animationsEnabled();
+    s.last_width = width;
+    s.last_count = kids.count;
+    const now = nowUs(w);
+    var sliding = false;
     var i: c_int = 0;
     var child = gtk.Widget.getFirstChild(w);
     while (child) |c| : (child = gtk.Widget.getNextSibling(c)) {
@@ -207,13 +265,46 @@ fn allocate(w: *gtk.Widget, width: c_int, _: c_int, _: c_int) callconv(.c) void 
         const left = @as(f64, @floatFromInt(column)) * pitch;
         const x: c_int = @intFromFloat(@round(left));
         const right: c_int = @intFromFloat(@round(left + g.cell_width));
+        const y = row * (g.cell_height + s.spacing);
+        const cell = cellOf(c) orelse blk: {
+            const fresh = std.heap.c_allocator.create(Cell) catch return;
+            fresh.* = .{ .x = x, .y = y, .shown_x = x, .shown_y = y };
+            gobject.Object.setDataFull(asObject(c), K_CELL, fresh, &freeCell);
+            break :blk fresh;
+        };
+        if (cell.x != x or cell.y != y) {
+            if (may_slide) {
+                cell.from_x = cell.shown_x;
+                cell.from_y = cell.shown_y;
+                cell.start_us = now;
+            } else cell.start_us = -1;
+            cell.x = x;
+            cell.y = y;
+        }
+        var at_x = x;
+        var at_y = y;
+        if (cell.start_us >= 0) {
+            const p = @min(@as(f64, @floatFromInt(now - cell.start_us)) / slide_us, 1.0);
+            if (p >= 1.0) {
+                cell.start_us = -1;
+            } else {
+                const e = eased(p);
+                at_x = cell.from_x + @as(c_int, @intFromFloat(@round(@as(f64, @floatFromInt(x - cell.from_x)) * e)));
+                at_y = cell.from_y + @as(c_int, @intFromFloat(@round(@as(f64, @floatFromInt(y - cell.from_y)) * e)));
+                sliding = true;
+            }
+        }
+        cell.shown_x = at_x;
+        cell.shown_y = at_y;
         var rect: gtk.Allocation = .{
-            .f_x = x,
-            .f_y = row * (g.cell_height + s.spacing),
+            .f_x = at_x,
+            .f_y = at_y,
             .f_width = right - x,
             .f_height = g.cell_height,
         };
         gtk.Widget.sizeAllocate(c, &rect, -1);
         i += 1;
     }
+    s.sliding = sliding;
+    if (sliding and s.tick == 0) s.tick = gtk.Widget.addTickCallback(w, &cbTick, null, null);
 }

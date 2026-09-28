@@ -1142,10 +1142,22 @@ final class NDBoxView: NSView {
         return NSSize(width: max(width + padX, own.minWidth), height: max(height + padY, own.minHeight))
     }
 
+    private var tileLaidOutWidth: CGFloat = -1
+    private var tileOrder: [ObjectIdentifier] = []
+
     private func ndPlaceTiles(_ visible: [NSView]) {
         let width = max(0, bounds.width - ndPadding.left - ndPadding.right)
         let grid = tileGrid(visible, width: width)
         let rightToLeft = userInterfaceLayoutDirection == .rightToLeft
+        // The same tiles in a new order at the same width slide to their new
+        // cells (a reorder while one is dragged over the others); a resize,
+        // an added or removed tile, and the first pass place them at once.
+        let order = visible.map { ObjectIdentifier($0) }
+        let slide = tileLaidOutWidth == bounds.width && order != tileOrder && Set(order) == Set(tileOrder)
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        tileLaidOutWidth = bounds.width
+        tileOrder = order
+        var moves: [(NSView, NSRect)] = []
         for (i, child) in visible.enumerated() {
             let row = i / grid.columns
             var column = i % grid.columns
@@ -1157,7 +1169,17 @@ final class NDBoxView: NSView {
             // and the last column still ends on the box's trailing edge.
             let placed = backingAlignedRect(rect, options: .alignAllEdgesNearest)
             if !child.translatesAutoresizingMaskIntoConstraints { child.translatesAutoresizingMaskIntoConstraints = true }
-            if !NSEqualRects(child.frame, placed) { child.frame = placed }
+            if !NSEqualRects(child.frame, placed) { moves.append((child, placed)) }
+        }
+        guard slide else {
+            for (child, placed) in moves { child.frame = placed }
+            return
+        }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.allowsImplicitAnimation = true
+            for (child, placed) in moves { child.animator().frame = placed }
         }
     }
 

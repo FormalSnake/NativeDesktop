@@ -14,7 +14,9 @@ tileAspect={0.74} spacing={6}>` lays its children out as equal cells that span t
 as many columns as fit at the minimum width (never narrower than a child's own minimum, or than
 keeps a child's minimum height at the aspect), a short last row on the column pitch, each cell
 `tileAspect` of its width tall. The box's height follows its width, so a resized pane reflows it in
-the same layout pass (AppKit `NDBoxView`, GTK `src/gtk/tilegrid.zig`).
+the same layout pass (AppKit `NDBoxView`, GTK `src/gtk/tilegrid.zig`). The same children in a new
+order at the same width slide to their new cells (0.2 s ease-out, none with reduced motion), which
+is what a drag-to-reorder over the grid looks like.
 
 This file is intentionally short and is not kept in sync with schema changes by hand. Treat
 `docs/styling.md` as the source of truth and this file as the "start here" pointer to it.
