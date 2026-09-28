@@ -72,7 +72,7 @@ const cursor = new Cursor({
 
 // MARK: - app vocabulary (the same reads scripts/mac/app-chrome-drive.ts uses)
 
-type Node = { type: string; testID: string | null; visible: boolean; rows: unknown[] | null; children: Node[] };
+type Node = { ref: number; type: string; testID: string | null; visible: boolean; rows: unknown[] | null; children: Node[] };
 
 async function activePage(): Promise<string> {
   const tree = await app.tree(mainWindow);
@@ -86,19 +86,20 @@ async function activePage(): Promise<string> {
   return found!;
 }
 
-/// The app's tab count: the sidebar's row list, or in the compact layout the
-/// tab strip's items.
+/// The app's tab count. An older app lists tabs as rows of one list; the
+/// current one gives each tab a slot of its own, in the sidebar and in the
+/// compact strip alike, and its `tab-list` is a plain box with no rows.
 async function tabCount(): Promise<number> {
   const tree = await app.tree(mainWindow);
   let rows = -1;
-  let items = 0;
+  let slots = 0;
   const walk = (node: Node) => {
-    if (node.testID === "tab-list") rows = node.rows?.length ?? 0;
-    if (node.testID?.startsWith("tab-item-")) items++;
+    if (node.testID === "tab-list" && node.rows) rows = node.rows.length;
+    if (/^tab-slot-t\d+$/.test(node.testID ?? "")) slots++;
     for (const child of node.children) walk(child);
   };
   walk(tree.root as never);
-  return rows >= 0 ? rows : items;
+  return rows >= 0 ? rows : slots;
 }
 /// Real keys into the new-tab page's search field. The header's own address
 /// field is not always on show (the app hides it in some layouts), so a page
@@ -110,15 +111,36 @@ async function openAddress(url: string): Promise<void> {
     await pageEval(app, page, `location.href = ${JSON.stringify(url)}`);
     return;
   }
-  if (!(await main.getByTestId("new-tab-search").isVisible().catch(() => false))) {
-    chord("t", ["command"]);
-    await until("the new-tab page", () => main.getByTestId("new-tab-search").isVisible(), (v) => v === true, 8000);
+  // The app's address is its command bar: cmd+L brings it up holding the
+  // page's address, all of it selected, so the typing replaces it.
+  if (!(await paletteRows())) {
+    chord("l", ["command"]);
+    await until("the command bar comes up", paletteRows, (bar) => bar !== null, 8000);
   }
-  await cursor.click(main.getByTestId("new-tab-search"));
-  await Bun.sleep(400);
   osa(`tell application "System Events" to keystroke ${JSON.stringify(url)}`);
-  await Bun.sleep(200);
+  // Return runs the row on top once the rows follow the query; an address
+  // already open in another tab puts "switch to that tab" there instead, and
+  // then the bar's query is submitted through the socket.
+  const isAddress = (row?: { id?: string; title?: string }) =>
+    row?.id === "url" && !!row.title && url.includes(String(row.title));
+  const bar = await until("the command bar lists the address", paletteRows, (b) => !!b?.rows.some(isAddress), 5000)
+    .catch(() => null);
+  if (bar && !isAddress(bar.rows[0])) {
+    await app.rpc.call("setValue", { ref: bar.ref, value: true });
+    return;
+  }
   chord("36", []);
+}
+
+/// The command bar's rows while it is up, null while it is not.
+async function paletteRows(): Promise<{ ref: number; rows: { id?: string; title?: string }[] } | null> {
+  let found: { ref: number; rows: { id?: string; title?: string }[] } | null = null;
+  const walk = (node: Node) => {
+    if (node.testID === "palette" && node.visible) found = { ref: node.ref, rows: (node.rows ?? []) as never };
+    for (const child of node.children) walk(child);
+  };
+  walk((await app.tree(mainWindow)).root as never);
+  return found;
 }
 
 async function load(url: string, ready = "complete"): Promise<string> {
