@@ -87,11 +87,6 @@ const nd_base_css =
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
-    \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
-    \\dialog.nd-palette { --nd-ground: rgb(255 255 255); --nd-ink: rgb(23 23 23); --nd-muted: rgb(140 140 140); --nd-hairline: rgb(232 232 232); --nd-wash: rgb(239 239 239); }
-    \\@media (prefers-color-scheme: dark) { dialog.nd-palette { --nd-ground: rgb(28 28 28); --nd-ink: rgb(237 237 237); --nd-muted: rgb(148 148 148); --nd-hairline: rgb(51 51 51); --nd-wash: rgb(45 45 45); } }
-    \\dialog.nd-palette floating-sheet > dimming { background-color: color-mix(in srgb, var(--nd-ground) 74%, transparent); opacity: 0; transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1); }
-    \\dialog.nd-palette.nd-palette-shown floating-sheet > dimming { opacity: 1; transition-duration: 160ms; }
     \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); }
     \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
     \\.nd-palette-card { background-color: var(--window-bg-color); color: var(--window-fg-color); border-radius: 15px; box-shadow: 0 0 14px 2px rgb(0 0 6 / 3%), 0 0 5px 2px rgb(0 0 6 / 10%), 0 0 0 1px rgb(0 0 0 / 5%); outline: 1px solid rgb(255 255 255 / 7%); outline-offset: -1px; }
