@@ -37,6 +37,7 @@ const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
 const ndicons = @import("icons.zig");
 const dialogsurface = @import("dialogsurface.zig");
+const typeahead = @import("typeahead.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
 
@@ -527,9 +528,15 @@ fn present(state: *State) void {
     startPlacing(state);
     state.presented = true;
     state.pending_open = false;
+    typeahead.wire(parent_win);
     // Grabbing focus selects the entry's whole text, which is what a seeded
     // open (the current address) wants.
     _ = gtk.Widget.grabFocus(state.entry.as(gtk.Widget));
+    // The widget that now holds the focus (the entry's inner text) is realized
+    // here rather than on the dialog's first frame: GTK swallows a key whose
+    // path to the focus widget crosses an unrealized widget, and the keys typed
+    // straight after the chord that opened the bar were lost.
+    if (gtk.Window.getFocus(parent_win)) |focus| gtk.Widget.realize(focus);
     selectAllFromStart(state);
     setHighlight(state, if (state.ids.items.len > 0) 0 else -1);
 }
