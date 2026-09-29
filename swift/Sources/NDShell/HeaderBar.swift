@@ -1271,6 +1271,14 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     func ownerWindow() -> NSWindow? { resolveOwnerWindow() }
 }
 
+/// Every view a header bar holds in a slot. A button promoted to a
+/// system-drawn toolbar item never gets a superview, and the core only sends
+/// the remove op for a child whose backend reports a parent (`vt.has_parent`,
+/// src/tree.zig), so without this an unmounted header button stayed in its
+/// slot and every remount added another item beside it. Weak, so a header
+/// torn down with its children in place leaves nothing to alias a later view.
+nonisolated(unsafe) let ndHeaderBarChildren = NSHashTable<NSView>.weakObjects()
+
 /// Places `child` in `bar`'s start/end slot array (generated HeaderBar
 /// append/insertBefore arm): before `before` when that sibling is in the same
 /// slot, else last. A child already in a slot moves rather than duplicating,
@@ -1280,6 +1288,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
 func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String, before: NSView? = nil) {
     bar.startViews.removeAll { $0 === child }
     bar.endViews.removeAll { $0 === child }
+    ndHeaderBarChildren.add(child)
     if slot == "end" {
         ndSlotInsert(&bar.endViews, child, before: before)
     } else {
@@ -1356,6 +1365,7 @@ func ndHeaderBarApplySubtitle(_ bar: NDHeaderBarView, _ subtitle: String) {
 func ndHeaderBarUnpack(_ bar: NDHeaderBarView, _ child: NSView) {
     bar.startViews.removeAll { $0 === child }
     bar.endViews.removeAll { $0 === child }
+    ndHeaderBarChildren.remove(child)
     bar.pane?.manager?.scheduleRebuild()
 }
 

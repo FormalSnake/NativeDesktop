@@ -165,6 +165,7 @@ func buildVTable() -> nd_backend {
             // its own view never has a superview either; without this a header
             // unmounted from the tree left its items in the toolbar.
             if let header = view as? NDHeaderBarView, header.pane != nil { return true }
+            if ndHeaderBarChildren.contains(view) { return true }
             return view.superview != nil
         }
     }
