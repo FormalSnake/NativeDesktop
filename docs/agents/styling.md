@@ -45,7 +45,7 @@ JSON; it is not nested under `style` and does not touch the C-ABI vtable.
   | `heading` | `.preferredFont(forTextStyle: .headline)` |
   | `caption` / `caption-heading` | `.preferredFont(forTextStyle: .caption1)` / `.caption2` |
   | `body` | `.preferredFont(forTextStyle: .body)` |
-  | `dimmed` | `.textColor = .secondaryLabelColor` |
+  | `dimmed` | `.textColor = .secondaryLabelColor`; on a box, `alphaValue = 0.55` over the whole subtree, as libadwaita's opacity does |
   | `monospace` | `.font = .monospacedSystemFont(ofSize:weight:)` |
   | `numeric` | `.font = .monospacedDigitSystemFont(ofSize:weight:)` |
   | `activatable` | on a box, an `NSTrackingArea`-driven quaternary-fill hover highlight at the concentric radius |

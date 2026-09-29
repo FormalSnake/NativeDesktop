@@ -112,6 +112,7 @@ private let ndSFSymbolMap: [String: String] = [
     "application-x-addon": "puzzlepiece.extension",
     "package-x-generic": "shippingbox",
     "system-software-install": "arrow.down.app",
+    "weather-clear-night": "moon.zzz",
 ]
 
 func ndSFSymbol(forFreedesktop name: String) -> String? {

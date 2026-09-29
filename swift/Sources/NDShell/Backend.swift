@@ -752,6 +752,13 @@ func ndApplyCssClasses(_ view: NSView, _ classes: [String]) {
         }
     }
 
+    // libadwaita's `.dimmed` is opacity on the widget, so on GTK a dimmed box
+    // fades its icons and every child with it. Text colour alone would leave
+    // a box's images at full strength here.
+    if let box = view as? NDBoxView {
+        box.alphaValue = classes.contains("dimmed") ? 0.55 : 1
+    }
+
     if let bar = view as? NDProgressBarView {
         bar.loadBar = classes.contains("osd")
         bar.quiet = classes.contains("dimmed")
