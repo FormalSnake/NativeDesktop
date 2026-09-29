@@ -381,7 +381,7 @@ import Foundation
             defer { nd_cef_ref_release(browserHost) }
             frontend.start(host: browserHost, observer: view?.box.dockObserver)
         }
-        guard let frame = browser.pointee.get_main_frame?(browser) else { return false }
+        guard frontend.isHooked, let frame = browser.pointee.get_main_frame?(browser) else { return false }
         defer { nd_cef_ref_release(frame) }
         return ndCefDockFrontend(browser, frame)
     }

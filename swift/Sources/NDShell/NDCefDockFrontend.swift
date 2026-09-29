@@ -61,6 +61,13 @@ import Foundation
     private var registration: UnsafeMutablePointer<cef_registration_t>?
     private var nextMessageID: Int32 = 1
     private var handshake: Int32 = 0
+    private var newDocumentHook: Int32 = 0
+
+    /// Whether the next document the frontend loads gets the hook: the
+    /// new-document script has been acknowledged, or the session failed and
+    /// never will. The can_dock re-point waits on it; a re-point issued first
+    /// lands a document without the hook, whose bounds never reach the host.
+    private(set) var isHooked = false
 
     init(window: NDCefChromeWindow) {
         self.window = window
@@ -78,8 +85,10 @@ import Foundation
         guard self.host == nil, let observer else { return }
         nd_cef_ref_add(browserHost)
         host = browserHost
+        isHooked = false
         registration = browserHost.pointee.add_dev_tools_message_observer?(browserHost, ndCefHandOut(observer))
         handshake = send("Runtime.enable", nil)
+        if handshake == 0 { isHooked = true }
     }
 
     func stop() {
@@ -88,15 +97,26 @@ import Foundation
         nd_cef_ref_release(host)
         host = nil
         handshake = 0
+        newDocumentHook = 0
+        isHooked = false
     }
 
     func handleResult(id: Int32, ok: Bool) {
+        if id == newDocumentHook, newDocumentHook != 0 {
+            newDocumentHook = 0
+            isHooked = true
+            return
+        }
         guard id == handshake, handshake != 0 else { return }
         handshake = 0
-        guard ok else { return }
+        guard ok else {
+            isHooked = true
+            return
+        }
         _ = send("Runtime.addBinding", ["name": "ndDockBounds"])
         _ = send("Page.enable", nil)
-        _ = send("Page.addScriptToEvaluateOnNewDocument", ["source": Self.hook])
+        newDocumentHook = send("Page.addScriptToEvaluateOnNewDocument", ["source": Self.hook])
+        if newDocumentHook == 0 { isHooked = true }
         _ = send("Runtime.evaluate", ["expression": Self.hook])
     }
 
