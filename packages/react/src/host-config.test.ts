@@ -130,7 +130,7 @@ test("an undeclared on* prop registers nothing and warns once, naming the declar
     expect(Object.keys(handlersOf("button", { onClick: () => {}, onClicked: () => {} }))).toEqual(["clicked"]);
     const text = warn.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(text).toContain('<button> has no "onClicked" event');
-    expect(text).toContain("Declared events: onClick, onHoverChanged, onDragStarted, onDragEnded, onDragOver, onDropped.");
+    expect(text).toContain("Declared events: onClick, onHoverChanged, onDragStarted, onDragEnded, onDragOver, onDropped, onContextMenuSelected.");
   } finally {
     warn.mockRestore();
   }

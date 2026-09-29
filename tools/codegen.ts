@@ -3788,7 +3788,7 @@ const UNIVERSAL_COMMAND_EXEMPT = new Set(["Terminal"]);
  *  one arm above the kind dispatch (GtkDragSource/GtkDropTarget controllers,
  *  an NSDraggingSession plus a drop zone). So there is no per-widget signal
  *  template for them, and the SIGNALS/SWIFT_SIGNALS tables never see them. */
-const UNIVERSAL_EVENTS = new Set(["dragStarted", "dragEnded", "dragOver", "dropped"]);
+const UNIVERSAL_EVENTS = new Set(["dragStarted", "dragEnded", "dragOver", "dropped", "contextMenuSelected"]);
 
 /** The events a widget still needs its own signal template for. */
 function ownEvents(w: Widget): Event[] {
@@ -3904,6 +3904,9 @@ const UNIVERSAL_PROP_OWNERS: Record<string, string | null> = {
   draggable: null,
   dragPayload: null,
   dropTarget: null,
+  // A right-click menu belongs to whatever handle the node carries, the same
+  // as the drag/drop trio.
+  contextMenu: null,
 };
 
 function updatableProps(w: Widget): Prop[] {
@@ -8109,6 +8112,7 @@ function genSwift(s: Schema): string {
   out += '    if let tip = propStr(universal, "tooltip") { ndApplyTooltip(view, tip) }\n';
   out += '    if let on = propBool(universal, "enabled") { ndApplyEnabled(view, on) }\n';
   out += "    ndDragDropApply(view, universal)\n";
+  out += "    ndContextMenuApply(view, universal)\n";
   out += "    // The cross-axis default a box gives this child is resolved from the\n";
   out += "    // KIND, once, here (Layout.swift's ndSelfSizedOnAxis).\n";
   out += "    ndRecordWidgetKind(view, kind)\n";
@@ -8687,6 +8691,7 @@ function genSwiftApplyProps(s: Schema): string {
   out += '    if let tip = propStr(props, "tooltip") { ndApplyTooltip(view, tip) }\n';
   out += '    if let on = propBool(props, "enabled") { ndApplyEnabled(view, on) }\n';
   out += "    ndDragDropApply(view, props)\n";
+  out += "    ndContextMenuApply(view, props)\n";
   let first = true;
   for (const w of s.widgets) {
     const updProps = updatableProps(w);
@@ -9346,6 +9351,7 @@ function genSwiftEvents(s: Schema): string {
   out += "    // installed by the props arm, which runs before this and so has\n";
   out += "    // no node id yet. This is where they learn it.\n";
   out += "    ndDragDropConnect(view, nodeID: nodeID)\n";
+  out += "    ndContextMenuConnect(view, nodeID: nodeID)\n";
   out += "    // The only op the core hands every node's id to, so it is where a\n";
   out += "    // node id becomes resolvable to a view (Popover's `anchor` prop is\n";
   out += "    // the one reader; NDShell/Popovers.swift).\n";

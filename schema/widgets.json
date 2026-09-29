@@ -149,6 +149,17 @@
         { "name": "severity", "type": "string" },
         { "name": "message", "type": "string" }
       ]
+    },
+    {
+      "name": "MenuEntry",
+      "doc": "One item of a widget's contextMenu: a command with an id, echoed back on contextMenuSelected, or a separator. accelerator is shown beside the label and binds nothing; the menu bar keeps the binding.",
+      "fields": [
+        { "name": "id", "type": "string", "optional": true },
+        { "name": "label", "type": "string", "optional": true },
+        { "name": "enabled", "type": "bool", "optional": true },
+        { "name": "separator", "type": "bool", "optional": true },
+        { "name": "accelerator", "type": "string", "optional": true }
+      ]
     }
   ],
   "widgets": [
@@ -170,6 +181,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -183,7 +195,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["showAlert", "openFile", "saveFile", "showAbout", "showTabOverview", "present"],
       "automation": { "role": "window", "textFrom": "title" }
@@ -204,6 +217,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -211,7 +225,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     },
@@ -229,13 +244,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "label", "textFrom": "text" }
     },
@@ -255,6 +272,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "prominent", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "destructive", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "badge", "type": "string", "appliesTo": "createAndUpdate" },
@@ -266,7 +284,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "button", "textFrom": "label" }
@@ -290,6 +309,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -300,7 +320,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus", "activateLeadingIcon", "activateTrailingIcon"],
       "automation": { "role": "textbox", "textFrom": "text" }
@@ -317,6 +338,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -324,7 +346,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "textbox", "textFrom": "text" }
@@ -341,6 +364,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -348,7 +372,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "checkbox", "textFrom": "label" }
@@ -366,6 +391,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -373,7 +399,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "radio", "textFrom": "label" }
@@ -390,6 +417,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -397,7 +425,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "combobox", "textFrom": null }
@@ -417,6 +446,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -424,7 +454,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "slider", "textFrom": null }
     },
@@ -439,13 +470,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "progressbar", "textFrom": null }
     },
@@ -465,13 +498,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "image", "textFrom": null }
     },
@@ -487,13 +522,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "scrollarea", "textFrom": null }
     },
@@ -508,13 +545,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "separator", "textFrom": null }
     },
@@ -529,13 +568,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "spinner", "textFrom": null }
     },
@@ -556,6 +597,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -563,7 +605,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "tablist", "textFrom": null }
     },
@@ -585,13 +628,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "grid", "textFrom": null }
     },
@@ -610,6 +655,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -617,7 +663,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "list", "textFrom": null }
     },
@@ -635,6 +682,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -673,7 +721,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": [
         "goBack", "goForward", "reload", "stop", "executeJavaScript", "setZoom", "setUserAgent", "openDevTools",
@@ -703,6 +752,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -710,7 +760,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": [],
       "automation": { "role": "custom", "textFrom": null }
@@ -736,6 +787,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -743,7 +795,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["revealSidebar", "concealSidebar"],
       "automation": { "role": "group", "textFrom": null }
@@ -768,6 +821,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -776,7 +830,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "toolbar", "textFrom": "title" }
     },
@@ -799,6 +854,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "commands": ["revealTopBars", "concealTopBars"],
@@ -806,7 +862,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     },
@@ -828,6 +885,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -838,7 +896,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus", "activateLeadingIcon", "activateTrailingIcon"],
       "automation": { "role": "textbox", "textFrom": "text" }
@@ -858,6 +917,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -866,7 +926,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "list", "textFrom": null }
     },
@@ -888,6 +949,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -900,7 +962,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "tree", "textFrom": null }
     },
@@ -915,13 +978,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "menubar", "textFrom": null }
     },
@@ -936,13 +1001,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "menu", "textFrom": "label" }
     },
@@ -961,6 +1028,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -968,7 +1036,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "menuitem", "textFrom": "label" }
     },
@@ -985,13 +1054,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": "title" }
     },
@@ -1015,6 +1086,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1022,7 +1094,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "listitem", "textFrom": "title" }
     },
@@ -1039,6 +1112,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1046,7 +1120,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "switch", "textFrom": "title" }
     },
@@ -1062,13 +1137,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     },
@@ -1083,13 +1160,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     },
@@ -1104,6 +1183,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1111,7 +1191,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "switch", "textFrom": null }
@@ -1129,6 +1210,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1136,7 +1218,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "button", "textFrom": "label" }
     },
@@ -1152,6 +1235,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1159,7 +1243,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "radiogroup", "textFrom": null }
     },
@@ -1179,6 +1264,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1186,7 +1272,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "spinbutton", "textFrom": null }
@@ -1205,6 +1292,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1212,7 +1300,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "link", "textFrom": "label" }
     },
@@ -1233,13 +1322,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "levelbar", "textFrom": null }
     },
@@ -1255,6 +1346,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1262,7 +1354,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "colorpicker", "textFrom": null }
     },
@@ -1279,6 +1372,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1286,7 +1380,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "banner", "textFrom": "title" }
     },
@@ -1302,13 +1397,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "menubutton", "textFrom": "label" }
     },
@@ -1324,6 +1421,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1331,7 +1429,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "splitbutton", "textFrom": "label" }
     },
@@ -1349,6 +1448,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1356,7 +1456,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "popover", "textFrom": null }
     },
@@ -1372,6 +1473,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1379,7 +1481,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "expander", "textFrom": "label" }
     },
@@ -1396,13 +1499,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": "title" }
     },
@@ -1416,6 +1521,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1424,7 +1530,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["showToast", "dismissToast"],
       "automation": { "role": "group", "textFrom": null }
@@ -1443,6 +1550,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1450,7 +1558,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "datepicker", "textFrom": null }
     },
@@ -1474,6 +1583,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1485,7 +1595,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "table", "textFrom": null }
     },
@@ -1505,6 +1616,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1515,7 +1627,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "tree", "textFrom": null }
     },
@@ -1530,6 +1643,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1537,7 +1651,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "fontpicker", "textFrom": null }
     },
@@ -1555,13 +1670,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "video", "textFrom": null }
     },
@@ -1577,13 +1694,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "trayitem", "textFrom": null }
     },
@@ -1601,13 +1720,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "button", "textFrom": "label" }
     },
@@ -1636,6 +1757,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1649,7 +1771,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["copy", "paste", "selectAll", "clearSelection", "focus"],
       "automation": { "role": "terminal", "textFrom": null }
@@ -1666,6 +1789,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1673,7 +1797,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     },
@@ -1691,6 +1816,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1701,7 +1827,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "dialog", "textFrom": null }
     },
@@ -1719,13 +1846,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "image", "textFrom": "text" }
     },
@@ -1742,13 +1871,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "label", "textFrom": "label" }
     },
@@ -1765,6 +1896,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1772,7 +1904,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "label", "textFrom": "label" }
     },
@@ -1787,13 +1920,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "label", "textFrom": "keys" }
     },
@@ -1812,6 +1947,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1820,7 +1956,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "combobox", "textFrom": "text" }
@@ -1837,6 +1974,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1844,7 +1982,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "toolbar", "textFrom": null }
     },
@@ -1863,6 +2002,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1870,7 +2010,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "dialog", "textFrom": "title" }
     },
@@ -1887,6 +2028,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1894,7 +2036,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "dialog", "textFrom": null }
     },
@@ -1910,6 +2053,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1917,7 +2061,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "label", "textFrom": "markdown" }
     },
@@ -1934,13 +2079,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "progressbar", "textFrom": null }
     },
@@ -1958,13 +2105,15 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "custom", "textFrom": null }
     },
@@ -1986,6 +2135,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -1993,7 +2143,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "custom", "textFrom": null }
     },
@@ -2014,6 +2165,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -2023,7 +2175,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "commands": ["focus"],
       "automation": { "role": "textbox", "textFrom": "text" }
@@ -2039,6 +2192,7 @@
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
         { "name": "dragPayload", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "dropTarget", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
+        { "name": "contextMenu", "type": "objectList", "itemShape": "MenuEntry", "appliesTo": "createAndUpdate" },
         { "name": "testID", "type": "string", "appliesTo": "meta" }
       ],
       "events": [
@@ -2046,7 +2200,8 @@
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },
-        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" }
+        { "name": "dropped", "ndpName": "onDropped", "payload": "dragPoint" },
+        { "name": "contextMenuSelected", "ndpName": "onContextMenuSelected", "payload": "text" }
       ],
       "automation": { "role": "group", "textFrom": null }
     }

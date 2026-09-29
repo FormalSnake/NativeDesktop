@@ -4093,6 +4093,7 @@ const nd_resets_Window = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Box = [_]NdPropReset{
     .{ .key = "spacing", .value = .{ .integer = -1 } },
@@ -4105,6 +4106,7 @@ const nd_resets_Box = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Label = [_]NdPropReset{
     .{ .key = "variant", .value = .{ .string = "body" } },
@@ -4113,6 +4115,7 @@ const nd_resets_Label = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Button = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4123,6 +4126,7 @@ const nd_resets_Button = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
     .{ .key = "prominent", .value = .{ .bool = false } },
     .{ .key = "destructive", .value = .{ .bool = false } },
     .{ .key = "badge", .value = .{ .string = "" } },
@@ -4143,6 +4147,7 @@ const nd_resets_TextInput = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_TextArea = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
@@ -4151,6 +4156,7 @@ const nd_resets_TextArea = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Checkbox = [_]NdPropReset{
     .{ .key = "checked", .value = .{ .bool = false } },
@@ -4160,6 +4166,7 @@ const nd_resets_Checkbox = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Radio = [_]NdPropReset{
     .{ .key = "checked", .value = .{ .bool = false } },
@@ -4169,6 +4176,7 @@ const nd_resets_Radio = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Select = [_]NdPropReset{
     .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
@@ -4177,6 +4185,7 @@ const nd_resets_Select = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Slider = [_]NdPropReset{
     .{ .key = "value", .value = .{ .float = 0.0 } },
@@ -4185,6 +4194,7 @@ const nd_resets_Slider = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ProgressBar = [_]NdPropReset{
     .{ .key = "fraction", .value = .{ .float = 0.0 } },
@@ -4193,6 +4203,7 @@ const nd_resets_ProgressBar = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Image = [_]NdPropReset{
     .{ .key = "path", .value = .{ .string = "" } },
@@ -4203,6 +4214,7 @@ const nd_resets_Image = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ScrollView = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4210,6 +4222,7 @@ const nd_resets_ScrollView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Separator = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4217,6 +4230,7 @@ const nd_resets_Separator = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Spinner = [_]NdPropReset{
     .{ .key = "spinning", .value = .{ .bool = true } },
@@ -4225,6 +4239,7 @@ const nd_resets_Spinner = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_TabView = [_]NdPropReset{
     .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
@@ -4233,6 +4248,7 @@ const nd_resets_TabView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Grid = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4240,6 +4256,7 @@ const nd_resets_Grid = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ListView = [_]NdPropReset{
     .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
@@ -4252,6 +4269,7 @@ const nd_resets_ListView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_WebView = [_]NdPropReset{
     .{ .key = "url", .value = .{ .string = "" } },
@@ -4261,6 +4279,7 @@ const nd_resets_WebView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_NativeView = [_]NdPropReset{
     .{ .key = "props", .value = .{ .string = "{}" } },
@@ -4269,6 +4288,7 @@ const nd_resets_NativeView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SplitView = [_]NdPropReset{
     .{ .key = "collapsed", .value = .{ .bool = false } },
@@ -4279,6 +4299,7 @@ const nd_resets_SplitView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_HeaderBar = [_]NdPropReset{
     .{ .key = "title", .value = .{ .string = "" } },
@@ -4290,6 +4311,7 @@ const nd_resets_HeaderBar = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ToolbarView = [_]NdPropReset{
     .{ .key = "topBarsAutoHide", .value = .{ .bool = false } },
@@ -4298,6 +4320,7 @@ const nd_resets_ToolbarView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SearchInput = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
@@ -4313,6 +4336,7 @@ const nd_resets_SearchInput = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SourceList = [_]NdPropReset{
     .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
@@ -4325,6 +4349,7 @@ const nd_resets_SourceList = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SourceTree = [_]NdPropReset{
     .{ .key = "nodes", .value = .{ .array = nd_empty_json_array } },
@@ -4338,6 +4363,7 @@ const nd_resets_SourceTree = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Menubar = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4345,6 +4371,7 @@ const nd_resets_Menubar = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Menu = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4353,6 +4380,7 @@ const nd_resets_Menu = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_MenuItem = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4361,6 +4389,7 @@ const nd_resets_MenuItem = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SettingsGroup = [_]NdPropReset{
     .{ .key = "title", .value = .{ .string = "" } },
@@ -4370,6 +4399,7 @@ const nd_resets_SettingsGroup = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Row = [_]NdPropReset{
     .{ .key = "title", .value = .{ .string = "" } },
@@ -4380,6 +4410,7 @@ const nd_resets_Row = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SwitchRow = [_]NdPropReset{
     .{ .key = "title", .value = .{ .string = "" } },
@@ -4390,6 +4421,7 @@ const nd_resets_SwitchRow = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Clamp = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4397,6 +4429,7 @@ const nd_resets_Clamp = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Overlay = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4404,6 +4437,7 @@ const nd_resets_Overlay = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Switch = [_]NdPropReset{
     .{ .key = "checked", .value = .{ .bool = false } },
@@ -4412,6 +4446,7 @@ const nd_resets_Switch = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ToggleButton = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4421,6 +4456,7 @@ const nd_resets_ToggleButton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SegmentedControl = [_]NdPropReset{
     .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
@@ -4429,6 +4465,7 @@ const nd_resets_SegmentedControl = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_NumberInput = [_]NdPropReset{
     .{ .key = "value", .value = .{ .float = 0.0 } },
@@ -4437,6 +4474,7 @@ const nd_resets_NumberInput = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_LinkButton = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4448,6 +4486,7 @@ const nd_resets_LinkButton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_LevelIndicator = [_]NdPropReset{
     .{ .key = "value", .value = .{ .float = 0.0 } },
@@ -4458,6 +4497,7 @@ const nd_resets_LevelIndicator = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ColorPicker = [_]NdPropReset{
     .{ .key = "value", .value = .{ .string = "#000000" } },
@@ -4466,6 +4506,7 @@ const nd_resets_ColorPicker = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Banner = [_]NdPropReset{
     .{ .key = "title", .value = .{ .string = "" } },
@@ -4476,6 +4517,7 @@ const nd_resets_Banner = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_MenuButton = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4485,6 +4527,7 @@ const nd_resets_MenuButton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_SplitButton = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4494,6 +4537,7 @@ const nd_resets_SplitButton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Popover = [_]NdPropReset{
     .{ .key = "anchor", .value = .{ .integer = 0 } },
@@ -4505,6 +4549,7 @@ const nd_resets_Popover = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Expander = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4514,6 +4559,7 @@ const nd_resets_Expander = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_StatusPage = [_]NdPropReset{
     .{ .key = "iconName", .value = .{ .string = "" } },
@@ -4524,6 +4570,7 @@ const nd_resets_StatusPage = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ToastOverlay = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4531,6 +4578,7 @@ const nd_resets_ToastOverlay = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_DatePicker = [_]NdPropReset{
     .{ .key = "value", .value = .{ .string = "" } },
@@ -4541,6 +4589,7 @@ const nd_resets_DatePicker = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Table = [_]NdPropReset{
     .{ .key = "columns", .value = .{ .array = nd_empty_json_array } },
@@ -4557,6 +4606,7 @@ const nd_resets_Table = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_TreeView = [_]NdPropReset{
     .{ .key = "nodes", .value = .{ .array = nd_empty_json_array } },
@@ -4569,6 +4619,7 @@ const nd_resets_TreeView = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_FontPicker = [_]NdPropReset{
     .{ .key = "value", .value = .{ .string = "Sans 12" } },
@@ -4577,6 +4628,7 @@ const nd_resets_FontPicker = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Video = [_]NdPropReset{
     .{ .key = "src", .value = .{ .string = "" } },
@@ -4586,6 +4638,7 @@ const nd_resets_Video = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_TrayItem = [_]NdPropReset{
     .{ .key = "iconName", .value = .{ .string = "" } },
@@ -4594,6 +4647,7 @@ const nd_resets_TrayItem = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ShareButton = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4603,6 +4657,7 @@ const nd_resets_ShareButton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Terminal = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4610,6 +4665,7 @@ const nd_resets_Terminal = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Paned = [_]NdPropReset{
     .{ .key = "position", .value = .{ .float = 0.5 } },
@@ -4618,6 +4674,7 @@ const nd_resets_Paned = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_CommandPalette = [_]NdPropReset{
     .{ .key = "open", .value = .{ .bool = false } },
@@ -4629,6 +4686,7 @@ const nd_resets_CommandPalette = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Avatar = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
@@ -4638,6 +4696,7 @@ const nd_resets_Avatar = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Badge = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4647,6 +4706,7 @@ const nd_resets_Badge = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Tag = [_]NdPropReset{
     .{ .key = "label", .value = .{ .string = "" } },
@@ -4656,6 +4716,7 @@ const nd_resets_Tag = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Kbd = [_]NdPropReset{
     .{ .key = "keys", .value = .{ .string = "" } },
@@ -4664,6 +4725,7 @@ const nd_resets_Kbd = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ComboBox = [_]NdPropReset{
     .{ .key = "selectedIndex", .value = .{ .integer = 0 } },
@@ -4673,6 +4735,7 @@ const nd_resets_ComboBox = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Breadcrumb = [_]NdPropReset{
     .{ .key = "items", .value = .{ .array = nd_empty_json_array } },
@@ -4682,6 +4745,7 @@ const nd_resets_Breadcrumb = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Dialog = [_]NdPropReset{
     .{ .key = "open", .value = .{ .bool = false } },
@@ -4694,6 +4758,7 @@ const nd_resets_Dialog = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Sheet = [_]NdPropReset{
     .{ .key = "open", .value = .{ .bool = false } },
@@ -4704,6 +4769,7 @@ const nd_resets_Sheet = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_RichText = [_]NdPropReset{
     .{ .key = "markdown", .value = .{ .string = "" } },
@@ -4713,6 +4779,7 @@ const nd_resets_RichText = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_ProgressCircle = [_]NdPropReset{
     .{ .key = "fraction", .value = .{ .float = 0.0 } },
@@ -4723,6 +4790,7 @@ const nd_resets_ProgressCircle = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Skeleton = [_]NdPropReset{
     .{ .key = "width", .value = .{ .integer = 0 } },
@@ -4734,6 +4802,7 @@ const nd_resets_Skeleton = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_Chart = [_]NdPropReset{
     .{ .key = "type", .value = .{ .string = "line" } },
@@ -4748,6 +4817,7 @@ const nd_resets_Chart = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_CodeEditor = [_]NdPropReset{
     .{ .key = "text", .value = .{ .string = "" } },
@@ -4762,6 +4832,7 @@ const nd_resets_CodeEditor = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 const nd_resets_WindowControls = [_]NdPropReset{
     .{ .key = "enabled", .value = .{ .bool = true } },
@@ -4769,6 +4840,7 @@ const nd_resets_WindowControls = [_]NdPropReset{
     .{ .key = "draggable", .value = .{ .bool = false } },
     .{ .key = "dragPayload", .value = .{ .string = "" } },
     .{ .key = "dropTarget", .value = .{ .bool = false } },
+    .{ .key = "contextMenu", .value = .{ .array = nd_empty_json_array } },
 };
 
 fn ndPropResets(kind: []const u8) []const NdPropReset {

@@ -83,6 +83,7 @@ export type {
   ChartPoint,
   ChartSeries,
   CodeDiagnostic,
+  MenuEntry,
 } from "./generated/intrinsics.ts";
 export { performRefresh, registerExports, fullReload } from "./hmr.ts";
 export {

@@ -28,6 +28,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -43,6 +44,7 @@ Automation role: `window`. Text source: `title`. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showAlert`, `openFile`, `saveFile`, `showAbout`, `showTabOverview`, `present`.
 
@@ -65,6 +67,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -74,6 +77,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `spacing`'s default, `-1`, is the "platform standard" sentinel: 6 on the GTK backend (the Adwaita gutter), 8 on the AppKit backend. Any non-negative value is used verbatim. See [Spacing scale](/core-concepts/styling-design-language/#spacing-scale) for `Spacing`/`ContentMargin`, the typed export built on the same platform-standard numbers.
 
@@ -94,6 +98,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -102,6 +107,7 @@ Automation role: `label`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `variant` is the typography scale: `title1` to `title4`, `heading`, `body`, `caption`, `captionHeading`, and `monospace`. GTK applies the matching Adwaita style class (`.title-1`, `.heading`, `.caption-heading`, ...); AppKit applies the matching system text style (large title, title 1 to 3, headline, caption). Use it instead of `cssClasses` or `style.fontSize` for hierarchy, so the size follows each platform's scale.
 
@@ -122,6 +128,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `prominent` | bool | false | createAndUpdate |
 | `destructive` | bool | false | createAndUpdate |
 | `badge` | string | none | createAndUpdate |
@@ -135,6 +142,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -160,6 +168,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -172,6 +181,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
@@ -190,6 +200,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -199,6 +210,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -219,6 +231,7 @@ Automation role: `checkbox`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -228,6 +241,7 @@ Automation role: `checkbox`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -245,6 +259,7 @@ Automation role: `radio`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -254,6 +269,7 @@ Automation role: `radio`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -270,6 +286,7 @@ Automation role: `combobox`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -279,6 +296,7 @@ Automation role: `combobox`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -300,6 +318,7 @@ Automation role: `slider`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -309,6 +328,7 @@ Automation role: `slider`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `step` snaps the value on both backends. GTK snaps to it without drawing anything; AppKit's only stepping lever is tick marks, so there an explicit `step` yielding 50 stops or fewer both snaps and draws marks below the track. Anything else stays continuous on AppKit, including the default `1` over the default 0 to 100 range, which would be 101 marks.
 
@@ -324,6 +344,7 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -332,6 +353,7 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Image (`<image>`)
 
@@ -350,6 +372,7 @@ Automation role: `image`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -358,6 +381,7 @@ Automation role: `image`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `symbolScale`/`symbolWeight`/`symbolRenderingMode` configure the resolved SF Symbol on macOS and are inert on GTK; see [Icons](/native-platform/icons/#symbol-configuration).
 
@@ -374,6 +398,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -382,6 +407,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `minContentHeight` is the same floor `<textarea>` takes: a scroller with no natural height measures zero inside another scrolling parent. `0` opts out.
 
@@ -397,6 +423,7 @@ Automation role: `separator`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -405,6 +432,7 @@ Automation role: `separator`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Spinner (`<spinner>`)
 
@@ -418,6 +446,7 @@ Automation role: `spinner`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -426,6 +455,7 @@ Automation role: `spinner`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## TabView (`<tabview>`)
 
@@ -439,6 +469,7 @@ Automation role: `tablist`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -448,6 +479,7 @@ Automation role: `tablist`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Attached props (set on children):
 
@@ -473,6 +505,7 @@ Automation role: `grid`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -481,6 +514,7 @@ Automation role: `grid`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Attached props (set on children):
 
@@ -509,6 +543,7 @@ Automation role: `list`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -518,6 +553,7 @@ Automation role: `list`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 The three `empty*` props swap in platform empty-state chrome when `items` is empty; see [Native empty states](/components/data-views/#native-empty-states).
 
@@ -538,6 +574,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -578,6 +615,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `goBack`, `goForward`, `reload`, `stop`, `executeJavaScript`, `setZoom`, `setUserAgent`, `openDevTools`, `addUserScript`, `removeUserScript`, `clearUserScripts`, `registerScriptMessage`, `unregisterScriptMessage`, `respondScheme`, `respondPermission`, `resetPermissions`, `respondDownload`, `startDownload`, `pauseDownload`, `resumeDownload`, `cancelDownload`, `getCookies`, `setCookie`, `deleteCookie`, `findStart`, `findNext`, `findPrevious`, `findStop`, `saveSession`, `restoreSession`, `setMuted`, `setContextMenuItems`, `listExtensions`, `watchExtensions`, `listExtensionActions`, `readExtensionAction`, `triggerExtensionAction`, `installExtension`, `uninstallExtension`, `setExtensionEnabled`, `focus`.
 
@@ -596,6 +634,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -605,6 +644,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 The generic host for an app-owned native plugin widget. Apps use `defineNativeComponent` rather than this intrinsic directly. See [Native Modules](/native-platform/native-modules/) for the plugin ABI, build config, and a working example.
 
@@ -625,6 +665,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -634,6 +675,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `revealSidebar`, `concealSidebar`.
 
@@ -663,6 +705,7 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -673,6 +716,7 @@ Automation role: `toolbar`. Text source: `title`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Attached props (set on children):
 
@@ -701,6 +745,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -709,6 +754,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `revealTopBars`, `concealTopBars`.
 
@@ -741,6 +787,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -753,6 +800,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`, `activateLeadingIcon`, `activateTrailingIcon`.
 
@@ -774,6 +822,7 @@ Automation role: `list`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -784,6 +833,7 @@ Automation role: `list`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## SourceTree (`<sourcetree>`)
 
@@ -804,6 +854,7 @@ Automation role: `tree`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -818,6 +869,7 @@ Automation role: `tree`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Menubar (`<menubar>`)
 
@@ -831,6 +883,7 @@ Automation role: `menubar`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -839,6 +892,7 @@ Automation role: `menubar`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `<menubar>` is a child of `<window>`, alongside the content child. See [Menu Bar](/native-platform/menu-bar/) for platform rendering (real `NSApp.mainMenu` on macOS, primary hamburger menu on GNOME).
 
@@ -854,6 +908,7 @@ Automation role: `menu`. Text source: `label`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -862,6 +917,7 @@ Automation role: `menu`. Text source: `label`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## MenuItem (`<menuitem>`)
 
@@ -879,6 +935,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -888,6 +945,7 @@ Automation role: `menuitem`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `iconVisible` opts an item's `iconName` back in on macOS 27, where menu-item symbol images are hidden by default; see [Icons](/native-platform/icons/#macos-27-hides-menu-item-symbol-images-by-default).
 
@@ -905,6 +963,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -913,6 +972,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Row (`<row>`)
 
@@ -930,6 +990,7 @@ Automation role: `listitem`. Text source: `title`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -939,6 +1000,7 @@ Automation role: `listitem`. Text source: `title`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Attached props (set on children):
 
@@ -962,6 +1024,7 @@ Automation role: `switch`. Text source: `title`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -971,6 +1034,7 @@ Automation role: `switch`. Text source: `title`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Clamp (`<clamp>`)
 
@@ -985,6 +1049,7 @@ Automation role: `group`. Text source: none. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -993,6 +1058,7 @@ Automation role: `group`. Text source: none. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Overlay (`<overlay>`)
 
@@ -1005,6 +1071,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1013,6 +1080,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Switch (`<switch>`)
 
@@ -1026,6 +1094,7 @@ Automation role: `switch`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1035,6 +1104,7 @@ Automation role: `switch`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -1052,6 +1122,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1061,6 +1132,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## SegmentedControl (`<segmentedcontrol>`)
 
@@ -1075,6 +1147,7 @@ Automation role: `radiogroup`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1084,6 +1157,7 @@ Automation role: `radiogroup`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## NumberInput (`<numberinput>`)
 
@@ -1102,6 +1176,7 @@ Automation role: `spinbutton`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1111,6 +1186,7 @@ Automation role: `spinbutton`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -1129,6 +1205,7 @@ Automation role: `link`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1138,6 +1215,7 @@ Automation role: `link`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## LevelIndicator (`<levelindicator>`)
 
@@ -1157,6 +1235,7 @@ Automation role: `levelbar`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1165,6 +1244,7 @@ Automation role: `levelbar`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## ColorPicker (`<colorpicker>`)
 
@@ -1179,6 +1259,7 @@ Automation role: `colorpicker`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1188,6 +1269,7 @@ Automation role: `colorpicker`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Banner (`<banner>`)
 
@@ -1203,6 +1285,7 @@ Automation role: `banner`. Text source: `title`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1212,6 +1295,7 @@ Automation role: `banner`. Text source: `title`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## MenuButton (`<menubutton>`)
 
@@ -1226,6 +1310,7 @@ Automation role: `menubutton`. Text source: `label`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1234,6 +1319,7 @@ Automation role: `menubutton`. Text source: `label`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## SplitButton (`<splitbutton>`)
 
@@ -1248,6 +1334,7 @@ Automation role: `splitbutton`. Text source: `label`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1257,6 +1344,7 @@ Automation role: `splitbutton`. Text source: `label`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Popover (`<popover>`)
 
@@ -1273,6 +1361,7 @@ Automation role: `popover`. Text source: none. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1282,6 +1371,7 @@ Automation role: `popover`. Text source: none. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Expander (`<expander>`)
 
@@ -1296,6 +1386,7 @@ Automation role: `expander`. Text source: `label`. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1305,6 +1396,7 @@ Automation role: `expander`. Text source: `label`. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## StatusPage (`<statuspage>`)
 
@@ -1320,6 +1412,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1328,6 +1421,7 @@ Automation role: `group`. Text source: `title`. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## ToastOverlay (`<toastoverlay>`)
 
@@ -1340,6 +1434,7 @@ Automation role: `group`. Text source: none. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1350,6 +1445,7 @@ Automation role: `group`. Text source: none. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `showToast`, `dismissToast`.
 
@@ -1368,6 +1464,7 @@ Automation role: `datepicker`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1377,6 +1474,7 @@ Automation role: `datepicker`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Table (`<table>`)
 
@@ -1399,6 +1497,7 @@ Automation role: `table`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1412,6 +1511,7 @@ Automation role: `table`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## TreeView (`<treeview>`)
 
@@ -1430,6 +1530,7 @@ Automation role: `tree`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1442,6 +1543,7 @@ Automation role: `tree`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## FontPicker (`<fontpicker>`)
 
@@ -1455,6 +1557,7 @@ Automation role: `fontpicker`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1464,6 +1567,7 @@ Automation role: `fontpicker`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Video (`<video>`)
 
@@ -1480,6 +1584,7 @@ Automation role: `video`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1488,6 +1593,7 @@ Automation role: `video`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## TrayItem (`<trayitem>`)
 
@@ -1503,6 +1609,7 @@ Automation role: `trayitem`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1511,6 +1618,7 @@ Automation role: `trayitem`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## ShareButton (`<sharebutton>`)
 
@@ -1528,6 +1636,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1536,6 +1645,7 @@ Automation role: `button`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Terminal (`<terminal>`)
 
@@ -1563,6 +1673,7 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1578,6 +1689,7 @@ Automation role: `terminal`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `copy`, `paste`, `selectAll`, `clearSelection`, `focus`.
 
@@ -1596,6 +1708,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1605,6 +1718,7 @@ Automation role: `group`. Text source: none. Children: multi.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## CommandPalette (`<commandpalette>`)
 
@@ -1621,6 +1735,7 @@ Automation role: `dialog`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1633,6 +1748,7 @@ Automation role: `dialog`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 A controlled Cmd-K style overlay: the app owns `query`/`items` and does all filtering and ranking, the widget only renders rows and reports interaction. See [Command Palette](/components/command-palette/) for the full pattern, platform presentation, and automation notes.
 
@@ -1651,6 +1767,7 @@ Automation role: `image`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1659,6 +1776,7 @@ Automation role: `image`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Badge (`<badge>`)
 
@@ -1674,6 +1792,7 @@ Automation role: `label`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1682,6 +1801,7 @@ Automation role: `label`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Tag (`<tag>`)
 
@@ -1697,6 +1817,7 @@ Automation role: `label`. Text source: `label`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1706,6 +1827,7 @@ Automation role: `label`. Text source: `label`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Kbd (`<kbd>`)
 
@@ -1719,6 +1841,7 @@ Automation role: `label`. Text source: `keys`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1727,6 +1850,7 @@ Automation role: `label`. Text source: `keys`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## ComboBox (`<combobox>`)
 
@@ -1744,6 +1868,7 @@ Automation role: `combobox`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1754,6 +1879,7 @@ Automation role: `combobox`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -1770,6 +1896,7 @@ Automation role: `toolbar`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1779,6 +1906,7 @@ Automation role: `toolbar`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Dialog (`<dialog>`)
 
@@ -1796,6 +1924,7 @@ Automation role: `dialog`. Text source: `title`. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1805,6 +1934,7 @@ Automation role: `dialog`. Text source: `title`. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Sheet (`<sheet>`)
 
@@ -1820,6 +1950,7 @@ Automation role: `dialog`. Text source: none. Children: single.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1829,6 +1960,7 @@ Automation role: `dialog`. Text source: none. Children: single.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## RichText (`<richtext>`)
 
@@ -1843,6 +1975,7 @@ Automation role: `label`. Text source: `markdown`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1852,6 +1985,7 @@ Automation role: `label`. Text source: `markdown`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## ProgressCircle (`<progresscircle>`)
 
@@ -1867,6 +2001,7 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1875,6 +2010,7 @@ Automation role: `progressbar`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Skeleton (`<skeleton>`)
 
@@ -1891,6 +2027,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1899,6 +2036,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 ## Chart (`<chart>`)
 
@@ -1919,6 +2057,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1928,6 +2067,7 @@ Automation role: `custom`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 `minContentHeight` is the sizing floor `<chart>` needs for the same reason `<textarea>` does: the drawing surface fills what it is given, so in a scrolled parent it would measure zero. See [Charts](/components/charts/).
 
@@ -1949,6 +2089,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1960,6 +2101,7 @@ Automation role: `textbox`. Text source: `text`. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 
 Imperative commands (via `sendCommand(ref.current, …)` from `@nativedesktop/react`): `focus`.
 
@@ -1977,6 +2119,7 @@ Automation role: `group`. Text source: none. Children: none.
 | `draggable` | bool | false | createAndUpdate |
 | `dragPayload` | string | none | createAndUpdate |
 | `dropTarget` | bool | false | createAndUpdate |
+| `contextMenu` | objectList | none | createAndUpdate |
 | `testID` | string | none | meta |
 
 | Event | Handler | Payload |
@@ -1986,4 +2129,5 @@ Automation role: `group`. Text source: none. Children: none.
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |
 | `dropped` | `onDropped` | dragPoint |
+| `contextMenuSelected` | `onContextMenuSelected` | text |
 

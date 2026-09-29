@@ -414,6 +414,7 @@ func buildVTable() -> nd_backend {
     ndSourceListPurge(view)
     ndSourceListSurfacePurge(view)
     ndDragDropPurge(view)
+    ndContextMenuPurge(view)
     ndCodeEditorPurge(view)
     ndPaneInstallPurge(view)
     ndPanedTeardown(view)
