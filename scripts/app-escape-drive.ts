@@ -821,7 +821,29 @@ const routes: Route[] = [
   pageClick("page.geolocation", "geo", NONE),
   pageClick("page.notification", "notif", NONE),
   pageClick("page.openChromeUrl", "open-chrome", {}),
-  pageClick("page.passwordSave", "login-submit", NONE),
+  {
+    // Views draws the save-password bubble inside the browser's own X window,
+    // where the census of top-levels never sees it. It lands at the view's top
+    // right, over page two's solid orange, so anything there that is not
+    // orange is the bubble. The classic X11 scrollbar's grey thumb runs down
+    // the view's right edge, so the last 24 px stay out of the crop.
+    name: "page.passwordSave",
+    expect: NONE,
+    run: async (page) => {
+      focusApp();
+      await clickAt(await pagePoint(page, "login-submit"));
+      await Bun.sleep(2500);
+      const view = shownContainer();
+      if (!view) return;
+      const shot = `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/escape-password.png`;
+      sh("import", "-window", "root", shot);
+      const w = Math.floor(view.w / 2);
+      const crop = `${w - 24}x${Math.min(360, view.h)}+${view.x + view.w - w}+${view.y}`;
+      const blue = Number(sh("magick", shot, "-crop", crop, "-format", "%[fx:maxima.b]", "info:"));
+      if (blue > 0.3) return { note: "save-password bubble drawn in the view", problems: [`Chromium's save-password bubble is drawn in the view (top-right blue ${blue.toFixed(2)})`] };
+      return `view top-right stays page orange (blue ${blue.toFixed(2)})`;
+    },
+  },
 
   menuItem("menu.openLinkNewTab", "plain", /open link in new tab/i, TAB),
   menuItem("menu.openLinkNewWindow", "plain", /open link in new window/i),
