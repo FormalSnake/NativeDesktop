@@ -547,6 +547,12 @@ func ndNaturalChildSize(_ view: NSView) -> NSSize {
         size.width = max(size.width, fitting.width)
         size.height = max(size.height, fitting.height)
     }
+    // An ellipsizing button's title sizes nothing, as on GTK: a row of tabs
+    // is as wide as the app sets it, not as wide as its longest title.
+    // Expand or a minWidth gives the button its room.
+    if let button = view as? NSButton, button.lineBreakMode == .byTruncatingTail, !button.title.isEmpty {
+        size.width = min(size.width, ndLabelMinimumWidth)
+    }
     if let scroll = view as? NSScrollView {
         let content = ndScrollNaturalSize(scroll)
         size.width = max(size.width, content.width)

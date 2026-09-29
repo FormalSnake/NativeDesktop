@@ -1678,7 +1678,8 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "ScrollView" {
         let sv = NSScrollView()
         sv.hasVerticalScroller = true
-        if propStr(props, "hscroll") == "never" { sv.hasHorizontalScroller = false }
+        if propStr(props, "hscroll") == "never" || propStr(props, "hscroll") == "clip" { sv.hasHorizontalScroller = false }
+        if propStr(props, "hscroll") == "clip" { sv.hasVerticalScroller = false }
         sv.drawsBackground = false
         let doc = FlippedView()
         sv.documentView = doc

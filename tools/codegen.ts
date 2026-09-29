@@ -582,11 +582,46 @@ fn ndButtonContent(button: *gtk.Button) ?*gtk.Widget {
 fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
     if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) == null) {
         gtk.Button.setChild(button, content);
+    } else {
+        const wrap: *gtk.Box = @ptrCast(@alignCast(gtk.Button.getChild(button).?));
+        if (gtk.Widget.getFirstChild(wrap.as(gtk.Widget))) |old| gtk.Box.remove(wrap, old);
+        gtk.Box.prepend(wrap, content);
+    }
+    ndButtonShrinkTitle(button);
+}
+
+/// An ellipsizing button's title sizes nothing, the way an ellipsizing
+/// Label's does not: its minimum is one ellipsis and max-width-chars(1) caps
+/// its natural too, so a row of tabs is as wide as the app sets it rather
+/// than as wide as its longest title. hexpand or a minWidth gives it room.
+/// Every content shape is walked, since can-shrink only reaches the label
+/// GtkButton or AdwButtonContent own, and the iconData arms build their own.
+///
+/// Any box between the button and the title would then give the title only
+/// that natural width, one ellipsis (AdwButtonContent centres its own), so
+/// every one of them fills and the label's xalign carries labelAlign instead.
+const ND_BUTTON_ALIGN_START = "nd-button-align-start";
+
+fn ndButtonShrinkTitle(button: *gtk.Button) void {
+    if (gtk.Button.getCanShrink(button) == 0) return;
+    const content = ndButtonContent(button) orelse return;
+    const at_start = gobject.Object.getData(asObject(button), ND_BUTTON_ALIGN_START) != null;
+    ndShrinkLabelsUnder(content, at_start);
+}
+
+fn ndShrinkLabelsUnder(widget: *gtk.Widget, at_start: bool) void {
+    if (gobject.ext.isA(widget, gtk.Label)) {
+        const label: *gtk.Label = @ptrCast(@alignCast(widget));
+        gtk.Label.setEllipsize(label, .end);
+        gtk.Label.setMaxWidthChars(label, 1);
+        gtk.Widget.setHexpand(widget, 1);
+        gtk.Label.setXalign(label, if (at_start) 0.0 else 0.5);
         return;
     }
-    const wrap: *gtk.Box = @ptrCast(@alignCast(gtk.Button.getChild(button).?));
-    if (gtk.Widget.getFirstChild(wrap.as(gtk.Widget))) |old| gtk.Box.remove(wrap, old);
-    gtk.Box.prepend(wrap, content);
+    if (gobject.ext.isA(widget, gtk.Image)) return;
+    gtk.Widget.setHalign(widget, .fill);
+    var c = gtk.Widget.getFirstChild(widget);
+    while (c) |w| : (c = gtk.Widget.getNextSibling(w)) ndShrinkLabelsUnder(w, at_start);
 }
 
 /// Button.label update. The create arm leaves one of four child shapes — a
@@ -4003,6 +4038,7 @@ function genZigCreateBody(w: Widget): string {
     out += "            if (gtk.Button.getChild(button)) |child| {\n";
     out += "                const halign: gtk.Align = if (std.mem.eql(u8, label_align, \"start\")) .start else .end;\n";
     out += "                gtk.Widget.setHalign(child, halign);\n";
+    out += "                if (halign == .start) gobject.Object.setData(asObject(button), ND_BUTTON_ALIGN_START, @ptrFromInt(1));\n";
     out += "                if (gobject.ext.isA(child, gtk.Label)) {\n";
     out += "                    const xalign: f32 = if (std.mem.eql(u8, label_align, \"start\")) 0.0 else 1.0;\n";
     out += "                    gtk.Label.setXalign(@ptrCast(@alignCast(child)), xalign);\n";
@@ -4015,14 +4051,8 @@ function genZigCreateBody(w: Widget): string {
     out += "            gtk.Button.setCanShrink(button, 1);\n";
     out += "            if (gtk.Button.getChild(button)) |child| {\n";
     out += "                if (gobject.ext.isA(child, adw.ButtonContent)) adw.ButtonContent.setCanShrink(@ptrCast(@alignCast(child)), 1);\n";
-    out += "                // iconData ran first and built an image+label box of its own,\n";
-    out += "                // whose label can-shrink never reaches.\n";
-    out += "                if (gobject.ext.isA(child, gtk.Box)) {\n";
-    out += "                    if (gtk.Widget.getLastChild(child)) |last| {\n";
-    out += "                        if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setEllipsize(@ptrCast(@alignCast(last)), .end);\n";
-    out += "                    }\n";
-    out += "                }\n";
     out += "            }\n";
+    out += "            ndButtonShrinkTitle(button);\n";
     out += "        }\n";
     out += "        // prominent -> the Adwaita accent treatment (AppKit peer:\n";
     out += "        // NSToolbarItem.style .prominent / an accent bezel).\n";
@@ -4154,6 +4184,15 @@ function genZigCreateBody(w: Widget): string {
     out += "        // growing a horizontal scrollbar under vertically-scrolling lists.\n";
     out += "        if (propStr(props, \"hscroll\")) |h| {\n";
     out += "            if (std.mem.eql(u8, h, \"never\")) gtk.ScrolledWindow.setPolicy(sw, .never, .automatic);\n";
+    // hscroll=clip: a row that asks for its natural size and is cut off at
+    // the trailing edge when it gets less, and whose minimum width is not its
+    // content's. A header row whose content is sized from the window's width
+    // needs that, or every width it was drawn at becomes the window's minimum.
+    out += "            if (std.mem.eql(u8, h, \"clip\")) {\n";
+    out += "                gtk.ScrolledWindow.setPolicy(sw, .external, .never);\n";
+    out += "                gtk.ScrolledWindow.setPropagateNaturalWidth(sw, 1);\n";
+    out += "                gtk.ScrolledWindow.setPropagateNaturalHeight(sw, 1);\n";
+    out += "            }\n";
     out += "        }\n";
     out += "        return sw.as(gtk.Widget);\n";
   } else if (w.name === "WindowControls") {
@@ -8156,7 +8195,8 @@ function genSwiftCreateBody(w: Widget): string {
     // The document view is width-pinned to the clip view (constraints below),
     // so "auto" never actually scrolls horizontally on this backend; "never"
     // just makes the contract explicit.
-    out += '        if propStr(props, "hscroll") == "never" { sv.hasHorizontalScroller = false }\n';
+    out += '        if propStr(props, "hscroll") == "never" || propStr(props, "hscroll") == "clip" { sv.hasHorizontalScroller = false }\n';
+    out += '        if propStr(props, "hscroll") == "clip" { sv.hasVerticalScroller = false }\n';
     // GtkScrolledWindow never paints its own background — the AppKit peer
     // must not either, or it renders as an opaque gray slab inside the glass
     // sidebar (owner-reported). Apps that want a fill set style.background,

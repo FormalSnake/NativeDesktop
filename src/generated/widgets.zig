@@ -256,11 +256,46 @@ fn ndButtonContent(button: *gtk.Button) ?*gtk.Widget {
 fn ndButtonReplaceContent(button: *gtk.Button, content: *gtk.Widget) void {
     if (gobject.Object.getData(asObject(button), ND_BUTTON_BADGE_LABEL) == null) {
         gtk.Button.setChild(button, content);
+    } else {
+        const wrap: *gtk.Box = @ptrCast(@alignCast(gtk.Button.getChild(button).?));
+        if (gtk.Widget.getFirstChild(wrap.as(gtk.Widget))) |old| gtk.Box.remove(wrap, old);
+        gtk.Box.prepend(wrap, content);
+    }
+    ndButtonShrinkTitle(button);
+}
+
+/// An ellipsizing button's title sizes nothing, the way an ellipsizing
+/// Label's does not: its minimum is one ellipsis and max-width-chars(1) caps
+/// its natural too, so a row of tabs is as wide as the app sets it rather
+/// than as wide as its longest title. hexpand or a minWidth gives it room.
+/// Every content shape is walked, since can-shrink only reaches the label
+/// GtkButton or AdwButtonContent own, and the iconData arms build their own.
+///
+/// Any box between the button and the title would then give the title only
+/// that natural width, one ellipsis (AdwButtonContent centres its own), so
+/// every one of them fills and the label's xalign carries labelAlign instead.
+const ND_BUTTON_ALIGN_START = "nd-button-align-start";
+
+fn ndButtonShrinkTitle(button: *gtk.Button) void {
+    if (gtk.Button.getCanShrink(button) == 0) return;
+    const content = ndButtonContent(button) orelse return;
+    const at_start = gobject.Object.getData(asObject(button), ND_BUTTON_ALIGN_START) != null;
+    ndShrinkLabelsUnder(content, at_start);
+}
+
+fn ndShrinkLabelsUnder(widget: *gtk.Widget, at_start: bool) void {
+    if (gobject.ext.isA(widget, gtk.Label)) {
+        const label: *gtk.Label = @ptrCast(@alignCast(widget));
+        gtk.Label.setEllipsize(label, .end);
+        gtk.Label.setMaxWidthChars(label, 1);
+        gtk.Widget.setHexpand(widget, 1);
+        gtk.Label.setXalign(label, if (at_start) 0.0 else 0.5);
         return;
     }
-    const wrap: *gtk.Box = @ptrCast(@alignCast(gtk.Button.getChild(button).?));
-    if (gtk.Widget.getFirstChild(wrap.as(gtk.Widget))) |old| gtk.Box.remove(wrap, old);
-    gtk.Box.prepend(wrap, content);
+    if (gobject.ext.isA(widget, gtk.Image)) return;
+    gtk.Widget.setHalign(widget, .fill);
+    var c = gtk.Widget.getFirstChild(widget);
+    while (c) |w| : (c = gtk.Widget.getNextSibling(w)) ndShrinkLabelsUnder(w, at_start);
 }
 
 /// Button.label update. The create arm leaves one of four child shapes — a
@@ -3220,6 +3255,7 @@ fn createWidget(
             if (gtk.Button.getChild(button)) |child| {
                 const halign: gtk.Align = if (std.mem.eql(u8, label_align, "start")) .start else .end;
                 gtk.Widget.setHalign(child, halign);
+                if (halign == .start) gobject.Object.setData(asObject(button), ND_BUTTON_ALIGN_START, @ptrFromInt(1));
                 if (gobject.ext.isA(child, gtk.Label)) {
                     const xalign: f32 = if (std.mem.eql(u8, label_align, "start")) 0.0 else 1.0;
                     gtk.Label.setXalign(@ptrCast(@alignCast(child)), xalign);
@@ -3232,14 +3268,8 @@ fn createWidget(
             gtk.Button.setCanShrink(button, 1);
             if (gtk.Button.getChild(button)) |child| {
                 if (gobject.ext.isA(child, adw.ButtonContent)) adw.ButtonContent.setCanShrink(@ptrCast(@alignCast(child)), 1);
-                // iconData ran first and built an image+label box of its own,
-                // whose label can-shrink never reaches.
-                if (gobject.ext.isA(child, gtk.Box)) {
-                    if (gtk.Widget.getLastChild(child)) |last| {
-                        if (gobject.ext.isA(last, gtk.Label)) gtk.Label.setEllipsize(@ptrCast(@alignCast(last)), .end);
-                    }
-                }
             }
+            ndButtonShrinkTitle(button);
         }
         // prominent -> the Adwaita accent treatment (AppKit peer:
         // NSToolbarItem.style .prominent / an accent bezel).
@@ -3356,6 +3386,11 @@ fn createWidget(
         // growing a horizontal scrollbar under vertically-scrolling lists.
         if (propStr(props, "hscroll")) |h| {
             if (std.mem.eql(u8, h, "never")) gtk.ScrolledWindow.setPolicy(sw, .never, .automatic);
+            if (std.mem.eql(u8, h, "clip")) {
+                gtk.ScrolledWindow.setPolicy(sw, .external, .never);
+                gtk.ScrolledWindow.setPropagateNaturalWidth(sw, 1);
+                gtk.ScrolledWindow.setPropagateNaturalHeight(sw, 1);
+            }
         }
         return sw.as(gtk.Widget);
     } else if (std.mem.eql(u8, kind, "Separator")) {

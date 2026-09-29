@@ -359,7 +359,7 @@ Automation role: `scrollarea`. Text source: none. Children: single.
 | Prop | Type | Default | Applied |
 |---|---|---|---|
 | `minContentHeight` | int | 0 | create |
-| `hscroll` | auto \| never | auto | create |
+| `hscroll` | auto \| never \| clip | auto | create |
 | `enabled` | bool | true | createAndUpdate |
 | `tooltip` | string | none | createAndUpdate |
 | `draggable` | bool | false | createAndUpdate |

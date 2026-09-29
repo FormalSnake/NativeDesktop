@@ -476,7 +476,7 @@
       "container": { "childModel": "single" },
       "props": [
         { "name": "minContentHeight", "type": "int", "default": 0, "appliesTo": "create" },
-        { "name": "hscroll", "type": "enum", "values": ["auto", "never"], "default": "auto", "appliesTo": "create" },
+        { "name": "hscroll", "type": "enum", "values": ["auto", "never", "clip"], "default": "auto", "appliesTo": "create" },
         { "name": "enabled", "type": "bool", "default": true, "appliesTo": "createAndUpdate" },
         { "name": "tooltip", "type": "string", "appliesTo": "createAndUpdate" },
         { "name": "draggable", "type": "bool", "default": false, "appliesTo": "createAndUpdate" },
