@@ -681,7 +681,7 @@
         "registerScriptMessage", "unregisterScriptMessage",
         "respondScheme",
         "respondPermission", "resetPermissions",
-        "respondDownload",
+        "respondDownload", "startDownload", "pauseDownload", "resumeDownload", "cancelDownload",
         "getCookies", "setCookie", "deleteCookie",
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",

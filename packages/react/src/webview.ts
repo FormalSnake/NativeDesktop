@@ -419,3 +419,59 @@ export interface ContextMenuItemClick {
 export function setContextMenuItems(node: NdNodeRef<"webview">, items: ContextMenuItem[]): void {
   sendCommand(node, "setContextMenuItems", { items });
 }
+
+// ============================================================================
+// Downloads
+// ============================================================================
+
+/// `onDownloadRequested`. With an `id` (Chromium) the engine holds the
+/// download until `respondDownload` names where it goes; without one (the
+/// system engine) the engine has dropped it and the app fetches `url` itself.
+export interface DownloadRequest {
+  id?: string;
+  url: string;
+  suggestedFilename?: string;
+}
+
+export type DownloadState = "running" | "done" | "failed" | "cancelled";
+
+/// `onDownloadUpdated`, for a download the app gave a path. `total` is -1
+/// while the size is unknown and `speed` is in bytes per second. A paused
+/// download is still `running`, with `paused` set.
+export interface DownloadUpdate {
+  id: string;
+  state: DownloadState;
+  received: number;
+  total: number;
+  path: string;
+  speed?: number;
+  paused?: boolean;
+}
+
+/// Answers a `downloadRequested` that carried an `id`: the engine runs the
+/// transfer to `path`, a full file path. No `path` cancels it.
+export function respondDownload(node: NdNodeRef<"webview">, id: string, path?: string): void {
+  sendCommand(node, "respondDownload", path ? { id, path } : { id });
+}
+
+/// Downloads `url` with this view's profile and cookies. It comes back as
+/// `downloadRequested` like a download the page started.
+export function startDownload(node: NdNodeRef<"webview">, url: string): void {
+  sendCommand(node, "startDownload", { url });
+}
+
+/// Pause, resume and cancel take a running download's id. Any live view of
+/// the same engine can carry them: a download is the engine's, not the tab's.
+/// Resume also picks up a `failed` download where it stopped, when the server
+/// allows it.
+export function pauseDownload(node: NdNodeRef<"webview">, id: string): void {
+  sendCommand(node, "pauseDownload", { id });
+}
+
+export function resumeDownload(node: NdNodeRef<"webview">, id: string): void {
+  sendCommand(node, "resumeDownload", { id });
+}
+
+export function cancelDownload(node: NdNodeRef<"webview">, id: string): void {
+  sendCommand(node, "cancelDownload", { id });
+}

@@ -767,11 +767,15 @@ enum NDCefDownloads {
         let total: Int64
         let path: String
         let state: String
+        let speed: Int64
+        let paused: Bool
 
         init(_ item: UnsafeMutablePointer<cef_download_item_t>) {
             itemID = item.pointee.get_id?(item) ?? 0
             received = item.pointee.get_received_bytes?(item) ?? 0
             total = item.pointee.get_total_bytes?(item) ?? -1
+            speed = item.pointee.get_current_speed?(item) ?? 0
+            paused = item.pointee.is_paused?(item) == 1
             var full = ""
             if let raw = item.pointee.get_full_path?(item) {
                 full = ndCefString(raw)
@@ -794,6 +798,10 @@ enum NDCefDownloads {
     /// Downloads the app gave a path, with the last state reported, so an
     /// update that changes nothing is not sent again.
     @MainActor private static var running: [String: String] = [:]
+    /// The latest item callback per running download, retained, for
+    /// `pauseDownload`, `resumeDownload` and `cancelDownload`. A failed one
+    /// keeps it: resume is how an interrupted download comes back.
+    @MainActor private static var controls: [String: UInt] = [:]
 
     @MainActor private static var lastStarted: Date?
 
@@ -844,21 +852,61 @@ enum NDCefDownloads {
         nd_cef_ref_release(callback)
     }
 
-    @MainActor static func updated(view: NDCefWebView?, _ update: Update) {
+    @MainActor static func updated(view: NDCefWebView?, _ update: Update, callback token: UInt = 0) {
         let id = key(update.itemID)
-        guard let last = running[id] else { return }
-        let signature = "\(update.state)/\(update.received)"
-        guard signature != last else { return }
-        if update.state == "running" {
-            running[id] = signature
-        } else {
-            running.removeValue(forKey: id)
+        guard let last = running[id] else {
+            releaseItem(token)
+            return
         }
-        guard let view else { return }
+        if token != 0 {
+            if let old = controls.updateValue(token, forKey: id) { releaseItem(old) }
+        }
+        let signature = "\(update.state)/\(update.received)/\(update.paused)"
+        guard signature != last else { return }
+        if update.state == "done" || update.state == "cancelled" {
+            running.removeValue(forKey: id)
+            if let old = controls.removeValue(forKey: id) { releaseItem(old) }
+        } else {
+            running[id] = signature
+        }
+        // A download outlives the view that started it for as long as its
+        // browser runs; the report then goes to any view still alive.
+        guard let view = view ?? NDCefWebView.liveViews.allObjects.first else { return }
         view.ndTrace("downloadUpdated id=\(id) state=\(update.state) received=\(update.received)")
         view.emitData("downloadUpdated", [
             "id": id, "state": update.state, "received": update.received, "total": update.total, "path": update.path,
+            "speed": update.speed, "paused": update.paused,
         ])
+    }
+
+    /// `pauseDownload`, `resumeDownload` and `cancelDownload`: `{id}`. A
+    /// download still waiting for `respondDownload` is cancelled by never
+    /// being continued.
+    @MainActor static func control(_ command: String, _ obj: [String: Any]) {
+        guard let id = obj["id"] as? String else {
+            ndCefWarn("\(command): missing id")
+            return
+        }
+        if command == "cancelDownload", pending[id] != nil {
+            respond(["id": id])
+            return
+        }
+        guard let token = controls[id],
+              let raw = UnsafeMutableRawPointer(bitPattern: token) else {
+            ndCefWarn("\(command): unknown download id \(id)")
+            return
+        }
+        let callback = raw.assumingMemoryBound(to: cef_download_item_callback_t.self)
+        switch command {
+        case "pauseDownload": callback.pointee.pause?(callback)
+        case "resumeDownload": callback.pointee.resume?(callback)
+        default: callback.pointee.cancel?(callback)
+        }
+    }
+
+    private static func releaseItem(_ token: UInt) {
+        guard let raw = UnsafeMutableRawPointer(bitPattern: token) else { return }
+        nd_cef_ref_release(raw.assumingMemoryBound(to: cef_download_item_callback_t.self))
     }
 
     private static func release(_ token: UInt) {

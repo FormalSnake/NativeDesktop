@@ -492,6 +492,8 @@ final class NDCefWebView: NSView {
             let context = ndCefBrowserContext(browser)
             defer { nd_cef_ref_release(context) }
             NDCefPermissions.reset(obj, context: context)
+        case "pauseDownload", "resumeDownload", "cancelDownload": NDCefDownloads.control(command, obj)
+        case "startDownload": ndStartDownload(obj)
         case "getCookies": ndGetCookies(obj)
         case "setCookie": ndSetCookie(obj)
         case "deleteCookie": ndDeleteCookie(obj)
@@ -628,6 +630,19 @@ final class NDCefWebView: NSView {
             caseSensitive ? 1 : 0,
             command == "findStart" ? 0 : 1
         )
+    }
+
+    private func ndStartDownload(_ obj: [String: Any]) {
+        guard let url = obj["url"] as? String, !url.isEmpty else {
+            ndCefWarn("startDownload: missing url")
+            return
+        }
+        guard let browserHost = browserHost() else { return }
+        defer { nd_cef_ref_release(browserHost) }
+        var target = cef_string_t()
+        ndCefSetString(url, &target)
+        browserHost.pointee.start_download?(browserHost, &target)
+        nd_cef_string_clear(&target)
     }
 
     private func ndFindStop() {
@@ -1143,11 +1158,16 @@ final class NDCefHandlerBox {
         }
         download.pointee.on_download_updated = { selfPointer, browser, item, callback in
             nd_cef_ref_release(browser)
-            nd_cef_ref_release(callback)
-            guard let item else { return }
+            guard let item else {
+                nd_cef_ref_release(callback)
+                return
+            }
             defer { nd_cef_ref_release(item) }
             let update = NDCefDownloads.Update(item)
-            ndCefDeliver(selfPointer) { view in NDCefDownloads.updated(view: view, update) }
+            // The item callback is what pause, resume and cancel go through;
+            // the reference is handed to NDCefDownloads, which keeps the latest.
+            let token = callback.map { UInt(bitPattern: $0) } ?? 0
+            ndCefDeliver(selfPointer) { view in NDCefDownloads.updated(view: view, update, callback: token) }
         }
     }
 

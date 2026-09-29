@@ -26,9 +26,17 @@ export {
   installExtension,
   uninstallExtension,
   setExtensionEnabled,
+  respondDownload,
+  startDownload,
+  pauseDownload,
+  resumeDownload,
+  cancelDownload,
 } from "./webview.ts";
 export type {
   Cookie,
+  DownloadRequest,
+  DownloadState,
+  DownloadUpdate,
   ContextMenuContext,
   ContextMenuItem,
   ContextMenuItemClick,

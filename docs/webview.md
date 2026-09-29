@@ -219,9 +219,15 @@ engine hits a response it cannot render, or an attachment.
   `sendCommand(view, "respondDownload", { id, path })`. A `path` has Chromium
   run the transfer to that file, which is the only way `blob:`, `data:`, POST
   and cookie-bound downloads land, and `downloadUpdated`
-  `{ data: { id, state, received, total, path } }` follows (`state` is
-  `running`, `done`, `failed` or `cancelled`; `total` is -1 while unknown). No
-  `path` cancels it. Chromium's download bubble and download-started animation
+  `{ data: { id, state, received, total, path, speed, paused } }` follows
+  (`state` is `running`, `done`, `failed` or `cancelled`; `total` is -1 while
+  unknown; `speed` is bytes per second; a paused download stays `running`
+  with `paused: true`). No `path` cancels it. `pauseDownload`,
+  `resumeDownload` and `cancelDownload` take `{ id }` on any live view;
+  resume also restarts a `failed` download where it stopped when the server
+  allows. `startDownload { url }` downloads with the view's profile and comes
+  back as `downloadRequested`. `@nativedesktop/react` exports typed helpers
+  for all five and the `DownloadRequest` / `DownloadUpdate` payloads. Chromium's download bubble and download-started animation
   never show; the app's own UI is the report.
 
 The event fires ONCE per download, on the view that asked for it, however many

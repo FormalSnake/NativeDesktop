@@ -2756,6 +2756,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondPermission")) return cmdRespondPermission(arg);
     if (std.mem.eql(u8, cmd, "respondDownload")) return cmdRespondDownload(arg);
     if (std.mem.eql(u8, cmd, "resetPermissions")) return cmdResetPermissions(view, arg);
+    if (std.mem.eql(u8, cmd, "pauseDownload") or std.mem.eql(u8, cmd, "resumeDownload") or std.mem.eql(u8, cmd, "cancelDownload")) return cmdControlDownload(cmd, arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensions")) return cmdListExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
@@ -2791,6 +2792,8 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
         cmdFindStep(view, false);
     } else if (std.mem.eql(u8, cmd, "findStop")) {
         cmdFindStop(view);
+    } else if (std.mem.eql(u8, cmd, "startDownload")) {
+        cmdStartDownload(view, arg);
     } else if (std.mem.eql(u8, cmd, "setMuted")) {
         cmdSetMuted(view, arg);
     } else if (std.mem.eql(u8, cmd, "setZoom")) {
@@ -4093,7 +4096,17 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         if (box.menu_request) |req| cancelMenuRequest(req);
         if (box.permission) |req| answerPermissionRequest(req, .dismiss);
         if (box.download) |req| answerDownload(req, null);
-        return 0;
+        if (box.download_update) |u| {
+            // A download outlives the view that started it for as long as
+            // its browser runs; the report then goes to any view still alive.
+            var it = live_views.keyIterator();
+            if (it.next()) |other| {
+                box.view = @ptrFromInt(other.*);
+            } else {
+                releaseItemCallback(u.callback);
+                return 0;
+            }
+        } else return 0;
     }
     const view = box.view;
 
@@ -4292,14 +4305,24 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         const u = box.download_update orelse return 0;
         var key_buf: [40]u8 = undefined;
         const id = std.fmt.bufPrint(&key_buf, "cefdownload-{d}", .{u.item_id}) catch return 0;
-        const entry = running_downloads.getEntry(id) orelse return 0;
-        const signature = (@as(u64, @intFromEnum(u.state)) << 60) | (@as(u64, @bitCast(u.received)) & ((1 << 60) - 1));
+        const entry = running_downloads.getEntry(id) orelse {
+            releaseItemCallback(u.callback);
+            return 0;
+        };
+        if (u.callback != 0) {
+            if (download_controls.getPtr(id)) |held| {
+                releaseItemCallback(held.*);
+                held.* = u.callback;
+            } else {
+                download_controls.put(alloc, entry.key_ptr.*, u.callback) catch releaseItemCallback(u.callback);
+            }
+        }
+        const signature = (@as(u64, @intFromEnum(u.state)) << 60) | (@as(u64, @intFromBool(u.paused)) << 59) | (@as(u64, @bitCast(u.received)) & ((1 << 59) - 1));
         if (entry.value_ptr.* == signature) return 0;
         entry.value_ptr.* = signature;
-        if (u.state != .running) {
-            const owned = entry.key_ptr.*;
-            _ = running_downloads.remove(id);
-            alloc.free(owned);
+        const final = u.state == .done or u.state == .cancelled;
+        if (final) {
+            if (download_controls.fetchRemove(id)) |held| releaseItemCallback(held.value);
         }
         tr("downloadUpdated node={d} id={s} state={s} received={d}", .{ view.node_id, id, @tagName(u.state), u.received });
         var payload: std.json.ObjectMap = .empty;
@@ -4309,7 +4332,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         payload.put(alloc, "received", .{ .integer = u.received }) catch return 0;
         payload.put(alloc, "total", .{ .integer = u.total }) catch return 0;
         payload.put(alloc, "path", .{ .string = if (box.text) |t| t else "" }) catch return 0;
+        payload.put(alloc, "speed", .{ .integer = u.speed }) catch return 0;
+        payload.put(alloc, "paused", .{ .bool = u.paused }) catch return 0;
         f(view.node_id, "downloadUpdated", .{ .data = .{ .object = payload } });
+        if (final) {
+            if (running_downloads.fetchRemove(id)) |gone| alloc.free(gone.key);
+        }
     } else if (std.mem.eql(u8, box.name, "loadFailed")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
@@ -7261,6 +7289,10 @@ const DownloadUpdate = struct {
     state: enum { running, done, failed, cancelled },
     received: i64,
     total: i64,
+    speed: i64,
+    paused: bool,
+    /// The item callback, retained, for pause, resume and cancel.
+    callback: usize,
 };
 
 /// GTK thread only. Keys are owned by the maps.
@@ -7268,6 +7300,57 @@ var pending_downloads: std.StringHashMapUnmanaged(*DownloadRequest) = .empty;
 /// Downloads the app gave a path, with the last state reported, so an update
 /// that changes nothing is not sent again.
 var running_downloads: std.StringHashMapUnmanaged(u64) = .empty;
+/// The latest item callback per running download, retained, keyed like
+/// running_downloads. A failed download keeps its own: resume is how an
+/// interrupted download comes back.
+var download_controls: std.StringHashMapUnmanaged(usize) = .empty;
+
+fn releaseItemCallback(token: usize) void {
+    if (token == 0) return;
+    const cb: [*c]c.cef_download_item_callback_t = @ptrFromInt(token);
+    ref.releaseParam(cb);
+}
+
+/// `pauseDownload`, `resumeDownload`, `cancelDownload`: `{id}`. A download
+/// still waiting for `respondDownload` is cancelled by never continuing it.
+fn cmdControlDownload(cmd: []const u8, arg: ?std.json.Value) void {
+    const obj_arg = argObject(arg) orelse return;
+    const id = objStr(obj_arg, "id") orelse {
+        std.debug.print("ND_WARN WebView {s}: missing id\n", .{cmd});
+        return;
+    };
+    if (std.mem.eql(u8, cmd, "cancelDownload")) {
+        if (pending_downloads.fetchRemove(id)) |entry| {
+            alloc.free(entry.key);
+            answerDownload(entry.value, null);
+            return;
+        }
+    }
+    const token = download_controls.get(id) orelse {
+        std.debug.print("ND_WARN WebView {s}: unknown download id {s}\n", .{ cmd, id });
+        return;
+    };
+    const cb: [*c]c.cef_download_item_callback_t = @ptrFromInt(token);
+    if (std.mem.eql(u8, cmd, "pauseDownload")) {
+        if (cb.*.pause) |f| f(cb);
+    } else if (std.mem.eql(u8, cmd, "resumeDownload")) {
+        if (cb.*.@"resume") |f| f(cb);
+    } else if (cb.*.cancel) |f| f(cb);
+}
+
+fn cmdStartDownload(view: *View, arg: ?std.json.Value) void {
+    const obj_arg = argObject(arg) orelse return;
+    const url = objStr(obj_arg, "url") orelse {
+        std.debug.print("ND_WARN WebView startDownload: missing url\n", .{});
+        return;
+    };
+    const host = hostOf(view) orelse return;
+    const start = host.start_download orelse return;
+    var target = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&target);
+    if (!setStr(&target, url)) return;
+    start(host, &target);
+}
 
 fn onBeforeDownload(
     self: [*c]c.cef_download_handler_t,
@@ -7350,8 +7433,10 @@ fn onDownloadUpdated(
 ) callconv(.c) void {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(item);
-    defer ref.releaseParam(callback);
-    if (item == null) return;
+    if (item == null) {
+        ref.releaseParam(callback);
+        return;
+    }
     const view = DownloadObj.of(self).payload;
     const is = struct {
         fn flag(f: ?*const fn ([*c]c.cef_download_item_t) callconv(.c) c_int, it: [*c]c.cef_download_item_t) bool {
@@ -7375,6 +7460,9 @@ fn onDownloadUpdated(
             .state = if (is.flag(item.*.is_complete, item)) .done else if (is.flag(item.*.is_canceled, item)) .cancelled else if (is.flag(item.*.is_interrupted, item)) .failed else .running,
             .received = if (item.*.get_received_bytes) |g| g(item) else 0,
             .total = if (item.*.get_total_bytes) |g| g(item) else -1,
+            .speed = if (item.*.get_current_speed) |g| g(item) else 0,
+            .paused = is.flag(item.*.is_paused, item),
+            .callback = @intFromPtr(callback),
         },
     });
 }

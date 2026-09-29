@@ -82,7 +82,8 @@ widget-specific object nested under `data` instead.
 | `loadProgress`       | `onLoadProgress`       | `{ value }`, `0..1`                   | Load progress changes (polled, rounded to 3 places). |
 | `loadFailed`         | `onLoadFailed`         | `{ data: { url, error } }`            | A navigation fails to load. |
 | `newWindow`          | `onNewWindow`          | `{ text }` (URL)                      | `target="_blank"`/`window.open()` requests a popup. |
-| `downloadRequested`  | `onDownloadRequested`  | `{ data: { url, suggestedFilename? } }` | The engine hits a response it can't render itself (a download). |
+| `downloadRequested`  | `onDownloadRequested`  | `{ data: { url, suggestedFilename?, id? } }` | The engine hits a response it can't render itself (a download). |
+| `downloadUpdated`    | `onDownloadUpdated`    | `{ data: { id, state, received, total, path, speed, paused } }` | A download the app answered with a path moved on (Chromium only). |
 | `javaScriptResult`   | `onJavaScriptResult`   | `{ data: { id, ok, value?, error? } }` | An `executeJavaScript` command completes. |
 | `scriptMessage`      | `onScriptMessage`      | `{ data: { name, world, body } }`      | Page JS called `window.webkit.messageHandlers.<name>.postMessage(…)`. |
 | `schemeRequest`      | `onSchemeRequest`      | `{ data: { id, url, scheme } }`        | The engine needs the app to serve a custom-scheme URL. |
@@ -109,9 +110,11 @@ backends, since polling cannot observe them.
 emits `newWindow` with the requested URL, leaving the app to decide what to do with it, usually
 opening a native tab. `examples/browser/main.tsx` is the worked pattern.
 
-`downloadRequested` fires when the engine hits a response it cannot render. The in-engine download
-is always cancelled and the app fetches the URL itself through Bun. GTK omits `suggestedFilename`,
-which only WebKit's macOS delegate provides.
+`downloadRequested` fires when the engine hits a response it cannot render. Under WebKit the
+in-engine download is cancelled and the app fetches the URL itself through Bun. Under Chromium the
+payload carries an `id` and the engine waits: `respondDownload(node, id, path)` runs the transfer to
+`path` and `downloadUpdated` reports it; no path cancels it. `pauseDownload`, `resumeDownload`,
+`cancelDownload` and `startDownload` complete the set; `docs/webview.md` has the details.
 
 `loadFailed` filters two classes of routine navigation noise instead of firing on every cancelled
 load: a newer navigation superseding an in-flight one, and the tail of a navigation the engine
