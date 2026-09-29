@@ -741,6 +741,27 @@ const routes: Route[] = [
       return back ? "the command bar came up and went" : { note: "", problems: [`the page came back at ${await size()}, was ${before}`] };
     },
   },
+  // Typed straight after ctrl+T, the way a keyboard-first user does: every
+  // key has to land in the bar's field, in order, however soon after the
+  // chord it comes.
+  {
+    name: "key.ctrlTTypeAhead",
+    expect: NONE,
+    run: async (page) => {
+      await focusPage(page);
+      key("ctrl+t");
+      sh("xdotool", "key", "--delay", "5", "a", "b", "c");
+      const bar = await until(paletteRows, (b) => b !== null, 5000);
+      if (!bar) return { note: "", problems: ["ctrl+T brought up no command bar"] };
+      const field = async () =>
+        ((await app.rpc.call("paletteLayout", { testId: "palette" }).catch(() => null)) as { fieldText?: string } | null)?.fieldText ?? "";
+      const seen = (await until(field, (v) => v === "abc", 3000)) ?? (await field());
+      await Bun.sleep(300);
+      key("Escape");
+      await until(async () => (await paletteRows()) === null, (v) => v, 5000);
+      return seen === "abc" ? "the bar's field read abc" : { note: "", problems: [`the bar's field read ${JSON.stringify(seen)}, not "abc"`] };
+    },
+  },
   chord("key.ctrlShiftT", "ctrl+shift+t", {}),
   chord("key.ctrlShiftB", "ctrl+shift+b"),
   // The app's history palette, through browserCommand history; it stands the
