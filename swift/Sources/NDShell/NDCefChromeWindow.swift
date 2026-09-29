@@ -642,7 +642,24 @@ import Foundation
     /// now, so focus is an AppKit first-responder change. Routing focus through
     /// cef_browser_host_t::set_focus instead activates the anchor window, and
     /// the host takes key straight back, which leaves the page unfocused.
-    var focusTarget: NSView? { lifted }
+    /// The page's own RenderWidgetHostViewCocoa is the view that takes keys:
+    /// the lifted Views root as first responder leaves Views focus where it
+    /// was, and the page never hears it has focus.
+    var focusTarget: NSView? {
+        guard let lifted else { return nil }
+        return Self.renderWidget(in: lifted) ?? lifted
+    }
+
+    private static func renderWidget(in view: NSView) -> NSView? {
+        for child in view.subviews {
+            let name = NSStringFromClass(type(of: child))
+            if name.contains("RenderWidgetHostViewCocoa") { return child }
+            // The inspector's own web contents live under the same root; the
+            // page's come first in the tree, and that is the one wanted here.
+            if let hit = renderWidget(in: child) { return hit }
+        }
+        return nil
+    }
 
     // MARK: - Anchor geometry
 

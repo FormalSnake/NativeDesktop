@@ -166,7 +166,17 @@ final class NDWebView: WKWebView {
 
     override func becomeFirstResponder() -> Bool {
         #if canImport(CCef)
-        if let cefEngine { return window?.makeFirstResponder(cefEngine) ?? false }
+        if let cefEngine {
+            // A first-responder change made inside becomeFirstResponder is
+            // undone when this returns (the window then records THIS view), so
+            // the hand-off to Chromium's view runs once AppKit is done.
+            let target = cefEngine.chrome?.focusTarget ?? cefEngine
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window, window.firstResponder === self else { return }
+                window.makeFirstResponder(target)
+            }
+            return true
+        }
         #endif
         return super.becomeFirstResponder()
     }

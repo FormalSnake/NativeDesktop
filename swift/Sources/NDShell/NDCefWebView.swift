@@ -375,7 +375,13 @@ final class NDCefWebView: NSView {
 
     override func becomeFirstResponder() -> Bool {
         if let target = chrome?.focusTarget, target !== self {
-            return window?.makeFirstResponder(target) ?? false
+            // Deferred for the same reason as NDWebView's: a nested change is
+            // overwritten by the one in progress.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window, window.firstResponder === self else { return }
+                window.makeFirstResponder(target)
+            }
+            return true
         }
         if let browserHost = browserHost() {
             browserHost.pointee.set_focus?(browserHost, 1)
