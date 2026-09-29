@@ -227,7 +227,7 @@ func ndCefBrowserContext(_ browser: UnsafeMutablePointer<cef_browser_t>?) -> Uns
 /// profile's content settings, after which that origin never asks again. CEF
 /// 151 has no one-time grant to answer with (`cef_permission_request_result_t`
 /// is accept/deny/dismiss/ignore), so the answer is put back to the profile
-/// default through `cef_request_context_t::set_content_setting` as soon as CEF
+/// default through `cef_request_context_t::set_website_setting` as soon as CEF
 /// says it is done with the prompt. `resetPermissions` is the same clearing on
 /// demand.
 enum NDCefPermissions {
@@ -511,29 +511,27 @@ enum NDCefPermissions {
     /// Removes the settings an answer may have written, so the same origin asks
     /// again and the app's own store stays the only record of the decision.
     ///
-    /// `set_website_setting` with a null value, not `set_content_setting`: the
-    /// latter aborts the browser process for a type Chromium keeps as a website
-    /// setting rather than a content setting. `mask` only ever carries bits
-    /// Chromium itself raised a prompt for, which is what keeps this safe: a
-    /// type Chromium has registered no pattern scope for aborts the process.
+    /// `set_website_setting` with a null value, not `set_content_setting` with
+    /// CEF_CONTENT_SETTING_VALUE_DEFAULT: the latter reaches
+    /// `HostContentSettingsMap::SetContentSettingDefaultScope`, which traps the
+    /// browser process for a type Chromium keeps as a website setting
+    /// (geolocation's precise/approximate choice is one). Measured on 151.3.23:
+    /// the first answered geolocation prompt took the host down there.
+    ///
+    /// Both URLs, never a null top level: CEF derives the rule's pattern pair
+    /// from them, and a type scoped to the requesting origin alone ignores the
+    /// second. `mask` only ever carries bits Chromium itself raised a prompt
+    /// for, which is what keeps this safe: a type Chromium has registered no
+    /// pattern scope for traps the process.
     @MainActor private static func clear(context: UnsafeMutablePointer<cef_request_context_t>,
                                          origin: String, mask: UInt32, media: Bool) {
-        guard !origin.isEmpty, let set = context.pointee.set_content_setting else { return }
+        guard !origin.isEmpty, let set = context.pointee.set_website_setting else { return }
         var url = cef_string_t()
-        var topLevel = cef_string_t()
         ndCefSetString(origin, &url)
-        ndCefSetString(origin, &topLevel)
-        defer {
-            nd_cef_string_clear(&url)
-            nd_cef_string_clear(&topLevel)
-        }
+        defer { nd_cef_string_clear(&url) }
         for (bit, settings) in (media ? mediaContentSettings : contentSettings) where mask & bit != 0 {
             for setting in settings {
-                // Both URLs, not a null top level: CEF derives the setting's
-                // pattern pair from them, and an invalid secondary aborts the
-                // browser process. A type scoped to the requesting origin alone
-                // ignores the second one.
-                set(context, &url, &topLevel, setting, CEF_CONTENT_SETTING_VALUE_DEFAULT)
+                set(context, &url, &url, setting, nil)
             }
         }
     }
