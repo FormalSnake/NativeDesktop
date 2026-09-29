@@ -127,10 +127,26 @@ await strays("load");
 
 // The whole reason Chrome style exists here: Alloy has no extension runtime, so
 // neither the service worker target nor the content script's marker can appear.
-const list = await targets();
-const worker = list.find((t) => t.type === "service_worker" && t.url.startsWith("chrome-extension://"));
+// The framework's own extension has a worker too; the probe's is the one that
+// proves the app's --load-extension took.
+const probeWorker = (list: Awaited<ReturnType<typeof targets>>) =>
+  list.find((t) => t.type === "service_worker" && t.url.startsWith("chrome-extension://") && !t.url.includes("pfbmaghgajhpjaobhbamhamgbcelckhd"));
+const list = await until("the probe extension's worker registers", targets, (l) => probeWorker(l) !== undefined, 15000).catch(() => targets());
+const worker = probeWorker(list);
 check("extensionServiceWorker", worker !== undefined, worker?.url ?? JSON.stringify(list.map((t) => t.type)));
-check("extensionContentScript", (await evaluate("document.documentElement.dataset.ndExtension")) === "live", "content script marker");
+// Chromium installs a --load-extension extension asynchronously
+// (UnpackedInstaller::StartInstallChecks), and a document that commits before
+// it is registered never gets its content scripts; desktop Chrome with the
+// same switch does the same. So the marker is read off a load that starts
+// after the worker above proves the extension is in.
+await evaluate("location.reload()");
+const marker = await until(
+  "the reloaded page carries the content script's marker",
+  () => evaluate("document.readyState === 'complete' ? (document.documentElement.dataset.ndExtension ?? '') : ''"),
+  (v) => v === "live",
+  10000,
+).catch(() => null);
+check("extensionContentScript", marker === "live", `content script marker ${JSON.stringify(marker)}`);
 
 // Clicking into the page must not take the host window out of its active look:
 // the anchor is a window of its own and a key one would grey the title bar.
