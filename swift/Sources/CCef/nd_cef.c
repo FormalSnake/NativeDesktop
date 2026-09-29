@@ -1,6 +1,9 @@
 #include "nd_cef.h"
 
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -293,6 +296,59 @@ static void CEF_CALLBACK app_register_schemes(cef_app_t *self, cef_scheme_regist
   }
 }
 
+// Chromium's --remote-debugging-pipe reads the browser target's protocol from
+// fd 3 and writes it to fd 4, both fixed on POSIX
+// (content/browser/devtools/devtools_agent_host_impl.cc), and holds them for
+// the whole run. So the two slots are claimed before anything else in the
+// process opens a descriptor, and only when both are free: a launcher that
+// handed this process an fd 3 or 4 keeps it, and the pipe is simply absent.
+static int browser_pipe_to_cef = -1;
+static int browser_pipe_from_cef = -1;
+
+static int fd_is_free(int fd) {
+  return fcntl(fd, F_GETFD) == -1 && errno == EBADF;
+}
+
+static int move_to(int from, int to) {
+  if (from == to) return 1;
+  if (dup2(from, to) != to) return 0;
+  close(from);
+  return 1;
+}
+
+int nd_cef_reserve_browser_pipe(void) {
+  if (browser_pipe_to_cef >= 0) return 1;
+  if (!fd_is_free(3) || !fd_is_free(4)) return 0;
+  int in[2], out[2];
+  if (pipe(in) != 0) return 0;
+  if (pipe(out) != 0) {
+    close(in[0]);
+    close(in[1]);
+    return 0;
+  }
+  // pipe() takes the lowest free numbers, so in[0] may already sit on 3 and
+  // out[1] on 4; the others are moved off 3 and 4 before those are filled.
+  int host_write = fcntl(in[1], F_DUPFD_CLOEXEC, 5);
+  int host_read = fcntl(out[0], F_DUPFD_CLOEXEC, 5);
+  close(in[1]);
+  close(out[0]);
+  if (host_write < 0 || host_read < 0 || !move_to(in[0], 3) || !move_to(out[1], 4)) {
+    if (host_write >= 0) close(host_write);
+    if (host_read >= 0) close(host_read);
+    close(3);
+    close(4);
+    return 0;
+  }
+  fcntl(3, F_SETFD, FD_CLOEXEC);
+  fcntl(4, F_SETFD, FD_CLOEXEC);
+  browser_pipe_to_cef = host_write;
+  browser_pipe_from_cef = host_read;
+  return 1;
+}
+
+int nd_cef_browser_pipe_write_fd(void) { return browser_pipe_to_cef; }
+int nd_cef_browser_pipe_read_fd(void) { return browser_pipe_from_cef; }
+
 static void append_switch(cef_command_line_t *command_line, const char *name) {
   cef_string_t value = {0};
   if (nd_cef_string_set(name, strlen(name), &value)) {
@@ -370,6 +426,7 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       append_switch(command_line, "no-default-browser-check");
       append_switch(command_line, "disable-print-preview");
       append_framework_extension(command_line);
+      if (browser_pipe_to_cef >= 0) append_switch(command_line, "remote-debugging-pipe");
     }
     // Read by StartupBrowserCreator, which CEF skips at startup and a refused
     // relaunch (below) never reaches; this covers any other route into it.

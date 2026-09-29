@@ -179,6 +179,7 @@ import Foundation
             nd_cef_ref_add(browserView)
             let child = UnsafeMutableRawPointer(browserView).assumingMemoryBound(to: cef_view_t.self)
             panel.pointee.add_child_view?(panel, child)
+            hideChromeToolbar(browserView)
         }
 
         guard let view, let anchorWindow = Self.anchorWindow(of: window) else { return }
@@ -224,6 +225,15 @@ import Foundation
         anchorWindow.setAccessibilityElement(false)
         anchorWindow.animationBehavior = .none
         anchorWindow.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+    }
+
+    private func hideChromeToolbar(_ browserView: UnsafeMutablePointer<cef_browser_view_t>) {
+        guard let toolbar = browserView.pointee.get_chrome_toolbar?(browserView) else {
+            ndCefWarn("chrome style: no Chrome toolbar to hide")
+            return
+        }
+        toolbar.pointee.set_visible?(toolbar, 0)
+        nd_cef_ref_release(UnsafeMutableRawPointer(toolbar))
     }
 
     /// `on_after_created`, once the browser behind the BrowserView exists.
@@ -966,7 +976,7 @@ extension NDCefHandlerBox {
         browserViewDelegate.pointee.get_browser_runtime_style = { _ in CEF_RUNTIME_STYLE_CHROME }
         browserViewDelegate.pointee.get_chrome_toolbar_type = { _, browserView in
             nd_cef_ref_release(browserView)
-            return CEF_CTT_NONE
+            return CEF_CTT_NORMAL
         }
         // Document picture-in-picture is a Chromium-owned top-level window with
         // no other way to refuse it.

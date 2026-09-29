@@ -57,7 +57,12 @@ final class NDCefWebView: NSView {
     /// after mount sitting on about:blank.
     private var deferredURL = ""
     /// The `profile` prop, resolved to a request context once at create time.
-    private let profile: String
+    let profile: String
+    /// Extension registry state (NDCefExtensions.swift).
+    var extensionsWatched = false
+    var pendingInstallPath: String?
+    var installInFlight = false
+    var tabTargetID: String?
 
     lazy var devTools = NDCefDevTools(view: self)
 
@@ -443,6 +448,7 @@ final class NDCefWebView: NSView {
     func ndHandleCommand(_ command: String, argJson: String) {
         let arg = ndCefParseJSON(argJson)
         let obj = arg as? [String: Any] ?? [:]
+        if ndHandleExtensionCommand(command, obj) { return }
         switch command {
         case "goBack":
             if let browser, browser.pointee.can_go_back?(browser) != 0 { browser.pointee.go_back?(browser) }
@@ -1263,6 +1269,13 @@ final class NDCefHandlerBox {
             }
             nd_cef_ref_release(browser)
             guard let callback else { return 0 }
+            var answered = false
+            let pending = UInt(bitPattern: callback)
+            ndCefDeliver(selfPointer) { view in answered = view?.answerInstallDialog(pending) ?? false }
+            if answered {
+                nd_cef_ref_release(callback)
+                return 1
+            }
             nd_cef_ref_add(callback)
             let token = UInt(bitPattern: callback)
             ndCefDeliver(selfPointer) { view in

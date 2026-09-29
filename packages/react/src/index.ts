@@ -19,6 +19,7 @@ export {
   onExtensionsList,
   listExtensionActions,
   readExtensionAction,
+  triggerExtensionAction,
   onExtensionActions,
   watchExtensions,
   onExtensionsChanged,

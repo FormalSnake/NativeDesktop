@@ -423,6 +423,17 @@ pub fn reparent(window: Window, parent: Window, x: c_int, y: c_int) void {
     c.pop();
 }
 
+/// `reparent` on a connection that is not GDK's: CEF's own, for the Views
+/// window it owns, from the CEF UI thread. Left unmapped, so the window is
+/// never a top-level the window manager sees; CEF maps it when it shows it.
+pub fn reparentOn(dpy: *anyopaque, window: Window, parent: Window, x: c_int, y: c_int) void {
+    if (window == 0 or parent == 0) return;
+    const a = loadApi() orelse return;
+    const d: *Display = @ptrCast(dpy);
+    _ = a.reparent_window(d, window, parent, x, y);
+    _ = a.sync(d, 0);
+}
+
 /// Mapping is synced for the same reason creation is: CEF only paints into a
 /// viewable window, and it reads that state from its own connection.
 pub fn show(window: Window) void {

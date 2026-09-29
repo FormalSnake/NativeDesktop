@@ -58,6 +58,10 @@ enum NDCefRuntime {
     /// requested engine is unavailable.
     static func prepare() -> Bool {
         guard isRequested else { return false }
+        // First, while fds 3 and 4 are still free: see nd_cef_reserve_browser_pipe.
+        if isChromeStyle && nd_cef_reserve_browser_pipe() == 0 {
+            ndCefWarn("chrome style: fds 3 and 4 are taken, so extension action clicks are unavailable")
+        }
         guard let resolved = NDCefPaths.resolve() else {
             ndCefWarn("ND_WEBVIEW_ENGINE=chromium: no CEF distribution found (set ND_CEF_ROOT); using the system engine")
             return false
@@ -134,6 +138,7 @@ enum NDCefRuntime {
             return false
         }
         FileHandle.standardError.write("ND_WEBVIEW_ENGINE chromium (\(paths.frameworkDirectory))\n".data(using: .utf8)!)
+        NDCefBrowserProtocol.start()
         return true
     }
 
@@ -218,6 +223,8 @@ enum NDCefRuntime {
     /// Where a named profile's jar lives, under the one root cache path CEF was
     /// initialized with. The name is hashed so a profile with path characters
     /// in it cannot escape the root.
+    static var rootCachePath: String { paths?.rootCache ?? NSTemporaryDirectory() }
+
     static func profileCachePath(_ profile: String) -> String {
         let root = paths?.rootCache ?? NSTemporaryDirectory()
         var hash: UInt64 = 5381

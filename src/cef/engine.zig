@@ -32,6 +32,7 @@ const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const shape = @import("shape.zig");
 const cdp = @import("cdp.zig");
+const browser_pipe = @import("browser_pipe.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
 const ndchrome = @import("../gtk/chrome.zig");
 const gtkmenu = @import("gtkmenu.zig");
@@ -106,6 +107,10 @@ pub fn earlyExecuteProcess(argv: []const [*:0]const u8) ?u8 {
     const rc = api.execute_process(&args, app.handOut(), null);
     if (rc < 0) {
         process_ready = true;
+        // The browser process, before anything else here opens a descriptor.
+        if (chromeStyle() and !browser_pipe.reserve()) {
+            std.debug.print("ND_WARN CEF: fds 3 and 4 are taken, so extension action clicks are unavailable\n", .{});
+        }
         return null;
     }
     return @truncate(@as(u32, @bitCast(rc)));
@@ -995,6 +1000,7 @@ fn onBeforeCommandLine(
         // Not --no-startup-window: it holds a keep-alive, and CefShutdown then
         // waits forever for a UI thread that never quits.
         appendFlag(command_line, append, "hide-crash-restore-bubble");
+        if (browser_pipe.available()) appendFlag(command_line, append, "remote-debugging-pipe");
     }
     if (chromeStyle()) appendFrameworkExtension(command_line);
 }
@@ -1092,11 +1098,6 @@ fn appendFlag(
 
 var chrome_style: ?bool = null;
 
-/// Chrome style gives the embedded browser Chromium's own browser runtime,
-/// which is what runs the extension system; Alloy style is the content layer
-/// with CEF's extra client callbacks. `webview.cef.style` in the app config
-/// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
-/// because the command line and the browser style have to agree.
 /// Whether this process actually came up as the CEF browser process. An app
 /// that asked for chromium and got a host with no loadable distribution is
 /// running WebKitGTK, and this is what tells the two apart.
@@ -1104,6 +1105,39 @@ pub fn started() bool {
     return process_ready;
 }
 
+var views_hosted: ?bool = null;
+
+/// `ND_CEF_VIEWS_HOSTED=1`, Chrome style only: the page is born in a CEF Views
+/// window (a BrowserView in a frameless CefWindow) that is reparented into the
+/// view's container, instead of in the child window CEF makes for a
+/// `parent_window`. A browser made the second way gets CEF's own
+/// ChildBrowserViewDelegate, which answers CEF_CTT_NONE, so it has no Chrome
+/// toolbar and no ExtensionsContainer; the first way asks for one and hides it,
+/// which is what `Extensions.triggerAction` needs. Opt-in until it has cleared
+/// the same gates as the child window path.
+pub fn viewsHosted() bool {
+    if (views_hosted) |v| return v;
+    const raw = std.c.getenv("ND_CEF_VIEWS_HOSTED");
+    const v = chromeStyle() and raw != null and std.mem.eql(u8, std.mem.span(raw.?), "1");
+    views_hosted = v;
+    return v;
+}
+
+/// A chrome:// page keeps the child window even then. Chrome anchors its
+/// extension dialogs to the toolbar of the browser they are raised from, and
+/// an anchored bubble in a window the window manager never activates
+/// closes as soon as it opens, which reads as "canceled by user". A browser
+/// with no toolbar gets the modal dialog instead, which is what the registry
+/// view needs.
+fn viewsHostedFor(url: []const u8) bool {
+    return viewsHosted() and !std.mem.startsWith(u8, url, "chrome://");
+}
+
+/// Chrome style gives the embedded browser Chromium's own browser runtime,
+/// which is what runs the extension system; Alloy style is the content layer
+/// with CEF's extra client callbacks. `webview.cef.style` in the app config
+/// arrives here as ND_CEF_STYLE, and the launch path sets it in every process
+/// because the command line and the browser style have to agree.
 pub fn chromeStyle() bool {
     if (chrome_style) |v| return v;
     const raw = std.c.getenv("ND_CEF_STYLE");
@@ -1190,6 +1224,7 @@ fn ensureInitialized() bool {
     }
     initialized = true;
     init_failed = false;
+    browser_pipe.start();
     ensureSchemeFactories();
     // cef_initialize swapped the process's signal actions for Chromium's; give
     // the embedder its chance to take them back (src/gtk/main.zig).
@@ -1471,6 +1506,11 @@ const View = struct {
     browser: std.atomic.Value(usize) = .init(0),
     /// The window CEF made inside our container, for tracking the allocation.
     cef_window: std.atomic.Value(usize) = .init(0),
+    /// The Views-hosted embedding only, CEF UI thread only: the BrowserView and
+    /// the frameless CEF window it sits in, both held until the browser closes.
+    views_browser_view: ?*c.cef_browser_view_t = null,
+    views_size: struct { w: c_uint = 0, h: c_uint = 0 } = .{},
+    views_window: ?*c.cef_window_t = null,
     /// The docked devtools, Chrome style only: our own X child inside the
     /// container, CEF's devtools window inside that, and the view's last known
     /// size so the CEF UI thread can lay the split out without reading the
@@ -1506,6 +1546,9 @@ const View = struct {
 
     // GTK thread only from here down.
     container: x11.Window = 0,
+    /// Born in a CEF Views window (`viewsHostedFor`), so it has the toolbar
+    /// `triggerExtensionAction` clicks through.
+    views_hosted: bool = false,
     /// The page is off to the side of the window because a dialog is up over
     /// it. Only so the engine tick can spot one that never came back.
     aside: bool = false,
@@ -2182,9 +2225,152 @@ fn createBrowser(view: *View) void {
         ref.addRefParam(ctx);
         break :blk ctx;
     } else null;
+    if (viewsHostedFor(start)) {
+        view.views_hosted = true;
+        if (!createViewsBrowser(view, start, start_w, start_h, context)) {
+            view.created = false;
+            std.debug.print("ND_WARN WebView engine=chromium: the Views-hosted browser could not be scheduled\n", .{});
+        }
+        return;
+    }
     if (api.create_browser(&window_info, view.client.handOut(), &url, &browser_settings, null, context) == 0) {
         view.created = false;
         std.debug.print("ND_WARN WebView engine=chromium: cef_browser_host_create_browser failed\n", .{});
+    }
+}
+
+// ============================================================================
+// Views-hosted embedding
+// ============================================================================
+
+const BrowserViewDelegateObj = ref.Counted(c.cef_browser_view_delegate_t, *View);
+const WindowDelegateObj = ref.Counted(c.cef_window_delegate_t, *View);
+
+const ViewsCreate = struct {
+    view: *View,
+    url: []u8,
+    w: c_uint,
+    h: c_uint,
+    context: [*c]c.cef_request_context_t,
+};
+const ViewsCreateObj = ref.Counted(c.cef_task_t, ViewsCreate);
+
+/// Views objects are CEF UI thread only, and createBrowser runs on the GTK one.
+/// `context` arrives with a reference for CEF to consume.
+fn createViewsBrowser(view: *View, url: []const u8, w: c_uint, h: c_uint, context: [*c]c.cef_request_context_t) bool {
+    const api = loader.loaded() orelse return false;
+    const url_copy = alloc.dupe(u8, url) catch return false;
+    const task = ViewsCreateObj.create(.{ .view = view, .url = url_copy, .w = w, .h = h, .context = context }) orelse {
+        alloc.free(url_copy);
+        return false;
+    };
+    task.cef.execute = &runViewsCreate;
+    const posted = api.post_task(c.TID_UI, task.handOut()) != 0;
+    if (!posted) task.drop();
+    task.drop();
+    return posted;
+}
+
+fn runViewsCreate(self: [*c]c.cef_task_t) callconv(.c) void {
+    const job = ViewsCreateObj.of(self).payload;
+    defer alloc.free(job.url);
+    const api = loader.loaded() orelse return;
+    const view = job.view;
+    view.views_size = .{ .w = job.w, .h = job.h };
+
+    var url = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&url);
+    _ = setStr(&url, job.url);
+    var settings = std.mem.zeroes(c.cef_browser_settings_t);
+    settings.size = @sizeOf(c.cef_browser_settings_t);
+
+    const delegate = BrowserViewDelegateObj.create(view) orelse return;
+    delegate.cef.get_chrome_toolbar_type = &viewsToolbarType;
+    delegate.cef.get_browser_runtime_style = &viewsRuntimeStyle;
+    const browser_view = api.browser_view_create(view.client.handOut(), &url, &settings, null, job.context, delegate.handOut());
+    delegate.drop();
+    if (browser_view == null) {
+        std.debug.print("ND_WARN WebView engine=chromium: cef_browser_view_create failed\n", .{});
+        return;
+    }
+    view.views_browser_view = browser_view;
+
+    const window_delegate = WindowDelegateObj.create(view) orelse return;
+    window_delegate.cef.on_window_created = &viewsWindowCreated;
+    window_delegate.cef.is_frameless = &viewsFrameless;
+    window_delegate.cef.get_initial_bounds = &viewsInitialBounds;
+    const window = api.window_create_top_level(window_delegate.handOut());
+    window_delegate.drop();
+    if (window == null) std.debug.print("ND_WARN WebView engine=chromium: cef_window_create_top_level failed\n", .{});
+    // The returned reference is the same object on_window_created was handed
+    // and kept; this one is not needed.
+    ref.releaseParam(window);
+}
+
+fn viewsToolbarType(_: [*c]c.cef_browser_view_delegate_t, browser_view: [*c]c.cef_browser_view_t) callconv(.c) c.cef_chrome_toolbar_type_t {
+    ref.releaseParam(browser_view);
+    return c.CEF_CTT_NORMAL;
+}
+
+fn viewsRuntimeStyle(_: [*c]c.cef_browser_view_delegate_t) callconv(.c) c.cef_runtime_style_t {
+    return c.CEF_RUNTIME_STYLE_CHROME;
+}
+
+fn viewsFrameless(_: [*c]c.cef_window_delegate_t, window: [*c]c.cef_window_t) callconv(.c) c_int {
+    ref.releaseParam(window);
+    return 1;
+}
+
+fn viewsInitialBounds(self: [*c]c.cef_window_delegate_t, window: [*c]c.cef_window_t) callconv(.c) c.cef_rect_t {
+    ref.releaseParam(window);
+    const view = WindowDelegateObj.of(self).payload;
+    return .{ .x = 0, .y = 0, .width = @intCast(@max(view.views_size.w, 1)), .height = @intCast(@max(view.views_size.h, 1)) };
+}
+
+/// The window exists and is not mapped yet. It goes into the container before
+/// it is shown, so it is never a top-level the window manager takes over, and
+/// the Chrome toolbar that came with the BrowserView is hidden before its
+/// first frame.
+fn viewsWindowCreated(self: [*c]c.cef_window_delegate_t, window: [*c]c.cef_window_t) callconv(.c) void {
+    const view = WindowDelegateObj.of(self).payload;
+    if (window == null) return;
+    view.views_window = window;
+    const panel: [*c]c.cef_panel_t = @ptrCast(window);
+    if (panel.*.set_to_fill_layout) |fill| {
+        if (fill(panel)) |layout| ref.releaseParam(layout);
+    }
+    const browser_view = view.views_browser_view orelse return;
+    if (panel.*.add_child_view) |add| {
+        ref.addRefParam(browser_view);
+        add(panel, @ptrCast(browser_view));
+    }
+    if (browser_view.get_chrome_toolbar) |get| {
+        const toolbar = get(browser_view);
+        if (toolbar != null) {
+            if (toolbar.*.set_visible) |set| set(toolbar, 0);
+            ref.releaseParam(toolbar);
+        } else {
+            std.debug.print("ND_WARN WebView engine=chromium: the Views-hosted browser has no Chrome toolbar\n", .{});
+        }
+    }
+    const api = loader.loaded() orelse return;
+    const xid: x11.Window = if (window.*.get_window_handle) |get| @intCast(get(window)) else 0;
+    const dpy = api.get_xdisplay() orelse return;
+    x11.reparentOn(dpy, xid, view.container, 0, 0);
+    tr("viewsWindow node={d} xid=0x{x} container=0x{x}", .{ view.node_id, xid, view.container });
+    if (window.*.show) |show| show(window);
+}
+
+/// The browser is gone; its window goes with it. CEF UI thread.
+fn releaseViews(view: *View) void {
+    if (view.views_window) |window| {
+        view.views_window = null;
+        if (window.close) |close| close(window);
+        ref.releaseParam(window);
+    }
+    if (view.views_browser_view) |browser_view| {
+        view.views_browser_view = null;
+        ref.releaseParam(browser_view);
     }
 }
 
@@ -2547,6 +2733,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "watchExtensions")) return cmdWatchExtensions(view, arg);
     if (std.mem.eql(u8, cmd, "listExtensionActions")) return cmdListExtensionActions(view, arg);
     if (std.mem.eql(u8, cmd, "readExtensionAction")) return cmdReadExtensionAction(view, arg);
+    if (std.mem.eql(u8, cmd, "triggerExtensionAction")) return cmdTriggerExtensionAction(view, arg);
     if (std.mem.eql(u8, cmd, "installExtension")) return cmdInstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "uninstallExtension")) return cmdUninstallExtension(view, arg);
     if (std.mem.eql(u8, cmd, "setExtensionEnabled")) return cmdSetExtensionEnabled(view, arg);
@@ -3780,6 +3967,7 @@ fn onBeforeClose(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browser
     if (held != 0) ref.releaseParam(@as([*c]c.cef_browser_t, @ptrFromInt(held)));
     ref.releaseParam(browser);
     post(.{ .view = view, .name = "", .browser_closed = true });
+    releaseViews(view);
 }
 
 // ============================================================================
@@ -4402,6 +4590,9 @@ const Call = union(enum) {
     agent_ready,
     /// Page.getFrameTree's reply, which names the main frame.
     frame_tree,
+    /// Target.getTargetInfo's reply for `triggerExtensionAction`: the page
+    /// target whose tab the click is for.
+    trigger: struct { id: []u8, extension: []u8 },
 };
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
@@ -4420,9 +4611,6 @@ const PendingCall = struct { view: *View, call: Call, deadline_us: i64 };
 /// registration whose only failure mode is a wedged agent.
 const eval_call_timeout_us: i64 = 4 * std.time.us_per_s;
 const other_call_timeout_us: i64 = 15 * std.time.us_per_s;
-/// `uninstallExtension` waits on Chrome's own "Remove …?" confirmation, so its
-/// deadline is a person's, not a round trip's.
-const confirmed_call_timeout_us: i64 = 5 * std.time.us_per_min;
 /// `installExtension` waits on nobody: the directory chooser
 /// `developerPrivate.loadUnpacked` opens is answered by this engine's own
 /// dialog handler. What it does wait on is Chromium unpacking and validating
@@ -4509,6 +4697,10 @@ fn callFree(call: Call) void {
         .add_channel_script => |s| alloc.free(s.name),
         .cookies => |id| alloc.free(id),
         .agent_ready, .frame_tree => {},
+        .trigger => |t| {
+            alloc.free(t.id);
+            alloc.free(t.extension);
+        },
     }
 }
 
@@ -5133,6 +5325,17 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
 
     switch (call) {
         .ignore, .agent_ready => {},
+        .trigger => |t| {
+            const target = switch (root) {
+                .object => |o| o.get("targetInfo") orelse .null,
+                else => .null,
+            };
+            const page = stringField(target, "targetId") orelse {
+                defer callFree(call);
+                return emitTriggered(view, t.id, "triggerExtensionAction: page target unknown");
+            };
+            startTrigger(view, t.id, t.extension, page, stringField(target, "url") orelse "");
+        },
         .frame_tree => {
             const tree = switch (root) {
                 .object => |o| o.get("frameTree") orelse return,
@@ -5251,6 +5454,10 @@ fn failCall(view: *View, call: Call, message: []const u8) void {
         .stringify => |s| {
             alloc.free(s.object_id);
             finishEval(view, s.sink, false, message);
+        },
+        .trigger => |t| {
+            defer callFree(call);
+            emitTriggered(view, t.id, message);
         },
         else => callFree(call),
     }
@@ -5915,6 +6122,181 @@ fn cmdReadExtensionAction(view: *View, arg: ?std.json.Value) void {
     startJsonCommand(view, id, "extensionActions", "action", what, registry_call_timeout_us, read_action_js);
 }
 
+/// What Chrome does when its toolbar button is clicked: the popup when the
+/// action has one for this tab, otherwise `action.onClicked` with the tab and
+/// an `activeTab` grant on it. `Extensions.triggerAction` runs that same
+/// `ExecuteUserAction`, over the browser target (browser_pipe.zig). It needs
+/// Chromium's ExtensionsContainer, which only a browser with a toolbar has: a
+/// `parent_window` browser gets CEF's ChildBrowserViewDelegate, whose toolbar
+/// type is fixed at CEF_CTT_NONE (libcef/browser/chrome/views/
+/// chrome_child_window.cc), and the command dereferences null there. So it is
+/// sent only for the Views-hosted embedding.
+fn cmdTriggerExtensionAction(view: *View, arg: ?std.json.Value) void {
+    const id = extensionCommandId(arg, "triggerExtensionAction") orelse return;
+    const obj = argObject(arg) orelse return;
+    const extension = objStr(obj, "extensionId") orelse {
+        std.debug.print("ND_WARN WebView triggerExtensionAction: malformed arg (expected {{id, extensionId}})\n", .{});
+        return;
+    };
+    if (!view.views_hosted) return emitTriggered(view, id, "triggerExtensionAction: a parent_window browser has no Chrome toolbar to click through");
+    if (!browser_pipe.available()) return emitTriggered(view, id, "triggerExtensionAction: no browser protocol pipe in this process");
+    const id_copy = alloc.dupe(u8, id) catch return;
+    const extension_copy = alloc.dupe(u8, extension) catch {
+        alloc.free(id_copy);
+        return;
+    };
+    _ = cdpSend(view, "Target.getTargetInfo", "{}", .{ .trigger = .{ .id = id_copy, .extension = extension_copy } });
+}
+
+/// GTK thread. `error_text` null is success.
+fn emitTriggered(view: *View, id: []const u8, error_text: ?[]const u8) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "ok", .{ .bool = error_text == null }) catch return;
+    if (error_text) |e| payload.put(alloc, "error", .{ .string = e }) catch return;
+    tr("triggerExtensionAction node={d} {s}", .{ view.node_id, error_text orelse "ok" });
+    f(view.node_id, "extensionActions", .{ .data = .{ .object = payload } });
+}
+
+/// One click in flight, walked on the pipe's reader thread. A top-level page
+/// target reports no parent (render_frame_devtools_agent_host.cc GetParentId),
+/// so the tab is found the way a tab-mode client finds it: a tab session with
+/// auto-attach names its page child. Tabs on the page's address go first.
+const Trigger = struct {
+    view: *View,
+    id: []u8,
+    extension: []u8,
+    page: []u8,
+    url: []u8,
+    tabs: std.ArrayList([]u8) = .empty,
+    next: usize = 0,
+    session: ?[]u8 = null,
+    owns: bool = false,
+    error_text: ?[]u8 = null,
+
+    fn deinit(t: *Trigger) void {
+        alloc.free(t.id);
+        alloc.free(t.extension);
+        alloc.free(t.page);
+        alloc.free(t.url);
+        for (t.tabs.items) |tab| alloc.free(tab);
+        t.tabs.deinit(alloc);
+        if (t.session) |s| alloc.free(s);
+        if (t.error_text) |e| alloc.free(e);
+        alloc.destroy(t);
+    }
+};
+
+/// Takes `id` and `extension`.
+fn startTrigger(view: *View, id: []u8, extension: []u8, page: []const u8, url: []const u8) void {
+    const t = alloc.create(Trigger) catch return;
+    t.* = .{
+        .view = view,
+        .id = id,
+        .extension = extension,
+        .page = alloc.dupe(u8, page) catch return,
+        .url = alloc.dupe(u8, url) catch return,
+    };
+    if (!browser_pipe.call("Target.getTargets", "{\"filter\":[{\"type\":\"tab\"}]}", null, &onTabs, t)) {
+        finishTrigger(t, "Target.getTargets could not be sent");
+    }
+}
+
+fn onTabs(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const t: *Trigger = @ptrCast(@alignCast(ctx));
+    if (!ok) return finishTrigger(t, cdpErrorText(result));
+    const infos = switch (result) {
+        .object => |o| o.get("targetInfos") orelse .null,
+        else => .null,
+    };
+    if (infos == .array) {
+        for ([_]bool{ true, false }) |same_url| {
+            for (infos.array.items) |entry| {
+                const tab = stringField(entry, "targetId") orelse continue;
+                const url = stringField(entry, "url") orelse "";
+                if (std.mem.eql(u8, url, t.url) != same_url) continue;
+                const copy = alloc.dupe(u8, tab) catch continue;
+                t.tabs.append(alloc, copy) catch alloc.free(copy);
+            }
+        }
+    }
+    nextTab(t);
+}
+
+fn nextTab(t: *Trigger) void {
+    if (t.next >= t.tabs.items.len) return finishTrigger(t, "no tab target owns this page");
+    const tab = t.tabs.items[t.next];
+    t.next += 1;
+    const params = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\",\"flatten\":true}}", .{tab}) catch return finishTrigger(t, "out of memory");
+    defer alloc.free(params);
+    if (!browser_pipe.call("Target.attachToTarget", params, null, &onAttached, t)) finishTrigger(t, "Target.attachToTarget could not be sent");
+}
+
+fn onAttached(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const t: *Trigger = @ptrCast(@alignCast(ctx));
+    const session = if (ok) stringField(result, "sessionId") else null;
+    const s = session orelse return nextTab(t);
+    t.session = alloc.dupe(u8, s) catch return finishTrigger(t, "out of memory");
+    t.owns = false;
+    browser_pipe.listen(s, browser_pipe.listener(&onTabEvent, t));
+    // Existing children are announced before the reply to setAutoAttach.
+    if (!browser_pipe.call("Target.setAutoAttach", "{\"autoAttach\":true,\"waitForDebuggerOnStart\":false,\"flatten\":true}", s, &onAutoAttached, t)) {
+        finishTrigger(t, "Target.setAutoAttach could not be sent");
+    }
+}
+
+fn onTabEvent(ctx: *anyopaque, method: []const u8, params: std.json.Value) void {
+    const t: *Trigger = @ptrCast(@alignCast(ctx));
+    if (!std.mem.eql(u8, method, "Target.attachedToTarget")) return;
+    const target = switch (params) {
+        .object => |o| o.get("targetInfo") orelse return,
+        else => return,
+    };
+    const child = stringField(target, "targetId") orelse return;
+    if (std.mem.eql(u8, child, t.page)) t.owns = true;
+}
+
+fn onAutoAttached(ctx: *anyopaque, _: bool, _: std.json.Value) void {
+    const t: *Trigger = @ptrCast(@alignCast(ctx));
+    const session = t.session orelse return nextTab(t);
+    browser_pipe.listen(session, null);
+    const params = std.fmt.allocPrint(alloc, "{{\"sessionId\":\"{s}\"}}", .{session}) catch return finishTrigger(t, "out of memory");
+    defer alloc.free(params);
+    _ = browser_pipe.call("Target.detachFromTarget", params, null, &ignoreReply, t);
+    alloc.free(session);
+    t.session = null;
+    if (!t.owns) return nextTab(t);
+    const tab = t.tabs.items[t.next - 1];
+    const action = std.fmt.allocPrint(alloc, "{{\"id\":\"{s}\",\"targetId\":\"{s}\"}}", .{ t.extension, tab }) catch return finishTrigger(t, "out of memory");
+    defer alloc.free(action);
+    if (!browser_pipe.call("Extensions.triggerAction", action, null, &onTriggered, t)) finishTrigger(t, "Extensions.triggerAction could not be sent");
+}
+
+fn ignoreReply(_: *anyopaque, _: bool, _: std.json.Value) void {}
+
+fn onTriggered(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const t: *Trigger = @ptrCast(@alignCast(ctx));
+    finishTrigger(t, if (ok) null else cdpErrorText(result));
+}
+
+/// Reader thread to GTK thread. The detach above may still be in flight, and
+/// its reply names this object as its context, so the object outlives it by
+/// being freed on the GTK side after the answer has gone out.
+fn finishTrigger(t: *Trigger, error_text: ?[]const u8) void {
+    if (error_text) |e| t.error_text = std.fmt.allocPrint(alloc, "triggerExtensionAction: {s}", .{e}) catch null;
+    if (error_text != null and t.error_text == null) t.error_text = alloc.dupe(u8, "triggerExtensionAction failed") catch null;
+    _ = glib.idleAdd(&deliverTrigger, t);
+}
+
+fn deliverTrigger(data: ?*anyopaque) callconv(.c) c_int {
+    const t: *Trigger = @ptrCast(@alignCast(data.?));
+    defer t.deinit();
+    if (live_views.contains(@intFromPtr(t.view))) emitTriggered(t.view, t.id, t.error_text);
+    return 0;
+}
+
 const manifest_limit: usize = 1 << 20;
 
 /// An extension's manifest.json. `developerPrivate` reports `path` for an
@@ -6175,6 +6557,14 @@ fn cmdInstallExtension(view: *View, arg: ?std.json.Value) void {
     startJsonCommand(view, id, "extensionsList", "extensions", what, install_call_timeout_us, code.items);
 }
 
+/// `chrome.management.uninstall` from anything but the extension itself always
+/// puts up Chrome's "Remove ...?" dialog (management_api.cc forces it unless
+/// the caller is the target), and that dialog hangs off a toolbar no embedded
+/// browser shows. So the extension removes itself: `uninstallSelf` in a hidden
+/// target on its manifest.json, over the browser pipe. Every extension has
+/// that document, and a hidden target is in no tab strip and no window. The
+/// app asks the person first. The answer is the registry once the extension
+/// has left it.
 fn cmdUninstallExtension(view: *View, arg: ?std.json.Value) void {
     const obj = argObject(arg) orelse return;
     const id = objStr(obj, "id") orelse return;
@@ -6182,24 +6572,157 @@ fn cmdUninstallExtension(view: *View, arg: ?std.json.Value) void {
         std.debug.print("ND_WARN WebView uninstallExtension: malformed arg (expected {{id, extensionId}})\n", .{});
         return;
     };
+    for (target) |ch| {
+        if (ch < 'a' or ch > 'p') return emitRemovalError(view, id, "uninstallExtension: not an extension id");
+    }
+    if (!browser_pipe.available()) return emitRemovalError(view, id, "uninstallExtension: no browser protocol pipe in this process");
+    const r = alloc.create(Removal) catch return;
+    r.* = .{
+        .view = view,
+        .id = alloc.dupe(u8, id) catch return alloc.destroy(r),
+        .extension = alloc.dupe(u8, target) catch {
+            alloc.free(r.id);
+            return alloc.destroy(r);
+        },
+    };
+    const params = std.fmt.allocPrint(alloc, "{{\"url\":\"chrome-extension://{s}/manifest.json\",\"hidden\":true,\"background\":true}}", .{r.extension}) catch return finishRemoval(r, "out of memory");
+    defer alloc.free(params);
+    if (!browser_pipe.call("Target.createTarget", params, null, &onRemovalCreated, r)) finishRemoval(r, "Target.createTarget could not be sent");
+}
+
+/// Walked on the pipe's reader thread, answered on the GTK thread.
+const Removal = struct {
+    view: *View,
+    id: []u8,
+    extension: []u8,
+    target: ?[]u8 = null,
+    session: ?[]u8 = null,
+    error_text: ?[]u8 = null,
+
+    fn deinit(r: *Removal) void {
+        alloc.free(r.id);
+        alloc.free(r.extension);
+        if (r.target) |t| alloc.free(t);
+        if (r.session) |t| alloc.free(t);
+        if (r.error_text) |e| alloc.free(e);
+        alloc.destroy(r);
+    }
+};
+
+fn onRemovalCreated(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const r: *Removal = @ptrCast(@alignCast(ctx));
+    if (!ok) return finishRemoval(r, cdpErrorText(result));
+    const t = stringField(result, "targetId") orelse return finishRemoval(r, "no context of the extension to remove it from");
+    r.target = alloc.dupe(u8, t) catch return finishRemoval(r, "out of memory");
+    attachRemoval(r);
+}
+
+fn attachRemoval(r: *Removal) void {
+    const params = std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\",\"flatten\":true}}", .{r.target.?}) catch return finishRemoval(r, "out of memory");
+    defer alloc.free(params);
+    if (!browser_pipe.call("Target.attachToTarget", params, null, &onRemovalAttached, r)) finishRemoval(r, "Target.attachToTarget could not be sent");
+}
+
+/// A new target starts on about:blank, where `chrome.management` does not
+/// exist, so the call waits for the extension's own document to announce its
+/// context and runs there. The context goes away with the extension, so the
+/// uninstall itself is not awaited: the registry, read next, is what says it
+/// worked.
+fn onRemovalAttached(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const r: *Removal = @ptrCast(@alignCast(ctx));
+    if (!ok) return finishRemoval(r, cdpErrorText(result));
+    const session = stringField(result, "sessionId") orelse return finishRemoval(r, "attach gave no session");
+    r.session = alloc.dupe(u8, session) catch return finishRemoval(r, "out of memory");
+    browser_pipe.listen(r.session.?, browser_pipe.listener(&onRemovalEvent, r));
+    if (!browser_pipe.call("Runtime.enable", "{}", r.session.?, &ignoreReply, r)) finishRemoval(r, "Runtime.enable could not be sent");
+}
+
+fn onRemovalEvent(ctx: *anyopaque, method: []const u8, params: std.json.Value) void {
+    const r: *Removal = @ptrCast(@alignCast(ctx));
+    if (!std.mem.eql(u8, method, "Runtime.executionContextCreated")) return;
+    const context = switch (params) {
+        .object => |o| o.get("context") orelse return,
+        else => return,
+    };
+    const origin = stringField(context, "origin") orelse return;
+    if (!std.mem.startsWith(u8, origin, "chrome-extension://") or !std.mem.eql(u8, origin["chrome-extension://".len..], r.extension)) return;
+    const context_id = switch (context) {
+        .object => |o| switch (o.get("id") orelse return) {
+            .integer => |i| i,
+            else => return,
+        },
+        else => return,
+    };
+    browser_pipe.listen(r.session.?, null);
+    const call = std.fmt.allocPrint(alloc,
+        \\{{"expression":"chrome.management.uninstallSelf({{ showConfirmDialog: false }}).catch(() => {{}}), 'sent'","contextId":{d},"returnByValue":true,"userGesture":true}}
+    , .{context_id}) catch return finishRemoval(r, "out of memory");
+    defer alloc.free(call);
+    if (!browser_pipe.call("Runtime.evaluate", call, r.session.?, &onRemovalSent, r)) finishRemoval(r, "Runtime.evaluate could not be sent");
+}
+
+fn onRemovalSent(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
+    const r: *Removal = @ptrCast(@alignCast(ctx));
+    if (std.fmt.allocPrint(alloc, "{{\"targetId\":\"{s}\"}}", .{r.target.?})) |params| {
+        defer alloc.free(params);
+        _ = browser_pipe.call("Target.closeTarget", params, null, &ignoreReply, r);
+    } else |_| {}
+    // A protocol error is most often the context going away with the
+    // extension; only an exception the page threw is an answer.
+    if (ok and result == .object) {
+        if (result.object.get("exceptionDetails")) |details| {
+            const thrown = switch (details) {
+                .object => |o| if (o.get("exception")) |e| stringField(e, "description") else null,
+                else => null,
+            };
+            return finishRemoval(r, thrown orelse stringField(details, "text") orelse "uninstallSelf threw");
+        }
+    }
+    finishRemoval(r, null);
+}
+
+/// Reader thread to GTK thread; a closeTarget reply may still name `r`, so it
+/// is freed on the GTK side after the answer, like a Trigger.
+fn finishRemoval(r: *Removal, error_text: ?[]const u8) void {
+    if (error_text) |e| r.error_text = std.fmt.allocPrint(alloc, "uninstallExtension: {s}", .{e}) catch null;
+    if (error_text != null and r.error_text == null) r.error_text = alloc.dupe(u8, "uninstallExtension failed") catch null;
+    _ = glib.idleAdd(&deliverRemoval, r);
+}
+
+fn deliverRemoval(data: ?*anyopaque) callconv(.c) c_int {
+    const r: *Removal = @ptrCast(@alignCast(data.?));
+    defer r.deinit();
+    if (!live_views.contains(@intFromPtr(r.view))) return 0;
+    if (r.error_text) |e| {
+        emitRemovalError(r.view, r.id, e);
+        return 0;
+    }
     var code: std.ArrayList(u8) = .empty;
     defer code.deinit(alloc);
-    code.appendSlice(alloc, extension_mutation_prefix) catch return;
-    // chrome.management.uninstall always draws Chrome's own "Remove …?"
-    // confirmation when the caller is not the extension being removed, and
-    // there is no API that skips it: developerPrivate has no uninstall, and its
-    // removeMultipleExtensions refuses its own documented signature on 151. So
-    // the dialog is part of the contract, and the promise settles when the
-    // person answers it.
-    code.appendSlice(alloc, "  await new Promise((resolve, reject) => chrome.management.uninstall(") catch return;
-    appendJsString(&code, target) catch return;
+    code.appendSlice(alloc, extension_mutation_prefix) catch return 0;
+    code.appendSlice(alloc, "  const target = ") catch return 0;
+    appendJsString(&code, r.extension) catch return 0;
     code.appendSlice(alloc,
-        \\, { showConfirmDialog: false },
-        \\    () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()));
-    ) catch return;
-    code.appendSlice(alloc, extension_mutation_suffix) catch return;
-    const what = alloc.dupe(u8, "uninstallExtension") catch return;
-    startJsonCommand(view, id, "extensionsList", "extensions", what, confirmed_call_timeout_us, code.items);
+        \\;
+        \\  for (let i = 0; JSON.parse(await listed()).some((e) => e.id === target); i++) {
+        \\    if (i >= 100) throw new Error(target + " is still installed");
+        \\    await new Promise((resolve) => setTimeout(resolve, 200));
+        \\  }
+    ) catch return 0;
+    code.appendSlice(alloc, extension_mutation_suffix) catch return 0;
+    const what = alloc.dupe(u8, "uninstallExtension") catch return 0;
+    startJsonCommand(r.view, r.id, "extensionsList", "extensions", what, registry_call_timeout_us, code.items);
+    return 0;
+}
+
+fn emitRemovalError(view: *View, id: []const u8, error_text: []const u8) void {
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "id", .{ .string = id }) catch return;
+    payload.put(alloc, "ok", .{ .bool = false }) catch return;
+    payload.put(alloc, "error", .{ .string = error_text }) catch return;
+    f(view.node_id, "extensionsList", .{ .data = .{ .object = payload } });
 }
 
 fn cmdSetExtensionEnabled(view: *View, arg: ?std.json.Value) void {

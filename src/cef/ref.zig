@@ -49,7 +49,10 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
                 .refs = .init(1),
                 .payload = payload,
             };
-            self.cef.base = .{
+            // Through a cast rather than `self.cef.base`: a views delegate
+            // nests its ref-counted base one struct deeper, at the same offset.
+            const base: *c.cef_base_ref_counted_t = @ptrCast(@alignCast(&self.cef));
+            base.* = .{
                 .size = @sizeOf(CStruct),
                 .add_ref = addRef,
                 .release = release,
@@ -74,7 +77,7 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
         /// Drops the reference `create` handed back. Used to unwind a
         /// half-built object; CEF has not seen it, so this is also the free.
         pub fn drop(self: *Self) void {
-            _ = release(@ptrCast(&self.cef.base));
+            _ = release(@ptrCast(&self.cef));
         }
 
         pub fn of(cef: anytype) *Self {

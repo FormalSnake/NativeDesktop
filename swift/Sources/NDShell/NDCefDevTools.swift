@@ -174,6 +174,10 @@ final class NDCefDevTools {
             worldContexts.removeAll()
         case "Runtime.bindingCalled":
             guard let payload = params["payload"] as? String else { return }
+            if params["name"] as? String == NDCefWebView.extensionsChangedBinding {
+                view?.emitExtensionsChanged(payload)
+                return
+            }
             view?.handleBindingPayload(payload)
         default:
             break
@@ -261,7 +265,7 @@ final class NDCefDevTools {
     /// One JavaScript round trip, answered in WebKit's shape: a string value
     /// (nil for undefined) or a message from the thrown exception. `world` is
     /// "" for the page's own world.
-    func evaluate(_ code: String, world: String, _ completion: @escaping (String?, String?) -> Void) {
+    func evaluate(_ code: String, world: String, userGesture: Bool = false, _ completion: @escaping (String?, String?) -> Void) {
         withWorldContext(world) { [weak self] contextID in
             guard let self else {
                 completion(nil, "view is gone")
@@ -277,6 +281,7 @@ final class NDCefDevTools {
                 "awaitPromise": true,
             ]
             if let contextID { params["contextId"] = contextID }
+            if userGesture { params["userGesture"] = true }
             self.call("Runtime.evaluate", params) { result, error in
                 if let error {
                     completion(nil, error)

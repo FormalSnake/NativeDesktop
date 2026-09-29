@@ -20,6 +20,7 @@ const pendingExtensions = new Map<string, Pending<InstalledExtension[]>>();
 const pendingActions = new Map<string, Pending<ExtensionAction[]>>();
 const pendingWatches = new Map<string, Pending<string[]>>();
 const pendingActionState = new Map<string, Pending<ExtensionActionState>>();
+const pendingTriggers = new Map<string, Pending<void>>();
 let seq = 0;
 
 function nextId(prefix: string): string {
@@ -191,6 +192,10 @@ export function installExtension(node: NdNodeRef<"webview">, path: string): Prom
   return extensionMutation(node, "installExtension", { path });
 }
 
+/// Removes an extension without Chrome's "Remove ...?" confirmation, which has
+/// no toolbar to hang from in an embedded browser: ask the person first.
+/// Same view as `listExtensions`; settles with the registry once the extension
+/// has left it. Chromium engine under Chrome style.
 export function uninstallExtension(node: NdNodeRef<"webview">, extensionId: string): Promise<InstalledExtension[]> {
   return extensionMutation(node, "uninstallExtension", { extensionId });
 }
@@ -311,11 +316,27 @@ export function readExtensionAction(node: NdNodeRef<"webview">): Promise<Extensi
   return request(node, pendingActionState, "ext", "readExtensionAction", {});
 }
 
+/// Clicks an extension's action the way Chrome's toolbar button does, on the
+/// tab `node` shows: Chromium opens the popup when the action has one for that
+/// tab, and otherwise dispatches `action.onClicked` (`browserAction.onClicked`
+/// for MV2) with the tab and grants `activeTab` on it. An app that mounts its
+/// own popup view calls this only when `readExtensionAction` reports
+/// `popupUrl: ""`, because a popup Chromium opens has no toolbar to hang from.
+///
+/// Chromium engine under Chrome style, on macOS and in the Views-hosted Linux
+/// embedding (`ND_CEF_VIEWS_HOSTED=1`). Elsewhere it rejects.
+export function triggerExtensionAction(node: NdNodeRef<"webview">, extensionId: string): Promise<void> {
+  const id = nextId("ext");
+  return new Promise<void>((resolve, reject) => {
+    pendingTriggers.set(id, { resolve, reject });
+    sendCommand(node, "triggerExtensionAction", { id, extensionId });
+  });
+}
+
 /// The actions the installed extensions declare, for an app that draws its own
 /// toolbar. Same view as `listExtensions`; requires the `onExtensionActions`
-/// prop. Clicking one means mounting a `<webview>` created at `popupUrl`: there
-/// is no toolbar button for Chromium to consider clicked, so `onClicked` never
-/// fires and no `activeTab` grant is issued.
+/// prop. A click is `triggerExtensionAction` when the live popup is `""`, and
+/// otherwise a `<webview>` the app mounts at the popup's URL.
 export function listExtensionActions(node: NdNodeRef<"webview">): Promise<ExtensionAction[]> {
   return request(node, pendingActions, "ext", "listExtensionActions", {});
 }
@@ -327,8 +348,16 @@ export function onExtensionActions(e: { data: unknown }): void {
     ok: boolean;
     actions?: ExtensionAction[];
     action?: ExtensionActionState;
+    triggered?: string;
     error?: string;
   };
+  const trigger = pendingTriggers.get(result.id);
+  if (trigger) {
+    pendingTriggers.delete(result.id);
+    if (result.ok) trigger.resolve();
+    else trigger.reject(new Error(result.error ?? "triggerExtensionAction failed"));
+    return;
+  }
   const state = pendingActionState.get(result.id);
   if (state) {
     pendingActionState.delete(result.id);

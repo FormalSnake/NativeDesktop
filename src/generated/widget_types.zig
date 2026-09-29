@@ -226,6 +226,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.watchExtensions",
     "webview.listExtensionActions",
     "webview.readExtensionAction",
+    "webview.triggerExtensionAction",
     "webview.installExtension",
     "webview.uninstallExtension",
     "webview.setExtensionEnabled",

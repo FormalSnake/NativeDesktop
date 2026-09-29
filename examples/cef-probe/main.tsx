@@ -5,6 +5,7 @@ import {
   listExtensionActions,
   listExtensions,
   readExtensionAction,
+  triggerExtensionAction,
   onExtensionActions,
   onExtensionsChanged,
   onExtensionsList,
@@ -126,14 +127,14 @@ const LOCAL_BASE = `http://localhost:${fixture.port}`;
 const LATE_SCHEME = "ndlate";
 const LATE_HTML = PAGE("ND CEF Late", '<h1 id="marker">late-scheme-ok</h1>');
 
-const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "removedNode", "extensions", "twoRegistryViews", "extensionsChanged", "runtimeActionState", "installExtensionError", "runtimeExtensions", "uninstallExtension", "chromeDialog"] as const;
+const CHECKS = ["render", "title", "progress", "history", "popup", "lateScheme", "hidden", "reload", "secondWindow", "closedBrowser", "removedNode", "extensions", "twoRegistryViews", "extensionsChanged", "runtimeActionState", "actionClick", "installExtensionError", "runtimeExtensions", "uninstallExtension", "uninstallSilent"] as const;
 
 /// Chrome style is the only one with an extension registry to list, and the
 /// launch path sets the same variable the host reads.
 const CHROME_STYLE = (process.env.ND_CEF_STYLE ?? "") === "chrome";
 
-/// The gate pass whose driver clicks Chrome's "Remove …?" confirmation. Unset
-/// outside the gate, where there is one run and somebody is watching it.
+/// The gate pass that runs the registry legs, which change the profile the
+/// later passes reuse. Unset outside the gate, where there is one run.
 const REGISTRY_PASS = (process.env.ND_CEF_PROBE_PASS ?? "first") === "first";
 
 /// The pass that probes Chromium's own dialogs and bubbles. It renders one view
@@ -235,11 +236,12 @@ function App(): React.ReactNode {
   const setResult = (name: CheckName, value: string): void =>
     setResults((prev) => ({ ...prev, [name]: value }));
 
-  // Reported on whichever view the dialog was drawn over, which is the one on
-  // screen rather than the hidden registry view the command was sent to.
+  // Reported on whichever view a dialog was drawn over. uninstallExtension
+  // must not raise Chrome's "Remove ...?" confirmation: the app asks instead.
+  const chromeDialogs = useRef<string[]>([]);
   const onChromeDialogSeen = (e: { data: unknown }): void => {
     const d = e.data as { x: number; y: number; width: number; height: number };
-    setResult("chromeDialog", `ok (${d.x},${d.y} ${d.width}x${d.height})`);
+    chromeDialogs.current.push(`${d.x},${d.y} ${d.width}x${d.height}`);
   };
 
   useEffect(() => {
@@ -253,6 +255,7 @@ function App(): React.ReactNode {
       hidden3,
       second,
       extensions,
+      chromeDialogs,
       actionPage,
       closing,
       setClosingKey,
@@ -312,6 +315,7 @@ function App(): React.ReactNode {
           onNewWindow={(e) => record("newWindow", e.text)}
           onLoadFailed={(e) => record("loadFailed", e.data)}
           onChromeDialog={onChromeDialogSeen}
+          onExtensionActions={onExtensionActions}
           onJavaScriptResult={onJavaScriptResult}
         />
         {/* A background tab, which is the shape the bug was found in twice: an
@@ -464,6 +468,7 @@ async function run(ctx: {
   hidden3: React.RefObject<NdNodeRef<"webview"> | null>;
   second: React.RefObject<NdNodeRef<"webview"> | null>;
   extensions: React.RefObject<NdNodeRef<"webview"> | null>;
+  chromeDialogs: React.RefObject<string[]>;
   actionPage: React.RefObject<NdNodeRef<"webview"> | null>;
   closing: React.RefObject<NdNodeRef<"webview"> | null>;
   setClosingKey: (k: number) => void;
@@ -796,7 +801,7 @@ async function run(ctx: {
   // is what proves it fires.
   await step("extensionsChanged", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
-    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
     const view = ctx.extensions.current;
     if (!view) throw new Error("no extensions view ref");
     const sources = await watchExtensions(view, (change) => record("extensionsChanged", change.reason));
@@ -811,7 +816,7 @@ async function run(ctx: {
   // never meant to be on screen.
   await step("runtimeActionState", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
-    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
     const registry = ctx.extensions.current;
     if (!registry) throw new Error("no extensions view ref");
 
@@ -862,13 +867,45 @@ async function run(ctx: {
     return `ok (manifest ${manifest.popupUrl.slice(-11)}, runtime "" then popup.html, badge ${perTab.badgeText} on tab ${perTab.tabId})`;
   });
 
+  // A click on an action with no popup, the way Chrome's toolbar button does
+  // it: onClicked with this tab, and an activeTab grant on it. The fixture has
+  // no host permissions, so its executeScript only reaches the page because
+  // the click granted it.
+  await step("actionClick", async () => {
+    if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
+    const registry = ctx.extensions.current;
+    const page = ctx.view.current;
+    if (!registry || !page) throw new Error("no view refs");
+    const actions = await pollValue(
+      () => listExtensionActions(registry),
+      (list) => list.some((a) => a.name === "ND Click Extension"),
+      "the click fixture is registered",
+    );
+    const click = actions.find((a) => a.name === "ND Click Extension")!;
+    if (click.popupUrl !== "") throw new Error(`the click fixture declares a popup: ${click.popupUrl}`);
+    try {
+      await triggerExtensionAction(page, click.id);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message.includes("no Chrome toolbar")) return `skip: ${message}`;
+      throw error;
+    }
+    const mark = await pollValue(
+      () => executeJavaScript(page, "document.documentElement.dataset.ndActionClicked || ''"),
+      (text) => text.includes(BASE) || text.includes(LOCAL_BASE),
+      "onClicked marks the page through activeTab",
+    );
+    return `ok (${mark})`;
+  });
+
   // An install that cannot work has to answer. The command runs a promise on
   // chrome://extensions behind a directory chooser this engine answers itself,
   // and every step of that can stall; a promise left unsettled reads to the app
   // as the whole registry being dead.
   await step("installExtensionError", async () => {
     if (!CHROME_STYLE) return "skip: alloy style has no extension registry";
-    if (!REGISTRY_PASS) return "skip: the registry legs run in the pass that answers Chrome's confirmation";
+    if (!REGISTRY_PASS) return "skip: the registry legs run in the first pass";
     const view = ctx.extensions.current;
     if (!view) throw new Error("no extensions view ref");
     const started = Date.now();
@@ -881,17 +918,14 @@ async function run(ctx: {
   });
 
   await step("runtimeExtensions", async () => {
-    // The uninstall leg ends at Chrome's own confirmation, which only this
-    // pass's driver answers; leaving it up for a later pass would put a dialog
-    // over the view before that pass had done anything.
     const why = !CHROME_STYLE
       ? "skip: alloy style has no extension registry"
       : REGISTRY_PASS
         ? ""
-        : "skip: the registry legs run in the pass that answers Chrome's confirmation";
+        : "skip: the registry legs run in the first pass";
     if (why) {
       ctx.setResult("uninstallExtension", why);
-      ctx.setResult("chromeDialog", why);
+      ctx.setResult("uninstallSilent", why);
       return why;
     }
     const view = ctx.extensions.current;
@@ -916,16 +950,15 @@ async function run(ctx: {
     const enabled = await setExtensionEnabled(view, mine.id, true);
     if (enabled.find((e) => e.id === mine.id)?.enabled !== true) throw new Error("setExtensionEnabled(true) did not take");
 
-    // Not awaited: Chrome puts its own "Remove …?" confirmation up and the
-    // promise settles when that is answered, which is somebody else's click.
-    uninstallExtension(view, mine.id).then(
-      (left) => ctx.setResult(
-        "uninstallExtension",
-        left.some((e) => e.id === mine.id) ? "fail: still installed" : `ok (${mine.id} removed)`,
-      ),
-      (error: Error) => ctx.setResult("uninstallExtension", `fail: ${error.message}`),
+    const left = await uninstallExtension(view, mine.id);
+    ctx.setResult(
+      "uninstallExtension",
+      left.some((e) => e.id === mine.id) ? "fail: still installed" : `ok (${mine.id} removed)`,
     );
-    return `ok (installed ${mine.id}, change ${reason}, action ${action.title}, disabled, enabled, uninstall asked)`;
+    await new Promise((r) => setTimeout(r, 1500));
+    const dialogs = ctx.chromeDialogs.current;
+    ctx.setResult("uninstallSilent", dialogs.length === 0 ? "ok (no Chrome dialog)" : `fail: Chrome dialog at ${dialogs.join(", ")}`);
+    return `ok (installed ${mine.id}, change ${reason}, action ${action.title}, disabled, enabled, removed)`;
   });
 
   // The app's own items, which the engine appends to Chromium's model after a

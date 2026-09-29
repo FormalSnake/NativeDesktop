@@ -42,6 +42,9 @@ EXTENSION="$PWD/scripts/fixtures/chrome-ext"
 # its worker turns that popup off, which is the state an app reading the
 # manifest off disk gets wrong.
 ACTION_EXTENSION="$PWD/scripts/fixtures/chrome-ext-action"
+# An action with no popup at all, whose click has to reach onClicked with an
+# activeTab grant. Only the Views-hosted embedding can run it.
+CLICK_EXTENSION="$PWD/scripts/fixtures/chrome-ext-click"
 # Everything the run writes, removed on exit. One data home across the passes:
 # the restart leg is the whole point.
 RUN_DIR="$(mktemp -d)"
@@ -81,11 +84,9 @@ LOG="$RUN_DIR/host.log"
 run_pass() {
   local pass="$1"
   : >"$LOG"
-  # The registry legs leave Chrome's "Remove …?" confirmation up until somebody
-  # clicks it, and only the first pass's driver does; a later pass would start
-  # with that dialog sitting over the view.
+  # The registry legs run in the first pass only: they change the profile.
   ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS="$pass" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
-    --load-extension="$EXTENSION,$ACTION_EXTENSION" \
+    --load-extension="$EXTENSION,$ACTION_EXTENSION,$CLICK_EXTENSION" \
     --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
 

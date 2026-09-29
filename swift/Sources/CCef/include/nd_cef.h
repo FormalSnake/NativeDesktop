@@ -61,6 +61,14 @@ extern "C" {
 /// second call is a no-op reporting the first call's result.
 int nd_cef_load(const char *framework_binary_path);
 
+/// Claims fds 3 and 4 for Chromium's --remote-debugging-pipe, which then
+/// carries the browser target's protocol. Call before anything else opens a
+/// descriptor. Returns 0 when either slot is taken or a pipe cannot be made.
+int nd_cef_reserve_browser_pipe(void);
+/// The host's ends of that pipe, or -1 when it was never reserved.
+int nd_cef_browser_pipe_write_fd(void);
+int nd_cef_browser_pipe_read_fd(void);
+
 /// Whether nd_cef_load has succeeded in this process.
 int nd_cef_is_loaded(void);
 

@@ -39,5 +39,7 @@ pub const c = @cImport({
     @cInclude("include/capi/cef_menu_model_capi.h");
     @cInclude("include/capi/cef_command_handler_capi.h");
     @cInclude("include/capi/cef_request_handler_capi.h");
+    @cInclude("include/capi/views/cef_browser_view_capi.h");
+    @cInclude("include/capi/views/cef_window_capi.h");
     @cInclude("include/cef_api_hash.h");
 });

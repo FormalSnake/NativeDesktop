@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "ND Click Extension",
+  "version": "1.0",
+  "description": "Fixture for the action click: no popup, so a click has to reach chrome.action.onClicked with the tab and grant activeTab on it.",
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "ND Click",
+    "default_icon": { "16": "icon16.png" }
+  },
+  "icons": { "16": "icon16.png" },
+  "permissions": ["activeTab", "scripting"]
+}

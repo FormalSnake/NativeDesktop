@@ -772,11 +772,15 @@ minute). And `loadUnpacked` can open the chooser a second time, with no path
 parked for it; that used to fall through to CEF's own directory chooser, a
 dialog nobody answers, so an unarmed chooser during an install is now cancelled
 and the failure reaches the app. `ND_CEF installDialogAnswered` and
-`ND_CEF installDialogUnarmed` tell the two apart in the host log. `uninstallExtension` goes through `chrome.management.uninstall`,
-which always draws Chrome's own "Remove <name>?" confirmation when the caller is
-not the extension being removed (`developerPrivate` has no `uninstall`, and its
-`removeMultipleExtensions` refuses its own documented signature on 151), so the
-promise settles when that is answered and the dialog arrives as `chromeDialog`.
+`ND_CEF installDialogUnarmed` tell the two apart in the host log. `uninstallExtension` asks nobody, so the app asks first.
+`chrome.management.uninstall` from anyone but the extension itself always draws
+Chrome's "Remove <name>?" confirmation (`management_api.cc` forces it), and in an
+embedded browser that dialog hangs off a toolbar nobody sees. The host instead
+runs `chrome.management.uninstallSelf({ showConfirmDialog: false })` in one of
+the extension's own contexts over the browser protocol pipe
+(`--remote-debugging-pipe`), in a hidden target on its `manifest.json`: a
+document every extension has, in no tab strip and no window. The promise settles with the registry
+once the extension has left it.
 
 `listExtensionActions` reports what an extension's manifest declares, read off
 disk by the host: `chrome://extensions` cannot fetch
@@ -790,15 +794,20 @@ URL set at create time. Chromium refuses a renderer-initiated navigation to an
 extension page, so setting `url` on a view that already exists does not work;
 mount a new view instead.
 
-Against real Chrome, extension actions still differ. There is no toolbar button,
-so `chrome.action.onClicked` never fires and the app decides what a click on its
-own button does; an app with a popup opens it, and an extension whose action has
-no popup cannot be triggered at all. `chrome.action.setPopup`, `setBadgeText`,
+A click on an action is `triggerExtensionAction(view, extensionId)`, the click
+Chrome's toolbar makes, for the tab `view` shows: over the browser protocol pipe
+the host sends `Extensions.triggerAction`, which dispatches
+`chrome.action.onClicked` with that tab and grants `activeTab` on it. It needs
+Chromium's extensions container, which only a browser with a toolbar has: on
+macOS the page's BrowserView asks for `CEF_CTT_NORMAL` and hides the toolbar it
+gets, and on Linux only the Views-hosted embedding (`ND_CEF_VIEWS_HOSTED=1`)
+has one. With a popup on the tab Chromium would open its own popup window, so
+call it only when `readExtensionAction` reports `popupUrl: ""` and mount the
+popup in the app otherwise. `chrome.action.setPopup`, `setBadgeText`,
 `setIcon` and `setTitle` are recorded by Chromium but answered only to the
 extension itself, so `badgeText` is always empty and a popup URL changed at
-runtime is not seen. A popup in an app-owned view does not close on blur and is
-not sized by the popup document, so the app owns both. And the `activeTab` grant
-Chrome issues when its own toolbar button is clicked is never issued.
+runtime is not seen by `listExtensionActions`. A popup in an app-owned view does
+not close on blur and is not sized by the popup document, so the app owns both.
 
 What the 1Password extension (`aeblfdkhhhdcdjpifhhbdiojplfjncoa`, 8.12.37.1)
 does inside this embedding, measured headless on CEF 151.3.23 against an
@@ -904,10 +913,9 @@ answer for 1Password carried
 app's own toolbar follows focus in one of its views, which is the case this is
 read in.
 
-What is still missing is the click itself. An action whose runtime popup is `""`
-is one whose click Chrome answers with `chrome.action.onClicked`, and there is
-no toolbar button here for Chromium to consider clicked, so the app has to
-decide what that click means: for 1Password, opening its onboarding page.
+An action whose runtime popup is `""` is one whose click Chrome answers with
+`chrome.action.onClicked`, which is what `triggerExtensionAction` runs: for
+1Password, opening its onboarding page or filling the page.
 
 The host still cannot reach an extension's service worker. Its whole CDP
 substrate is `cef_browser_host_t::execute_dev_tools_method` (`src/cef/cdp.zig`),
@@ -974,8 +982,9 @@ The opt-in is structural rather than a runtime flag:
 `scripts/headless-webview-cef-chrome.sh` is the Chrome-style gate (marker
 `ND_CEF_CHROME_OK`): the extension runtime, every route that would open a
 Chromium window, docked devtools, the registry commands (install an unpacked
-directory, list its action, disable, enable, uninstall through Chrome's
-confirmation), and the extension and its storage across a restart. The top-level
+directory, list its action, disable, enable, an action click
+through `triggerExtensionAction` with its `activeTab` grant, uninstall with no
+Chrome dialog), and the extension and its storage across a restart. The top-level
 census holds through every leg. `ND_CEF_CHROME_STORE=1` adds the Web Store legs
 (`ND_CEF_CHROME_STORE_OK`), which are opt-in because they need the network and
 Google's consent interstitial.

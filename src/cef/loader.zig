@@ -31,6 +31,16 @@ pub const Api = struct {
         extra_info: [*c]c.cef_dictionary_value_t,
         request_context: [*c]c.cef_request_context_t,
     ) callconv(.c) c_int,
+    /// The Views-hosted embedding (engine.zig `viewsHosted`).
+    browser_view_create: *const fn (
+        client: [*c]c.cef_client_t,
+        url: [*c]const c.cef_string_t,
+        settings: [*c]const c.cef_browser_settings_t,
+        extra_info: [*c]c.cef_dictionary_value_t,
+        request_context: [*c]c.cef_request_context_t,
+        delegate: [*c]c.cef_browser_view_delegate_t,
+    ) callconv(.c) [*c]c.cef_browser_view_t,
+    window_create_top_level: *const fn (delegate: [*c]c.cef_window_delegate_t) callconv(.c) [*c]c.cef_window_t,
     string_utf8_to_utf16: *const fn (src: [*c]const u8, src_len: usize, output: [*c]c.cef_string_utf16_t) callconv(.c) c_int,
     string_utf16_clear: *const fn (str: [*c]c.cef_string_utf16_t) callconv(.c) void,
     /// CEF's own X11 connection. Windows CEF creates are only guaranteed to
@@ -132,6 +142,8 @@ fn lookupAll(l: *std.DynLib) ?Api {
         .initialize = l.lookup(@FieldType(Api, "initialize"), "cef_initialize") orelse return null,
         .shutdown = l.lookup(@FieldType(Api, "shutdown"), "cef_shutdown") orelse return null,
         .create_browser = l.lookup(@FieldType(Api, "create_browser"), "cef_browser_host_create_browser") orelse return null,
+        .browser_view_create = l.lookup(@FieldType(Api, "browser_view_create"), "cef_browser_view_create") orelse return null,
+        .window_create_top_level = l.lookup(@FieldType(Api, "window_create_top_level"), "cef_window_create_top_level") orelse return null,
         .string_utf8_to_utf16 = l.lookup(@FieldType(Api, "string_utf8_to_utf16"), "cef_string_utf8_to_utf16") orelse return null,
         .string_utf16_clear = l.lookup(@FieldType(Api, "string_utf16_clear"), "cef_string_utf16_clear") orelse return null,
         .get_xdisplay = l.lookup(@FieldType(Api, "get_xdisplay"), "cef_get_xdisplay") orelse return null,
