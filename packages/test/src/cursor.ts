@@ -109,8 +109,11 @@ export class Cursor {
       return name;
     });
     const keyCode = MAC_KEY_CODES[key];
-    if (keyCode === undefined) throw new Error(`app.cursor.press: no key code for "${key}" in "${chord}"`);
-    await this.send({ op: "key", keyCode, modifiers });
+    // A printable key goes by its character, which the helper finds on the
+    // current keyboard layout; the key code is the US position, the fallback.
+    const char = key.length === 1 ? key : undefined;
+    if (keyCode === undefined && char === undefined) throw new Error(`app.cursor.press: no key code for "${key}" in "${chord}"`);
+    await this.send({ op: "key", keyCode, char, modifiers });
   }
 
   /** The cursor's current position in global logical points. */

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import Foundation
 
 // `NDShell --nd-input`: drives the real system cursor for @nativedesktop/test's
@@ -165,8 +166,13 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
         // A keypress at the HID level, so it reaches whatever has the keyboard
         // the way a physical key does: a page's own shortcut handling, the
         // menu bar's key equivalents, Chromium's accelerator table.
-        guard let code = (cmd["keyCode"] as? NSNumber)?.uint16Value else { return ["ok": false, "error": "key needs keyCode"] }
         var flags: CGEventFlags = []
+        var code = (cmd["keyCode"] as? NSNumber)?.uint16Value
+        if let char = cmd["char"] as? String, let typed = ndKeyTyping(char) {
+            code = typed.code
+            if typed.shift { flags.insert(.maskShift) }
+        }
+        guard let code else { return ["ok": false, "error": "key needs keyCode or a char the keyboard layout types"] }
         for name in cmd["modifiers"] as? [String] ?? [] {
             switch name {
             case "command": flags.insert(.maskCommand)
@@ -186,6 +192,31 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
         return ["ok": true]
     default:
         return ["ok": false, "error": "unknown op '\(op)'"]
+    }
+}
+
+/// The key, and whether it needs shift, that types `char` on the current
+/// keyboard layout. A key code names a physical key, and "=" on a US layout is
+/// "¡" on a Spanish one, so a chord spelled by its character is resolved here.
+private func ndKeyTyping(_ char: String) -> (code: UInt16, shift: Bool)? {
+    guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+          let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+    else { return nil }
+    let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+    return data.withUnsafeBytes { bytes -> (UInt16, Bool)? in
+        guard let layout = bytes.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return nil }
+        for shift in [false, true] {
+            for code in UInt16(0)..<128 {
+                var dead: UInt32 = 0
+                var length = 0
+                var chars = [UniChar](repeating: 0, count: 4)
+                let mods: UInt32 = shift ? UInt32(shiftKey >> 8) & 0xFF : 0
+                let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), mods, UInt32(LMGetKbdType()),
+                                            OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &length, &chars)
+                if status == noErr, length > 0, String(utf16CodeUnits: chars, count: length) == char { return (code, shift) }
+            }
+        }
+        return nil
     }
 }
 
