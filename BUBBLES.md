@@ -12,7 +12,8 @@ Each bubble gets one of three answers:
 1. **Native**: the framework reports the state (an event or an API) and the app
    draws its own UI where it belongs.
 2. **Suppressed**: the command that raises it is refused
-   (`on_chrome_command`), its page action icon is hidden
+   (`on_chrome_command` lets only the page's own commands through, see
+   ESCAPES.md), its page action icon is hidden
    (`is_chrome_page_action_icon_visible`, which also removes the page action
    from the location bar CEF builds), or the profile preference behind it is
    off.
@@ -28,10 +29,10 @@ trailing icon and its popover anchor).
 
 | Bubble | Raised by | Answer | How |
 | --- | --- | --- | --- |
-| Zoom | Cmd/Ctrl `+` `-` `0` (on macOS Chrome maps them through its main menu, which this embedding lacks, so there they are the app's own View menu accelerators), ctrl+wheel, `setZoom`, an extension's `chrome.tabs.setZoom` | Native | The engine serves `IDC_ZOOM_PLUS/MINUS/NORMAL` itself (Chrome's preset steps) and reports every change as `zoomChanged {factor, source}`. The app shows a magnifier as the address field's trailing icon while zoom is not 100% and a popover under it (minus, value, plus, Reset); a chord or a menu step shows the popover for 1.5s. macOS: the bubble window is closed the moment it appears, before it is placed. **Linux: blocked on our own CEF build**, see below. A trackpad pinch is page scale and raises nothing. |
-| Find bar | Cmd/Ctrl+F, F3, Cmd/Ctrl+G | Native | The app's own find popover (`findStart`/`findNext`, `findResult`). `IDC_FIND`, `IDC_FIND_NEXT`, `IDC_FIND_PREVIOUS` are refused, so a chord the app did not bind raises nothing. The `no-escape` branch routes them to the app as `browserCommand` instead. |
+| Zoom | Cmd/Ctrl `+` `-` `0` (on macOS Chrome maps them through its main menu, which this embedding lacks, so there they are the app's own View menu accelerators), ctrl+wheel, `setZoom`, an extension's `chrome.tabs.setZoom` | Native | The engine serves `IDC_ZOOM_PLUS/MINUS/NORMAL` itself (Chrome's preset steps) and reports every change as `zoomChanged {factor, source}`. The app shows a magnifier while zoom is not 100% (compact: the address field's trailing icon, popover under it; sidebar layout: a glyph at the sidebar's foot, popover above it; sidebar hidden: a toast with the value) and a popover with minus, value, plus, Reset; a chord or a menu step shows it for 1.5s. macOS: the bubble window is closed the moment it appears, before it is placed. **Linux: blocked on our own CEF build**, see below. A trackpad pinch is page scale and raises nothing. |
+| Find bar | Cmd/Ctrl+F, F3, Cmd/Ctrl+G | Native | The app's own find popover (`findStart`/`findNext`, `findResult`). `IDC_FIND`, `IDC_FIND_NEXT`, `IDC_FIND_PREVIOUS` are refused and reach the app as `browserCommand`. |
 | Downloads | a download starting | Native | Owned by the `pages` branch (chrome://downloads and the bubble). The engine already cancels Chrome's download and reports `downloadRequested`. |
-| Save / update password | submitting a login form | Suppressed | Profile preferences `credentials_enable_service` and `credentials_enable_autosignin` off (Chrome's password manager; the owner uses an extension). `IDC_MANAGE_PASSWORDS_FOR_PAGE` refused, and the key icon is hidden. |
+| Save / update password | submitting a login form | Suppressed | Profile preferences `credentials_enable_service` and `credentials_enable_autosignin` off (Chrome's password manager; the owner uses an extension). Written at every request context's initialization with the startup preferences. `IDC_MANAGE_PASSWORDS_FOR_PAGE` refused, and the key icon is hidden. |
 | Passkey / security key | `navigator.credentials` | Stopgap (correct place) | WebAuthn is a tab-modal dialog, not an anchored bubble: `NDCefSurfaceWindows` (macOS) and the window watch (Linux) put it at the top centre of the web contents, which is where Chrome puts tab-modal sheets. Saving a passkey to Google Password Manager needs a signed-in profile, which this browser never has. |
 | Save card / save address | submitting a payment or address form | Suppressed | `autofill.credit_card_enabled` and `autofill.profile_enabled` off. |
 | Translate | a page in another language, the context menu, `IDC_SHOW_TRANSLATE` | Suppressed | `translate.enabled` off; `IDC_SHOW_TRANSLATE` and `IDC_CONTENT_CONTEXT_TRANSLATE` refused (the context menu drops the item). |
@@ -44,7 +45,7 @@ trailing icon and its popover anchor).
 | Sharing hub / QR code | the share icon, `IDC_SHARING_HUB`, `IDC_QRCODE_GENERATOR`, the context menu | Suppressed | Icons hidden, commands refused (`IDC_CONTENT_CONTEXT_GENERATE_QR_CODE` too; the context menu drops it). |
 | Send tab to self | the icon, `IDC_SEND_TAB_TO_SELF` | Suppressed | Icon hidden, command refused; it also needs a signed-in profile. |
 | Reading list | `IDC_READING_LIST_MENU_ADD_TAB` | Suppressed | Command refused. |
-| Bookmark star | Cmd/Ctrl+D (`IDC_BOOKMARK_THIS_TAB`), `IDC_BOOKMARK_ALL_TABS` | Suppressed | Commands refused, star hidden. `no-escape` routes Cmd/Ctrl+D to the app as `browserCommand` `bookmarkPage`. |
+| Bookmark star | Cmd/Ctrl+D (`IDC_BOOKMARK_THIS_TAB`), `IDC_BOOKMARK_ALL_TABS` | Suppressed | Commands refused, star hidden; Cmd/Ctrl+D reaches the app as `browserCommand` `bookmarkPage`. |
 | Tab search | Cmd/Ctrl+Shift+A (`IDC_TAB_SEARCH`) | Suppressed | Command refused; the app's command palette is the native tab search. |
 | Avatar / profile menu | `IDC_SHOW_AVATAR_MENU` | Suppressed | Command refused. |
 
@@ -66,6 +67,15 @@ for 1.5s. Tried, none of them removes it:
   `ZoomController::SetZoomLevel`, which sets `can_show_bubble` from
   `can_show_bubble_`. That flag defaults to true and only
   `ZoomController::SetShowsNotificationBubble` (C++) changes it.
+- Taking the widget away from the X side: `xwininfo -root -tree` taken while
+  the bubble is up shows no window for it, top-level or child; it is an aura
+  window painted into the browser's own X window.
+- Anything that closes a `LocationBarBubbleDelegateView` early (the page going
+  hidden, a fullscreen change, a key or click in the page) either flickers
+  the page or needs the user to act. `ZoomBubbleCoordinator::Show` has no
+  gate besides an active tab, and on 151 the page action state CEF exposes
+  is not consulted on this path (`ZoomViewController` belongs to the page
+  actions migration, not to `PageActionIconController`).
 - Zooming without the controller: the only CDP route is
   `Emulation.setDeviceMetricsOverride`, which emulates a device (layout shrinks
   to a box in the corner of the view), not a page zoom.
@@ -101,6 +111,7 @@ The app's part lives in `src/ZoomControl.tsx` (nativebrowser):
   `zoomNotice` counter moves (a chord inside the page, a menu or palette step)
   and until dismissed when the icon is clicked.
 
-Today both layouts use the header's address field, so the indicator is in the
-right place in each. The sidebar's own URL field (Arc layout, `sidebar`
-branch) takes the same two lines when it lands.
+The sidebar layout has no address field: `<ZoomFootControl>` puts the
+magnifier among the glyphs at the sidebar's foot, beside the padlock, with the
+popover above it, and with the sidebar hidden a chord or menu step says the
+new value in a toast.
