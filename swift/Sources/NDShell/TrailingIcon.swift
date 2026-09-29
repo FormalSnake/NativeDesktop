@@ -68,6 +68,8 @@ func ndApplyTrailingIcon(_ view: NSView, _ props: [String: Any]) {
             let blank = NSImage(size: NSSize(width: 1, height: 1))
             cell.cancelButtonCell?.image = blank
             cell.cancelButtonCell?.alternateImage = blank
+            // macOS 26 draws its own clear glyph whatever the image is.
+            cell.cancelButtonCell?.isTransparent = true
         } else if let cell = field.cell as? NDTextFieldCell {
             cell.ndTrailingInset = ndTrailingIconWidth
         }

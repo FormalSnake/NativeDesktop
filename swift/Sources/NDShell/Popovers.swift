@@ -145,9 +145,17 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             let (kept, view) = keptInWindow(rect, of: anchor)
             if view !== anchor, position == "top" || position == "bottom", let window = anchor.window {
                 let onScreen = window.convertToScreen(anchor.convert(rect, to: nil))
+                contentContainer.layer?.backgroundColor = nil
                 anchoredPanel.show(content: contentContainer, size: popover.contentSize, anchor: onScreen,
                                    above: position == "top", in: window)
                 return
+            }
+            // Untinted, NSPopover's glass lets a bright page through and the
+            // labels in it drop well under 4.5:1; the same dimming the
+            // anchored panel's glass gets.
+            contentContainer.wantsLayer = true
+            anchor.effectiveAppearance.performAsCurrentDrawingAppearance {
+                contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.7).cgColor
             }
             popover.show(relativeTo: kept, of: view, preferredEdge: preferredEdge(for: view))
         } else {
