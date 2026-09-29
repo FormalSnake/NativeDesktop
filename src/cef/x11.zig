@@ -700,7 +700,7 @@ pub fn gdkDisplay() ?*gdk.Display {
 // drawing and for input. libXext is optional: without it the page stays a
 // rectangle, which is what it was before.
 
-pub const Rect = extern struct { x: c_short, y: c_short, width: c_ushort, height: c_ushort };
+pub const Rect = @import("shape.zig").Rect;
 
 const FnShapeRects = *const fn (*Display, Window, c_int, c_int, c_int, [*]const Rect, c_int, c_int, c_int) callconv(.c) void;
 const FnShapeMask = *const fn (*Display, Window, c_int, c_int, c_int, c_ulong, c_int) callconv(.c) void;

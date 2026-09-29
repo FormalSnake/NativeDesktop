@@ -30,6 +30,7 @@ const c = capi.c;
 const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
+const shape = @import("shape.zig");
 const cdp = @import("cdp.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
 const ndchrome = @import("../gtk/chrome.zig");
@@ -2276,13 +2277,8 @@ fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64) 
         if (same) continue;
         // Close the band that ends here.
         for (band[0..band_n]) |sp| {
-            if (sp[1] <= sp[0] or y == band_start) continue;
-            rects.append(alloc, .{
-                .x = @intCast(sp[0]),
-                .y = @intCast(band_start),
-                .width = @intCast(sp[1] - sp[0]),
-                .height = @intCast(y - band_start),
-            }) catch return;
+            const r = shape.bandRect(sp[0], sp[1], band_start, y) orelse continue;
+            rects.append(alloc, r) catch return;
         }
         band_start = y;
         band_n = n;
