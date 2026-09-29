@@ -1345,6 +1345,19 @@ if (hasApp) {
   check("appShortcutWhilePageFocused", !findBefore && findAfter, `find bar visible ${findBefore} -> ${findAfter}`);
   key("Escape");
   await Bun.sleep(800);
+  // Escape closes the find bar and hands the page back: the popover is gone
+  // from the tree and from the screen (a GTK popover that stays mapped keeps
+  // its grab and swallows every click after it), and a click on the page
+  // lands in the page.
+  const findGone = !(await app.getByTestId("find-bar").isVisible().catch(() => false));
+  const popups = overrideRedirect(120, 30).filter((p) => p.h < 200);
+  await fixtureEval("(window.__ndFindClicks = 0, document.addEventListener('mousedown', () => window.__ndFindClicks++), JSON.stringify(0))");
+  pointerTo(pageAt.x, pageAt.y);
+  click(1);
+  await Bun.sleep(400);
+  const clicks = await fixtureEval<number>("JSON.stringify(window.__ndFindClicks)");
+  check("findEscapeReleasesThePage", findGone && popups.length === 0 && clicks === 1,
+    `find bar gone ${findGone}, popover-sized popups ${popups.length}, page clicks ${clicks}`);
   const s = await settled(6000);
   check("appShortcutLeftTheViewAlone", s.ok, s.detail);
   noStray("appShortcut");
