@@ -40,7 +40,7 @@ type ColumnId = "todo" | "doing" | "done";
 | Prop | Type | Default | Applied | Notes |
 | --- | --- | --- | --- | --- |
 | `draggable` | bool | `false` | createAndUpdate | Makes the widget a drag source. |
-| `dragPayload` | string | `""` | createAndUpdate | The app-defined string carried by the drag. Read fresh at drag start, so changing it before the next drag is enough; no need to remount. |
+| `dragPayload` | string | `""` | createAndUpdate | The app-defined string carried by the drag. Read fresh at drag start, so changing it before the next drag is enough; no need to remount. A `file://` URL is also offered as that file (copy only), so it drops into Finder, Files or any app that takes files. |
 | `dropTarget` | bool | `false` | createAndUpdate | Makes the widget a drop target. |
 
 A widget can be `draggable` and `dropTarget` at once, useful for reordering a list where every row

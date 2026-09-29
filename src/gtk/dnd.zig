@@ -20,6 +20,7 @@ const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
 const gobject = @import("gobject");
+const gio = @import("gio");
 const protocol = @import("../protocol.zig");
 
 pub const EmitFn = *const fn (node_id: u32, name: []const u8, payload: protocol.EventPayload) void;
@@ -98,7 +99,22 @@ fn cbPrepare(src: *gtk.DragSource, _: f64, _: f64, _: ?*anyopaque) callconv(.c) 
     @memcpy(buf[0..len], payload[0..len]);
     buf[len] = 0;
     gobject.Value.setString(&value, @ptrCast(&buf));
-    return gdk.ContentProvider.newForValue(&value);
+    const text = gdk.ContentProvider.newForValue(&value);
+    // A payload naming a file is also that file, so it drops into Files or
+    // any app that takes files. Copy only: a drag out of the app must never
+    // take the file away from where the app keeps it.
+    if (std.mem.startsWith(u8, payload, "file://") and len == payload.len) {
+        const file = gio.File.newForUri(@ptrCast(&buf));
+        var file_value: gobject.Value = std.mem.zeroes(gobject.Value);
+        _ = gobject.Value.init(&file_value, gio.File.getGObjectType());
+        defer gobject.Value.unset(&file_value);
+        gobject.Value.takeObject(&file_value, @ptrCast(file));
+        var providers = [_]*gdk.ContentProvider{ gdk.ContentProvider.newForValue(&file_value), text };
+        gtk.DragSource.setActions(src, .{ .copy = true });
+        return gdk.ContentProvider.newUnion(&providers, providers.len);
+    }
+    gtk.DragSource.setActions(src, .{ .copy = true, .move = true });
+    return text;
 }
 
 fn cbDragBegin(src: *gtk.DragSource, _: *gdk.Drag, _: ?*anyopaque) callconv(.c) void {

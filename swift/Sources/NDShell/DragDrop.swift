@@ -122,6 +122,9 @@ private final class NDDragSourceProxy: NSObject, NSDraggingSource, @unchecked Se
         let item = NSPasteboardItem()
         item.setString(e.payload, forType: ndDragPayloadType)
         item.setString(e.payload, forType: .string)
+        // A payload naming a file that exists is also that file, so it drops
+        // into Finder or any app that takes files.
+        if let file = ndDragFileURL(e.payload) { item.setString(file.absoluteString, forType: .fileURL) }
         let draggingItem = NSDraggingItem(pasteboardWriter: item)
         draggingItem.setDraggingFrame(host.bounds, contents: ndDragImage(of: host))
 
@@ -133,7 +136,11 @@ private final class NDDragSourceProxy: NSObject, NSDraggingSource, @unchecked Se
         _ session: NSDraggingSession,
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
-        [.copy, .move]
+        // Finder moves a file dropped on the same volume unless the source
+        // only offers a copy, and a drag out of the app must never take the
+        // file away from where the app keeps it.
+        if context == .outsideApplication, let e = current, ndDragFileURL(e.payload) != nil { return .copy }
+        return [.copy, .move]
     }
 
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
@@ -150,6 +157,12 @@ private final class NDDragSourceProxy: NSObject, NSDraggingSource, @unchecked Se
         guard let e = current, e.nodeID != 0 else { return }
         ndEmitEvent(e.nodeID, "dragEnded", "{}")
     }
+}
+
+/// The file a `file://` payload names, when it exists.
+private func ndDragFileURL(_ payload: String) -> URL? {
+    guard payload.hasPrefix("file://"), let url = URL(string: payload), url.isFileURL else { return nil }
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
 }
 
 /// Snapshot of the view as the drag image. Without one the session drags

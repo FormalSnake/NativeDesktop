@@ -111,6 +111,8 @@ private let ndSFSymbolMap: [String: String] = [
     "document-open-recent": "clock.arrow.circlepath",
     "application-x-addon": "puzzlepiece.extension",
     "package-x-generic": "shippingbox",
+    "video-x-generic": "film",
+    "audio-x-generic": "music.note",
     "system-software-install": "arrow.down.app",
     "weather-clear-night": "moon.zzz",
 ]
