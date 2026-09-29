@@ -1460,7 +1460,10 @@ func ndApplyStyle(_ view: NSView, _ nodeID: UInt32, _ styleJson: String) {
     flags.margin = style["margin"].flatMap(parseEdgeInsets) ?? NSEdgeInsets()
     flags.minWidth = CGFloat((style["minWidth"] as? NSNumber)?.doubleValue ?? 0)
     flags.minHeight = CGFloat((style["minHeight"] as? NSNumber)?.doubleValue ?? 0)
+    let resized = flags.minWidth != (ndLayoutFlags[ObjectIdentifier(view)]?.minWidth ?? 0)
+        || flags.minHeight != (ndLayoutFlags[ObjectIdentifier(view)]?.minHeight ?? 0)
     ndLayoutFlags[ObjectIdentifier(view)] = flags
+    if resized { MainActor.assumeIsolated { ndRefitEnclosingPopover(view) } }
 
     ndApplyMinSize(view, style)
     // Unconditional: `font` and `padding` change what the widget measures, not
@@ -1737,4 +1740,16 @@ func ndGridRemove(_ grid: NSGridView, _ child: NSView) {
     }
     grid.cell(atColumnIndex: cell.col, rowIndex: cell.row).contentView = nil
     gridCells[ObjectIdentifier(grid)]?[ObjectIdentifier(child)] = nil
+}
+
+/// The popover (if any) whose panel holds `view`, told to fit again.
+@MainActor func ndRefitEnclosingPopover(_ view: NSView) {
+    var node: NSView? = view.superview
+    while let current = node {
+        if let handle = ndPopoverHandles[ObjectIdentifier(current)]?.handle {
+            handle.refitIfShown()
+            return
+        }
+        node = current.superview
+    }
 }

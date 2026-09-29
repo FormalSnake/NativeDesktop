@@ -24,6 +24,13 @@ let ndPopoverContentID = NSUserInterfaceItemIdentifier("nd.popover.content")
     return false
 }
 
+struct NDWeakPopover {
+    weak var handle: NDPopoverHandleView?
+}
+
+/// Each popover's content container to its handle, for `ndRefitEnclosingPopover`.
+@MainActor var ndPopoverHandles: [ObjectIdentifier: NDWeakPopover] = [:]
+
 final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     var nodeID: UInt32 = 0
     var position = "top"
@@ -236,6 +243,27 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     }
 
     private var sizeConstraints: [NSLayoutConstraint] = []
+    private var refitQueued = false
+
+    /// A child whose minimum size changed while the panel is up (a web
+    /// page measured after it loaded) resizes the panel: neither NSPopover
+    /// nor the anchored panel follows its content once shown.
+    func refitIfShown() {
+        guard isUp, !refitQueued else { return }
+        refitQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refitQueued = false
+            guard self.isUp else { return }
+            let before = self.popover.contentSize
+            self.sizeContent()
+            guard self.popover.contentSize != before else { return }
+            if self.anchoredPanel.isShown {
+                self.anchoredPanel.close()
+                self.applyOpen(true)
+            }
+        }
+    }
 
     /// Sizes the panel from its child's natural size and pins it there.
     /// NSPopover fits its content view again once it is shown, and a box child
@@ -262,6 +290,7 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
 
     /// Single-child slot (generated structural Popover arms).
     func setChild(_ child: NSView) {
+        ndPopoverHandles[ObjectIdentifier(contentContainer)] = NDWeakPopover(handle: self)
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         child.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(child)
