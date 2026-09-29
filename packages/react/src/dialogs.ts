@@ -41,6 +41,10 @@ export interface ShowAlertOptions {
   title: string;
   body?: string;
   buttons: DialogButton[];
+  /// The button Return fires. Unset, only a "suggested" one does.
+  defaultId?: string;
+  /// The button Escape fires, and the answer when the dialog is dismissed.
+  closeId?: string;
 }
 
 export interface AlertResult {
