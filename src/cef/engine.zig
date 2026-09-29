@@ -338,9 +338,9 @@ const bubble_prefs = [_][]const u8{
     "translate.enabled",
 };
 
-/// Chrome style pops its download bubble whenever a download it runs
-/// finishes, anchored to a toolbar this embedding does not have; the app's own
-/// UI reports downloads instead.
+/// `download_bubble.partial_view_enabled`: Chrome style pops its download
+/// bubble whenever a download it runs finishes, anchored to a toolbar this
+/// embedding does not have; the app's own UI reports downloads instead.
 fn writeBoolPref(ctx: [*c]c.cef_request_context_t, key: []const u8, on: bool) void {
     const api = loader.loaded() orelse return;
     const set = ctx.*.base.set_preference orelse return;
@@ -356,7 +356,9 @@ fn writeBoolPref(ctx: [*c]c.cef_request_context_t, key: []const u8, on: bool) vo
         const why = dupeStr(&err);
         defer if (why) |w| alloc.free(w);
         std.debug.print("ND_WARN CEF: {s} was not written: {?s}\n", .{ key, why });
+        return;
     }
+    tr("pref {s}={}", .{ key, on });
 }
 
 // ============================================================================

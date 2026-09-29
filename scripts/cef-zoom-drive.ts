@@ -214,8 +214,10 @@ await leg("extension fills", async () => {
 await leg("prefs", async () => {
   // The password manager, autofill saving and translate raise their bubbles
   // from the page itself, so the engine switches them off in the profile.
-  const off = (await logText()).split("\n").filter((l) => /bubble pref \S+ off=1/.test(l)).length;
-  if (off < 5) throw new Error(`prefs: only ${off} of the 5 bubble preferences were switched off`);
+  const names = ["credentials_enable_service", "credentials_enable_autosignin", "autofill.profile_enabled", "autofill.credit_card_enabled", "translate.enabled"];
+  const text = await logText();
+  const off = names.filter((n) => text.includes(`pref ${n}=false`)).length;
+  if (off < names.length) throw new Error(`prefs: only ${off} of the 5 bubble preferences were switched off`);
   console.log(`  ND_CEF_BUBBLE_PREFS_OK the password manager, autofill saving and translate are off`);
 });
 

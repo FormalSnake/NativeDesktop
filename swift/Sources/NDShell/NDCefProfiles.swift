@@ -62,7 +62,11 @@ enum NDCefProfiles {
             var error = cef_string_t()
             ndCefSetString(name, &pref)
             let ok = withUnsafeMutablePointer(to: &context.pointee.base) { set($0, &pref, value, &error) }
-            if ok == 0 { ndCefWarn("CEF: \(name) was not written: \(ndCefString(&error))") }
+            if ok == 0 {
+                ndCefWarn("CEF: \(name) was not written: \(ndCefString(&error))")
+            } else if ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" {
+                FileHandle.standardError.write("ND_WV cef pref \(name)=false\n".data(using: .utf8)!)
+            }
             nd_cef_string_clear(&pref)
             nd_cef_string_clear(&error)
         }
