@@ -202,8 +202,9 @@ final class NDButton: NSButton {
         ndIsSidebarRowModel ? nil : super.hitTest(point)
     }
 
-    /// The tint the tree asked for; inside a popover panel a flat button with
-    /// none takes the label ink (PopoverPanel.swift's ndPanelInk).
+    /// The tint the tree asked for; inside a popover a flat button with none
+    /// takes the label ink, as a popover's menu rows read (PopoverPanel.swift's
+    /// ndPanelInk has the reason).
     private var ndRequestedTint: NSColor?
     private var ndPanelTinted = false
 
@@ -223,7 +224,7 @@ final class NDButton: NSButton {
     }
 
     private func ndApplyPanelInk() {
-        let wanted = window is NDPopoverPanel && !isBordered && ndRequestedTint == nil
+        let wanted = window != nil && ndInPopoverContent(self) && !isBordered && ndRequestedTint == nil
         guard wanted != ndPanelTinted else { return }
         ndPanelTinted = wanted
         super.contentTintColor = wanted ? .labelColor : ndRequestedTint

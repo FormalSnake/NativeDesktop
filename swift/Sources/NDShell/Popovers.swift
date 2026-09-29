@@ -10,10 +10,28 @@ import AppKit
 /// `popoverDidClose` -> `closed`; programmatic closes are flagged so they
 /// don't echo (an NSPopover close is animated/async, which outlives a
 /// withEchoSuppressed scope).
+let ndPopoverContentID = NSUserInterfaceItemIdentifier("nd.popover.content")
+
+/// Whether `view` is drawn inside a popover's content, in an NSPopover or in
+/// the anchored panel that stands in for one.
+@MainActor func ndInPopoverContent(_ view: NSView) -> Bool {
+    if view.window is NDPopoverPanel { return true }
+    var node: NSView? = view.superview
+    while let current = node {
+        if current.identifier == ndPopoverContentID { return true }
+        node = current.superview
+    }
+    return false
+}
+
 final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     var nodeID: UInt32 = 0
     var position = "top"
-    let contentContainer = FlippedView()
+    let contentContainer: FlippedView = {
+        let view = FlippedView()
+        view.identifier = ndPopoverContentID
+        return view
+    }()
     private weak var treeParent: NSView?
     /// `anchor` prop: the wire id of the node to present from, 0 for none.
     /// Resolved on every present rather than when the prop lands, because the
@@ -152,7 +170,8 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
             }
             // Untinted, NSPopover's glass lets a bright page through and the
             // labels in it drop well under 4.5:1; the same dimming the
-            // anchored panel's glass gets.
+            // anchored panel's glass gets, and the same inks
+            // (`ndInPopoverContent`).
             contentContainer.wantsLayer = true
             anchor.effectiveAppearance.performAsCurrentDrawingAppearance {
                 contentContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.7).cgColor
