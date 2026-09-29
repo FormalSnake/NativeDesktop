@@ -1563,21 +1563,25 @@ func ndCefOpenOutside(_ url: String, gesture: Bool) {
 /// the button then reaches CEF as `closeWindow`, which closes the devtools
 /// browser, and `on_browser_destroyed` retires the dock from there.
 ///
-/// Answers whether the frontend is now pointed at a docking URL, which is what
-/// ends the poll in `NDCefChromeWindow`: the inspector's browser is CEF's own,
-/// not this client's, so there is no load callback to hang this on.
-func ndCefDockFrontend(_ frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
+/// Answers whether the frontend reads back a docking URL, which is what ends
+/// the poll in `NDCefChromeWindow`: the inspector's browser is CEF's own, not
+/// this client's, so there is no load callback to hang this on. The re-point
+/// waits for the frontend's first load to finish: issued while that load is
+/// still running (a cold first open), it is dropped and the frontend stays on
+/// the URL without the flag, so no close button.
+func ndCefDockFrontend(_ browser: UnsafeMutablePointer<cef_browser_t>, _ frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
     guard let frame, frame.pointee.is_main?(frame) != 0 else { return false }
     guard let raw = frame.pointee.get_url?(frame) else { return false }
     let url = ndCefString(raw)
     nd_cef_string_free(raw)
     guard url.hasPrefix("devtools://") else { return false }
     if url.contains("can_dock=") { return true }
+    guard browser.pointee.is_loading?(browser) == 0 else { return false }
     var docked = cef_string_t()
     ndCefSetString(url + (url.contains("?") ? "&" : "?") + "can_dock=true", &docked)
     defer { nd_cef_string_clear(&docked) }
     frame.pointee.load_url?(frame, &docked)
-    return true
+    return false
 }
 
 /// Hands a handler struct to CEF with the reference the caller is owed.

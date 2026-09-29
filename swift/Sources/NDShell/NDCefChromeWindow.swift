@@ -383,7 +383,7 @@ import Foundation
         }
         guard let frame = browser.pointee.get_main_frame?(browser) else { return false }
         defer { nd_cef_ref_release(frame) }
-        return ndCefDockFrontend(frame)
+        return ndCefDockFrontend(browser, frame)
     }
 
     /// Both arrive from inside CEF's walk over its message observers
