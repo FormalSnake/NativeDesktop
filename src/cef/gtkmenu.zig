@@ -137,23 +137,28 @@ fn cbPresent(data: ?*anyopaque) callconv(.c) c_int {
     const popup: *Popup = @ptrCast(@alignCast(data.?));
     popup.present_source = 0;
     if (popup.closing) return 0;
-    sizeToContent(popup.popover.as(gtk.Widget));
+    sizeToContent(popup.popover.as(gtk.Popover));
     gtk.Popover.present(popup.popover.as(gtk.Popover));
     return 0; // G_SOURCE_REMOVE
 }
 
 /// GtkPopover presents its surface at the size it measured before the menu's
 /// own content had been laid out, which leaves the last section clipped. The
-/// natural size becomes the minimum so that measurement cannot come out short,
-/// capped at the monitor so a long menu scrolls instead of running off it.
-fn sizeToContent(popover: *gtk.Widget) void {
+/// menu's natural size becomes its minimum so that measurement cannot come out
+/// short, capped at the monitor so a long menu scrolls instead of running off
+/// it. Set on the menu inside the popover, not on the popover: the popover's
+/// own measure includes its shadow, which it then adds again around a minimum
+/// set on itself, and the menu came up with a shadow's width of empty space on
+/// two sides.
+fn sizeToContent(popover: *gtk.Popover) void {
+    const menu = gtk.Popover.getChild(popover) orelse return;
     var min_w: c_int = 0;
     var nat_w: c_int = 0;
     var min_h: c_int = 0;
     var nat_h: c_int = 0;
     var ignored: c_int = 0;
-    gtk.Widget.measure(popover, .horizontal, -1, &min_w, &nat_w, &ignored, &ignored);
-    gtk.Widget.measure(popover, .vertical, nat_w, &min_h, &nat_h, &ignored, &ignored);
+    gtk.Widget.measure(menu, .horizontal, -1, &min_w, &nat_w, &ignored, &ignored);
+    gtk.Widget.measure(menu, .vertical, nat_w, &min_h, &nat_h, &ignored, &ignored);
     var area: gdk.Rectangle = .{ .f_x = 0, .f_y = 0, .f_width = 0, .f_height = 0 };
     if (gdk.Display.getDefault()) |display| {
         const monitors = gdk.Display.getMonitors(display);
@@ -162,7 +167,7 @@ fn sizeToContent(popover: *gtk.Widget) void {
         }
     }
     const cap: c_int = if (area.f_height > 80) area.f_height - 40 else nat_h;
-    gtk.Widget.setSizeRequest(popover, nat_w, @min(nat_h, cap));
+    gtk.Widget.setSizeRequest(menu, nat_w, @min(nat_h, cap));
 }
 
 /// Dismisses a menu the user did not answer: the view went away, the page
