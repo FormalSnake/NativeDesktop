@@ -2858,8 +2858,62 @@ fn cbDialogPresentIdle(data: ?*anyopaque) callconv(.c) c_int {
     gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, null);
     const parent = gobject.Object.getData(obj, ND_DIALOG_PARENT) orelse return 0; // never attached: nothing to present against
     gobject.Object.setData(obj, ND_DIALOG_PRESENTED, @ptrFromInt(1));
+    ndDialogMirrorAccels(widget);
     adw.Dialog.present(@ptrCast(@alignCast(widget)), @ptrCast(@alignCast(parent)));
     return 0; // G_SOURCE_REMOVE
+}
+
+/// GtkSearchEntry keeps Esc for its own stop-search, so in a dialog Esc never
+/// reached the dialog. It now clears the field first and closes the dialog
+/// the field is in once the field is empty, as an NSSearchField in a sheet
+/// does.
+fn cbSearchStop(search: *gtk.SearchEntry, _: ?*anyopaque) callconv(.c) void {
+    const dialog = gtk.Widget.getAncestor(search.as(gtk.Widget), adw.Dialog.getGObjectType()) orelse return;
+    const editable = search.as(gtk.Editable);
+    if (std.mem.span(gtk.Editable.getText(editable)).len > 0) {
+        gtk.Editable.setText(editable, "");
+        return;
+    }
+    _ = adw.Dialog.close(@ptrCast(@alignCast(dialog)));
+}
+
+const ND_DIALOG_ACCELS = "nd-dialog-accels";
+
+/// A presented AdwDialog is modal, and its window stops answering the app's
+/// menu accelerators while it is up, so the key that opened a dialog could
+/// not put it away. The dialog carries its own copy of them, taken when it is
+/// presented (AppKit peer: a sheet leaves the menu bar's key equivalents
+/// working).
+fn ndDialogMirrorAccels(widget: *gtk.Widget) void {
+    const obj = asObject(widget);
+    if (gobject.Object.getData(obj, ND_DIALOG_ACCELS)) |old| {
+        gtk.Widget.removeController(widget, @ptrCast(@alignCast(old)));
+        gobject.Object.setData(obj, ND_DIALOG_ACCELS, null);
+    }
+    const app = menu_app orelse return;
+    const controller = gtk.ShortcutController.new();
+    gtk.ShortcutController.setScope(controller, .local);
+    var any = false;
+    const actions: [*:null]?[*:0]u8 = @ptrCast(gtk.Application.listActionDescriptions(app));
+    defer glib.strfreev(@ptrCast(actions));
+    var i: usize = 0;
+    while (actions[i]) |action| : (i += 1) {
+        const accels: [*:null]?[*:0]u8 = @ptrCast(gtk.Application.getAccelsForAction(app, action));
+        defer glib.strfreev(@ptrCast(accels));
+        var j: usize = 0;
+        while (accels[j]) |accel| : (j += 1) {
+            const trigger = gtk.ShortcutTrigger.parseString(accel) orelse continue;
+            const shortcut = gtk.Shortcut.new(trigger, @ptrCast(gtk.NamedAction.new(action)));
+            gtk.ShortcutController.addShortcut(controller, shortcut);
+            any = true;
+        }
+    }
+    if (!any) {
+        gobject.Object.unref(@as(*gobject.Object, @ptrCast(@alignCast(controller))));
+        return;
+    }
+    gtk.Widget.addController(widget, @ptrCast(controller));
+    gobject.Object.setData(obj, ND_DIALOG_ACCELS, controller);
 }
 `;
 
@@ -4177,6 +4231,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        const editable = search.as(gtk.Editable);\n";
     out += "        if (propStr(props, \"text\")) |t| {\n            if (t.len > 0) gtk.Editable.setText(editable, dupeZ(t));\n        }\n";
     out += "        if (propStr(props, \"placeholder\")) |p| gtk.SearchEntry.setPlaceholderText(search, dupeZ(p));\n";
+    out += "        _ = gobject.signalConnectData(@ptrCast(@alignCast(search)), \"stop-search\", @ptrCast(&cbSearchStop), null, null, .{});\n";
     out += "        ndNoteSearchInput(search.as(gtk.Widget));\n";
     out += "        return search.as(gtk.Widget);\n";
   } else if (w.name === "TextArea") {
