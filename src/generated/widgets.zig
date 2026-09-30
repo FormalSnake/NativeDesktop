@@ -26,6 +26,7 @@ const ndmotion_gtk = @import("../gtk/motion.zig");
 const ndchrome_gtk = @import("../gtk/chrome.zig");
 const ndtilegrid_gtk = @import("../gtk/tilegrid.zig");
 const nddnd_gtk = @import("../gtk/dnd.zig");
+const ndctx_gtk = @import("../gtk/contextmenu.zig");
 const ndcode_gtk = @import("../gtk/codeeditor.zig");
 const nd_plugin = @import("../plugin.zig");
 
@@ -1200,6 +1201,8 @@ fn ndMenuModelFlatten(model: *gio.MenuModel, prefix: []const u8, out: *std.Array
 /// homes it, the GtkApplication menubar otherwise). Null for any other node,
 /// including a <menu>, which only ever draws inside one of these.
 fn ndMenuOwnerModel(widget: *gtk.Widget) ?*gio.MenuModel {
+    // A contextMenu owns a model only while it is open.
+    if (ndctx_gtk.openModel(widget)) |model| return model;
     if (gobject.ext.isA(widget, adw.SplitButton)) return adw.SplitButton.getMenuModel(@ptrCast(@alignCast(widget)));
     if (gobject.ext.isA(widget, gtk.MenuButton)) return gtk.MenuButton.getMenuModel(@ptrCast(@alignCast(widget)));
     const menubar = the_menubar orelse return null;
@@ -3161,6 +3164,7 @@ pub fn create(
     ndApplyTooltip(widget, props, dupeZ);
     ndApplyEnabled(widget, props);
     nddnd_gtk.applyProps(widget, props, dupeZ);
+    ndctx_gtk.applyProps(widget, props);
     return widget;
 }
 
@@ -4949,6 +4953,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
     ndApplyTooltip(widget, props, dupeZ);
     ndApplyEnabled(widget, props);
     nddnd_gtk.applyProps(widget, props, dupeZ);
+    ndctx_gtk.applyProps(widget, props);
     if (std.mem.eql(u8, kind, "Window")) {
         if (propStr(props, "title")) |t| ndtabs_gtk.setTitle(widget, dupeZ(t));
     } else if (std.mem.eql(u8, kind, "Box")) {
@@ -5733,6 +5738,7 @@ pub fn connectEvents(widget: *gtk.Widget, kind: []const u8, node_id: u32) void {
     // arm, which runs before this and so has no node id yet. This is
     // where they learn it.
     if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);
+    if (emit) |f| ndctx_gtk.connectEvents(widget, node_id, f);
     // The only op the core hands every node's id to, so it is where a
     // node id becomes resolvable to a widget (Popover's `anchor` prop
     // is the one reader).

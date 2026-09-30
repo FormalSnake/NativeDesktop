@@ -1539,6 +1539,8 @@ fn ndMenuModelFlatten(model: *gio.MenuModel, prefix: []const u8, out: *std.Array
 /// homes it, the GtkApplication menubar otherwise). Null for any other node,
 /// including a <menu>, which only ever draws inside one of these.
 fn ndMenuOwnerModel(widget: *gtk.Widget) ?*gio.MenuModel {
+    // A contextMenu owns a model only while it is open.
+    if (ndctx_gtk.openModel(widget)) |model| return model;
     if (gobject.ext.isA(widget, adw.SplitButton)) return adw.SplitButton.getMenuModel(@ptrCast(@alignCast(widget)));
     if (gobject.ext.isA(widget, gtk.MenuButton)) return gtk.MenuButton.getMenuModel(@ptrCast(@alignCast(widget)));
     const menubar = the_menubar orelse return null;
@@ -3651,6 +3653,7 @@ function genZig(s: Schema): string {
   out += "const ndchrome_gtk = @import(\"../gtk/chrome.zig\");\n";
   out += "const ndtilegrid_gtk = @import(\"../gtk/tilegrid.zig\");\n";
   out += "const nddnd_gtk = @import(\"../gtk/dnd.zig\");\n";
+  out += "const ndctx_gtk = @import(\"../gtk/contextmenu.zig\");\n";
   out += "const ndcode_gtk = @import(\"../gtk/codeeditor.zig\");\n";
   out += "const nd_plugin = @import(\"../plugin.zig\");\n\n";
   out += ZIG_HELPERS;
@@ -3682,6 +3685,7 @@ function genZig(s: Schema): string {
   out += "    ndApplyTooltip(widget, props, dupeZ);\n";
   out += "    ndApplyEnabled(widget, props);\n";
   out += "    nddnd_gtk.applyProps(widget, props, dupeZ);\n";
+  out += "    ndctx_gtk.applyProps(widget, props);\n";
   out += "    return widget;\n";
   out += "}\n\n";
   out += GTK_PLACEMENT_HELPERS;
@@ -3738,6 +3742,7 @@ function genZig(s: Schema): string {
   out += "    ndApplyTooltip(widget, props, dupeZ);\n";
   out += "    ndApplyEnabled(widget, props);\n";
   out += "    nddnd_gtk.applyProps(widget, props, dupeZ);\n";
+  out += "    ndctx_gtk.applyProps(widget, props);\n";
   let firstApply = true;
   for (const w of s.widgets) {
     const updProps = updatableProps(w);
@@ -5850,6 +5855,7 @@ function genZigEvents(s: Schema): string {
   out += "    // arm, which runs before this and so has no node id yet. This is\n";
   out += "    // where they learn it.\n";
   out += "    if (emit) |f| nddnd_gtk.connectEvents(widget, node_id, f);\n";
+  out += "    if (emit) |f| ndctx_gtk.connectEvents(widget, node_id, f);\n";
   out += "    // The only op the core hands every node's id to, so it is where a\n";
   out += "    // node id becomes resolvable to a widget (Popover's `anchor` prop\n";
   out += "    // is the one reader).\n";

@@ -264,7 +264,7 @@ export interface DoubleClickParams {
   window?: number;
 }
 
-/** Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys "escape"). Unsupported on GTK (-32003). Target by exactly one of ref / testId. */
+/** Actionability-checked right-click at the widget's center via real input synthesis; opens native context menus where the widget has one (dismiss with keys "escape"). On GTK, which cannot synthesise input, it opens the node's own contextMenu at its centre and is otherwise unsupported (-32003). Target by exactly one of ref / testId. */
 export interface RightClickParams {
   ref?: number;
   testId?: string;
@@ -340,7 +340,7 @@ export interface PaletteLayoutParams {
   window?: number;
 }
 
-/** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, or a TrayItem; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
+/** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, a TrayItem, or on GTK a node whose contextMenu is open; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
 export interface MenuModelParams {
   ref?: number;
   testId?: string;

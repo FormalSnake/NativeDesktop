@@ -26,6 +26,7 @@ const ndtabs_gtk = @import("tabs.zig");
 const ndpalette_gtk = @import("commandpalette.zig");
 const ndsourcetree_gtk = @import("sourcetree.zig");
 const ndwebview_gtk = @import("webview.zig");
+const ndctx_gtk = @import("contextmenu.zig");
 const pango = @import("pango");
 
 pub const Widget = gtk.Widget;
@@ -735,6 +736,15 @@ fn vtSemanticAction(
         return semanticScrollIntoView(w, result_json_out);
     } else if (std.mem.eql(u8, action_s, "snapshotNode")) {
         return semanticSnapshotNode(w, node_id, args, result_json_out, err_json_out);
+    } else if (std.mem.eql(u8, action_s, "rightClick") and ndctx_gtk.open(
+        w,
+        @divTrunc(gtk.Widget.getWidth(w), 2),
+        @divTrunc(gtk.Widget.getHeight(w), 2),
+    )) {
+        // The one right-click GTK can answer without synthesising input: a
+        // node's own contextMenu, opened where the press would have opened it.
+        setResult(result_json_out, .{ .ref = node_id, .dispatched = true });
+        return 0;
     } else if (std.mem.eql(u8, action_s, "pointer") or std.mem.eql(u8, action_s, "drag") or
         std.mem.eql(u8, action_s, "keys") or std.mem.eql(u8, action_s, "doubleClick") or
         std.mem.eql(u8, action_s, "rightClick") or std.mem.eql(u8, action_s, "hover"))
