@@ -1545,6 +1545,9 @@ const View = struct {
     /// Whether the page currently holds the keyboard, as last told to the
     /// browser. Transitions are what the app hears as `focusChanged`.
     page_focused: bool = false,
+    /// Set while the engine moves focus off a page that gave it up itself
+    /// (Tab past its last element), for `syncBrowserFocus` to read.
+    page_released: bool = false,
     bounds: Bounds = .{},
     pending_url: ?[:0]u8 = null,
 
@@ -1890,7 +1893,7 @@ fn syncBrowserFocus(view: *View) void {
         // and a page in a window that just lost to another one would take the
         // activation straight back. Two windows with a page each did that
         // 1.2 million times in one engine gate run and starved GTK of layout.
-        returnFocusToApp(view);
+        if (view.page_released) x11.focusToplevel(view.widget) else returnFocusToApp(view);
     }
     const host = hostOf(view) orelse return;
     const wants = active and mine;
@@ -3948,6 +3951,8 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         // GTK's focus widget and X input focus both come home: grabFocus
         // alone leaves the keyboard on CEF's X window, and the app
         // (accelerators included) stays deaf until something else moves it.
+        view.page_released = true;
+        defer view.page_released = false;
         if (gtk.Widget.getRoot(view.widget)) |root| {
             const root_widget: *gtk.Widget = @ptrCast(@alignCast(root));
             // childFocus, not grabFocus: grabbing on the root hands focus
