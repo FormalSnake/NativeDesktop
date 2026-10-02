@@ -194,6 +194,8 @@ fn closeBrowsersInOrder() void {
     }
     const waited = waitForViews(&View.browserOpen, 5000);
     tr("shutdown browsers closed after {d}ms", .{waited});
+    const windows = waitForViews(&View.viewsWindowOpen, 3000);
+    tr("shutdown views windows destroyed after {d}ms", .{windows});
 }
 
 fn hostPtr(view: *View) ?[*c]c.cef_browser_host_t {
@@ -1511,6 +1513,10 @@ const View = struct {
     views_browser_view: ?*c.cef_browser_view_t = null,
     views_size: struct { w: c_uint = 0, h: c_uint = 0 } = .{},
     views_window: ?*c.cef_window_t = null,
+    /// From the window's creation until CEF reports it destroyed. Closing it
+    /// is asynchronous, and cef_shutdown started while one is still up joins
+    /// a UI thread whose run loop never quits.
+    views_window_live: std.atomic.Value(bool) = .init(false),
     /// The docked devtools, Chrome style only: our own X child inside the
     /// container, CEF's devtools window inside that, and the view's last known
     /// size so the CEF UI thread can lay the split out without reading the
@@ -1641,6 +1647,10 @@ const View = struct {
 
     fn browserOpen(self: *View) bool {
         return self.browser.load(.acquire) != 0;
+    }
+
+    fn viewsWindowOpen(self: *View) bool {
+        return self.views_window_live.load(.acquire);
     }
 
     fn devtoolsOpen(self: *View) bool {
@@ -2299,6 +2309,8 @@ fn runViewsCreate(self: [*c]c.cef_task_t) callconv(.c) void {
     window_delegate.cef.on_window_created = &viewsWindowCreated;
     window_delegate.cef.is_frameless = &viewsFrameless;
     window_delegate.cef.get_initial_bounds = &viewsInitialBounds;
+    window_delegate.cef.on_window_destroyed = &viewsWindowDestroyed;
+    window_delegate.cef.can_close = &viewsCanClose;
     const window = api.window_create_top_level(window_delegate.handOut());
     window_delegate.drop();
     if (window == null) std.debug.print("ND_WARN WebView engine=chromium: cef_window_create_top_level failed\n", .{});
@@ -2335,6 +2347,7 @@ fn viewsWindowCreated(self: [*c]c.cef_window_delegate_t, window: [*c]c.cef_windo
     const view = WindowDelegateObj.of(self).payload;
     if (window == null) return;
     view.views_window = window;
+    view.views_window_live.store(true, .release);
     const panel: [*c]c.cef_panel_t = @ptrCast(window);
     if (panel.*.set_to_fill_layout) |fill| {
         if (fill(panel)) |layout| ref.releaseParam(layout);
@@ -2361,10 +2374,25 @@ fn viewsWindowCreated(self: [*c]c.cef_window_delegate_t, window: [*c]c.cef_windo
     if (window.*.show) |show| show(window);
 }
 
+/// A delegate that leaves `can_close` unset answers false through CEF's C to
+/// C++ wrapper, and `close()` then never takes the window down.
+fn viewsCanClose(_: [*c]c.cef_window_delegate_t, window: [*c]c.cef_window_t) callconv(.c) c_int {
+    ref.releaseParam(window);
+    return 1;
+}
+
+fn viewsWindowDestroyed(self: [*c]c.cef_window_delegate_t, window: [*c]c.cef_window_t) callconv(.c) void {
+    ref.releaseParam(window);
+    const view = WindowDelegateObj.of(self).payload;
+    view.views_window_live.store(false, .release);
+    tr("viewsWindow node={d} destroyed", .{view.node_id});
+}
+
 /// The browser is gone; its window goes with it. CEF UI thread.
 fn releaseViews(view: *View) void {
     if (view.views_window) |window| {
         view.views_window = null;
+        tr("viewsWindow node={d} close", .{view.node_id});
         if (window.close) |close| close(window);
         ref.releaseParam(window);
     }
