@@ -276,12 +276,23 @@ for (const [name, menu] of [["page", pageMenu], ["link", linkMenu], ["image", im
 
 // ------------------------------------------------------------ activation ----
 
-const swTarget = (await targets(port)).find((t) => t.type === "service_worker" && t.url.startsWith("chrome-extension://"));
-if (!swTarget) {
+// The gate loads more than one fixture, so the worker is found by the helper
+// it carries rather than by being first.
+let sw: Session | null = null;
+for (const t of await targets(port)) {
+  if (t.type !== "service_worker" || !t.url.startsWith("chrome-extension://")) continue;
+  const session = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+  if (!session) continue;
+  if ((await session.eval<string>("typeof ndClearMenu").catch(() => "undefined")) === "function") {
+    sw = session;
+    break;
+  }
+  session.close();
+}
+if (!sw) {
   console.error("ND_CEF_MENU_FAIL the extension's service worker is not running");
   process.exit(1);
 }
-const sw = await Session.open(swTarget.webSocketDebuggerUrl!);
 await sw.eval("ndClearMenu().then(()=>'cleared')");
 
 const activation = await openMenu(700, 100);
