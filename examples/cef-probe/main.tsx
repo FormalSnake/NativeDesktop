@@ -950,14 +950,15 @@ async function run(ctx: {
     const enabled = await setExtensionEnabled(view, mine.id, true);
     if (enabled.find((e) => e.id === mine.id)?.enabled !== true) throw new Error("setExtensionEnabled(true) did not take");
 
+    const dialogsBefore = ctx.chromeDialogs.current.length;
     const left = await uninstallExtension(view, mine.id);
     ctx.setResult(
       "uninstallExtension",
       left.some((e) => e.id === mine.id) ? "fail: still installed" : `ok (${mine.id} removed)`,
     );
     await new Promise((r) => setTimeout(r, 1500));
-    const dialogs = ctx.chromeDialogs.current;
-    ctx.setResult("uninstallSilent", dialogs.length === 0 ? "ok (no Chrome dialog)" : `fail: Chrome dialog at ${dialogs.join(", ")}`);
+    const dialogs = ctx.chromeDialogs.current.slice(dialogsBefore);
+    ctx.setResult("uninstallSilent", dialogs.length === 0 ? `ok (no Chrome dialog; ${dialogsBefore} earlier in the run)` : `fail: Chrome dialog at ${dialogs.join(", ")}`);
     return `ok (installed ${mine.id}, change ${reason}, action ${action.title}, disabled, enabled, removed)`;
   });
 
