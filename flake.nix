@@ -107,6 +107,7 @@
               xorg-server      # Xvfb: the CEF gate needs a real X11 root window (windowed embedding is X11-only, and an XWayland root paints nothing to screenshot)
               xwininfo         # the no-stray-window census: `xwininfo -root -children` before and after a popup
               imagemagick      # `import -window root`: the only capture that includes the X11 child window CEF renders into
+              xprop            # window class, pid and _NET_CLIENT_LIST_STACKING for the reader drive's floating-window checks
               xdotool          # real X11 clicks and keystrokes: Chrome's own accelerators and a consent page's gesture check never see CDP-injected input
               openbox          # a reparenting window manager for the Xvfb rig: without one nothing ever resizes a toplevel, which is the class of bug the bare-Xvfb gates miss
               wmctrl           # EWMH maximize/fullscreen requests, which xdotool cannot send
