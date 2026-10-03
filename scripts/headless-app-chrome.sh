@@ -56,10 +56,18 @@ echo "work dir $WORK, captures in $SHOTS"
 # owns and nothing else. Other agents share this machine.
 PIDS=()
 HYPR_RUNTIME_DIRS=()
+# A pid's children go first: dbus-run-session exits on TERM without passing it
+# on, and the mutter under it (bwrap in between on NVIDIA) then lives on under
+# init, holding every fd it inherited, a caller's lock included.
+kill_tree() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$child"; done
+  kill "$1" 2>/dev/null || true
+}
 cleanup() {
   for pid in "${PIDS[@]:-}"; do
     [ -n "$pid" ] || continue
-    kill "$pid" 2>/dev/null || true
+    kill_tree "$pid"
   done
 }
 # The Chrome profiles go with the run; the captures stay for whoever reads them.
