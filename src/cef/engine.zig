@@ -856,9 +856,7 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     for (clients) |w| {
         if (w == 0 or named_windows.contains(w)) continue;
         if (x11.windowPid(w) != self_pid or x11.isGdkSurface(w)) continue;
-        if (anchorView()) |anchor| {
-            if (x11.copyClass(x11.toplevelXid(anchor.view.widget), w)) named_windows.put(alloc, w, {}) catch {};
-        }
+        if (x11.copyClass(appToplevel(), w)) named_windows.put(alloc, w, {}) catch {};
     }
     for (children) |w| {
         if (w == 0 or w == kept_window) continue;
@@ -878,11 +876,7 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // offers it as an untitled one of its own. Cheaper than the move below
         // and done for every one of them, the small parked ones included.
         if (!named_windows.contains(w)) {
-            if (anchorView()) |anchor| {
-                if (x11.copyClass(x11.toplevelXid(anchor.view.widget), w)) {
-                    named_windows.put(alloc, w, {}) catch {};
-                }
-            }
+            if (x11.copyClass(appToplevel(), w)) named_windows.put(alloc, w, {}) catch {};
         }
         // A popup Chromium draws for the page (a <select> list, autofill, the
         // date picker) is placed against its control by Chromium itself.
@@ -936,6 +930,23 @@ fn keepAbove(window: usize) void {
 /// the park origin far off-screen (see `parkContainer`), and centring a dialog
 /// on one of those would hide it rather than place it, so an on-screen view
 /// wins over the focused one.
+/// The app's toplevel, where the class Chromium's windows borrow comes from.
+/// Unlike `anchorView` it does not ask for a view on screen: a window dragged
+/// partly past the screen's left edge is still the app's.
+fn appToplevel() x11.Window {
+    if (focused_view) |view| {
+        const xid = x11.toplevelXid(view.widget);
+        if (xid != 0) return xid;
+    }
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        const xid = x11.toplevelXid(view.widget);
+        if (xid != 0) return xid;
+    }
+    return 0;
+}
+
 fn anchorView() ?struct { view: *View, origin: x11.Origin } {
     if (focused_view) |view| {
         const origin = x11.originOnRoot(view.container);
