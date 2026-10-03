@@ -169,6 +169,11 @@ final class NDButton: NSButton {
     /// resolve to a neighboring invisible button.
     var ndIsSidebarRowModel = false
 
+    /// Set by the generated Button create arm for `ellipsize`. The line break
+    /// mode cannot say it: NSButton truncates its tail by default, so every
+    /// titled button would read as ellipsizing.
+    var ndEllipsizes = false
+
     /// Marked by the generated ToggleButton create arm: a toggle keeps its
     /// custom view when placed in a toolbar — promotion to a system-drawn
     /// momentary item (HeaderBar.swift's promotedItem) would hide its
@@ -552,7 +557,7 @@ func ndNaturalChildSize(_ view: NSView) -> NSSize {
     // An ellipsizing button's title sizes nothing, as on GTK: a row of tabs
     // is as wide as the app sets it, not as wide as its longest title.
     // Expand or a minWidth gives the button its room.
-    if let button = view as? NSButton, button.lineBreakMode == .byTruncatingTail, !button.title.isEmpty {
+    if let button = view as? NDButton, button.ndEllipsizes, !button.title.isEmpty {
         size.width = min(size.width, ndLabelMinimumWidth)
     }
     if let scroll = view as? NSScrollView {

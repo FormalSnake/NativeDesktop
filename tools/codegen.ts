@@ -8186,6 +8186,7 @@ function genSwiftCreateBody(w: Widget): string {
     out += "        default: break\n";
     out += "        }\n";
     out += '        if propBool(props, "ellipsize") ?? false {\n';
+    out += "            b.ndEllipsizes = true\n";
     out += "            b.lineBreakMode = .byTruncatingTail\n";
     out += "            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)\n";
     out += "        }\n";

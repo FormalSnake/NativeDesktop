@@ -1606,6 +1606,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
         default: break
         }
         if propBool(props, "ellipsize") ?? false {
+            b.ndEllipsizes = true
             b.lineBreakMode = .byTruncatingTail
             b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
