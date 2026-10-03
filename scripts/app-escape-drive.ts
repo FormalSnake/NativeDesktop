@@ -256,6 +256,23 @@ async function appPopovers(): Promise<{ w: number; h: number }[]> {
   return found;
 }
 
+/// Whether one of the app's own dialogs is up. Under one the page stands
+/// aside (an X child window is drawn over everything GTK paints), so its
+/// viewport then says nothing about Chromium.
+async function appDialogUp(): Promise<boolean> {
+  for (const w of (await app.windows()).windows) {
+    const tree = await app.tree(w.ref);
+    let up = false;
+    const walk = (node: Node) => {
+      if (node.type === "Dialog" && node.visible) up = true;
+      for (const child of node.children) walk(child);
+    };
+    walk(tree.root as Node);
+    if (up) return true;
+  }
+  return false;
+}
+
 async function pageEval(testId: string, code: string): Promise<string | null> {
   const result = (await app.rpc.call("webviewEval", { testId, code, timeoutMs: 8000 })) as { ok: boolean; value?: string; error?: string };
   if (!result.ok) throw new Error(`webviewEval(${testId}): ${result.error ?? "failed"}`);
@@ -1091,13 +1108,15 @@ for (const route of routes) {
     ...added.filter((w) => (w.or || w.w < 300 || w.h < 200) && !ownPopover(w)),
   ];
   if (added.some(ownPopover)) note += `${note ? "; " : ""}app popover on show`;
+  const dialogUp = await appDialogUp().catch(() => false);
+  if (dialogUp) note += `${note ? "; " : ""}app dialog on show`;
   const problems: string[] = [...routeProblems];
   if (surfaces.length > 0) {
     problems.push(`Chromium surface(s): ${surfaces.map((w) => `${w.or ? "OR " : ""}${w.w}x${w.h}+${w.x}+${w.y}${w.name ? ` "${w.name}"` : ""}`).join(" | ")}`);
   }
   if (route.expect.windows !== undefined && newWindows !== route.expect.windows) problems.push(`app windows ${newWindows >= 0 ? "+" : ""}${newWindows}, expected +${route.expect.windows}`);
   if (route.expect.tabs !== undefined && newTabs !== route.expect.tabs) problems.push(`app tabs ${newTabs >= 0 ? "+" : ""}${newTabs}, expected +${route.expect.tabs}`);
-  if (route.expect.viewport !== false && newTabs === 0 && newWindows === 0 && before.viewport !== after.viewport && /^\d/.test(before.viewport) && /^\d/.test(after.viewport)) {
+  if (route.expect.viewport !== false && !dialogUp && newTabs === 0 && newWindows === 0 && before.viewport !== after.viewport && /^\d/.test(before.viewport) && /^\d/.test(after.viewport)) {
     problems.push(`page viewport ${before.viewport}->${after.viewport}`);
   }
   const detail = `windows ${newWindows >= 0 ? "+" : ""}${newWindows} tabs ${newTabs >= 0 ? "+" : ""}${newTabs} pages ${after.pages - before.pages >= 0 ? "+" : ""}${after.pages - before.pages} viewport ${before.viewport}->${after.viewport}${note ? ` [${note}]` : ""}`;
