@@ -188,9 +188,12 @@ fn collectRoots(out: *std.ArrayList([]const u8)) void {
     if (std.c.getenv("ND_CEF_ROOT")) |env| push(out, std.mem.span(env));
 
     // The app bundle: `nd package` stages the dist next to the executable.
+    // A Linux AppDir keeps the executable at usr/bin and the dist at the
+    // AppDir root's lib/cef, two levels up.
     if (selfExeDir()) |exe_dir| {
         pushJoin(out, &.{ exe_dir, "lib", "cef" });
         pushJoin(out, &.{ exe_dir, "..", "lib", "cef" });
+        pushJoin(out, &.{ exe_dir, "..", "..", "lib", "cef" });
     }
 
     if (std.c.getenv("HOME")) |home| {
