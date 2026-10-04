@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NativeDesktopConfig } from "../config.ts";
-import { builtBundles, type Check, webviewChecks } from "./doctor.ts";
+import { builtBundles, type Check, nixosHostChecks, webviewChecks } from "./doctor.ts";
 
 const FRAMEWORK = "Chromium Embedded Framework.framework";
 const target = process.platform === "darwin" ? "mac" : "linux";
@@ -80,5 +80,48 @@ describe("webviewChecks", () => {
     const empty = tempApp();
     stageBundle(empty, false);
     expect(find(webviewChecks(config, empty), "cef-bytes")[0]!.status).toBe("error");
+  });
+});
+
+describe("nixosHostChecks", () => {
+  const gtk = "/nix/store/a-gtk4/lib";
+  const adw = "/nix/store/a-libadwaita/lib";
+  const gstPin = "/nix/store/a-gstreamer/lib";
+  const gstOther = "/nix/store/b-gstreamer/lib";
+  const files = new Set([
+    "/etc/NIXOS",
+    "/lib64/ld-linux-x86-64.so.2",
+    `${gtk}/libgtk-4.so.1`,
+    `${adw}/libadwaita-1.so.0`,
+    `${gstPin}/libgstreamer-1.0.so.0`,
+    `${gstOther}/libgstreamer-1.0.so.0`,
+  ]);
+  const exists = (p: string) => files.has(p);
+
+  test("says nothing off NixOS", () => {
+    expect(nixosHostChecks({}, () => false)).toEqual([]);
+  });
+
+  test("without nix-ld the generic loader is missing", () => {
+    const checks = nixosHostChecks({}, (p) => p === "/etc/NIXOS");
+    expect(checks[0]!.status).toBe("error");
+    expect(checks[0]!.detail).toContain("programs.nix-ld.enable");
+  });
+
+  test("outside the dev shell nix-ld has no GTK to hand the host", () => {
+    const checks = nixosHostChecks({ NIX_LD_LIBRARY_PATH: "/run/current-system/sw/share/nix-ld/lib" }, exists);
+    expect(checks[0]!.status).toBe("error");
+    expect(checks[0]!.detail).toContain("nix develop");
+  });
+
+  test("GStreamer from another nixpkgs than GTK is the missing-symbol failure", () => {
+    const checks = nixosHostChecks({ NIX_LD_LIBRARY_PATH: `${gtk}:${adw}:${gstOther}`, LD_LIBRARY_PATH: gstPin }, exists);
+    expect(checks[0]!.status).toBe("error");
+    expect(checks[0]!.detail).toContain(gstPin);
+  });
+
+  test("one pin for both is fine", () => {
+    const checks = nixosHostChecks({ NIX_LD_LIBRARY_PATH: `${gtk}:${adw}:${gstPin}`, LD_LIBRARY_PATH: gstPin }, exists);
+    expect(checks).toEqual([{ name: "nixos", status: "ok", detail: `prebuilt host runs through nix-ld with GTK from ${gtk}` }]);
   });
 });

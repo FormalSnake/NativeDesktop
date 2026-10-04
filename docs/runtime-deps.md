@@ -48,6 +48,17 @@ mainstream distribution.
 | `libgstreamer-1.0.so.0` + gst-plugins-base/-good | `audio.*` playback and spectrum | audio calls reject with "audio unavailable" |
 | `libsecret-1.so.0` | `credentials.*` | credential calls reject |
 
+### NixOS
+
+The prebuilt binary's interpreter is `/lib64/ld-linux-x86-64.so.2`, which
+NixOS only provides through nix-ld (`programs.nix-ld.enable = true`). Run
+`nd dev` inside the framework's dev shell (`nix develop <NativeDesktop
+checkout>`): it points `NIX_LD` and `NIX_LD_LIBRARY_PATH` at its own nixpkgs
+pin, so GTK, GStreamer and CEF's libraries all come from one set. Mixing them
+(GTK from the system's nix-ld set, GStreamer from the shell) fails with
+`undefined symbol: gst_state_get_name`. `nd doctor` reports which case a shell
+is in.
+
 ### How to check a machine
 
 ```bash

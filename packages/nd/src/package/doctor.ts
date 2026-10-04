@@ -74,6 +74,43 @@ export function builtBundles(config: NativeDesktopConfig, cwd: string): string[]
  * bundle carrying Chromium bytes breaks the framework's central claim about the
  * default path, so it fails rather than warns.
  */
+const GENERIC_LOADER = "/lib64/ld-linux-x86-64.so.2";
+
+function libDirWith(path: string | undefined, soname: string, exists: (p: string) => boolean): string | undefined {
+  return path?.split(":").find((dir) => dir && exists(join(dir, soname)));
+}
+
+/** The published Linux host is a generic-distro binary: on NixOS it only runs
+ * through nix-ld, and only correctly when GTK (NIX_LD_LIBRARY_PATH) and the
+ * GStreamer the dev shell puts on LD_LIBRARY_PATH come from one nixpkgs. */
+export function nixosHostChecks(
+  env: Record<string, string | undefined>,
+  exists: (path: string) => boolean = existsSync,
+): Check[] {
+  if (!exists("/etc/NIXOS")) return [];
+  const shell = "run nd inside the framework dev shell (`nix develop <NativeDesktop checkout>`)";
+  if (!exists(GENERIC_LOADER)) {
+    return [{
+      name: "nixos",
+      status: "error",
+      detail: `the prebuilt host needs ${GENERIC_LOADER}, which NixOS only provides with nix-ld: set programs.nix-ld.enable = true, then ${shell}`,
+    }];
+  }
+  const gtk = libDirWith(env.NIX_LD_LIBRARY_PATH, "libgtk-4.so.1", exists);
+  if (!gtk || !libDirWith(env.NIX_LD_LIBRARY_PATH, "libadwaita-1.so.0", exists)) {
+    return [{ name: "nixos", status: "error", detail: `NIX_LD_LIBRARY_PATH has no GTK 4 / libadwaita for the prebuilt host: ${shell}` }];
+  }
+  const gst = libDirWith(env.LD_LIBRARY_PATH, "libgstreamer-1.0.so.0", exists);
+  if (gst && !env.NIX_LD_LIBRARY_PATH!.split(":").includes(gst)) {
+    return [{
+      name: "nixos",
+      status: "error",
+      detail: `GStreamer on LD_LIBRARY_PATH (${gst}) is not the one GTK on NIX_LD_LIBRARY_PATH was built against, so GTK fails on a missing symbol: update the NativeDesktop checkout whose dev shell this is`,
+    }];
+  }
+  return [{ name: "nixos", status: "ok", detail: `prebuilt host runs through nix-ld with GTK from ${gtk}` }];
+}
+
 export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[] {
   const target = engineTargetFor();
   if (!target) return [];
@@ -181,7 +218,8 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
     // ND_HOST_BINARY is what `nd dev` will actually run, so report that rather
     // than the prebuilt it overrides.
     const explicit = process.env.ND_HOST_BINARY;
-    const found = explicit || prebuiltHostBinary(backend) || fresh.find(existsSync);
+    const prebuilt = prebuiltHostBinary(backend);
+    const found = explicit || prebuilt || fresh.find(existsSync);
     if (explicit && !existsSync(explicit)) {
       checks.push({ name: "host", status: "error", detail: `ND_HOST_BINARY points at ${explicit}, which does not exist` });
     } else {
@@ -189,6 +227,7 @@ export async function collectChecks(cwd: string): Promise<Check[]> {
         ? { name: "host", status: "ok", detail: explicit ? `${found} (ND_HOST_BINARY)` : found }
         : { name: "host", status: "warn", detail: `no ${backend} host binary built yet (nd dev / nd package builds it on first run in a source checkout)` });
     }
+    if (process.platform === "linux" && !explicit && prebuilt && found === prebuilt) checks.push(...nixosHostChecks(process.env));
   } catch (err) {
     checks.push({ name: "host", status: "error", detail: String(err) });
   }

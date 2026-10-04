@@ -37,6 +37,19 @@
             libx11 libxcomposite libxdamage libxext libxfixes libxrandr
             libxcb libxrender libxi libxtst libxcursor
           ]);
+          # The published @nativedesktop/host-linux-x64 binary is built on
+          # Ubuntu and links GTK by soname with /lib64/ld-linux-x86-64.so.2 as
+          # its interpreter, which on NixOS is nix-ld. Left to the system's
+          # NIX_LD_LIBRARY_PATH it loads GTK from the system nixpkgs while the
+          # LD_LIBRARY_PATH below hands it this pin's GStreamer, and the
+          # system GTK's media backend then fails on a GStreamer symbol the
+          # older pin lacks. Every soname the host and libcef.so need comes
+          # from this one pin instead, glibc loader included.
+          hostRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (with pkgs; [
+            gtk4 libadwaita glib pango cairo gdk-pixbuf graphene harfbuzz
+            vulkan-loader webkitgtk_6_0 gtksourceview5 libsecret
+            gst_all_1.gstreamer gst_all_1.gst-plugins-base
+          ] ++ cefRuntimeLibs);
           fontsConf = pkgs.writeText "nd-headless-fonts.conf" ''
             <?xml version="1.0"?>
             <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
@@ -144,6 +157,8 @@
               # unresolvable.
               export FONTCONFIG_FILE="${fontsConf}"
               export ND_CEF_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath cefRuntimeLibs}"
+              export NIX_LD="${pkgs.stdenv.cc.bintools.dynamicLinker}"
+              export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath hostRuntimeLibs}"
             '';
           };
         });
