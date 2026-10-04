@@ -14,7 +14,7 @@ import {
   resolveWebViewEngine,
   type WebViewEngine,
 } from "../config.ts";
-import { cefBundleAudit, cefVersionFor } from "./cef.ts";
+import { cefBundleAudit, cefVersionFor, elfStrippers } from "./cef.ts";
 import { DEFAULT_ENTRY } from "./payload.ts";
 
 export type CheckStatus = "ok" | "warn" | "error";
@@ -148,6 +148,10 @@ export function webviewChecks(config: NativeDesktopConfig, cwd: string): Check[]
       checks.push({ name: "cef", status: "error", detail: String(err) });
     }
     if (target === "linux") {
+      const strippers = elfStrippers();
+      checks.push(strippers.length
+        ? { name: "cef-strip", status: "ok", detail: `libcef.so is stripped with ${strippers[0]}` }
+        : { name: "cef-strip", status: "error", detail: "no ELF stripper on PATH (strip, llvm-strip or objcopy); nd package linux refuses to ship the 1.4 GB unstripped libcef.so" });
       checks.push({
         name: "cef",
         status: "warn",

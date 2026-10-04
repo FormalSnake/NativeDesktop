@@ -184,7 +184,10 @@ a remote host at test time.
 
 The AppDir is packed with `appimagetool` when available, else `mksquashfs`
 (the nix devshell case), else packaging fails at the packing step;
-`--format appdir` stops at the raw AppDir. A committed Flatpak manifest lives
+`--format appdir` stops at the raw AppDir. The staged
+`libcef.so` is always stripped (1.4 GB to ~270 MB) with the first of `strip`,
+`llvm-strip` or `objcopy` that works on ELF; with none of them packaging fails
+rather than ship it unstripped (`nd doctor` reports this as `cef-strip`). A committed Flatpak manifest lives
 at `packaging/flatpak/com.nativedesktop.gallery.yml` and is only lint-validated
 in CI (a full `flatpak-builder` run needs a real GNOME runner).
 

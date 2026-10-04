@@ -12,7 +12,7 @@
 // assert, so both platforms' layouts are covered from one cached dist without
 // writing a bundle.
 import { $ } from "bun";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { buildCefHelper } from "@nativedesktop/host";
 import {
@@ -374,17 +374,59 @@ export async function applyCefLinuxPlan(plan: CefLinuxPlan): Promise<void> {
   if (strip) await stripInPlace(strip.to);
 }
 
-/** `strip` on the staged libcef.so. Cross-packaging from macOS has no ELF strip,
- * so a failure warns and ships the unstripped copy rather than failing the run. */
+/** ELF strippers in preference order, each writing a stripped copy to `out`.
+ * On macOS `strip` and `objcopy` are Apple's Mach-O tools and refuse an ELF
+ * file, so a cross-package there needs llvm-strip. zig 0.16's objcopy answers
+ * "unimplemented" for libcef.so, so it is no fallback. */
+const ELF_STRIPPERS: { tool: string; args: (input: string, out: string) => string[]; hosts: NodeJS.Platform[] }[] = [
+  { tool: "strip", args: (i, o) => ["-o", o, i], hosts: ["linux"] },
+  { tool: "llvm-strip", args: (i, o) => ["-o", o, i], hosts: ["linux", "darwin"] },
+  { tool: "objcopy", args: (i, o) => ["--strip-all", i, o], hosts: ["linux"] },
+];
+
+/** The ELF strippers on PATH for this host, in the order `nd package linux` tries them. */
+export function elfStrippers(platform: NodeJS.Platform = process.platform): string[] {
+  return ELF_STRIPPERS.filter((s) => s.hosts.includes(platform) && Bun.which(s.tool)).map((s) => s.tool);
+}
+
+const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+
+function isElf(path: string): boolean {
+  if (!existsSync(path)) return false;
+  const fd = openSync(path, "r");
+  try {
+    const head = Buffer.alloc(4);
+    return readSync(fd, head, 0, 4, 0) === 4 && head.equals(ELF_MAGIC);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Strips the staged libcef.so (1.4 GB unstripped, ~270 MB stripped). Shipping
+ * it unstripped is never the fallback: no working stripper fails the run. */
 async function stripInPlace(path: string): Promise<void> {
   const before = statSync(path).size;
-  const result = await $`strip ${path}`.quiet().nothrow();
-  if (result.exitCode !== 0) {
-    console.error(`ND_WARN nd: strip failed on ${basename(path)}; shipping it unstripped (${(before / 1e9).toFixed(2)} GB)`);
-    return;
+  const out = `${path}.stripped`;
+  const tried: string[] = [];
+  for (const stripper of ELF_STRIPPERS) {
+    if (!stripper.hosts.includes(process.platform) || !Bun.which(stripper.tool)) continue;
+    rmSync(out, { force: true });
+    const result = await $`${stripper.tool} ${stripper.args(path, out)}`.quiet().nothrow();
+    if (result.exitCode === 0 && isElf(out)) {
+      chmodSync(out, statSync(path).mode & 0o7777);
+      renameSync(out, path);
+      const after = statSync(path).size;
+      console.error(`ND_PACKAGE_CEF_STRIP ${basename(path)} ${(before / 1e6).toFixed(0)}MB -> ${(after / 1e6).toFixed(0)}MB tool=${stripper.tool}`);
+      return;
+    }
+    tried.push(`${stripper.tool} (exit ${result.exitCode}: ${result.stderr.toString().trim().split("\n")[0] ?? ""})`);
   }
-  const after = statSync(path).size;
-  console.error(`ND_PACKAGE_CEF_STRIP ${basename(path)} ${(before / 1e6).toFixed(0)}MB -> ${(after / 1e6).toFixed(0)}MB`);
+  rmSync(out, { force: true });
+  throw new Error(
+    `nd: could not strip ${basename(path)} (${(before / 1e9).toFixed(2)} GB unstripped); ` +
+      (tried.length ? `tried ${tried.join(", ")}` : "no ELF stripper on PATH") +
+      `. Install binutils (strip) or llvm-strip, or package inside the framework's nix dev shell.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
