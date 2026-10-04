@@ -11,6 +11,7 @@ import AppKit
 /// hands over, which the props arm does not have at create time.
 private final class NDContextMenuTarget: NSObject, NSMenuDelegate {
     var nodeID: UInt32 = 0
+    weak var view: NSView?
 
     @objc func pick(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
@@ -34,6 +35,45 @@ private final class NDContextMenuTarget: NSObject, NSMenuDelegate {
 private let ndContextMenuTrace = ProcessInfo.processInfo.environment["NATIVE_AUTOMATION"] == "1"
 
 nonisolated(unsafe) private var ndContextMenuTargets: [ObjectIdentifier: NDContextMenuTarget] = [:]
+
+nonisolated(unsafe) private var ndToolbarRightClickMonitor: Any?
+
+private func ndInToolbar(_ view: NSView) -> Bool {
+    var up: NSView? = view
+    while let v = up {
+        if NSStringFromClass(type(of: v)).contains("Toolbar") { return true }
+        up = v.superview
+    }
+    return false
+}
+
+/// A right click on a view in a toolbar item shows the toolbar's own Icon and
+/// Text / Icon Only menu, never the view's. For a view with a menu inside the
+/// toolbar under the pointer, that menu is shown instead. Anywhere else
+/// AppKit's own path already reaches `NSView.menu`, and the event passes
+/// through untouched.
+private func ndInstallToolbarRightClickMonitor() {
+    guard ndToolbarRightClickMonitor == nil else { return }
+    ndToolbarRightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { event in
+        guard let window = event.window, let frame = window.contentView?.superview,
+              let hit = frame.hitTest(frame.convert(event.locationInWindow, from: nil)) else { return event }
+        var best: (view: NSView, menu: NSMenu, depth: Int)?
+        for target in ndContextMenuTargets.values {
+            guard let view = target.view, let menu = view.menu, view.window === window,
+                  !view.isHiddenOrHasHiddenAncestor, view.isDescendant(of: hit) || hit.isDescendant(of: view),
+                  ndInToolbar(view) else { continue }
+            let point = view.convert(event.locationInWindow, from: nil)
+            guard view.bounds.contains(point) else { continue }
+            var depth = 0
+            var up = view.superview
+            while let v = up { depth += 1; up = v.superview }
+            if depth > best?.depth ?? -1 { best = (view, menu, depth) }
+        }
+        guard let best else { return event }
+        NSMenu.popUpContextMenu(best.menu, with: event, for: best.view)
+        return nil
+    }
+}
 
 /// The entries as AppKit gets them: a separator only between two commands, so
 /// an app that builds its list from optional groups never shows a leading,
@@ -62,7 +102,9 @@ func ndContextMenuApply(_ view: NSView, _ props: [String: Any]) {
         return
     }
     let target = ndContextMenuTargets[key] ?? NDContextMenuTarget()
+    target.view = view
     ndContextMenuTargets[key] = target
+    ndInstallToolbarRightClickMonitor()
     let menu = NSMenu()
     // An item's `enabled` is the app's to say; AppKit's validation would
     // otherwise enable every item that has a target.
