@@ -14,6 +14,7 @@
 # outright, the second skips the dock and asserts the host exits cleanly.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+./scripts/mac/pip-feature-check.sh
 
 PORT="${ND_CEF_DEBUG_PORT:-9334}"
 EXTENSION="$(pwd)/examples/webview-probe/chrome-style-ext"

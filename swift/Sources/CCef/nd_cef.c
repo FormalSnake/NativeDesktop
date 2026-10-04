@@ -438,11 +438,13 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       append_framework_extension(command_line);
       if (browser_pipe_to_cef >= 0) append_switch(command_line, "remote-debugging-pipe");
       // The floating video keeps the page's origin over the picture until the
-      // user presses inside its window or the site counts as trusted for media
-      // (VideoOverlayWindowViews::UpdateControlsVisibility). The host's own
-      // controls take every press there (NDCefPictureInPicture), so the title
-      // would never leave; trusted, it goes after Chromium's first three
-      // seconds, which no switch removes.
+      // user presses inside it or the site is trusted for media
+      // (VideoOverlayWindowViews::UpdateControlsVisibility); the host's own
+      // controls take every press, so the title would never leave. This
+      // feature only short-circuits that trust check. Being a ForTesting
+      // feature it can disappear in a CEF update, and an unknown feature name
+      // is ignored silently: scripts/mac/pip-feature-check.sh fails if the
+      // framework binary no longer carries the name.
       append_switch_value(command_line, "enable-features", "VideoPipForceTrustedForMediaPlaybackForTesting");
     }
     // Read by StartupBrowserCreator, which CEF skips at startup and a refused
