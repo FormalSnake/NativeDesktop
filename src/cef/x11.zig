@@ -73,6 +73,8 @@ const FnGetProperty = *const fn (*Display, Window, c_ulong, c_long, c_long, c_in
 const FnChangeProperty = *const fn (*Display, Window, c_ulong, c_ulong, c_int, c_int, [*]const u8, c_int) callconv(.c) c_int;
 const FnSetTransientFor = *const fn (*Display, Window, Window) callconv(.c) c_int;
 const FnSelectInput = *const fn (*Display, Window, c_long) callconv(.c) c_int;
+const FnMoveWindow = *const fn (*Display, Window, c_int, c_int) callconv(.c) c_int;
+const FnSendEvent = *const fn (*Display, Window, c_int, c_long, *anyopaque) callconv(.c) c_int;
 const FnGetAttributes = *const fn (*Display, Window, *WindowAttributes) callconv(.c) c_int;
 
 /// Xlib's XWindowAttributes. Only `your_event_mask` and `override_redirect`
@@ -131,6 +133,8 @@ const Api = struct {
     change_property: FnChangeProperty,
     set_transient_for_hint: FnSetTransientFor,
     select_input: FnSelectInput,
+    send_event: FnSendEvent,
+    move_window: FnMoveWindow,
     get_window_attributes: FnGetAttributes,
     query_pointer: FnQueryPointer,
     display_get_xdisplay: FnGetXDisplay,
@@ -193,6 +197,8 @@ fn loadApi() ?*const Api {
         .get_window_attributes = x.lookup(FnGetAttributes, "XGetWindowAttributes") orelse return missing(&x, &g, "XGetWindowAttributes"),
         .query_pointer = x.lookup(FnQueryPointer, "XQueryPointer") orelse return missing(&x, &g, "XQueryPointer"),
         .select_input = x.lookup(FnSelectInput, "XSelectInput") orelse return missing(&x, &g, "XSelectInput"),
+        .send_event = x.lookup(FnSendEvent, "XSendEvent") orelse return missing(&x, &g, "XSendEvent"),
+        .move_window = x.lookup(FnMoveWindow, "XMoveWindow") orelse return missing(&x, &g, "XMoveWindow"),
         .display_get_xdisplay = g.lookup(FnGetXDisplay, "gdk_x11_display_get_xdisplay") orelse return missing(&x, &g, "gdk_x11_display_get_xdisplay"),
         .surface_get_xid = g.lookup(FnGetXid, "gdk_x11_surface_get_xid") orelse return missing(&x, &g, "gdk_x11_surface_get_xid"),
         .surface_lookup = g.lookup(FnSurfaceLookup, "gdk_x11_surface_lookup_for_display") orelse return missing(&x, &g, "gdk_x11_surface_lookup_for_display"),
@@ -783,6 +789,27 @@ pub fn clientList(out: []Window) []Window {
     return out[0..n];
 }
 
+/// WM_NORMAL_HINTS with an aspect ratio (PAspect): the video's own shape, kept
+/// as the window is resized. Chromium's floating video sets it before it maps,
+/// and no other window of Chromium's carries it.
+pub fn keepsAspect(window: Window) bool {
+    const c = conn() orelse return false;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    const XA_WM_NORMAL_HINTS: c_ulong = 40;
+    const XA_WM_SIZE_HINTS: c_ulong = 41;
+    const PAspect: c_ulong = 1 << 7;
+    c.push();
+    const ok = c.api.get_window_property(c.x, window, XA_WM_NORMAL_HINTS, 0, 18, 0, XA_WM_SIZE_HINTS, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or actual_format != 32) return false;
+    defer _ = c.api.free(@ptrCast(data));
+    return nitems >= 1 and @as(*const c_ulong, @ptrCast(@alignCast(data))).* & PAspect != 0;
+}
+
 /// True for Chromium's picture-in-picture window, the one window it puts on
 /// the root that keeps a fixed aspect ratio, stays above every other and shows
 /// on every workspace. The aspect hint is there from the start; the other two
@@ -798,20 +825,7 @@ pub fn pictureInPicture(window: Window) bool {
     var nitems: c_ulong = 0;
     var bytes_after: c_ulong = 0;
     var data: [*]u8 = undefined;
-    // WM_NORMAL_HINTS with an aspect ratio (PAspect): the video's own shape,
-    // kept as the window is resized.
-    {
-        const XA_WM_NORMAL_HINTS: c_ulong = 40;
-        const XA_WM_SIZE_HINTS: c_ulong = 41;
-        const PAspect: c_ulong = 1 << 7;
-        c.push();
-        const ok = c.api.get_window_property(c.x, window, XA_WM_NORMAL_HINTS, 0, 18, 0, XA_WM_SIZE_HINTS, &actual_type, &actual_format, &nitems, &bytes_after, &data);
-        c.pop();
-        if (ok == 0 and actual_format == 32) {
-            defer _ = c.api.free(@ptrCast(data));
-            if (nitems >= 1 and @as(*const c_ulong, @ptrCast(@alignCast(data))).* & PAspect != 0) return true;
-        }
-    }
+    if (keepsAspect(window)) return true;
     const desktop = c.api.intern_atom(c.x, "_NET_WM_DESKTOP", 1);
     if (desktop != 0) {
         c.push();
@@ -836,6 +850,157 @@ pub fn pictureInPicture(window: Window) bool {
     }
     return false;
 }
+
+/// Asks for `window` at root position `x`, `y`. A configure request: the
+/// window manager decides, and one that tiles the window ignores it.
+pub fn moveWindow(window: Window, x: c_int, y: c_int) void {
+    const c = conn() orelse return;
+    c.push();
+    _ = c.api.move_window(c.x, window, x, y);
+    _ = c.api.flush(c.x);
+    c.pop();
+}
+
+pub const Area = struct { x: c_int, y: c_int, w: c_int, h: c_int };
+
+/// The window manager's work area (`_NET_WORKAREA` for the current desktop):
+/// the screen less its panels. Null when the manager publishes none.
+pub fn workArea() ?Area {
+    const c = conn() orelse return null;
+    const atom = c.api.intern_atom(c.x, "_NET_WORKAREA", 1);
+    if (atom == 0) return null;
+    const XA_CARDINAL: c_ulong = 6;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, c.api.default_root_window(c.x), atom, 0, 4, 0, XA_CARDINAL, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or nitems < 4 or actual_format != 32) return null;
+    defer _ = c.api.free(@ptrCast(data));
+    const v: [*]const c_ulong = @ptrCast(@alignCast(data));
+    return .{ .x = @intCast(v[0]), .y = @intCast(v[1]), .w = @intCast(v[2]), .h = @intCast(v[3]) };
+}
+
+/// The title every picture-in-picture window carries, whatever the page calls
+/// itself: what a window rule can match, and what the Hyprland pin looks for.
+pub const picture_in_picture_title = "Picture in Picture";
+
+/// What a window manager rule can hold on to for a picture-in-picture window,
+/// set on Chromium's window: the app's own class with an instance of its own
+/// ("picture-in-picture"), a fixed title, the utility type a tiling manager
+/// floats by default, and above plus sticky. The state goes as an EWMH request
+/// to the window manager, since the window is already mapped; the others are
+/// properties it reads (most only at map, which Chromium did before this runs,
+/// so the title and class are what rules should use).
+pub fn markPictureInPicture(window: Window, app: Window) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    const XA_ATOM: c_ulong = 4;
+    const XA_STRING: c_ulong = 31;
+    const XA_WM_CLASS: c_ulong = 67;
+    const PROP_MODE_REPLACE: c_int = 0;
+    c.push();
+    defer c.pop();
+    // The class half of the app's own WM_CLASS ("instance\0class\0").
+    var class_buf: [256]u8 = undefined;
+    var class_name: []const u8 = "";
+    if (app != 0) {
+        var actual_type: c_ulong = 0;
+        var actual_format: c_int = 0;
+        var nitems: c_ulong = 0;
+        var bytes_after: c_ulong = 0;
+        var data: [*]u8 = undefined;
+        if (c.api.get_window_property(c.x, app, XA_WM_CLASS, 0, 64, 0, XA_STRING, &actual_type, &actual_format, &nitems, &bytes_after, &data) == 0 and actual_format == 8 and nitems > 0) {
+            defer _ = c.api.free(@ptrCast(data));
+            const raw = data[0..@intCast(nitems)];
+            const first = std.mem.indexOfScalar(u8, raw, 0) orelse raw.len;
+            const rest = raw[@min(first + 1, raw.len)..];
+            const second = std.mem.indexOfScalar(u8, rest, 0) orelse rest.len;
+            const n = @min(second, class_buf.len);
+            @memcpy(class_buf[0..n], rest[0..n]);
+            class_name = class_buf[0..n];
+        }
+    }
+    if (class_name.len > 0) {
+        var value: [300]u8 = undefined;
+        const instance = "picture-in-picture";
+        const composed = std.fmt.bufPrint(&value, "{s}\x00{s}\x00", .{ instance, class_name }) catch "";
+        if (composed.len > 0) _ = c.api.change_property(c.x, window, XA_WM_CLASS, XA_STRING, 8, PROP_MODE_REPLACE, composed.ptr, @intCast(composed.len));
+    }
+    setTitleLocked(c, window);
+    const type_atom = c.api.intern_atom(c.x, "_NET_WM_WINDOW_TYPE", 0);
+    const utility = c.api.intern_atom(c.x, "_NET_WM_WINDOW_TYPE_UTILITY", 0);
+    if (type_atom != 0 and utility != 0) {
+        var value: c_ulong = utility;
+        _ = c.api.change_property(c.x, window, type_atom, XA_ATOM, 32, PROP_MODE_REPLACE, @ptrCast(&value), 1);
+    }
+    const state = c.api.intern_atom(c.x, "_NET_WM_STATE", 0);
+    const above = c.api.intern_atom(c.x, "_NET_WM_STATE_ABOVE", 0);
+    const sticky = c.api.intern_atom(c.x, "_NET_WM_STATE_STICKY", 0);
+    if (state != 0 and above != 0 and sticky != 0) {
+        const root = c.api.default_root_window(c.x);
+        var event: XEvent = .{
+            .client = .{
+                .type = 33, // ClientMessage
+                .serial = 0,
+                .send_event = 1,
+                .display = c.x,
+                .window = window,
+                .message_type = state,
+                .format = 32,
+                // _NET_WM_STATE_ADD, two properties, source indication 1 (an
+                // application).
+                .data = .{ 1, @intCast(above), @intCast(sticky), 1, 0 },
+            },
+        };
+        const SubstructureNotifyMask: c_long = 1 << 19;
+        const SubstructureRedirectMask: c_long = 1 << 20;
+        _ = c.api.send_event(c.x, root, 0, SubstructureNotifyMask | SubstructureRedirectMask, @ptrCast(&event));
+    }
+    _ = c.api.flush(c.x);
+}
+
+/// Puts the fixed title back when Chromium has renamed the window after the
+/// page (a document window follows its page's title). Answers whether it had to.
+pub fn holdPictureInPictureTitle(window: Window) bool {
+    var buf: [128]u8 = undefined;
+    if (std.mem.eql(u8, windowName(window, &buf), picture_in_picture_title)) return false;
+    const c = conn() orelse return false;
+    c.push();
+    defer c.pop();
+    setTitleLocked(c, window);
+    _ = c.api.flush(c.x);
+    return true;
+}
+
+fn setTitleLocked(c: Conn, window: Window) void {
+    const XA_STRING: c_ulong = 31;
+    const XA_WM_NAME: c_ulong = 39;
+    const PROP_MODE_REPLACE: c_int = 0;
+    const title = picture_in_picture_title;
+    _ = c.api.change_property(c.x, window, XA_WM_NAME, XA_STRING, 8, PROP_MODE_REPLACE, title.ptr, @intCast(title.len));
+    const net_name = c.api.intern_atom(c.x, "_NET_WM_NAME", 0);
+    const utf8 = c.api.intern_atom(c.x, "UTF8_STRING", 0);
+    if (net_name != 0 and utf8 != 0) _ = c.api.change_property(c.x, window, net_name, utf8, 8, PROP_MODE_REPLACE, title.ptr, @intCast(title.len));
+}
+
+/// Xlib's XClientMessageEvent inside the XEvent union (24 longs).
+const XEvent = extern union {
+    client: extern struct {
+        type: c_int,
+        serial: c_ulong,
+        send_event: c_int,
+        display: ?*Display,
+        window: Window,
+        message_type: c_ulong,
+        format: c_int,
+        data: [5]c_long,
+    },
+    pad: [24]c_long,
+};
 
 /// The window's title (`_NET_WM_NAME`), copied into `out`; empty when it has
 /// none.

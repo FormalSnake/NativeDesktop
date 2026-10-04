@@ -34,6 +34,7 @@ const shape = @import("shape.zig");
 const cdp = @import("cdp.zig");
 const browser_pipe = @import("browser_pipe.zig");
 const hyprland = @import("hyprland.zig");
+const pip_landing = @import("pip_landing.zig");
 const ctxmenu = @import("../gtk/context_menu.zig");
 const ndchrome = @import("../gtk/chrome.zig");
 const gtkmenu = @import("gtkmenu.zig");
@@ -744,6 +745,24 @@ var adopted_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 var named_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
 /// Picture-in-picture windows already kept above under Hyprland.
 var pinned_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
+/// Picture-in-picture windows on screen, with the view a document window
+/// belongs to (a floating video's tab is named by no callback).
+const PipWindow = struct { view: ?*View };
+var pip_windows: std.AutoHashMapUnmanaged(usize, PipWindow) = .empty;
+/// A document window was asked for (on_before_popup) and Chromium has yet to
+/// map it: the next top-level of this process is that window. Chromium builds
+/// it as a browser of its own with no client of ours, so nothing else says
+/// which window it is. Set on the CEF UI thread itself rather than through the
+/// GTK hop: the window can map before an idle callback runs, and the watch
+/// would then take it for one of Chromium's dialogs.
+var pending_doc_pip_view: std.atomic.Value(usize) = .init(0);
+var pending_doc_pip_until: std.atomic.Value(i64) = .init(0);
+/// Windows already looked at and found not to be picture-in-picture: a window
+/// does not become one later (the floating video's aspect hint is there before
+/// it maps, a document window is new), so each costs its X round trips once
+/// rather than on every tick of the watch.
+var not_pip_windows: std.AutoHashMapUnmanaged(usize, void) = .empty;
+const pending_doc_pip_us: i64 = 5 * std.time.us_per_s;
 var self_pid: u32 = 0;
 
 fn startChromeWindowWatch() void {
@@ -853,10 +872,16 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         if (std.mem.indexOfScalar(x11.Window, children, key.*) == null) gone.append(alloc, key.*) catch {};
     }
     for (gone.items) |w| _ = pinned_windows.remove(w);
+    forgetGonePictureInPicture(children, clients);
     for (clients) |w| {
-        if (w == 0 or named_windows.contains(w)) continue;
+        if (w == 0) continue;
+        if (named_windows.contains(w)) {
+            _ = pictureInPicture(w);
+            continue;
+        }
         if (x11.windowPid(w) != self_pid or x11.isGdkSurface(w)) continue;
         if (x11.copyClass(appToplevel(), w)) named_windows.put(alloc, w, {}) catch {};
+        _ = pictureInPicture(w);
     }
     for (children) |w| {
         if (w == 0 or w == kept_window) continue;
@@ -888,6 +913,8 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // other: it belongs in the screen's corner, above other apps, and a
         // dialog's treatment (transient for the app, centred on the page)
         // would tie it to this window instead.
+        if (pictureInPicture(w)) continue;
+        // Kept above, as before, but left as Chromium named it.
         if (x11.pictureInPicture(w)) {
             keepAbove(w);
             continue;
@@ -906,6 +933,79 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         adoptChromeWindow(w);
     }
     return 1;
+}
+
+/// A floating video or a document window: given what a window manager rule
+/// can match on (x11.markPictureInPicture) once, its fixed title back whenever
+/// Chromium renames it, and kept above. Answers whether `w` is one, or may
+/// still turn out to be (the watch leaves it alone this tick).
+fn pictureInPicture(w: usize) bool {
+    if (pip_windows.contains(w)) {
+        _ = x11.holdPictureInPictureTitle(w);
+        keepAbove(w);
+        return true;
+    }
+    if (not_pip_windows.contains(w)) return false;
+    if (x11.windowPid(w) != self_pid or x11.isGdkSurface(w) or x11.isOverrideRedirect(w)) {
+        not_pip_windows.put(alloc, w, {}) catch {};
+        return false;
+    }
+    var view: ?*View = null;
+    const pending = pending_doc_pip_view.load(.acquire);
+    if (pending != 0) {
+        const geo = x11.geometry(w);
+        if (glib.getMonotonicTime() > pending_doc_pip_until.load(.acquire) or !live_views.contains(pending)) {
+            pending_doc_pip_view.store(0, .release);
+        } else if (geo != null and geo.?.w >= 100 and geo.?.h >= 60) {
+            view = @ptrFromInt(pending);
+            pending_doc_pip_view.store(0, .release);
+        } else {
+            // Views maps a window at 1x1 and sizes it after: until it has its
+            // size it is neither decided nor anyone else's to adopt.
+            return true;
+        }
+    }
+    // Only the two signals that name the window outright are taken: a window
+    // the window manager put above every other (x11.pictureInPicture's wider
+    // test) may be one of Chromium's dialogs, and renaming that would hide it.
+    if (view == null and !x11.keepsAspect(w)) {
+        not_pip_windows.put(alloc, w, {}) catch {};
+        return false;
+    }
+    pip_windows.put(alloc, w, .{ .view = view }) catch return false;
+    named_windows.put(alloc, w, {}) catch {};
+    x11.markPictureInPicture(w, appToplevel());
+    pip_landing.track(w, view == null);
+    tr("picture in picture window={x} kind={s}", .{ w, if (view != null) "document" else "video" });
+    if (view) |v| post(.{ .view = v, .name = "pictureInPicture", .text = alloc.dupe(u8, "opened") catch null, .extra = alloc.dupe(u8, "document") catch null });
+    keepAbove(w);
+    return true;
+}
+
+fn forgetGonePictureInPicture(children: []const x11.Window, clients: []const x11.Window) void {
+    var gone: std.ArrayList(usize) = .empty;
+    defer gone.deinit(alloc);
+    // The X server reuses window ids.
+    var seen = not_pip_windows.keyIterator();
+    while (seen.next()) |key| {
+        if (std.mem.indexOfScalar(x11.Window, children, key.*) == null and std.mem.indexOfScalar(x11.Window, clients, key.*) == null) gone.append(alloc, key.*) catch {};
+    }
+    for (gone.items) |w| _ = not_pip_windows.remove(w);
+    gone.clearRetainingCapacity();
+    var it = pip_windows.iterator();
+    while (it.next()) |entry| {
+        const w = entry.key_ptr.*;
+        if (std.mem.indexOfScalar(x11.Window, children, w) == null and std.mem.indexOfScalar(x11.Window, clients, w) == null) gone.append(alloc, w) catch {};
+    }
+    for (gone.items) |w| {
+        const entry = pip_windows.fetchRemove(w) orelse continue;
+        pip_landing.forget(w);
+        tr("picture in picture window={x} gone", .{w});
+        const view = entry.value.view orelse continue;
+        // The opener's tab may be what closed it.
+        if (!live_views.contains(@intFromPtr(view))) continue;
+        post(.{ .view = view, .name = "pictureInPicture", .text = alloc.dupe(u8, "closed") catch null, .extra = alloc.dupe(u8, "document") catch null });
+    }
 }
 
 /// Under Hyprland, which reads no keep-above hint from an XWayland window, the
@@ -3864,17 +3964,33 @@ fn onBeforePopup(
     _: c_int,
     target_url: [*c]const c.cef_string_t,
     _: [*c]const c.cef_string_t,
-    _: c.cef_window_open_disposition_t,
+    disposition: c.cef_window_open_disposition_t,
     user_gesture: c_int,
     _: [*c]const c.cef_popup_features_t,
     _: [*c]c.cef_window_info_t,
-    _: [*c][*c]c.cef_client_t,
+    client: [*c][*c]c.cef_client_t,
     _: [*c]c.cef_browser_settings_t,
     _: [*c][*c]c.cef_dictionary_value_t,
     _: [*c]c_int,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
     defer ref.releaseParam(frame);
+    // Document picture-in-picture (documentPictureInPicture.requestWindow) is
+    // Chrome's own browser of TYPE_PICTURE_IN_PICTURE: CEF builds it whatever
+    // this returns, and refusing it only rejects the page's promise. It goes
+    // through without a client of ours, so it never reaches on_after_created as
+    // one of this view's browsers. The client arrived with a reference CEF only
+    // drops when it gets the same pointer back. Alloy has no such browser, and
+    // there the popup stays refused.
+    if (disposition == c.CEF_WOD_NEW_PICTURE_IN_PICTURE and chromeStyle()) {
+        if (client != null) {
+            ref.releaseParam(client.*);
+            client.* = null;
+        }
+        pending_doc_pip_until.store(glib.getMonotonicTime() + pending_doc_pip_us, .release);
+        pending_doc_pip_view.store(@intFromPtr(LifeObj.of(self).payload), .release);
+        return 0;
+    }
     // `window.open("about:blank")` followed by `w.location = …` from the
     // opener reaches the app as about:blank and the destination never exists:
     // denying the popup makes window.open answer null and the opener's next
@@ -4286,6 +4402,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;
         f(view.node_id, "browserCommand", .{ .text = text });
+    } else if (std.mem.eql(u8, box.name, "pictureInPicture")) {
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "state", .{ .string = box.text orelse return 0 }) catch return 0;
+        payload.put(alloc, "kind", .{ .string = box.extra orelse return 0 }) catch return 0;
+        f(view.node_id, "pictureInPicture", .{ .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "zoomChanged")) {
         var payload: std.json.ObjectMap = .empty;
         defer payload.deinit(alloc);
