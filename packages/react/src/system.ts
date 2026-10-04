@@ -356,7 +356,58 @@ export const webviewEngine = {
       secure: options.secure ?? false,
     });
   },
+
+  /**
+   * Built-in content blocking for the Chromium engine: uBlock Origin / EasyList
+   * syntax filter lists, evaluated by brave/adblock-rust inside the host.
+   * Network rules cancel or replace requests; cosmetic rules and scriptlets run
+   * at document start in every page. Each `<webview>` reports what it blocked
+   * with `onContentBlocked` (`{ count }`, reset on every main-frame
+   * navigation). The system engine ignores all of this.
+   */
+  contentBlocking: {
+    /**
+     * Compiles `lists` (read from disk by the host, off the UI thread) and
+     * swaps them in for every view. With `cacheFile` and `cacheKey`, the
+     * compiled engine is written there and reused while the key matches, so
+     * change the key whenever a list changes. `resources` is a JSON file of
+     * adblock-rust resources (scriptlets and `redirect=` bodies).
+     */
+    async load(options: ContentBlockingLoadOptions): Promise<{ source: "cache" | "compiled"; ms: number }> {
+      return (await call("webviewEngine.contentBlockingLoad", options)) as { source: "cache" | "compiled"; ms: number };
+    },
+    /**
+     * Changes what is blocked without recompiling the lists. Omitted fields
+     * keep their value. `disabledSites` are hostnames; a site matches its own
+     * entry and every parent domain's. `userRules` is filter-list text
+     * (`example.com##.banner`, `||ads.example^`), compiled apart from the
+     * lists; an empty string clears it. New rules apply from the next
+     * navigation.
+     */
+    async configure(options: ContentBlockingConfigureOptions): Promise<void> {
+      await call("webviewEngine.contentBlockingConfigure", options);
+    },
+  },
 };
+
+export interface ContentBlockingList {
+  path: string;
+  /** "hosts" for `/etc/hosts`-style lists (Peter Lowe's, as uBO fetches it). */
+  format?: "standard" | "hosts";
+}
+
+export interface ContentBlockingLoadOptions {
+  lists: ContentBlockingList[];
+  resources?: string;
+  cacheFile?: string;
+  cacheKey?: string;
+}
+
+export interface ContentBlockingConfigureOptions {
+  enabled?: boolean;
+  disabledSites?: string[];
+  userRules?: string;
+}
 
 // --- audio -----------------------------------------------------------------
 

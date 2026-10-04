@@ -6,3 +6,4 @@
 #include "../../../include/nd.h"
 #include "../../../include/ndterm.h"
 #include "../../../include/ndremote.h"
+#include "../../../include/nd_adblock.h"

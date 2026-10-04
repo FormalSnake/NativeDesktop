@@ -435,6 +435,50 @@ Adding a new webview *event* needs one-line routing entries in `tools/codegen.ts
 dispatch forwards the raw command string to the hand-written engine files,
 `src/gtk/webview.zig` and `NDShell/NDWebView.swift`.
 
+## Content blocking
+
+Chromium engine only. `webviewEngine.contentBlocking` runs filter lists in
+uBlock Origin / EasyList syntax through brave/adblock-rust inside the host
+(`src/adblock.zig`, `crates/nd-adblock`, which `build.zig` compiles with cargo:
+building a host needs a Rust toolchain).
+
+```ts
+await webviewEngine.contentBlocking.load({
+  lists: [{ path: "/data/easylist.txt" }, { path: "/data/plowe.txt", format: "hosts" }],
+  resources: "/data/resources.json", // adblock-rust resources: scriptlets, redirect bodies
+  cacheFile: "/data/engine.bin",
+  cacheKey: "lists-2026-09-23",     // change it whenever a list changes
+});
+await webviewEngine.contentBlocking.configure({
+  disabledSites: ["example.com"],   // a host and its subdomains
+  userRules: "example.com##.newsletter",
+});
+<webview onContentBlocked={(e) => setBlocked(e.data.count)} />
+```
+
+- Both calls need the host connection, so they come after `render()`.
+- `load` reads and compiles the lists on a host thread of its own and writes
+  the compiled engine to `cacheFile`; the next start with the same
+  `cacheKey` deserializes it instead of compiling.
+- Network rules run on CEF's IO thread in the view's resource request
+  handler: a block cancels the request, a `redirect=` serves the resource body
+  in place of the response (Chromium refuses a redirect to `data:`). Top-level
+  documents are never blocked. `contentBlocked` reports the count since the
+  last main-frame navigation, which resets it to 0.
+- Cosmetic rules and scriptlets reach every frame, cross-site ones included,
+  from the render process handler: when a frame's main-world V8 context is
+  created, it fetches its own script from the `nd-adblock` scheme (served by
+  the same request handler) and runs it before any of the page's scripts. The
+  scheme bypasses CSP and the script is compiled by CEF directly, so a page's
+  CSP cannot stop either. DevTools cannot do this job: a script registered
+  while a navigation is in flight only reaches the documents after it.
+- The cosmetic agent hides with an adopted stylesheet, runs uBO's procedural
+  operators, looks up generic class and id rules as the page grows, and
+  collapses images, frames and objects whose request was blocked.
+- Known gap: requests from a service worker of the default profile have no
+  browser and no request-context handler, so they are not filtered. Named and
+  private profiles filter them on the GTK host.
+
 ## Engines
 
 The system engine is the default on both platforms and costs zero bundle bytes.

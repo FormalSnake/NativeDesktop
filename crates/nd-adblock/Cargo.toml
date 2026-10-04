@@ -1,0 +1,19 @@
+[package]
+name = "nd-adblock"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+# single-thread is left out so one Engine can be shared by CEF's IO thread and
+# the UI thread behind a lock.
+adblock = { version = "=0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "css-validation"] }
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1

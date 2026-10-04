@@ -13,6 +13,7 @@ const ndp_binary = @import("ndp_binary.zig");
 const abi_backend = @import("abi_backend.zig");
 const automation_dialogs = @import("automation_dialogs.zig");
 const widget_types = @import("generated/widget_types.zig");
+const adblock = @import("adblock.zig");
 
 var trace: bool = false;
 
@@ -804,6 +805,12 @@ pub const Runtime = struct {
             sendSystemResponse(req.id, false, "capability denied");
             return;
         }
+        // Content blocking lives in the core, not a backend: both hosts'
+        // Chromium engines read the same engine from CEF's IO thread.
+        if (adblock.handlesMethod(req.method)) {
+            adblock.handle(self.io, req.id, req.method, req.params, &adblockReply);
+            return;
+        }
         // Scripted native dialogs (ND_AUTOMATION_DIALOG_SCRIPT): answer
         // dialog.* from the per-method FIFO instead of dispatching real UI.
         // An exhausted queue fails LOUDLY — never silently shows the dialog.
@@ -841,6 +848,10 @@ pub const Runtime = struct {
         };
         job.* = .{ .rt = self, .id = req.id, .method = method_z, .params = params_z };
         abi_backend.vtable.marshal_async(abi_backend.ctx, &systemRequestOnUi, job);
+    }
+
+    fn adblockReply(id: u32, ok: bool, json: []const u8) void {
+        sendSystemResponse(id, ok, json);
     }
 
     fn systemRequestOnUi(data: ?*anyopaque) callconv(.c) void {

@@ -40,6 +40,7 @@ const ndchrome = @import("../gtk/chrome.zig");
 const gtkmenu = @import("gtkmenu.zig");
 const automation_dialogs = @import("../automation_dialogs.zig");
 const types = @import("types.zig");
+const adblock = @import("../adblock.zig");
 
 const alloc = std.heap.c_allocator;
 
@@ -241,6 +242,7 @@ fn ensureApp() ?*AppObj {
     a.cef.on_before_command_line_processing = &onBeforeCommandLine;
     a.cef.on_register_custom_schemes = &onRegisterCustomSchemes;
     a.cef.get_browser_process_handler = &appGetBrowserProcessHandler;
+    a.cef.get_render_process_handler = &appGetRenderProcessHandler;
     app_obj = a;
     return a;
 }
@@ -291,8 +293,10 @@ var startup_prefs_handler: ?*StartupPrefsObj = null;
 /// gets the same startup prefs as the global one.
 fn startupPrefsHandler() [*c]c.cef_request_context_handler_t {
     if (startup_prefs_handler == null) {
+        ensureAdblockBlock();
         const h = StartupPrefsObj.create({}) orelse return null;
         h.cef.on_request_context_initialized = &onRequestContextInitialized;
+        h.cef.get_resource_request_handler = &onContextGetResourceRequestHandler;
         startup_prefs_handler = h;
     }
     return startup_prefs_handler.?.handOut();
@@ -1773,6 +1777,11 @@ const View = struct {
     request_handler: *RequestHandlerObj,
     permission_handler: *PermissionObj,
 
+    /// Blocked requests since the last main-frame navigation. Bumped on the
+    /// IO thread, read on the GTK one when `contentBlocked` is emitted.
+    adblock_count: std.atomic.Value(u32) = .init(0),
+    adblock_report_queued: std.atomic.Value(bool) = .init(false),
+
     /// The request context this view's browser was created with, or null for
     /// the global one. Held so the view keeps the profile alive.
     context: ?*c.cef_request_context_t = null,
@@ -2055,6 +2064,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     const keyboard_handler = KeyboardObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const request_handler = RequestHandlerObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
     const permission_handler = PermissionObj.create(view) orelse return abandon(view, client, display_handler, load_handler);
+    ensureAdblockBlock();
 
     view.* = .{
         .widget = widget,
@@ -2128,6 +2138,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     request_handler.cef.on_open_urlfrom_tab = &onOpenUrlFromTab;
     request_handler.cef.on_before_browse = &onBeforeBrowse;
     request_handler.cef.get_auth_credentials = &onGetAuthCredentials;
+    request_handler.cef.get_resource_request_handler = &onGetResourceRequestHandler;
     permission_handler.cef.on_show_permission_prompt = &onShowPermissionPrompt;
     permission_handler.cef.on_request_media_access_permission = &onRequestMediaAccessPermission;
     permission_handler.cef.on_dismiss_permission_prompt = &onDismissPermissionPrompt;
@@ -4015,6 +4026,351 @@ fn onGetAuthCredentials(
 }
 
 // ============================================================================
+// Content blocking (src/adblock.zig holds the engine; this is the GTK host's
+// half, the peer of swift/Sources/NDShell/NDCefAdblock.swift)
+// ============================================================================
+//
+// Network rules are answered on CEF's IO thread from the resource request
+// handlers below. Cosmetic rules and scriptlets reach every frame through the
+// render process handler: each new main-world context fetches its own script
+// from the `nd-adblock` scheme, which the same request handlers serve.
+
+const AdblockBlockObj = ref.Counted(c.cef_resource_request_handler_t, void);
+const AdblockRedirectObj = ref.Counted(c.cef_resource_request_handler_t, AdblockBody);
+const AdblockBodyObj = ref.Counted(c.cef_resource_handler_t, AdblockBody);
+
+/// Shared by every view and by the profile contexts' service-worker requests.
+/// Created on the GTK thread before any browser or context exists, read on the
+/// IO thread afterwards.
+var adblock_block: ?*AdblockBlockObj = null;
+
+fn ensureAdblockBlock() void {
+    if (adblock_block != null) return;
+    const h = AdblockBlockObj.create({}) orelse return;
+    h.cef.on_before_resource_load = &onAdblockBlockLoad;
+    adblock_block = h;
+}
+
+fn onAdblockBlockLoad(
+    _: [*c]c.cef_resource_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    callback: [*c]c.cef_callback_t,
+) callconv(.c) c.cef_return_value_t {
+    ref.releaseParam(browser);
+    ref.releaseParam(frame);
+    ref.releaseParam(request);
+    ref.releaseParam(callback);
+    return c.RV_CANCEL;
+}
+
+fn requestUrl(request: [*c]c.cef_request_t) ?[]u8 {
+    const get_url = request.*.get_url orelse return null;
+    const raw = get_url(request);
+    if (raw == null) return null;
+    defer freeUserfree(raw);
+    return dupeStr(raw);
+}
+
+/// The view's `get_resource_request_handler`. IO thread.
+fn onGetResourceRequestHandler(
+    self: [*c]c.cef_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    _: c_int,
+    _: c_int,
+    request_initiator: [*c]const c.cef_string_t,
+    disable_default_handling: [*c]c_int,
+) callconv(.c) [*c]c.cef_resource_request_handler_t {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    if (request == null) return null;
+    const view = RequestHandlerObj.of(self).payload;
+    const url = requestUrl(request) orelse return null;
+    defer alloc.free(url);
+    if (adblock.isSchemeUrl(url)) {
+        if (disable_default_handling != null) disable_default_handling.* = 1;
+        const top = if (browser != null) mainFrameUrl(browser) else null;
+        defer if (top) |t| alloc.free(t);
+        return adblockServe(url, top orelse "");
+    }
+    if (!adblock.nd_adblock_active()) return null;
+    const get_type = request.*.get_resource_type orelse return null;
+    const kind: c_int = @intCast(get_type(request));
+    if (kind == c.RT_MAIN_FRAME) {
+        // The docked inspector rides this client, and its navigation is not
+        // the page's.
+        if (std.mem.startsWith(u8, url, "devtools://")) return null;
+        view.adblock_count.store(0, .release);
+        adblockReport(view);
+        return null;
+    }
+    const initiator = dupeStr(request_initiator);
+    defer if (initiator) |i| alloc.free(i);
+    const top = if (browser != null) mainFrameUrl(browser) else null;
+    defer if (top) |t| alloc.free(t);
+    return adblockNetwork(view, url, kind, initiator orelse "", top orelse "");
+}
+
+/// The profile contexts' `get_resource_request_handler`, which is where a
+/// request with no browser (a service worker's) is seen. A request that has
+/// one was already answered by its view's handler. IO thread.
+fn onContextGetResourceRequestHandler(
+    _: [*c]c.cef_request_context_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+    _: c_int,
+    _: c_int,
+    request_initiator: [*c]const c.cef_string_t,
+    _: [*c]c_int,
+) callconv(.c) [*c]c.cef_resource_request_handler_t {
+    defer ref.releaseParam(browser);
+    defer ref.releaseParam(frame);
+    defer ref.releaseParam(request);
+    if (browser != null or request == null or !adblock.nd_adblock_active()) return null;
+    const get_type = request.*.get_resource_type orelse return null;
+    const url = requestUrl(request) orelse return null;
+    defer alloc.free(url);
+    const initiator = dupeStr(request_initiator);
+    defer if (initiator) |i| alloc.free(i);
+    return adblockNetwork(null, url, @intCast(get_type(request)), initiator orelse "", initiator orelse "");
+}
+
+fn adblockNetwork(view: ?*View, url: []const u8, kind: c_int, initiator: []const u8, top: []const u8) [*c]c.cef_resource_request_handler_t {
+    var decision = adblock.decide(url, initiator, top, @enumFromInt(kind));
+    defer adblock.freeDecision(&decision);
+    switch (decision.action) {
+        .allow => return null,
+        .block => {
+            tr("adblock block kind={d} {s}", .{ kind, url });
+            if (view) |v| adblockBump(v);
+            return (adblock_block orelse return null).handOut();
+        },
+        .redirect => {
+            tr("adblock redirect kind={d} {s}", .{ kind, url });
+            if (view) |v| adblockBump(v);
+            const body = decision.body orelse return null;
+            const mime = decision.mime orelse return null;
+            return adblockRespond(body[0..decision.body_len], std.mem.span(mime));
+        },
+    }
+}
+
+/// A request on the `nd-adblock` scheme: a frame asking for its document-start
+/// script, or the cosmetic agent asking about what it found.
+fn adblockServe(url: []const u8, top: []const u8) [*c]c.cef_resource_request_handler_t {
+    var served = adblock.serve(url, top);
+    defer adblock.freeServed(&served);
+    const body: []const u8 = if (served.body) |b| b[0..served.body_len] else "";
+    return adblockRespond(body, std.mem.span(served.mime));
+}
+
+fn adblockRespond(body: []const u8, mime: []const u8) [*c]c.cef_resource_request_handler_t {
+    const payload = AdblockBody.init(body, mime) orelse return null;
+    const h = AdblockRedirectObj.create(payload) orelse {
+        var p = payload;
+        p.deinit();
+        return null;
+    };
+    h.cef.get_resource_handler = &onAdblockRedirectHandler;
+    // The one reference `create` handed back is the caller's.
+    return h.cptr();
+}
+
+/// A body served in place of a network response: a `redirect=` rule's
+/// resource, or an `nd-adblock` scheme answer.
+const AdblockBody = struct {
+    body: []u8,
+    mime: []u8,
+    /// IO thread only: CEF reads one resource from one thread.
+    offset: usize = 0,
+
+    fn init(body: []const u8, mime: []const u8) ?AdblockBody {
+        const b = alloc.dupe(u8, body) catch return null;
+        const m = alloc.dupe(u8, mime) catch {
+            alloc.free(b);
+            return null;
+        };
+        return .{ .body = b, .mime = m };
+    }
+
+    pub fn deinit(self: *AdblockBody) void {
+        alloc.free(self.body);
+        alloc.free(self.mime);
+    }
+};
+
+fn onAdblockRedirectHandler(
+    self: [*c]c.cef_resource_request_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    request: [*c]c.cef_request_t,
+) callconv(.c) [*c]c.cef_resource_handler_t {
+    ref.releaseParam(browser);
+    ref.releaseParam(frame);
+    ref.releaseParam(request);
+    const src = AdblockRedirectObj.of(self).payload;
+    const payload = AdblockBody.init(src.body, src.mime) orelse return null;
+    const h = AdblockBodyObj.create(payload) orelse {
+        var p = payload;
+        p.deinit();
+        return null;
+    };
+    h.cef.open = &onAdblockBodyOpen;
+    h.cef.get_response_headers = &onAdblockBodyHeaders;
+    h.cef.read = &onAdblockBodyRead;
+    h.cef.cancel = &onAdblockBodyCancel;
+    return h.cptr();
+}
+
+fn onAdblockBodyOpen(
+    _: [*c]c.cef_resource_handler_t,
+    request: [*c]c.cef_request_t,
+    handle_request: [*c]c_int,
+    callback: [*c]c.cef_callback_t,
+) callconv(.c) c_int {
+    ref.releaseParam(request);
+    ref.releaseParam(callback);
+    if (handle_request != null) handle_request.* = 1;
+    return 1;
+}
+
+fn onAdblockBodyHeaders(
+    self: [*c]c.cef_resource_handler_t,
+    response: [*c]c.cef_response_t,
+    response_length: [*c]i64,
+    _: [*c]c.cef_string_t,
+) callconv(.c) void {
+    const res = &AdblockBodyObj.of(self).payload;
+    if (response != null) {
+        if (response.*.set_status) |set| set(response, 200);
+        if (response.*.set_mime_type) |set| {
+            var s = std.mem.zeroes(c.cef_string_t);
+            defer clearStr(&s);
+            if (setStr(&s, res.mime)) set(response, &s);
+        }
+        // A redirected script or XHR is usually cross-origin to the page, and
+        // every `nd-adblock` request is.
+        if (response.*.set_header_by_name) |set| {
+            var name = std.mem.zeroes(c.cef_string_t);
+            var value = std.mem.zeroes(c.cef_string_t);
+            defer clearStr(&name);
+            defer clearStr(&value);
+            if (setStr(&name, "Access-Control-Allow-Origin") and setStr(&value, "*")) set(response, &name, &value, 1);
+        }
+    }
+    if (response_length != null) response_length.* = @intCast(res.body.len);
+}
+
+fn onAdblockBodyRead(
+    self: [*c]c.cef_resource_handler_t,
+    data_out: ?*anyopaque,
+    bytes_to_read: c_int,
+    bytes_read: [*c]c_int,
+    callback: [*c]c.cef_resource_read_callback_t,
+) callconv(.c) c_int {
+    ref.releaseParam(callback);
+    const res = &AdblockBodyObj.of(self).payload;
+    if (bytes_read != null) bytes_read.* = 0;
+    if (res.offset >= res.body.len) return 0;
+    const out = data_out orelse return 0;
+    const n = @min(@as(usize, @intCast(@max(bytes_to_read, 0))), res.body.len - res.offset);
+    if (n == 0) return 0;
+    @memcpy(@as([*]u8, @ptrCast(out))[0..n], res.body[res.offset..][0..n]);
+    res.offset += n;
+    if (bytes_read != null) bytes_read.* = @intCast(n);
+    return 1;
+}
+
+fn onAdblockBodyCancel(_: [*c]c.cef_resource_handler_t) callconv(.c) void {}
+
+/// Blocked requests since the last main-frame navigation, counted on the IO
+/// thread and reported as `contentBlocked` with at most one report in flight.
+fn adblockBump(view: *View) void {
+    _ = view.adblock_count.fetchAdd(1, .monotonic);
+    adblockReport(view);
+}
+
+fn adblockReport(view: *View) void {
+    if (view.adblock_report_queued.swap(true, .acq_rel)) return;
+    post(.{ .view = view, .name = "", .adblock_report = true });
+}
+
+fn emitContentBlocked(view: *View) void {
+    view.adblock_report_queued.store(false, .release);
+    const count = view.adblock_count.load(.acquire);
+    const f = emit orelse return;
+    var payload: std.json.ObjectMap = .empty;
+    defer payload.deinit(alloc);
+    payload.put(alloc, "count", .{ .integer = count }) catch return;
+    f(view.node_id, "contentBlocked", .{ .data = .{ .object = payload } });
+}
+
+// ---- Renderer side ----------------------------------------------------------
+//
+// Runs in every renderer subprocess (this binary re-exec'd by CEF), never in
+// the browser.
+
+const RenderProcessObj = ref.Counted(c.cef_render_process_handler_t, void);
+var render_process_obj: ?*RenderProcessObj = null;
+
+fn appGetRenderProcessHandler(_: [*c]c.cef_app_t) callconv(.c) [*c]c.cef_render_process_handler_t {
+    if (render_process_obj == null) {
+        const h = RenderProcessObj.create({}) orelse return null;
+        h.cef.on_context_created = &onRendererContextCreated;
+        render_process_obj = h;
+    }
+    return render_process_obj.?.handOut();
+}
+
+/// A frame's main world exists and none of its scripts has run: fetch and run
+/// its content-blocking script (src/adblock.zig `renderer_bootstrap`).
+fn onRendererContextCreated(
+    _: [*c]c.cef_render_process_handler_t,
+    browser: [*c]c.cef_browser_t,
+    frame: [*c]c.cef_frame_t,
+    context: [*c]c.cef_v8_context_t,
+) callconv(.c) void {
+    ref.releaseParam(browser);
+    ref.releaseParam(frame);
+    defer ref.releaseParam(context);
+    if (context == null) return;
+    const script = v8Eval(context, adblock.renderer_bootstrap) orelse return;
+    defer alloc.free(script);
+    if (script.len == 0) return;
+    if (v8Eval(context, script)) |rest| alloc.free(rest);
+}
+
+/// Runs `code` in `context` and returns its value when that is a string.
+/// CEF's eval compiles directly, so a page's CSP has no say in it.
+fn v8Eval(context: [*c]c.cef_v8_context_t, code: []const u8) ?[]u8 {
+    const eval = context.*.eval orelse return null;
+    var source = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&source);
+    if (!setStr(&source, code)) return null;
+    var name = std.mem.zeroes(c.cef_string_t);
+    defer clearStr(&name);
+    _ = setStr(&name, "nd-adblock://frame/");
+    var retval: [*c]c.cef_v8_value_t = null;
+    var exception: [*c]c.cef_v8_exception_t = null;
+    const ok = eval(context, &source, &name, 1, &retval, &exception);
+    defer ref.releaseParam(retval);
+    defer ref.releaseParam(exception);
+    if (ok == 0 or retval == null) return null;
+    const is_string = retval.*.is_string orelse return null;
+    if (is_string(retval) == 0) return null;
+    const get = retval.*.get_string_value orelse return null;
+    const raw = get(retval);
+    if (raw == null) return alloc.dupe(u8, "") catch null;
+    defer freeUserfree(raw);
+    return dupeStr(raw);
+}
+
+// ============================================================================
 // cef_display_handler_t
 // ============================================================================
 
@@ -4440,6 +4796,8 @@ const Emission = struct {
     /// GTK side owns continuing or cancelling it from here on.
     download: ?*DownloadRequest = null,
     download_update: ?DownloadUpdate = null,
+    /// The view's blocked count changed (`contentBlocked`).
+    adblock_report: bool = false,
 };
 
 fn post(e: Emission) void {
@@ -4513,6 +4871,11 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
 
     if (box.permission) |req| {
         announcePermissionRequest(view, req);
+        return 0;
+    }
+
+    if (box.adblock_report) {
+        emitContentBlocked(view);
         return 0;
     }
 
@@ -8962,6 +9325,7 @@ const CEF_SCHEME_OPTION_STANDARD: c_int = 1 << 0;
 const CEF_SCHEME_OPTION_CORS_ENABLED: c_int = 1 << 4;
 const CEF_SCHEME_OPTION_SECURE: c_int = 1 << 3;
 const CEF_SCHEME_OPTION_FETCH_ENABLED: c_int = 1 << 5;
+const CEF_SCHEME_OPTION_CSP_BYPASSING: c_int = 1 << 5;
 
 const SchemeSpec = struct { name: []u8, cors: bool, secure: bool };
 
@@ -9050,6 +9414,11 @@ fn addCustomScheme(
 fn onRegisterCustomSchemes(_: [*c]c.cef_app_t, registrar: [*c]c.cef_scheme_registrar_t) callconv(.c) void {
     if (registrar == null) return;
     const add = registrar.*.add_custom_scheme orelse return;
+    // Content blocking's own scheme (src/adblock.zig `serve`), in every
+    // process and for every app: the renderers fetch from it from inside
+    // pages whose CSP would refuse anything else.
+    addCustomScheme(registrar, add, adblock.scheme, CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+        CEF_SCHEME_OPTION_CORS_ENABLED | CEF_SCHEME_OPTION_CSP_BYPASSING);
     // Launch-declared schemes first: they are the ones a subprocess can know
     // about, and their options are fixed by the contract.
     for (envSchemes()) |name| addCustomScheme(registrar, add, name, env_scheme_options);

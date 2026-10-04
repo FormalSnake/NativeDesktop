@@ -126,6 +126,9 @@ export type {
   AudioState,
   AudioStateEvent,
   AudioSpectrumEvent,
+  ContentBlockingList,
+  ContentBlockingLoadOptions,
+  ContentBlockingConfigureOptions,
 } from "./system.ts";
 export { openExternal, openPath, revealPath } from "./shell.ts";
 export { onUnhandledError, setUnhandledErrorPolicy } from "./errors.ts";

@@ -56,6 +56,12 @@ pub fn build(b: *std.Build) void {
         else => @panic("no prebuilt libghostty-vt for this target"),
     });
 
+    // crates/nd-adblock: brave/adblock-rust behind the C ABI src/adblock.zig
+    // declares, built by cargo for the host machine and linked into every
+    // artifact that compiles runtime.zig. The Swift host links the copy the
+    // `libnd` step installs next to libnd.a.
+    const adblock_lib = buildAdblock(b);
+
     // ---- The core: `src/abi.zig` transitively reaches every other
     // GTK-free core file via ordinary same-directory relative imports (abi
     // -> {abi_backend, tree, runtime, automation, protocol}; tree/runtime/
@@ -106,7 +112,7 @@ pub fn build(b: *std.Build) void {
         .imports = &gtk_imports,
     });
     exe_mod.addImport("generated", exe_mod);
-    linkTerminalDeps(exe_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(exe_mod, ghostty_vt_lib, adblock_lib, target);
     addCefHeaders(exe_mod, cef_dist);
     const exe = b.addExecutable(.{ .name = "nd-hello", .root_module = exe_mod });
     b.installArtifact(exe);
@@ -123,7 +129,7 @@ pub fn build(b: *std.Build) void {
         .imports = &gtk_imports,
     });
     tests_mod.addImport("generated", tests_mod);
-    linkTerminalDeps(tests_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(tests_mod, ghostty_vt_lib, adblock_lib, target);
     addCefHeaders(tests_mod, cef_dist);
     const tests = b.addTest(.{ .root_module = tests_mod });
     const test_step = b.step("test", "Run unit tests");
@@ -155,6 +161,7 @@ pub fn build(b: *std.Build) void {
             .imports = &gtk_imports,
         }),
     });
+    linkAdblock(tree_tests.root_module, adblock_lib, target);
     test_step.dependOn(&b.addRunArtifact(tree_tests).step);
 
     // `test` declarations are only collected from a file's own addTest root,
@@ -176,7 +183,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &gtk_imports,
     });
-    linkTerminalDeps(style_test_generated_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(style_test_generated_mod, ghostty_vt_lib, adblock_lib, target);
     const style_tests_mod = b.createModule(.{
         .root_source_file = b.path("src/gtk/style.zig"),
         .target = target,
@@ -185,7 +192,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "generated", .module = style_test_generated_mod },
         }),
     });
-    linkTerminalDeps(style_tests_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(style_tests_mod, ghostty_vt_lib, adblock_lib, target);
     const style_tests = b.addTest(.{ .root_module = style_tests_mod });
     test_step.dependOn(&b.addRunArtifact(style_tests).step);
 
@@ -198,7 +205,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &gtk_imports,
     });
-    linkTerminalDeps(decoration_tests_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(decoration_tests_mod, ghostty_vt_lib, adblock_lib, target);
     const decoration_tests = b.addTest(.{ .root_module = decoration_tests_mod });
     test_step.dependOn(&b.addRunArtifact(decoration_tests).step);
 
@@ -223,6 +230,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    linkAdblock(conformance_tests.root_module, adblock_lib, target);
     test_step.dependOn(&b.addRunArtifact(conformance_tests).step);
 
     // Header-conformance test: `abi.zig`'s comptime layout asserts
@@ -240,6 +248,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    linkAdblock(abi_tests.root_module, adblock_lib, target);
     test_step.dependOn(&b.addRunArtifact(abi_tests).step);
 
     // Update-verification core: its own addTest root — Zig 0.16 does not
@@ -273,7 +282,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    linkTerminalDeps(terminal_tests_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(terminal_tests_mod, ghostty_vt_lib, adblock_lib, target);
     const terminal_tests = b.addTest(.{ .root_module = terminal_tests_mod });
     test_step.dependOn(&b.addRunArtifact(terminal_tests).step);
 
@@ -285,7 +294,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    linkTerminalDeps(remote_terminal_tests_mod, ghostty_vt_lib, target);
+    linkTerminalDeps(remote_terminal_tests_mod, ghostty_vt_lib, adblock_lib, target);
     const remote_terminal_tests = b.addTest(.{ .root_module = remote_terminal_tests_mod });
     test_step.dependOn(&b.addRunArtifact(remote_terminal_tests).step);
 
@@ -326,6 +335,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    linkAdblock(automation_tests.root_module, adblock_lib, target);
     test_step.dependOn(&b.addRunArtifact(automation_tests).step);
 
     // Native-plugin dlopen loader: own addTest root; link_libc because
@@ -392,6 +402,7 @@ pub fn build(b: *std.Build) void {
         repack.step.dependOn(&libnd_install.step);
         libnd_step.dependOn(&repack.step);
     }
+    libnd_step.dependOn(&b.addInstallLibFile(adblock_lib, "libnd_adblock.a").step);
     libnd_step.dependOn(&b.addInstallFileWithDir(b.path("include/nd.h"), .{ .custom = "include" }, "nd.h").step);
     // nd.h nests `#include "nd_plugin.h"` — install it alongside or
     // the installed header tree fatally fails to resolve for any consumer.
@@ -468,10 +479,31 @@ fn addCefHeaders(mod: *std.Build.Module, dist: ?[]const u8) void {
 
 const cef_version_dir = "151.3.23-linux64";
 
-fn linkTerminalDeps(mod: *std.Build.Module, ghostty_lib: std.Build.LazyPath, target: std.Build.ResolvedTarget) void {
+fn linkTerminalDeps(mod: *std.Build.Module, ghostty_lib: std.Build.LazyPath, adblock_lib: std.Build.LazyPath, target: std.Build.ResolvedTarget) void {
     mod.link_libc = true;
     mod.addObjectFile(ghostty_lib);
+    linkAdblock(mod, adblock_lib, target);
     if (target.result.os.tag == .linux) mod.linkSystemLibrary("util", .{});
+}
+
+fn buildAdblock(b: *std.Build) std.Build.LazyPath {
+    const cargo = b.addSystemCommand(&.{ "cargo", "build", "--release", "--locked", "--quiet", "--manifest-path" });
+    cargo.addFileArg(b.path("crates/nd-adblock/Cargo.toml"));
+    cargo.addArg("--target-dir");
+    const out = cargo.addOutputDirectoryArg("cargo");
+    cargo.addFileInput(b.path("crates/nd-adblock/Cargo.lock"));
+    cargo.addFileInput(b.path("crates/nd-adblock/src/lib.rs"));
+    // Matches .macOS(.v26) in swift/Package.swift; without it rustc stamps the
+    // SDK version and ld warns on every object.
+    if (builtin.os.tag == .macos) cargo.setEnvironmentVariable("MACOSX_DEPLOYMENT_TARGET", "26.0");
+    return out.path(b, "release/libnd_adblock.a");
+}
+
+fn linkAdblock(mod: *std.Build.Module, lib: std.Build.LazyPath, target: std.Build.ResolvedTarget) void {
+    mod.link_libc = true;
+    mod.addObjectFile(lib);
+    // Rust's std unwinds through libgcc_s on linux-gnu.
+    if (target.result.os.tag == .linux) mod.linkSystemLibrary("gcc_s", .{});
 }
 
 fn checkZigVersion() void {

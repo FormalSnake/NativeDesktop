@@ -35,6 +35,8 @@ pub const gpa = std.heap.c_allocator;
 pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
     return struct {
         const Self = @This();
+        /// A payload that owns memory frees it with the object.
+        const has_deinit = @typeInfo(Payload) == .@"struct" and @hasDecl(Payload, "deinit");
 
         cef: CStruct,
         refs: std.atomic.Value(u32),
@@ -100,6 +102,7 @@ pub fn Counted(comptime CStruct: type, comptime Payload: type) type {
             // must see every write the other threads made through it before
             // the memory goes back.
             if (self.refs.fetchSub(1, .acq_rel) == 1) {
+                if (comptime has_deinit) self.payload.deinit();
                 gpa.destroy(self);
                 return 1;
             }

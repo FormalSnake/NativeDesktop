@@ -35,6 +35,11 @@ pub const remote_terminal = @import("remote_terminal.zig");
 // each export's address is enough to force analysis + emission without
 // calling anything at runtime.
 comptime {
+    _ = &abi.adblock.nd_adblock_active;
+    _ = &abi.adblock.nd_adblock_decide;
+    _ = &abi.adblock.nd_adblock_decision_free;
+    _ = &abi.adblock.nd_adblock_serve;
+    _ = &abi.adblock.nd_adblock_served_free;
     _ = &abi.nd_init;
     _ = &abi.nd_register_backend;
     _ = &abi.nd_start_runtime;

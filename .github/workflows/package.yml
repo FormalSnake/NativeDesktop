@@ -35,6 +35,11 @@ jobs:
         with: { bun-version: 1.3.13 }
       - name: minisign (for update signing)
         run: brew install minisign
+      - name: Install Rust 1.95.0
+        # build.zig compiles crates/nd-adblock (content blocking) with cargo.
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
       - name: Build AppKit host (libnd repack + Swift shell)
         run: |
           ./scripts/mac/build-appkit-host.sh

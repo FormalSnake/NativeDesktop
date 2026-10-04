@@ -849,6 +849,10 @@ final class NDCefHandlerBox {
     fileprivate(set) var request: UnsafeMutablePointer<cef_request_handler_t>?
     fileprivate(set) var resourceRequest: UnsafeMutablePointer<cef_resource_request_handler_t>?
     fileprivate(set) var devToolsObserver: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
+    /// Content blocking's shared handler for a blocked request
+    /// (NDCefAdblock.swift).
+    fileprivate(set) var adblockBlock: UnsafeMutablePointer<cef_resource_request_handler_t>?
+    let adblockCounter = NDCefAdblockCounter()
     /// Chrome style only (NDCefChromeWindow.swift). Alloy has no Chrome command
     /// surface and is never born in a Views window, so these stay nil there.
     var command: UnsafeMutablePointer<cef_command_handler_t>?
@@ -878,6 +882,7 @@ final class NDCefHandlerBox {
         request = ndCefAlloc(cef_request_handler_t.self, self)
         resourceRequest = ndCefAlloc(cef_resource_request_handler_t.self, self)
         devToolsObserver = ndCefAlloc(cef_dev_tools_message_observer_t.self, self)
+        adblockBlock = ndCefAlloc(cef_resource_request_handler_t.self, self)
         if NDCefRuntime.isChromeStyle { buildChrome() }
         client = ndCefAlloc(cef_client_t.self, self)
         wireDisplay()
@@ -893,6 +898,7 @@ final class NDCefHandlerBox {
         wireKeyboard()
         wireRequest()
         wireDevTools()
+        NDCefAdblock.wire(self)
         wireClient()
     }
 
@@ -915,6 +921,7 @@ final class NDCefHandlerBox {
             request.map(UnsafeMutableRawPointer.init),
             resourceRequest.map(UnsafeMutableRawPointer.init),
             devToolsObserver.map(UnsafeMutableRawPointer.init),
+            adblockBlock.map(UnsafeMutableRawPointer.init),
             command.map(UnsafeMutableRawPointer.init),
             windowDelegate.map(UnsafeMutableRawPointer.init),
             browserViewDelegate.map(UnsafeMutableRawPointer.init),
@@ -938,6 +945,7 @@ final class NDCefHandlerBox {
         request = nil
         resourceRequest = nil
         devToolsObserver = nil
+        adblockBlock = nil
         devToolsRegistration = nil
         command = nil
         windowDelegate = nil
@@ -1545,16 +1553,23 @@ final class NDCefHandlerBox {
             return 0
         }
         request.pointee.get_resource_request_handler = {
-            selfPointer, browser, frame, request, _, _, _, disableDefaultHandling in
+            selfPointer, browser, frame, request, _, _, requestInitiator, disableDefaultHandling in
             var url = ""
             if let request, let raw = request.pointee.get_url?(request) {
                 url = ndCefString(raw)
                 nd_cef_string_free(raw)
             }
-            nd_cef_ref_release(browser)
-            nd_cef_ref_release(frame)
-            nd_cef_ref_release(request)
-            guard NDCefSchemes.handles(url) else { return nil }
+            defer {
+                nd_cef_ref_release(browser)
+                nd_cef_ref_release(frame)
+                nd_cef_ref_release(request)
+            }
+            guard NDCefSchemes.handles(url) else {
+                guard let box = ndCefBox(selfPointer) else { return nil }
+                return NDCefAdblock.requestHandler(
+                    box: box, browser: browser, request: request, url: url,
+                    initiator: ndCefString(requestInitiator), disableDefaultHandling: disableDefaultHandling)
+            }
             disableDefaultHandling?.pointee = 1
             return ndCefHandOut(ndCefBox(selfPointer)?.resourceRequest)
         }

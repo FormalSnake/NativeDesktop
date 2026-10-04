@@ -98,6 +98,9 @@ let package = Package(
                     // libnd's terminal core (ndterm_*) references. After -lnd so the
                     // archive satisfies libnd's undefined symbols.
                     "\(repoRoot)vendor/libghostty-vt/lib/libghostty-vt-macos-aarch64.a",
+                    // brave/adblock-rust behind src/adblock.zig's externs,
+                    // built by cargo and installed by the same `zig build libnd`.
+                    "\(repoRoot)zig-out/lib/libnd_adblock.a",
                 ]),
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),

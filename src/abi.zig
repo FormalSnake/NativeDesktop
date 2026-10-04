@@ -8,6 +8,7 @@ const Runtime = @import("runtime.zig").Runtime;
 const automation = @import("automation.zig");
 const acl = @import("acl.zig");
 const plugin = @import("plugin.zig");
+pub const adblock = @import("adblock.zig");
 
 // Mirrors include/nd.h exactly. Layout asserts below catch header/Zig drift
 // at `zig build test` time.

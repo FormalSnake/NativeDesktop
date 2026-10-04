@@ -29,6 +29,11 @@ jobs:
           curl -sL -o cef.tar.bz2 "https://cef-builds.spotifycdn.com/cef_binary_151.3.23%2Bgd211df0%2Bchromium-151.0.7922.170_macosarm64_minimal.tar.bz2"
           tar xjf cef.tar.bz2 -C "$HOME/.cache/nativedesktop/cef"
           mv "$HOME/.cache/nativedesktop/cef"/cef_binary_* "$HOME/.cache/nativedesktop/cef/151.3.23-macosarm64"
+      - name: Install Rust 1.95.0
+        # build.zig compiles crates/nd-adblock (content blocking) with cargo.
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
       - name: Build AppKit host
         run: ./scripts/mac/build-appkit-host.sh
       - name: Strip (local symbols only; a full strip breaks Swift reflection metadata)
@@ -68,6 +73,12 @@ jobs:
           curl -sL -o cef.tar.bz2 "https://cef-builds.spotifycdn.com/cef_binary_151.3.23%2Bgd211df0%2Bchromium-151.0.7922.170_linux64_minimal.tar.bz2"
           tar xjf cef.tar.bz2 -C "$HOME/.cache/nativedesktop/cef"
           mv "$HOME/.cache/nativedesktop/cef"/cef_binary_* "$HOME/.cache/nativedesktop/cef/151.3.23-linux64"
+      - name: Install Rust 1.95.0
+        # build.zig compiles crates/nd-adblock (content blocking) with cargo,
+        # here against this container's glibc.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.95.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Build GTK host
         # A link failure mentioning glibc symbols here means the committed
         # vendor/libghostty-vt linux archive was built against a newer glibc

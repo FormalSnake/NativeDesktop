@@ -96,6 +96,8 @@
               pkg-config
               minisign     # M9: sign/verify update manifests + archives
               zstd         # M9: .tar.zst full-archive updates (Linux)
+              cargo        # build.zig compiles crates/nd-adblock (content blocking) into every host
+              rustc
             ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               gtk4
               libadwaita

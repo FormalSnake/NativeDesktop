@@ -267,8 +267,21 @@ int nd_cef_register_scheme_handler_factory(const cef_string_t *scheme_name,
 
 static void CEF_CALLBACK app_register_schemes(cef_app_t *self, cef_scheme_registrar_t *registrar) {
   (void)self;
+  if (!registrar || !registrar->add_custom_scheme) {
+    return;
+  }
+  // Content blocking's own scheme (src/adblock.zig `serve`), in every process
+  // and for every app: the renderers fetch from it from inside pages whose CSP
+  // would refuse anything else.
+  cef_string_t adblock = {0};
+  if (nd_cef_string_set("nd-adblock", strlen("nd-adblock"), &adblock)) {
+    registrar->add_custom_scheme(registrar, &adblock,
+                                 CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                                     CEF_SCHEME_OPTION_CORS_ENABLED | CEF_SCHEME_OPTION_CSP_BYPASSING);
+    nd_cef_string_clear(&adblock);
+  }
   const char *list = getenv("ND_CEF_SCHEMES");
-  if (!list || !list[0] || !registrar || !registrar->add_custom_scheme) {
+  if (!list || !list[0]) {
     return;
   }
   const int options = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
@@ -532,6 +545,98 @@ static cef_browser_process_handler_t *CEF_CALLBACK app_browser_process_handler(c
   return browser_process_handler;
 }
 
+// MARK: - Content blocking, renderer side
+
+// src/adblock.zig `renderer_bootstrap`, kept byte for byte: this helper never
+// links libnd. It yields the frame's content-blocking script, served by the
+// host from the nd-adblock scheme, or "".
+static const char adblock_bootstrap[] =
+    "(function () {\n"
+    "  if (location.protocol !== \"http:\" && location.protocol !== \"https:\") return \"\";\n"
+    "  try {\n"
+    "    var x = new XMLHttpRequest();\n"
+    "    x.open(\"GET\", \"nd-adblock://frame/?u=\" + encodeURIComponent(location.href), false);\n"
+    "    x.send();\n"
+    "    return x.status === 200 ? x.responseText : \"\";\n"
+    "  } catch (e) {\n"
+    "    return \"\";\n"
+    "  }\n"
+    "})()";
+
+static cef_render_process_handler_t *render_process_handler = NULL;
+
+// CEF's eval compiles directly, so a page's CSP has no say in it. Returns the
+// value when it is a non-empty string; free it with nd_cef_string_free.
+static cef_string_userfree_t adblock_eval(cef_v8_context_t *context, const cef_string_t *code) {
+  if (!context->eval) {
+    return NULL;
+  }
+  cef_string_t name = {0};
+  nd_cef_string_set("nd-adblock://frame/", strlen("nd-adblock://frame/"), &name);
+  cef_v8_value_t *value = NULL;
+  cef_v8_exception_t *exception = NULL;
+  int ok = context->eval(context, code, &name, 1, &value, &exception);
+  nd_cef_string_clear(&name);
+  if (exception) {
+    nd_cef_ref_release(exception);
+  }
+  cef_string_userfree_t text = NULL;
+  if (ok && value && value->is_string && value->is_string(value) && value->get_string_value) {
+    text = value->get_string_value(value);
+    if (text && text->length == 0) {
+      nd_cef_string_free(text);
+      text = NULL;
+    }
+  }
+  if (value) {
+    nd_cef_ref_release(value);
+  }
+  return text;
+}
+
+// A frame's main world exists and none of its scripts has run: fetch and run
+// its content-blocking script.
+static void CEF_CALLBACK adblock_context_created(cef_render_process_handler_t *self, cef_browser_t *browser,
+                                                 cef_frame_t *frame, cef_v8_context_t *context) {
+  (void)self;
+  if (browser) {
+    nd_cef_ref_release(browser);
+  }
+  if (frame) {
+    nd_cef_ref_release(frame);
+  }
+  if (!context) {
+    return;
+  }
+  cef_string_t bootstrap = {0};
+  if (nd_cef_string_set(adblock_bootstrap, strlen(adblock_bootstrap), &bootstrap)) {
+    cef_string_userfree_t script = adblock_eval(context, &bootstrap);
+    nd_cef_string_clear(&bootstrap);
+    if (script) {
+      cef_string_userfree_t rest = adblock_eval(context, script);
+      if (rest) {
+        nd_cef_string_free(rest);
+      }
+      nd_cef_string_free(script);
+    }
+  }
+  nd_cef_ref_release(context);
+}
+
+static cef_render_process_handler_t *CEF_CALLBACK app_render_process_handler(cef_app_t *self) {
+  (void)self;
+  if (!render_process_handler) {
+    render_process_handler = (cef_render_process_handler_t *)nd_cef_ref_alloc(
+        sizeof(cef_render_process_handler_t), NULL, NULL);
+    if (!render_process_handler) {
+      return NULL;
+    }
+    render_process_handler->on_context_created = adblock_context_created;
+  }
+  nd_cef_ref_add(render_process_handler);
+  return render_process_handler;
+}
+
 cef_app_t *nd_cef_app_create(int browser_process) {
   cef_app_t *app = (cef_app_t *)nd_cef_ref_alloc(sizeof(cef_app_t), NULL, NULL);
   if (!app) {
@@ -541,6 +646,8 @@ cef_app_t *nd_cef_app_create(int browser_process) {
   if (browser_process) {
     app->on_before_command_line_processing = app_command_line;
     app->get_browser_process_handler = app_browser_process_handler;
+  } else {
+    app->get_render_process_handler = app_render_process_handler;
   }
   return app;
 }
