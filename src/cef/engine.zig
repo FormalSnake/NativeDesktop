@@ -1163,7 +1163,11 @@ fn onBeforeCommandLine(
         appendFlag(command_line, append, "hide-crash-restore-bubble");
         if (browser_pipe.available()) appendFlag(command_line, append, "remote-debugging-pipe");
     }
-    if (chromeStyle()) appendFrameworkExtension(command_line);
+    // The pipe alone turns on Blink's AutomationControlled, which is what sets
+    // navigator.webdriver, and sites such as Google Search then answer with a
+    // bot check. The pipe is the framework's own channel, not automation.
+    if (browser_pipe.available()) appendJoined(command_line, "disable-blink-features", "AutomationControlled");
+    if (chromeStyle()) if (framework_extension_dir) |dir| appendJoined(command_line, "load-extension", dir);
 }
 
 /// The framework's own extension, loaded into Chrome style beside the app's.
@@ -1201,19 +1205,18 @@ fn writeFrameworkExtension(root: []const u8) void {
     framework_extension_dir = dir;
 }
 
-/// Joins whatever --load-extension the launch already carries: Chromium reads
-/// one comma-separated switch, and a second append would replace the app's
+/// Joins whatever value the launch already carries for `name`: Chromium reads
+/// one comma-separated switch, and a second append would replace the earlier
 /// list rather than add to it.
-fn appendFrameworkExtension(cl: [*c]c.cef_command_line_t) void {
-    const dir = framework_extension_dir orelse return;
+fn appendJoined(cl: [*c]c.cef_command_line_t, name: []const u8, value: []const u8) void {
     const append = cl.*.append_switch_with_value orelse return;
     var joined: std.ArrayList(u8) = .empty;
     defer joined.deinit(alloc);
     if (cl.*.get_switch_value) |get| {
-        var name = std.mem.zeroes(c.cef_string_t);
-        defer clearStr(&name);
-        if (setStr(&name, "load-extension")) {
-            const raw = get(cl, &name);
+        var key = std.mem.zeroes(c.cef_string_t);
+        defer clearStr(&key);
+        if (setStr(&key, name)) {
+            const raw = get(cl, &key);
             if (raw != null) {
                 defer freeUserfree(raw);
                 if (dupeStr(raw)) |existing| {
@@ -1224,8 +1227,8 @@ fn appendFrameworkExtension(cl: [*c]c.cef_command_line_t) void {
         }
     }
     if (joined.items.len > 0) joined.append(alloc, ',') catch return;
-    joined.appendSlice(alloc, dir) catch return;
-    appendSwitch(cl, append, "load-extension", joined.items);
+    joined.appendSlice(alloc, value) catch return;
+    appendSwitch(cl, append, name, joined.items);
 }
 
 fn appendSwitch(

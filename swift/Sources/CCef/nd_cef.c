@@ -367,16 +367,15 @@ static void append_switch_value(cef_command_line_t *command_line, const char *na
   nd_cef_string_clear(&val);
 }
 
-// ND_CEF_FRAMEWORK_EXTENSION joins whatever --load-extension the launch
-// already carries: Chromium reads one comma-separated switch, and a second
-// append would replace the app's list rather than add to it.
-static void append_framework_extension(cef_command_line_t *command_line) {
-  const char *dir = getenv("ND_CEF_FRAMEWORK_EXTENSION");
-  if (!dir || !dir[0] || !command_line->append_switch_with_value) {
+// Joins whatever value the launch already carries for `switch_name`: Chromium
+// reads one comma-separated switch, and a second append would replace the
+// earlier list rather than add to it.
+static void append_joined(cef_command_line_t *command_line, const char *switch_name, const char *value) {
+  if (!value || !value[0] || !command_line->append_switch_with_value) {
     return;
   }
   cef_string_t name = {0};
-  if (!nd_cef_string_set("load-extension", strlen("load-extension"), &name)) {
+  if (!nd_cef_string_set(switch_name, strlen(switch_name), &name)) {
     return;
   }
   char joined[8192];
@@ -403,18 +402,18 @@ static void append_framework_extension(cef_command_line_t *command_line) {
     }
   }
   size_t used = strlen(joined);
-  if (used + strlen(dir) + 2 >= sizeof(joined)) {
+  if (used + strlen(value) + 2 >= sizeof(joined)) {
     nd_cef_string_clear(&name);
     return;
   }
   if (used > 0) {
     strcat(joined, ",");
   }
-  strcat(joined, dir);
-  cef_string_t value = {0};
-  if (nd_cef_string_set(joined, strlen(joined), &value)) {
-    command_line->append_switch_with_value(command_line, &name, &value);
-    nd_cef_string_clear(&value);
+  strcat(joined, value);
+  cef_string_t joined_value = {0};
+  if (nd_cef_string_set(joined, strlen(joined), &joined_value)) {
+    command_line->append_switch_with_value(command_line, &name, &joined_value);
+    nd_cef_string_clear(&joined_value);
   }
   nd_cef_string_clear(&name);
 }
@@ -435,8 +434,14 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       append_switch(command_line, "no-first-run");
       append_switch(command_line, "no-default-browser-check");
       append_switch(command_line, "disable-print-preview");
-      append_framework_extension(command_line);
-      if (browser_pipe_to_cef >= 0) append_switch(command_line, "remote-debugging-pipe");
+      append_joined(command_line, "load-extension", getenv("ND_CEF_FRAMEWORK_EXTENSION"));
+      if (browser_pipe_to_cef >= 0) {
+        append_switch(command_line, "remote-debugging-pipe");
+        // The pipe alone turns on Blink's AutomationControlled, which is what
+        // sets navigator.webdriver, and sites such as Google Search then
+        // answer with a bot check. The pipe is the framework's own channel.
+        append_joined(command_line, "disable-blink-features", "AutomationControlled");
+      }
       // The floating video keeps the page's origin over the picture until the
       // user presses inside it or the site is trusted for media
       // (VideoOverlayWindowViews::UpdateControlsVisibility); the host's own
