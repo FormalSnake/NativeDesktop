@@ -134,8 +134,10 @@ final class NDAnchoredPanel {
             if event.window !== p { MainActor.assumeIsolated { self?.dismissByUser() } }
             return event
         } as Any)
-        monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self, weak p] event in
-            guard event.keyCode == 53, event.window === p else { return event }
+        // Escape from the parent window too: the anchor that opened the
+        // panel can take the key window back (a field's trailing icon).
+        monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self, weak p, weak parent] event in
+            guard event.keyCode == 53, event.window === p || event.window === parent else { return event }
             MainActor.assumeIsolated { self?.dismissByUser() }
             return nil
         } as Any)

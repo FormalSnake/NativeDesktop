@@ -422,6 +422,8 @@ func buildVTable() -> nd_backend {
     // node is gone, and a sheet left on the window blocks the next one.
     (view as? NDDialogHandleView)?.applyOpen(false)
     (view as? NDSheetHandleView)?.applyOpen(false)
+    // A popover inside a removed subtree is never detached on its own.
+    (view as? NDPopoverHandleView)?.takeDown()
     #if canImport(CCef)
     ndCefPurge(view)
     #endif

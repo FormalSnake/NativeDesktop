@@ -96,12 +96,20 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
     }
 
     func detachFromParent(_ parent: NSView) {
-        anchoredPanel.close()
-        if popover.isShown {
-            programmaticClose = true
-            popover.close()
-        }
+        takeDown()
         if treeParent === parent { treeParent = nil }
+    }
+
+    /// Closes whatever is up without telling the app. The node is leaving the
+    /// tree, and a removed ancestor never detaches its popover: without this
+    /// the anchored panel outlived its handle, and its dismissal monitors,
+    /// holding the handle weakly, could no longer close it.
+    func takeDown() {
+        pendingOpen = false
+        anchoredPanel.close()
+        guard isPopoverCreated, popover.isShown else { return }
+        programmaticClose = true
+        popover.close()
     }
 
     /// `anchorSlot`: "leadingIcon" or "trailingIcon" points the popover at
@@ -232,7 +240,32 @@ final class NDPopoverHandleView: NSView, NSPopoverDelegate {
         }
     }
 
+    private var escapeMonitor: Any?
+
+    /// NSPopover only hears Escape while its own window is key, and a click
+    /// on an anchor that keeps the focus (an address field's trailing icon)
+    /// leaves the key window behind it: Escape went to the field and the
+    /// popover stayed up. Escape anywhere in the anchor's window dismisses it.
+    func popoverDidShow(_ notification: Notification) {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53, let window = event.window else { return event }
+            let dismissed = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.isPopoverCreated, self.popover.isShown,
+                      window === self.contentContainer.window || window === self.anchor?.window
+                else { return false }
+                self.popover.performClose(nil)
+                return true
+            }
+            return dismissed ? nil : event
+        }
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        if let escapeMonitor {
+            NSEvent.removeMonitor(escapeMonitor)
+            self.escapeMonitor = nil
+        }
         if programmaticClose {
             programmaticClose = false
             return
