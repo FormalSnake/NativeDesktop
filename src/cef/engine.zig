@@ -2272,6 +2272,8 @@ fn createBrowser(view: *View) void {
 
     var browser_settings = std.mem.zeroes(c.cef_browser_settings_t);
     browser_settings.size = @sizeOf(c.cef_browser_settings_t);
+    // The app draws its own zoom indicator ("Page zoom reported to the app").
+    browser_settings.chrome_zoom_bubble = c.STATE_DISABLED;
 
     var url = std.mem.zeroes(c.cef_string_t);
     defer clearStr(&url);
@@ -2352,6 +2354,7 @@ fn runViewsCreate(self: [*c]c.cef_task_t) callconv(.c) void {
     _ = setStr(&url, job.url);
     var settings = std.mem.zeroes(c.cef_browser_settings_t);
     settings.size = @sizeOf(c.cef_browser_settings_t);
+    settings.chrome_zoom_bubble = c.STATE_DISABLED;
 
     const delegate = BrowserViewDelegateObj.create(view) orelse return;
     delegate.cef.get_chrome_toolbar_type = &viewsToolbarType;
@@ -3495,9 +3498,10 @@ fn isChromeToolbarButtonVisible(
 // level is read back and reported.
 //
 // On Linux the bubble is not a window of its own: Views draws it inside the
-// browser's X window, at the view's top right, so nothing here can take it
-// away. It closes itself after 1.5s. docs/webview.md lists it as a known gap;
-// on macOS it is a window, and NDCefZoom.swift closes it.
+// browser's X window, at the view's top right, where no window watch sees it.
+// `chrome_zoom_bubble` off in the browser settings keeps Chrome from showing
+// it at all (CEF hands it to `ZoomController::SetShowsNotificationBubble`
+// when the browser is created). On macOS NDCefZoom.swift closes it instead.
 
 const ZoomTask = struct {
     view: *View,

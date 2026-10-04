@@ -14,9 +14,10 @@
 //          commands (Linux; on macOS a pinch is page scale and changes no zoom
 //          level).
 //
-// "No bubble" is asserted twice: the host's own trace (the engine names every
-// bubble it closed, and a surface it placed instead is a failure) and the
-// window server's census of the host's visible windows.
+// "No bubble" is asserted from the host's own trace (the engine names every
+// bubble it closed, and a surface it placed instead is a failure), the window
+// server's census of the host's visible windows and, on Linux, where Views
+// paints the bubble inside the view, captures of the view's top right.
 import { connectApp, findNode, poll } from "../packages/test/src/index.ts";
 import { Session, waitForTarget } from "./cdp.ts";
 
@@ -62,31 +63,39 @@ async function smallWindows(): Promise<Win[]> {
 
 /// Linux only: whether the bubble is painted inside the view. Views draws it
 /// into the browser's own X window there, so the window list never shows it;
-/// the top strip of the (white) page going dark is the tell.
-async function bubbleInView(): Promise<boolean> {
+/// the top right of the (white) page going dark is the tell. The first sample
+/// of each step is kept as `cef-zoom-<leg>.png` for the visual check.
+async function bubbleInView(keep?: string): Promise<boolean> {
   const view = findNode((await app.tree()).root, "z-view")?.geometry;
   const win = (await app.windows()).windows[0]?.geometry;
   if (!view || !win) return false;
-  const shot = `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/cef-zoom-strip.png`;
+  const dir = process.env.XDG_RUNTIME_DIR ?? "/tmp";
+  const shot = `${dir}/cef-zoom-strip.png`;
   Bun.spawnSync(["import", "-window", "root", shot]);
-  const crop = `${view.w}x32+${win.x + view.x}+${win.y + view.y}`;
+  if (keep) {
+    const name = keep.replace(/\+/g, "-plus-").replace(/=/g, "equal").replace(/-$/, "minus").replace(/[^a-z0-9]+/gi, "-");
+    Bun.spawnSync(["magick", shot, "-crop", `${win.w}x${win.h}+${win.x}+${win.y}`, `${dir}/cef-zoom-${name}.png`]);
+  }
+  // Inset from the view's edges so the dark frame around it never counts.
+  const crop = `280x30+${win.x + view.x + view.w - 290}+${win.y + view.y + 8}`;
   const min = Bun.spawnSync(["magick", shot, "-crop", crop, "-colorspace", "Gray", "-format", "%[fx:minima]", "info:"]).stdout.toString();
   return Number(min) < 0.5;
 }
 
-/// Linux legs where the bubble was drawn in the view: the known gap, reported
-/// rather than failed (BUBBLES.md, docs/webview.md).
-const seenInView: string[] = [];
-
 /// Watches for a bubble for as long as Chrome keeps one up (1.5s), sampling
-/// the window list, and fails on the first one seen.
+/// the window list and, on Linux, the view itself, and fails on the first one
+/// seen.
 async function noBubble(leg: string, since: number): Promise<void> {
-  if (!mac) {
-    await Bun.sleep(250);
-    if (await bubbleInView()) seenInView.push(leg);
-  }
+  // The bubble is up within a frame or two of the change; the kept capture
+  // is taken where it would be fully drawn.
+  if (!mac) await Bun.sleep(250);
   const deadline = Date.now() + 1800;
+  let first = true;
   while (Date.now() < deadline) {
+    if (!mac) {
+      if (await bubbleInView(first ? leg : undefined)) throw new Error(`${leg}: Chromium drew its zoom bubble inside the view`);
+      first = false;
+    }
     const seen = await smallWindows();
     if (seen.length > 0) throw new Error(`${leg}: a bubble-sized window is on screen: ${JSON.stringify(seen)}`);
     await Bun.sleep(100);
@@ -223,14 +232,11 @@ await leg("prefs", async () => {
 
 const closed = (await logText()).split("\n").filter((l) => /zoom bubble closed/.test(l)).length;
 if (mac) console.log(`  engine closed ${closed} zoom bubble window(s) before they were placed`);
-if (seenInView.length > 0) {
-  console.log(`  ND_CEF_ZOOM_BUBBLE_IN_VIEW (known Linux gap) Chromium drew its bubble inside the view after: ${seenInView.join(", ")}`);
-}
 await app.close();
 if (failures.length > 0) {
   console.log(`FAIL: ${failures.join("\n")}`);
   process.exit(1);
 }
-console.log("ND_CEF_ZOOM_OK zoom reaches the app from every source and Chromium's bubble never gets a window of its own");
+console.log("ND_CEF_ZOOM_OK zoom reaches the app from every source and Chromium's bubble never comes up");
 // The debugger socket would keep the process alive.
 process.exit(0);

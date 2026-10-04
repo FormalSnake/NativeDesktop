@@ -3,7 +3,8 @@
 # examples/webview-probe/cef-zoom.tsx under Xvfb and drives it with
 # scripts/cef-zoom-drive.ts, the same drive the AppKit gate runs. Proves that
 # setZoom, the zoom chords and ctrl+wheel all reach the app as `zoomChanged`
-# and that Chromium's zoom bubble never maps. Marker: ND_CEF_ZOOM_OK.
+# and that Chromium's zoom bubble never comes up, as a window or inside the
+# view. Marker: ND_CEF_ZOOM_OK.
 #
 # Xvfb for the reason scripts/headless-webview-cef-chrome.sh gives: the bubble
 # is an X top-level of its own, and only a plain X server makes the census of

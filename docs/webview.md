@@ -392,10 +392,9 @@ because Chrome style would otherwise answer every zoom change with its own zoom
 bubble, anchored to a location bar this embedding does not have: an app shows
 its own indicator from this event (a trailing icon in the address field, see
 `trailingIconName`). On macOS the bubble is a window of its own and the engine
-closes it the moment it appears. On Linux Views draws it inside the browser's X
-window, at the view's top right, where nothing can reach it; it closes itself
-after 1.5s. That is a known gap. A trackpad pinch is page scale, not zoom, and
-reports nothing.
+closes it the moment it appears. On Linux every page browser is created with
+`chrome_zoom_bubble` disabled, so Chrome never shows it. A trackpad pinch is
+page scale, not zoom, and reports nothing.
 
 `openDevTools` opens the WebKit inspector window on GTK. macOS has no
 programmatic open, so it sets `isInspectable` and the inspector attaches through

@@ -1204,6 +1204,112 @@ async function accelLegs(): Promise<void> {
   }
 }
 
+/// Page zoom from every route the owner has: the zoom chords with the page
+/// focused, and the app's own popover. Each step has to land on the page
+/// (devicePixelRatio against the factor) and must not bring up Chromium's zoom
+/// bubble, which Views paints inside the browser's own X window at its top
+/// right for 1.5s: a capture taken right after the change has to match one
+/// taken after the bubble would have closed, in that corner. The sidebar
+/// layout keeps the app's popover at the sidebar's foot, clear of the corner.
+/// A reload in the middle has to keep the host's zoom. ND_ACCEPT_LEGS=zoom
+/// runs this alone.
+async function zoomLegs(): Promise<void> {
+  if (!(await app.getByTestId("layout-toggle").isVisible().catch(() => false))) {
+    skip("zoomNoBubble", "the app under test has no layout toggle");
+    return;
+  }
+  if ((await app.getByTestId("tab-list").isVisible().catch(() => false)) !== true) {
+    await app.getByTestId("layout-toggle").click().catch(() => {});
+    await Bun.sleep(1500);
+  }
+  // Hyprland's config-error banner sits across the top of the output and would
+  // hide the bubble's corner.
+  if (wayland) {
+    moveToplevel(top, 40, 240);
+    await Bun.sleep(1200);
+  }
+  await resyncPage();
+  const rootW = Number(sh("xwininfo", "-root").match(/Width:\s+(\d+)/)?.[1] ?? 0);
+  const dpr = async () => {
+    const r = (await page.send("Runtime.evaluate", { expression: "devicePixelRatio", returnByValue: true })) as { result: { value: number } };
+    return r.result.value;
+  };
+  const base = await dpr();
+  const popover = async (id: string) => {
+    if ((await app.getByTestId("zoom-popover").isVisible().catch(() => false)) !== true) {
+      await app.getByTestId("zoom-indicator").click();
+      await Bun.sleep(600);
+    }
+    await app.getByTestId(id).click();
+  };
+  const chord = async (keys: string) => {
+    const at = await pageToScreen("probe");
+    pointerTo(at.x, at.y);
+    click(1);
+    await Bun.sleep(600);
+    key(keys);
+  };
+  const reload = async () => {
+    await page.send("Runtime.evaluate", { expression: "location.reload()" });
+    await Bun.sleep(2500);
+    await resyncPage();
+  };
+  const steps: Array<[string, () => Promise<void>, number]> = [
+    ["ctrl+equal", () => chord("ctrl+equal"), 1.1],
+    ["ctrl+plus", () => chord("ctrl+plus"), 1.25],
+    ["ctrl+minus", () => chord("ctrl+minus"), 1.1],
+    ["popover+", () => popover("zoom-in"), 1.25],
+    ["reload", reload, 1.25],
+    ["popover-", () => popover("zoom-out"), 1.1],
+    ["popoverReset", () => popover("zoom-reset"), 1],
+    ["ctrl+equal again", () => chord("ctrl+equal"), 1.1],
+    ["ctrl+0", () => chord("ctrl+0"), 1],
+  ];
+  for (const [step, act, factor] of steps) {
+    const name = `zoomNoBubble(${step})`;
+    try {
+      await act();
+    } catch (error) {
+      check(name, false, `could not act: ${(error as Error).message.slice(0, 120)}`);
+      continue;
+    }
+    const want = base * factor;
+    let got = NaN;
+    for (let i = 0; i < 30; i++) {
+      got = await dpr().catch(() => NaN);
+      if (Math.abs(got - want) < 0.02) break;
+      await Bun.sleep(100);
+    }
+    const view = shownView();
+    if (!view) {
+      check(name, false, "no view on screen");
+      continue;
+    }
+    const tag = step.replace(/[^a-z0-9]+/gi, "-");
+    const early = `${shots}/zoom-${rig}-${tag}.png`;
+    const late = `${shots}/zoom-${rig}-${tag}-late.png`;
+    capture(early);
+    await Bun.sleep(2200);
+    capture(late);
+    // grim captures the output in physical pixels, the X root is logical.
+    const capW = Number(sh("magick", "identify", "-format", "%w", early));
+    const k = rootW > 0 && capW > 0 ? capW / rootW : 1;
+    const corner = {
+      x: Math.round((view.cef.x + view.cef.w - 340) * k),
+      y: Math.round((view.cef.y + 4) * k),
+      w: Math.round(330 * k),
+      h: Math.round(72 * k),
+    };
+    const diff = regionDiff(early, late, corner);
+    check(
+      name,
+      Math.abs(got - want) < 0.02 && diff < 0.01,
+      `devicePixelRatio ${got.toFixed(3)} for ${factor} (want ${want.toFixed(3)}), top-right corner moved ${diff.toFixed(4)} once a bubble would have closed`,
+    );
+    noStray(name);
+  }
+}
+
 // ============================================================================
 // Legs
 // ============================================================================
@@ -1238,6 +1344,11 @@ if (legs === "filedialog") {
 
 if (legs === "accel") {
   await accelLegs();
+  finish();
+}
+
+if (legs === "zoom") {
+  await zoomLegs();
   finish();
 }
 
