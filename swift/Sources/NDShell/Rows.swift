@@ -92,12 +92,18 @@ class NDRowView: NDHostedLeaf {
             } label: {
                 HStack(spacing: 8) {
                     children(prefixViews)
+                    // One 16pt slot whatever fills it: a symbol is narrower or
+                    // wider than a favicon, and the titles beside them went
+                    // out of line by that much.
                     if let icon {
-                        if iconTinted {
-                            Image(nsImage: icon).foregroundStyle(.secondary)
-                        } else {
-                            Image(nsImage: icon)
+                        Group {
+                            if iconTinted {
+                                Image(nsImage: icon).foregroundStyle(.secondary)
+                            } else {
+                                Image(nsImage: icon)
+                            }
                         }
+                        .frame(width: 16, height: 16)
                     }
                     // One line each, cut at the end, the way the sidebar's
                     // rows are. A zero ideal width is what lets the text give
