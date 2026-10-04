@@ -1023,3 +1023,88 @@ pub fn windowName(window: Window, out: []u8) []u8 {
     @memcpy(out[0..n], data[0..n]);
     return out[0..n];
 }
+
+/// Asks the window manager to activate `window` (`_NET_ACTIVE_WINDOW`, as a
+/// pager would, which is the source a WM honours from another client) and
+/// sets X input focus on it for a session with no WM. Views takes keys only
+/// in the widget it believes is active, which XSetInputFocus alone does not
+/// make it under a WM.
+pub fn activate(window: Window) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    c.push();
+    defer c.pop();
+    const active = c.api.intern_atom(c.x, "_NET_ACTIVE_WINDOW", 0);
+    if (active != 0) {
+        const root = c.api.default_root_window(c.x);
+        var event: XEvent = .{
+            .client = .{
+                .type = 33, // ClientMessage
+                .serial = 0,
+                .send_event = 1,
+                .display = c.x,
+                .window = window,
+                .message_type = active,
+                .format = 32,
+                // Source indication 2 (a pager), no timestamp, no requestor.
+                .data = .{ 2, 0, 0, 0, 0 },
+            },
+        };
+        const SubstructureNotifyMask: c_long = 1 << 19;
+        const SubstructureRedirectMask: c_long = 1 << 20;
+        _ = c.api.send_event(c.x, root, 0, SubstructureNotifyMask | SubstructureRedirectMask, @ptrCast(&event));
+    }
+    _ = c.api.set_input_focus(c.x, window, REVERT_TO_PARENT, CURRENT_TIME);
+    _ = c.api.flush(c.x);
+}
+
+const FnFakeKey = *const fn (*Display, c_uint, c_int, c_ulong) callconv(.c) c_int;
+const FnKeysymToKeycode = *const fn (*Display, c_ulong) callconv(.c) u8;
+var xtest_attempted = false;
+var fake_key: ?FnFakeKey = null;
+var keysym_to_keycode: ?FnKeysymToKeycode = null;
+
+pub const keysym_tab: c_ulong = 0xff09;
+pub const keysym_space: c_ulong = 0x20;
+
+fn loadXTest() bool {
+    if (!xtest_attempted) {
+        xtest_attempted = true;
+        if (loadApi() == null) return false;
+        var ext = std.DynLib.open("libXtst.so.6") catch std.DynLib.open("libXtst.so") catch {
+            std.debug.print("ND_WARN CEF: libXtst not found; Chrome's install prompt is left for the user to answer\n", .{});
+            return false;
+        };
+        fake_key = ext.lookup(FnFakeKey, "XTestFakeKeyEvent");
+        keysym_to_keycode = xlib.lookup(FnKeysymToKeycode, "XKeysymToKeycode");
+    }
+    return fake_key != null and keysym_to_keycode != null;
+}
+
+/// Presses and releases `keysym` through XTest, which the X server delivers
+/// like a key on the keyboard to whatever has focus. A key sent with
+/// XSendEvent is marked synthetic, and Chromium drops it.
+pub fn pressKey(keysym: c_ulong) bool {
+    if (!loadXTest()) return false;
+    const c = conn() orelse return false;
+    c.push();
+    defer c.pop();
+    const code = keysym_to_keycode.?(c.x, keysym);
+    if (code == 0) return false;
+    _ = fake_key.?(c.x, code, 1, CURRENT_TIME);
+    _ = fake_key.?(c.x, code, 0, CURRENT_TIME);
+    _ = c.api.flush(c.x);
+    return true;
+}
+
+/// Whether `window` is mapped and every ancestor is too.
+pub fn viewable(window: Window) bool {
+    if (window == 0) return false;
+    const c = conn() orelse return false;
+    c.push();
+    defer c.pop();
+    var attrs = std.mem.zeroes(WindowAttributes);
+    if (c.api.get_window_attributes(c.x, window, &attrs) == 0) return false;
+    const IS_VIEWABLE: c_int = 2;
+    return attrs.map_state == IS_VIEWABLE;
+}

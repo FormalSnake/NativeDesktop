@@ -507,6 +507,10 @@ fn onSinkBrowserCreated(_: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_bro
         armSinkTimer();
         return;
     }
+    if (keep and newTabPage(url)) {
+        if (url) |u| alloc.free(u);
+        return;
+    }
     reportSinkUrl(url);
     if (keep) return;
     if (host.*.close_browser) |close| close(host, 1);
@@ -584,7 +588,11 @@ fn reportSinkUrl(url: ?[]u8) void {
     const chosen = target orelse anyShownView() orelse focused_view orelse anyLiveView();
     if (chosen) |view| {
         tr("sinkNewWindow node={d} url={?s}", .{ view.node_id, url });
-        post(.{ .view = view, .name = "newWindow", .text = url });
+        // A tab Chrome made on its own (an extension's chrome.tabs.create, the
+        // page an extension opens on install) arrives here with no
+        // disposition; `active` defaults to true, and that is the tab Chrome
+        // shows, at the end of the strip rather than next to any page.
+        post(.{ .view = view, .name = "newWindow", .text = url, .extra = alloc.dupe(u8, "foregroundTab") catch null, .unrelated = true });
         return;
     }
     tr("sinkNewWindow dropped url={?s}", .{url});
@@ -711,10 +719,24 @@ fn onSinkBeforeBrowse(
             }
         }
     }
+    if (entry.keep and newTabPage(url)) {
+        tr("sinkBrowse id={d} kept browser's own new tab page, not reported", .{browser_id});
+        if (url) |u| alloc.free(u);
+        return 0;
+    }
     reportSinkUrl(url);
     if (entry.keep) return 0;
     if (entry.host.*.close_browser) |close| close(entry.host, 1);
     return 1;
+}
+
+/// The page Chrome opens in a tabbed browser it builds for itself. After an
+/// extension install that is the browser the post-install dialog asks for,
+/// which no extension and no page asked for, and reporting it gave the app a
+/// stray new tab after every first install.
+fn newTabPage(url: ?[]const u8) bool {
+    const u = url orelse return false;
+    return std.mem.startsWith(u8, u, "chrome://new-tab-page") or std.mem.startsWith(u8, u, "chrome://newtab");
 }
 
 // ============================================================================
@@ -795,6 +817,11 @@ var download_map_hook = false;
 fn watchDownloadAnimation() void {
     if (!chromeStyle()) return;
     download_watch_until_us = glib.getMonotonicTime() + download_watch_us;
+    hookRootMaps();
+}
+
+/// Every top-level this process maps or resizes, seen as GDK reads the event.
+fn hookRootMaps() void {
     if (download_map_hook) return;
     const display = x11.gdkDisplay() orelse return;
     if (!x11.watchRootMaps()) return;
@@ -804,7 +831,120 @@ fn watchDownloadAnimation() void {
 
 fn onXEvent(_: *gdk.Display, xevent: *const anyopaque, _: ?*anyopaque) callconv(.c) c_int {
     const w = x11.mappedWindow(xevent);
-    if (w != 0) hideDownloadAnimation(w);
+    if (w != 0 and !claimInstallPrompt(w)) hideDownloadAnimation(w);
+    return 0;
+}
+
+// ============================================================================
+// Chrome's install prompt, answered unseen
+// ============================================================================
+//
+// An app that confirms a Web Store install in a dialog of its own lets the
+// store page go on and arms this (`acceptExtensionInstall`); Chromium then
+// raises its own "Add <name>?" prompt, a Views top-level no CEF callback is
+// asked about and no switch or policy skips. The first top-level of this
+// process big enough to be a dialog that maps while armed is taken as the
+// prompt: it stays mapped, which Views needs before it enables the accept
+// button, with an empty shape so nothing of it is drawn. Views takes no key
+// sent with XSendEvent and none in a widget it does not believe active, so the
+// prompt is activated through the window manager and answered with XTest:
+// Tab from the Cancel button it focuses first to "Add extension", then Space.
+// A prompt still up a few seconds later is shaped back and put over the view
+// for the user to answer.
+
+const install_arm_us: i64 = 20 * std.time.us_per_s;
+const install_first_press_ms: c_uint = 1200;
+const install_settle_ms: c_uint = 250;
+const install_check_ms: c_uint = 200;
+const install_wait_us: i64 = 4 * std.time.us_per_s;
+const install_min_w: c_uint = 200;
+const install_min_h: c_uint = 80;
+var install_armed_until_us: i64 = 0;
+var install_window: usize = 0;
+var install_deadline_us: i64 = 0;
+/// The prompt has been handed back to the user.
+var install_shown = false;
+
+fn cmdAcceptExtensionInstall() void {
+    if (!chromeStyle()) return;
+    install_armed_until_us = glib.getMonotonicTime() + install_arm_us;
+    hookRootMaps();
+    tr("installPrompt armed", .{});
+}
+
+/// Takes `w` as the prompt when an install is armed; true when it did.
+fn claimInstallPrompt(w: usize) bool {
+    if (install_window != 0 or glib.getMonotonicTime() >= install_armed_until_us) return false;
+    if (w == 0 or w == kept_window or isPendingSinkWindow(w)) return false;
+    if (x11.isGdkSurface(w) or x11.windowPid(w) != self_pid or x11.isOverrideRedirect(w)) return false;
+    const geo = x11.geometry(w) orelse return false;
+    if (geo.w < install_min_w or geo.h < install_min_h) return false;
+    install_armed_until_us = 0;
+    install_window = w;
+    install_shown = false;
+    adopted_windows.put(alloc, w, {}) catch {};
+    x11.setShape(w, &.{});
+    tr("installPrompt claimed window={x} {d}x{d}", .{ w, geo.w, geo.h });
+    _ = glib.timeoutAdd(install_first_press_ms, &onInstallActivate, null);
+    _ = glib.timeoutAdd(install_shape_ms, &onInstallShape, null);
+    return true;
+}
+
+/// Views gives its dialogs a shape of its own (the rounded frame) whenever it
+/// lays one out, which undoes the empty one; it is put back until the prompt
+/// is gone.
+const install_shape_ms: c_uint = 40;
+
+fn onInstallShape(_: ?*anyopaque) callconv(.c) c_int {
+    const w = install_window;
+    if (w == 0 or install_shown) return 0;
+    x11.setShape(w, &.{});
+    return 1;
+}
+
+fn installPromptGone(w: usize) bool {
+    return x11.geometry(w) == null or !x11.viewable(w);
+}
+
+fn onInstallActivate(_: ?*anyopaque) callconv(.c) c_int {
+    const w = install_window;
+    if (w == 0) return 0;
+    if (installPromptGone(w)) return finishInstallPrompt("answered");
+    x11.activate(w);
+    _ = glib.timeoutAdd(install_settle_ms, &onInstallPress, null);
+    return 0;
+}
+
+fn onInstallPress(_: ?*anyopaque) callconv(.c) c_int {
+    const w = install_window;
+    if (w == 0) return 0;
+    if (!x11.pressKey(x11.keysym_tab) or !x11.pressKey(x11.keysym_space)) return finishInstallPrompt("unanswered, no XTest");
+    install_deadline_us = glib.getMonotonicTime() + install_wait_us;
+    _ = glib.timeoutAdd(install_check_ms, &onInstallCheck, null);
+    return 0;
+}
+
+fn onInstallCheck(_: ?*anyopaque) callconv(.c) c_int {
+    const w = install_window;
+    if (w == 0) return 0;
+    if (installPromptGone(w)) return finishInstallPrompt("answered");
+    if (glib.getMonotonicTime() < install_deadline_us) return 1;
+    return finishInstallPrompt("unanswered");
+}
+
+/// The prompt is gone, or is handed back to the user.
+fn finishInstallPrompt(how: []const u8) c_int {
+    const w = install_window;
+    install_window = 0;
+    tr("installPrompt {s} window={x}", .{ how, w });
+    if (std.mem.eql(u8, how, "answered")) {
+        // Activating the prompt took the app's window out of focus.
+        x11.activate(appToplevel());
+        return 0;
+    }
+    install_shown = true;
+    x11.clearShape(w);
+    adoptChromeWindow(w);
     return 0;
 }
 
@@ -875,6 +1015,7 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
     forgetGonePictureInPicture(children, clients);
     for (clients) |w| {
         if (w == 0) continue;
+        if (!adopted_windows.contains(w)) _ = claimInstallPrompt(w);
         if (named_windows.contains(w)) {
             _ = pictureInPicture(w);
             continue;
@@ -890,6 +1031,7 @@ fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
         // there, which is the stray window the whole sink exists to prevent.
         if (isPendingSinkWindow(w)) continue;
         if (adopted_windows.contains(w)) continue;
+        if (claimInstallPrompt(w)) continue;
         if (x11.windowPid(w) != self_pid) continue;
         // GDK knows every window it made, which is the app's toplevels and the
         // override-redirect ones a popover or the page's GTK context menu puts
@@ -2920,6 +3062,7 @@ pub fn command(widget: *gtk.Widget, cmd: []const u8, arg: ?std.json.Value) void 
     if (std.mem.eql(u8, cmd, "respondScheme")) return cmdRespondScheme(arg);
     if (std.mem.eql(u8, cmd, "respondPermission")) return cmdRespondPermission(arg);
     if (std.mem.eql(u8, cmd, "respondDownload")) return cmdRespondDownload(arg);
+    if (std.mem.eql(u8, cmd, "acceptExtensionInstall")) return cmdAcceptExtensionInstall();
     if (std.mem.eql(u8, cmd, "resetPermissions")) return cmdResetPermissions(view, arg);
     if (std.mem.eql(u8, cmd, "pauseDownload") or std.mem.eql(u8, cmd, "resumeDownload") or std.mem.eql(u8, cmd, "cancelDownload")) return cmdControlDownload(cmd, arg);
     if (std.mem.eql(u8, cmd, "setContextMenuItems")) return cmdSetContextMenuItems(view, arg);
@@ -3117,16 +3260,37 @@ const open_link_commands = [_][*:0]const u8{
 var open_link_ids: ?[open_link_commands.len]c_int = null;
 
 fn openLinkCommand(command_id: c_int) bool {
+    return openLinkIndex(command_id) != null;
+}
+
+/// Which of `open_link_commands` the id is.
+fn openLinkIndex(command_id: c_int) ?usize {
     if (open_link_ids == null) {
-        const api = loader.loaded() orelse return false;
+        const api = loader.loaded() orelse return null;
         var ids: [open_link_commands.len]c_int = undefined;
         for (open_link_commands, 0..) |name, i| ids[i] = api.id_for_command_id_name(name);
         open_link_ids = ids;
     }
-    for (open_link_ids.?) |id| {
-        if (id >= 0 and id == command_id) return true;
+    for (open_link_ids.?, 0..) |id, i| {
+        if (id >= 0 and id == command_id) return i;
     }
-    return false;
+    return null;
+}
+
+/// How a page asked for a new window, in the words `newWindow` carries:
+/// Chrome puts a foreground tab after the opener and a background one after
+/// the opener's other children, so the app needs to know which it was.
+fn dispositionName(disposition: c.cef_window_open_disposition_t) []const u8 {
+    return switch (disposition) {
+        c.CEF_WOD_NEW_BACKGROUND_TAB => "backgroundTab",
+        c.CEF_WOD_NEW_WINDOW, c.CEF_WOD_OFF_THE_RECORD => "window",
+        c.CEF_WOD_NEW_POPUP => "popup",
+        else => "foregroundTab",
+    };
+}
+
+fn postNewWindow(view: *View, url: ?[]u8, disposition: []const u8, user_gesture: bool) void {
+    post(.{ .view = view, .name = "newWindow", .text = url, .extra = alloc.dupe(u8, disposition) catch null, .flag = user_gesture });
 }
 
 const ChromeCommandTask = struct { host: *c.cef_browser_host_t, command_id: c_int };
@@ -3692,7 +3856,7 @@ fn onOpenUrlFromTab(
     browser: [*c]c.cef_browser_t,
     frame: [*c]c.cef_frame_t,
     target_url: [*c]const c.cef_string_t,
-    _: c.cef_window_open_disposition_t,
+    disposition: c.cef_window_open_disposition_t,
     user_gesture: c_int,
 ) callconv(.c) c_int {
     defer ref.releaseParam(browser);
@@ -3704,7 +3868,7 @@ fn onOpenUrlFromTab(
             return 1;
         }
     }
-    post(.{ .view = RequestHandlerObj.of(self).payload, .name = "newWindow", .text = url });
+    postNewWindow(RequestHandlerObj.of(self).payload, url, dispositionName(disposition), user_gesture != 0);
     return 1;
 }
 
@@ -4011,7 +4175,7 @@ fn onBeforePopup(
             return 1;
         }
     }
-    post(.{ .view = LifeObj.of(self).payload, .name = "newWindow", .text = url });
+    postNewWindow(LifeObj.of(self).payload, url, dispositionName(disposition), user_gesture != 0);
     return 1;
 }
 
@@ -4197,6 +4361,9 @@ const Emission = struct {
     extra: ?[]u8 = null,
     flag: bool = false,
     number: f64 = 0,
+    /// `newWindow` for a tab Chrome made on its own rather than one a page in
+    /// this view asked for.
+    unrelated: bool = false,
     settle: bool = false,
     /// Devtools traffic rides the same hop: a protocol result arrives on the
     /// CEF UI thread, and everything that interprets it (the pending-call
@@ -4401,7 +4568,16 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
         f(view.node_id, "titleChanged", .{ .text = text });
     } else if (std.mem.eql(u8, box.name, "newWindow")) {
         const text = box.text orelse return 0;
-        f(view.node_id, "newWindow", .{ .text = text });
+        const how = box.extra orelse {
+            f(view.node_id, "newWindow", .{ .text = text });
+            return 0;
+        };
+        var payload: std.json.ObjectMap = .empty;
+        defer payload.deinit(alloc);
+        payload.put(alloc, "disposition", .{ .string = how }) catch return 0;
+        payload.put(alloc, "userGesture", .{ .bool = box.flag }) catch return 0;
+        if (box.unrelated) payload.put(alloc, "fromExtension", .{ .bool = true }) catch return 0;
+        f(view.node_id, "newWindow", .{ .text = text, .data = .{ .object = payload } });
     } else if (std.mem.eql(u8, box.name, "browserCommand")) {
         const text = box.text orelse return 0;
         f(view.node_id, "browserCommand", .{ .text = text });
@@ -7560,6 +7736,11 @@ fn onBeforeDownload(
     defer ref.releaseParam(browser);
     defer ref.releaseParam(download_item);
     if (callback == null) return 0;
+    if (extensionPackage(download_item, suggested_name)) {
+        tr("downloadToChrome extension package", .{});
+        ref.releaseParam(callback);
+        return 0;
+    }
     const view = DownloadObj.of(self).payload;
     var url: ?[]u8 = null;
     var item_id: u32 = 0;
@@ -7587,6 +7768,29 @@ fn onBeforeDownload(
         .download = req,
     });
     return 1;
+}
+
+/// A Web Store install fetches the extension's CRX as a download, and
+/// Chrome's installer is waiting on it at a path of its own. Handed to the
+/// app, it became a row in the app's downloads, and its file went where the
+/// app saves downloads; Chrome's own handling keeps it out of sight, as in
+/// Chrome. A .crx from anywhere else gets Chrome's answer too, which is to
+/// refuse it.
+fn extensionPackage(item: [*c]c.cef_download_item_t, suggested_name: [*c]const c.cef_string_t) bool {
+    if (item != null) {
+        if (item.*.get_mime_type) |get_mime| {
+            const raw = get_mime(item);
+            if (raw != null) {
+                defer freeUserfree(raw);
+                const mime = dupeStr(raw) orelse return false;
+                defer alloc.free(mime);
+                if (std.ascii.eqlIgnoreCase(mime, "application/x-chrome-extension")) return true;
+            }
+        }
+    }
+    const name = dupeStr(suggested_name) orelse return false;
+    defer alloc.free(name);
+    return std.ascii.endsWithIgnoreCase(name, ".crx");
 }
 
 /// Continues the download to `path`, or cancels it without one (a callback
@@ -9826,9 +10030,12 @@ fn onContextMenuCommand(
     // cef_command_handler_t sees them and they are the only place the link URL
     // is still in hand, so the routing to `newWindow` happens here and the
     // command deny list is only the backstop.
-    if (chromeStyle() and hit.link.len > 0 and openLinkCommand(command_id)) {
-        post(.{ .view = view, .name = "newWindow", .text = dupeOwned(hit.link) });
-        return 1;
+    if (chromeStyle() and hit.link.len > 0) {
+        if (openLinkIndex(command_id)) |which| {
+            // Chrome opens "Open link in new tab" behind the page.
+            postNewWindow(view, dupeOwned(hit.link), if (which == 0) "backgroundTab" else "window", true);
+            return 1;
+        }
     }
 
     view.menu_lock.lock();

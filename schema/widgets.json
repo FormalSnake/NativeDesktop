@@ -736,7 +736,7 @@
         "findStart", "findNext", "findPrevious", "findStop",
         "saveSession", "restoreSession", "setMuted",
         "setContextMenuItems",
-        "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "triggerExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled",
+        "listExtensions", "watchExtensions", "listExtensionActions", "readExtensionAction", "triggerExtensionAction", "installExtension", "uninstallExtension", "setExtensionEnabled", "acceptExtensionInstall",
         "focus"
       ],
       "automation": { "role": "webview", "textFrom": null }

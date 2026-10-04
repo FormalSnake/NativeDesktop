@@ -206,7 +206,10 @@ import CCef
         typealias Plain = @convention(c) (NSWindow, Selector, AnyObject?) -> Void
         wrap(cls, #selector(NSWindow.order(_:relativeTo:)), as: Order.self) { original in
             let block: @convention(block) (NSWindow, Int, Int) -> Void = { window, place, other in
-                if place != NSWindow.OrderingMode.out.rawValue, MainActor.assumeIsolated({ matches(window) }) { return }
+                if place != NSWindow.OrderingMode.out.rawValue {
+                    if MainActor.assumeIsolated({ matches(window) }) { return }
+                    MainActor.assumeIsolated { _ = NDCefInstallPrompt.claim(window) }
+                }
                 original(window, #selector(NSWindow.order(_:relativeTo:)), place, other)
             }
             return imp_implementationWithBlock(block)
@@ -215,10 +218,23 @@ import CCef
             wrap(cls, selector, as: Plain.self) { original in
                 let block: @convention(block) (NSWindow, AnyObject?) -> Void = { window, sender in
                     if MainActor.assumeIsolated({ matches(window) }) { return }
+                    // A prompt answered unseen must not take key status from
+                    // the app's window, so it is only ordered in.
+                    if MainActor.assumeIsolated({ NDCefInstallPrompt.claim(window) }), selector == #selector(NSWindow.makeKeyAndOrderFront(_:)) {
+                        window.orderFront(sender)
+                        return
+                    }
                     original(window, selector, sender)
                 }
                 return imp_implementationWithBlock(block)
             }
+        }
+        wrap(cls, #selector(NSWindow.makeKey), as: (@convention(c) (NSWindow, Selector) -> Void).self) { original in
+            let block: @convention(block) (NSWindow) -> Void = { window in
+                if MainActor.assumeIsolated({ NDCefInstallPrompt.holds(window) }) { return }
+                original(window, #selector(NSWindow.makeKey))
+            }
+            return imp_implementationWithBlock(block)
         }
     }
 
@@ -232,6 +248,115 @@ import CCef
         if !class_addMethod(cls, selector, imp, method_getTypeEncoding(method)) {
             method_setImplementation(method, imp)
         }
+    }
+}
+
+/// Chrome's "Add <name>?" prompt for a Web Store install the app has already
+/// confirmed in a dialog of its own (`acceptExtensionInstall`).
+///
+/// The prompt is a Views window that no CEF callback is asked about, and
+/// Chrome offers no switch or policy that skips it for a store install. So the
+/// first parentless Views window ordered in while an install is armed is taken
+/// as the prompt: it is ordered in transparent and click-through, which Views
+/// still counts as shown (its accept button only enables once the dialog has
+/// been visible for a moment), and its "Add extension" button is pressed
+/// through the accessibility tree. A prompt still up after a few seconds is
+/// put back on screen for the user to answer.
+@MainActor enum NDCefInstallPrompt {
+    private static let armedFor: TimeInterval = 20
+    private static let firstPress: TimeInterval = 0.8
+    private static let pressInterval: TimeInterval = 0.4
+    private static let presses = 10
+
+    private static var armedUntil: Date?
+    private static var held: Set<ObjectIdentifier> = []
+    /// The window that was key when the prompt came up. Chrome activates its
+    /// dialog and, once it closes, nothing of the app's is key any more.
+    private static weak var keyBefore: NSWindow?
+
+    static func arm() {
+        armedUntil = Date().addingTimeInterval(armedFor)
+        trace("armed")
+    }
+
+    static func holds(_ window: NSWindow) -> Bool {
+        held.contains(ObjectIdentifier(window))
+    }
+
+    /// Takes `window` as the prompt when an install is armed. True for a
+    /// window already taken.
+    static func claim(_ window: NSWindow) -> Bool {
+        if holds(window) { return true }
+        guard let until = armedUntil, Date() < until else { return false }
+        guard window.parent == nil, window.level == .normal,
+              window.frame.width >= 200, window.frame.height >= 80,
+              !NDCefChromeCreated.owns(window) else { return false }
+        armedUntil = nil
+        keyBefore = NSApp.keyWindow
+        held.insert(ObjectIdentifier(window))
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        trace("claimed \(window.frame.size)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + firstPress) { [weak window] in
+            MainActor.assumeIsolated { press(window, left: presses) }
+        }
+        return true
+    }
+
+    private static func press(_ window: NSWindow?, left: Int) {
+        guard let window, window.isVisible else {
+            if let window { held.remove(ObjectIdentifier(window)) }
+            trace("answered")
+            keyBefore?.makeKeyAndOrderFront(nil)
+            keyBefore = nil
+            return
+        }
+        guard left > 0 else {
+            held.remove(ObjectIdentifier(window))
+            window.alphaValue = 1
+            window.ignoresMouseEvents = false
+            trace("unanswered, shown")
+            return
+        }
+        pressAccept(window, attempt: presses - left)
+        DispatchQueue.main.asyncAfter(deadline: .now() + pressInterval) { [weak window] in
+            MainActor.assumeIsolated { press(window, left: left - 1) }
+        }
+    }
+
+    /// Views drops a key event sent to a window that is not key, but its
+    /// accessibility tree takes a press: the buttons
+    /// are found there, and the accept button is the trailing one in the
+    /// bottom row, where macOS puts a dialog's default action.
+    private static func pressAccept(_ window: NSWindow, attempt: Int) {
+        var buttons: [NSObject] = []
+        var queue: [Any] = [window.contentView as Any]
+        var seen = 0
+        while !queue.isEmpty, seen < 400 {
+            let node = queue.removeFirst()
+            seen += 1
+            guard let element = node as? NSObject, element.responds(to: #selector(NSAccessibilityProtocol.accessibilityChildren)) else { continue }
+            let accessible = element as? NSAccessibilityProtocol
+            if accessible?.accessibilityRole() == .button, accessible?.isAccessibilityEnabled() == true {
+                buttons.append(element)
+            }
+            queue.append(contentsOf: accessible?.accessibilityChildren() ?? [])
+        }
+        let frames = buttons.map { (($0 as? NSAccessibilityProtocol)?.accessibilityFrame() ?? .zero) }
+        guard let bottom = frames.map(\.minY).min() else {
+            if attempt == 0 { trace("no enabled button yet") }
+            return
+        }
+        let row = zip(buttons, frames).filter { abs($0.1.minY - bottom) < 4 }
+        guard let accept = row.max(by: { $0.1.maxX < $1.1.maxX }) else { return }
+        let title = (accept.0 as? NSAccessibilityProtocol)?.accessibilityTitle() ?? (accept.0 as? NSAccessibilityProtocol)?.accessibilityLabel() ?? ""
+        let pressed = (accept.0 as? NSAccessibilityProtocol)?.accessibilityPerformPress() ?? false
+        trace("press \"\(title)\" of \(buttons.count) button(s) pressed=\(pressed)")
+    }
+
+    private static func trace(_ message: String) {
+        guard ProcessInfo.processInfo.environment["ND_WEBVIEW_TRACE"] == "1" else { return }
+        FileHandle.standardError.write("ND_WV cef installPrompt \(message)\n".data(using: .utf8)!)
     }
 }
 #endif

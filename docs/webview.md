@@ -185,6 +185,18 @@ policy-interruption noise are filtered on both backends, and blocked-port loads
 `window.open` or `target=_blank`. The host always denies the native popup and
 lets the app decide what a new window means, usually a native tab.
 
+On the Chromium engine it also carries `data: { disposition, userGesture,
+fromExtension? }`, read with `newWindowRequest(e)`. `disposition` is
+`foregroundTab` (target=_blank, `window.open`, ctrl+shift-click),
+`backgroundTab` (ctrl/cmd-click, middle-click, "Open link in new tab"),
+`window` (shift-click, "Open link in new window") or `popup` (`window.open`
+with features), which is what Chrome places and focuses a tab by: a
+foreground tab right after its opener, a background one after the opener's
+other new tabs. `fromExtension` marks a tab Chrome made on its own (an
+extension's `chrome.tabs.create`, the page one opens on install), which Chrome
+shows at the end of the strip. Blink drops the modifiers of a click a script
+dispatches, so only real input opens a background tab.
+
 Under Chrome style two more routes reach it, and both used to hand the app a URL
 it could not use. A browser Chrome makes for itself (`chrome.tabs.create`,
 `chrome.windows.create`, `chrome.runtime.openOptionsPage`) is reported through
@@ -673,6 +685,22 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   rule already did. The containers the pages are
   rendered into need nothing: they are children of the toplevel and the
   compositor never sees them.
+- A Web Store install can be confirmed by the app instead of by Chromium. The
+  app holds `chrome.webstorePrivate.beginInstallWithManifest3` in the store
+  page (a main-world user script and a script message), asks in its own
+  dialog, and on a yes calls `acceptExtensionInstall` before letting the call
+  through. The engine then takes the first Chromium dialog to come up in the
+  next 20 seconds as the prompt and answers it unseen. AppKit orders it in
+  transparent and click-through and presses its trailing bottom button
+  through the accessibility tree (a key event sent to a Views window that is
+  not key is dropped). GTK keeps it mapped with an empty shape, activates it
+  through the window manager and types Tab, Space with XTest (XSendEvent keys
+  are dropped as synthetic, and the prompt focuses Cancel first). A prompt
+  still up after a few seconds is shown for the user to answer. The CRX the
+  install downloads never reaches `downloadRequested`: a download whose MIME
+  type is `application/x-chrome-extension` or whose name ends in `.crx` is
+  left to Chrome, which keeps the installer's own download out of sight and
+  refuses one from any other site.
 - Chrome's dialogs that belong to no browser (the install prompt, the
   post-install dialog, the "Remove <name>?" confirmation) are Views widgets: no
   CEF callback is consulted about them, and they arrive as top-level windows on

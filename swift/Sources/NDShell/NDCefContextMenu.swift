@@ -282,6 +282,8 @@ let ndCefOpenLinkCommands: Set<Int32> = ndCefCommandIDs([
     "IDC_CONTENT_CONTEXT_OPENLINKINPROFILE", "IDC_CONTENT_CONTEXT_OPENLINKBOOKMARKAPP",
 ])
 
+let ndCefOpenLinkNewTab: Int32 = "IDC_CONTENT_CONTEXT_OPENLINKNEWTAB".withCString { nd_cef_command_id($0) }
+
 /// `cef_id_for_command_id_name` answers -1 for a name this build does not know,
 /// which is a name that cannot be triggered either.
 func ndCefCommandIDs(_ names: [String]) -> Set<Int32> {

@@ -494,6 +494,7 @@ final class NDCefWebView: NSView {
         case "respondScheme": NDCefSchemes.respond(obj)
         case "respondPermission": NDCefPermissions.respond(obj)
         case "respondDownload": NDCefDownloads.respond(obj)
+        case "acceptExtensionInstall": NDCefInstallPrompt.arm()
         case "resetPermissions":
             let context = ndCefBrowserContext(browser)
             defer { nd_cef_ref_release(context) }
@@ -602,7 +603,8 @@ final class NDCefWebView: NSView {
     /// backstop.
     @MainActor func ndRerouteOpenLink(_ commandID: Int32) -> Bool {
         guard !menuLinkURL.isEmpty, ndCefOpenLinkCommands.contains(commandID) else { return false }
-        emitText("newWindow", menuLinkURL)
+        // Chrome opens "Open link in new tab" behind the page.
+        emitNewWindow(menuLinkURL, disposition: commandID == ndCefOpenLinkNewTab ? "backgroundTab" : "window", gesture: true)
         return true
     }
 
@@ -714,6 +716,18 @@ final class NDCefWebView: NSView {
 
     func emitData(_ name: String, _ fields: [String: Any]) {
         host?.emitData(name, fields)
+    }
+
+    /// `newWindow` with how the page asked for it: Chrome puts a foreground
+    /// tab after the opener and a background one after the opener's other
+    /// children, so the app needs to know which it was.
+    func emitNewWindow(_ url: String, disposition: String, gesture: Bool, fromExtension: Bool = false) {
+        var data: [String: Any] = ["disposition": disposition, "userGesture": gesture]
+        if fromExtension { data["fromExtension"] = true }
+        let payload: [String: Any] = ["text": url, "data": data]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return emitText("newWindow", url) }
+        host?.emitEvent("newWindow", json: json)
     }
 
     fileprivate func emitAddress(_ value: String) {
@@ -1094,7 +1108,8 @@ final class NDCefHandlerBox {
                 ndCefOpenOutside(url, gesture: gesture != 0)
                 return 1
             }
-            ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
+            let how = ndCefDispositionName(disposition)
+            ndCefDeliver(selfPointer) { $0?.emitNewWindow(url, disposition: how, gesture: gesture != 0) }
             return 1
         }
         lifeSpan.pointee.on_before_dev_tools_popup = { selfPointer, browser, _, _, _, _, useDefaultWindow in
@@ -1161,10 +1176,15 @@ final class NDCefHandlerBox {
         download.pointee.on_before_download = { selfPointer, browser, item, suggestedName, callback in
             let name = ndCefString(suggestedName)
             var url = ""
+            var mime = ""
             var itemID: UInt32 = 0
             if let item {
                 if let raw = item.pointee.get_url?(item) {
                     url = ndCefString(raw)
+                    nd_cef_string_free(raw)
+                }
+                if let raw = item.pointee.get_mime_type?(item) {
+                    mime = ndCefString(raw)
                     nd_cef_string_free(raw)
                 }
                 itemID = item.pointee.get_id?(item) ?? 0
@@ -1172,6 +1192,15 @@ final class NDCefHandlerBox {
             nd_cef_ref_release(browser)
             nd_cef_ref_release(item)
             guard let callback else { return 0 }
+            // A Web Store install fetches the extension's CRX as a download,
+            // and Chrome's installer waits on it at a path of its own. Handed
+            // to the app it became a row in the app's downloads; Chrome's own
+            // handling keeps it out of sight, as in Chrome, and refuses a .crx
+            // from anywhere else.
+            if mime.lowercased() == "application/x-chrome-extension" || name.lowercased().hasSuffix(".crx") {
+                nd_cef_ref_release(callback)
+                return 0
+            }
             let token = UInt(bitPattern: callback)
             ndCefDeliver(selfPointer) { view in
                 NDCefDownloads.request(view: view, itemID: itemID, url: url, suggestedName: name, callback: token)
@@ -1475,7 +1504,7 @@ final class NDCefHandlerBox {
         // here rather than on_before_popup. Under Chrome style an allowed one
         // would become a Chromium tab in a window the user is not supposed to
         // have; the app gets the same `newWindow` event a popup produces.
-        request.pointee.on_open_urlfrom_tab = { selfPointer, browser, frame, targetUrl, _, gesture in
+        request.pointee.on_open_urlfrom_tab = { selfPointer, browser, frame, targetUrl, disposition, gesture in
             let url = ndCefString(targetUrl)
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
@@ -1483,7 +1512,8 @@ final class NDCefHandlerBox {
                 ndCefOpenOutside(url, gesture: gesture != 0)
                 return 1
             }
-            ndCefDeliver(selfPointer) { $0?.emitText("newWindow", url) }
+            let how = ndCefDispositionName(disposition)
+            ndCefDeliver(selfPointer) { $0?.emitNewWindow(url, disposition: how, gesture: gesture != 0) }
             return 1
         }
         // A navigation to a scheme no browser draws (mailto:, tel:, zoommtg:)
@@ -1730,6 +1760,17 @@ func ndCefDeliver(
 
 /// `{"text": "..."}`, the same minimal escaping the WKWebView surface uses for
 /// URLs and titles.
+/// The app's name for a `cef_window_open_disposition_t` that reaches it as
+/// `newWindow`.
+func ndCefDispositionName(_ disposition: cef_window_open_disposition_t) -> String {
+    switch disposition {
+    case CEF_WOD_NEW_BACKGROUND_TAB: return "backgroundTab"
+    case CEF_WOD_NEW_WINDOW, CEF_WOD_OFF_THE_RECORD: return "window"
+    case CEF_WOD_NEW_POPUP: return "popup"
+    default: return "foregroundTab"
+    }
+}
+
 func ndCefTextJson(_ value: String) -> String {
     let escaped = value
         .replacingOccurrences(of: "\\", with: "\\\\")

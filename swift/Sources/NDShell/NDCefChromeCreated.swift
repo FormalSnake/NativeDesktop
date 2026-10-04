@@ -117,7 +117,15 @@ import CCef
     /// cancelled, so nothing of it is fetched or drawn.
     private static func browse(_ id: Int32, _ url: String) -> Bool {
         guard let hostToken = pending.removeValue(forKey: id) else { return false }
-        report(url)
+        // The page Chrome opens in a tabbed browser it builds for itself: after
+        // an extension install that is the browser the post-install dialog
+        // asks for, which nothing asked to show, and reporting it gave the app
+        // a stray new tab after every first install.
+        if id == kept, url.hasPrefix("chrome://new-tab-page") || url.hasPrefix("chrome://newtab") {
+            trace("kept id=\(id) opened \(url), not reported")
+        } else {
+            report(url)
+        }
         finish(id, hostToken)
         return true
     }
@@ -154,7 +162,11 @@ import CCef
         let target = (inKey.first { $0.surfaceTargetFrame != nil } ?? inKey.first
             ?? owners.first { $0.surfaceTargetFrame != nil } ?? owners.first)?.webView
         trace("newWindow \(url) to node \(target?.host?.ndNodeID ?? 0)")
-        target?.emitText("newWindow", url)
+        // A tab Chrome made on its own (an extension's chrome.tabs.create, the
+        // page an extension opens on install) carries no disposition here;
+        // `active` defaults to true, and that is the tab Chrome shows, at the
+        // end of the strip rather than next to any page.
+        target?.emitNewWindow(url, disposition: "foregroundTab", gesture: false, fromExtension: true)
     }
 
     static func hide(_ window: NSWindow) {

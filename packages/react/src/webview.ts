@@ -435,6 +435,39 @@ export function setContextMenuItems(node: NdNodeRef<"webview">, items: ContextMe
 // Downloads
 // ============================================================================
 
+/// Answers Chrome's own "Add <name>?" prompt for the next Web Store install,
+/// unseen. For an app that confirms a store install in a dialog of its own and
+/// then lets the store page go on: the first Chromium dialog that comes up in
+/// the next 20 seconds is taken as the prompt and accepted. Chromium engine,
+/// Chrome style only; elsewhere it does nothing.
+export function acceptExtensionInstall(node: NdNodeRef<"webview">): void {
+  sendCommand(node, "acceptExtensionInstall", {});
+}
+
+/// How a page asked for the window in `onNewWindow`. Chrome shows a
+/// foreground tab next to the page that opened it and puts a background one
+/// after that page's other new tabs; "window" and "popup" are what Chrome
+/// would give a window of its own.
+export type NewWindowDisposition = "foregroundTab" | "backgroundTab" | "window" | "popup";
+
+export interface NewWindowRequest {
+  url: string;
+  /// Absent on the system engine, which reports the URL only.
+  disposition?: NewWindowDisposition;
+  userGesture?: boolean;
+  /// A tab Chrome made on its own (an extension's `chrome.tabs.create`, the
+  /// page an extension opens on install) rather than one the page asked for:
+  /// Chrome adds it at the end of the strip.
+  fromExtension?: boolean;
+}
+
+/// Reads an `onNewWindow` event. The Chromium engine adds the disposition
+/// beside the URL in `data`.
+export function newWindowRequest(e: { text: string }): NewWindowRequest {
+  const data = (e as { data?: Omit<NewWindowRequest, "url"> }).data;
+  return { url: e.text, disposition: data?.disposition, userGesture: data?.userGesture, fromExtension: data?.fromExtension };
+}
+
 /// `onDownloadRequested`. With an `id` (Chromium) the engine holds the
 /// download until `respondDownload` names where it goes; without one (the
 /// system engine) the engine has dropped it and the app fetches `url` itself.

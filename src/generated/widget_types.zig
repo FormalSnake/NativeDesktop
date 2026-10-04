@@ -234,6 +234,7 @@ pub const host_commands: []const []const u8 = &.{
     "webview.installExtension",
     "webview.uninstallExtension",
     "webview.setExtensionEnabled",
+    "webview.acceptExtensionInstall",
     "webview.focus",
     "splitview.revealSidebar",
     "splitview.concealSidebar",

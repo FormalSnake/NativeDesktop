@@ -31,6 +31,8 @@ export {
   pauseDownload,
   resumeDownload,
   cancelDownload,
+  newWindowRequest,
+  acceptExtensionInstall,
 } from "./webview.ts";
 export type {
   Cookie,
@@ -44,6 +46,8 @@ export type {
   ExtensionActionState,
   ExtensionsChange,
   InstalledExtension,
+  NewWindowDisposition,
+  NewWindowRequest,
 } from "./webview.ts";
 export {
   showAlert,
