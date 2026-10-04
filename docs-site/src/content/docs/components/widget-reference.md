@@ -611,6 +611,7 @@ Automation role: `webview`. Text source: none. Children: none.
 | `permissionRequest` | `onPermissionRequest` | data |
 | `permissionRequestDismissed` | `onPermissionRequestDismissed` | data |
 | `zoomChanged` | `onZoomChanged` | data |
+| `pictureInPicture` | `onPictureInPicture` | data |
 | `dragStarted` | `onDragStarted` | text |
 | `dragEnded` | `onDragEnded` | none |
 | `dragOver` | `onDragOver` | dragPoint |

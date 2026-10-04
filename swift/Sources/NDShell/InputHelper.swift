@@ -124,6 +124,7 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
         guard let x, let y else { return ["ok": false, "error": "move needs x and y"] }
         let to = CGPoint(x: x, y: y)
         let steps = max(1, (cmd["steps"] as? NSNumber)?.intValue ?? 1)
+        let interval = (cmd["intervalMs"] as? NSNumber).map { useconds_t(max(1, $0.doubleValue * 1000)) } ?? gap
         let from = state.position
         for i in 1...steps {
             let t = Double(i) / Double(steps)
@@ -133,7 +134,7 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
             } else {
                 ndPost(.mouseMoved, at, .left)
             }
-            usleep(gap)
+            usleep(interval)
         }
         state.position = to
         return ["ok": true]
@@ -159,6 +160,35 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
                                   wheel1: dy, wheel2: dx, wheel3: 0)
         else { return ["ok": false, "error": "could not create scroll event"] }
         event.location = state.position
+        // A trackpad's two-finger scroll: continuous, with the gesture's phase
+        // (CGScrollPhase) and then the momentum's (CGMomentumScrollPhase).
+        if let phase = cmd["phase"] as? String {
+            let value: Int64 = ["began": 1, "changed": 2, "ended": 4][phase] ?? 2
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventScrollPhase, value: value)
+        }
+        if let momentum = cmd["momentumPhase"] as? String {
+            let value: Int64 = ["began": 1, "changed": 2, "ended": 3][momentum] ?? 2
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: value)
+        }
+        event.post(tap: .cghidEventTap)
+        usleep(gap)
+        return ["ok": true]
+    case "magnify":
+        // A trackpad pinch. CoreGraphics has no public constructor for gesture
+        // events; this is the window server's own layout for one (event type
+        // 29, gesture subtype 8 = zoom, the magnification as a double, the
+        // phase as 1 began, 2 changed, 4 ended), which AppKit turns into an
+        // NSEvent of type .magnify for the view under the pointer.
+        let amount = (cmd["magnification"] as? NSNumber)?.doubleValue ?? 0
+        let phase: Int64 = ["began": 1, "changed": 2, "ended": 4][cmd["phase"] as? String ?? ""] ?? 2
+        guard let event = CGEvent(source: nil) else { return ["ok": false, "error": "could not create gesture event"] }
+        event.type = CGEventType(rawValue: 29)!
+        event.location = state.position
+        event.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8)
+        event.setDoubleValueField(CGEventField(rawValue: 113)!, value: amount)
+        event.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
         event.post(tap: .cghidEventTap)
         usleep(gap)
         return ["ok": true]

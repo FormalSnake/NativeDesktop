@@ -357,6 +357,16 @@ static void append_switch(cef_command_line_t *command_line, const char *name) {
   }
 }
 
+static void append_switch_value(cef_command_line_t *command_line, const char *name, const char *value) {
+  cef_string_t key = {0};
+  cef_string_t val = {0};
+  if (nd_cef_string_set(name, strlen(name), &key) && nd_cef_string_set(value, strlen(value), &val)) {
+    command_line->append_switch_with_value(command_line, &key, &val);
+  }
+  nd_cef_string_clear(&key);
+  nd_cef_string_clear(&val);
+}
+
 // ND_CEF_FRAMEWORK_EXTENSION joins whatever --load-extension the launch
 // already carries: Chromium reads one comma-separated switch, and a second
 // append would replace the app's list rather than add to it.
@@ -427,6 +437,13 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       append_switch(command_line, "disable-print-preview");
       append_framework_extension(command_line);
       if (browser_pipe_to_cef >= 0) append_switch(command_line, "remote-debugging-pipe");
+      // The floating video keeps the page's origin over the picture until the
+      // user presses inside its window or the site counts as trusted for media
+      // (VideoOverlayWindowViews::UpdateControlsVisibility). The host's own
+      // controls take every press there (NDCefPictureInPicture), so the title
+      // would never leave; trusted, it goes after Chromium's first three
+      // seconds, which no switch removes.
+      append_switch_value(command_line, "enable-features", "VideoPipForceTrustedForMediaPlaybackForTesting");
     }
     // Read by StartupBrowserCreator, which CEF skips at startup and a refused
     // relaunch (below) never reaches; this covers any other route into it.

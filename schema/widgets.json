@@ -718,6 +718,7 @@
         { "name": "permissionRequest", "ndpName": "onPermissionRequest", "payload": "data" },
         { "name": "permissionRequestDismissed", "ndpName": "onPermissionRequestDismissed", "payload": "data" },
         { "name": "zoomChanged", "ndpName": "onZoomChanged", "payload": "data" },
+        { "name": "pictureInPicture", "ndpName": "onPictureInPicture", "payload": "data" },
         { "name": "dragStarted", "ndpName": "onDragStarted", "payload": "text" },
         { "name": "dragEnded", "ndpName": "onDragEnded" },
         { "name": "dragOver", "ndpName": "onDragOver", "payload": "dragPoint" },

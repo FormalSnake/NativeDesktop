@@ -1070,10 +1070,26 @@ final class NDCefHandlerBox {
         // is the same answer the WKWebView surface gives by returning nil from
         // createWebViewWith.
         lifeSpan.pointee.on_before_popup = {
-            selfPointer, browser, frame, _, targetUrl, _, _, gesture, _, _, _, _, _, _ in
+            selfPointer, browser, frame, _, targetUrl, _, disposition, gesture, _, _, client, _, _, _ in
             let url = ndCefString(targetUrl)
             nd_cef_ref_release(browser)
             nd_cef_ref_release(frame)
+            // Document picture-in-picture (documentPictureInPicture.requestWindow)
+            // is Chrome's own browser of TYPE_PICTURE_IN_PICTURE: CEF builds it
+            // whatever this returns, and refusing it only rejects the page's
+            // promise. It is let through without a client of ours, so it never
+            // reaches on_after_created as one of this view's browsers. The
+            // client arrived with a reference CEF only drops when it gets the
+            // same pointer back. Alloy has no such browser, and there the popup
+            // stays refused.
+            if disposition == CEF_WOD_NEW_PICTURE_IN_PICTURE && NDCefRuntime.isChromeStyle {
+                if let held = client?.pointee { nd_cef_ref_release(held) }
+                client?.pointee = nil
+                ndCefDeliver(selfPointer) { view in
+                    if let view { NDCefPictureInPicture.noteDocumentOpener(view) }
+                }
+                return 0
+            }
             if ndCefExternalScheme(url) {
                 ndCefOpenOutside(url, gesture: gesture != 0)
                 return 1

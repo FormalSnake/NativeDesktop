@@ -50,6 +50,7 @@ import CCef
 
     static func start() {
         NDCefDownloadAnimation.install()
+        NDCefPictureInPicture.install()
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
             MainActor.assumeIsolated { sweep() }
@@ -62,6 +63,7 @@ import CCef
     static func releaseAll() {
         timer?.invalidate()
         timer = nil
+        NDCefPictureInPicture.releaseAll()
         for entry in adopted.values {
             guard let window = entry.window else { continue }
             window.parent?.removeChildWindow(window)
@@ -87,6 +89,7 @@ import CCef
                 if window.isVisible || window.alphaValue > 0 { NDCefChromeCreated.hide(window) }
                 continue
             }
+            NDCefPictureInPicture.sweep(window)
             guard window.isVisible, window.alphaValue > 0 else { continue }
             if described.insert(key).inserted {
                 owners.first?.traceSurface(
@@ -106,6 +109,7 @@ import CCef
             adopt(window, owner: owner)
         }
 
+        NDCefPictureInPicture.sweepGone()
         var gone: [ObjectIdentifier] = []
         for (key, entry) in adopted {
             guard let window = entry.window, window.isVisible else {

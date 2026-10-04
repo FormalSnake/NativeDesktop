@@ -995,11 +995,12 @@ extension NDCefHandlerBox {
             nd_cef_ref_release(browserView)
             return CEF_CTT_NORMAL
         }
-        // Document picture-in-picture is a Chromium-owned top-level window with
-        // no other way to refuse it.
+        // Document picture-in-picture opens without Chrome's title bar: the
+        // host draws its own controls over it (NDCefPictureInPicture), and the
+        // page's own draggable regions still move it.
         browserViewDelegate.pointee.use_frameless_window_for_picture_in_picture = { _, browserView in
             nd_cef_ref_release(browserView)
-            return 0
+            return 1
         }
         browserViewDelegate.pointee.allow_move_for_picture_in_picture = { _, browserView in
             nd_cef_ref_release(browserView)

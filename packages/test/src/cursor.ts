@@ -10,6 +10,8 @@
 import type { WindowsResult } from "@nativedesktop/react/rpc";
 import type { Locator } from "./locator.ts";
 
+const PHASE = { began: "began", changed: "changed", ended: "ended" } as const;
+
 export type CursorTarget = Locator | { x: number; y: number };
 
 export interface CursorButtonOptions {
@@ -24,6 +26,9 @@ export interface CursorMoveOptions {
   /** Intermediate positions on the way, default 12, so hover and drag
    * tracking see a path rather than a jump. */
   steps?: number;
+  /** Time between those positions, default 8 ms. A short interval over a few
+   * steps is a flick. */
+  intervalMs?: number;
 }
 
 interface CursorDeps {
@@ -50,7 +55,7 @@ export class Cursor {
   /** Moves to the target's centre (or the window-relative point). */
   async move(target: CursorTarget, opts: CursorMoveOptions = {}): Promise<void> {
     const at = await this.point(target);
-    await this.send({ op: "move", ...at, steps: opts.steps ?? 12 });
+    await this.send({ op: "move", ...at, steps: opts.steps ?? 12, ...(opts.intervalMs ? { intervalMs: opts.intervalMs } : {}) });
   }
 
   hover(target: CursorTarget, opts: CursorMoveOptions = {}): Promise<void> {
@@ -94,6 +99,32 @@ export class Cursor {
   async scroll(target: CursorTarget, delta: { dx?: number; dy?: number }): Promise<void> {
     await this.move(target, { steps: 1 });
     await this.send({ op: "scroll", dx: delta.dx ?? 0, dy: delta.dy ?? 0 });
+  }
+
+  /** A trackpad pinch over the target: one began, a changed event per
+   * magnification step (0.1 grows by a tenth), then ended. */
+  async pinch(target: CursorTarget, steps: number[]): Promise<void> {
+    await this.move(target, { steps: 1 });
+    await this.send({ op: "magnify", magnification: 0, phase: PHASE.began });
+    for (const m of steps) await this.send({ op: "magnify", magnification: m, phase: PHASE.changed });
+    await this.send({ op: "magnify", magnification: 0, phase: PHASE.ended });
+  }
+
+  /** A two-finger trackpad swipe over the target: scroll deltas in a began /
+   * changed / ended gesture, then the momentum the trackpad adds after the
+   * fingers lift. Positive dx moves content right, as a swipe to the right. */
+  async swipe(target: CursorTarget, deltas: number[], momentum: number[] = []): Promise<void> {
+    await this.move(target, { steps: 1 });
+    for (const [i, dx] of deltas.entries()) {
+      const phase = i === 0 ? PHASE.began : PHASE.changed;
+      await this.send({ op: "scroll", dx, dy: 0, phase });
+    }
+    await this.send({ op: "scroll", dx: 0, dy: 0, phase: PHASE.ended });
+    for (const [i, dx] of momentum.entries()) {
+      const momentumPhase = i === 0 ? PHASE.began : PHASE.changed;
+      await this.send({ op: "scroll", dx, dy: 0, momentumPhase });
+    }
+    if (momentum.length) await this.send({ op: "scroll", dx: 0, dy: 0, momentumPhase: PHASE.ended });
   }
 
   /** Presses one key chord on the real keyboard, "Meta+=" or "Control+Shift+t":
