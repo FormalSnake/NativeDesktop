@@ -202,9 +202,14 @@ hypr_rig() {
     sandbox=(bwrap --dev-bind / / "${mask[@]}")
   fi
 
+  # The compositors take their GL drivers from the dev shell's pin (flake.nix,
+  # ND_PIN_*), not from the system's /run/opengl-driver.
+  local pin_gl=()
+  [ -n "${ND_PIN_EGL_VENDOR_FILE:-}" ] && pin_gl=(env __EGL_VENDOR_LIBRARY_FILENAMES="$ND_PIN_EGL_VENDOR_FILE" LIBGL_DRIVERS_PATH="$ND_PIN_DRI_PATH" GBM_BACKENDS_PATH="$ND_PIN_GBM_PATH")
+
   ( export XDG_RUNTIME_DIR="$rt"
     unset DISPLAY WAYLAND_DISPLAY
-    exec "${sandbox[@]}" dbus-run-session -- \
+    exec "${pin_gl[@]}" "${sandbox[@]}" dbus-run-session -- \
       mutter --headless --virtual-monitor 1920x1200 --wayland-display nd-parent --no-x11
   ) >"$WORK/hypr/mutter.log" 2>&1 &
   PIDS+=($!)
@@ -249,7 +254,7 @@ EOF
     # The builtin libseat backend would open this machine's real input devices.
     # Pinning the backend to logind makes that attempt fail before it starts.
     export LIBSEAT_BACKEND=logind
-    exec Hyprland -c "$WORK/hypr/hypr.conf"
+    exec "${pin_gl[@]}" Hyprland -c "$WORK/hypr/hypr.conf"
   ) >"$WORK/hypr/hypr.log" 2>&1 &
   local hypr_pid=$!
   PIDS+=("$hypr_pid")

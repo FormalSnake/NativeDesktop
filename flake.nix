@@ -159,6 +159,16 @@
               export ND_CEF_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath cefRuntimeLibs}"
               export NIX_LD="${pkgs.stdenv.cc.bintools.dynamicLinker}"
               export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath hostRuntimeLibs}"
+              # The nested compositors of the Hyprland rig (mutter, Hyprland)
+              # are this pin's, and by default load the system's GL drivers
+              # from /run/opengl-driver, built against the system's glibc: once
+              # the system moves past this pin (glibc 2.44 against 2.42, seen
+              # on g815) the driver fails to load and the rig never starts.
+              # These point them at this pin's own mesa instead; the rig sets
+              # them on the compositors only, never on the host under test.
+              export ND_PIN_EGL_VENDOR_FILE="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+              export ND_PIN_DRI_PATH="${pkgs.mesa}/lib/dri"
+              export ND_PIN_GBM_PATH="${pkgs.mesa}/lib/gbm"
             '';
           };
         });
