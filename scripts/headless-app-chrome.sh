@@ -89,13 +89,22 @@ curl -s --max-time 1 "$FIXTURE" >/dev/null || { echo "FAIL: the fixture server n
 seed_store() {
   local dir="$1"
   mkdir -p "$dir"
+  # ND_ACCEPT_TABS: how many tabs in all, the rest on the fixture as well
+  # (scripts/perf-drive.ts measures a 10-tab session).
+  local more="" n=3
+  while [ "$n" -le "${ND_ACCEPT_TABS:-2}" ]; do
+    more="$more,{\"id\":\"t$n\",\"url\":\"$FIXTURE?tab$n\",\"title\":\"\",\"pinned\":false}"
+    n=$((n + 1))
+  done
   cat >"$dir/session.json" <<EOF
-{"version":1,"data":{"tabs":[{"id":"t1","url":"$FIXTURE","title":"","pinned":false},{"id":"t2","url":"$FIXTURE?two","title":"","pinned":false}],"activeId":"t1","nextTabId":3,"windowWidth":1280,"windowHeight":800,"zoomByHost":{}}}
+{"version":1,"data":{"tabs":[{"id":"t1","url":"$FIXTURE","title":"","pinned":false},{"id":"t2","url":"$FIXTURE?two","title":"","pinned":false}$more],"activeId":"t1","nextTabId":$n,"windowWidth":1280,"windowHeight":800,"zoomByHost":{}}}
 EOF
   # Compact: the layout with an address field and a layout toggle, which the
-  # app legs drive. The sidebar layout has neither.
+  # app legs drive. The sidebar layout has neither. ND_ACCEPT_PINNED adds more
+  # quoted ids to the toolbar ("id1","id2"), for extensions ND_ACCEPT_EXTENSIONS
+  # loads.
   cat >"$dir/settings.json" <<EOF
-{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"compact","pinnedExtensions":["$EXTENSION_ID"]}}
+{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"compact","pinnedExtensions":["$EXTENSION_ID"${ND_ACCEPT_PINNED:+,$ND_ACCEPT_PINNED}]}}
 EOF
 }
 
