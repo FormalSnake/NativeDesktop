@@ -31,6 +31,26 @@ type ReconcilerInstance = {
 // mount must therefore be idempotent (guarded by a globalThis singleton).
 // First boot connects, handshakes, and creates the reconciler root; every
 // subsequent call (a hot re-eval) reuses the surviving root instead.
+/// Events a page raises on its own, not answers to input. They render at
+/// default priority: a burst of them (a page load sends a dozen) is one render
+/// instead of one each, and input that lands meanwhile renders first.
+const PASSIVE_EVENTS = new Set([
+  "navigate",
+  "titleChanged",
+  "loadingChanged",
+  "loadProgress",
+  "backAvailable",
+  "forwardAvailable",
+  "faviconChanged",
+  "securityChanged",
+  "audioStateChanged",
+  "contentBlocked",
+  "cookiesChanged",
+  "downloadUpdated",
+  "linkHover",
+  "sessionSaved",
+]);
+
 export async function render(element: ReactNode): Promise<void> {
   installErrorHandlers();
   let state = getHmrState();
@@ -51,17 +71,40 @@ export async function render(element: ReactNode): Promise<void> {
     bindCommitTargets(batch, registry);
 
     let commitId = 0;
+    // ND_PERF_TRACE=1: `ND_PERF event` per host event (handler time) and
+    // `ND_PERF commit` per commit (ops, time since the last event). `at` is
+    // wall-clock microseconds, the clock the host's lines use.
+    const trace = process.env.ND_PERF_TRACE === "1";
+    const at = () => Math.round((performance.timeOrigin + performance.now()) * 1000);
+    let lastEvent = "";
+    let lastEventAt = 0;
     const configWithFlush = {
       ...hostConfig,
       resetAfterCommit() {
         const ops = batch.drain();
         if (ops.length) ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+        if (trace && ops.length) {
+          const t = at();
+          console.error(`ND_PERF commit ops=${ops.length} after=${lastEvent || "-"} since_us=${lastEventAt ? t - lastEventAt : -1} at=${t}`);
+          lastEvent = "";
+          lastEventAt = 0;
+        }
       },
     };
 
     ndp.onEvent((e: EventMsg) => {
-      setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete");
+      setPriorityFor(PASSIVE_EVENTS.has(e.name) ? "default" : ((e.priority as "discrete" | "continuous" | "default") ?? "discrete"));
+      if (!trace) {
+        registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+        return;
+      }
+      const t = at();
       registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+      if (!lastEventAt) {
+        lastEvent = e.name;
+        lastEventAt = t;
+      }
+      console.error(`ND_PERF event ${e.name} node=${e.nodeId} handler_us=${at() - t} at=${t}`);
     });
 
     const Reconciler = (ReconcilerFactory as unknown as (c: typeof configWithFlush) => ReconcilerInstance)(
