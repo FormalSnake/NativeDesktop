@@ -198,6 +198,57 @@ Bun.serve({
 const anim = `http://127.0.0.1:${pagePort}/anim`;
 const scroll = `http://127.0.0.1:${pagePort}/scroll`;
 
+/**
+ * Tab switch to first frame, once round the walk. Every fixture tab logs the
+ * wall-clock time of each animation frame it gets; a switch's latency is the
+ * first frame its new tab draws after the switch was asked for. A page kept
+ * running in the background has frames all along and answers within one
+ * frame, a page Chromium had hidden answers when it has resumed.
+ */
+async function switchLatency(p: number, next: () => Promise<void>, prev: () => Promise<void>): Promise<void> {
+  const n = Number(process.env.ND_ACCEPT_TABS ?? "10");
+  const sessions = new Map<string, Session>();
+  for (const t of (await targets(p)).filter((t) => t.type === "page" && t.url.startsWith(fixture))) {
+    const s = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+    if (!s) continue;
+    sessions.set(t.url, s);
+    await s.eval(`(() => { if (window.__fr) return; window.__fr = []; const f = () => { __fr.push(Date.now()); if (__fr.length > 600) __fr.shift(); requestAnimationFrame(f); }; requestAnimationFrame(f); })()`).catch(() => {});
+  }
+  // Long enough for every tab but the one on show to settle in the background.
+  await Bun.sleep(Number(process.env.ND_PERF_SWITCH_IDLE_MS ?? "20000"));
+  const ms: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const url = i === n - 1 ? fixture : i === 0 ? `${fixture}?two` : `${fixture}?tab${i + 2}`;
+    const t0 = Date.now();
+    await next();
+    await Bun.sleep(1500);
+    const s = sessions.get(url);
+    const first = s ? await s.eval<number>(`(__fr.find((t) => t >= ${t0}) ?? 0)`).catch(() => 0) : 0;
+    ms.push(first ? first - t0 : -1);
+    await Bun.sleep(Number(process.env.ND_PERF_SWITCH_GAP_MS ?? "3000"));
+  }
+  const report = (label: string, list: number[]) => {
+    const ok = list.filter((x) => x >= 0).sort((a, b) => a - b);
+    console.log(`  ${label} ms: ${list.join(" ")} (median ${ok[Math.floor(ok.length / 2)] ?? "?"}, max ${ok[ok.length - 1] ?? "?"})`);
+  };
+  report("switch to first frame, round all tabs", ms);
+  // Back and forth between two tabs, the way a person checks one page against
+  // another: each was on show seconds ago.
+  const pair: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    const url = i % 2 === 0 ? `${fixture}?two` : fixture;
+    const t0 = Date.now();
+    await (i % 2 === 0 ? next : prev)();
+    await Bun.sleep(1500);
+    const s = sessions.get(url);
+    const first = s ? await s.eval<number>(`(__fr.find((t) => t >= ${t0}) ?? 0)`).catch(() => 0) : 0;
+    pair.push(first ? first - t0 : -1);
+    await Bun.sleep(Number(process.env.ND_PERF_SWITCH_GAP_MS ?? "3000"));
+  }
+  report("switch to first frame, between two tabs", pair);
+  for (const s of sessions.values()) s.close();
+}
+
 /** Runs the measured sequence against a browser listening on `p`; `procs` names its processes. */
 async function measure(
   name: string,
@@ -207,6 +258,8 @@ async function measure(
   popup: (() => Promise<void>) | null,
   show: (url: string) => Promise<void> = open,
   warm: () => Promise<void> = async () => {},
+  next: (() => Promise<void>) | null = null,
+  prev: () => Promise<void> = async () => {},
 ): Promise<void> {
   console.log(`== ${name}`);
   await Bun.sleep(settleMs);
@@ -220,6 +273,7 @@ async function measure(
   console.log(`  tabs=${await pages(p)}`);
   await cpu(`${name} idle 10 tabs`, procs, sampleMs);
   memory(`${name} 10 tabs`, procs());
+  if (next) await switchLatency(p, next, prev);
   const main = procs().find((x) => x.kind === "browser");
   if (main) await threads(`${name} browser process`, main.pid, 15000);
   const vis: string[] = [];
@@ -232,8 +286,8 @@ async function measure(
   console.log(`  page visibility: ${vis.join(" ")}`);
   // Timers and frames in one background tab, over three seconds: a hidden page
   // gets no rAF and its 10 ms interval is throttled to about 1 Hz.
-  // The walk ends back on the first tab, so the last one is in the background.
-  const last = (await targets(p)).find((t) => t.type === "page" && t.url === `${fixture}?tab${process.env.ND_ACCEPT_TABS ?? "10"}`);
+  // A tab the walk left long ago, well behind the ones shown most recently.
+  const last = (await targets(p)).find((t) => t.type === "page" && t.url === `${fixture}?tab5`);
   const bg = last ? { url: last.url, s: await Session.open(last.webSocketDebuggerUrl!) } : null;
   if (bg) {
     const s = bg.s;
@@ -372,6 +426,10 @@ if (process.env.ND_PERF_SKIP_APP !== "1") {
       await app.getByTestId("menu-next-tab").click().catch((e) => console.log(`  next tab: ${e}`));
       await Bun.sleep(1500);
     }
+  }, process.env.ND_PERF_SWITCH === "1" ? async () => {
+    await app.getByTestId("menu-next-tab").click().catch((e) => console.log(`  next tab: ${e}`));
+  } : null, async () => {
+    await app.getByTestId("menu-prev-tab").click().catch((e) => console.log(`  previous tab: ${e}`));
   });
 }
 
