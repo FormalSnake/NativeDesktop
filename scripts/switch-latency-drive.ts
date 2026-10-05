@@ -206,6 +206,19 @@ async function paintTabs(p: number, urls: string[]): Promise<number> {
   return painted;
 }
 
+/** Whether the browser on `p` composites on the GPU, and on which. */
+async function gpuLine(p: number): Promise<string> {
+  try {
+    const v = await (await fetch(`http://127.0.0.1:${p}/json/version`)).json() as { webSocketDebuggerUrl: string };
+    const b = await Session.open(v.webSocketDebuggerUrl);
+    const info = await b.send("SystemInfo.getInfo") as { gpu?: { featureStatus?: Record<string, string>; auxAttributes?: Record<string, unknown> } };
+    b.close();
+    return `gpu_compositing=${info.gpu?.featureStatus?.gpu_compositing ?? "?"} renderer=${info.gpu?.auxAttributes?.glRenderer ?? "?"}`;
+  } catch (e) {
+    return `gpu unknown (${e})`;
+  }
+}
+
 // ============================================================================
 // Hops
 // ============================================================================
@@ -289,7 +302,7 @@ const all: Switch[] = [];
 
 if (process.env.ND_SWITCH_SKIP_APP !== "1") {
   const app = await connectApp();
-  console.log(`== app (${tabs} tabs, layout ${process.env.ND_ACCEPT_LAYOUT ?? "compact"})`);
+  console.log(`== app (${tabs} tabs, layout ${process.env.ND_ACCEPT_LAYOUT ?? "compact"}) ${await gpuLine(port)}`);
   await Bun.sleep(Number(process.env.ND_SWITCH_SETTLE_MS ?? "15000"));
   const win = Number(biggest(sh("xdotool", "search", "--classname", hostClass).split("\n").filter(Boolean)));
   const wg = geom(`0x${win.toString(16)}`)!;
@@ -411,7 +424,7 @@ if (stock) {
     await Bun.sleep(200);
   }
   const name = stock.split("/").pop()!;
-  console.log(`== ${name} (${tabs} tabs)`);
+  console.log(`== ${name} (${tabs} tabs) ${await gpuLine(stockPort)}`);
   await Bun.sleep(8000);
   const ids = sh("xdotool", "search", "--pid", String(child.pid)).split("\n").filter(Boolean);
   const win = Number(biggest(ids.length ? ids : sh("xdotool", "search", "--classname", name).split("\n").filter(Boolean)));
