@@ -2308,6 +2308,7 @@ fn connectLayout(view: *View) void {
     if (view.layout_handler != 0) return;
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const surface = gtk.Native.getSurface(native) orelse return;
+    if (marker.latOn()) latPaints(surface);
     view.layout_surface = surface;
     view.layout_handler = gobject.signalConnectData(
         @ptrCast(@alignCast(surface)),
@@ -2317,6 +2318,22 @@ fn connectLayout(view: *View) void {
         null,
         .{},
     );
+}
+
+/// ND_LAT_TRACE: a `gtk.paint` line each time GTK has drawn the window a page
+/// is in, which is when the app's own chrome (a sidebar row marked as the one
+/// on show) has been redrawn.
+var lat_paint_surface: ?*gdk.Surface = null;
+
+fn latPaints(surface: *gdk.Surface) void {
+    if (lat_paint_surface == surface) return;
+    lat_paint_surface = surface;
+    const clock = gdk.Surface.getFrameClock(surface);
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "after-paint", @ptrCast(&onLatPaint), null, null, .{});
+}
+
+fn onLatPaint(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.paint", "", .{});
 }
 
 /// Keyboard routing between the app's own widgets and the page.

@@ -254,6 +254,7 @@ const hops = [
   "cef.mapped",
   "host.applyEnd",
   "cef.layout",
+  "gtk.paint",
 ] as const;
 
 interface Switch { scenario: string; t0: number; px: number; row?: number; seen: string[] }
@@ -267,7 +268,12 @@ function hopOffsets(all: Lat[], s: Switch): Record<string, number> {
     const hit = all.find((l) => l.t >= s.t0 && l.t <= end && l.tag === h && !((h === "host.event" || h === "js.event") && noise.test(l.rest)));
     if (hit) out[h] = (hit.t - s.t0) / 1000;
   }
-  if (s.row && s.row > 0) out.row = (s.row - s.t0) / 1000;
+  if (s.row && s.row > 0) {
+    out.row = (s.row - s.t0) / 1000;
+    // The GTK paint the row change came out of: the last one before it.
+    const paint = all.filter((l) => l.tag === "gtk.paint" && l.t >= s.t0 && l.t <= s.row!).at(-1);
+    if (paint) out.rowPaint = (paint.t - s.t0) / 1000;
+  }
   if (s.px > 0) out.pixels = (s.px - s.t0) / 1000;
   return out;
 }
@@ -282,7 +288,7 @@ function report(label: string, list: Switch[], all: Lat[]): void {
   console.log(`  ${label} input->pixels ms: ${totals.map((x) => x.toFixed(1)).join(" ")} (median ${median(totals).toFixed(1)}, max ${Math.max(...totals).toFixed(1)})`);
   if (!all.length) return;
   const per = list.map((s) => hopOffsets(all, s));
-  const cols = [...hops, "row", "pixels"].filter((h) => per.some((p) => p[h] !== undefined));
+  const cols = [...hops, "rowPaint", "row", "pixels"].filter((h) => per.some((p) => p[h] !== undefined));
   console.log(`  ${label} hops (median ms after input): ${cols.map((h) => `${h}=${median(per.map((p) => p[h] ?? -1)).toFixed(1)}`).join(" ")}`);
   for (let i = 0; i < list.length; i++) {
     const s = list[i]!;
