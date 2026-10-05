@@ -896,6 +896,7 @@ pub const Rect = @import("shape.zig").Rect;
 const FnShapeRects = *const fn (*Display, Window, c_int, c_int, c_int, [*]const Rect, c_int, c_int, c_int) callconv(.c) void;
 const FnShapeMask = *const fn (*Display, Window, c_int, c_int, c_int, c_ulong, c_int) callconv(.c) void;
 const shape_bounding: c_int = 0;
+const shape_input: c_int = 2;
 const shape_set: c_int = 0;
 const yx_banded: c_int = 3;
 
@@ -932,6 +933,21 @@ pub fn clearShape(window: Window) void {
     const c = conn() orelse return;
     c.push();
     shape_mask.?(c.x, window, shape_bounding, 0, 0, 0, shape_set);
+    c.pop();
+}
+
+/// Lets the pointer through `window` to whatever is under it (an empty input
+/// region), or gives it back its own. The bounding shape is left alone.
+pub fn setInputPassthrough(window: Window, through: bool) void {
+    if (window == 0 or !loadShape()) return;
+    const c = conn() orelse return;
+    c.push();
+    if (through) {
+        const none: [0]Rect = .{};
+        shape_rects.?(c.x, window, shape_input, 0, 0, &none, 0, shape_set, yx_banded);
+    } else {
+        shape_mask.?(c.x, window, shape_input, 0, 0, 0, shape_set);
+    }
     c.pop();
 }
 

@@ -1884,9 +1884,13 @@ const View = struct {
     /// Born in a CEF Views window (`viewsHostedFor`), so it has the toolbar
     /// `triggerExtensionAction` clicks through.
     views_hosted: bool = false,
-    /// The page is off to the side of the window because a dialog is up over
-    /// it. Only so the engine tick can spot one that never came back.
+    /// A dialog is up over the page: the page is off to the side of the window,
+    /// or under the command bar (`under_bar`). The keyboard stays off it, and
+    /// the engine tick can spot one whose dialog went away unannounced.
     aside: bool = false,
+    /// The page stays where it is under the command bar, dimmed, cut around
+    /// the bar's card and letting the pointer through. See `setUnderBar`.
+    under_bar: bool = false,
     /// The toplevel the container is a child of. A view moved into another
     /// window by `moveNode` has to take its X child with it.
     container_parent: x11.Window = 0,
@@ -2854,8 +2858,13 @@ fn syncBounds(view: *View) void {
     if (gtk.Widget.getMapped(view.widget) == 0) return;
     // Same for a page standing aside: a dialog is up over this window, and
     // tracking the allocation would put the page straight back on top of it.
-    if (dialogOverView(view)) return standAside(view);
-    view.aside = false;
+    // The command bar is the exception, cut out of the page instead.
+    const bar = barCardOver(view);
+    if (bar == null and dialogOverView(view)) {
+        setUnderBar(view, false);
+        return standAside(view);
+    }
+    view.aside = bar != null;
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const native_widget: *gtk.Widget = @ptrCast(@alignCast(native));
     var rect: graphene.Rect = undefined;
@@ -2904,8 +2913,64 @@ fn syncBounds(view: *View) void {
         if (page != 0) x11.setMinimized(@intCast(page), false);
         view.page_minimized = false;
     }
-    syncShape(view, native_widget, rect, scale);
+    var bar_rect: ?graphene.Rect = null;
+    if (bar) |card| {
+        var r: graphene.Rect = undefined;
+        if (gtk.Widget.computeBounds(card, native_widget, &r) != 0) bar_rect = r;
+    }
+    syncShape(view, native_widget, rect, scale, bar_rect);
     layoutContents(view, next.w, next.h);
+    setUnderBar(view, bar != null);
+}
+
+/// The command bar's card when the bar is the dialog up over `view`'s window
+/// (commandpalette.zig). The bar is a card on a light scrim, so the page is
+/// left on show under it, the way AppKit shows it, rather than taken away like
+/// it is for a sheet.
+fn barCardOver(view: *View) ?*gtk.Widget {
+    const root = gtk.Widget.getRoot(view.widget) orelse return null;
+    const widget: *gtk.Widget = @ptrCast(@alignCast(root));
+    const dialog: *adw.Dialog = blk: {
+        if (gobject.ext.cast(adw.ApplicationWindow, widget)) |w| break :blk adw.ApplicationWindow.getVisibleDialog(w) orelse return null;
+        if (gobject.ext.cast(adw.Window, widget)) |w| break :blk adw.Window.getVisibleDialog(w) orelse return null;
+        return null;
+    };
+    const dw: *gtk.Widget = @ptrCast(@alignCast(dialog));
+    if (gtk.Widget.hasCssClass(dw, "nd-palette") == 0) return null;
+    return findCssClass(dw, "nd-palette-card");
+}
+
+fn findCssClass(w: *gtk.Widget, class: [:0]const u8) ?*gtk.Widget {
+    if (gtk.Widget.hasCssClass(w, class) != 0) return w;
+    var child = gtk.Widget.getFirstChild(w);
+    while (child) |kid| : (child = gtk.Widget.getNextSibling(kid)) {
+        if (findCssClass(kid, class)) |found| return found;
+    }
+    return null;
+}
+
+/// The bar's scrim (basecss.zig, `dialog.nd-palette ... > dimming`), drawn
+/// into the page by Chromium's own overlay: GTK cannot paint over the page's
+/// X window, and the overlay leaves the document alone.
+const bar_dim_params = "{\"x\":0,\"y\":0,\"width\":32768,\"height\":32768,\"color\":{\"r\":0,\"g\":0,\"b\":0,\"a\":0.15}}";
+
+/// Puts the page under the command bar or takes it back out: dimmed like the
+/// rest of the window, the pointer passed through to the scrim (a click there
+/// closes the bar, as on AppKit) and the keyboard kept on the bar.
+fn setUnderBar(view: *View, under: bool) void {
+    if (view.under_bar == under) return;
+    view.under_bar = under;
+    x11.setInputPassthrough(view.container, under);
+    if (under) {
+        _ = cdpSend(view, "DOM.enable", "", .ignore);
+        _ = cdpSend(view, "Overlay.enable", "", .ignore);
+        _ = cdpSend(view, "Overlay.highlightRect", bar_dim_params, .ignore);
+    } else {
+        _ = cdpSend(view, "Overlay.hideHighlight", "", .ignore);
+        _ = cdpSend(view, "Overlay.disable", "", .ignore);
+        _ = cdpSend(view, "DOM.disable", "", .ignore);
+    }
+    syncBrowserFocus(view);
 }
 
 /// Cuts the page's X window to what GTK shows of it: inside the rounded card
@@ -2915,16 +2980,24 @@ fn syncBounds(view: *View) void {
 /// A GTK widget cannot be drawn over an X child window, so without this the
 /// card's corners were square and every one of those layers was hidden under
 /// the page.
-fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64) void {
+fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64, bar: ?graphene.Rect) void {
     var card: ?graphene.Rect = null;
     if (ndchrome.cardAncestor(view.widget)) |cw| {
         var r: graphene.Rect = undefined;
         if (gtk.Widget.computeBounds(cw, native, &r) != 0) card = r;
     }
     var covers: [max_covers]graphene.Rect = undefined;
+    // Corner radius per cover: the command bar's card is rounded, the rest
+    // are square.
+    var radii: [max_covers]f64 = .{0} ** max_covers;
     var cover_n: usize = 0;
+    if (bar) |r| {
+        covers[0] = r;
+        radii[0] = bar_card_radius;
+        cover_n = 1;
+    }
     var cover_widgets: [max_covers]*gtk.Widget = undefined;
-    const found = ndchrome.coversOver(view.widget, &cover_widgets);
+    const found = ndchrome.coversOver(view.widget, cover_widgets[0 .. max_covers - cover_n]);
     for (cover_widgets[0..found]) |cw| {
         var r: graphene.Rect = undefined;
         if (gtk.Widget.computeBounds(cw, native, &r) == 0) continue;
@@ -2984,11 +3057,16 @@ fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64) 
                 spans[0] = .{ @intFromFloat(@round((lo - px) * scale)), @intFromFloat(@round((hi - px) * scale)) };
                 n = 1;
                 // Each layer over this row takes its run out of the spans.
-                for (covers[0..cover_n]) |cv| {
+                for (covers[0..cover_n], radii[0..cover_n]) |cv, cr| {
                     const c_top: f64 = cv.f_origin.f_y;
-                    if (ly < c_top or ly >= c_top + cv.f_size.f_height) continue;
-                    const c_lo: i32 = @intFromFloat(@round((cv.f_origin.f_x - px) * scale));
-                    const c_hi: i32 = @intFromFloat(@round((cv.f_origin.f_x + cv.f_size.f_width - px) * scale));
+                    const c_bottom: f64 = c_top + cv.f_size.f_height;
+                    if (ly < c_top or ly >= c_bottom) continue;
+                    const c_r = @min(cr, @min(cv.f_size.f_width, cv.f_size.f_height) / 2);
+                    var c_in: f64 = 0;
+                    if (ly < c_top + c_r) c_in = c_r - @sqrt(@max(0, c_r * c_r - (c_top + c_r - ly) * (c_top + c_r - ly)));
+                    if (ly > c_bottom - c_r) c_in = c_r - @sqrt(@max(0, c_r * c_r - (ly - (c_bottom - c_r)) * (ly - (c_bottom - c_r))));
+                    const c_lo: i32 = @intFromFloat(@round((cv.f_origin.f_x + c_in - px) * scale));
+                    const c_hi: i32 = @intFromFloat(@round((cv.f_origin.f_x + cv.f_size.f_width - c_in - px) * scale));
                     var next: [max_covers + 1]Span = undefined;
                     var m: usize = 0;
                     for (spans[0..n]) |sp| {
@@ -3033,6 +3111,9 @@ fn syncShape(view: *View, native: *gtk.Widget, page: graphene.Rect, scale: f64) 
 
 /// How many floating layers one page can be cut around.
 const max_covers = 6;
+
+/// `.nd-palette-card`'s border-radius in basecss.zig.
+const bar_card_radius: f64 = 15;
 
 /// The view's inner windows: the page browser, and the docked devtools beside
 /// it when it is open. Reads the XIDs on the calling thread and hands the X

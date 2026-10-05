@@ -53,9 +53,8 @@ const gdk = @import("gdk");
 //    own `.nd-<id>` block, the same way `button.compact` above already does.
 //
 // The `nd-palette-*` rules are the command bar's (commandpalette.zig): the
-// dialog's own sheet made transparent and its dimming a light scrim, the card
-// drawn in its place with the sheet's own libadwaita look (_dialogs.scss), a
-// borderless 20px field and 40px one-line rows with no separators, and no
+// card drawn in place of the dialog's sheet with the sheet's own libadwaita
+// look (_dialogs.scss), a borderless 20px field and 40px one-line rows with no separators, and no
 // hover shade: the keyboard highlight is the only one.
 //
 // Installed once at display level; providers restyle retroactively, so a lazy
@@ -87,8 +86,6 @@ const nd_base_css =
     \\.nd-card-content { background-color: var(--view-bg-color); border-radius: 12px; box-shadow: 0 0 0 1px var(--border-color), 0 1px 3px 1px rgba(0, 0, 0, 0.06); }
     \\.nd-card-content.nd-card-immersive { box-shadow: none; }
     \\toolbarview.nd-top-autohide > .top-bar { background-color: var(--sidebar-bg-color); }
-    \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); }
-    \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
     \\.nd-palette-card { background-color: var(--window-bg-color); color: var(--window-fg-color); border-radius: 15px; box-shadow: 0 0 14px 2px rgb(0 0 6 / 3%), 0 0 5px 2px rgb(0 0 6 / 10%), 0 0 0 1px rgb(0 0 0 / 5%); outline: 1px solid rgb(255 255 255 / 7%); outline-offset: -1px; }
     \\.nd-palette-entry { font-size: 20px; min-height: 44px; padding: 0 6px; background: none; box-shadow: none; outline: none; }
     \\.nd-palette-entry > image { -gtk-icon-size: 18px; }
@@ -96,6 +93,15 @@ const nd_base_css =
     \\list.nd-palette-list > row { min-height: 40px; padding: 0 10px; margin: 0 6px; border-radius: 9px; }
     \\list.nd-palette-list > row:hover:not(:selected) { background: none; }
     \\@media (prefers-contrast: more) { box.navigation-sidebar > button:hover, box.navigation-sidebar > button:active, box.navigation-sidebar > button.suggested-action { box-shadow: inset 0 0 0 1px var(--border-color); } }
+;
+
+/// The command bar's own sheet made transparent and its dimming a light scrim.
+/// Above GTK_STYLE_PROVIDER_PRIORITY_USER (800): a user's gtk.css theme
+/// (elementary's, say) restyles every AdwDialog sheet at that priority, and
+/// the bar then sat on an opaque sheet the size of most of the window.
+const nd_palette_sheet_css =
+    \\dialog.nd-palette floating-sheet > dimming { background-color: rgb(0 0 0 / 15%); }
+    \\dialog.nd-palette floating-sheet > sheet { background: none; box-shadow: none; border-radius: 0; outline: none; }
 ;
 
 /// Called from tabs.zig's createWindow (a live display is guaranteed there);
@@ -106,5 +112,8 @@ pub fn ensureBaseCss() void {
     const p = gtk.CssProvider.new();
     gtk.CssProvider.loadFromString(p, nd_base_css);
     gtk.StyleContext.addProviderForDisplay(display, p.as(gtk.StyleProvider), 600); // STYLE_PROVIDER_PRIORITY_APPLICATION
+    const sheet = gtk.CssProvider.new();
+    gtk.CssProvider.loadFromString(sheet, nd_palette_sheet_css);
+    gtk.StyleContext.addProviderForDisplay(display, sheet.as(gtk.StyleProvider), 801);
     base_installed = true;
 }

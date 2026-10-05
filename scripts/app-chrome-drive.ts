@@ -1179,18 +1179,30 @@ function windowState(cef: string): string {
 
 /// The command bar over the page it was opened from, by each way in: a click
 /// on the active tab (the sidebar row, or the address tab in compact), ctrl+L,
-/// and a click on a tab that was parked as a background tab and brought back.
-/// On GTK the page stands aside while the bar is up (docs/webview.md); when the
-/// bar closes the page has to come back as it was, pixels and Chromium's own
-/// window state both (ND_ACCEPT_LEGS=barpage).
+/// and a click on a tab that was parked as a background tab and brought back,
+/// at a normal and a narrow width. The page stays on show under the bar,
+/// dimmed like the rest of the window; the bar is centred and takes the keys;
+/// Escape gives the keyboard back to the page, which is as it was, pixels and
+/// Chromium's own window state both (ND_ACCEPT_LEGS=barpage).
 async function barPageLegs(): Promise<void> {
   await resyncPage();
+  const top = toplevelId();
+  for (const width of [1280, 720]) {
+    resizeToplevel(top, width, 800);
+    await Bun.sleep(1500);
+    await resyncPage();
+    await barPageWays(width);
+  }
+  resizeToplevel(top, 1280, 800);
+  await Bun.sleep(1000);
+}
+
+async function barPageWays(width: number): Promise<void> {
   const before = shownView();
   if (!before) {
-    skip("barPage", "no page on show");
+    skip(`barPage.${width}`, "no page on show");
     return;
   }
-  const area = { x: before.container.x + 40, y: before.container.y + 40, w: before.container.w - 80, h: before.container.h - 80 };
   const ids = before.ids;
   const ownState = windowState(ids.cef);
   // A tab is `tab-<id>` in the sidebar and `tab-item-<id>` in compact.
@@ -1203,39 +1215,74 @@ async function barPageLegs(): Promise<void> {
   };
   const ways: Array<[string, () => Promise<void>]> = [
     ["click", () => clickTab("t1")],
-    ["ctrlL", async () => key("ctrl+l")],
-    ["afterSwitch", async () => {
+    // From the page: the keyboard is the page's before and after.
+    ["ctrlL", async () => {
+      const v = shownView()!;
+      pointerTo(v.container.x + Math.round(v.container.w / 2), v.container.y + v.container.h - 40);
+      await Bun.sleep(200);
+      click();
+      await Bun.sleep(600);
+      key("ctrl+l");
+    }],
+  ];
+  if (width === 1280) {
+    ways.push(["afterSwitch", async () => {
       for (const id of ["t2", "t1", "t1"]) {
         await clickTab(id);
         await Bun.sleep(1500);
       }
-    }],
-  ];
+    }]);
+  }
   for (const [way, open] of ways) {
-    const closed = `${shots}/barpage-${way}-closed.png`;
-    const opened = `${shots}/barpage-${way}-open.png`;
-    const after = `${shots}/barpage-${way}-after.png`;
+    const name = `barPage.${way}.${width}`;
+    const closed = `${shots}/barpage-${way}-${width}-closed.png`;
+    const opened = `${shots}/barpage-${way}-${width}-open.png`;
+    const after = `${shots}/barpage-${way}-${width}-after.png`;
+    const origin = await windowOrigin();
     capture(closed);
     await open();
-    let presented = false;
-    for (let i = 0; i < 20 && !presented; i++) {
+    type Layout = { presented?: boolean; window?: { w: number; h: number } | null; panel?: { x: number; y: number; w: number; h: number } | null; fieldText?: string };
+    let layout: Layout | null = null;
+    for (let i = 0; i < 20 && !layout?.presented; i++) {
       await Bun.sleep(150);
-      presented = await paletteShown();
+      layout = (await app.callRpc("paletteLayout", { testId: "palette" }).catch(() => null)) as Layout | null;
     }
     await Bun.sleep(800);
+    layout = (await app.callRpc("paletteLayout", { testId: "palette" }).catch(() => null)) as Layout | null;
     capture(opened);
-    const parked = geom(ids.container);
-    const openState = windowState(ids.cef);
+    const under = shownView();
+    const panel = layout?.panel;
+    const win = layout?.window;
+    const offCentre = panel && win ? Math.abs(panel.x + panel.w / 2 - win.w / 2) : NaN;
+    // The page below the card: dimmed, so a little darker than it was, where
+    // an empty sheet would be a different picture altogether.
+    let dim = NaN;
+    if (under && panel && origin) {
+      const y0 = Math.round(origin.y + (panel.y + panel.h) * scale) + 16;
+      const y1 = under.container.y + under.container.h - 8;
+      if (y1 - y0 >= 24) {
+        dim = regionDiff(closed, opened, { x: under.container.x + 8, y: y0, w: under.container.w - 16, h: y1 - y0 });
+      }
+    }
+    typeText("zz");
+    await Bun.sleep(500);
+    const typed = ((await app.callRpc("paletteLayout", { testId: "palette" }).catch(() => null)) as Layout | null)?.fieldText ?? "";
     key("Escape");
     await Bun.sleep(1200);
     capture(after);
+    await resyncPage();
     const back = shownView();
+    const area = { x: before.container.x + 40, y: before.container.y + 40, w: before.container.w - 80, h: before.container.h - 80 };
     const backDiff = regionDiff(closed, after, area);
     const backState = windowState(ids.cef);
+    // Only ctrl+L starts from the page; a click on a tab gives the keyboard
+    // back to the tab.
+    const focused = way !== "ctrlL" || await fixtureEval<boolean>("JSON.stringify(document.hasFocus())").catch(() => false);
     check(
-      `barPage.${way}`,
-      presented && back?.node === before.node && backDiff < 0.02 && backState === ownState,
-      `presented=${presented}, page at ${parked?.x},${parked?.y} (${openState}) while open, view ${back?.node} back with ${(backDiff * 100).toFixed(2)}% pixel change, window state ${JSON.stringify(backState)} (Chromium's own ${JSON.stringify(ownState)})`,
+      name,
+      layout?.presented === true && under?.node === before.node && offCentre <= 1 && (Number.isNaN(dim) || (dim > 0.01 && dim < 0.3)) &&
+        typed.endsWith("zz") && back?.node === before.node && backDiff < 0.02 && backState === ownState && focused === true,
+      `presented=${layout?.presented}, page ${under?.node === before.node ? "on show" : "gone"} under the bar, card ${offCentre}px off centre, ${Number.isNaN(dim) ? "no room below the card" : `${(dim * 100).toFixed(2)}% darker below the card`}, typed ${JSON.stringify(typed)}, view ${back?.node} back with ${(backDiff * 100).toFixed(2)}% pixel change, page focused=${focused}, window state ${JSON.stringify(backState)} (Chromium's own ${JSON.stringify(ownState)})`,
     );
   }
 }

@@ -704,6 +704,15 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   is up, under the dialog's own scrim. Whether a dialog is up is read back from
   `adw_window_get_visible_dialog` rather than counted, and the engine tick puts
   a page back that was left aside.
+- The command bar is the exception: a card on a light scrim, it leaves the page
+  on show the way AppKit does. The page stays where it is, its window cut
+  around the card (XShape, rounded like the card, re-cut as the card follows
+  its rows), dimmed by Chromium's own overlay (`Overlay.highlightRect` in the
+  scrim's colour, no change to the document), with an empty input region so a
+  click on it reaches the scrim and closes the bar, and no keyboard until the
+  bar closes. Its sheet and scrim rules sit above
+  `GTK_STYLE_PROVIDER_PRIORITY_USER`: a user theme in `gtk.css` restyles every
+  AdwDialog sheet at that priority, and the bar then sat on an opaque sheet.
 - Every window Chromium puts on the root (a dialog, the bubble it shows when a
   page goes fullscreen, the small parked ones) arrives with no `WM_CLASS` at
   all, and a compositor hands that straight to whatever enumerates windows: on

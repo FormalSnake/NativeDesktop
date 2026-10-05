@@ -19,12 +19,13 @@
 // caret. It never reaches queryChanged until Tab or Right accepts it.
 //
 // Placement: AdwDialog is still what presents it, because a visible dialog is
-// what moves the Chromium page (an X11 child window no in-window widget can
-// draw over) out of the way, and it brings the modal focus handling. But its
-// own sheet is made transparent and window-sized, and the card inside it is
-// placed the way the AppKit card is: centred, its top edge at a fixed fraction
-// of the window height, its height following its rows. The dialog's dimming
-// layer, restyled, is the scrim over the whole window.
+// what tells the engine to cut the Chromium page (an X11 child window no
+// in-window widget can draw over) around the card, and it brings the modal
+// focus handling. But its own sheet is made transparent and window-sized, and
+// the card inside it is placed the way the AppKit card is: centred, its top
+// edge at a fixed fraction of the window height, its height following its
+// rows. The dialog's dimming layer, restyled, is the scrim over the whole
+// window.
 const std = @import("std");
 const gtk = @import("gtk");
 const gdk = @import("gdk");
@@ -74,6 +75,10 @@ const State = struct {
     /// The visible panel.
     card: *gtk.Widget,
     tick: c_uint = 0,
+    /// Follows the card while the bar is up, so the page the engine leaves
+    /// under it is cut to the card's current size (`cbWatchTick`).
+    watch: c_uint = 0,
+    watched: [4]f32 = .{ 0, 0, 0, 0 },
     /// Resize notifications on `return_window`, dropped with it.
     resize_hids: [2]c_ulong = .{ 0, 0 },
     entry: *gtk.SearchEntry,
@@ -526,6 +531,8 @@ fn present(state: *State) void {
     withoutAdwAnimation(&presentDialog, state);
     _ = place(state);
     startPlacing(state);
+    state.watched = .{ 0, 0, 0, 0 };
+    if (state.watch == 0) state.watch = gtk.Widget.addTickCallback(state.card, &cbWatchTick, state, null);
     state.presented = true;
     state.pending_open = false;
     typeahead.wire(parent_win);
@@ -605,6 +612,26 @@ fn startPlacing(state: *State) void {
 fn cbWindowResized(_: *gobject.Object, _: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (state.presented) startPlacing(state);
+}
+
+/// Every frame while the bar is up: the card grows and shrinks with its rows,
+/// and the engine has to hear of each change to cut the page under it.
+fn cbWatchTick(card: *gtk.Widget, _: *gdk.FrameClock, data: ?*anyopaque) callconv(.c) c_int {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    const root = gtk.Widget.getRoot(card) orelse return 1;
+    const win: *gtk.Widget = @ptrCast(@alignCast(root));
+    var rect: graphene.Rect = undefined;
+    if (gtk.Widget.computeBounds(card, win, &rect) == 0) return 1;
+    const now: [4]f32 = .{ rect.f_origin.f_x, rect.f_origin.f_y, rect.f_size.f_width, rect.f_size.f_height };
+    if (std.mem.eql(f32, &now, &state.watched)) return 1;
+    state.watched = now;
+    dialogsurface.refresh(win);
+    return 1;
+}
+
+fn stopWatching(state: *State) void {
+    if (state.watch != 0) gtk.Widget.removeTickCallback(state.card, state.watch);
+    state.watch = 0;
 }
 
 fn stopPlacing(state: *State) void {
@@ -1046,6 +1073,10 @@ fn cbDialogClosed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     state.presented = false;
     stopPlacing(state);
+    stopWatching(state);
+    // The page under the bar takes no focus while the bar is up; the engine
+    // has to hear the bar went before the focus goes back to it.
+    if (state.return_window) |w| dialogsurface.refresh(w.as(gtk.Widget));
     restoreFocus(state);
     if (state.programmatic_close) {
         state.programmatic_close = false;
@@ -1108,6 +1139,7 @@ fn cbHandleDestroyed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     }
     if (state.completion_idle != 0) _ = glib.Source.remove(state.completion_idle);
     stopPlacing(state);
+    stopWatching(state);
     releaseReturnFocus(state);
     gobject.Object.unref(asObj(state.dialog));
     freeIds(state);

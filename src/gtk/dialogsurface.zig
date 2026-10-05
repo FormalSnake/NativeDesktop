@@ -5,8 +5,9 @@
 // stacks a child above everything its parent draws, so over a webview the
 // dialog and its scrim are painted, reported by GTK as presented, and never
 // seen: the window is modal-blocked with nothing on screen until Escape. The
-// pages in that window therefore stand aside while a dialog is up, which is
-// the engine's business; this is where it is told.
+// pages in that window therefore stand aside while a dialog is up (or, under
+// the command bar, are cut around its card), which is the engine's business;
+// this is where it is told.
 //
 // Every in-window dialog surface goes through here. A new one that presents an
 // AdwDialog itself belongs here too.
@@ -46,4 +47,10 @@ fn cbClosed(dialog: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
     const window: *gtk.Window = @ptrCast(@alignCast(raw));
     cef.refreshDialogOcclusion(window.as(gtk.Widget));
     setWindow(dialog, null);
+}
+
+/// A dialog whose visible part moved or changed size while it is up: the
+/// command bar's card, which the page under it is cut around.
+pub fn refresh(window: *gtk.Widget) void {
+    cef.refreshDialogOcclusion(window);
 }
