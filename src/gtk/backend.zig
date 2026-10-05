@@ -17,6 +17,7 @@ const protocol = @import("../protocol.zig");
 // distinct (type-incompatible) modules.
 const generated = @import("generated");
 const style = @import("style.zig");
+const perftrace = @import("perftrace.zig");
 const overlay = @import("overlay.zig");
 const abi = @import("../abi.zig");
 const tree_mod = @import("../tree.zig");
@@ -63,6 +64,7 @@ fn emitEventAdapter(node_id: u32, name: []const u8, payload: protocol.EventPaylo
     defer alloc.free(json);
     const json_z = alloc.dupeZ(u8, json) catch return;
     defer alloc.free(json_z);
+    if (perftrace.on()) std.debug.print("ND_PERF emit {s} node={d} at={d}\n", .{ name, node_id, perftrace.wall() });
     abi.nd_emit_event(ctx, node_id, name_z, json_z);
 }
 
@@ -384,6 +386,13 @@ const marshal_alloc = std.heap.smp_allocator;
 fn marshalTrampoline(data: ?*anyopaque) callconv(.c) c_int {
     const job: *MarshalJob = @ptrCast(@alignCast(data.?));
     defer marshal_alloc.destroy(job);
+    if (perftrace.on()) {
+        const start = perftrace.now();
+        job.fn_ptr(job.data);
+        perftrace.job(start);
+        perftrace.hookWindows(global_app);
+        return G_SOURCE_REMOVE;
+    }
     job.fn_ptr(job.data);
     return G_SOURCE_REMOVE;
 }
