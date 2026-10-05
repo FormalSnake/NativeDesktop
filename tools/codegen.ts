@@ -8890,11 +8890,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       // The value the breakpoint restores once the window widens back past
       // the threshold (NDSplitViewController.explicitCollapsed).
       out += "            controller.explicitCollapsed = c\n";
-      // By behavior, not by index: with no sidebar mounted, item 0 is the
-      // content pane, and collapsing that empties the window.
-      out += "            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {\n";
-      out += "                sidebarItem.isCollapsed = c\n";
-      out += "            }\n";
+      // The sidebar slides (SplitMotion.swift); with none mounted there is
+      // nothing to collapse.
+      out += "            controller.setSidebarCollapsed(c)\n";
       out += "        }\n";
     } else if (w.name === "Paned" && p.name === "position") {
       out += '        if let f = propDouble(props, "position"), let split = view as? NSSplitView,\n';

@@ -2164,9 +2164,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
            let controller = ndSplitViewController(for: split) {
             splitViewCollapsed[ObjectIdentifier(split)] = c
             controller.explicitCollapsed = c
-            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
-                sidebarItem.isCollapsed = c
-            }
+            controller.setSidebarCollapsed(c)
         }
         if let r = propBool(props, "edgeReveal"), let split = view as? NSSplitView,
            let controller = ndSplitViewController(for: split) { controller.edgeReveal = r }

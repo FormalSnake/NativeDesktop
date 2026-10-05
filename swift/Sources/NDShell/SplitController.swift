@@ -86,6 +86,9 @@ final class NDSplitViewController: NSSplitViewController {
 
     lazy var reveal = NDSplitReveal(controller: self)
 
+    /// The sidebar slide in flight: see SplitMotion.swift.
+    var motion: NDSplitMotion?
+
     /// `contentStyle="card"`: see ContentCard.swift.
     var contentCard = false {
         didSet { if contentCard != oldValue { ndApplyContentCard(self) } }
