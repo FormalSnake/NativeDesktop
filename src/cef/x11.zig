@@ -40,7 +40,7 @@ const SetWindowAttributes = extern struct {
     cursor: c_ulong = 0,
 };
 
-const CW_BACK_PIXEL: c_ulong = 1 << 1;
+const CW_BACK_PIXMAP: c_ulong = 1 << 0;
 const CW_BORDER_PIXEL: c_ulong = 1 << 3;
 const CW_COLORMAP: c_ulong = 1 << 13;
 const INPUT_OUTPUT: c_uint = 1;
@@ -301,8 +301,12 @@ pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Win
     // the border pixel that a differing depth requires) is what makes the
     // embedded window appear at all.
     const screen = c.api.default_screen(c.x);
+    // Background None: the server leaves an exposed area as it was instead of
+    // clearing it. A tab switched to is a container moved back on screen, and
+    // with a black background that read as a black frame until the page had
+    // drawn into it; with none, the page it replaces stays until it has.
     var attrs: SetWindowAttributes = .{
-        .background_pixel = 0,
+        .background_pixmap = 0,
         .border_pixel = 0,
         .colormap = c.api.default_colormap(c.x, screen),
     };
@@ -318,7 +322,7 @@ pub fn createChild(parent: Window, x: c_int, y: c_int, w: c_uint, h: c_uint) Win
         c.api.default_depth(c.x, screen),
         INPUT_OUTPUT,
         c.api.default_visual(c.x, screen),
-        CW_BACK_PIXEL | CW_BORDER_PIXEL | CW_COLORMAP,
+        CW_BACK_PIXMAP | CW_BORDER_PIXEL | CW_COLORMAP,
         &attrs,
     );
     if (child != 0) _ = c.api.sync(c.x, 0);

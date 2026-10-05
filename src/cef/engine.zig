@@ -1957,6 +1957,8 @@ const View = struct {
     placed: bool = false,
     page_minimized: bool = false,
     park_timer: c_uint = 0,
+    /// The deferred `parkContainer` of an unmapped view. See `onUnmap`.
+    park_source: c_uint = 0,
     pending_url: ?[:0]u8 = null,
 
     // The CDP substrate. GTK thread only: results and events are marshaled
@@ -2204,6 +2206,10 @@ fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     syncBounds(view);
     maybeCreateBrowser(view);
     x11.show(view.container);
+    // Above the page it replaces, which stays where it is until the commit
+    // is through (`onUnmap`): stacked under it, the tab switched to stayed
+    // covered until then.
+    x11.raise(view.container);
     releasePopoverGrab(view);
 }
 
@@ -2538,12 +2544,25 @@ fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) ca
 /// to its parent, so a window parked this far outside the parent's bounds is
 /// mapped, running, and completely invisible.
 const park_origin: c_int = -8192;
-const park_w: c_uint = 1024;
-const park_h: c_uint = 768;
+
+/// A parked page keeps the size it had on screen, and a page never shown takes
+/// the size of the last one that was, so showing it is a move and not a resize:
+/// a resize costs the page a relayout and a full raster before its first frame,
+/// which on a tab switch was most of the time to pixels. 1024x768 until any
+/// page has been on screen.
+var shown_w: c_uint = 1024;
+var shown_h: c_uint = 768;
+
+const ParkSize = struct { w: c_uint, h: c_uint };
+
+fn parkSize(view: *View) ParkSize {
+    if (view.placed and view.bounds.w >= focusable_min_px and view.bounds.h >= focusable_min_px) return .{ .w = view.bounds.w, .h = view.bounds.h };
+    return .{ .w = shown_w, .h = shown_h };
+}
 
 /// Puts the view's window where a hidden view's window belongs, and keeps it
-/// mapped. Sized like a real viewport rather than 1x1 so the page lays out the
-/// way it will when the view is shown.
+/// mapped. Sized like the page on screen rather than 1x1 so the page lays out
+/// the way it will when the view is shown (see `parkSize`).
 fn parkContainer(view: *View) void {
     if (view.container == 0) return;
     // A page parked while it holds X input focus (a tab switched away from, a
@@ -2552,9 +2571,10 @@ fn parkContainer(view: *View) void {
     // included, went to the parked page.
     const cef_window = view.cef_window.load(.acquire);
     if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) x11.focusToplevel(view.widget);
-    x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
+    const size = parkSize(view);
+    x11.moveResize(view.container, park_origin, park_origin, size.w, size.h);
     x11.show(view.container);
-    layoutContents(view, park_w, park_h);
+    layoutContents(view, size.w, size.h);
     parkPage(view);
 }
 
@@ -2678,7 +2698,20 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     // Parked, not hidden: a background tab whose window is unmapped stops
     // running, and a tab the user comes back to has to still be the page they
     // left. `onMap` puts it back where it belongs.
-    parkContainer(view);
+    //
+    // Once the commit that hid it is through: a tab switch hides the old page
+    // before it shows the new one, and parking at once uncovered the window
+    // behind it, black, for the 3 ms until the new page was on screen and the
+    // frame after that until it had drawn. Left in place, the old page's
+    // pixels stay until the new page's replace them, as in Chrome.
+    if (view.park_source == 0) view.park_source = glib.timeoutAdd(0, &onParkSource, view);
+}
+
+fn onParkSource(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    view.park_source = 0;
+    if (gtk.Widget.getMapped(view.widget) == 0) parkContainer(view);
+    return 0;
 }
 
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -2687,6 +2720,10 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     if (focused_view == view) focused_view = null;
     forgetParked(view);
     motionFinish(view, false);
+    if (view.park_source != 0) {
+        _ = glib.Source.remove(view.park_source);
+        view.park_source = 0;
+    }
     closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
@@ -2732,10 +2769,11 @@ fn createBrowser(view: *View) void {
     }
     syncBounds(view);
     const hidden = gtk.Widget.getMapped(view.widget) == 0;
+    const park = parkSize(view);
     const start_x: c_int = if (hidden) park_origin else view.bounds.x;
     const start_y: c_int = if (hidden) park_origin else view.bounds.y;
-    const start_w: c_uint = if (hidden) park_w else view.bounds.w;
-    const start_h: c_uint = if (hidden) park_h else view.bounds.h;
+    const start_w: c_uint = if (hidden) park.w else view.bounds.w;
+    const start_h: c_uint = if (hidden) park.h else view.bounds.h;
     const container = x11.createChild(parent, start_x, start_y, start_w, start_h);
     if (container == 0) {
         std.debug.print("ND_WARN WebView engine=chromium: could not create the embedding window; browser not created\n", .{});
@@ -2748,7 +2786,7 @@ fn createBrowser(view: *View) void {
     if (mapped) {
         x11.show(container);
     } else {
-        x11.moveResize(container, park_origin, park_origin, park_w, park_h);
+        x11.moveResize(container, park_origin, park_origin, park.w, park.h);
         x11.show(container);
     }
     tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d} mapped={}", .{
@@ -3033,6 +3071,16 @@ fn syncBounds(view: *View) void {
     // left the webview stuck at the wrong size after a live resize. The
     // layout signal only fires on frames GTK actually laid the toplevel out,
     // so re-asserting costs one request per real layout, not one per tick.
+    //
+    // A view shown again (a tab switched to) is mapped before GTK has
+    // allocated it, and until its next layout it reads as 1x1 at the slot's
+    // corner. Moving the page there resized it to nothing and back, a relayout
+    // and a full raster before the tab's first frame; it goes back where it
+    // was last on show instead, and the layout pass that follows corrects it
+    // if the slot has moved since.
+    const unallocated = next.w <= 1 or next.h <= 1;
+    const reuse = unallocated and view.placed and view.bounds.w > 1 and view.bounds.h > 1;
+    if (reuse) next = view.bounds;
     view.bounds = next;
     view.size_w.store(next.w, .release);
     view.size_h.store(next.h, .release);
@@ -3051,6 +3099,10 @@ fn syncBounds(view: *View) void {
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
     view.placed = true;
+    if (next.w >= focusable_min_px and next.h >= focusable_min_px) {
+        shown_w = next.w;
+        shown_h = next.h;
+    }
     forgetParked(view);
     if (view.page_minimized) {
         const page = view.cef_window.load(.acquire);
@@ -3066,7 +3118,7 @@ fn syncBounds(view: *View) void {
         layoutContents(view, next.w, next.h);
         return;
     }
-    syncShape(view, native_widget, rect, scale, bar_rect);
+    if (!reuse) syncShape(view, native_widget, rect, scale, bar_rect);
     layoutContents(view, next.w, next.h);
     setUnderBar(view, bar != null);
 }
