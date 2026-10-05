@@ -133,7 +133,9 @@ launch_host() {
     export ND_CEF_STYLE=chrome
     export ND_SCRIPT="$APP_SCRIPT"
     export ND_DEMO_URL="$FIXTURE"
-    export ND_WEBVIEW_TRACE=1
+    # ND_ACCEPT_WEBVIEW_TRACE=0 keeps the engine's narration off, for a drive
+    # that times what the host does.
+    if [ "${ND_ACCEPT_WEBVIEW_TRACE:-1}" = 1 ]; then export ND_WEBVIEW_TRACE=1; else unset ND_WEBVIEW_TRACE; fi
     # The page's file chooser leg: one pick, then one cancel. A drive that
     # opens other file dialogs (the no-escape drive's Save as) brings its own
     # script through ND_ACCEPT_DIALOG_SCRIPT: Save as answered with any path

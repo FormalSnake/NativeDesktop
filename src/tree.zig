@@ -409,11 +409,31 @@ pub const Tree = struct {
         backend.releaseNode(widget);
     }
 
+    /// The prop names an op sets, comma-joined into `buf`, for the slow-op trace.
+    fn propKeys(props: ?std.json.Value, buf: []u8) []const u8 {
+        const p = props orelse return "";
+        if (p != .object) return "";
+        var n: usize = 0;
+        for (p.object.keys()) |k| {
+            if (n + k.len + 1 > buf.len) break;
+            if (n > 0) {
+                buf[n] = ',';
+                n += 1;
+            }
+            @memcpy(buf[n..][0..k.len], k);
+            n += k.len;
+        }
+        return buf[0..n];
+    }
+
     /// UI-thread only. Applies an entire commit batch as one unit.
     pub fn apply(self: *Tree, batch: protocol.CommitBatch) void {
         const previous_gen = self.generation;
         self.generation = batch.generation;
         for (batch.ops) |op| {
+            const op_t0: i64 = if (marker.latOn()) marker.nowMicros() else 0;
+            var keys_buf: [160]u8 = undefined;
+            defer if (op_t0 != 0) marker.latSlow("host.slowOp", op_t0, 1000, "op={s} id={?d} widget={?s} props={s}", .{ op.op, op.id, op.widget, propKeys(op.props, &keys_buf) });
             if (std.mem.eql(u8, op.op, "create")) {
                 const app = self.app orelse continue;
                 // A child dying mid-commit can flush a truncated op, and the

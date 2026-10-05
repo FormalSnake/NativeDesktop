@@ -25,6 +25,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
+const marker = @import("../marker.zig");
 const capi = @import("capi.zig");
 const c = capi.c;
 const ref = @import("ref.zig");
@@ -2196,6 +2197,8 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
+    marker.lat("cef.map", "node={d} minimized={}", .{ view.node_id, view.page_minimized });
+    defer marker.lat("cef.mapped", "node={d} x={d} y={d} w={d} h={d}", .{ view.node_id, view.bounds.x, view.bounds.y, view.bounds.w, view.bounds.h });
     connectLayout(view);
     connectActive(view);
     syncBounds(view);
@@ -2523,6 +2526,7 @@ fn disconnectLayout(view: *View) void {
 
 fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
+    marker.lat("cef.layout", "node={d}", .{view.node_id});
     syncBounds(view);
     maybeCreateBrowser(view);
     releasePopoverGrab(view);
@@ -2667,6 +2671,7 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     view.in_popover.store(false, .release);
+    marker.lat("cef.unmap", "node={d}", .{view.node_id});
     disconnectLayout(view);
     disconnectActive(view);
     motionFinish(view, false);
@@ -4070,6 +4075,7 @@ fn onPreKeyEvent(
         return 0;
     };
     tr("appAccel {s} -> {s}", .{ accel, owned });
+    marker.lat("cef.accel", "{s}", .{accel});
     const task = AccelObj.create(.{ .action = owned }) orelse {
         alloc.free(owned);
         return 0;
@@ -4102,6 +4108,7 @@ fn runAccelIdle(data: ?*anyopaque) callconv(.c) c_int {
     const name = if (std.mem.startsWith(u8, detailed, "app.")) detailed[4..] else detailed;
     const owned = alloc.dupeZ(u8, name) catch return 0;
     defer alloc.free(owned);
+    marker.lat("cef.accelRun", "{s}", .{name});
     gio.ActionGroup.activateAction(app.as(gio.ActionGroup), owned, null);
     return 0;
 }

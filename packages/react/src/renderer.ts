@@ -18,6 +18,7 @@ import {
   hotUpdateRoot,
 } from "./hmr.ts";
 import { installErrorHandlers, reportRenderError } from "./errors.ts";
+import { lat } from "./lat.ts";
 
 type ReconcilerInstance = {
   createContainer: (...a: unknown[]) => unknown;
@@ -80,9 +81,16 @@ export async function render(element: ReactNode): Promise<void> {
     let lastEventAt = 0;
     const configWithFlush = {
       ...hostConfig,
+      prepareForCommit() {
+        lat("js.commitStart");
+        return null;
+      },
       resetAfterCommit() {
         const ops = batch.drain();
-        if (ops.length) ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+        if (ops.length) {
+          lat("js.commitSend", `commit=${commitId} ops=${ops.length}`);
+          ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+        }
         if (trace && ops.length) {
           const t = at();
           console.error(`ND_PERF commit ops=${ops.length} after=${lastEvent || "-"} since_us=${lastEventAt ? t - lastEventAt : -1} at=${t}`);
@@ -94,12 +102,15 @@ export async function render(element: ReactNode): Promise<void> {
 
     ndp.onEvent((e: EventMsg) => {
       setPriorityFor(PASSIVE_EVENTS.has(e.name) ? "default" : ((e.priority as "discrete" | "continuous" | "default") ?? "discrete"));
+      lat("js.event", `seq=${e.seq} node=${e.nodeId} name=${e.name}`);
       if (!trace) {
         registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+        lat("js.handled", `seq=${e.seq}`);
         return;
       }
       const t = at();
       registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+      lat("js.handled", `seq=${e.seq}`);
       if (!lastEventAt) {
         lastEvent = e.name;
         lastEventAt = t;
@@ -169,6 +180,7 @@ export async function render(element: ReactNode): Promise<void> {
 function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string, arg: unknown): void {
   const state = getHmrState();
   if (!state) throw new Error(`${caller}() before render(): no NDP connection yet`);
+  lat("js.widgetCommand", `node=${node.id} command=${command}`);
   state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
 }
 
