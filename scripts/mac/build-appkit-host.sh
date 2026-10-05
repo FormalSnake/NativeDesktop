@@ -7,7 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 
-zig build libnd -Dbackend=abi
+# Without -Doptimize the core the shell links is a Debug build.
+zig build libnd -Dbackend=abi -Doptimize=ReleaseSafe
 
 # Zig's archiver emits members Apple's ld rejects ("not 8-byte aligned") and
 # extracts them 0-permission; repack with the system ar/libtool before linking.

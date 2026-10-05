@@ -83,7 +83,8 @@ jobs:
         # A link failure mentioning glibc symbols here means the committed
         # vendor/libghostty-vt linux archive was built against a newer glibc
         # than this container, not a GTK problem.
-        run: zig build
+        # Without -Doptimize the published host is a Debug build.
+        run: zig build -Doptimize=ReleaseSafe
       - name: Strip + record sonames
         run: |
           strip zig-out/bin/nd-hello
