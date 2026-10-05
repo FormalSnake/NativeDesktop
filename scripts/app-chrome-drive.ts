@@ -749,6 +749,144 @@ function noStray(name: string): void {
   if (added.length > 0) check(`${name}.census`, false, `stray top-level ${added.join(" | ")}`);
 }
 
+/// The popups hovering produces: Chromium's link status bubble and GTK's
+/// tooltip, both override-redirect windows on the root.
+function hoverPopups(): string[] {
+  return overrideRedirect(20, 10).map((p) => `${p.id} ${p.w}x${p.h}+${p.x}+${p.y}`);
+}
+
+/// A terminal next to the app, the owner's (ghostty) when it is installed:
+/// it takes the keyboard while the pointer stays where it was, which is how
+/// focus moves on a keyboard-driven Hyprland. Its own environment, because the
+/// dev shell's library path breaks a system binary.
+const terminalBin = process.env.ND_ACCEPT_TERMINAL ?? "/etc/profiles/per-user/kyandesutter/bin/ghostty";
+
+async function withTerminal(body: (addr: string) => Promise<void>): Promise<boolean> {
+  const cfg = `${shots}/terminal-config`;
+  sh("mkdir", "-p", cfg);
+  const term = Bun.spawn([terminalBin, "--gtk-single-instance=false"], {
+    env: {
+      HOME: process.env.HOME ?? "",
+      PATH: "/run/current-system/sw/bin",
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? "",
+      WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? "",
+      XDG_CONFIG_HOME: cfg,
+    },
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  try {
+    let addr = "";
+    for (let i = 0; i < 80 && !addr; i++) {
+      await Bun.sleep(250);
+      const cs = JSON.parse(hyprctl("-j", "clients")) as Array<Record<string, unknown>>;
+      addr = String(cs.find((c) => c.class !== "nd-hello")?.address ?? "");
+    }
+    if (!addr) return false;
+    // Floating, so the app does not reflow: a window moved under the X
+    // pointer gets a real leave from the X server, which a pointer that the
+    // compositor never moved does not produce on a desktop.
+    hyprDispatch("setfloating", `address:${addr}`);
+    hyprDispatch("resizewindowpixel", `exact 600 400,address:${addr}`);
+    hyprDispatch("movewindowpixel", `exact 1400 820,address:${addr}`);
+    hyprDispatch("focuswindow", `address:${addr}`);
+    await Bun.sleep(1500);
+    await body(addr);
+    return true;
+  } finally {
+    term.kill();
+    await term.exited;
+    await Bun.sleep(1000);
+  }
+}
+
+/// Hover popups never outlive the window's focus or its workspace. A popup on
+/// the root is stacked by nobody with the app, so one left up floats over
+/// whatever takes the app's place. A rig can run this set alone
+/// (ND_ACCEPT_LEGS=hover).
+async function hoverPopupLegs(): Promise<void> {
+  if (rig !== "hypr") {
+    skip("hoverPopups", "needs a compositor to move focus without the pointer");
+    return;
+  }
+  // The rig's config error banner would otherwise sit over the tab strip in
+  // every capture below.
+  hyprctl("seterror", "disable");
+  await resyncPage();
+  const view = shownView()!;
+  const hoverLink = async (): Promise<string[]> => {
+    const link = await pageToScreen("link");
+    pointerTo(view.container.x + view.container.w + 40, view.container.y + 20);
+    await Bun.sleep(500);
+    pointerTo(link.x, link.y);
+    await Bun.sleep(1500);
+    return hoverPopups();
+  };
+  const hoverTab = async (): Promise<string[]> => {
+    const tab = await widgetToScreen("tab-item-t1");
+    if (!tab) return [];
+    pointerTo(view.container.x + view.container.w + 40, view.container.y + 20);
+    await Bun.sleep(500);
+    pointerTo(tab.x, tab.y);
+    await Bun.sleep(2500);
+    return hoverPopups();
+  };
+
+  for (const [what, hover] of [["link", hoverLink], ["tab", hoverTab]] as const) {
+    const shown = await hover();
+    if (shown.length === 0) {
+      check(`hoverPopup.${what}.focusAway`, false, "hovering showed no popup to begin with");
+      continue;
+    }
+    let left: string[] = [];
+    const ran = await withTerminal(async () => {
+      left = hoverPopups();
+      capture(`${shots}/hover-${what}-focus-away.png`);
+    });
+    if (!ran) {
+      skip(`hoverPopup.${what}.focusAway`, `no terminal at ${terminalBin}`);
+      continue;
+    }
+    check(`hoverPopup.${what}.focusAway`, left.length === 0, `shown ${shown.join(" | ")}, left with the terminal focused: ${left.join(" | ") || "none"}`);
+
+    // Another workspace with nothing on it takes no focus from the app, and
+    // the popup stays mapped; what has to hold is that the compositor shows it
+    // with its workspace and not on the one now on screen. Read off pixels: the
+    // same spot with the popup up and with it closed must not differ.
+    if (overrideRedirect(20, 10).length === 0) await hover();
+    const popup = overrideRedirect(20, 10)[0];
+    const here = String(JSON.parse(hyprctl("-j", "activeworkspace")).name);
+    hyprDispatch("workspace", here === "1" ? "2" : "1");
+    await Bun.sleep(1500);
+    const up = `${shots}/hover-${what}-workspace-away.png`;
+    capture(up);
+    pointerTo(view.container.x + view.container.w + 40, view.container.y + 20);
+    await Bun.sleep(1500);
+    const closed = `${shots}/hover-${what}-workspace-away-closed.png`;
+    capture(closed);
+    hyprDispatch("workspace", here);
+    await Bun.sleep(1500);
+    if (!popup) {
+      check(`hoverPopup.${what}.workspaceAway`, false, "hovering showed no popup to begin with");
+      continue;
+    }
+    const rootW = Number(sh("xwininfo", "-root").match(/Width:\s+(\d+)/)?.[1] ?? 0);
+    const capW = Number(sh("magick", "identify", "-format", "%w", up));
+    const k = rootW > 0 && capW > 0 ? capW / rootW : 1;
+    const box = {
+      x: Math.max(0, Math.round(popup.x * k)),
+      y: Math.max(0, Math.round(popup.y * k)),
+      w: Math.round(popup.w * k),
+      h: Math.round(popup.h * k),
+    };
+    const diff = regionDiff(up, closed, box);
+    check(`hoverPopup.${what}.workspaceAway`, diff < 0.005, `${popup.id} ${popup.w}x${popup.h}+${popup.x}+${popup.y}, its spot changed ${diff.toFixed(4)} when it closed on the other workspace`);
+  }
+  pointerTo(view.container.x + view.container.w + 40, view.container.y + 20);
+  await Bun.sleep(800);
+  noStray("hoverPopups");
+}
+
 /// Everything the native context menu has to do, as one set: a rig can run
 /// this alone (ND_ACCEPT_LEGS=menu).
 async function menuLegs(): Promise<void> {
@@ -1357,8 +1495,14 @@ if (legs === "minwidth") {
   finish();
 }
 
+if (legs === "hover") {
+  await hoverPopupLegs();
+  finish();
+}
+
 if (legs === "menu") {
   await menuLegs();
+  await hoverPopupLegs();
   await compositorWindowLegs();
   await paletteLegs();
   finish();
@@ -1961,6 +2105,7 @@ if (hasApp) {
 }
 
 await compositorWindowLegs();
+await hoverPopupLegs();
 
 await fileDialogLegs();
 await accelLegs();

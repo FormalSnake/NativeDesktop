@@ -1424,6 +1424,56 @@ const legs: Leg[] = [
     },
   },
   {
+    // Hover popups never float over another app. Chromium's link status bubble
+    // is a window of its own; with another app frontmost it is either gone or
+    // ordered directly on the app window it belongs to, so whatever covers
+    // that window covers the bubble too.
+    name: "hoverPopupDeactivate",
+    run: async () => {
+      const page = await activePage();
+      await clearForRealPointer(page);
+      const link = JSON.parse(
+        (await pageEval(app, page, "JSON.stringify(document.getElementById('blank').getBoundingClientRect())")) ?? "{}",
+      );
+      const spot = await globalPoint(page, link.x + link.width / 2, link.y + link.height / 2);
+      // Whatever else of the engine's is on screen was there before the hover.
+      const before = await surfaces(app);
+      realPointer(spot.x, spot.y, "move");
+      const bubbles = await until(
+        "the link status bubble appears",
+        async () => (await surfaces(app)).filter((w) => w.height < 60 && !before.some((b) => b.number === w.number)),
+        (found) => found.length > 0,
+        15000,
+      );
+      const bubble = bubbles[0]!;
+      const centre = { x: bubble.x + bubble.width / 2, y: bubble.y + bubble.height / 2 };
+      // What cmd+tab does: another app frontmost, the pointer left where it was.
+      Bun.spawnSync(["osascript", "-e", 'tell application "Finder" to activate']);
+      try {
+        await Bun.sleep(1500);
+        const stack = Bun.spawnSync(
+          ["swift", "scripts/mac/window-stack.swift", String(Math.round(centre.x)), String(Math.round(centre.y))],
+          { env: { ...process.env, SDKROOT: undefined, DEVELOPER_DIR: undefined } },
+        ).stdout.toString().split("\n").filter((line) => line.trim().startsWith("{"))
+          .map((line) => JSON.parse(line) as { owner: string; pid: number; layer: number; width: number; height: number });
+        const described = stack.map((w) => `${w.owner}(${w.layer}) ${w.width}x${w.height}`).join(" > ");
+        const at = stack.findIndex((w) => w.pid === HOST_PID && w.width === bubble.width && w.height === bubble.height);
+        // Hidden with the app in the background is as good as ordered on it.
+        if (at < 0) return;
+        const under = stack[at + 1];
+        assert(
+          under !== undefined && under.pid === HOST_PID && under.width * under.height > bubble.width * bubble.height * 20,
+          `the status bubble ${bubble.width}x${bubble.height}@${bubble.x},${bubble.y} is not ordered on its app window: ${described}`,
+        );
+      } finally {
+        activateApp();
+        await Bun.sleep(500);
+        const corner = await globalPoint(page, 8, 8);
+        realPointer(corner.x, corner.y, "move");
+      }
+    },
+  },
+  {
     name: "contextMenuOnAPage",
     run: async () => {
       // Chromium's own page menu, drawn by the host. What has to be there is

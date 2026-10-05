@@ -529,11 +529,16 @@ pub fn toplevelOf(window: Window) Window {
 /// process is this process, so `_NET_WM_PID` does not tell its windows from the
 /// app's; this does, because GDK only knows the ones it created itself.
 pub fn isGdkSurface(window: Window) bool {
-    const c = conn() orelse return false;
+    return gdkSurface(window) != null;
+}
+
+/// The GDK surface behind `window`, when GDK made it.
+pub fn gdkSurface(window: Window) ?*gdk.Surface {
+    const c = conn() orelse return null;
     c.push();
     const surface = c.api.surface_lookup(c.gdk, window);
     c.pop();
-    return surface != null;
+    return surface;
 }
 
 /// True for a window the window manager is told to leave alone: Chromium's

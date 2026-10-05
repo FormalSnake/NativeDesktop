@@ -1919,6 +1919,9 @@ const View = struct {
     active_handler: c_ulong = 0,
     focus_widget_handler: c_ulong = 0,
     active_window: ?*gtk.Window = null,
+    /// The toplevel's `is-active` as the handler last saw it, so a window that
+    /// loses activation is told apart from a focus-widget change.
+    window_was_active: bool = false,
     /// Whether the page currently holds the keyboard, as last told to the
     /// browser. Transitions are what the app hears as `focusChanged`.
     page_focused: bool = false,
@@ -2231,6 +2234,7 @@ fn connectActive(view: *View) void {
         null,
         .{},
     );
+    view.window_was_active = gtk.Window.isActive(window) != 0;
     syncBrowserFocus(view);
 }
 
@@ -2245,7 +2249,50 @@ fn disconnectActive(view: *View) void {
 }
 
 fn onToplevelFocusChanged(_: *gobject.Object, _: *gobject.ParamSpec, data: ?*anyopaque) callconv(.c) void {
-    syncBrowserFocus(@ptrCast(@alignCast(data.?)));
+    const view: *View = @ptrCast(@alignCast(data.?));
+    syncBrowserFocus(view);
+    const window = view.active_window orelse return;
+    const active = gtk.Window.isActive(window) != 0;
+    if (view.window_was_active and !active) dropHover(view);
+    view.window_was_active = active;
+}
+
+/// The window just lost activation: everything hovering over it goes.
+///
+/// Chromium's link status bubble, a page's title tooltip and GTK's own
+/// tooltips are override-redirect windows on the root, which no window manager
+/// stacks with the app. They close when the pointer leaves, but focus that
+/// moves by keyboard moves no pointer: on a Hyprland scrolling layout the
+/// app's column slides away under a pointer that never left it, and a popup
+/// stayed on screen over whatever slid in. So the page is told the pointer
+/// left, which is the path that closes Chromium's own popups the way it
+/// always does, and a GTK tooltip is hidden directly.
+fn dropHover(view: *View) void {
+    if (hostOf(view)) |host| {
+        if (host.send_mouse_move_event) |send| {
+            const event = std.mem.zeroInit(c.cef_mouse_event_t, .{ .x = -1, .y = -1 });
+            send(host, &event, 1);
+        }
+    }
+    hideTooltips();
+}
+
+/// GTK hides a tooltip on the pointer leaving its widget and on nothing to do
+/// with activation. GtkTooltip reads the tooltip window's visibility as its own
+/// state, so hiding the window is what its own timeout would have done, and
+/// the next hover shows it again.
+fn hideTooltips() void {
+    var buf: [1024]x11.Window = undefined;
+    var truncated = false;
+    for (x11.rootChildren(&buf, &truncated)) |w| {
+        if (w == 0 or !x11.isOverrideRedirect(w) or !x11.viewable(w)) continue;
+        const surface = x11.gdkSurface(w) orelse continue;
+        const native = gtk.Native.getForSurface(surface) orelse continue;
+        const widget: *gtk.Widget = @ptrCast(@alignCast(native));
+        const instance: *gobject.TypeInstance = @ptrCast(@alignCast(widget));
+        if (!std.mem.eql(u8, std.mem.span(gobject.typeNameFromInstance(instance)), "GtkTooltipWindow")) continue;
+        gtk.Widget.setVisible(widget, 0);
+    }
 }
 
 fn syncBrowserFocus(view: *View) void {
