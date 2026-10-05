@@ -3290,7 +3290,14 @@ fn ndHeaderBarSlotBoxOf(hb: *adw.HeaderBar, child: *gtk.Widget) ?*gtk.Box {
 fn ndApplyTooltip(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const tip = propStr(props, "tooltip") orelse return;
     if (!gobject.ext.isA(widget, gtk.Widget)) return;
+    // Setting a tooltip on a visible widget asks the display where the
+    // pointer is (gtk_tooltip_trigger_tooltip_query), an X round trip of
+    // ~5 ms under XWayland, paid for every button an app mounts. A widget
+    // that is in no window yet has no tooltip to show, so it is set hidden.
+    const detached = gtk.Widget.getRoot(widget) == null and gtk.Widget.getVisible(widget) != 0;
+    if (detached) gtk.Widget.setVisible(widget, 0);
     gtk.Widget.setTooltipText(widget, if (tip.len > 0) dupeZ(tip).ptr else null);
+    if (detached) gtk.Widget.setVisible(widget, 1);
     // GTK derives no accessible name from a tooltip, so an icon-only control
     // would be announced by nothing; the tooltip is the short name the HIG
     // asks every element to carry.
