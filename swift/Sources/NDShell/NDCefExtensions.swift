@@ -40,19 +40,19 @@ extension NDCefWebView {
         throw new Error("watchExtensions needs a view showing chrome://extensions");
       }
       if (globalThis.__ndExtensionsWatch) return JSON.stringify(globalThis.__ndExtensionsWatch);
-      const send = (reason) => {
-        try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason) })); } catch (e) {}
+      const send = (reason, id) => {
+        try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason), id: id ? String(id) : "" })); } catch (e) {}
       };
       const sources = [];
       const item = chrome.developerPrivate.onItemStateChanged;
       if (item && typeof item.addListener === "function") {
-        item.addListener((e) => send((e && e.event_type) || "itemStateChanged"));
+        item.addListener((e) => send((e && e.event_type) || "itemStateChanged", e && e.item_id));
         sources.push("developerPrivate.onItemStateChanged");
       }
       for (const name of ["onInstalled", "onUninstalled", "onEnabled", "onDisabled"]) {
         const ev = chrome.management && chrome.management[name];
         if (ev && typeof ev.addListener === "function") {
-          ev.addListener(() => send(name));
+          ev.addListener((info) => send(name, typeof info === "string" ? info : info && info.id));
           sources.push("management." + name);
         }
       }
@@ -362,8 +362,11 @@ extension NDCefWebView {
     }
 
     func emitExtensionsChanged(_ payload: String) {
-        let reason = ((try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any])?["reason"] as? String
-        emitData("extensionsChanged", ["reason": reason ?? "changed"])
+        let fields = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any]
+        emitData("extensionsChanged", [
+            "reason": fields?["reason"] as? String ?? "changed",
+            "extensionId": fields?["id"] as? String ?? "",
+        ])
     }
 
     // MARK: - Removal

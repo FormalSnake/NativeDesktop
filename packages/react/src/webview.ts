@@ -234,6 +234,8 @@ function extensionMutation(
 /// framework's.
 export interface ExtensionsChange {
   reason: string;
+  /** The extension the change is about, or "" when the event does not say. */
+  extensionId: string;
 }
 
 /// One list, not one per view: an event carries the payload and nothing that
@@ -263,7 +265,7 @@ export function watchExtensions(
 /// watchExtensions() call that carries the same `id`, and delivers every later
 /// change to the listeners registered with it.
 export function onExtensionsChanged(e: { data: unknown }): void {
-  const result = e.data as { id?: string; ok?: boolean; sources?: string[]; error?: string; reason?: string };
+  const result = e.data as { id?: string; ok?: boolean; sources?: string[]; error?: string; reason?: string; extensionId?: string };
   if (result.id !== undefined) {
     const call = pendingWatches.get(result.id);
     if (!call) return;
@@ -272,7 +274,7 @@ export function onExtensionsChanged(e: { data: unknown }): void {
     else call.reject(new Error(result.error ?? "watchExtensions failed"));
     return;
   }
-  for (const listener of extensionsWatchers) listener({ reason: result.reason ?? "" });
+  for (const listener of extensionsWatchers) listener({ reason: result.reason ?? "", extensionId: result.extensionId ?? "" });
 }
 
 export interface ExtensionAction {

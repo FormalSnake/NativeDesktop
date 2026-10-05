@@ -6126,7 +6126,7 @@ fn onBindingCalled(view: *View, root: std.json.Value) void {
         var parsed = std.json.parseFromSlice(std.json.Value, alloc, payload_text, .{}) catch return;
         defer parsed.deinit();
         const reason = stringField(parsed.value, "reason") orelse "";
-        emitExtensionsChanged(view, reason);
+        emitExtensionsChanged(view, reason, stringField(parsed.value, "id") orelse "");
         return;
     }
     const world = worldForBinding(view, binding) orelse return;
@@ -6453,19 +6453,19 @@ const watch_extensions_js =
     \\    throw new Error("watchExtensions needs a view showing chrome://extensions");
     \\  }
     \\  if (globalThis.__ndExtensionsWatch) return JSON.stringify(globalThis.__ndExtensionsWatch);
-    \\  const send = (reason) => {
-    \\    try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason) })); } catch (e) {}
+    \\  const send = (reason, id) => {
+    \\    try { globalThis.__ndExtensionsChanged(JSON.stringify({ reason: String(reason), id: id ? String(id) : "" })); } catch (e) {}
     \\  };
     \\  const sources = [];
     \\  const item = chrome.developerPrivate.onItemStateChanged;
     \\  if (item && typeof item.addListener === "function") {
-    \\    item.addListener((e) => send((e && e.event_type) || "itemStateChanged"));
+    \\    item.addListener((e) => send((e && e.event_type) || "itemStateChanged", e && e.item_id));
     \\    sources.push("developerPrivate.onItemStateChanged");
     \\  }
     \\  for (const name of ["onInstalled", "onUninstalled", "onEnabled", "onDisabled"]) {
     \\    const ev = chrome.management && chrome.management[name];
     \\    if (ev && typeof ev.addListener === "function") {
-    \\      ev.addListener(() => send(name));
+    \\      ev.addListener((info) => send(name, typeof info === "string" ? info : info && info.id));
     \\      sources.push("management." + name);
     \\    }
     \\  }
@@ -6498,11 +6498,12 @@ fn cmdWatchExtensions(view: *View, arg: ?std.json.Value) void {
 
 /// A registry change reported by the page's own subscription. No correlation
 /// id: the app's listener is the whole audience.
-fn emitExtensionsChanged(view: *View, reason: []const u8) void {
+fn emitExtensionsChanged(view: *View, reason: []const u8, extension_id: []const u8) void {
     const f = emit orelse return;
     var payload: std.json.ObjectMap = .empty;
     defer payload.deinit(alloc);
     payload.put(alloc, "reason", .{ .string = reason }) catch return;
+    payload.put(alloc, "extensionId", .{ .string = extension_id }) catch return;
     tr("extensionsChanged node={d} reason={s}", .{ view.node_id, reason });
     f(view.node_id, "extensionsChanged", .{ .data = .{ .object = payload } });
 }
