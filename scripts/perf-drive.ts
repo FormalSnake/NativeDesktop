@@ -230,6 +230,26 @@ async function measure(
     s.close();
   }
   console.log(`  page visibility: ${vis.join(" ")}`);
+  // Timers and frames in one background tab, over three seconds: a hidden page
+  // gets no rAF and its 10 ms interval is throttled to about 1 Hz.
+  // The walk ends back on the first tab, so the last one is in the background.
+  const last = (await targets(p)).find((t) => t.type === "page" && t.url === `${fixture}?tab${process.env.ND_ACCEPT_TABS ?? "10"}`);
+  const bg = last ? { url: last.url, s: await Session.open(last.webSocketDebuggerUrl!) } : null;
+  if (bg) {
+    const s = bg.s;
+    const r = await s.eval<string>(`(async () => {
+      let ticks = 0, frames = 0;
+      const id = setInterval(() => ticks++, 10);
+      const f = () => { frames++; requestAnimationFrame(f); };
+      requestAnimationFrame(f);
+      const t0 = performance.now();
+      await new Promise((r) => setTimeout(r, 3000));
+      clearInterval(id);
+      return document.visibilityState + " ticks=" + ticks + " frames=" + frames + " ms=" + Math.round(performance.now() - t0);
+    })()`).catch((e) => String(e));
+    console.log(`  background tab ${bg.url.replace(fixture, "")}: ${r}`);
+    s.close();
+  }
   for (const x of procs().filter((q) => q.kind === "renderer").slice(0, 1)) {
     const cmd = readFileSync(`/proc/${x.pid}/cmdline`, "utf8").split("\0");
     console.log(`  renderer features: ${cmd.filter((a) => /^--(enable|disable)-features=/.test(a)).join(" ")}`);
@@ -284,6 +304,13 @@ async function measure(
       s.close();
     }
   }
+  const hostLog = process.env.ND_ACCEPT_HOST_LOG;
+  if (name === "app" && hostLog) {
+    // Each registry or badge read is one evaluate on the host's trace.
+    const log = readFileSync(hostLog, "utf8");
+    const count = (needle: string) => log.split(needle).length - 1;
+    console.log(`  registry reads=${count("listExtensions needs")} badge reads=${count("readExtensionAction needs")} change events=${count("extensionsChanged node=")}`);
+  }
   b.close();
   if (popup && extensionId) {
     const times: number[] = [];
@@ -323,16 +350,24 @@ if (process.env.ND_PERF_SKIP_APP !== "1") {
     await app.getByTestId(`ext-action-${extensionId}`).click();
   }, async (url) => {
     if (!shownPage) {
-      const shown = (await targets(port)).find((t) => t.type === "page" && t.url === fixture);
-      shownPage = shown?.webSocketDebuggerUrl ? await Session.open(shown.webSocketDebuggerUrl) : null;
+      for (const t of (await targets(port)).filter((t) => t.type === "page" && t.url.startsWith(fixture))) {
+        const s = await Session.open(t.webSocketDebuggerUrl!).catch(() => null);
+        if (!s) continue;
+        if ((await s.eval<string>("document.visibilityState").catch(() => "")) === "visible") {
+          shownPage = s;
+          break;
+        }
+        s.close();
+      }
     }
     const r = await shownPage?.send("Page.navigate", { url }).catch((e) => String(e));
     console.log(`  navigate ${url}: ${JSON.stringify(r)}`);
     await Bun.sleep(1500);
   }, async () => {
     // Every restored tab is loaded once it has been shown, so walk them all
-    // and come back round to the first.
-    const n = Number(process.env.ND_ACCEPT_TABS ?? "10") + 1;
+    // and come back round to the first. Each extension that opens a welcome
+    // tab on install adds one (ND_PERF_EXTRA_TABS).
+    const n = Number(process.env.ND_ACCEPT_TABS ?? "10") + Number(process.env.ND_PERF_EXTRA_TABS ?? "0");
     for (let i = 0; i < n; i++) {
       await app.getByTestId("menu-next-tab").click().catch((e) => console.log(`  next tab: ${e}`));
       await Bun.sleep(1500);
