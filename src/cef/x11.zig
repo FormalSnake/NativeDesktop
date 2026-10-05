@@ -598,7 +598,8 @@ pub fn windowPid(window: Window) u32 {
 /// Marks a page's window minimized, or not, the way a window manager would:
 /// `_NET_WM_STATE_HIDDEN` in its `_NET_WM_STATE`. Chromium watches that
 /// property on its own window and treats a minimized window's contents as
-/// hidden. No window manager manages a child window, so nothing else writes it.
+/// hidden. No window manager manages a child window, so nothing else writes it
+/// but Chromium itself, whose own atoms (`_NET_WM_STATE_SKIP_TASKBAR`) stay.
 pub fn setMinimized(window: Window, minimized: bool) void {
     if (window == 0) return;
     const c = conn() orelse return;
@@ -607,11 +608,32 @@ pub fn setMinimized(window: Window, minimized: bool) void {
     if (state == 0 or hidden == 0) return;
     const XA_ATOM: c_ulong = 4;
     const PROP_MODE_REPLACE: c_int = 0;
-    var value: c_ulong = hidden;
+    var atoms: [16]c_ulong = undefined;
+    var n: usize = 0;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
     c.push();
-    _ = c.api.change_property(c.x, window, state, XA_ATOM, 32, PROP_MODE_REPLACE, @ptrCast(&value), if (minimized) 1 else 0);
-    _ = c.api.flush(c.x);
-    c.pop();
+    defer c.pop();
+    if (c.api.get_window_property(c.x, window, state, 0, atoms.len, 0, XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &data) == 0) {
+        defer _ = c.api.free(@ptrCast(data));
+        if (actual_format == 32) {
+            // Format 32 is a C long per item on the client side.
+            const items: [*]const c_ulong = @ptrCast(@alignCast(data));
+            for (items[0..@min(@as(usize, nitems), atoms.len - 1)]) |atom| {
+                if (atom == hidden) continue;
+                atoms[n] = atom;
+                n += 1;
+            }
+        }
+    }
+    if (minimized) {
+        atoms[n] = hidden;
+        n += 1;
+    }
+    _ = c.api.change_property(c.x, window, state, XA_ATOM, 32, PROP_MODE_REPLACE, @ptrCast(&atoms), @intCast(n));
 }
 
 /// Tells the window manager that `window` is a dialog belonging to `parent`.
