@@ -1927,9 +1927,11 @@ const View = struct {
     page_released: bool = false,
     bounds: Bounds = .{},
     /// Whether the view has been put on screen at its own bounds, and whether
-    /// its page is marked minimized while it is parked. See `parkPage`.
+    /// its page is marked minimized while it is parked, and the timer that
+    /// minimizes it. See `parkPage`.
     placed: bool = false,
     page_minimized: bool = false,
+    park_timer: c_uint = 0,
     pending_url: ?[:0]u8 = null,
 
     // The CDP substrate. GTK thread only: results and events are marshaled
@@ -2397,10 +2399,45 @@ fn parkContainer(view: *View) void {
 /// window being minimized, so the page's window is marked so. Only for a view
 /// that has been on screen: a page never shown (an extension's background page,
 /// a tab opened behind the current one) still has to load.
+///
+/// Not at once: a page coming back from minimized takes ~120 ms to draw its
+/// first frame, against one frame for a page that kept running, and that is
+/// the delay a tab switch shows. The last few pages parked stay running for a
+/// while, the way Chrome keeps recently used tabs ready, so switching between
+/// a handful of tabs is instant and everything else is throttled.
+const live_parked_max = 3;
+const live_parked_ms: c_uint = 120 * std.time.ms_per_s;
+var live_parked: std.ArrayList(*View) = .empty;
+
 fn parkPage(view: *View) void {
     if (!view.placed or view.page_minimized) return;
+    if (view.cef_window.load(.acquire) == 0) return;
+    if (std.mem.indexOfScalar(*View, live_parked.items, view) != null) return;
+    live_parked.append(alloc, view) catch return minimizePage(view);
+    view.park_timer = glib.timeoutAdd(live_parked_ms, &onParkTimer, view);
+    if (live_parked.items.len > live_parked_max) minimizePage(live_parked.items[0]);
+}
+
+fn onParkTimer(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    view.park_timer = 0;
+    minimizePage(view);
+    return 0;
+}
+
+/// Drops `view` from the pages kept running while parked.
+fn forgetParked(view: *View) void {
+    if (view.park_timer != 0) {
+        _ = glib.Source.remove(view.park_timer);
+        view.park_timer = 0;
+    }
+    if (std.mem.indexOfScalar(*View, live_parked.items, view)) |i| _ = live_parked.orderedRemove(i);
+}
+
+fn minimizePage(view: *View) void {
+    forgetParked(view);
     const page = view.cef_window.load(.acquire);
-    if (page == 0) return;
+    if (page == 0 or view.page_minimized) return;
     x11.setMinimized(@intCast(page), true);
     view.page_minimized = true;
 }
@@ -2478,6 +2515,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     _ = live_views.remove(@intFromPtr(view));
     if (focused_view == view) focused_view = null;
+    forgetParked(view);
     closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
@@ -2812,6 +2850,7 @@ fn syncBounds(view: *View) void {
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
     view.placed = true;
+    forgetParked(view);
     if (view.page_minimized) {
         const page = view.cef_window.load(.acquire);
         if (page != 0) x11.setMinimized(@intCast(page), false);
