@@ -1956,6 +1956,11 @@ const View = struct {
     /// after that, or parked before it, is answered with an error here rather
     /// than waiting on an agent that will never attach again.
     browser_gone: std.atomic.Value(bool) = .init(false),
+    /// Drawn in an autohide popover, for the CEF UI thread's Escape check.
+    in_popover: std.atomic.Value(bool) = .init(false),
+    /// When this engine last handed the browser the focus itself, so the CEF
+    /// UI thread can tell that `on_got_focus` from one a click caused.
+    focus_set_us: std.atomic.Value(i64) = .init(0),
     queued: std.ArrayList(Queued) = .empty,
     /// Per-script-id install counter. A script identifier comes back
     /// asynchronously, so an id that is re-added (or removed) while its own
@@ -2178,6 +2183,92 @@ fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     syncBounds(view);
     maybeCreateBrowser(view);
     x11.show(view.container);
+    releasePopoverGrab(view);
+}
+
+/// A page in an autohide GtkPopover (an extension's action popup) never saw a
+/// click or a key: the popover's seat grab sends every event for a window that
+/// is not GDK's to the popover's own surface. GDK grabs again each time it
+/// presents the popup, so this runs on every layout of the popover as well.
+fn releasePopoverGrab(view: *View) void {
+    const popover = autohidePopoverOf(view);
+    const was = view.in_popover.swap(popover != null, .acq_rel);
+    const pop = popover orelse return;
+    x11.releaseSeatGrab();
+    if (was) return;
+    watchOutsidePresses(pop);
+    // Chrome gives an extension popup the keyboard as it opens. `settle`
+    // hands it to the browser once one exists.
+    _ = gtk.Widget.grabFocus(view.widget);
+    syncBrowserFocus(view);
+}
+
+const OUTSIDE_PRESS_KEY = "nd-cef-outside-press";
+
+/// With the grab gone GDK no longer closes the popover on a press elsewhere
+/// in its window, so the window's own presses do, ahead of every widget.
+fn watchOutsidePresses(popover: *gtk.Popover) void {
+    const root = gtk.Widget.getRoot(popover.as(gtk.Widget)) orelse return;
+    const window = (gobject.ext.cast(gtk.Window, root) orelse return).as(gtk.Widget);
+    if (gobject.Object.getData(window.as(gobject.Object), OUTSIDE_PRESS_KEY) != null) return;
+    const click = gtk.GestureClick.new();
+    gtk.GestureSingle.setButton(click.as(gtk.GestureSingle), 0);
+    gtk.EventController.setPropagationPhase(click.as(gtk.EventController), .capture);
+    _ = gtk.GestureClick.signals.pressed.connect(click, ?*anyopaque, &onOutsidePress, null, .{});
+    gtk.Widget.addController(window, click.as(gtk.EventController));
+    gobject.Object.setData(window.as(gobject.Object), OUTSIDE_PRESS_KEY, click);
+}
+
+/// A press inside a popover is on the popover's own surface and reaches the
+/// window's controllers too, since the popover is the window's descendant;
+/// only presses on other surfaces close it.
+fn onOutsidePress(gesture: *gtk.GestureClick, _: c_int, _: f64, _: f64, _: ?*anyopaque) callconv(.c) void {
+    const controller = gesture.as(gtk.EventController);
+    const window = gtk.EventController.getWidget(controller) orelse return;
+    const event = gtk.EventController.getCurrentEvent(controller);
+    const surface = if (event) |e| gdk.Event.getSurface(e) else null;
+    var open: std.ArrayList(*gtk.Popover) = .empty;
+    defer open.deinit(alloc);
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const view: *View = @ptrFromInt(key.*);
+        if (gtk.Widget.getMapped(view.widget) == 0) continue;
+        const popover = autohidePopoverOf(view) orelse continue;
+        const root = gtk.Widget.getRoot(popover.as(gtk.Widget)) orelse continue;
+        const root_window = gobject.ext.cast(gtk.Window, root) orelse continue;
+        if (root_window.as(gtk.Widget) != window) continue;
+        const native = gtk.Widget.getNative(view.widget) orelse continue;
+        if (surface != null and gtk.Native.getSurface(native) == surface) continue;
+        tr("popdown node={d} for a press outside", .{view.node_id});
+        open.append(alloc, popover) catch {};
+    }
+    for (open.items) |popover| gtk.Popover.popdown(popover);
+}
+
+/// The autohide popover a view is drawn in, if any.
+fn autohidePopoverOf(view: *View) ?*gtk.Popover {
+    const native = gtk.Widget.getNative(view.widget) orelse return null;
+    const popover = gobject.ext.cast(gtk.Popover, native) orelse return null;
+    if (gtk.Popover.getAutohide(popover) == 0) return null;
+    return popover;
+}
+
+/// Closes every autohide popover with a page in it other than `except`'s: on
+/// Escape in that page, and when a click moves the keyboard to another page,
+/// which GDK never sees.
+fn popdownPagePopovers(except: ?*View) void {
+    // Collected first: closing a popover destroys the views in it.
+    var open: std.ArrayList(*gtk.Popover) = .empty;
+    defer open.deinit(alloc);
+    var it = live_views.keyIterator();
+    while (it.next()) |key| {
+        const other: *View = @ptrFromInt(key.*);
+        if (other == except or gtk.Widget.getMapped(other.widget) == 0) continue;
+        const popover = autohidePopoverOf(other) orelse continue;
+        tr("popdown node={d}", .{other.node_id});
+        open.append(alloc, popover) catch {};
+    }
+    for (open.items) |popover| gtk.Popover.popdown(popover);
 }
 
 /// GTK4 has no size-allocate signal and gives no widget a window of its own, so
@@ -2338,6 +2429,7 @@ fn syncBrowserFocus(view: *View) void {
     }
     const host = hostOf(view) orelse return;
     const wants = active and mine;
+    if (wants) view.focus_set_us.store(glib.getMonotonicTime(), .release);
     if (host.set_focus) |set| set(host, @intFromBool(wants));
     if (wants != view.page_focused) {
         view.page_focused = wants;
@@ -2415,6 +2507,7 @@ fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) ca
     const view: *View = @ptrCast(@alignCast(data.?));
     syncBounds(view);
     maybeCreateBrowser(view);
+    releasePopoverGrab(view);
 }
 
 /// Where a hidden view's window lives. It has to be MAPPED, because Chromium
@@ -2555,6 +2648,7 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
 
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
+    view.in_popover.store(false, .release);
     disconnectLayout(view);
     disconnectActive(view);
     // Parked, not hidden: a background tab whose window is unmapped stops
@@ -3743,7 +3837,7 @@ const AccelObj = ref.Counted(c.cef_task_t, AccelTask);
 /// menu accelerators, which is the rule the AppKit host already follows: a
 /// browser whose page has the keyboard still answers ctrl+t.
 fn onPreKeyEvent(
-    _: [*c]c.cef_keyboard_handler_t,
+    self: [*c]c.cef_keyboard_handler_t,
     browser: [*c]c.cef_browser_t,
     event: [*c]const c.cef_key_event_t,
     _: c.cef_event_handle_t,
@@ -3752,6 +3846,16 @@ fn onPreKeyEvent(
     defer ref.releaseParam(browser);
     if (event == null) return 0;
     if (event.*.type != c.KEYEVENT_RAWKEYDOWN) return 0;
+    // An extension popup closes on Escape in Chrome. The popover's own key
+    // binding never sees it: the page holds the keyboard.
+    const held = c.EVENTFLAG_SHIFT_DOWN | c.EVENTFLAG_CONTROL_DOWN | c.EVENTFLAG_ALT_DOWN | c.EVENTFLAG_COMMAND_DOWN;
+    if (event.*.windows_key_code == 0x1B and event.*.modifiers & held == 0) {
+        const view = KeyboardObj.of(self).payload;
+        if (view.in_popover.load(.acquire)) {
+            post(.{ .view = view, .name = "", .popdown = true });
+            return 1;
+        }
+    }
     const spelled = accelsOf(event);
     defer for (spelled) |a| if (a) |x| alloc.free(x);
     const accel = spelled[0] orelse return 0;
@@ -4957,6 +5061,8 @@ const Emission = struct {
     /// back; the GTK-side hop returns X input focus to the toplevel.
     take_focus: bool = false,
     grab_focus: bool = false,
+    /// Escape in a page that sits in an autohide popover.
+    popdown: bool = false,
     relayout: bool = false,
     browser_closed: bool = false,
     /// A parked scheme request being handed from the IO thread to the GTK one.
@@ -5020,6 +5126,12 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     // after its tab went away is still forgotten.
     if (box.permission_dismissed) |prompt_id| {
         dropPermissionRequest(box.view, prompt_id);
+        return 0;
+    }
+    // Not keyed by the view: the key went to a page in a popover, and every
+    // such popover closes, whichever view the event is filed under.
+    if (box.popdown) {
+        popdownPagePopovers(null);
         return 0;
     }
     // The tab this came from can have been closed while the event was in
@@ -5104,6 +5216,9 @@ fn deliver(data: ?*anyopaque) callconv(.c) c_int {
     }
 
     if (box.grab_focus) {
+        // A click into another page closes a page popover, as GDK's press
+        // check would have; focus this engine handed back itself does not.
+        if (box.flag and autohidePopoverOf(view) == null) popdownPagePopovers(view);
         // Re-asserted rather than left to the property notification: the
         // widget can already BE the focus widget (a tab coming back from
         // hidden brings its own focus with it), and then nothing would tell
@@ -10090,8 +10205,13 @@ fn onGotFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t) cal
     defer ref.releaseParam(browser);
     const view = FocusObj.of(self).payload;
     if (!focusEligible(view)) return;
-    post(.{ .view = view, .name = "", .grab_focus = true });
+    const asked = glib.getMonotonicTime() - view.focus_set_us.load(.acquire) < own_focus_window_us;
+    post(.{ .view = view, .name = "", .grab_focus = true, .flag = !asked });
 }
+
+/// How long after this engine's own `set_focus` an `on_got_focus` is taken to
+/// be its answer rather than a click.
+const own_focus_window_us: i64 = 500 * std.time.us_per_ms;
 
 fn onTakeFocus(self: [*c]c.cef_focus_handler_t, browser: [*c]c.cef_browser_t, next: c_int) callconv(.c) void {
     defer ref.releaseParam(browser);

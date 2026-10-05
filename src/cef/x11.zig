@@ -413,6 +413,40 @@ pub fn pointerButtonsDown() bool {
     return (mask & BUTTON_MASK) != 0;
 }
 
+const FnXiUngrabDevice = *const fn (*Display, c_int, c_ulong) callconv(.c) c_int;
+const FnGdkX11DeviceId = *const fn (*gdk.Device) callconv(.c) c_int;
+
+var xi_attempted = false;
+var xi_ungrab: ?FnXiUngrabDevice = null;
+var gdk_device_id: ?FnGdkX11DeviceId = null;
+
+/// Releases the XInput2 pointer and keyboard grabs GDK took for an autohide
+/// popup. GDK grabs both devices with owner_events, so X delivers an event to
+/// a window of GDK's own connection where it lands and everything else to the
+/// popup's surface; Chromium's windows belong to Chromium's connection, so a
+/// page inside a popover saw no click and no key at all. GDK keeps its own
+/// record of the grab, which is what still closes the popover on a press
+/// anywhere else in the app's windows.
+pub fn releaseSeatGrab() void {
+    const c = conn() orelse return;
+    if (!xi_attempted) {
+        xi_attempted = true;
+        var xi = std.DynLib.open("libXi.so.6") catch std.DynLib.open("libXi.so") catch {
+            std.debug.print("ND_WARN CEF: libXi not found; a page in a popover gets no input\n", .{});
+            return;
+        };
+        xi_ungrab = xi.lookup(FnXiUngrabDevice, "XIUngrabDevice");
+        gdk_device_id = gtklib.lookup(FnGdkX11DeviceId, "gdk_x11_device_get_id");
+    }
+    const ungrab = xi_ungrab orelse return;
+    const device_id = gdk_device_id orelse return;
+    const seat = gdk.Display.getDefaultSeat(c.gdk) orelse return;
+    c.push();
+    defer c.pop();
+    if (gdk.Seat.getPointer(seat)) |pointer| _ = ungrab(c.x, device_id(pointer), CURRENT_TIME);
+    if (gdk.Seat.getKeyboard(seat)) |keyboard| _ = ungrab(c.x, device_id(keyboard), CURRENT_TIME);
+}
+
 /// Moves an embedding container under a different toplevel, which is what a
 /// tab dragged into another window needs: GTK relocates the widget, and the X
 /// child holding the browser is GTK's to know nothing about. Remapped
