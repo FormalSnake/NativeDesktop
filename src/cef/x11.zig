@@ -590,6 +590,25 @@ pub fn windowPid(window: Window) u32 {
     return @truncate(value);
 }
 
+/// Marks a page's window minimized, or not, the way a window manager would:
+/// `_NET_WM_STATE_HIDDEN` in its `_NET_WM_STATE`. Chromium watches that
+/// property on its own window and treats a minimized window's contents as
+/// hidden. No window manager manages a child window, so nothing else writes it.
+pub fn setMinimized(window: Window, minimized: bool) void {
+    if (window == 0) return;
+    const c = conn() orelse return;
+    const state = c.api.intern_atom(c.x, "_NET_WM_STATE", 0);
+    const hidden = c.api.intern_atom(c.x, "_NET_WM_STATE_HIDDEN", 0);
+    if (state == 0 or hidden == 0) return;
+    const XA_ATOM: c_ulong = 4;
+    const PROP_MODE_REPLACE: c_int = 0;
+    var value: c_ulong = hidden;
+    c.push();
+    _ = c.api.change_property(c.x, window, state, XA_ATOM, 32, PROP_MODE_REPLACE, @ptrCast(&value), if (minimized) 1 else 0);
+    _ = c.api.flush(c.x);
+    c.pop();
+}
+
 /// Tells the window manager that `window` is a dialog belonging to `parent`.
 /// A compositor that manages XWayland top-levels itself places them by its own
 /// rules and discards a client's ConfigureRequest; the two hints below are what

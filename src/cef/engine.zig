@@ -1917,6 +1917,10 @@ const View = struct {
     /// (Tab past its last element), for `syncBrowserFocus` to read.
     page_released: bool = false,
     bounds: Bounds = .{},
+    /// Whether the view has been put on screen at its own bounds, and whether
+    /// its page is marked minimized while it is parked. See `parkPage`.
+    placed: bool = false,
+    page_minimized: bool = false,
     pending_url: ?[:0]u8 = null,
 
     // The CDP substrate. GTK thread only: results and events are marshaled
@@ -2371,6 +2375,23 @@ fn parkContainer(view: *View) void {
     x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
     x11.show(view.container);
     layoutContents(view, park_w, park_h);
+    parkPage(view);
+}
+
+/// The container stays mapped while parked, and Chromium takes a page whose
+/// window is mapped for one on screen: every background tab kept drawing
+/// frames and running timers at full rate with `visibilityState` "visible".
+/// CEF's `was_hidden` is for windowless browsers only, and Chromium does not
+/// follow its window being unmapped from outside, but it does follow the
+/// window being minimized, so the page's window is marked so. Only for a view
+/// that has been on screen: a page never shown (an extension's background page,
+/// a tab opened behind the current one) still has to load.
+fn parkPage(view: *View) void {
+    if (!view.placed or view.page_minimized) return;
+    const page = view.cef_window.load(.acquire);
+    if (page == 0) return;
+    x11.setMinimized(@intCast(page), true);
+    view.page_minimized = true;
 }
 
 /// A mapped view waits for its first real allocation: GTK4 maps before it has
@@ -2779,6 +2800,12 @@ fn syncBounds(view: *View) void {
         view.container_parent = parent;
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
+    view.placed = true;
+    if (view.page_minimized) {
+        const page = view.cef_window.load(.acquire);
+        if (page != 0) x11.setMinimized(@intCast(page), false);
+        view.page_minimized = false;
+    }
     syncShape(view, native_widget, rect, scale);
     layoutContents(view, next.w, next.h);
 }
