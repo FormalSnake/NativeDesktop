@@ -357,16 +357,6 @@ static void append_switch(cef_command_line_t *command_line, const char *name) {
   }
 }
 
-static void append_switch_value(cef_command_line_t *command_line, const char *name, const char *value) {
-  cef_string_t key = {0};
-  cef_string_t val = {0};
-  if (nd_cef_string_set(name, strlen(name), &key) && nd_cef_string_set(value, strlen(value), &val)) {
-    command_line->append_switch_with_value(command_line, &key, &val);
-  }
-  nd_cef_string_clear(&key);
-  nd_cef_string_clear(&val);
-}
-
 // Joins whatever value the launch already carries for `switch_name`: Chromium
 // reads one comma-separated switch, and a second append would replace the
 // earlier list rather than add to it.
@@ -450,8 +440,18 @@ static void CEF_CALLBACK app_command_line(cef_app_t *self,
       // feature it can disappear in a CEF update, and an unknown feature name
       // is ignored silently: scripts/mac/pip-feature-check.sh fails if the
       // framework binary no longer carries the name.
-      append_switch_value(command_line, "enable-features", "VideoPipForceTrustedForMediaPlaybackForTesting");
+      append_joined(command_line, "enable-features", "VideoPipForceTrustedForMediaPlaybackForTesting");
     }
+    // Domain Reliability uploads network error samples to Google; nothing in
+    // an embedded browser reads them.
+    append_switch(command_line, "disable-domain-reliability");
+    // Background services with no surface in an embedded browser: Cast device
+    // discovery, Google's page hints and autofill form signatures, and
+    // Translate, whose language detection otherwise runs on every page load.
+    // The omnibox popups as WebUI preload two pages for every browser, and
+    // every view here is a browser whose omnibox nobody sees; the Views popup
+    // is only built when an omnibox opens one.
+    append_joined(command_line, "disable-features", "MediaRouter,OptimizationHints,AutofillServerCommunication,Translate,WebUIOmniboxPopup,WebUIOmniboxFullPopup,WebUIOmniboxAimPopup");
     // Read by StartupBrowserCreator, which CEF skips at startup and a refused
     // relaunch (below) never reaches; this covers any other route into it.
     // Not --no-startup-window: on Linux it holds a keep-alive that stops

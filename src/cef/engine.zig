@@ -1310,6 +1310,21 @@ fn onBeforeCommandLine(
     // bot check. The pipe is the framework's own channel, not automation.
     if (browser_pipe.available()) appendJoined(command_line, "disable-blink-features", "AutomationControlled");
     if (chromeStyle()) if (framework_extension_dir) |dir| appendJoined(command_line, "load-extension", dir);
+    if (command_line.*.append_switch) |append| {
+        // Domain Reliability uploads network error samples to Google; nothing
+        // in an embedded browser reads them.
+        appendFlag(command_line, append, "disable-domain-reliability");
+    }
+    // VA-API decode through the GL path, which Chromium leaves off on Linux.
+    // Without libva or a driver for the GPU the decoder stays in software.
+    appendJoined(command_line, "enable-features", "AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL");
+    // Background services with no surface in an embedded browser: Cast device
+    // discovery, Google's page hints and autofill form signatures, and
+    // Translate, whose language detection otherwise runs on every page load.
+    // The omnibox popups as WebUI preload two pages for every browser, and
+    // every view here is a browser whose omnibox nobody sees; the Views popup
+    // is only built when an omnibox opens one.
+    appendJoined(command_line, "disable-features", "MediaRouter,OptimizationHints,AutofillServerCommunication,Translate,WebUIOmniboxPopup,WebUIOmniboxFullPopup,WebUIOmniboxAimPopup");
 }
 
 /// The framework's own extension, loaded into Chrome style beside the app's.
@@ -4758,6 +4773,10 @@ fn cdpEventSink(tag: usize, method: []const u8, json: []const u8) void {
         !std.mem.eql(u8, method, "Network.responseReceived") and
         !std.mem.eql(u8, method, cdp.agent_attached) and
         !std.mem.eql(u8, method, cdp.agent_detached)) return;
+    // Every subresource's response arrives here too, and only the document's
+    // is read (onCdpEvent).
+    if (std.mem.eql(u8, method, "Network.responseReceived") and
+        std.mem.indexOf(u8, json, "\"type\":\"Document\"") == null) return;
     post(.{
         .view = view,
         .name = "",
@@ -5239,7 +5258,9 @@ fn agentReady(view: *View) void {
     // response, the TLS state securityChanged reports. The Security domain
     // would say the same thing in one event, but CEF's protocol subset does
     // not answer Security.enable at all.
-    _ = cdpSendRaw(view, "Network.enable", "", .ignore);
+    // No buffers: by default the renderer keeps up to 100 MB of every page's
+    // response bodies for Network.getResponseBody, which nothing here asks for.
+    _ = cdpSendRaw(view, "Network.enable", "{\"maxTotalBufferSize\":0,\"maxResourceBufferSize\":0,\"maxPostDataSize\":0}", .ignore);
     // The main frame has to be known before any world-scoped call can be aimed;
     // frameNavigated keeps it current from here on.
     _ = cdpSendRaw(view, "Page.getFrameTree", "", .frame_tree);
