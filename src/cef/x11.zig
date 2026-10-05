@@ -667,6 +667,134 @@ pub fn copyClass(from: Window, to: Window) bool {
     return true;
 }
 
+// ---- Naming Chromium's popups before the compositor maps them -------------
+// Chromium names none of its popups (a <select> list, autofill, a tooltip):
+// no WM_CLASS, no title. A compositor applies its window rules once, on a
+// window's first frame, and the owner's Hyprland has one for windows with an
+// empty class and title (Chrome's notifications) that floats them and pins
+// them to the monitor's top right, so every <select> list opened there. The
+// engine's watch stamps the app's class on Chromium's windows every 200 ms,
+// and even GDK's own read of the CreateNotify lost the race whenever the GTK
+// thread was busy laying out. This thread does it on a connection of its own
+// as the CreateNotify arrives, ahead of the popup's first frame.
+//
+// XCB rather than Xlib: a request against a window that is already gone comes
+// back as an event here, where Xlib's default handler would end the process.
+
+const XcbConn = opaque {};
+const XcbGenericEvent = extern struct { response_type: u8, pad0: u8, sequence: u16 };
+const XcbCreateNotify = extern struct {
+    response_type: u8,
+    pad0: u8,
+    sequence: u16,
+    parent: u32,
+    window: u32,
+};
+const XcbScreenIterator = extern struct { data: ?*const extern struct { root: u32 }, rem: c_int, index: c_int };
+const XcbSetupHead = extern struct {
+    status: u8,
+    pad0: u8,
+    protocol_major_version: u16,
+    protocol_minor_version: u16,
+    length: u16,
+    release_number: u32,
+    resource_id_base: u32,
+    resource_id_mask: u32,
+};
+const XcbVoidCookie = extern struct { sequence: c_uint };
+
+const Xcb = struct {
+    connect: *const fn (?[*:0]const u8, ?*c_int) callconv(.c) ?*XcbConn,
+    has_error: *const fn (*XcbConn) callconv(.c) c_int,
+    get_setup: *const fn (*XcbConn) callconv(.c) *const XcbSetupHead,
+    roots: *const fn (*const XcbSetupHead) callconv(.c) XcbScreenIterator,
+    change_attributes: *const fn (*XcbConn, u32, u32, [*]const u32) callconv(.c) XcbVoidCookie,
+    change_property: *const fn (*XcbConn, u8, u32, u32, u32, u8, u32, [*]const u8) callconv(.c) XcbVoidCookie,
+    wait_for_event: *const fn (*XcbConn) callconv(.c) ?*XcbGenericEvent,
+    flush: *const fn (*XcbConn) callconv(.c) c_int,
+};
+
+const XCB_CW_EVENT_MASK: u32 = 1 << 11;
+const XCB_CREATE_NOTIFY: u8 = 16;
+const XCB_ATOM_WM_CLASS: u32 = 67;
+const XCB_ATOM_STRING: u32 = 31;
+
+var namer_started = false;
+/// Any window Chromium's connection made; every window it makes shares the
+/// client part of this id. 0 until the first browser exists.
+var namer_chromium_window: std.atomic.Value(u32) = .init(0);
+/// The app toplevel's WM_CLASS, written once by the GTK thread before
+/// `namer_class_len` is published.
+var namer_class: [256]u8 = undefined;
+var namer_class_len: std.atomic.Value(usize) = .init(0);
+
+/// Starts the thread, once per process. Called from the CEF UI thread with a
+/// window Chromium made, which is what names Chromium's client.
+pub fn nameChromiumWindowsFrom(chromium_window: Window) void {
+    if (chromium_window == 0) return;
+    namer_chromium_window.store(@truncate(chromium_window), .release);
+    if (@atomicRmw(bool, &namer_started, .Xchg, true, .acq_rel)) return;
+    _ = std.Thread.spawn(.{}, namerLoop, .{}) catch {
+        std.debug.print("ND_WARN CEF: the popup namer did not start; Chromium's popups stay nameless until the watch names them\n", .{});
+    };
+}
+
+/// Hands the namer the class to stamp, read off the app's toplevel. GTK thread;
+/// a no-op once published.
+pub fn publishClass(toplevel: Window) void {
+    if (toplevel == 0 or namer_class_len.load(.acquire) != 0) return;
+    const c = conn() orelse return;
+    const XA_WM_CLASS: c_ulong = 67;
+    const XA_STRING: c_ulong = 31;
+    var actual_type: c_ulong = 0;
+    var actual_format: c_int = 0;
+    var nitems: c_ulong = 0;
+    var bytes_after: c_ulong = 0;
+    var data: [*]u8 = undefined;
+    c.push();
+    const ok = c.api.get_window_property(c.x, toplevel, XA_WM_CLASS, 0, 64, 0, XA_STRING, &actual_type, &actual_format, &nitems, &bytes_after, &data);
+    c.pop();
+    if (ok != 0 or nitems == 0 or actual_format != 8) return;
+    defer _ = c.api.free(@ptrCast(data));
+    const n = @min(@as(usize, nitems), namer_class.len);
+    @memcpy(namer_class[0..n], data[0..n]);
+    namer_class_len.store(n, .release);
+}
+
+fn namerLoop() void {
+    var lib = std.DynLib.open("libxcb.so.1") catch return;
+    const x: Xcb = .{
+        .connect = lib.lookup(@FieldType(Xcb, "connect"), "xcb_connect") orelse return,
+        .has_error = lib.lookup(@FieldType(Xcb, "has_error"), "xcb_connection_has_error") orelse return,
+        .get_setup = lib.lookup(@FieldType(Xcb, "get_setup"), "xcb_get_setup") orelse return,
+        .roots = lib.lookup(@FieldType(Xcb, "roots"), "xcb_setup_roots_iterator") orelse return,
+        .change_attributes = lib.lookup(@FieldType(Xcb, "change_attributes"), "xcb_change_window_attributes") orelse return,
+        .change_property = lib.lookup(@FieldType(Xcb, "change_property"), "xcb_change_property") orelse return,
+        .wait_for_event = lib.lookup(@FieldType(Xcb, "wait_for_event"), "xcb_wait_for_event") orelse return,
+        .flush = lib.lookup(@FieldType(Xcb, "flush"), "xcb_flush") orelse return,
+    };
+    const c = x.connect(null, null) orelse return;
+    if (x.has_error(c) != 0) return;
+    const setup = x.get_setup(c);
+    const mask = setup.resource_id_mask;
+    const screen = x.roots(setup).data orelse return;
+    // SubstructureNotify on the root is shared: every client may select it.
+    const events = [_]u32{1 << 19};
+    _ = x.change_attributes(c, screen.root, XCB_CW_EVENT_MASK, &events);
+    _ = x.flush(c);
+    while (x.wait_for_event(c)) |event| {
+        defer std.c.free(event);
+        if (event.response_type & 0x7f != XCB_CREATE_NOTIFY) continue;
+        const created: *const XcbCreateNotify = @ptrCast(@alignCast(event));
+        const known = namer_chromium_window.load(.acquire);
+        if (known == 0 or (created.window & ~mask) != (known & ~mask)) continue;
+        const len = namer_class_len.load(.acquire);
+        if (len == 0) continue;
+        _ = x.change_property(c, 0, created.window, XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 8, @intCast(len), &namer_class);
+        _ = x.flush(c);
+    }
+}
+
 /// The window a window is a child of, or 0. A reparented dialog is told apart
 /// from one still sitting on the root by this and nothing else.
 pub const Origin = struct { x: c_int, y: c_int };

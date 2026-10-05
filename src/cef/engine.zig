@@ -975,6 +975,7 @@ fn hideDownloadAnimations() void {
 }
 
 fn onChromeWindowWatch(_: ?*anyopaque) callconv(.c) c_int {
+    x11.publishClass(appToplevel());
     if (kept_window != 0) x11.hide(kept_window);
     hideDownloadAnimations();
     for (pending_sink.items) |entry| {
@@ -4760,6 +4761,7 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
             view.host.store(@intFromPtr(host), .release);
             if (host.*.get_window_handle) |get_handle| {
                 view.cef_window.store(@intCast(get_handle(host)), .release);
+                if (chromeStyle()) x11.nameChromiumWindowsFrom(@intCast(get_handle(host)));
             }
             // Written here rather than on the GTK thread because the observer
             // has to exist before the first protocol message; the settle hop
