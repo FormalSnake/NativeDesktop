@@ -124,7 +124,9 @@ launch_host() {
     export NB_STORE_DIR="$WORK/$rig/store"
     export NB_DOWNLOAD_DIR="$WORK/$rig/downloads"
     export GDK_BACKEND=x11
-    export GSK_RENDERER=cairo
+    # ND_ACCEPT_GSK_RENDERER=default leaves GTK to pick, as a user's session does.
+    export GSK_RENDERER="${ND_ACCEPT_GSK_RENDERER:-cairo}"
+    [ "$GSK_RENDERER" = default ] && unset GSK_RENDERER
     export GDK_SCALE="$SCALE"
     export NATIVE_AUTOMATION=1
     export ND_WEBVIEW_ENGINE=chromium
@@ -153,7 +155,7 @@ launch_host() {
     # drive loads its probe extension through it. ND_ACCEPT_HOST_ARGS carries
     # other host flags, word-split on purpose.
     # shellcheck disable=SC2086
-    exec setsid "$FRAMEWORK/zig-out/bin/nd-hello" \
+    exec setsid "${ND_ACCEPT_HOST_BIN:-$FRAMEWORK/zig-out/bin/nd-hello}" \
       --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' \
       --load-extension="$EXTENSION${ND_ACCEPT_EXTENSIONS:+,$ND_ACCEPT_EXTENSIONS}" ${ND_ACCEPT_HOST_ARGS:-}
   ) >"$log" 2>&1 &

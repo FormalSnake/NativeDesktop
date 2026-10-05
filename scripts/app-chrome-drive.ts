@@ -34,6 +34,8 @@ const scale = Number(process.env.ND_ACCEPT_SCALE ?? "1");
 /// Which leg sets this rig runs: everything, or the context menu on its own.
 const legs = process.env.ND_ACCEPT_LEGS ?? "all";
 
+/// The host binary's name, which is its WM_CLASS: a packaged app renames it.
+const hostClass = process.env.ND_ACCEPT_HOST_CLASS ?? "nd-hello";
 const hostPid = Number(process.env.ND_ACCEPT_HOST_PID ?? "0");
 const legBudgetMs = Number(process.env.ND_ACCEPT_LEG_BUDGET_MS ?? "180000");
 
@@ -283,7 +285,7 @@ function overrideRedirect(minW = 30, minH = 20): Array<{ id: string } & Geom> {
 /// The app's toplevel: the biggest mapped window the host owns. `xdotool
 /// search` matches on WM_CLASS, which the host sets to its binary name.
 function toplevelId(): string {
-  const ids = sh("xdotool", "search", "--classname", "nd-hello").split("\n").filter(Boolean);
+  const ids = sh("xdotool", "search", "--classname", hostClass).split("\n").filter(Boolean);
   let best = "";
   let area = 0;
   for (const dec of ids) {
@@ -1169,6 +1171,75 @@ async function paletteLegs(): Promise<void> {
   noStray("palette");
 }
 
+/// The atoms in a page window's _NET_WM_STATE: Chromium writes its own there,
+/// and the engine marks a parked page _NET_WM_STATE_HIDDEN.
+function windowState(cef: string): string {
+  return sh("xprop", "-id", cef, "_NET_WM_STATE").replace(/^_NET_WM_STATE\(ATOM\) =\s*/, "") || "none";
+}
+
+/// The command bar over the page it was opened from, by each way in: a click
+/// on the active tab (the sidebar row, or the address tab in compact), ctrl+L,
+/// and a click on a tab that was parked as a background tab and brought back.
+/// On GTK the page stands aside while the bar is up (docs/webview.md); when the
+/// bar closes the page has to come back as it was, pixels and Chromium's own
+/// window state both (ND_ACCEPT_LEGS=barpage).
+async function barPageLegs(): Promise<void> {
+  await resyncPage();
+  const before = shownView();
+  if (!before) {
+    skip("barPage", "no page on show");
+    return;
+  }
+  const area = { x: before.container.x + 40, y: before.container.y + 40, w: before.container.w - 80, h: before.container.h - 80 };
+  const ids = before.ids;
+  const ownState = windowState(ids.cef);
+  // A tab is `tab-<id>` in the sidebar and `tab-item-<id>` in compact.
+  const clickTab = async (id: string): Promise<void> => {
+    const at = (await widgetToScreen(`tab-${id}`)) ?? (await widgetToScreen(`tab-item-${id}`));
+    if (!at) throw new Error(`no tab ${id} on screen`);
+    pointerTo(at.x, at.y);
+    await Bun.sleep(200);
+    click();
+  };
+  const ways: Array<[string, () => Promise<void>]> = [
+    ["click", () => clickTab("t1")],
+    ["ctrlL", async () => key("ctrl+l")],
+    ["afterSwitch", async () => {
+      for (const id of ["t2", "t1", "t1"]) {
+        await clickTab(id);
+        await Bun.sleep(1500);
+      }
+    }],
+  ];
+  for (const [way, open] of ways) {
+    const closed = `${shots}/barpage-${way}-closed.png`;
+    const opened = `${shots}/barpage-${way}-open.png`;
+    const after = `${shots}/barpage-${way}-after.png`;
+    capture(closed);
+    await open();
+    let presented = false;
+    for (let i = 0; i < 20 && !presented; i++) {
+      await Bun.sleep(150);
+      presented = await paletteShown();
+    }
+    await Bun.sleep(800);
+    capture(opened);
+    const parked = geom(ids.container);
+    const openState = windowState(ids.cef);
+    key("Escape");
+    await Bun.sleep(1200);
+    capture(after);
+    const back = shownView();
+    const backDiff = regionDiff(closed, after, area);
+    const backState = windowState(ids.cef);
+    check(
+      `barPage.${way}`,
+      presented && back?.node === before.node && backDiff < 0.02 && backState === ownState,
+      `presented=${presented}, page at ${parked?.x},${parked?.y} (${openState}) while open, view ${back?.node} back with ${(backDiff * 100).toFixed(2)}% pixel change, window state ${JSON.stringify(backState)} (Chromium's own ${JSON.stringify(ownState)})`,
+    );
+  }
+}
+
 /// What a window picker is offered. The shell the owner runs builds its list
 /// from the compositor's own clients (`hyprctl clients`), so every window this
 /// app puts on the display is an entry there: the containers the pages are
@@ -1580,6 +1651,11 @@ const hasApp = (await app.getByTestId("omnibox").isVisible().catch(() => false))
   const s = await settled();
   check("initialSize", s.ok, s.detail);
   noStray("initialSize");
+}
+
+if (legs === "barpage") {
+  await barPageLegs();
+  finish();
 }
 
 if (legs === "filedialog") {
@@ -2041,7 +2117,7 @@ if (hasApp) {
   const openOk = !!afterOpen && (rig === "x11" || afterOpen.container.w !== before.container.w);
   const s1 = await settled(6000);
   check("secondWindowOpens", openOk && s1.ok, `container ${before.container.w}x${before.container.h} -> ${afterOpen?.container.w}x${afterOpen?.container.h}; ${s1.detail}`);
-  const others = sh("xdotool", "search", "--classname", "nd-hello").split("\n").filter(Boolean)
+  const others = sh("xdotool", "search", "--classname", hostClass).split("\n").filter(Boolean)
     .map((d) => `0x${Number(d).toString(16)}`)
     .filter((id) => id !== top && (geom(id)?.mapped ?? false) && (geom(id)?.w ?? 0) > 200);
   for (const id of others) closeFocusedWindow(id);
