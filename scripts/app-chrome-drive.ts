@@ -339,7 +339,9 @@ function shownView(): { node: number; container: Geom; cef: Geom; ids: { contain
     const container = geom(ids.container);
     const cef = geom(ids.cef);
     if (!container || !cef) continue;
-    if (container.x < -1000 || !container.mapped) continue;
+    // Parked is told by y: the engine parks at -8192 on both axes, and a
+    // window Hyprland shows on a second monitor can have a negative root x.
+    if (container.y < -4000 || !container.mapped) continue;
     // Apps keep functional-but-invisible browsers at 2x2 (an extension
     // registry, say), and while the page stands aside for a dialog that one
     // is the only view left on screen.
@@ -353,7 +355,7 @@ function parkedViews(): Array<{ node: number; container: Geom }> {
   const out: Array<{ node: number; container: Geom }> = [];
   for (const [node, ids] of embeddedViews()) {
     const container = geom(ids.container);
-    if (container && container.x < -1000) out.push({ node, container });
+    if (container && container.y < -4000) out.push({ node, container });
   }
   return out;
 }
@@ -975,6 +977,111 @@ async function menuLegs(): Promise<void> {
   }
 }
 
+/// Where the page's popups land, measured instead of eyeballed: a <select>
+/// list has its left edge on the control's and its top on the control's bottom
+/// (or its bottom on the control's top, flipped), and the page's context menu
+/// has a corner at the pointer. Each probe runs again after the window or the
+/// page's own window has moved on the root: on another tab, on the other
+/// monitor, floated and moved. On Hyprland the owner's rule for windows with
+/// an empty class and title is in force, which pinned every <select> list to
+/// the monitor's top right while Chromium's popups went unnamed until after
+/// their first frame. ND_ACCEPT_LEGS=popups runs this alone.
+async function popupLegs(): Promise<void> {
+  const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
+  async function probe(label: string): Promise<void> {
+    await resyncPage();
+    await Bun.sleep(800);
+    const view = shownView();
+    if (!view) {
+      check(`${label}.selectUnderControl`, false, "no shown view");
+      return;
+    }
+    const r = await rect("picker");
+    const m = await metrics();
+    const left = Math.round(view.cef.x + r.x * m.dpr);
+    const controlTop = Math.round(view.cef.y + r.y * m.dpr);
+    const bottom = Math.round(view.cef.y + (r.y + r.h) * m.dpr);
+    const before = new Set(overrideRedirect().map((p) => p.id));
+    pointerTo(Math.round(view.cef.x + (r.x + r.w / 2) * m.dpr), Math.round(view.cef.y + (r.y + r.h / 2) * m.dpr));
+    await Bun.sleep(200);
+    click(1);
+    await Bun.sleep(1200);
+    const popups = overrideRedirect();
+    const list = popups.find((p) => !before.has(p.id)) ?? popups[0];
+    capture(`${shots}/popup-${label}-select.png`);
+    check(
+      `${label}.selectUnderControl`,
+      !!list && near(list.x, left, 6) && (near(list.y, bottom, 6) || near(list.y + list.h, controlTop, 6)),
+      list ? `list ${list.w}x${list.h}+${list.x}+${list.y}, control left ${left} top ${controlTop} bottom ${bottom}` : `${popups.length} popup(s), no list`,
+    );
+    key("Escape");
+    await Bun.sleep(800);
+
+    const at = await pageToScreen("title");
+    pointerTo(at.x, at.y);
+    press(3);
+    await Bun.sleep(250);
+    release(3);
+    await Bun.sleep(1500);
+    const menu = overrideRedirect(120, 80).find((p) => p.w < 700 && p.h < 900);
+    capture(`${shots}/popup-${label}-menu.png`);
+    // The popover's shadow puts its window a few pixels outside the corner
+    // that lines up with the pointer.
+    check(
+      `${label}.menuAtPointer`,
+      !!menu && (near(menu.x, at.x, 10) || near(menu.x + menu.w, at.x, 10)) && (near(menu.y, at.y, 10) || near(menu.y + menu.h, at.y, 10)),
+      menu ? `menu ${menu.w}x${menu.h}+${menu.x}+${menu.y} for a click at ${at.x},${at.y}` : "no menu window",
+    );
+    key("Escape");
+    await Bun.sleep(800);
+    noStray(label);
+  }
+
+  if (rig === "hypr") {
+    hyprctl("keyword", "windowrule", "match:class ^$, match:title ^$, float on, pin on, move (monitor_w-window_w-16) 16");
+    // Tiled, as the owner runs it. The drive's start sized it floating, and a
+    // floating window this rig's Hyprland keeps on one monitor while drawing
+    // it on the other has its X origin off the root, out of XTEST's reach.
+    hyprSetFloating(false);
+    await Bun.sleep(1500);
+  }
+  await probe("popupsAtStart");
+  // A tab's page window is born parked and moved on screen inside its
+  // container when the tab is shown, which moves it on the root without a
+  // configure of its own or of the toplevel.
+  key("ctrl+Tab");
+  await Bun.sleep(2000);
+  await probe("popupsOtherTab");
+  key("ctrl+Tab");
+  await Bun.sleep(2000);
+  await probe("popupsFirstTabAgain");
+  if (rig === "hypr") {
+    const mons = JSON.parse(hyprctl("-j", "monitors") || "[]") as Array<{ name: string; focused: boolean }>;
+    const here = mons.find((m) => m.focused);
+    const other = mons.find((m) => !m.focused);
+    if (here && other) {
+      hyprDispatch("movewindow", `mon:${other.name}`);
+      await Bun.sleep(1500);
+      await probe("popupsOtherMonitor");
+      hyprDispatch("movewindow", `mon:${here.name}`);
+      await Bun.sleep(1500);
+      await probe("popupsBackAgain");
+    }
+    hyprSetFloating(true);
+    hyprDispatch("resizeactive", "exact", "1100", "760");
+    hyprDispatch("centerwindow");
+    hyprDispatch("moveactive", "160", "90");
+  } else if (rig === "x11") {
+    const g = geom(top);
+    if (g) moveToplevel(top, g.x + 160, g.y + 90);
+  } else {
+    swaymsg("floating", "enable");
+    swaymsg("move", "position", "200", "120");
+  }
+  await Bun.sleep(1500);
+  await probe("popupsAfterMove");
+}
+
 /// The framework's in-window dialog surfaces, over a page the engine renders
 /// into an X11 child window. The X server stacks that child above everything
 /// the toplevel's own surface draws, so a dialog GTK reports as presented can
@@ -1500,11 +1607,17 @@ if (legs === "hover") {
   finish();
 }
 
+if (legs === "popups") {
+  await popupLegs();
+  finish();
+}
+
 if (legs === "menu") {
   await menuLegs();
   await hoverPopupLegs();
   await compositorWindowLegs();
   await paletteLegs();
+  await popupLegs();
   finish();
 }
 

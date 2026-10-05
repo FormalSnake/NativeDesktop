@@ -102,9 +102,9 @@ EOF
   # Compact: the layout with an address field and a layout toggle, which the
   # app legs drive. The sidebar layout has neither. ND_ACCEPT_PINNED adds more
   # quoted ids to the toolbar ("id1","id2"), for extensions ND_ACCEPT_EXTENSIONS
-  # loads.
+  # loads. ND_ACCEPT_LAYOUT=sidebar starts in the other one.
   cat >"$dir/settings.json" <<EOF
-{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"compact","pinnedExtensions":["$EXTENSION_ID"${ND_ACCEPT_PINNED:+,$ND_ACCEPT_PINNED}]}}
+{"version":1,"data":{"searchEngine":"duckduckgo","homepage":"","restoreOnLaunch":true,"layout":"${ND_ACCEPT_LAYOUT:-compact}","pinnedExtensions":["$EXTENSION_ID"${ND_ACCEPT_PINNED:+,$ND_ACCEPT_PINNED}]}}
 EOF
 }
 
@@ -227,23 +227,27 @@ hypr_rig() {
 
   # No animations and no fade: every leg reads geometry right after it asks for
   # it, and an animated resize answers with the old one.
-  cat >"$WORK/hypr/hypr.conf" <<'EOF'
+  # ND_ACCEPT_HYPR_ZERO_SCALING=true is the owner's xwayland setting.
+  cat >"$WORK/hypr/hypr.conf" <<EOF
 xwayland {
   enabled = true
-  force_zero_scaling = false
+  force_zero_scaling = ${ND_ACCEPT_HYPR_ZERO_SCALING:-false}
 }
 misc {
   disable_hyprland_logo = true
   disable_splash_rendering = true
   force_default_wallpaper = 0
-  vfr = false
 }
 animations {
   enabled = false
 }
 decoration {
-  blur { enabled = false }
-  shadow { enabled = false }
+  blur {
+    enabled = false
+  }
+  shadow {
+    enabled = false
+  }
 }
 general {
   border_size = 0
@@ -298,6 +302,18 @@ EOF
   [ -n "$monitor" ] || { echo "FAIL: Hyprland created no monitor"; tail -20 "$WORK/hypr/hypr.log"; return 1; }
   hyprctl keyword monitor "$monitor,${ND_ACCEPT_HYPR_MONITOR:-2560x1600@60,0x0,1.25}" >/dev/null
   sleep 1
+  # ND_ACCEPT_HYPR_MONITOR2 adds a second output beside it, the owner's
+  # external screen, for the popup legs: X root coordinates stop being the
+  # app's monitor's own once there are two. The app still opens on the first.
+  if [ -n "${ND_ACCEPT_HYPR_MONITOR2:-}" ]; then
+    hyprctl output create headless >/dev/null
+    sleep 1
+    local second
+    second="$(hyprctl monitors | sed -n 's/^Monitor \([^ ]*\) .*/\1/p' | grep -vx "$monitor" | head -1)"
+    hyprctl keyword monitor "$second,$ND_ACCEPT_HYPR_MONITOR2" >/dev/null
+    sleep 1
+    hyprctl dispatch focusmonitor "$monitor" >/dev/null
+  fi
   echo "  hypr monitors: $(hyprctl -j monitors | tr -d '\n ' | sed 's/.*"name":"\([^"]*\)".*"width":\([0-9]*\),"height":\([0-9]*\).*"scale":\([0-9.]*\).*/\1 \2x\3 scale \4/')"
 
   # Hyprland's own DISPLAY is only in its process environment, and it starts
