@@ -291,13 +291,6 @@ if (process.env.ND_SWITCH_SKIP_APP !== "1") {
   const app = await connectApp();
   console.log(`== app (${tabs} tabs, layout ${process.env.ND_ACCEPT_LAYOUT ?? "compact"})`);
   await Bun.sleep(Number(process.env.ND_SWITCH_SETTLE_MS ?? "15000"));
-  // Every restored tab loads once it has been shown.
-  for (let i = 0; i < tabs; i++) {
-    await app.getByTestId("menu-next-tab").click().catch((e) => console.log(`  next tab: ${e}`));
-    await Bun.sleep(1500);
-  }
-  console.log(`  painted ${await paintTabs(port, urls)} of ${tabs} tabs`);
-
   const win = Number(biggest(sh("xdotool", "search", "--classname", hostClass).split("\n").filter(Boolean)));
   const wg = geom(`0x${win.toString(16)}`)!;
   const slot = await app.getByTestId("view-slot").boundingBox().catch(() => null);
@@ -306,14 +299,28 @@ if (process.env.ND_SWITCH_SKIP_APP !== "1") {
     : { win, x: Math.round(wg.w * 0.7), y: Math.round(wg.h * 0.6) };
   console.log(`  toplevel 0x${win.toString(16)} ${wg.w}x${wg.h}+${wg.x}+${wg.y}, page probe at ${probe.x},${probe.y}`);
 
-  // Which tab is on show, by its colour.
-  const onShow = (): number => palette.indexOf(pixel(probe.win, probe.x, probe.y));
   // A click into the page first: the keys then reach the page, the way they do
   // for someone reading it, and travel the engine's accelerator path.
   moveTo(wg.x + probe.x, wg.y + probe.y);
   await Bun.sleep(200);
   sendClick();
   await Bun.sleep(800);
+  // Every restored tab loads once it has been shown. The automation click on
+  // the menu item has been seen to do nothing straight after startup, so the
+  // walk is the same real Ctrl+Tab the legs use, and goes round again until
+  // every page has a target.
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < tabs; i++) {
+      sendChord("ctrl+Tab");
+      await Bun.sleep(1500);
+    }
+    if ((await targets(port)).filter((t) => t.type === "page" && urls.includes(t.url)).length >= tabs) break;
+  }
+  console.log(`  painted ${await paintTabs(port, urls)} of ${tabs} tabs`);
+  await Bun.sleep(1000);
+
+  // Which tab is on show, by its colour.
+  const onShow = (): number => palette.indexOf(pixel(probe.win, probe.x, probe.y));
   let cur = onShow();
   console.log(`  on show: tab ${cur + 1} (${hex(pixel(probe.win, probe.x, probe.y))})`);
   if (cur < 0) console.log("  the page probe reads no tab colour; check the capture");
