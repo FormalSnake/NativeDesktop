@@ -125,7 +125,7 @@ comptime {
 pub export fn nd_init() callconv(.c) ?*NdContext {
     // The runtime and tree allocate per commit op and per event, mostly a few
     // bytes at a time; page_allocator made each one an mmap of its own page.
-    const gpa = std.heap.smp_allocator;
+    const gpa = std.heap.c_allocator;
     const self = gpa.create(NdContext) catch return null;
     self.* = .{ .gpa = gpa, .vtable = undefined };
     self.plugins = plugin.Manager.init(gpa, self, &pluginEmit);
@@ -334,7 +334,7 @@ pub export fn nd_overlay_clear_nodes(self: *NdContext) callconv(.c) void {
 /// defensive parsing).
 fn parseEventPayload(payload_json: [*:0]const u8) ?std.json.Parsed(protocol.EventPayload) {
     const json = std.mem.span(payload_json);
-    return std.json.parseFromSlice(protocol.EventPayload, std.heap.smp_allocator, json, .{ .ignore_unknown_fields = true }) catch null;
+    return std.json.parseFromSlice(protocol.EventPayload, std.heap.c_allocator, json, .{ .ignore_unknown_fields = true }) catch null;
 }
 
 /// Terminates the bun child. The embedder calls this from its app-shutdown
@@ -376,7 +376,7 @@ pub export fn nd_free(p: ?*anyopaque) callconv(.c) void {
 
 test "nd_set_acl parses grants into the context" {
     const self = nd_init().?;
-    defer std.heap.smp_allocator.destroy(self);
+    defer std.heap.c_allocator.destroy(self);
     nd_set_acl(self, "{\"grants\":[{\"window\":0,\"permissions\":[\"plugin:hello.greet\"]}]}");
     try std.testing.expect(self.acl != null);
     try std.testing.expect(self.acl.?.isAllowed(0, "plugin:hello.greet"));
