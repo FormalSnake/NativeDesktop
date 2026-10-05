@@ -602,10 +602,28 @@ static void CEF_CALLBACK adblock_context_created(cef_render_process_handler_t *s
   if (browser) {
     nd_cef_ref_release(browser);
   }
+  if (!context) {
+    if (frame) {
+      nd_cef_ref_release(frame);
+    }
+    return;
+  }
+  // CEF reports every context a frame gets, an extension's content-script
+  // world included. The filters are the page's, and a scriptlet run in
+  // 1Password's world rewrites that world's globals.
+  int main_world = 0;
+  if (frame && frame->get_v8_context && context->is_same) {
+    cef_v8_context_t *main = frame->get_v8_context(frame);
+    // is_same takes the reference get_v8_context handed out.
+    if (main) {
+      main_world = context->is_same(context, main);
+    }
+  }
   if (frame) {
     nd_cef_ref_release(frame);
   }
-  if (!context) {
+  if (!main_world) {
+    nd_cef_ref_release(context);
     return;
   }
   cef_string_t bootstrap = {0};

@@ -1,4 +1,4 @@
-import { render, useEffect, useRef, useState, webviewEngine } from "@nativedesktop/react";
+import { executeJavaScript, onJavaScriptResult, render, useEffect, useRef, useState, webviewEngine } from "@nativedesktop/react";
 import type { NdNodeRef } from "@nativedesktop/react";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -124,8 +124,12 @@ function App() {
   useEffect(() => {
     if (!title.startsWith("R")) return;
     const name = PHASES[phase];
-    console.log(`ND_ADBLOCK_PHASE ${name} blocked=${blocked} ${title.slice(1)}`);
     void (async () => {
+      // An isolated world of the page (an extension's content scripts live in
+      // one) must not get the page's scriptlets.
+      const isolated = view.current ? await executeJavaScript(view.current, "String(window.__ndScriptlet)", "nd-probe-isolated").catch(String) : "";
+      const report = { ...JSON.parse(title.slice(1)), isolatedScriptlet: isolated === "42" };
+      console.log(`ND_ADBLOCK_PHASE ${name} blocked=${blocked} ${JSON.stringify(report)}`);
       const next = phase + 1;
       if (next >= PHASES.length) {
         console.log("ND_ADBLOCK_PROBE_DONE");
@@ -152,6 +156,7 @@ function App() {
           style={{ vexpand: true, hexpand: true }}
           onTitleChanged={(e) => setTitle(e.text)}
           onContentBlocked={(e) => setBlocked((e.data as { count: number }).count)}
+          onJavaScriptResult={onJavaScriptResult}
         />
       </box>
     </window>

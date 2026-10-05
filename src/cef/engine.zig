@@ -4504,13 +4504,27 @@ fn onRendererContextCreated(
     context: [*c]c.cef_v8_context_t,
 ) callconv(.c) void {
     ref.releaseParam(browser);
-    ref.releaseParam(frame);
+    defer ref.releaseParam(frame);
     defer ref.releaseParam(context);
     if (context == null) return;
+    // CEF reports every context a frame gets, an extension's content-script
+    // world included. The filters are the page's, and a scriptlet run in
+    // 1Password's world rewrites that world's globals.
+    if (!isMainWorld(frame, context)) return;
     const script = v8Eval(context, adblock.renderer_bootstrap) orelse return;
     defer alloc.free(script);
     if (script.len == 0) return;
     if (v8Eval(context, script)) |rest| alloc.free(rest);
+}
+
+fn isMainWorld(frame: [*c]c.cef_frame_t, context: [*c]c.cef_v8_context_t) bool {
+    if (frame == null) return false;
+    const get_context = frame.*.get_v8_context orelse return false;
+    const same = context.*.is_same orelse return false;
+    const main = get_context(frame);
+    if (main == null) return false;
+    // is_same takes the reference get_v8_context handed out.
+    return same(context, main) != 0;
 }
 
 /// Runs `code` in `context` and returns its value when that is a string.

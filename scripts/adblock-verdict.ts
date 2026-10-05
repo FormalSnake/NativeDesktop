@@ -24,6 +24,7 @@ const blocking: Report = {
   child: "none",
   childScriptlet: false,
   worker: true,
+  isolatedScriptlet: false,
 };
 const expected: Record<string, { report: Report; minBlocked: number; maxBlocked: number }> = {
   on: { report: blocking, minBlocked: 3, maxBlocked: 6 },
