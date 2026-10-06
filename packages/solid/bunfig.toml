@@ -1,0 +1,4 @@
+# `bun test` from this directory: the tests are Solid JSX, and solid-js must
+# resolve to its client build (see src/register.ts).
+[test]
+preload = ["./src/register.ts"]

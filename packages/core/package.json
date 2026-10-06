@@ -1,0 +1,39 @@
+{
+  "name": "@nativedesktop/core",
+  "version": "0.4.54",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/packages/core/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/packages/core/src/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./rpc": {
+      "types": "./dist/packages/core/src/generated/rpc.d.ts",
+      "default": "./dist/generated/rpc.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/generated/rpc.ts --outdir dist --target node --format esm",
+    "prepack": "bun run build",
+    "prepare": "bun run build"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

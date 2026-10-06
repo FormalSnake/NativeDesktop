@@ -169,14 +169,14 @@ fn applyStyleIfPresent(widget: *Widget, id: u32, props: ?std.json.Value) void {
 /// Reserved generation for host-created overlay chrome: never swept
 /// by gcOldGenerations (an incoming app generation reaches 0xFF only after
 /// 255 hot-reloads — reserved in practice). NOTE: ids are
-/// `(generation << 24) | (seq & 0xFFFFFF)` (see packages/react/src/ids.ts),
+/// `(generation << 24) | (seq & 0xFFFFFF)` (see packages/core/src/ids.ts),
 /// an 8-bit generation field — 0xFFFF (16 bits) would silently truncate to
 /// 0xFF00 through `u32` shift overflow, corrupting the reserved-generation
 /// check (`gcOldGenerations`/`clearAppNodes` would never match
 /// overlay-tagged ids with a wider constant).
 pub const OVERLAY_GENERATION: u32 = 0xFF;
 
-/// Node ids are (generation << 24) | (seq & 0xFFFFFF) — see packages/react/src/ids.ts.
+/// Node ids are (generation << 24) | (seq & 0xFFFFFF); see packages/core/src/ids.ts.
 fn genOf(id: u32) u32 {
     return id >> 24;
 }

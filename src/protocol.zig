@@ -2,7 +2,7 @@ const std = @import("std");
 
 // Frame/struct shapes are GENERATED from schema/protocol.json (the single
 // source of truth shared with the TS mirror,
-// packages/react/src/generated/protocol.ts) — a field rename or type change
+// packages/core/src/generated/protocol.ts): a field rename or type change
 // there regenerates both sides, so drift is a compile error, not a silent
 // wire break. This file re-exports them under the existing `protocol.*`
 // names and keeps the hand-written framing/encode helpers + golden-byte

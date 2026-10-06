@@ -1,0 +1,13 @@
+{
+  "name": "counter-solid-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nd dev main.ts"
+  },
+  "dependencies": {
+    "@nativedesktop/solid": "workspace:*",
+    "@nativedesktop/cli": "workspace:*",
+    "solid-js": "2.0.0-rc.13"
+  }
+}

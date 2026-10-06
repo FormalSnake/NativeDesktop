@@ -1,23 +1,9 @@
 import ReconcilerFactory from "react-reconciler";
 import { ConcurrentRoot } from "react-reconciler/constants";
 import type { ReactNode, ReactPortal } from "react";
-import { Ndp, type EventMsg } from "../../../runtime/ndp.ts";
-import type { NdNodeRef, WidgetType } from "./generated/intrinsics.ts";
-import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta.ts";
+import { connect, installErrorHandlers, isHot, reportRenderError } from "@nativedesktop/core";
 import { hostConfig, bindCommitTargets, setPriorityFor, type Container } from "./host-config.ts";
-import { Batch, NodeRegistry } from "./ops.ts";
-import { currentGeneration } from "./ids.ts";
-import { hasCommand, setBackend, setHostManifest } from "./platform.ts";
-import { dispatchSystemEvent } from "./system.ts";
-import {
-  getHmrState,
-  setHmrState,
-  isHot,
-  setupRefresh,
-  registerRoot,
-  hotUpdateRoot,
-} from "./hmr.ts";
-import { installErrorHandlers, reportRenderError } from "./errors.ts";
+import { getHmrState, setHmrState, setupRefresh, registerRoot, hotUpdateRoot } from "./hmr.ts";
 
 type ReconcilerInstance = {
   createContainer: (...a: unknown[]) => unknown;
@@ -35,34 +21,14 @@ export async function render(element: ReactNode): Promise<void> {
   installErrorHandlers();
   let state = getHmrState();
   if (!state) {
-    const ndp = await Ndp.connect();
-    // Registered BEFORE the handshake: the host replays the standing
-    // app-activation state in a systemEvent written right after HelloAck,
-    // and both frames can land in one socket chunk — a callback registered
-    // after the awaited handshake would miss it (the dispatch loop runs
-    // synchronously; the await's continuation is a microtask behind it).
-    ndp.onSystemEvent((channel, data) => dispatchSystemEvent(channel, data));
-    await ndp.handshake({ name: "bun", version: Bun.version });
-    setBackend(ndp.backend);
-    setHostManifest(ndp.hostWidgets, ndp.hostCommands);
-
-    const batch = new Batch();
-    const registry = new NodeRegistry();
-    bindCommitTargets(batch, registry);
-
-    let commitId = 0;
+    const session = await connect({
+      beforeEvent: (e) => setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete"),
+    });
+    bindCommitTargets(session.batch, session.registry);
     const configWithFlush = {
       ...hostConfig,
-      resetAfterCommit() {
-        const ops = batch.drain();
-        if (ops.length) ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
-      },
+      resetAfterCommit: () => session.commit(),
     };
-
-    ndp.onEvent((e: EventMsg) => {
-      setPriorityFor((e.priority as "discrete" | "continuous" | "default") ?? "discrete");
-      registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
-    });
 
     const Reconciler = (ReconcilerFactory as unknown as (c: typeof configWithFlush) => ReconcilerInstance)(
       configWithFlush,
@@ -91,7 +57,7 @@ export async function render(element: ReactNode): Promise<void> {
       },
       null,
     );
-    state = { ndp, root, reconciler: Reconciler, bootCount: 0 };
+    state = { root, reconciler: Reconciler, bootCount: 0 };
     setHmrState(state);
   }
 
@@ -121,50 +87,6 @@ export async function render(element: ReactNode): Promise<void> {
   // Only the first boot awaits this — a hot re-eval must return so the
   // re-run entry doesn't pile up a second forever-pending promise.
   if (state.bootCount === 1) await new Promise<void>(() => {});
-}
-
-function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string, arg: unknown): void {
-  const state = getHmrState();
-  if (!state) throw new Error(`${caller}() before render(): no NDP connection yet`);
-  state.ndp.sendWidgetCommand(node.id, command, arg ?? null);
-}
-
-/// Sends an imperative command to a mounted widget (widgetCommand NDP frame).
-/// `node` is what a host-element `ref` resolves to — e.g.
-/// `const wv = useRef<NdNodeRef<"webview">>(null)` then
-/// `sendCommand(wv.current!, "goBack")`. Command names are schema-typed per
-/// widget (WidgetCommandNames) and validated again at runtime so a stale
-/// string fails loudly here, not silently host-side.
-export function sendCommand<T extends keyof WidgetCommandNames & WidgetType>(
-  node: NdNodeRef<T>,
-  command: WidgetCommandNames[T],
-  arg?: unknown,
-): void {
-  const allowed = widgetCommands[node.type] ?? [];
-  if (!allowed.includes(command)) {
-    throw new Error(`<${node.type}> does not accept command "${command}" (valid: ${allowed.join(", ") || "none"})`);
-  }
-  // JS-known but host-unknown (an older host build): still sent (the host
-  // logs and drops it), but warn once in dev — mirrors host-config.ts's
-  // checkPlatform gating.
-  if (isHot() && !hasCommand(node.type, command)) {
-    const key = `${node.type}.${command}`;
-    if (!warnedHostUnknownCommand.has(key)) {
-      warnedHostUnknownCommand.add(key);
-      console.warn(`sendCommand: the connected host does not dispatch "${key}" — gate it with hasCommand("${node.type}", "${command}").`);
-    }
-  }
-  dispatchWidgetCommand("sendCommand", node, command, arg);
-}
-
-const warnedHostUnknownCommand = new Set<string>();
-
-/// Sends an imperative command to an app-owned <nativeview>. Command names
-/// are plugin-defined (native-module ABI), not schema-validated — only a
-/// non-empty string is required; the host resolves it.
-export function sendNativeCommand(node: NdNodeRef<"nativeview">, command: string, arg?: unknown): void {
-  if (!command) throw new Error("sendNativeCommand() requires a non-empty command");
-  dispatchWidgetCommand("sendNativeCommand", node, command, arg);
 }
 
 /// A stable, off-window host container that holds nodes which must survive being
@@ -207,16 +129,4 @@ export function createPortal(children: ReactNode, pool: Pool = defaultPool): Rea
     createPortal: (children: ReactNode, containerInfo: unknown, implementation: unknown, key?: string | null) => ReactPortal;
   };
   return reconciler.createPortal(children, pool, null);
-}
-
-/// Moves a live node's native widget under `toParent` (optionally before
-/// `before`) WITHOUT destroying it — the widget-preserving cross-window move.
-/// The node MUST stay mounted at a stable React position (typically inside a
-/// `createPortal(..., pool)`) so React never unmounts it; this relocates only
-/// the native widget, preserving a <webview>'s loaded page / scroll / JS state
-/// that re-parenting in the React tree (unmount+remount) would lose. `node` and
-/// `toParent` are what a host-element `ref` resolves to. Rides the widgetCommand
-/// frame with a reserved command, so no protocol/schema change is needed.
-export function moveNode(node: NdNodeRef, toParent: NdNodeRef, before?: NdNodeRef | null): void {
-  dispatchWidgetCommand("moveNode", node, "__ndReparent", { parent: toParent.id, before: before?.id ?? null });
 }

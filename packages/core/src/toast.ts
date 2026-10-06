@@ -10,8 +10,8 @@
 // `{ buttonClicked: false }`. `pending` is cleared by whichever fires first
 // and the other is a no-op.
 
-import type { NdNodeRef } from "./generated/intrinsics.ts";
-import { sendCommand } from "./renderer.ts";
+import type { NdNodeRef } from "./generated/widgets.ts";
+import { sendCommand } from "./commands.ts";
 
 export type ToastPriority = "normal" | "high";
 

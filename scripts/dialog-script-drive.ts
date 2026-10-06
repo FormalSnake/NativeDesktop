@@ -40,14 +40,14 @@ async function clickAndExpect(button: string, resultTestId: string, expectedValu
   }
 }
 
-// App-level (systemRequest, packages/react/src/system.ts's `dialog` object):
+// App-level (systemRequest, packages/core/src/system.ts's `dialog` object):
 // raw result shapes, not wrapped objects — see src/dialogs.ts's header comment.
 await clickAndExpect("app-open-file-button", "app-open-file-result", "/tmp/nd-dialog-script-a.txt");
 await clickAndExpect("app-save-file-button", "app-save-file-result", "/tmp/nd-dialog-script-out.txt");
 await clickAndExpect("app-show-message-button", "app-show-message-result", "1");
 console.log("ND_DIALOG_SCRIPT_APP_OK dialog.openFile/saveFile/showMessage all scripted");
 
-// Window-scoped (widgetCommand, packages/react/src/dialogs.ts): the real
+// Window-scoped (widgetCommand, packages/core/src/dialogs.ts): the real
 // AlertResult/OpenFileResult/SaveFileResult shapes.
 await clickAndExpect("window-show-alert-button", "window-alert-result", "delete");
 await clickAndExpect("window-open-file-button", "window-open-file-result", "/tmp/nd-dialog-script-b.txt");

@@ -1,7 +1,7 @@
 import { render } from "@nativedesktop/react";
 
 // Negative test: an invalid web-CSS style key must be rejected at mount
-// with the fix-it StyleError (see packages/react/src/style-validate.ts).
+// with the fix-it StyleError (see packages/core/src/style-validate.ts).
 // Built as Record<string, unknown> (not a StyleProp literal) so the TS
 // excess-property check doesn't shadow the runtime rejection this script
 // exists to exercise. Run standalone via

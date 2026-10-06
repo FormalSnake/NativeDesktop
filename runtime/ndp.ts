@@ -12,8 +12,8 @@ import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 // of truth shared with the Zig mirror, src/generated/protocol.zig) — a field
 // rename or type change there regenerates both sides, so drift is a compile
 // error, not a silent wire break.
-import { NDP_VERSION } from "../packages/react/src/generated/protocol";
-import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "../packages/react/src/generated/protocol";
+import { NDP_VERSION } from "../packages/core/src/generated/protocol";
+import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "../packages/core/src/generated/protocol";
 
 interface PendingRequest {
   resolve: (result: unknown) => void;
@@ -59,7 +59,7 @@ export class Ndp {
   private backendName = "unknown";
   // Host capability manifest (helloAck hostWidgets/hostCommands). null when
   // the host predates the fields — callers fall back to their own schema
-  // tables (see packages/react/src/platform.ts's setHostManifest).
+  // tables (see packages/core/src/platform.ts's setHostManifest).
   private hostWidgetsSet: Set<string> | null = null;
   private hostCommandsSet: Set<string> | null = null;
   // systemRequest/systemResponse correlation (system capabilities API, M15):

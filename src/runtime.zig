@@ -958,7 +958,7 @@ pub const Runtime = struct {
             handleReparent(self.tree, cmd.nodeId, cmd.arg);
             return;
         }
-        // Scripted window-scoped dialogs (packages/react/src/dialogs.ts rides
+        // Scripted window-scoped dialogs (packages/core/src/dialogs.ts rides
         // widgetCommand, not systemRequest): a scripted showAlert/openFile/
         // saveFile on a Window node synthesizes the matching *Result event —
         // spliced verbatim as the event's `data`, so the entry must carry the

@@ -3,10 +3,10 @@
 // out-of-band and replies async over NDP with the matching `id`, so these
 // modules hold the resolver until that event arrives.
 
-import type { NdNodeRef } from "./generated/intrinsics.ts";
-import { registry } from "./host-config.ts";
+import type { NdNodeRef } from "./generated/widgets.ts";
+import { getSession } from "./session.ts";
 import { onNodeRemoved } from "./ops.ts";
-import { sendCommand } from "./renderer.ts";
+import { sendCommand } from "./commands.ts";
 
 interface Pending<T> {
   resolve: (value: T) => void;
@@ -50,7 +50,7 @@ function request<T>(
 ): Promise<T> {
   const id = nextId(prefix);
   return new Promise<T>((resolve, reject) => {
-    if (!registry.get(node.id)) {
+    if (!getSession()?.registry.get(node.id)) {
       reject(new Error(`${command}: the <webview> is no longer mounted`));
       return;
     }

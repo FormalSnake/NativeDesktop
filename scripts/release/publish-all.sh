@@ -20,7 +20,9 @@ for dir in \
   packages/host-darwin-arm64 \
   packages/host-linux-x64 \
   packages/host \
+  packages/core \
   packages/react \
+  packages/solid \
   packages/rpc \
   packages/test \
   packages/native \

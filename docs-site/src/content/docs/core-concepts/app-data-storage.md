@@ -9,7 +9,7 @@ commit loop.
 
 ## `getAppDataDir()` / `ensureAppDataDir()`
 
-Both are exported from `@nativedesktop/react` (`packages/react/src/paths.ts`):
+Both are exported from `@nativedesktop/react` (`packages/core/src/paths.ts`):
 
 ```tsx
 import { ensureAppDataDir, getAppDataDir } from "@nativedesktop/react";
@@ -37,7 +37,7 @@ opening a database there.
 ## `createStore`: versioned JSON settings
 
 For settings, layouts, and other small persistent state, `createStore` (exported from
-`@nativedesktop/react`, `packages/react/src/store.ts`) manages one `${name}.json` file under
+`@nativedesktop/react`, `packages/core/src/store.ts`) manages one `${name}.json` file under
 `getAppDataDir()` (or a `dir` override):
 
 ```tsx

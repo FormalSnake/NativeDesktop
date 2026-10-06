@@ -2,7 +2,7 @@ import { forwardRef, useCallback } from "./dev-react.ts";
 import { createElement, type Ref } from "react";
 import type { JSX, NdNodeRef } from "./generated/intrinsics.ts";
 import type { Instance } from "./host-config.ts";
-import { sendNativeCommand } from "./renderer.ts";
+import { sendNativeCommand } from "@nativedesktop/core";
 
 export interface NativeComponentOptions {
   /** Factory key registered by the app's platform-native library. */

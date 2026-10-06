@@ -82,7 +82,7 @@ async function handleDelete() {
 }
 ```
 
-`showToast` and `dismissToast` (from `@nativedesktop/react`, backed by `packages/react/src/toast.ts`)
+`showToast` and `dismissToast` (from `@nativedesktop/react`, backed by `packages/core/src/toast.ts`)
 are [imperative commands](/core-concepts/imperative-commands/) wrapped in a promise:
 
 | Function | Signature | Resolves to |

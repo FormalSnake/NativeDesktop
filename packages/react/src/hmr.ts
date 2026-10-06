@@ -2,12 +2,11 @@
 // socket across edits, but re-runs every top-level statement in the module
 // graph on any edit. Module-local `let`/`const` bindings are re-initialized
 // on each re-eval; only `globalThis`-keyed state survives. `render()` must
-// therefore stash its connect+mount state here so a hot re-eval reuses the
-// live Ndp/root instead of double-connecting.
+// therefore stash its mount state here so a hot re-eval reuses the live root
+// instead of mounting a second one (the connection itself is core's session).
 
-import type { Ndp } from "../../../runtime/ndp.ts";
 import * as RefreshRuntimeFirstEval from "react-refresh/runtime";
-import { newGeneration } from "./ids.ts";
+import { newGeneration } from "@nativedesktop/core";
 
 // react-refresh/runtime keeps its family registry (allFamiliesByID,
 // mountedRoots, helpersByRoot, ...) in module-local closures, not on any
@@ -34,7 +33,6 @@ function pinnedRefreshRuntime(): typeof RefreshRuntimeFirstEval {
 }
 
 export interface HmrState {
-  ndp: Ndp;
   root: unknown;
   reconciler: { updateContainer: (...a: unknown[]) => void };
   bootCount: number;
@@ -51,10 +49,6 @@ export function getHmrState(): HmrState | undefined {
 
 export function setHmrState(s: HmrState): void {
   globalThis.__nd_hmr = s;
-}
-
-export function isHot(): boolean {
-  return process.env.ND_DEV === "1";
 }
 
 interface RefreshableReconciler {

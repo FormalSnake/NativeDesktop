@@ -3,10 +3,10 @@
 // error boundaries (react-reconciler's createContainer callbacks land here
 // via reportRenderError); this module owns the process-level
 // `unhandledRejection` / `uncaughtException` handlers. All state lives on
-// globalThis (same idiom as hmr.ts) so a `bun --hot` re-eval neither
+// globalThis (same idiom as session.ts) so a `bun --hot` re-eval neither
 // double-installs process listeners nor resets subscriptions mid-session.
 
-import { getHmrState, isHot } from "./hmr.ts";
+import { getSession, isHot } from "./session.ts";
 
 export type NdErrorKind =
   | "unhandledRejection"
@@ -155,7 +155,7 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?
       console.error(line);
     }
     // No-op before render() connects, same pattern as system.ts's call().
-    getHmrState()?.ndp.sendRuntimeError(error.message, error.stack ?? "", fatal);
+    getSession()?.ndp.sendRuntimeError(error.message, error.stack ?? "", fatal);
   }
   const context: NdErrorContext = { kind, fatal, raw };
   if (componentStack !== undefined) context.componentStack = componentStack;
@@ -168,7 +168,7 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?
   }
 }
 
-/** Called by renderer.ts's createContainer callbacks. Not public API. */
+/** Called by a renderer's own error callbacks (React: createContainer's). Not public API. */
 export function reportRenderError(
   raw: unknown,
   kind: "renderUncaught" | "renderCaught" | "renderRecoverable",
@@ -176,7 +176,7 @@ export function reportRenderError(
 ): void {
   if (kind === "renderUncaught") {
     // Fatal, not configurable: React already committed {element: null}. Mark
-    // the error so the follow-on uncaughtException (renderer.ts rethrows,
+    // the error so the follow-on uncaughtException (packages/react's renderer.ts rethrows,
     // React re-raises that in a setTimeout) exits without a second report.
     // A non-object throw can't be marked and double-logs; documented.
     if (typeof raw === "object" && raw !== null) state().renderFatal.add(raw);

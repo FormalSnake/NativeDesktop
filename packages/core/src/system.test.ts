@@ -2,7 +2,7 @@
 // app.isActive() activation mirror — no host process; the ndp is a stub
 // whose request() just hands back ids.
 import { test, expect, beforeEach } from "bun:test";
-import { setHmrState, type HmrState } from "./hmr.ts";
+import { setSession, type Session } from "./session.ts";
 import { notifications, app, dispatchSystemEvent } from "./system.ts";
 
 let nextId = 0;
@@ -12,7 +12,7 @@ beforeEach(() => {
   globalThis.__nd_app_active = undefined;
   nextId = 0;
   const fakeNdp = { request: async () => `n${++nextId}` };
-  setHmrState({ ndp: fakeNdp, root: null, reconciler: { updateContainer: () => {} }, bootCount: 1 } as unknown as HmrState);
+  setSession({ ndp: fakeNdp } as unknown as Session);
 });
 
 test("show() stores data; click echoes it once and deletes the entry", async () => {

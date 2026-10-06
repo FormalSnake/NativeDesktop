@@ -10,7 +10,7 @@ or a headless CI script inspects and drives an app the way a person does.
 
 Every method's params, result shape, and error code is generated from `schema/rpc.json`, shared by
 the Zig host (`src/generated/rpc.zig`, consumed by `src/automation.zig`) and the TypeScript client
-(`packages/react/src/generated/rpc.ts`). Rename or retype a field there and both sides regenerate,
+(`packages/core/src/generated/rpc.ts`). Rename or retype a field there and both sides regenerate,
 making a mismatch a compile error rather than a silent wire break. Same `tools/codegen.ts` pipeline
 that generates widget bindings from `schema/widgets.json`.
 

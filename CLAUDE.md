@@ -326,7 +326,7 @@ band around the threshold).
 
 ### App-facing APIs added recently
 - **System capabilities** (parity with native-sdk.dev's capability pack) —
-  promise-based APIs from `@nativedesktop/react` (`packages/react/src/
+  promise-based APIs from `@nativedesktop/react` (`packages/core/src/
   system.ts`): `dialog.openFile/saveFile/showMessage`, `clipboard.readText/
   writeText`, `notifications.show/onClick`, `recentDocuments.add/clear`,
   `credentials.set/get/delete` (Keychain / dlopen'd libsecret), and app-level
@@ -340,7 +340,7 @@ band around the threshold).
   `core:clipboard.read` and `core:credentials` need an `ND_ACL_GRANTS`
   manifest (`{"defaultWindow":[...]}` or per-window `grants`). Pure-TS
   helpers (no host round-trip, unsandboxed by design): `openExternal` /
-  `openPath` / `revealPath` (`packages/react/src/shell.ts`).
+  `openPath` / `revealPath` (`packages/core/src/shell.ts`).
 - **Audio playback + spectrum** — `audio.play({path|url, volume?, spectrum?})`
   → handle; `pause/resume/stop/seek/setVolume`; `audio.onState` (transition
   events: playing/paused/ended/stopped/error, position/duration ms) and
@@ -361,7 +361,7 @@ band around the threshold).
   XML (`packages/nd/src/package/identity.ts`). OS launches land as
   `app.onOpenFile` / `app.onOpenUrl` events.
 - **App data dir** — `getAppDataDir()` / `ensureAppDataDir()` from
-  `@nativedesktop/react` (`packages/react/src/paths.ts`). Electron-style
+  `@nativedesktop/react` (`packages/core/src/paths.ts`). Electron-style
   userData path; app name comes from the app's `package.json` `name`. macOS
   `~/Library/Application Support/<name>`, Linux `$XDG_DATA_HOME/<name>`
   (→ `~/.local/share/<name>`).
@@ -380,8 +380,8 @@ band around the threshold).
   or `migrate()` at startup via the sqlite-proxy migrator. `drizzle-orm`/`kysely`
   are devDependencies only — never a library dep to keep updated.
 - **Per-window dialogs + toasts** — `showAlert`/`openFile`/`saveFile`/`showAbout`
-  (`packages/react/src/dialogs.ts`) and `showToast`/`dismissToast`
-  (`packages/react/src/toast.ts`) are promise-wrapped imperative commands on
+  (`packages/core/src/dialogs.ts`) and `showToast`/`dismissToast`
+  (`packages/core/src/toast.ts`) are promise-wrapped imperative commands on
   `<window>`/`<toastoverlay>`: `sendCommand` kicks the native dialog/toast off,
   a matching `*Result`/`toast*` event settles the promise. Dialogs correlate by
   the window's own wire id (only one pending per window — a second call
@@ -411,7 +411,7 @@ band around the threshold).
   app-controlled state, never native state, so an unrelated re-render can't
   silently collapse a branch the user opened.
 - **Survivable error policy**: `setUnhandledErrorPolicy` / `onUnhandledError`
-  (`packages/react/src/errors.ts`): `uncaughtException` defaults to fatal,
+  (`packages/core/src/errors.ts`): `uncaughtException` defaults to fatal,
   `unhandledRejection` to report-and-survive (`ND_FATAL_REJECTIONS=1` flips
   it); render-phase errors route through the reconciler's createContainer
   callbacks. Non-fatal reports are rate-capped (20 per 10s) so an error loop
@@ -420,7 +420,7 @@ band around the threshold).
   `ND_RUNTIME_ERROR_NONFATAL` otherwise, so a stale report never becomes
   overlay text.
 - **Settings store**: `createStore` / `useStoreValue`
-  (`packages/react/src/store.ts`): versioned `${name}.json` under the app data
+  (`packages/core/src/store.ts`): versioned `${name}.json` under the app data
   dir. Intended launch shape: `await store.load()` above `render()`, which
   makes `get()` synchronous inside components (no loading flash, no restore
   effect). Writes are debounced, serialized on one promise chain, land via
@@ -454,7 +454,7 @@ band around the threshold).
   ToolbarView top/content/bottom slots + bar styles, AdwViewSwitcher tab views,
   SplitView breakpoints + Window `sizeChanged`, empty-state AdwStatusPage on
   data views, `accentColor` in the appearance payload, and the spacing scale
-  `Spacing`/`ContentMargin` (`packages/react/src/metrics.ts`). AppKit:
+  `Spacing`/`ContentMargin` (`packages/core/src/metrics.ts`). AppKit:
   system-drawn toolbar items (labels, overflow, customization,
   NSToolbarItemGroup runs), badges, edge-to-edge content via
   NSBackgroundExtensionView, ~50 new SF Symbol mappings, window `toolbarStyle`/
@@ -462,7 +462,7 @@ band around the threshold).
   now the platform standard (8 AppKit / 6 GTK) instead of 0**; the schema
   default `-1` is the sentinel for it.
 - **Feature detection + app state**: `hasWidget(type)` / `hasCommand(type,
-  command)` (`packages/react/src/platform.ts`) answer from a helloAck host
+  command)` (`packages/core/src/platform.ts`) answer from a helloAck host
   manifest, replacing try/catch around `sendCommand` (fallback semantics for
   hosts predating the fields). `app.isActive()` is synchronous, kept current by
   host-side state replay after HelloAck. `NotificationOptions.data` is echoed
@@ -513,8 +513,18 @@ band around the threshold).
 - **AppKit backend:** `swift/Sources/NDShell/` (hand-written) +
   `swift/Sources/NDGen/` (generated) + `swift/Sources/CNd/` (bridges `libnd.a`);
   build scripts under `scripts/mac/`.
-- **JS packages:** `packages/react` (`@nativedesktop/react`: reconciler,
-  intrinsics, `Platform`, paths, store, errors), `packages/nd`
+- **JS packages:** `packages/core` (`@nativedesktop/core`: renderer-agnostic
+  session/NDP handshake, Batch/NodeRegistry, wire ids, prop diff and
+  dropped-prop reset, sendCommand/moveNode, `Platform`, paths, store, errors,
+  system/dialogs/toast/webview APIs, and the generated schema-meta/protocol/
+  rpc/widgets TS), `packages/react` (`@nativedesktop/react`: reconciler,
+  React JSX intrinsics, hooks, re-exports core), `packages/solid`
+  (`@nativedesktop/solid`: `@solidjs/universal` renderer over core, Solid JSX
+  intrinsics, `Portal`/`createPool`; `register.ts` is the Bun plugin that runs
+  babel-preset-solid's universal transform and swaps solid-js's SSR build
+  for its client build, so a Solid entry is a `.ts` file that imports
+  `@nativedesktop/solid/register` and then `await import`s the `.tsx` app; no
+  Solid HMR yet), `packages/nd`
   (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
   (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`
   (worker SQLite), `packages/rpc`, `packages/panes`, `packages/test`

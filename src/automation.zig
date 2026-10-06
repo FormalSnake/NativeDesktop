@@ -3,7 +3,7 @@ const marker = @import("marker.zig");
 const protocol = @import("protocol.zig");
 // Method names, params/result shapes, and error codes are GENERATED from
 // schema/rpc.json (the single source of truth shared with the TS mirror,
-// packages/react/src/generated/rpc.ts) — a method/param/result change there
+// packages/core/src/generated/rpc.ts): a method/param/result change there
 // regenerates both sides, so drift is a compile error, not a silent break.
 const rpc = @import("generated/rpc.zig");
 const widget_types = @import("generated/widget_types.zig");

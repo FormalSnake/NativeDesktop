@@ -1,12 +1,20 @@
 import { DiscreteEventPriority, ContinuousEventPriority, DefaultEventPriority } from "react-reconciler/constants";
-import { nextNodeId } from "./ids.ts";
-import { Batch, NodeRegistry, type Handler } from "./ops.ts";
-import { intrinsicToName, widgetEvents, handlerPropNames, widgetPlatforms, widgetRefProps } from "./generated/schema-meta.ts";
-import type { WidgetType } from "./generated/intrinsics.ts";
-import { validateStyle } from "./style-validate.ts";
-import { validateCssClasses } from "./css-classes-validate.ts";
-import { isHot } from "./hmr.ts";
-import { Platform } from "./platform.ts";
+import {
+  Batch,
+  NodeRegistry,
+  nextNodeId,
+  intrinsicToName,
+  handlerPropNames,
+  widgetRefProps,
+  validateStyle,
+  validateCssClasses,
+  collectHandlers,
+  refTargetId,
+  propsEqual,
+  removalValue,
+  checkPlatform,
+  type WidgetType,
+} from "@nativedesktop/core";
 
 export type { WidgetType };
 
@@ -33,38 +41,6 @@ function textOf(children: unknown): string | undefined {
   if (Array.isArray(children) && children.every((c) => typeof c === "string" || typeof c === "number"))
     return children.join("");
   return undefined;
-}
-
-// A function-valued `on*` prop the schema does not declare is dropped on the
-// floor: collectHandlers reads only declared names, so `onClicked` on a
-// <button> (whose event prop is `onClick`) never registers a listener while
-// the click RPC still answers dispatched:true and the GTK signal is still
-// connected. Nothing else in the stack notices, because examples/ and app
-// trees are not covered by any tsconfig, so the JSX type error never runs.
-// Warn once per type+prop.
-const warnedUnknownHandler = new Set<string>();
-function warnUnknownHandlers(type: string, props: Record<string, unknown>): void {
-  const declared = handlerPropNames[type] ?? [];
-  for (const key of Object.keys(props)) {
-    if (typeof props[key] !== "function") continue;
-    if (key.length < 3 || !key.startsWith("on") || key[2]! !== key[2]!.toUpperCase()) continue;
-    if (declared.includes(key)) continue;
-    const seen = `${type}.${key}`;
-    if (warnedUnknownHandler.has(seen)) continue;
-    warnedUnknownHandler.add(seen);
-    const hint = declared.length ? `Declared events: ${declared.join(", ")}.` : "This widget declares no events.";
-    console.warn(`ND_WARN <${type}> has no "${key}" event, so the handler will never fire. ${hint}`);
-  }
-}
-
-function collectHandlers(type: string, props: Record<string, unknown>): Record<string, Handler> {
-  warnUnknownHandlers(type, props);
-  const out: Record<string, Handler> = {};
-  for (const ev of widgetEvents[type] ?? []) {
-    const h = props[ev.handler];
-    if (typeof h === "function") out[ev.name] = h as Handler;
-  }
-  return out;
 }
 
 export interface Container { rootId: number | null }
@@ -99,11 +75,6 @@ function emitCreateIfNew(inst: Instance): void {
 /// ref starts pointing at a node.
 const lastRefIds = new WeakMap<Instance, Record<string, number>>();
 
-function refId(v: unknown): number | undefined {
-  const id = (v as { current?: { id?: number } | null } | null | undefined)?.current?.id;
-  return typeof id === "number" ? id : undefined;
-}
-
 /// Create path: swaps a ref-valued JSX prop (`anchorRef={buttonRef}`) for the
 /// wire prop carrying the target's node id (`anchor: 7`), in the shallow copy
 /// the caller is about to send.
@@ -118,7 +89,7 @@ function resolveRefProps(inst: Instance, props: Record<string, unknown>): void {
   const sent: Record<string, number> = {};
   for (const [refName, wireName] of Object.entries(refs)) {
     if (!(refName in props)) continue;
-    const id = refId(props[refName]);
+    const id = refTargetId(props[refName]);
     delete props[refName];
     if (id === undefined) continue;
     props[wireName] = id;
@@ -139,7 +110,7 @@ function diffRefProps(inst: Instance, props: Record<string, unknown>, changed: R
   }
   for (const [refName, wireName] of Object.entries(refs)) {
     if (wireName in props) continue; // an explicit id wins, and the generic diff owns it
-    const id = refName in props ? refId(props[refName]) : undefined;
+    const id = refName in props ? refTargetId(props[refName]) : undefined;
     if (id === sent[wireName]) continue;
     if (id === undefined) {
       changed[wireName] = null;
@@ -151,72 +122,8 @@ function diffRefProps(inst: Instance, props: Record<string, unknown>, changed: R
   }
 }
 
-// How deep propsEqual walks before it gives up and answers "changed". Covers
-// StyleProp (an object of scalars plus font/padding/margin/border sub-objects)
-// and the array-of-record props (`rows`, `columns`, `nodes`) without ever
-// recursing into something unbounded.
-const PROP_COMPARE_DEPTH = 4;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  if (typeof v !== "object" || v === null) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-
-/// Structural equality for prop values, bounded by PROP_COMPARE_DEPTH.
-/// A JSX literal (`style={{...}}`, `rows={items.map(...)}`) is a fresh object
-/// on every render, so identity comparison reports every one of them as
-/// changed and ships a full `update` op for a prop nobody touched. Anything
-/// that is not a plain object or an array (functions, class instances, Dates)
-/// falls back to identity, as does hitting the depth cap: the conservative
-/// answer is "changed", which costs a redundant update, never a missed one.
-function propsEqual(a: unknown, b: unknown, depth = 0): boolean {
-  if (Object.is(a, b)) return true;
-  if (depth >= PROP_COMPARE_DEPTH) return false;
-  if (Array.isArray(a)) {
-    if (!Array.isArray(b) || a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (!propsEqual(a[i], b[i], depth + 1)) return false;
-    return true;
-  }
-  if (!isPlainObject(a) || !isPlainObject(b)) return false;
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  for (const k of keys) {
-    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
-    if (!propsEqual(a[k], b[k], depth + 1)) return false;
-  }
-  return true;
-}
-
-/// The two universal props whose removal marker is not null. Both are applied
-/// by a set-replace pass over the whole value (Backend.swift's `ndApplyStyle`,
-/// src/gtk/style.zig's per-node CSS provider and class allowlist), so the empty
-/// value IS the reset; a null would only fall through their type guards.
-const REMOVAL_VALUE: Record<string, unknown> = {
-  style: Object.freeze({}),
-  cssClasses: Object.freeze([]),
-};
-
 export function setPriorityFor(kind: "discrete" | "continuous" | "default"): void {
   currentUpdatePriority = kind === "discrete" ? DiscreteEventPriority : kind === "continuous" ? ContinuousEventPriority : DefaultEventPriority;
-}
-
-const PLATFORM_LABEL: Record<"macos" | "linux", string> = { macos: "macOS", linux: "Linux" };
-
-// One-time-per-type dev warning when an intrinsic mounts on a platform its
-// schema entry doesn't list (e.g. <trayitem> on linux) — it's not an error,
-// the widget just renders as an invisible no-op there (see schema-meta's
-// widgetPlatforms doc comment), but silently doing nothing is easy to miss.
-// Gated on isHot() (ND_DEV=1, set only by `nd dev` — see hmr.ts) so a `nd
-// build` release never pays for or prints this check.
-const warnedPlatformMismatch = new Set<WidgetType>();
-function checkPlatform(type: WidgetType): void {
-  if (!isHot() || warnedPlatformMismatch.has(type)) return;
-  const allowed = widgetPlatforms[type];
-  if (!allowed || (allowed as readonly string[]).includes(Platform.os)) return;
-  warnedPlatformMismatch.add(type);
-  const label = allowed.map((p) => PLATFORM_LABEL[p]).join("/");
-  console.warn(`<${type}> is ${label}-only; it renders nothing on ${Platform.os}. Gate it with Platform.os.`);
 }
 
 export const hostConfig = {
@@ -302,7 +209,7 @@ export const hostConfig = {
       // `label={cond ? x : undefined}` keeps the key with no value, which JSON
       // drops from the op: it is a removal like a key the render left out.
       if (newProps[k] === undefined) {
-        if (oldProps[k] !== undefined) changed[k] = REMOVAL_VALUE[k] ?? null;
+        if (oldProps[k] !== undefined) changed[k] = removalValue(k);
         continue;
       }
       if (!propsEqual(newProps[k], oldProps[k])) changed[k] = newProps[k];
@@ -316,7 +223,7 @@ export const hostConfig = {
     // (ndApplyDroppedDefaults, tools/codegen.ts).
     for (const k of Object.keys(oldProps)) {
       if (k in newProps || !wire(k)) continue;
-      changed[k] = REMOVAL_VALUE[k] ?? null;
+      changed[k] = removalValue(k);
     }
     diffRefProps(inst, newProps, changed);
     if (Object.keys(changed).length) activeBatch.push({ op: "update", id: inst.id, props: changed });

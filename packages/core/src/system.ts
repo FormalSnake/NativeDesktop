@@ -8,20 +8,20 @@
 // readText and credentials.* are default-denied and reject with "capability
 // denied" unless the app's ND_ACL_GRANTS manifest lists them.
 
-import { getHmrState } from "./hmr.ts";
+import { getSession } from "./session.ts";
 
 function requireHost(name: string): void {
-  if (!getHmrState()) throw new Error(`${name}() used before render(): no host connection yet`);
+  if (!getSession()) throw new Error(`${name}() used before render(): no host connection yet`);
 }
 
 function call(method: string, params: unknown = {}): Promise<unknown> {
   requireHost(method);
-  return getHmrState()!.ndp.request(method, params);
+  return getSession()!.ndp.request(method, params);
 }
 
 // --- systemEvent registry ---------------------------------------------------
 // A channel -> handler-set map, stashed on globalThis (same pattern as
-// hmr.ts's __nd_hmr) so subscriptions survive a `bun --hot` re-eval of this
+// session.ts's __nd_session) so subscriptions survive a `bun --hot` re-eval of this
 // module instead of resetting to an empty registry mid-session.
 type SystemEventHandler = (data: unknown) => void;
 
@@ -49,7 +49,7 @@ function subscribe(channel: string, name: string, handler: SystemEventHandler): 
   return () => handlers!.delete(handler);
 }
 
-/** Wired up by renderer.ts from `ndp.onSystemEvent()` — not part of the public API. */
+/** Wired up by session.ts's connect() from `ndp.onSystemEvent()`; not part of the public API. */
 export function dispatchSystemEvent(channel: string, data: unknown): void {
   // Standing activation state behind app.isActive(), updated BEFORE the
   // fan-out so a handler reading isActive() inside its own onActivate sees

@@ -5,7 +5,7 @@ description: The full JSON-RPC automation surface, covering transport, methods, 
 
 `schema/rpc.json` is the ground truth for this page. `tools/codegen.ts` generates both
 `src/generated/rpc.zig` (consumed by `src/automation.zig`) and
-`packages/react/src/generated/rpc.ts` from it, and this page mirrors them. If the two disagree, the
+`packages/core/src/generated/rpc.ts` from it, and this page mirrors them. If the two disagree, the
 schema and its generated output win. Changing a method, param, or result in the schema is a compile
 error on both the Zig and the TypeScript side until every caller is updated, never a silent runtime
 break.

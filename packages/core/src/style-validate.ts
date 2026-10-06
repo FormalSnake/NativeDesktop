@@ -1,4 +1,4 @@
-import { styleKeySpec } from "./generated/intrinsics.ts";
+import { styleKeySpec } from "./generated/widgets.ts";
 
 export class StyleError extends Error {}
 

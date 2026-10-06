@@ -25,8 +25,8 @@
 // call while one is outstanding REJECTS immediately rather than silently
 // queueing or clobbering the first caller's promise.
 
-import type { NdNodeRef } from "./generated/intrinsics.ts";
-import { sendCommand } from "./renderer.ts";
+import type { NdNodeRef } from "./generated/widgets.ts";
+import { sendCommand } from "./commands.ts";
 import type { FileFilter } from "./system.ts";
 
 export type { FileFilter };

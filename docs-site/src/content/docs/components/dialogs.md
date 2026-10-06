@@ -95,5 +95,5 @@ Error: <window> already has a "showAlert" dialog pending; only one modal dialog 
 `showAbout` has no result event to correlate, so it never claims the slot and can be called
 alongside a pending `showAlert`, `openFile`, or `saveFile`.
 
-See `packages/react/src/dialogs.ts` for the implementation and `examples/gallery/main.tsx`'s
+See `packages/core/src/dialogs.ts` for the implementation and `examples/gallery/main.tsx`'s
 Dialogs tab for all four calls wired to readouts.

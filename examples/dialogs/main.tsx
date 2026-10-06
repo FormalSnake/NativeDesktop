@@ -21,7 +21,7 @@ import type { NdNodeRef } from "@nativedesktop/react";
 // (§1.5) can be exercised on both backends without that dependency.
 //
 // Covers both interception paths: the app-level `dialog.*` systemRequest
-// (packages/react/src/system.ts, ACL-gated but default-granted) and the
+// (packages/core/src/system.ts, ACL-gated but default-granted) and the
 // window-scoped showAlert/openFile/saveFile widgetCommand (packages/react/
 // src/dialogs.ts).
 

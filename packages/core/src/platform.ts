@@ -17,7 +17,7 @@ import { intrinsicToName, widgetCommands } from "./generated/schema-meta.ts";
 export type Backend = "gtk" | "appkit" | "unknown";
 export type OS = "macos" | "linux" | "windows";
 
-// Backend + manifest live on globalThis (same pattern as hmr.ts's __nd_hmr):
+// Backend + manifest live on globalThis (same pattern as session.ts's __nd_session):
 // `bun --hot` re-evals reset module-local bindings, and render() skips the
 // connect block on a re-eval, so module-local state would silently fall back
 // to the pre-handshake defaults after the first hot edit.

@@ -1,0 +1,40 @@
+{
+  "name": "@nativedesktop/solid",
+  "version": "0.4.54",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/FormalSnake/NativeDesktop#readme",
+  "bugs": "https://github.com/FormalSnake/NativeDesktop/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FormalSnake/NativeDesktop.git",
+    "directory": "packages/solid"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./register": "./src/register.ts",
+    "./jsx-runtime": "./src/jsx-runtime.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "peerDependencies": {
+    "solid-js": "2.0.0-rc.13"
+  },
+  "dependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/preset-typescript": "7.29.7",
+    "@nativedesktop/core": "workspace:*",
+    "@solidjs/universal": "2.0.0-rc.13",
+    "babel-preset-solid": "2.0.0-rc.2"
+  },
+  "devDependencies": {
+    "@types/babel__core": "7.20.5",
+    "solid-js": "2.0.0-rc.13",
+    "typescript": "7.0.2"
+  }
+}

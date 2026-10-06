@@ -123,7 +123,7 @@ function App(): React.ReactNode {
 
   // Window ref: showAlert/openFile/saveFile/showAbout are commands scoped to
   // this <window> node, correlated to their *Result events by the window's
-  // own wire id (see packages/react/src/dialogs.ts's header comment).
+  // own wire id (see packages/core/src/dialogs.ts's header comment).
   const winRef = useRef<NdNodeRef<"window">>(null);
   const toastRef = useRef<NdNodeRef<"toastoverlay">>(null);
 

@@ -208,5 +208,5 @@ teardown instead of tracking handles yourself.
 - `resolveTarget(t)`, `findNode`, `findAllNodes`, `findMatchingNode`: the target-normalization and
   tree-walk primitives `AppHandle` is built on, for scoped subtree searches like
   `findNode(paneNode, "some-child-testid")` rather than a whole-tree `find`.
-- `JsonNode`, `GetTreeResult`: re-exported from `packages/react/src/generated/rpc.ts` so a caller
+- `JsonNode`, `GetTreeResult`: re-exported from `packages/core/src/generated/rpc.ts` so a caller
   never has to reach into the generated tree outside this package.

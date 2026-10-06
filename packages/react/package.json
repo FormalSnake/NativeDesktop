@@ -32,12 +32,12 @@
       "default": "./dist/jsx-dev-runtime.js"
     },
     "./rpc": {
-      "types": "./dist/packages/react/src/generated/rpc.d.ts",
-      "default": "./dist/generated/rpc.js"
+      "types": "./dist/packages/react/src/rpc.d.ts",
+      "default": "./dist/rpc.js"
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts ./src/generated/rpc.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts ./src/rpc.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh --external @nativedesktop/core",
     "prepack": "bun run build",
     "prepare": "bun run build"
   },
@@ -45,6 +45,7 @@
     "react": "^19.2.7"
   },
   "dependencies": {
+    "@nativedesktop/core": "workspace:*",
     "react-reconciler": "0.33.0",
     "react-refresh": "0.17.0"
   },

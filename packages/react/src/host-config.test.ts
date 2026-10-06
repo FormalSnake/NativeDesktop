@@ -1,6 +1,6 @@
 import { test, expect, spyOn } from "bun:test";
 import { hostConfig, bindCommitTargets, type Container, type Instance, type WidgetType } from "./host-config.ts";
-import { Batch, NodeRegistry, type Handler } from "./ops.ts";
+import { Batch, NodeRegistry, type Handler } from "@nativedesktop/core";
 
 /// Mounts one intrinsic through the commit path and answers the handler map
 /// the event router would dispatch against.

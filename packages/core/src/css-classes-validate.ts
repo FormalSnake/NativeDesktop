@@ -1,4 +1,4 @@
-import { cssClassSpec } from "./generated/intrinsics.ts";
+import { cssClassSpec } from "./generated/widgets.ts";
 
 export class CssClassError extends Error {}
 

@@ -4,7 +4,7 @@
 // u32 LE frame-length prefix (shared with the JSON path, spec §1.1) — this
 // module never touches the socket or the outbox.
 
-import { WIDGET_TYPE } from "../packages/react/src/generated/widget-types";
+import { WIDGET_TYPE } from "../packages/core/src/generated/widget-types";
 
 type Op =
   | { op: "create"; id: number; widget: string; props: Record<string, unknown> }
