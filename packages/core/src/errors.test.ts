@@ -9,8 +9,10 @@ import {
   admitReport,
   type NdErrorContext,
 } from "./errors.ts";
+import { setSession } from "./session.ts";
 
 beforeEach(() => {
+  setSession(undefined);
   globalThis.__nd_errors = undefined;
   delete process.env.ND_FATAL_REJECTIONS;
 });
