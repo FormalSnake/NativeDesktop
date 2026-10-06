@@ -19,6 +19,7 @@ import {
   fetchCefIndex,
   planCefLinux,
   planCefMac,
+  ensureCefHelperBinary,
   resolveCefHelperBinary,
   selectCefBuild,
 } from "./cef.ts";
@@ -263,6 +264,23 @@ describe("resolveCefHelperBinary", () => {
   test("ND_CEF_HELPER wins, else the binary sits beside the host", () => {
     expect(resolveCefHelperBinary("/b/nd-shell", { ND_CEF_HELPER: "/x/helper" })).toBe("/x/helper");
     expect(resolveCefHelperBinary("/b/nd-shell", {})).toBe(`/b/${CEF_HELPER_BINARY_NAME}`);
+  });
+});
+
+describe("ensureCefHelperBinary", () => {
+  test("finds the helper staged beside a prebuilt platform package's host binary", async () => {
+    const bin = join(tempDir(), "node_modules", "@nativedesktop", "host-darwin-arm64", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "nd-shell"), "host");
+    writeFileSync(join(bin, CEF_HELPER_BINARY_NAME), "helper");
+    expect(await ensureCefHelperBinary(join(bin, "nd-shell"), {})).toBe(join(bin, CEF_HELPER_BINARY_NAME));
+  });
+
+  test("names the missing path when a prebuilt package lacks the helper", async () => {
+    const bin = join(tempDir(), "node_modules", "@nativedesktop", "host-darwin-arm64", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "nd-shell"), "host");
+    await expect(ensureCefHelperBinary(join(bin, "nd-shell"), {})).rejects.toThrow(CEF_HELPER_BINARY_NAME);
   });
 });
 

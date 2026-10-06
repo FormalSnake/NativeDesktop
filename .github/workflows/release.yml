@@ -40,10 +40,18 @@ jobs:
         run: strip -x swift/.build/release/NDShell
       - name: Require the chromium engine in the binary
         run: strings swift/.build/release/NDShell | grep -q "Chromium Embedded"
+      - name: Build the CEF helper (nd package copies it into the five helper apps)
+        run: |
+          ( cd swift && swift build -c release --product nd-cef-helper )
+          strip -x swift/.build/release/nd-cef-helper
+      - name: Require the CEF helper executable
+        run: test -x swift/.build/release/nd-cef-helper && file swift/.build/release/nd-cef-helper | grep -q "Mach-O 64-bit executable arm64"
       - uses: actions/upload-artifact@v4
         with:
           name: nd-shell
-          path: swift/.build/release/NDShell
+          path: |
+            swift/.build/release/NDShell
+            swift/.build/release/nd-cef-helper
           if-no-files-found: error
 
   build-linux-x64:
@@ -130,8 +138,10 @@ jobs:
         with: { name: nd-hello, path: artifacts/linux-x64 }
       - name: Stage platform binaries
         run: |
-          bun scripts/release/stage-platform-binary.ts darwin-arm64 artifacts/darwin-arm64/NDShell
+          bun scripts/release/stage-platform-binary.ts darwin-arm64 artifacts/darwin-arm64/NDShell artifacts/darwin-arm64/nd-cef-helper
           bun scripts/release/stage-platform-binary.ts linux-x64 artifacts/linux-x64/zig-out/bin/nd-hello
+      - name: Require the CEF helper in the staged darwin package
+        run: test -x packages/host-darwin-arm64/bin/nd-cef-helper
       - name: Check lockstep versions
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -171,8 +181,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           cp artifacts/darwin-arm64/NDShell nd-shell
+          cp artifacts/darwin-arm64/nd-cef-helper nd-cef-helper
           cp artifacts/linux-x64/zig-out/bin/nd-hello nd-hello
           cp artifacts/linux-x64/nd-hello.ldd.txt .
-          gh release create "$GITHUB_REF_NAME" nd-shell nd-hello nd-hello.ldd.txt NOTICE --generate-notes
+          gh release create "$GITHUB_REF_NAME" nd-shell nd-cef-helper nd-hello nd-hello.ldd.txt NOTICE --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
