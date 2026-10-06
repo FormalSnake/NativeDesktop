@@ -1,7 +1,7 @@
 import { test, expect, beforeAll } from "bun:test";
 import { createSignal, Errored, For, Show } from "solid-js";
 import { Batch, NodeRegistry, onUnhandledError, setSession, setUnhandledErrorPolicy, type Op } from "@nativedesktop/core";
-import { render, nextCommit, Portal, createPool } from "./renderer.ts";
+import { render, nextCommit, Portal, createPool, Activity } from "./renderer.ts";
 import { defineNativeComponent, type NativeComponentRef } from "./native-component.ts";
 import { eventForHandler } from "@nativedesktop/core";
 
@@ -170,6 +170,23 @@ test("portal children mount detached in the pool, side by side, and leave with t
   const attached = new Set(ops.filter((o) => o.op === "append").map((o) => (o as { child: number }).child));
   expect(views.some((v) => attached.has(v.id))).toBe(false);
   expect(await next(() => setOpen(false))).toEqual([{ op: "remove", id: views[0]!.id }]);
+});
+
+test("an Activity hides its widgets in place and shows the same ones again", async () => {
+  const [mode, setMode] = createSignal<"visible" | "hidden">("hidden");
+  const ops = await mount(() => (
+    <window>
+      <Activity mode={mode()}>
+        <webview testID="page" />
+      </Activity>
+    </window>
+  ));
+  const view = ops.find((o) => o.op === "create" && o.widget === "WebView") as { id: number };
+  const at = ops.indexOf(view as Op);
+  expect(ops.slice(at + 1)).toContainEqual({ op: "hide", id: view.id });
+  expect(await next(() => setMode("visible"))).toEqual([{ op: "unhide", id: view.id }]);
+  expect(await next(() => setMode("hidden"))).toEqual([{ op: "hide", id: view.id }]);
+  expect(await next(() => setMode("hidden"))).toEqual([]);
 });
 
 test("a native component sends viewKind and its props as JSON, and re-sends them on change", async () => {

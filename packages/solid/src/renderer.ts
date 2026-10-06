@@ -1,5 +1,5 @@
 import { createRenderer } from "@solidjs/universal";
-import { Errored, configureClientErrors, flush, onCleanup, type Element as SolidElement } from "solid-js";
+import { Errored, children, configureClientErrors, createRenderEffect, flush, onCleanup, type Element as SolidElement } from "solid-js";
 import {
   connect,
   installErrorHandlers,
@@ -50,6 +50,8 @@ export interface SolidNode {
   pendingUpdate: Record<string, unknown> | null;
   /** Last text sent for a label. */
   sentText: string | undefined;
+  /** Hidden by an <Activity>; a fresh create of this node comes up hidden too. */
+  hidden: boolean;
 }
 
 function makeNode(type: Kind): SolidNode {
@@ -69,6 +71,7 @@ function makeNode(type: Kind): SolidNode {
     pendingCreate: null,
     pendingUpdate: null,
     sentText: undefined,
+    hidden: false,
   };
 }
 
@@ -177,6 +180,7 @@ function mount(node: SolidNode): void {
   }
   const props = createProps(node);
   emit({ op: "create", id: node.id, widget: intrinsicToName[node.type] as "Window", props });
+  if (node.hidden) emit({ op: "hide", id: node.id });
   node.created = true;
   node.pendingCreate = props;
   touched.push(node);
@@ -388,6 +392,26 @@ export function Portal(props: { pool?: Pool; children?: SolidElement }): SolidEl
     if (marker.parent) removeFromParent(marker);
   });
   return undefined;
+}
+
+function setHidden(node: SolidNode, hidden: boolean): void {
+  if (node.type === "#text" || node.type === "#root" || node.hidden === hidden) return;
+  node.hidden = hidden;
+  if (node.created) emit({ op: hidden ? "hide" : "unhide", id: node.id });
+}
+
+/// Keeps `children` mounted while `mode` is "hidden": their top-level widgets
+/// are hidden in place instead of removed, so a hidden `<webview>` keeps its
+/// page, scroll position and JS state, all of which unmounting destroys.
+export function Activity(props: { mode: "visible" | "hidden"; children?: SolidElement }): SolidElement {
+  const resolved = children(() => props.children);
+  createRenderEffect(
+    () => ({ hidden: props.mode === "hidden", nodes: resolved.toArray() }),
+    ({ hidden, nodes }) => {
+      for (const n of nodes) if (n && typeof n === "object") setHidden(n as unknown as SolidNode, hidden);
+    },
+  );
+  return resolved as unknown as SolidElement;
 }
 
 interface Mounted {
