@@ -1,7 +1,7 @@
 # nativedesktop-app
 
-Scaffolded from the NativeDesktop template. Your UI lives in `src/`, renders to real native widgets,
-and runs on GTK4 with libadwaita on Linux or AppKit on macOS.
+Scaffolded from the NativeDesktop template. Your UI lives in `src/`, is written in SolidJS, renders
+to real native widgets, and runs on GTK4 with libadwaita on Linux or AppKit on macOS.
 
 ## Run it
 
@@ -18,7 +18,7 @@ bun run dev
 |---|---|
 | `nd dev [entry]` | Dev mode. `entry` defaults to `src/main.tsx`. |
 | `nd dev --backend gtk\|appkit` | Force a backend. Also reads `ND_BACKEND`. |
-| `nd build` | Compile to `dist/` through Babel, the same as `bun run compile`. |
+| `nd build` | Compile `src/` into `dist/main.js`, the same as `bun run compile`. |
 | `nd package [mac\|linux]` | Assemble and sign the platform bundle (`.app` / AppImage). Platform defaults to the host. Also `bun run package`. |
 | `nd doctor [--json]` | Check packaging and toolchain readiness for this directory. |
 
@@ -31,80 +31,62 @@ automation socket.
 If `nativedesktop.config.ts` declares app-owned native plugins, `nd` runs their cached build
 commands first and passes the resulting shared-library paths to the prebuilt host. It never rebuilds
 NativeDesktop itself. See `docs/native-components.md` in the framework checkout and `native/README.md`
-here.
+here. `defineNativeComponent` from `@nativedesktop/solid` gives such a view a typed component.
 
 When you are iterating on the framework's own Zig or Swift host rather than this app, invoke the raw
-form against your freshly built binary, since `nd dev` prefers the prebuilt one:
+form against your freshly built binary, since `nd dev` prefers the prebuilt one. The Solid JSX
+transform is a Bun preload, so pass it yourself:
 
 ```bash
-ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
+BUN_OPTIONS=--preload=@nativedesktop/solid/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
 ```
 
 ## Writing components
 
-Import hooks from `@nativedesktop/react`, not from `react`:
+Components are Solid components: each runs once, and the JSX expressions that read signals update
+the native widgets they feed. Read a signal by calling it (`clicks()`) inside JSX, a memo or an
+effect, and pass props as values (`<Panel open={open()} />`). Refs are plain variables or
+callbacks: `let win: NdNodeRef<"window"> | undefined` with `<window ref={win}>`.
 
-```tsx
-import { useState } from "@nativedesktop/react";
-```
+Primitives (`createSignal`, `createMemo`, `For`, `Show`, `Errored`, `Loading`) come from
+`solid-js`; the widgets, `render` and the platform APIs come from `@nativedesktop/solid`.
+`src/hooks/useToggle.ts` is plain `solid-js` with no JSX, so the same file also works in a web Solid
+app.
 
-Hot reload re-evaluates the entire module graph, and a bare `react` import resolves to a fresh
-instance whose dispatcher is attached to nothing. Shared, non-component `.ts` modules are the
-exception: write those against `react` and the build rewrites the import for you.
+Under `nd dev` an edit to a component patches it in place: the window and the state of the
+components you did not edit stay.
 
 ## How this app links to the framework
 
-`package.json` depends on the published npm packages: `@nativedesktop/react` (the renderer),
-`@nativedesktop/native` (native-plugin headers), and `@nativedesktop/cli` (the `nd` bin, which pulls
-in `@nativedesktop/host` and the prebuilt host binary for your platform). Optional additions from
-the same family: `@nativedesktop/data` (worker-backed SQLite), `@nativedesktop/rpc` (resilient
-JSON-RPC client for your own services), `@nativedesktop/panes` (split-pane tree over `<paned>`), and
-`@nativedesktop/test` (automation harness for scripted app tests).
+`package.json` depends on the published npm packages: `@nativedesktop/solid` (the renderer and its
+Bun preload), `solid-js`, `@nativedesktop/native` (native-plugin headers), and `@nativedesktop/cli`
+(the `nd` bin, which pulls in `@nativedesktop/host` and the prebuilt host binary for your platform).
+Optional additions from the same family: `@nativedesktop/data` (worker-backed SQLite, with
+`createQuery` at `@nativedesktop/data/solid`), `@nativedesktop/rpc` (JSON-RPC client for your own
+services), and `@nativedesktop/test` (automation harness for scripted app tests).
 
 When scaffolded from a framework checkout, `scripts/new-app.sh` rewrites those registry versions to
 `file:` paths into the checkout so the app exercises your local build instead of npm.
-
-`@nativedesktop/react` declares `react` as a `peerDependency` rather than a regular dependency, so
-Bun hoists one shared `react` for this app and the linked package. That is what prevents the
-two-copies "Invalid hook call" failure.
 
 ## Errors and settings
 
 Two framework defaults worth knowing from day one:
 
 - **Async errors do not kill the app by default.** An unhandled promise rejection is reported and
-  the app keeps running; an uncaught exception is fatal (the host paints the crash overlay). Tune it
-  with `setUnhandledErrorPolicy` and subscribe with `onUnhandledError`, both from
-  `@nativedesktop/react`.
+  the app keeps running; an uncaught exception is fatal (the host paints the crash overlay). A
+  render error under an `<Errored>` boundary is reported and the boundary shows its fallback; one no
+  boundary catches is fatal. Tune the async half with `setUnhandledErrorPolicy` and subscribe with
+  `onUnhandledError`, both from `@nativedesktop/solid`.
 - **Settings persist through `createStore`.** A versioned JSON file under the app data dir; call
   `await store.load()` before `render()` and `store.get()` is synchronous in every component, with
-  `useStoreValue(store)` for reactive reads. Writes are debounced and crash-safe.
+  `useStoreValue(store)` for a signal of it. Writes are debounced and crash-safe.
 
-## React Compiler
+## Production build
 
-Off by default, and working when you turn it on. `babel-plugin-react-compiler@1.0.0` runs cleanly as
-a build pre-pass and its output runs correctly against `@nativedesktop/react`. It has to be a
-pre-pass because Bun's runtime transpiler does not run Babel plugins.
-
-```bash
-bun run compile   # babel src -> dist, then run dist/main.tsx
-```
-
-`babel.config.json` runs three plugins in one pass:
-
-- `babel-plugin-react-compiler` for the memoization transform.
-- `@babel/plugin-transform-react-jsx` to turn JSX into `@nativedesktop/react/jsx-runtime` calls. This
-  leaves no JSX syntax for Bun to pragma-select on, avoiding its undocumented dev-vs-prod runtime
-  selection entirely.
-- `babel-plugin-nativedesktop` to rewrite `react` hook imports to `@nativedesktop/react`, so shared
-  hooks written the normal way for web or React Native still resolve to the pinned instance.
-
-`dist/` is not part of the dev loop. `nd dev` still points at uncompiled `src/`, so hot reload and
-react-refresh are unaffected. For a compiled production run:
-
-```bash
-bun run compile && ND_SCRIPT=dist/main.tsx <path-to-nd-host-binary>
-```
+`bun run compile` (what `nd build` and `nd package` run) is `nd-solid-build`: it bundles `src/`
+into `dist/main.js` with the Solid transform already applied, so the packaged app starts without
+compiling JSX. `nativedesktop.config.ts` names `dist/main.js` as the packaged entry. `dist/` is not
+part of the dev loop; `nd dev` runs `src/` directly.
 
 ## Why not `bun create`
 

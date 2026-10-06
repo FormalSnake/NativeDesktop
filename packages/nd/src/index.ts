@@ -3,7 +3,7 @@
 // docs/agents/README.md / template/AGENTS.md so there is one real command
 // instead of a hand-typed env-var incantation:
 //   `nd dev [entry]`  ==  ND_DEV=1 ND_SCRIPT=<entry> <host-binary-from-@nativedesktop/host>
-//   `nd build`        ==  bun run compile   (babel + react-compiler pre-pass, see template/README.md)
+//   `nd build`        ==  bun run compile   (nd-solid-build in the template, see template/README.md)
 //   `nd package`      ==  assemble + sign the platform bundle (packages/nd/src/package/)
 //   `nd doctor`       ==  packaging/toolchain readiness checks
 import { type Backend, preloadEnv, resolveHostBinary } from "@nativedesktop/host";

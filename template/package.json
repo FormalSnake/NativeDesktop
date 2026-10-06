@@ -5,23 +5,16 @@
   "trustedDependencies": [],
   "scripts": {
     "dev": "nd dev",
-    "compile": "babel src --out-dir dist --config-file ./babel.config.json --extensions .ts,.tsx --keep-file-extension",
+    "compile": "nd-solid-build src/main.tsx --outdir dist",
     "package": "nd package"
   },
   "dependencies": {
-    "@nativedesktop/react": "^0.1.0",
-    "@nativedesktop/native": "^0.1.0",
-    "@nativedesktop/cli": "^0.1.0",
-    "react": "19.2.7"
+    "@nativedesktop/solid": "^0.4.54",
+    "@nativedesktop/native": "^0.4.54",
+    "@nativedesktop/cli": "^0.4.54",
+    "solid-js": "2.0.0-rc.13"
   },
   "devDependencies": {
-    "@babel/cli": "8.0.4",
-    "@babel/core": "8.0.1",
-    "@babel/plugin-transform-react-jsx": "8.0.1",
-    "@babel/preset-typescript": "8.0.1",
-    "@types/bun": "1.3.13",
-    "@types/react": "19.2.17",
-    "babel-plugin-nativedesktop": "^0.1.0",
-    "babel-plugin-react-compiler": "1.0.0"
+    "@types/bun": "1.3.13"
   }
 }
