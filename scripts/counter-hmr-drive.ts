@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// scripts/counter-solid-hmr-drive.ts: Solid hot reload under ND_DEV=1
-// (`bun --hot`). Runs a copy of examples/counter-solid/main.tsx and edits it
+// scripts/counter-hmr-drive.ts: Solid hot reload under ND_DEV=1
+// (`bun --hot`). Runs a copy of examples/counter/main.tsx and edits it
 // while the app is up:
 //   1. an edit to ClicksLabel patches that component alone: the window keeps
 //      its native ref, App's clicks signal keeps its value, the host tree
@@ -16,7 +16,7 @@ import { join, relative } from "node:path";
 import type { JsonNode } from "../packages/core/src/generated/rpc.ts";
 import { launchApp, expect, poll } from "../packages/test/src/index.ts";
 
-const exampleDir = join(import.meta.dir, "..", "examples", "counter-solid");
+const exampleDir = join(import.meta.dir, "..", "examples", "counter");
 // Inside the example so its package.json (and so the Solid preload) applies.
 const dir = mkdtempSync(join(exampleDir, ".hmr-"));
 const entry = join(dir, "main.tsx");
@@ -68,7 +68,7 @@ try {
   if (after !== nodes) throw new Error(`node count ${nodes} before, ${after} after the remount`);
 
   console.log(
-    `ND_COUNTER_SOLID_HMR_OK patch kept window ref=${win!.ref} and clicks, remount kept ${after} nodes and ${windows.length} window`,
+    `ND_COUNTER_HMR_OK patch kept window ref=${win!.ref} and clicks, remount kept ${after} nodes and ${windows.length} window`,
   );
 } finally {
   await app?.close();

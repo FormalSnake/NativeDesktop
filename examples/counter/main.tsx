@@ -1,50 +1,36 @@
-import { render, Suspense, use, useState, useTransition, useMemo, memo } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { Loading, createMemo, createSignal, onCleanup } from "solid-js";
 
-// Module-scoped (not useMemo'd): the uptime interval re-renders App every
-// 500ms, and a concurrent render can discard an in-progress suspended fiber
-// before it commits; that discard resets any hook-level cache (useMemo
-// included) tied to that fiber. A promise created once at module load
-// survives every discarded attempt, so `use()` keeps resolving against the
-// same promise until it settles ~1s after the process starts.
-const delayedBadgePromise = new Promise<string>((r) => setTimeout(() => r("ready:suspense-resolved"), 1000));
+// Its own component so a hot edit to it leaves App, and the clicks signal App
+// owns, mounted (scripts/counter-hmr-drive.ts).
+function ClicksLabel(props: { clicks: number }) {
+  return <label testID="clicks-label" text={`Clicks: ${props.clicks}`} />;
+}
 
-// memo: DelayedBadge takes no props, so its fiber need not be torn down by
-// the unrelated uptime-interval re-renders of App every 500ms.
-const DelayedBadge = memo(function DelayedBadge(): React.ReactNode {
-  const text = use(delayedBadgePromise); // suspends until resolved -> fallback shown, then unhidden
-  return <label text={text} />;
-});
+function App() {
+  const [clicks, setClicks] = createSignal(0);
+  const [uptime, setUptime] = createSignal(0);
+  // Suspended badge. Created in here rather than at
+  // module scope: `bun --hot` re-runs module scope on every edit, and a fresh
+  // promise there would count as a changed dependency and remount App.
+  const badge = createMemo(() => new Promise<string>((r) => setTimeout(() => r("ready:loading-resolved"), 1000)));
 
-function App(): React.ReactNode {
-  const [clicks, setClicks] = useState(0);
-  const [uptime, setUptime] = useState(0);
-  const [slow, setSlow] = useState("idle");
-  const [, startTransition] = useTransition();
-
-  // Uptime interval keeps ND_COMMIT_APPLIED flowing under headless CI (no input synthesis).
-  // useMemo runs the setup once; the interval drives state so commits continue.
-  useMemo(() => {
-    setInterval(() => setUptime((s) => s + 1), 500);
-  }, []);
-
-  const onClick = (): void => {
-    setClicks((c) => c + 1);                       // discrete lane
-    startTransition(() => setSlow(`transition:${Date.now()}`)); // transition lane
-  };
+  // Keeps ND_COMMIT_APPLIED flowing under headless CI (no input synthesis).
+  const timer = setInterval(() => setUptime((s) => s + 1), 500);
+  onCleanup(() => clearInterval(timer));
 
   return (
-    <window title="NativeDesktop M3 Counter" defaultWidth={480} defaultHeight={320}>
+    <window title="NativeDesktop Solid Counter" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label testID="clicks-label" text={`Clicks: ${clicks}`} />
-        <button testID="increment-button" label="Increment" onClick={onClick} />
-        <label text={`Uptime: ${uptime}s`} />
-        <label text={`Slow: ${slow}`} />
-        <Suspense fallback={<label text="loading..." />}>
-          <DelayedBadge />
-        </Suspense>
+        <ClicksLabel clicks={clicks()} />
+        <button testID="increment-button" label="Increment" onClick={() => setClicks((c) => c + 1)} />
+        <label text={`Uptime: ${uptime()}s`} />
+        <Loading fallback={<label text="loading..." />}>
+          <label testID="badge-label" text={badge()} />
+        </Loading>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

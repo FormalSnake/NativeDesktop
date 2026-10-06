@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // A tab dragged into another window, driven against examples/multiwindow under
-// ND_CEF_STYLE=chrome. The view lives in a `createPortal` pool and moves
-// between the two windows' slots with `moveNode`, so React never unmounts it;
+// ND_CEF_STYLE=chrome. The view lives in a `<Portal>` pool and moves
+// between the two windows' slots with `moveNode`, so the renderer never unmounts it;
 // what this asserts is that the LIVE browser goes with it. Same debugger
 // target, same JS state, same scroll offset, no navigation, and the X child
 // the browser renders into reparented under the window that now shows it.

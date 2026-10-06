@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 // A <window> with no defaultWidth/defaultHeight: the acceptance fixture for
 // sizing a window from its content. Both boxes carry an explicit minWidth /
@@ -7,7 +7,7 @@ import { render } from "@nativedesktop/react";
 //
 // Root natural: 520 wide (the widest child), 240 + 120 + 8 spacing tall.
 // Root minimum: the same numbers, since a minWidth/minHeight is a floor.
-function App(): React.ReactNode {
+function App() {
   return (
     <window title="ND Autosize Probe">
       <box orientation="vertical" spacing={8} testID="autosize-root">
@@ -22,4 +22,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
