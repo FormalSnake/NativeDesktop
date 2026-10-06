@@ -80,11 +80,8 @@
       "name": "gallery-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/gestures": {
@@ -102,11 +99,8 @@
       "name": "headerfield-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/inspector": {
@@ -193,11 +187,8 @@
       "name": "popoveranchor-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/propreset": {
@@ -264,11 +255,8 @@
       "name": "webview-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "packages/babel-plugin-nativedesktop": {
