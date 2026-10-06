@@ -37,7 +37,7 @@ final class EventDispatcher: NSObject {
     // (view identity, event name) -> wiring. A view can hold >1 entry
     // (TextInput: "changed" + "activate").
     private var wiring: [ObjectIdentifier: [String: Wiring]] = [:]
-    // Views currently being mutated by a React-driven ndApplyProps update —
+    // Views currently being mutated by an app-driven ndApplyProps update:
     // suppress the echo event that mutation would otherwise fire (peer of
     // GTK's blockEcho/unblockEcho).
     var suppressed: Set<ObjectIdentifier> = []
@@ -258,7 +258,7 @@ private func jsonObject(_ fields: [String: JSONValue]) -> String {
 }
 
 /// Called by the generated `ndApplyProps` update guards: mutate a control's
-/// value without echoing a change event back to React (the AppKit peer of
+/// value without echoing a change event back to the app (the AppKit peer of
 /// GTK's `blockEcho`/`unblockEcho`). Re-entrancy-safe for nested calls to
 /// the same view (rare, but cheap to support with a plain insert/remove
 /// pair since AppKit mutations here are synchronous, not reentrant across
@@ -299,7 +299,7 @@ func ndJsonString(_ value: String) -> String { "\"\(ndJsonEscape(value))\"" }
 
 /// Suppression probe for hand-written composites that emit directly instead
 /// of through `EventDispatcher.emit` (which checks this internally): call
-/// before ndEmitEvent so React-driven prop writes wrapped in
+/// before ndEmitEvent so app-driven prop writes wrapped in
 /// `withEchoSuppressed` don't echo back.
 func ndIsEchoSuppressed(_ view: NSView) -> Bool {
     EventDispatcher.shared.suppressed.contains(ObjectIdentifier(view))

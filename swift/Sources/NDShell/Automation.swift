@@ -961,7 +961,7 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
 /// AppKit (unlike GTK's `Editable.setText`/`Range.setValue`, which fire
 /// their signals as a side effect), so each arm sets the value directly and
 /// then explicitly replays the exact `EventDispatcher` fire method a live
-/// user edit would trigger, so React sees exactly one `changed`/`toggled`/
+/// user edit would trigger, so the app sees exactly one `changed`/`toggled`/
 /// `valueChanged`/`selectionChanged` event.
 @MainActor private func semanticSetValue(_ view: NSView, _ nodeID: UInt32, _ args: [String: Any]?,
                                _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,

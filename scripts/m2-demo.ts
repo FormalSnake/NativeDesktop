@@ -1,4 +1,4 @@
-// M2 demo: plain TypeScript (no React) builds Window -> Box(vertical) -> [Label, Button, Label]
+// M2 demo: plain TypeScript (no renderer) builds Window -> Box(vertical) -> [Label, Button, Label]
 // over NDP, reacts to button-click events, and drives a timer commit so headless CI can
 // assert ND_COMMIT_APPLIED markers without input synthesis.
 

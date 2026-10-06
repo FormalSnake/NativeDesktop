@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Moving one live `<webview>` between two host windows, on both CEF styles.
-# `moveNode` relocates the native widget without React unmounting it, which is
+# `moveNode` relocates the native widget without the renderer unmounting it, which is
 # how a tab dragged to another window keeps the page it is showing; the lift
 # Chrome style does makes that a question about the anchor window as well.
 # Marker: ND_CEF_REPARENT_MAC_OK.

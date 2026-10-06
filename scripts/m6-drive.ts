@@ -74,7 +74,7 @@ if (mode === "counter") {
   if (list.itemCount !== 100000) throw new Error(`itemCount=${list.itemCount}, want 100000`);
   if (list.children.length !== 0) throw new Error(`ListView dumped ${list.children.length} children (must be 0)`);
 
-  // rowActivated wired end-to-end: activated-label mirrors React state,
+  // rowActivated wired end-to-end: activated-label mirrors app state,
   // steady-state "Activated: -1" (same observable proof as m5c).
   const activatedLabel = await app.getByTestId("activated-label").node();
   if (activatedLabel.text !== "Activated: -1") {

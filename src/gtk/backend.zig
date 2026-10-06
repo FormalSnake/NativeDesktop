@@ -167,7 +167,7 @@ pub fn hasParent(widget: *gtk.Widget) bool {
     // A menu node is never parented into a GtkWidget tree; its attachment is
     // its place in an owner's child list, and the core gates its remove op on
     // this answer (src/tree.zig). Reporting false meant a <menuitem> could
-    // leave the React tree while the GMenuModel kept drawing it.
+    // leave the app's tree while the GMenuModel kept drawing it.
     if (!isRealWidget(widget)) return generated.ndMenuNodeAttached(widget);
     return gtk.Widget.getParent(widget) != null;
 }
@@ -1286,14 +1286,14 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
         if (value != .string) return invalidValue(err_json_out, node_id);
         const z = arena.dupeZ(u8, value.string) catch return -32602;
         const editable = @as(*gtk.Entry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
-        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
+        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> app (by design)
     } else if (std.mem.eql(u8, kind, "SearchInput")) {
         // GtkSearchEntry is not a GtkEntry subclass (unlike TextInput) but
         // does implement gtk.Editable — same setText-fires-changed contract.
         if (value != .string) return invalidValue(err_json_out, node_id);
         const z = arena.dupeZ(u8, value.string) catch return -32602;
         const editable = @as(*gtk.SearchEntry, @ptrCast(@alignCast(widget))).as(gtk.Editable);
-        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> React (by design)
+        gtk.Editable.setText(editable, z); // fires "changed" -> Event -> app (by design)
     } else if (std.mem.eql(u8, kind, "TextArea")) {
         if (value != .string) return invalidValue(err_json_out, node_id);
         const z = arena.dupeZ(u8, value.string) catch return -32602;
@@ -1334,7 +1334,7 @@ fn semanticSetValue(widget: *gtk.Widget, node_id: u32, args: ?std.json.Value, re
         const sw: *gtk.ScrolledWindow = @ptrCast(@alignCast(widget));
         const box: *gtk.ListBox = @ptrCast(@alignCast(generated.scrolledWindowInner(sw).?));
         if (gtk.ListBox.getRowAtIndex(box, @intCast(value.integer))) |row| {
-            gtk.ListBox.selectRow(box, row); // fires "row-selected" -> Event -> React (by design)
+            gtk.ListBox.selectRow(box, row); // fires "row-selected" -> Event -> app (by design)
         } else {
             return invalidValue(err_json_out, node_id);
         }

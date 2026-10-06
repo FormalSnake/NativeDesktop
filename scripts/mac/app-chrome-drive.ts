@@ -5,7 +5,7 @@
 // gate (scripts/mac/cef-chrome-style.sh) covers one static view; this covers
 // the window, tab and input paths that only a real app exercises.
 //
-// Every assertion reads from something outside the app's own React state: the
+// Every assertion reads from something outside the app's own state: the
 // page's own innerWidth through CDP-free `webviewEval`, the window server's
 // census, the AppKit geometry in the automation tree, and ScreenCaptureKit
 // window captures read back as colour.
@@ -66,7 +66,7 @@ const app = await connectApp();
 const fixtures = startFixtureServer();
 await Bun.$`mkdir -p ${SHOTS}`.quiet();
 
-// The socket opens before React's first commit, so a tree read taken straight
+// The socket opens before the renderer's first commit, so a tree read taken straight
 // after connecting answers -32603 with no root.
 await until("the app's first window", async () => (await app.windows()).windows.length, (n) => n > 0, 45000);
 

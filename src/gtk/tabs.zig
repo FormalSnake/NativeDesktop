@@ -1,6 +1,6 @@
 // Native system tabs for the <window> widget (GTK/libadwaita side).
 //
-// The app model is tabs-as-windows: every `<window tabGroup="x">` React root
+// The app model is tabs-as-windows: every `<window tabGroup="x">` window root
 // is one tab. On this backend the group owns the real OS window — an
 // AdwApplicationWindow whose content is AdwTabOverview{view} > AdwTabView
 // (Ghostty's exact hierarchy) — and each member Window NODE's handle is an
@@ -160,7 +160,7 @@ fn emitFocused(node_id: u32, checked: bool) void {
 ///
 /// Deliberately NOT modal. `gtk_window_set_modal` puts a grab on the whole
 /// application, and this framework does not own a modal loop to match it: the
-/// window it would block is the app's, closed by the app's own React state,
+/// window it would block is the app's, closed by the app's own state,
 /// so the grab buys the app nothing it asked for and costs it every event on
 /// every other window while the dialog is up.
 pub fn createWindow(

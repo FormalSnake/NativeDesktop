@@ -1,5 +1,5 @@
 {
-  description = "NativeDesktop — Zig + Bun + React native-widget desktop framework";
+  description = "NativeDesktop: Zig + Bun + Solid native-widget desktop framework";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

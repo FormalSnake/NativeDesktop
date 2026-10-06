@@ -3,7 +3,7 @@ import SwiftUI
 
 /// StatusPage: SwiftUI `ContentUnavailableView`, the native empty-state
 /// primitive (macOS 14+), hosted through NDHostedLeaf. Action buttons are
-/// React-owned NSViews wrapped in `NDNativeChild` and placed straight in
+/// Tree-owned NSViews wrapped in `NDNativeChild` and placed straight in
 /// `ContentUnavailableView`'s own `actions` slot rather than a separate
 /// NSStackView bolted on below — the same centered column the GTK backend's
 /// AdwStatusPage draws, but the actions row is now real SwiftUI layout

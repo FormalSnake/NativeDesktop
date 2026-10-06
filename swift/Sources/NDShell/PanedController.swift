@@ -25,7 +25,7 @@ func ndPanedConnect(_ view: NSView, nodeID: UInt32) {
 }
 
 /// Owns a `<paned>`'s divider: converts the wire's 0..1 `position` fraction
-/// against the split's current size (create-time prop AND later React
+/// against the split's current size (create-time prop AND later app
 /// updates), and is the `NSSplitViewDelegate` that turns a settled user drag
 /// into `onPositionChanged`. GTK peer: cbPanedPositionChanged /
 /// ndPanedEmitPosition / ndPanedApplyPosition in tools/codegen.ts's
@@ -55,7 +55,7 @@ final class PanedController: NSObject, NSSplitViewDelegate {
 
     private var extent: CGFloat { split.isVertical ? split.bounds.width : split.bounds.height }
 
-    /// React-driven `position` write (the create-time prop AND every later
+    /// App-driven `position` write (the create-time prop AND every later
     /// update). A brand-new split reports zero size before its first layout
     /// pass, so an early write is stashed and replayed by `frameChanged`
     /// once real geometry exists.

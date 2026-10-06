@@ -43,7 +43,7 @@ enum NDCefRuntime {
     /// to be the default for every view because CEF is initialized before any
     /// view exists. The prop is the per-view layer and can name chromium on
     /// top of that. It cannot name a view back OUT of a chromium process:
-    /// React omits props sitting at their default, so "system" and "unset"
+    /// Props sitting at their default may be omitted, so "system" and "unset"
     /// arrive identically by the time the generated create arm has run.
     static func wants(_ prop: String) -> Bool {
         isActive && (prop == "chromium" || isRequested)

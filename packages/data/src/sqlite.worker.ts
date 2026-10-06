@@ -1,6 +1,6 @@
 // The SQLite worker: the ONLY place `bun:sqlite` is opened. It runs on its own
-// thread, so every query here is off the Bun main thread that drives React's
-// commit loop — a slow `SELECT` blocks this worker, never the UI.
+// thread, so every query here is off the Bun main thread that runs the
+// renderer: a slow `SELECT` blocks this worker, never the UI.
 //
 // Requests arrive in order on the worker's event loop and are answered by `id`,
 // so the client can have many in flight at once. The first request is always

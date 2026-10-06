@@ -143,7 +143,7 @@ final class NDToolbarPaneView: NSView {
         }
         // The generated SplitView/Window append arms snapshot `contentView`
         // ONCE, at attach time — when the logical root changes later (first
-        // bar added, last bar removed, or React swapping the pane's content
+        // bar added, last bar removed, or the app swapping the pane's content
         // child) the previously installed view must be physically replaced
         // where it stands, or the pane goes blank (the live content gets
         // reparented into a never-attached assembly).
@@ -154,8 +154,8 @@ final class NDToolbarPaneView: NSView {
         // Once the pane owns a split item, the install site is that item's
         // host view, which outlives any one content root: reinstall into it
         // instead of retargeting the outgoing view's constraints. A content
-        // swap arrives as remove-then-append (React commits deletions before
-        // placements), so the append half runs with `contentView` already nil
+        // swap may arrive as remove-then-append (a renderer need not
+        // order placements before deletions), so the append half runs with `contentView` already nil
         // and has nothing to retarget — and the new root's pin shape can
         // differ from the outgoing one's anyway (a <scrollview> section
         // replaced by a <box> section). The window-mounted pane, whose pins
@@ -401,9 +401,9 @@ func ndButtonApplyProminent(_ b: NSButton, _ prominent: Bool) {
     ndToolbarOwner(of: b)?.reseedItem(for: b)
 }
 
-/// The symbol name each button last resolved. React re-sends a node's whole
-/// prop set whenever anything about it changes, and reseeding a promoted item
-/// removes and re-inserts it in the live NSToolbar — repeating that for an
+/// The symbol name each button last resolved. A node's props
+/// can reach the host again when anything about it changes, and reseeding a promoted item
+/// removes and re-inserts it in the live NSToolbar, so repeating that for an
 /// icon that did not actually change is churn nothing benefits from. Weak
 /// keys: an ObjectIdentifier outlives its button, and a new button allocated
 /// at a freed one's address inherited its name here and was never given its
@@ -468,7 +468,7 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     /// snapshots them at build time).
     private var reseedViews: Set<ObjectIdentifier> = []
     /// Identifiers the user dragged OUT via Customize Toolbar this session —
-    /// the diff in `rebuild()` must not re-insert them on the next React
+    /// the diff in `rebuild()` must not re-insert them on the next app
     /// update. (Cross-launch removals are not honored yet: this set starts
     /// empty, so a removed default returns on the first post-restore rebuild.)
     private var userRemovedItemIDs: Set<NSToolbarItem.Identifier> = []
@@ -761,11 +761,11 @@ final class NDToolbarManager: NSObject, NSToolbarDelegate {
     }
 
     /// Reconciles the live item list against the identifiers the current
-    /// header children produce — remove what React no longer declares,
+    /// header children produce: remove what the app no longer declares,
     /// insert what's missing at its declared position, leave everything else
     /// where it stands. Items the user reordered keep their positions and an
     /// in-session Customize Toolbar removal stays removed; the old
-    /// remove-all/insert-all rebuild silently undid both on every React
+    /// remove-all/insert-all rebuild silently undid both on every app
     /// update (and on any window resize that moved the search run).
     func rebuild() {
         idsByView.removeAll()
@@ -1283,7 +1283,7 @@ nonisolated(unsafe) let ndHeaderBarChildren = NSHashTable<NSView>.weakObjects()
 /// Places `child` in `bar`'s start/end slot array (generated HeaderBar
 /// append/insertBefore arm): before `before` when that sibling is in the same
 /// slot, else last. A child already in a slot moves rather than duplicating,
-/// so a React reorder or slot change lands in tree order. If the bar's pane
+/// so a reorder or slot change lands in tree order. If the bar's pane
 /// is already registered with the window toolbar, a coalesced rebuild picks
 /// the change up.
 func ndHeaderBarPack(_ bar: NDHeaderBarView, _ child: NSView, slot: String, before: NSView? = nil) {

@@ -66,11 +66,11 @@ if (!scrollRejectMsg.includes("-32001")) throw new Error(`scroll on big-list rej
 // GtkListView's "activate" signal only fires on a real user double-
 // click/Enter on a mapped row, which this automation layer cannot drive.
 // The observable proof available today is the gallery's own wiring: the
-// "activated-label" node mirrors React's activatedRow state, which starts
+// "activated-label" node mirrors the app's activatedRow state, which starts
 // at -1 and is only set by a real onRowActivated callback (never by
 // mount-time logic), so it renders "Activated: -1" at steady state. This
 // proves onRowActivated is wired end-to-end from the ListView's create body
-// through cbListActivate (src/generated/widgets.zig) up to React state,
+// through cbListActivate (src/generated/widgets.zig) up to app state,
 // without asserting a signal this drive cannot trigger.
 const activatedLabel = await app.getByTestId("activated-label").node();
 if (activatedLabel.type !== "Label") throw new Error(`activated-label wrong type: ${activatedLabel.type}`);

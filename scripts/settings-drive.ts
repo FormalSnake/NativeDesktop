@@ -4,7 +4,7 @@
 // pages are real <settingsgroup title>/<row>/<switchrow> widgets (SwitchRow
 // a11y role/value + setValue toggle path, Row suffix controls, activatable
 // Row activation, SettingsGroup role), navigation runs through the
-// <sourcelist> sidebar, and React state survives page remounts. Prints
+// <sourcelist> sidebar, and app state survives page remounts. Prints
 // ND_ROWS_OK on success.
 import { expect, launchApp } from "../packages/test/src/index.ts";
 import type { Backend } from "@nativedesktop/host";
@@ -20,7 +20,7 @@ try {
   await app.waitForValue("setting-launch", true, { timeoutMs: 3000 });
   console.log("ND_ROWS_SHAPE_OK settingsgroup=group switchrow=switch");
 
-  // ---- leg 2: switchrow setValue -> toggled -> React state -------------------
+  // ---- leg 2: switchrow setValue -> toggled -> app state ---------------------
   await app.getByTestId("setting-launch").uncheck();
   await app.waitForText("launch false", { timeoutMs: 3000 });
   await app.waitForValue("setting-launch", false, { timeoutMs: 3000 });
@@ -41,7 +41,7 @@ try {
   await app.waitForText("devmode true", { timeoutMs: 3000 });
   await app.getByTestId("settings-categories").selectOption(1);
   await app.waitForPresent("appearance-card", { timeoutMs: 3000 });
-  await app.waitForValue("setting-textsize", 21, { timeoutMs: 3000 }); // remount kept React state
+  await app.waitForValue("setting-textsize", 21, { timeoutMs: 3000 }); // remount kept app state
   await app.getByTestId("settings-categories").selectOption(2);
   await app.waitForPresent("advanced-card", { timeoutMs: 3000 });
   await app.getByTestId("check-updates-row").click();

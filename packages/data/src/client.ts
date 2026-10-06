@@ -1,7 +1,7 @@
 // Main-thread client for the worker-backed SQLite connection. Nothing here
 // touches `bun:sqlite`; every call posts a message to sqlite.worker.ts and
 // returns a Promise resolved when the worker replies, so the Bun main thread
-// (which also runs React's commit loop) never blocks on a query.
+// (which also runs the renderer) never blocks on a query.
 
 import type {
   OpenOptions,

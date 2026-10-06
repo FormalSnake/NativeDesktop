@@ -5,7 +5,7 @@ import AppKit
 /// list (id/parentId) is grouped into a parentId index and rebuilt on every
 /// `nodes` update, REUSING item instances by id — NSOutlineView tracks
 /// expansion by item identity, so stable instances keep open branches open
-/// across React updates. Events carry `{ nodeId }` because flattened visible
+/// across app updates. Events carry `{ nodeId }` because flattened visible
 /// indexes are unstable across expand/collapse; `selectedIndex`
 /// still addresses the flattened visible row list, matching the schema.
 /// Expansion state is driven from each node's `expanded` flag,

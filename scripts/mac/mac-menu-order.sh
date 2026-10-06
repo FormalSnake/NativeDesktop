@@ -6,7 +6,7 @@ set -euo pipefail
 # with scripts/menu-order-drive.ts (the Linux peer is
 # scripts/headless-menu-order.sh). The drive reads NSApp.mainMenu and the
 # NSComboButton's menu back through the menuModel RPC and compares them to
-# React's order after a move, a middle remove and a middle insert.
+# the app's order after a move, a middle remove and a middle insert.
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd -P)"
 export PATH="/etc/profiles/per-user/kyandesutter/bin:/opt/homebrew/bin:$PATH"
@@ -40,4 +40,4 @@ grep -q ND_MENU_ORDER_OK "$DRIVE_LOG" || { echo "FAIL: no ND_MENU_ORDER_OK"; exi
 kill -TERM "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 PID=""
-echo "MAC_MENU_ORDER_OK the native menu matched React after a move, a middle remove and a middle insert"
+echo "MAC_MENU_ORDER_OK the native menu matched the app after a move, a middle remove and a middle insert"

@@ -3,7 +3,7 @@
 //
 // Proves both halves of the promise: queries work end-to-end across the worker
 // boundary (round-trip, named params, transactions, error propagation), and a
-// deliberately slow query never blocks the Bun main thread that drives React.
+// deliberately slow query never blocks the Bun main thread that runs the renderer.
 
 import { afterAll, expect, test } from "bun:test";
 import { openDatabase, type SqliteDatabase } from "./index.ts";

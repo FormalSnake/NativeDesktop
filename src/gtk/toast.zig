@@ -17,7 +17,7 @@ const TOAST_ID_KEY = "nd-toast-id"; // NUL-terminated id string, owned by `toast
 
 var emit: ?EmitFn = null;
 /// Live toasts by caller id — entries evicted (and the extra ref dropped) in
-/// cbToastDismissed. Ids are assumed unique per app while live (the React
+/// cbToastDismissed. Ids are assumed unique per app while live (the JS
 /// wrapper generates them, same contract as executeJavaScript ids).
 var toasts: std.StringHashMapUnmanaged(*adw.Toast) = .empty;
 

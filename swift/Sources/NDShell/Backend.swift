@@ -159,7 +159,7 @@ func buildVTable() -> nd_backend {
             // A menu node's view never enters the hierarchy either
             // (MenuBar.swift); its place in a parent menu or an owner's list
             // is its attachment. Reporting nil meant a <menuitem> could leave
-            // the React tree while the NSMenu kept drawing it.
+            // the app's tree while the NSMenu kept drawing it.
             if let node = ndMenuNode(view) { return node.isAttached }
             // A pane's `<headerbar>` lives in the window toolbar as items, and
             // its own view never has a superview either; without this a header
@@ -1661,7 +1661,7 @@ private func applyFont(_ view: NSView, _ fontObj: [String: Any]) {
 }
 
 /// Parses `#RRGGBB`/`#RRGGBBAA` hex strings (the schema's style color
-/// shape); unrecognized values are ignored (defensive — the React renderer
+/// shape); unrecognized values are ignored (defensive, the JS renderer
 /// already validates style keys).
 private func nsColor(fromHexOrName hex: String) -> NSColor? {
     var s = hex

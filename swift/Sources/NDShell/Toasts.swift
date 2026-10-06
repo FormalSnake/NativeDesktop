@@ -2,7 +2,7 @@ import AppKit
 
 /// ToastOverlay: fully host-implemented on the Mac (AppKit has no native
 /// toast). The tracked handle is a plain container
-/// the single React child fills; toasts are non-activating borderless
+/// the single child fills; toasts are non-activating borderless
 /// NSPanels attached as CHILD WINDOWS of the node's OWN window (multi-window
 /// correct: resolved via view.window, never a global), bottom-center,
 /// slide/fade via NSAnimationContext. Chrome: NSGlassEffectView (macOS 26)

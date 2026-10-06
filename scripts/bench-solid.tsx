@@ -1,8 +1,6 @@
-// Solid twin of scripts/bench-react.tsx: same tree, same phases, same marker
-// format under ND_BENCH_SOLID. Each sample runs from the signal write to the
-// CommitBatch handed to NDP (bench-react stops at the layout effect, which
-// React runs after resetAfterCommit sends the batch). Solid JSX needs the
-// transform registered first, so run it as
+// Renderer bench: mount, one-row and all-rows updates, markers under
+// ND_BENCH_SOLID. Each sample runs from the signal write to the CommitBatch
+// handed to NDP. Solid JSX needs the transform registered first, so run it as
 //   BUN_OPTIONS=--preload=./packages/solid/src/register.ts ND_SCRIPT=scripts/bench-solid.tsx <host>
 import { render, nextCommit } from "@nativedesktop/solid";
 import { createSignal, For } from "solid-js";

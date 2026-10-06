@@ -3,11 +3,11 @@
 // the automation socket on BOTH backends (scripts/headless-menu-order.sh on
 // Linux, scripts/mac/mac-menu-order.sh on macOS).
 //
-// What it proves: the NATIVE menu model matches React's child order after
-// every structural shape React can emit for a keyed list. `menuModel` reads
+// What it proves: the NATIVE menu model matches the app's child order after
+// every structural shape the renderer can emit for a keyed list. `menuModel` reads
 // the model the owner is actually carrying (the GMenuModel on GTK, the NSMenu
 // on AppKit), so a tree that reads right while the drawn menu is wrong fails
-// here. A reorder is the interesting one: React moves a child with a bare
+// here. A reorder is the interesting one: the renderer moves a child with a bare
 // insertBefore and no preceding remove, and an owner that appends instead of
 // moving draws the item twice.
 //
@@ -24,7 +24,7 @@ const menubarRef = await app.getByTestId("probe-menubar").ref();
 
 const TAIL = ["---", "More", "More > Nested one", "More > Nested two"];
 
-async function reactOrder(): Promise<string[]> {
+async function appOrder(): Promise<string[]> {
   const text = (await app.getByTestId("probe-order").node()).text ?? "";
   return text.replace(/^order=/, "").split("|");
 }
@@ -40,18 +40,18 @@ function tabsOnly(items: string[]): string[] {
 }
 
 async function assertBothMatch(step: string): Promise<void> {
-  const order = await reactOrder();
+  const order = await appOrder();
   const wantOwner = [...order, ...TAIL];
   const wantBar = ["Tabs", ...order.map((n) => `Tabs > ${n}`)];
   // AppKit coalesces menu rebuilds onto the next main-queue turn, so the model
   // is polled rather than read once.
   const owner = await poll(() => nativeItems(ownerRef), (items) => items.join("|") === wantOwner.join("|"))
     .catch(async () => {
-      throw new Error(`${step}: menubutton drew [${(await nativeItems(ownerRef)).join(", ")}], React said [${wantOwner.join(", ")}]`);
+      throw new Error(`${step}: menubutton drew [${(await nativeItems(ownerRef)).join(", ")}], the app said [${wantOwner.join(", ")}]`);
     });
   const bar = await poll(async () => tabsOnly(await nativeItems(menubarRef)), (items) => items.join("|") === wantBar.join("|"))
     .catch(async () => {
-      throw new Error(`${step}: menubar drew [${tabsOnly(await nativeItems(menubarRef)).join(", ")}], React said [${wantBar.join(", ")}]`);
+      throw new Error(`${step}: menubar drew [${tabsOnly(await nativeItems(menubarRef)).join(", ")}], the app said [${wantBar.join(", ")}]`);
     });
   console.log(`ND_MENU_ORDER_STEP ${step}: owner=[${owner.join(", ")}] bar=[${bar.join(", ")}]`);
 }
@@ -84,5 +84,5 @@ await assertBothMatch("inserted-middle");
   console.log(`ND_MENU_ORDER_STEP no duplicates: ${items.filter((i) => i.startsWith("Edit > ")).join(", ")}`);
 }
 
-console.log("ND_MENU_ORDER_OK the native menu matched React after a move, a middle remove and a middle insert");
+console.log("ND_MENU_ORDER_OK the native menu matched the app after a move, a middle remove and a middle insert");
 await app.close();

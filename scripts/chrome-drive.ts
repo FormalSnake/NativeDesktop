@@ -98,7 +98,7 @@ try {
 
   // ---- leg 5: unmounting the sidebar child removes the pane -----------------
   // GTK drops the sidebar and clears show-sidebar; AppKit kept the
-  // NSSplitViewItem whatever React removed, leaving the content pane behind a
+  // NSSplitViewItem whatever the app removed, leaving the content pane behind a
   // gutter the size of a sidebar that was no longer in the tree.
   await app.click("sp-toggle");
   await app.waitForText("sidebar off", { timeoutMs: T });

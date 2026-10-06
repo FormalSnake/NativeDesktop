@@ -5,7 +5,7 @@ import SwiftUI
 /// whole label row is a click target natively, so no extra gesture
 /// recognizer is needed for GtkExpander's "click the label too" parity).
 /// `expanded` is controlled: user toggles emit `toggled` {checked} and
-/// re-render; React-driven updates ride withEchoSuppressed and re-render too
+/// re-render; app-driven updates ride withEchoSuppressed and re-render too
 /// — this class has no persistent SwiftUI state of its own, so every change
 /// goes through `refreshLeaf()` the same way Row/Chart do.
 final class NDExpanderView: NDHostedLeaf {
@@ -24,7 +24,7 @@ final class NDExpanderView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven `expanded` write, echo-suppressed like every other
+    /// App-driven `expanded` write, echo-suppressed like every other
     /// controlled prop so the app's own round-trip never re-emits `toggled`.
     func setExpandedFromProps(_ e: Bool) {
         guard e != expanded else { return }

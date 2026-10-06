@@ -21,7 +21,7 @@ final class NDColorPickerView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven `value` write, echo-suppressed like every other
+    /// App-driven `value` write, echo-suppressed like every other
     /// controlled prop.
     func setValueFromProps(_ hex: String) {
         guard let c = ndColorFromHex(hex), !ndColorsClose(c, nsColor) else { return }

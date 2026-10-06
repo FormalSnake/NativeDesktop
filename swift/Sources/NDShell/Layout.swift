@@ -162,7 +162,7 @@ final class NDButton: NSButton {
         set {}
     }
 
-    /// A button promoted into a native source-list row remains the React/tree
+    /// A button promoted into a native source-list row remains the tree
     /// model and semantic-action target, but must not compete with the visible
     /// NSTableView for physical hit testing. Its padded stack-layout frame does
     /// not match the table's native row geometry, which otherwise makes clicks
@@ -758,13 +758,13 @@ final class NDBoxView: NSView {
 
     private var childParent: NSView { ndChildHost ?? self }
 
-    /// The React child list in document order. Decoration subviews (a card
+    /// The app's child list in document order. Decoration subviews (a card
     /// backing, the source-list table, the hover overlay) are ordinary
     /// constraint-pinned subviews and are deliberately not in here.
     private(set) var ndChildren: [NSView] = []
 
-    /// Membership index beside `ndChildren`. React never re-appends a child
-    /// that is already here, so the identity scan that would answer this is
+    /// Membership index beside `ndChildren`. An attached child is not re-appended
+    /// (a move is an insertBefore), so the identity scan that would answer this is
     /// pure O(n) overhead on the one path a 10k-node mount runs 10k times.
     private var childKeys: Set<ObjectIdentifier> = []
 

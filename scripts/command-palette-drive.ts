@@ -3,7 +3,7 @@
 // automation socket. The palette is mounted beside other content and the app
 // re-renders on a background tick, so this proves the routed palette actions
 // (type/click/setValue string|index|bool -> queryChanged/activate/submit) reach
-// React reliably under the same churn that broke Return/click before the fix.
+// the app reliably under the same churn that broke Return/click before the fix.
 import { connectApp } from "@nativedesktop/test";
 
 const app = await connectApp();

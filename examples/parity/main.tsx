@@ -99,7 +99,7 @@ function DisplaySection(): JSX.Element {
   const [avatarName, setAvatarName] = createSignal("Ada Lovelace");
   const [badgeVariantIndex, setBadgeVariantIndex] = createSignal(1);
   const [tags, setTags] = createSignal<TagChip[]>([
-    { id: "t1", label: "React", variant: "accent" },
+    { id: "t1", label: "Solid", variant: "accent" },
     { id: "t2", label: "Zig", variant: "warning" },
     { id: "t3", label: "Swift", variant: "success" },
   ]);
@@ -1345,10 +1345,6 @@ function DragDropSection(): JSX.Element {
 
 // --- Code editor ---------------------------------------------------------
 
-// CodeDiagnostic isn't re-exported from @nativedesktop/react yet, so this
-// array is checked structurally against <codeeditor>'s diagnostics prop
-// rather than against an imported type, the same situation charts.md
-// documents for ChartSeries/ChartPoint.
 const codeEditorLanguages = ["typescript", "javascript", "python", "rust"];
 
 const codeEditorSample = `function greet(name: string): string {

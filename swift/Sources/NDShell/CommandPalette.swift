@@ -16,7 +16,7 @@ import AppKit
 /// rows). onActivate carries the highlighted/clicked row's id; onSubmit the
 /// typed text (plain Return with no highlight, or Cmd/Ctrl Return regardless)
 /// so a directory picker can accept a typed path that matches no listed row.
-/// onCancel fires on Esc / click-outside; a React-driven close (open=false)
+/// onCancel fires on Esc / click-outside; an app-driven close (open=false)
 /// is flagged so it does not echo.
 ///
 /// Inline autocompletion: the first row's `completion`, when it extends what

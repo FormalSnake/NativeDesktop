@@ -3,8 +3,8 @@
 # examples/notes/menu-order-probe.tsx under weston-headless and drives it with
 # scripts/menu-order-drive.ts, the same script scripts/mac/mac-menu-order.sh
 # runs on AppKit. Everything it exercises is backend-neutral: the drive reads
-# the native menu back through the menuModel RPC and compares it to React's
-# order after a move, a middle remove and a middle insert.
+# the native menu back through the menuModel RPC and compares it to the
+# app's order after a move, a middle remove and a middle insert.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

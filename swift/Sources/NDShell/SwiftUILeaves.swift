@@ -55,9 +55,9 @@ struct NDLeafChrome<Content: View>: View {
     }
 }
 
-/// One React-owned `NSView` placed inside a SwiftUI body. Identity, props and
+/// One tree-owned `NSView` placed inside a SwiftUI body. Identity, props and
 /// event wiring stay on the original instance — SwiftUI only positions it.
-/// This is the ONLY thing crossing into SwiftUI from the React tree: a leaf
+/// This is the ONLY thing crossing into SwiftUI from the app's tree: a leaf
 /// hosts its own chrome and the app's single child control, never an
 /// arbitrary subtree.
 struct NDNativeChild: NSViewRepresentable {

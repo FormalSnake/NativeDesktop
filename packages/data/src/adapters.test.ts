@@ -5,7 +5,7 @@
 // is a small function written against the package's public `SqliteExecutor`
 // contract (openDatabase() returns one that implements it); copy either into an
 // app, install the ORM as the app's own dependency, and you get a worker-backed
-// query builder whose heavy queries never touch React's commit loop.
+// query builder whose heavy queries never touch the renderer's thread.
 //
 // Run with: bun test packages/data/src/adapters.test.ts
 

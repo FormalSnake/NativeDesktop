@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // scripts/m5b-drive.ts drives the gallery over the automation socket:
-// setValue/type/scroll semantic actions -> React state round-trips -> waitFor.
+// setValue/type/scroll semantic actions -> app state round-trips -> waitFor.
 import { connectApp, expect, poll } from "@nativedesktop/test";
 
 const outPng = process.env.ND_SHOT_PATH ?? "/tmp/m5b-shot.png";
@@ -9,7 +9,7 @@ const app = await connectApp();
 const tree = await app.tree();
 if (tree.coordinateSpace !== "logical-window-topleft") throw new Error("bad coordinate space");
 
-// 1. TextInput: setValue -> changed event -> React state -> bound label.
+// 1. TextInput: setValue -> changed event -> app state -> bound label.
 await app.getByTestId("name-input").fill("hello");
 await app.waitForText("Echo: hello", { timeoutMs: 3000 });
 

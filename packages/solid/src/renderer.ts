@@ -244,7 +244,7 @@ function removeFromParent(node: SolidNode): void {
 function insertNode(parent: SolidNode, node: SolidNode, anchor?: SolidNode): void {
   // DOM semantics: inserting a node that is already in the tree moves it. A
   // move within one live parent keeps the widget; a move to another parent
-  // is a remove plus a fresh create, the same as React's unmount+remount.
+  // is a remove plus a fresh create.
   const moving = node.parent === parent && node.created && node.type !== "#text";
   if (node.parent) {
     if (moving) unlink(node);
@@ -407,10 +407,10 @@ declare global {
 // Render-phase errors. One an <Errored> boundary renders a fallback for
 // reaches Solid's client error hook and is reported, non-fatal. One no app
 // boundary catches lands in the boundary wrapped around the whole tree, which
-// is fatal regardless of policy, as React's uncaught render error is: without
-// it Solid halts reactivity and leaves a window that looks alive. The hook
-// fires for that root boundary too, before its fallback runs, so a caught
-// report waits a microtask and is dropped once the root has claimed the error.
+// is fatal regardless of policy: without it Solid halts reactivity and leaves
+// a window that looks alive. The hook fires for that root boundary too,
+// before its fallback runs, so a caught report waits a microtask and is
+// dropped once the root has claimed the error.
 const fatalRender = new WeakSet<object>();
 
 function installRenderErrorHooks(): void {
@@ -446,10 +446,9 @@ function mountRoot(code: () => SolidElement): void {
 }
 
 /// Connects to the host and mounts `code`'s tree; the open host socket keeps
-/// the process alive. It resolves rather than parking the entry the way the
-/// React renderer does: Bun adds a module a plugin compiled to `--hot`'s
-/// watch set only once its evaluation finishes, so a parked .tsx entry would
-/// never reload.
+/// the process alive. It resolves rather than parking the entry: Bun adds a
+/// module a plugin compiled to `--hot`'s watch set only once its evaluation
+/// finishes, so a parked .tsx entry would never reload.
 ///
 /// A `bun --hot` re-eval calls this again. Under `nd dev` the refresh runtime
 /// (see register.ts) patches the live tree's components in place, so the

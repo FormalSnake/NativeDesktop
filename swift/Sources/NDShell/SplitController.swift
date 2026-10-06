@@ -375,8 +375,8 @@ private func ndAccessoriesMatch(_ controllers: [NSSplitViewItemAccessoryViewCont
 }
 
 /// Reconciles `item`'s accessories against a `<toolbarview>` pane's
-/// `slot="top"`/`slot="bottom"` bars. Compared by bar identity first, so a
-/// React update that touches neither leaves the live accessories (and their
+/// `slot="top"`/`slot="bottom"` bars. Compared by bar identity first, so an
+/// app update that touches neither leaves the live accessories (and their
 /// animatable hidden state) alone; a changed edge is replaced through the
 /// array property, whose own contract detaches the controllers it drops.
 func ndSyncPaneAccessories(_ item: NSSplitViewItem, top: [NSView], bottom: [NSView]) {
@@ -608,8 +608,8 @@ func ndMakePaneViewController(_ content: NSView) -> NDPaneViewController {
 }
 
 /// Pins a pane's content root inside `host` per its shape, replacing whatever
-/// was installed there. React sends a swapped pane child as remove-then-append
-/// (deletions commit before placements), so the host is momentarily empty
+/// was installed there. A swapped pane child may arrive as remove-then-append
+/// (a renderer need not place before it deletes), so the host is momentarily empty
 /// between the two ops and the second half has to be able to install from
 /// scratch — a swap that only knew how to retarget the outgoing view's
 /// constraints left the pane blank for the rest of the process's life.

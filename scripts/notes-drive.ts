@@ -242,7 +242,7 @@ await app.waitForValue("title-input", "Grocery run", { timeoutMs: 3000 });
 await app.click("pin-button");
 
 // The click RPC ack only confirms the GTK/AppKit-side action was dispatched,
-// which is synchronous at the signal level — the resulting onClick -> React
+// which is synchronous at the signal level; the resulting onClick -> app
 // state update -> NDP commitBatch round trip through the Bun child is a
 // separate, later, async event. Give that at least one round trip before
 // polling.

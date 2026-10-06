@@ -120,7 +120,7 @@ func ndMenuItemConnect(_ view: NSView, nodeID: UInt32) {
 }
 
 /// Places `child` under `parent` before `before` (at the end when `before` is
-/// nil or already gone). React reorders a keyed list with a bare insertBefore
+/// nil or already gone). A renderer may reorder a keyed list with a bare insertBefore
 /// and no preceding remove, so an already-attached child MOVES; appending it
 /// again would draw the same item twice.
 func ndMenuAttachChild(_ parent: NSView, _ child: NSView, before: NSView?) {

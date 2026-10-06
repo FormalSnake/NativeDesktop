@@ -6,7 +6,7 @@ import AppKit
 /// list (id/parentId) is grouped into a parent index and rebuilt on every
 /// `nodes` update, REUSING item instances by id — NSOutlineView tracks
 /// expansion by item identity, so stable instances keep open branches open
-/// across React updates (same contract as TreeViews.swift). Events carry
+/// across app updates (same contract as TreeViews.swift). Events carry
 /// `{ nodeId }` (actionClicked adds `actionId`); `selectedId` is the
 /// controlled selection prop, "" meaning no selection. `section` nodes are
 /// native group rows (isGroupItem, unselectable, no outline cell).

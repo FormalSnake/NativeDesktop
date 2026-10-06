@@ -59,7 +59,7 @@ fn textFromProps(widget_type: []const u8, props: ?std.json.Value) ?[]const u8 {
 }
 
 /// True when the key is present and carries the reconciler's removal marker
-/// (packages/react/src/host-config.ts), as opposed to being absent from the op.
+/// (packages/solid/src/renderer.ts), as opposed to being absent from the op.
 fn propIsNull(props: ?std.json.Value, key: []const u8) bool {
     const v = props orelse return false;
     if (v != .object) return false;
@@ -326,7 +326,7 @@ pub const Tree = struct {
         return list.items;
     }
 
-    /// Appends `root` and every descendant (depth-first) to `out`. React emits
+    /// Appends `root` and every descendant (depth-first) to `out`. The renderer emits
     /// exactly one `remove` op for a removed subtree's root but creates the
     /// subtree recursively (`emitCreateIfNew`), so the host must walk the
     /// tracked child lists itself to purge the whole subtree's bookkeeping.
@@ -485,8 +485,8 @@ pub const Tree = struct {
                 self.setMetaText(op.id.?, op.text.?);
             } else if (std.mem.eql(u8, op.op, "update")) {
                 const widget = self.nodes.get(op.id.?) orelse continue;
-                // React's host-config `commitUpdate` never sends the widget-kind
-                // field on update ops (only `create` ops carry it) — resolve the
+                // The renderer never sends the widget-kind field on update ops
+                // (only `create` ops carry it); resolve the
                 // kind from the retained tree's own create-time record instead of
                 // `op.widget` (always null on a real update), or every kind-
                 // dispatched prop applier would silently no-op on every update.
@@ -522,7 +522,7 @@ pub const Tree = struct {
                 const id = op.id.?;
                 const child = self.nodes.get(id) orelse continue;
                 const cmeta = self.metaGet(id);
-                // React emits ONE remove for the subtree root; unparenting it
+                // The renderer emits ONE remove for the subtree root; unparenting it
                 // cascade-destroys every descendant widget, so their bookkeeping
                 // must be purged here too — otherwise stale (id -> freed-widget)
                 // entries linger, alias later-recycled addresses, and crash
@@ -724,10 +724,10 @@ pub const Tree = struct {
 
     /// Widget-preserving cross-window move: relocate a live node's native widget
     /// under `new_parent_id` (optionally before `before_id`) WITHOUT destroying
-    /// it. React tears a subtree down when it moves to a different parent
+    /// it. The renderer tears a subtree down when it moves to a different parent
     /// (unmount+remount → the host would remove+create, reloading a <webview>),
-    /// so the moved node must stay pinned at a stable React position (a
-    /// `createPortal(..., pool)` off-window host) and never actually change React
+    /// so the moved node must stay pinned at a stable tree position (a
+    /// portal into an off-window pool host) and never actually change tree
     /// parent. This is the imperative escape hatch that then relocates only the
     /// LIVE native widget — the loaded page / scroll / JS state survive. Driven
     /// by the reserved `"__ndReparent"` widgetCommand (runtime.zig), itself
@@ -740,7 +740,7 @@ pub const Tree = struct {
         const cmeta = self.metaGet(child_id) orelse return;
         const nmeta = self.metaGet(new_parent_id) orelse return;
         // old_parent may be absent — a still-pooled node (meta.parent 0, never
-        // appended in React terms) is being shown in a window for the first time.
+        // appended in tree terms) is being shown in a window for the first time.
         const old_parent = self.nodes.get(cmeta.parent);
         const old_parent_kind = if (self.metaGet(cmeta.parent)) |m| m.widget_type else "";
         const before: ?*Widget = if (before_id) |b| self.nodes.get(b) else null;

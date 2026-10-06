@@ -181,7 +181,7 @@ try {
     "display-badge-neutral": { type: "Badge", role: "label", value: "neutral" },
     "display-badge-error": { type: "Badge", role: "label", value: "error" },
     "display-badge-dot": { type: "Badge", role: "label" },
-    "display-tag-t1": { type: "Tag", role: "label", text: "React" },
+    "display-tag-t1": { type: "Tag", role: "label", text: "Solid" },
     "display-tag-t3": { type: "Tag", role: "label", text: "Swift" },
     "display-kbd-palette": { type: "Kbd", role: "label", value: "⌘K" },
     "display-kbd-rename": { type: "Kbd", role: "label", value: "F2" },

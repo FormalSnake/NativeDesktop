@@ -386,8 +386,8 @@ test "ListView is schema-driven with items + rowActivated event" {
 }
 
 test "update op with no widget-kind field still applies createAndUpdate props" {
-    // Regression test for the tree.zig dispatch bug: React's host-config
-    // `commitUpdate` never sends the widget-kind on update ops (only create
+    // Regression test for the tree.zig dispatch bug: the renderer
+    // never sends the widget-kind on update ops (only create
     // ops carry it), so `Tree.apply` must resolve each node's kind from the
     // retained tree, not from `op.widget`.
     const gpa = std.testing.allocator;

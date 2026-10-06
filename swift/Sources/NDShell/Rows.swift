@@ -12,7 +12,7 @@ import SwiftUI
 // split on macOS, so the rows line up with each other and with System
 // Settings without the toolkit measuring anything.
 //
-// The app's child control still arrives from the React tree as an NSView and
+// The app's child control still arrives from the app's tree as an NSView and
 // stays one: it is placed through NDNativeChild, never rebuilt in SwiftUI.
 
 /// The label/content split System Settings draws: the content sits at the

@@ -1,4 +1,4 @@
-// Reconnect backoff ladder. Pure, framework-free, no React, no ND import.
+// Reconnect backoff ladder. Pure, framework-free, no renderer, no ND import.
 // `RpcClient` (client.ts) is the sole owner of a `ConnectionLadder`: it drives
 // the real reconnect schedule and exposes the resulting attempt/delay so a
 // subscriber can report it without maintaining a second, competing notion of

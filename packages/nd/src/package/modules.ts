@@ -69,7 +69,7 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
   while (queue.length) {
     const entry = queue.shift()!;
     // A peer the app already provides is settled: taking the dependency's own
-    // copy instead is what puts two reacts in one bundle.
+    // copy instead is what puts two solid-js copies in one bundle.
     if (entry.peer && claimed.has(entry.spec)) continue;
     let root: string;
     try {
@@ -116,9 +116,9 @@ export function flattenRuntimeModules({ appDir, extraRoots = [], dest }: Flatten
     }
     // Peers resolve from the APP, not from the package that declares them. A
     // `file:` linked dependency living outside the app tree resolves its own
-    // peer to its own copy, and a second react in the bundle is the classic
-    // "Invalid hook call" at launch. The package's root is only the fallback,
-    // for a peer the app does not provide at all.
+    // peer to its own copy, and a second solid-js in the bundle runs a second
+    // reactive graph the renderer never sees. The package's root is only the
+    // fallback, for a peer the app does not provide at all.
     for (const spec of Object.keys(pkg.peerDependencies ?? {})) {
       queue.push({ spec, anchor, fallbackAnchor: root, requirer: destDir, optional: true, peer: true });
     }
@@ -142,8 +142,8 @@ function declaresRootEntry(exports: unknown): boolean {
 
 /**
  * Asserts each flat package's main/exports entry resolves inside the bundle.
- * Catches a copied-but-unbuilt package (e.g. @nativedesktop/react without its
- * dist/) before it ships as a broken bundle.
+ * Catches a copied-but-unbuilt package (one whose main points at a dist/ it
+ * never built) before it ships as a broken bundle.
  */
 export function assertResolvableEntries(appRoot: string, names: string[]): void {
   for (const name of names) {

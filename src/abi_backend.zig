@@ -153,7 +153,7 @@ pub fn resolveWindow(handle: *Widget) *Widget {
     return @ptrCast(vtable.resolve_window(ctx, handle) orelse handle);
 }
 
-/// Closes a Window node's native window/tab when its React root unmounts
+/// Closes a Window node's native window/tab when its window root unmounts
 /// (tree.zig's remove arm). Rides `semantic_action` — "window.close" is a
 /// node-level semantic like the a11y probe, so no new vtable op. Backends
 /// treat it as a no-op on already-closed handles.

@@ -3,10 +3,10 @@ import AppKit
 /// Native system tabs for the <window> widget (AppKit side).
 ///
 /// The app model is tabs-as-windows and AppKit's window tabbing IS that
-/// model: every `<window tabGroup="x">` React root is a real NSWindow joined
+/// model: every `<window tabGroup="x">` window root is a real NSWindow joined
 /// into the group's native tab bar (tabbingIdentifier "nd.x"), so Safari-
 /// style drag-out/drag-in/reorder, the tab overview (Show All Tabs), and the
-/// Window-menu merge items all come from the OS. The React tree never
+/// Window-menu merge items all come from the OS. The app's tree never
 /// changes when the user drags a tab between windows — the NSWindow (and its
 /// content, e.g. a live <webview>) moves intact.
 ///
@@ -132,7 +132,7 @@ func ndWindowTabsCommand(_ view: NSView, _ command: String, _ argJson: String) {
     }
 }
 
-/// The "window.close" semantic action (tree.zig remove arm): the React root
+/// The "window.close" semantic action (tree.zig remove arm): the window root
 /// unmounted, so the OS window goes too. close() bypasses windowShouldClose
 /// by design — JS already made the decision.
 func ndWindowTabsClose(_ view: NSView) {

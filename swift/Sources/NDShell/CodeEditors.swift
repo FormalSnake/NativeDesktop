@@ -43,7 +43,7 @@ final class NDCodeEditorEntry {
     var tabWidth = 4
     var diagnostics: [NDCodeDiagnostic] = []
     /// Set while an apply writes `text`, so the delegate cannot echo a
-    /// React-driven write back as a user edit.
+    /// app-driven write back as a user edit.
     var suppress = false
 }
 

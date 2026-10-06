@@ -223,7 +223,7 @@ try {
   }
 
   // Notification click needs a real user click on an OS banner; the data
-  // correlation map is covered by packages/react/src/system.test.ts instead.
+  // correlation map is covered by packages/core/src/system.test.ts instead.
   console.log("ND_ST_NOTIFICATION_SKIP data echo covered by unit tests (OS banner click is not synthesizable)");
 } finally {
   await app.close();

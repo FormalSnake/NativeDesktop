@@ -15,10 +15,8 @@ export NATIVE_AUTOMATION=1 ND_DEV=1
 # untracked and removed by the EXIT trap; never staged/committed.
 APPDIR=$(mktemp -d -p "$(pwd)" .m8-drive-XXXXXX)
 
-# Real hook-based app (M8 fix landed): examples/counter's App uses
-# `useState`/`useTransition`/`use`/Suspense, imported from
-# `@nativedesktop/react` (not `react` directly -- see dev-react.ts). Copy it
-# into the temp dir so the HMR leg edits a COPY, never the repo, per the
+# examples/counter keeps its count in a signal, which the HMR leg checks
+# survives an edit. Copy it into the temp dir so the HMR leg edits a COPY, never the repo, per the
 # owner mandate above.
 cp examples/counter/main.tsx "$APPDIR/main.tsx"
 cp examples/counter/package.json "$APPDIR/package.json"

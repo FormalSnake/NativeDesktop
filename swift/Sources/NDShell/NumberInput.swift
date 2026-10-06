@@ -75,7 +75,7 @@ final class NDNumberInputView: NSStackView, NSTextFieldDelegate {
         ndEmitEvent(nodeID, "valueChanged", "{\"value\":\(v)}")
     }
 
-    /// React-driven `value` update: both subviews in one write, no emit
+    /// App-driven `value` update: both subviews in one write, no emit
     /// (programmatic writes never fire target/action; lastEmitted moves so a
     /// later user edit back to the old value still emits).
     func setValueProgrammatically(_ v: Double) {

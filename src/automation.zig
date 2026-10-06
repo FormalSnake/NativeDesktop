@@ -713,7 +713,7 @@ fn resolveReadable(job: *UiJob) ?*Widget {
 
 /// Dispatches click/setValue/type/scroll through `vtable.semantic_action`.
 /// Never suppresses the resulting native event — automation actions must
-/// flow to React exactly like real user input. A testId target is resolved
+/// flow to the app exactly like real user input. A testId target is resolved
 /// to its ranked ref here first (§1.2a: one round trip, host-side
 /// resolution).
 fn handleSemanticAction(job: *UiJob, action: []const u8) void {

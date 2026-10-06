@@ -291,9 +291,9 @@ pub fn applyStyle(widget: *gtk.Widget, node_id: u32, style: std.json.Value) void
 }
 
 /// Reconciles `widget`'s Adwaita/GTK CSS classes against `value` (a JSON
-/// array of class names, already validated by the React-side allowlist):
+/// array of class names, already validated by the JS-side allowlist):
 /// set-replace over `generated.css_class_spec`, the same allowlist the
-/// React side validates `cssClasses` entries against. For each allowed
+/// JS side validates `cssClasses` entries against. For each allowed
 /// class, add it if present in `value`, else remove it — so classes no
 /// longer requested are cleared instead of accumulating. Scoping the
 /// reconcile to the allowlist means the internal `nd-<id>` class (added

@@ -189,7 +189,7 @@ final class NDSidebarTable: NSObject, NSTableViewDataSource, NSTableViewDelegate
     /// its own already-populated button descendants in one shot).
     func reload() {
         for btn in rowButtons { ndMarkSidebarRowButton(btn) }
-        // The table may be installed before React appends the backing buttons.
+        // The table may be installed before the backing buttons.
         // Every later addArrangedSubview becomes a newer sibling and can sit
         // above the table despite the install-time `.above` positioning. Move
         // the table back to the front whenever the row model changes.
@@ -325,12 +325,12 @@ func ndIsSourceListShaped(_ box: NDBoxView) -> Bool {
 /// Decides whether a sidebar-classed box is backed by the source-list table
 /// and keeps that decision current. Called from `ndApplyCssClasses` when the
 /// class lands and from `ndBoxChildAttached`/`ndBoxChildDetached` for every
-/// later shape change, so a box that only becomes row-shaped once React has
+/// later shape change, so a box that only becomes row-shaped once the app has
 /// appended its rows still gets the takeover, and one that stops being
 /// row-shaped gives it back.
 func ndReconcileSidebarTable(_ box: NDBoxView) {
     // An empty box is "not populated yet", not "not row-shaped": the class
-    // lands before React appends anything (src/tree.zig applies props before
+    // lands before anything is appended (src/tree.zig applies props before
     // append), and replacing every row at once momentarily empties the box.
     // Neither should install a table or tear a live one down.
     if box.ndChildren.isEmpty { return }

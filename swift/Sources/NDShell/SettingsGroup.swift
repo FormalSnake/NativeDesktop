@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// React rows currently hosted by a native grouped Form. AppKit style updates
+/// App rows currently hosted by a native grouped Form. AppKit style updates
 /// consult this registry so shared GTK-oriented padding cannot be reapplied
 /// after attachment and double SwiftUI's native row insets.
 nonisolated(unsafe) private var ndSettingsGroupRows: Set<ObjectIdentifier> = []
@@ -15,7 +15,7 @@ func ndSettingsGroupPurge(_ view: NSView) {
     ndSettingsGroupRows.remove(ObjectIdentifier(view))
 }
 
-/// Bridges an existing React-owned AppKit view into a native SwiftUI form row.
+/// Bridges an existing tree-owned AppKit view into a native SwiftUI form row.
 /// SwiftUI controls only placement: identity, props, and event handlers remain
 /// attached to the original `NSView` instance.
 private struct NDSettingsGroupRow: NSViewRepresentable {
@@ -63,7 +63,7 @@ private struct NDSettingsGroupSurface: View {
 /// Semantic settings container for the AppKit backend.
 ///
 /// Unlike a painted card approximation, this uses SwiftUI's native grouped
-/// `Form`/`Section` style—the same platform API intended for settings UI. React
+/// `Form`/`Section` style, the same platform API intended for settings UI. The app
 /// continues to own every child `NSView`; the hosting view only arranges those
 /// existing handles as native form rows.
 final class NDSettingsGroupView: NSStackView {
@@ -110,14 +110,14 @@ final class NDSettingsGroupView: NSStackView {
         host.layoutSubtreeIfNeeded()
     }
 
-    func appendReactView(_ view: NSView) {
+    func appendTreeView(_ view: NSView) {
         guard !isStructuralSeparator(view) else { return }
         normalizeNativeRow(view)
         rows.append(view)
         refresh()
     }
 
-    func insertReactView(_ view: NSView, before sibling: NSView) {
+    func insertTreeView(_ view: NSView, before sibling: NSView) {
         guard !isStructuralSeparator(view) else { return }
         normalizeNativeRow(view)
         rows.removeAll { $0 === view }
@@ -126,7 +126,7 @@ final class NDSettingsGroupView: NSStackView {
         refresh()
     }
 
-    func removeReactView(_ view: NSView) {
+    func removeTreeView(_ view: NSView) {
         guard !isStructuralSeparator(view) else { return }
         rows.removeAll { $0 === view }
         ndSettingsGroupRows.remove(ObjectIdentifier(view))

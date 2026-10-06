@@ -22,7 +22,7 @@ LOG=$(mktemp)
 ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
-# Wait for the automation listener + the react handshake + the first commit (so widgets exist).
+# Wait for the automation listener + the renderer handshake + the first commit (so widgets exist).
 for _ in $(seq 1 80); do
   grep -q "ND_AUTOMATION_LISTENING" "$LOG" && grep -q "ND_COMMIT_APPLIED" "$LOG" && break
   sleep 0.1

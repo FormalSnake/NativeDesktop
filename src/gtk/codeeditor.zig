@@ -148,7 +148,7 @@ const Store = struct {
     /// a diagnostic lands. Reused so an update never grows the table.
     tags: [4]?*gtk.TextTag = .{ null, null, null, null },
     /// Set while applyProps writes `text`, so the buffer's own changed signal
-    /// cannot echo a React-driven write back as a user edit.
+    /// cannot echo an app-driven write back as a user edit.
     suppress: bool = false,
 
     fn clearDiagnostics(self: *Store) void {

@@ -5,7 +5,7 @@
 // surface on screen. Each route states what the app is supposed to see instead
 // (a new app window, a new app tab, nothing), and that is asserted too.
 //
-// Observation per route, all from outside the app's React state: the window
+// Observation per route, all from outside the app's state: the window
 // server's census diffed against the one taken before the route, the app's own
 // window and tab counts, the page viewport (a Chromium toolbar or bookmark bar
 // in the view takes rows from it) and the debugging port's page targets (a
