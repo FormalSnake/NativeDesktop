@@ -2,7 +2,7 @@
 
 # Styling
 
-`style` is an explicit, non-web prop on every widget. GTK styling is not web CSS: there is no `flex`, `grid`, `position`, `display`, or `justifyContent`. Layout comes from container widgets like `<box>` and `<grid>`, never from `style`. Unknown keys are rejected at the React renderer with a fix-it message, and rejected again host-side.
+`style` is an explicit, non-web prop on every widget. GTK styling is not web CSS: there is no `flex`, `grid`, `position`, `display`, or `justifyContent`. Layout comes from container widgets like `<box>` and `<grid>`, never from `style`. Unknown keys are rejected at the Solid renderer with a fix-it message, and rejected again host-side.
 
 ## Valid keys
 
@@ -25,6 +25,6 @@
 
 GTK margins are widget properties (`gtk_widget_set_margin_*`) rather than CSS, so `margin` compiles to `setMarginStart`, `setMarginEnd`, `setMarginTop`, and `setMarginBottom`. `padding` is a real GTK CSS property, so it stays in the generated `.nd-<id>` CSS block alongside colors, fonts, and borders.
 
-## React item-templates for ListView
+## Item templates for ListView
 
 Not implemented. `<listview>` renders native string rows today. Item-template components need the synchronous bind design from the widget spec before they can land.
