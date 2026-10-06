@@ -12,10 +12,11 @@
 // through xdotool and the rig must be an X server (GDK_BACKEND=x11). AppKit
 // uses the `keys` RPC. Screenshots land in $PALETTE_OUT
 // (default /tmp/nd-palette-layout). Marker: ND_PALETTE_LAYOUT_OK.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PaletteLayout } from "@nativedesktop/react/rpc";
 import { type AppHandle, launchApp } from "../packages/test/src/index.ts";
+import { decodePng, inkBandHeight, modalFill } from "./capture-ink.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const OUT = process.env.PALETTE_OUT ?? "/tmp/nd-palette-layout";
@@ -83,6 +84,26 @@ function checkLayout(l: PaletteLayout, where: string): void {
       }
     }
   }
+}
+
+/// The fixture's third row opens on a colour emoji. A colour emoji font is
+/// bitmap strikes, and a strike drawn at its own size (Noto's is 109ppem) makes
+/// the row as tall as the glyph. The title must keep a plain title's line
+/// height, and the glyph, measured off the capture across the whole row band
+/// so ink spilling past the label still counts, must fit inside it.
+function checkEmojiRow(l: PaletteLayout, shotPath: string, where: string): void {
+  const plain = l.rows[1]?.title as Geo | undefined;
+  const row = l.rows[2]?.row as Geo | undefined;
+  const title = l.rows[2]?.title as Geo | undefined;
+  if (!plain || !row || !title) return check(false, `${where}: no emoji row geometry`);
+  check(Math.abs(title.h - plain.h) <= 2, `${where}: the emoji title is ${title.h}px tall, a plain title ${plain.h}px`);
+  const img = decodePng(new Uint8Array(readFileSync(shotPath)));
+  const scale = img.w / (l.window as Geo).w;
+  const fill = modalFill(img, Math.round(row.x * scale), Math.round(right(row) * scale), Math.round(row.y * scale), Math.round((row.y + row.h) * scale));
+  const glyph = { x: title.x, y: row.y, w: Math.min(title.w, title.h), h: row.h };
+  const ink = inkBandHeight(img, glyph, scale, fill, 20);
+  check(ink > 0 && ink <= plain.h, `${where}: the emoji paints ${ink.toFixed(1)}px tall, over a ${plain.h}px text line`);
+  console.log(`ND_PALETTE_EMOJI ${where}: emoji ink ${ink.toFixed(1)}px, title ${title.h}px, plain title ${plain.h}px, row ${row.h}px`);
 }
 
 function xdo(...args: string[]): void {
@@ -167,6 +188,7 @@ for (const width of WIDTHS) {
     check(open.rows[0]?.truncated === true, `${where}: the long title/URL row is not truncated`);
     check(open.rows[0]?.highlighted === true, `${where}: the top row is not highlighted`);
     await shot("empty");
+    checkEmojiRow(open, `${OUT}/${width}-empty.png`, `${where} empty`);
 
     await typeText(app, "git");
     await waitText(app, "Query: git");

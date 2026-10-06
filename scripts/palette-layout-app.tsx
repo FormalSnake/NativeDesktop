@@ -1,7 +1,8 @@
 // Fixture for scripts/palette-layout-drive.ts: a command bar the way a browser
 // fills one. Long titles and URLs, a favicon, symbol icons, a row with no icon,
-// right-aligned hints, and inline completion on the first row. The window
-// width comes from PALETTE_WIDTH so the drive can run it normal and narrow.
+// right-aligned hints, a title that opens on a colour emoji, and inline
+// completion on the first row. The window width comes from PALETTE_WIDTH so
+// the drive can run it normal and narrow.
 import { render, useState } from "@nativedesktop/react";
 
 const FAVICON =
@@ -36,6 +37,7 @@ function rank(query: string): Item[] {
       hint: "Switch to Tab",
     },
     { id: "tab:short", title: "Inbox", subtitle: "https://mail.example.com/", iconName: "web-browser-symbolic", hint: "Switch to Tab" },
+    { id: "tab:emoji", title: "⚡ Zig Programming Language", subtitle: "https://ziglang.org/", iconData: FAVICON, hint: "Switch to Tab" },
     { id: "hist:plain", title: "A row with no icon and no URL", hint: "Open" },
     { id: "cmd:new-tab", title: "New Tab", iconName: "tab-new-symbolic", hint: "Ctrl+T" },
     { id: "cmd:settings", title: "Settings", iconName: "preferences-system-symbolic", hint: "Ctrl+Comma" },
