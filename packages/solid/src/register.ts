@@ -13,13 +13,11 @@
 //   fires for it), so the SSR file is replaced at load time with a re-export
 //   of the client build instead (the dev build under `nd dev`, which the
 //   refresh runtime requires).
-// - A Solid app's .jsx/.tsx go through babel-preset-solid's universal
-//   transform, whose compiled output imports its helpers from
-//   @nativedesktop/solid.
+// - Every .jsx/.tsx goes through babel-preset-solid's universal transform,
+//   whose compiled output imports its helpers from @nativedesktop/solid.
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
 import type { PluginObj, TransformOptions } from "@babel/core";
 import { dirname, join, sep } from "node:path";
-import { isSolidModule, jsxFile as jsx } from "./solid-source.ts";
 
 const dev = process.env.ND_DEV === "1";
 // A native addon, needed for the dev refresh pass only; a packaged app never loads it.
@@ -31,6 +29,7 @@ let transform: Promise<typeof import("./transform.ts")> | undefined;
 const solidDir = dirname(require.resolve("solid-js/package.json"));
 const clientBuild = join(solidDir, "dist", dev ? "solid.dev.js" : "solid.js");
 const serverBuild = /[\\/]solid-js[\\/]dist[\\/]server(\.dev)?\.js$/;
+const jsx = /\.[jt]sx$/;
 
 // Hot reload. `bun --hot` re-evaluates every module on an edit, node_modules
 // included, and keeps only globalThis. Two consequences:
@@ -195,11 +194,7 @@ Bun.plugin({
         const loader = /\.[cm]?ts$/.test(path) ? "ts" : "js";
         return { contents: selfPin(path, await Bun.file(path).text()), loader };
       }
-      if (jsx.test(path)) {
-        const source = await Bun.file(path).text();
-        if (isSolidModule(path, source)) return { contents: await compileJsx(path, source), loader: "js" };
-        return { contents: source, loader: path.endsWith(".jsx") ? "jsx" : "tsx" };
-      }
+      if (jsx.test(path)) return { contents: await compileJsx(path, await Bun.file(path).text()), loader: "js" };
       // register.ts itself, matched by its directory's filter.
       return { contents: await Bun.file(path).text(), loader: "ts" };
     });

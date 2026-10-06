@@ -2,7 +2,6 @@
 // fills one. Long titles and URLs, a favicon, symbol icons, a row with no icon,
 // right-aligned hints, and inline completion on the first row. The window
 // width comes from PALETTE_WIDTH so the drive can run it normal and narrow.
-/** @jsxImportSource @nativedesktop/solid */
 import { render } from "@nativedesktop/solid";
 import { createSignal } from "solid-js";
 

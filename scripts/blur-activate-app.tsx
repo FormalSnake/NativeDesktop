@@ -1,6 +1,5 @@
 // Fixture for scripts/blur-activate-drive.ts: a search field and a text field
 // beside a button, each field counting its `activate` events.
-/** @jsxImportSource @nativedesktop/solid */
 import { render } from "@nativedesktop/solid";
 import { createSignal } from "solid-js";
 

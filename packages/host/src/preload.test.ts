@@ -16,8 +16,8 @@ describe("preloadEnv", () => {
     expect(preloadEnv(dir, undefined)).toEqual({ BUN_OPTIONS: `--preload=${SOLID_PRELOAD}` });
   });
 
-  test("a React app and a dev-only Solid dependency get nothing", () => {
-    expect(preloadEnv(app({ dependencies: { "@nativedesktop/react": "0.4.54" } }), undefined)).toEqual({});
+  test("an app without a runtime Solid dependency gets nothing", () => {
+    expect(preloadEnv(app({ dependencies: { "@nativedesktop/core": "0.4.54" } }), undefined)).toEqual({});
     expect(preloadEnv(app({ devDependencies: { "@nativedesktop/solid": "0.4.54" } }), undefined)).toEqual({});
   });
 

@@ -6,7 +6,6 @@
 // solid-js still resolves through the register preload at launch and lands
 // on its client build there.
 import { basename } from "node:path";
-import { isSolidModule, jsxFile } from "./solid-source.ts";
 import { transformSolid } from "./transform.ts";
 
 export interface BuildOptions {
@@ -24,9 +23,8 @@ export async function buildApp({ entry, outdir }: BuildOptions): Promise<string>
       {
         name: "nativedesktop-solid",
         setup(build) {
-          build.onLoad({ filter: jsxFile }, async (args) => {
+          build.onLoad({ filter: /\.[jt]sx$/ }, async (args) => {
             const source = await Bun.file(args.path).text();
-            if (!isSolidModule(args.path, source)) return { contents: source, loader: args.path.endsWith(".jsx") ? "jsx" : "tsx" };
             return { contents: await transformSolid(source, args.path), loader: "js" };
           });
         },
