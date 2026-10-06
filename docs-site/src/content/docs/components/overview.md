@@ -14,7 +14,7 @@ drift apart.
 **Props**, each with a type and an `appliesTo` of `create` (set once), `createAndUpdate` (live), or
 `meta` (framework bookkeeping like `testID`, never rendered).
 
-**Events**, each mapped to a React handler prop name (`clicked` becomes `onClick`) and, where
+**Events**, each mapped to a handler prop name (`clicked` becomes `onClick`) and, where
 relevant, a payload shape.
 
 **Container model**: `null` for a leaf widget, `single` for one child (`<window>`, `<scrollview>`),

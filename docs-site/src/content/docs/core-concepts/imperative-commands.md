@@ -5,7 +5,7 @@ description: A schema-typed channel for one-shot imperative actions on a live wi
 
 Most of what an app does to a widget is declarative: set a prop, and the host reconciles the native
 widget to match. A few things are not. "Go back in history", "reload", "stop the load" are one-shot
-actions with no state to bind, and there is no `didGoBack` prop worth holding in React. Those are
+actions with no state to bind, and there is no `didGoBack` prop worth holding in a signal. Those are
 **imperative commands**: take a `ref` on a widget and call `sendCommand(ref, command)`. Anything
 stateful stays a prop.
 
@@ -39,13 +39,13 @@ Every intrinsic accepts a `ref`. It resolves to an `NdNodeRef<T>` (the node's wi
 intrinsic type, `{ id, type }`), which is the handle `sendCommand` addresses:
 
 ```tsx
-import { sendCommand, useRef } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
 
-const page = useRef<NdNodeRef<"webview">>(null);
+let page: NdNodeRef<"webview"> | undefined;
 
-// …later, from an event handler:
-sendCommand(page.current, "goBack");
+// <webview ref={page} ... />, then from an event handler:
+if (page) sendCommand(page, "goBack");
 ```
 
 ```ts
@@ -53,14 +53,14 @@ sendCommand<T>(node: NdNodeRef<T>, command: WidgetCommandNames[T], arg?: unknown
 ```
 
 The `command` argument is typed to the commands that *this* widget declares, so
-`sendCommand(page.current, "loadURL")` is a compile error on a `<webview>`. At runtime `sendCommand`
+`sendCommand(page, "loadURL")` is a compile error on a `<webview>`. At runtime `sendCommand`
 validates the name again against the `widgetCommands` table and throws if it isn't allowed (or if it
 is called before `render()` has opened the NDP connection), so a stale string fails loudly on the app
 side rather than being silently dropped by the host. The optional `arg` is JSON-serialized and passed
 through to the host; no current command uses it, but the channel carries it for commands that will.
 
-Call `sendCommand` from an event handler (a click, a menu selection), never from render. It is a
-side effect, not derived state.
+Call `sendCommand` from an event handler (a click, a menu selection) or `onSettled`, never from
+the component body or a JSX expression. It is a side effect, not derived state.
 
 ## Feature detection: hasCommand / hasWidget
 
@@ -68,9 +68,9 @@ When your app may run against host builds of different ages, ask before sending 
 `sendCommand` in try/catch:
 
 ```tsx
-import { hasCommand, hasWidget, sendCommand } from "@nativedesktop/react";
+import { hasCommand, hasWidget, sendCommand } from "@nativedesktop/solid";
 
-if (hasCommand("window", "present")) sendCommand(win.current, "present");
+if (hasCommand("window", "present")) sendCommand(win, "present");
 if (hasWidget("sourcetree")) {
   /* render <sourcetree>; otherwise fall back to <sourcelist> */
 }

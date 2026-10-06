@@ -55,7 +55,7 @@ a NativeDesktop checkout (installed as a `file:` or `link:` dep, so the source-c
 misses it too), or the GTK-on-macOS dev path, where no prebuilt ships. Resolve `nd-hello` from a
 sibling checkout yourself and pass its path.
 
-`entry` resolves relative to `cwd`. The GTK host, including GTK-via-Quartz on macOS, fails to start
+`entry` resolves relative to `cwd`, and `launchApp` loads the Solid JSX transform (`@nativedesktop/solid/register`) for it automatically. The GTK host, including GTK-via-Quartz on macOS, fails to start
 when `XDG_RUNTIME_DIR` is unset or points at a directory that does not exist. `launchApp` creates a
 fresh one unless the environment already provides a valid one, so callers never have to remember
 `export XDG_RUNTIME_DIR="$(mktemp -d)"`.

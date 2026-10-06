@@ -266,7 +266,7 @@ logical units (not device pixels), relative to the window's top-left corner.
   make a hidden one actionable. Put automation-driven controls on the default-active first tab, or
   outside the `TabView`, until this lands.
 - No `ListView` row-activate/select action from the RPC side (the widget emits `onRowActivated`
-  upward to React, but there's no automation method to trigger it).
+  upward to the app, but there's no automation method to trigger it).
 - A post-scroll `screenshot` can occasionally race frame invalidation and return a stale texture.
   Retry (poll every ~150ms, up to ~3s) rather than treating one blank shot as final.
 - An empty `TextArea` collapses to 0 logical height, so it fails the actionability check until it

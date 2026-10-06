@@ -4,10 +4,10 @@ An app can ship its own native UI without rebuilding NativeDesktop. The prebuilt
 app-owned shared libraries at launch, and the generic `NativeView` widget routes lifecycle
 operations to a factory that library registers.
 
-## React API
+## Solid API
 
 ```tsx
-import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/react";
+import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/solid";
 
 const MapView = defineNativeComponent<
   { latitude: number; longitude: number },
@@ -22,8 +22,8 @@ const MapView = defineNativeComponent<
 ```
 
 `props` is JSON-serialized. A ref exposes `send(command, arg)`, or you can call
-`sendNativeCommand(ref.current, command, arg)`. Native events arrive as `{ name, data }`.
-`NativeView` is an opaque leaf, so React children cannot mount inside it.
+`sendNativeCommand(ref, command, arg)`. Native events arrive as `{ name, data }`.
+`NativeView` is an opaque leaf, so Solid children cannot mount inside it.
 
 ## Configuration and builds
 
@@ -64,7 +64,7 @@ reference the package as `node_modules/@nativedesktop/native`.
 Use `@nativedesktop/native/include/nd_plugin.h`. Export `nd_plugin_entry()` and declare ABI v3. Register an `nd_view_impl` in `init()`:
 
 - `create(props_json)` returns `GtkWidget*` on Linux or `NSView*` on macOS.
-- `apply_props` handles later React props.
+- `apply_props` handles later props.
 - `connect(view, node_id)` records the node identity.
 - `command` handles imperative commands.
 - `destroy` releases app-owned state exactly once.
@@ -98,5 +98,5 @@ development headers and `pkg-config gtk4`. `nd_native_gtk.h`, reachable through
 `nd_gtk_emit` for per-view registry and node bookkeeping. Allocate and free component state in the
 app library rather than relying on framework allocators.
 
-`examples/nativeview-demo` has working GTK and AppKit implementations, typed React props, an event,
+`examples/nativeview-demo` has working GTK and AppKit implementations, typed props, an event,
 prop updates, the config, and cached build commands.

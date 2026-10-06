@@ -22,9 +22,9 @@ A button that stays pressed until clicked again (`GtkToggleButton`, or an `NSBut
 switch.
 
 ```tsx
-const [bold, setBold] = useState(false);
+const [bold, setBold] = createSignal(false);
 
-<togglebutton label="Bold" active={bold} onToggled={(e) => setBold(e.checked)} />;
+<togglebutton label="Bold" active={bold()} onToggled={(e) => setBold(e.checked)} />;
 ```
 
 | Prop | Type | Applied | Notes |
@@ -42,11 +42,11 @@ A fixed row of mutually exclusive options (`AdwToggleGroup`-style on GTK, SwiftU
 five short labels.
 
 ```tsx
-const [sizeIndex, setSizeIndex] = useState(1);
+const [sizeIndex, setSizeIndex] = createSignal(1);
 
 <segmentedcontrol
   options={["Small", "Medium", "Large"]}
-  selectedIndex={sizeIndex}
+  selectedIndex={sizeIndex()}
   onSelectionChanged={(e) => setSizeIndex(e.index)}
 />;
 ```
@@ -60,9 +60,9 @@ A bounded numeric stepper (`GtkSpinButton`, or `NSStepper` plus a text field on 
 or fixed-decimal values with a known range. Saves validating a free-text `<textinput>` yourself.
 
 ```tsx
-const [seats, setSeats] = useState(4);
+const [seats, setSeats] = createSignal(4);
 
-<numberinput value={seats} min={1} max={10} step={1} digits={0}
+<numberinput value={seats()} min={1} max={10} step={1} digits={0}
   onValueChanged={(e) => setSeats(e.value)} />;
 ```
 
@@ -81,7 +81,7 @@ A hyperlink-styled button (`GtkLinkButton`, or an `NSButton` with a link-style b
 always fires `onActivate` with the URI. Opening the link in the OS browser is a separate opt-in:
 
 ```tsx
-const [lastActivated, setLastActivated] = useState("");
+const [lastActivated, setLastActivated] = createSignal("");
 
 <linkbutton
   label="NativeDesktop Docs"
@@ -149,9 +149,9 @@ natively.
   Reordering an already-mounted child settles in append order on Linux, since
   `AdwPreferencesGroup` has no insert-at-index.
 - **`<row>`**: `title`, `subtitle`, `iconData` (createAndUpdate), `iconName` (create),
-  `activatable` (create, fires `onActivate` on click). `iconData` is raw image bytes — a
+  `activatable` (create, fires `onActivate` on click). `iconData` is raw image bytes: a
   `data:<mime>;base64,<payload>` URL or a bare base64 payload, the shape `faviconChanged` hands
-  you — for an icon no theme has, and it wins over `iconName` when both are set; a payload the
+  you, for an icon no theme has, and it wins over `iconName` when both are set; a payload the
   platform cannot decode draws no icon and logs one `ND_WARN`. Children mount into slots:
   `slot="prefix"` leads the row, the default `suffix` trails it. Suffix controls are vertically
   centered and keep their natural size; give a `<slider>` `style={{ hexpand: true }}` for a usable

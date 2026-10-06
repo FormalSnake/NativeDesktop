@@ -3,16 +3,16 @@ title: Quick Start
 description: From an empty directory to a running native window in under five minutes.
 ---
 
-You write React in TypeScript. A native host process renders it as real platform widgets: AppKit on
-macOS, GTK4 with libadwaita on Linux. This page takes you from an empty directory to a running
+You write SolidJS in TypeScript. A native host process renders it as real platform widgets: AppKit
+on macOS, GTK4 with libadwaita on Linux. This page takes you from an empty directory to a running
 window.
 
 ## Create a project
 
 ```bash
 mkdir hello-native && cd hello-native
-bun add @nativedesktop/cli @nativedesktop/react react
-bun add -d typescript @types/react @types/bun
+bun add @nativedesktop/cli @nativedesktop/solid solid-js
+bun add -d typescript @types/bun
 ```
 
 Add a `dev` script to the generated `package.json`:
@@ -25,8 +25,8 @@ Add a `dev` script to the generated `package.json`:
 }
 ```
 
-Create a `tsconfig.json`. The `jsxImportSource` line matters twice: it types the JSX against
-NativeDesktop's widgets, and Bun reads it to transpile your JSX at run time.
+Create a `tsconfig.json`. `jsx: "preserve"` leaves the JSX to Solid's compiler, and
+`jsxImportSource` types it against NativeDesktop's widgets.
 
 ```json
 {
@@ -34,38 +34,43 @@ NativeDesktop's widgets, and Bun reads it to transpile your JSX at run time.
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext", "DOM"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@nativedesktop/react",
+    "lib": ["ESNext"],
+    "jsx": "preserve",
+    "jsxImportSource": "@nativedesktop/solid",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["bun", "react"]
+    "types": ["bun"]
   },
   "include": ["**/*.ts", "**/*.tsx"]
 }
 ```
 
-There is no scaffolding command yet; these three files are the whole setup.
+Bun does not compile Solid JSX on its own. `nd dev`, `nd build` and `nd package` preload
+`@nativedesktop/solid/register`, which runs the `.tsx` files of any package that depends on
+`@nativedesktop/solid` through Solid's compiler. There is nothing to configure.
+
+There is no scaffolding command for a published install yet; these files are the whole setup. In a
+framework checkout, `./scripts/new-app.sh ../my-app` copies `template/`.
 
 ## First component
 
 Create `src/main.tsx`, the default entry point for `nd dev`:
 
 ```tsx
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 function App() {
   return (
     <window title="Hello" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text="Hello from React" />
+        <label text="Hello from Solid" />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 `<window>`, `<box>`, and `<label>` are NativeDesktop intrinsics. Each one is a real native widget:
@@ -78,41 +83,42 @@ DOM anywhere.
 bun run dev
 ```
 
-A native window opens. The terminal prints `ND_CHILD_CONNECTED` when your React process attaches to
-the host, then `ND_COMMIT_APPLIED` for every commit React ships across.
+A native window opens. The terminal prints `ND_CHILD_CONNECTED` when your Solid process attaches to
+the host, then `ND_COMMIT_APPLIED` for every commit it ships across.
 
 ## Add state
 
-State is plain React. Replace `src/main.tsx`:
+State is a Solid signal. Replace `src/main.tsx`:
 
 ```tsx
-import { render, useState } from "@nativedesktop/react";
+import { createSignal } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
 function App() {
-  const [clicks, setClicks] = useState(0);
+  const [clicks, setClicks] = createSignal(0);
 
   return (
     <window title="Hello" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Clicks: ${clicks}`} />
+        <label text={`Clicks: ${clicks()}`} />
         <button label="Increment" onClick={() => setClicks((c) => c + 1)} />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
-Import hooks from `@nativedesktop/react`, not from `react`. Hot reload re-evaluates the whole module
-graph, and a bare `react` import would resolve to a fresh module instance with no attached
-dispatcher. See [State & Hot Reload](/core-concepts/state-hot-reload/) for the mechanics.
+`App` runs once. Reading `clicks()` inside the `text` expression subscribes that one prop, so a
+click updates the label and nothing else re-runs. See
+[State & Hot Reload](/core-concepts/state-hot-reload/) for what an edit preserves.
 
 ## Hot reload
 
 Leave `bun run dev` running. Click the button a few times, then change the label text in
-`src/main.tsx` and save. The window updates in place and the click count survives the edit:
-`react-refresh` patches the live component tree instead of remounting it.
+`src/main.tsx` and save. The window updates in place and the click count survives the edit: Solid's
+refresh runtime patches the edited component and leaves the rest of the live tree mounted.
 
 If your code throws, the window stays up. The host owns the native process, so a JS crash shows an
 error overlay with a Restart button instead of taking the window down.

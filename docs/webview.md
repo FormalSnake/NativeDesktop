@@ -6,29 +6,28 @@ absent). The surface is deliberately browser-grade: full web browsers with nativ
 chrome (tabs, toolbar, address bar as real native widgets) are a supported
 target and the robustness baseline for the toolkit.
 
-## React API
+## Solid API
 
 ```tsx
-import { useRef } from "react";
 import {
   sendCommand,
   executeJavaScript,
   onJavaScriptResult,
   type NdNodeRef,
-} from "@nativedesktop/react";
+} from "@nativedesktop/solid";
 
-function BrowserTab({ url, onOpenTab }: { url: string; onOpenTab: (u: string) => void }) {
-  const wv = useRef<NdNodeRef<"webview">>(null);
+function BrowserTab(props: { url: string; onOpenTab: (u: string) => void }) {
+  let wv: NdNodeRef<"webview"> | undefined;
   return (
     <webview
-      ref={wv}
-      url={url}
+      ref={(n) => (wv = n)}
+      url={props.url}
       onNavigate={({ text }) => setAddressBar(text)}
       onTitleChanged={({ text }) => setTabTitle(text)}
       onFocusChanged={({ checked }) => setCaretInPage(checked)}   // the PAGE has the keyboard
       onLoadProgress={({ value }) => setProgress(value)}          // 0..1
       onLoadFailed={({ data }) => showErrorPage(data)}            // { url, error }
-      onNewWindow={({ text }) => onOpenTab(text)}                 // target=_blank / window.open
+      onNewWindow={({ text }) => props.onOpenTab(text)}           // target=_blank / window.open
       onDownloadRequested={({ data }) => download(data)}          // { url, suggestedFilename?, id? }
       onJavaScriptResult={onJavaScriptResult}                     // wires the promise helper
     />
@@ -36,26 +35,26 @@ function BrowserTab({ url, onOpenTab }: { url: string; onOpenTab: (u: string) =>
 }
 
 // imperative commands via ref
-sendCommand(wv.current!, "goBack");
-sendCommand(wv.current!, "setZoom", 1.25);
-sendCommand(wv.current!, "setUserAgent", "MyBrowser/1.0");        // "" resets to default
-sendCommand(wv.current!, "openDevTools");
+sendCommand(wv!, "goBack");
+sendCommand(wv!, "setZoom", 1.25);
+sendCommand(wv!, "setUserAgent", "MyBrowser/1.0");        // "" resets to default
+sendCommand(wv!, "openDevTools");
 
 // JS round-trip (requires onJavaScriptResult prop above)
-const ua = await executeJavaScript(wv.current!, "navigator.userAgent");
+const ua = await executeJavaScript(wv!, "navigator.userAgent");
 ```
 
 ## Extension surface
 
 ```tsx
-import { webviewEngine, executeJavaScript, getCookies, onCookiesResult } from "@nativedesktop/react";
+import { webviewEngine, executeJavaScript, getCookies, onCookiesResult } from "@nativedesktop/solid";
 
 // Custom schemes bind to a frozen engine configuration — register BEFORE the
 // first <webview> mounts, then answer `schemeRequest` with `respondScheme`.
 await webviewEngine.registerScheme("crx");
 
 // User scripts, in the page's world or a named isolated one.
-sendCommand(wv.current!, "addUserScript", {
+sendCommand(wv!, "addUserScript", {
   id: "content-script",
   source: "window.__ext = 1",
   injectionTime: "start",          // "start" | "end" (default)
@@ -63,19 +62,19 @@ sendCommand(wv.current!, "addUserScript", {
   allFrames: true,
   allowList: ["https://*.example.com/*"],
 });
-sendCommand(wv.current!, "removeUserScript", { id: "content-script" });
-sendCommand(wv.current!, "clearUserScripts", { world: "ext" });
+sendCommand(wv!, "removeUserScript", { id: "content-script" });
+sendCommand(wv!, "clearUserScripts", { world: "ext" });
 
 // Page -> app messages: window.webkit.messageHandlers.bridge.postMessage(v)
-sendCommand(wv.current!, "registerScriptMessage", { name: "bridge", world: "ext" });
+sendCommand(wv!, "registerScriptMessage", { name: "bridge", world: "ext" });
 
 // World-scoped eval reads what the isolated script stored.
-const value = await executeJavaScript(wv.current!, "window.__ext", "ext");
+const value = await executeJavaScript(wv!, "window.__ext", "ext");
 
 // Cookies on the view's own profile.
-const cookies = await getCookies(wv.current!, "https://example.com/");
-sendCommand(wv.current!, "setCookie", { name: "a", value: "1", domain: "example.com", path: "/" });
-sendCommand(wv.current!, "deleteCookie", { name: "a", domain: "example.com", path: "/" });
+const cookies = await getCookies(wv!, "https://example.com/");
+sendCommand(wv!, "setCookie", { name: "a", value: "1", domain: "example.com", path: "/" });
+sendCommand(wv!, "deleteCookie", { name: "a", domain: "example.com", path: "/" });
 ```
 
 Create-only prop: `profile` (`""` = shared default, `private…` = ephemeral, any other name = its
@@ -98,9 +97,9 @@ way, so knowing about the click costs nothing.
 App items are declared per view and stored by the host until they are replaced:
 
 ```tsx
-import { setContextMenuItems } from "@nativedesktop/react";
+import { setContextMenuItems } from "@nativedesktop/solid";
 
-setContextMenuItems(wv.current!, [
+setContextMenuItems(wv!, [
   { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
   { id: "save-image", label: "Save Image", contexts: ["image"] },
   { type: "separator" },
@@ -238,7 +237,7 @@ engine hits a response it cannot render, or an attachment.
   `resumeDownload` and `cancelDownload` take `{ id }` on any live view;
   resume also restarts a `failed` download where it stopped when the server
   allows. `startDownload { url }` downloads with the view's profile and comes
-  back as `downloadRequested`. `@nativedesktop/react` exports typed helpers
+  back as `downloadRequested`. `@nativedesktop/solid` exports typed helpers
   for all five and the `DownloadRequest` / `DownloadUpdate` payloads. Chromium's download bubble and download-started animation
   never show; the app's own UI is the report.
 
@@ -533,7 +532,7 @@ way it replays the activation state behind `app.isActive()`, so they are correct
 from the first render.
 
 ```ts
-import { webviewEngine } from "@nativedesktop/react";
+import { webviewEngine } from "@nativedesktop/solid";
 
 if (webviewEngine.active() === "chromium" && webviewEngine.cefStyle() === "chrome") {
   // chrome://extensions and the extension runtime exist here
@@ -839,13 +838,13 @@ Listing extensions, installing them, and their actions:
 import {
   installExtension, listExtensionActions, listExtensions, onExtensionActions,
   onExtensionsList, setExtensionEnabled, uninstallExtension,
-} from "@nativedesktop/react";
+} from "@nativedesktop/solid";
 
 // Chromium exposes its extension registry to chrome://extensions and nowhere
 // else, so every one of these is sent to a view showing that page. A hidden
 // one does.
 <webview
-  ref={registry}
+  ref={(n) => (registry = n)}
   engine="chromium"
   url="chrome://extensions"
   onExtensionsList={onExtensionsList}
@@ -853,20 +852,20 @@ import {
   onChromeDialog={(e) => setDialog(e.data)}
 />;
 
-const installed = await listExtensions(registry.current!);
+const installed = await listExtensions(registry!);
 // [{ id, name, version, enabled, iconUrl: "data:image/png;…", optionsUrl }]
 
-await installExtension(registry.current!, "/path/to/unpacked");
-await setExtensionEnabled(registry.current!, id, false);
-await uninstallExtension(registry.current!, id);
+await installExtension(registry!, "/path/to/unpacked");
+await setExtensionEnabled(registry!, id, false);
+await uninstallExtension(registry!, id);
 // each answers with the registry as it now stands, same shape as listExtensions
 
-const actions = await listExtensionActions(registry.current!);
+const actions = await listExtensionActions(registry!);
 // [{ id, name, enabled, title, iconUrl, popupUrl, badgeText }]
 // What the MANIFEST declares. An extension can turn its popup off at runtime,
 // and an app must read readExtensionAction before opening one (see below).
 
-const sources = await watchExtensions(registry.current!, (change) => reload(change.reason));
+const sources = await watchExtensions(registry!, (change) => reload(change.reason));
 // ["developerPrivate.onItemStateChanged", "management.onInstalled", …]
 ```
 
@@ -1009,9 +1008,9 @@ command is sent to a view showing one, which for an app drawing its own toolbar
 is the popup view it mounts for a click:
 
 ```tsx
-import { readExtensionAction } from "@nativedesktop/react";
+import { readExtensionAction } from "@nativedesktop/solid";
 
-const state = await readExtensionAction(popupView.current!);
+const state = await readExtensionAction(popupView!);
 // { id, tabId, tabUrl, popupUrl, badgeText, badgeColor, title, enabled }
 if (state.popupUrl === "") {
   // The extension has no popup right now. Opening the manifest's one anyway is

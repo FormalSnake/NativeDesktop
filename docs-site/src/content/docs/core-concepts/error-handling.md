@@ -3,9 +3,9 @@ title: Error Handling
 description: Which errors kill the app, which ones it survives, and how to observe both from app code.
 ---
 
-Two lanes, one rule: render errors belong to React error boundaries, async errors belong to the
+Two lanes, one rule: render errors belong to `<Errored>` boundaries, async errors belong to the
 framework's error policy. A boundary cannot see a rejected promise, and the policy cannot see a
-render throw before React does.
+render throw before the boundary does.
 
 ## Defaults
 
@@ -31,26 +31,26 @@ subscribers.
 ## Observing errors
 
 ```ts
-import { onUnhandledError } from "@nativedesktop/react";
+import { onUnhandledError } from "@nativedesktop/solid";
 
 const off = onUnhandledError((error, context) => {
   // context.kind: "unhandledRejection" | "uncaughtException" |
   //   "renderUncaught" | "renderCaught" | "renderRecoverable"
   // context.fatal: true when the process exits after handlers run
   // context.raw: the original thrown/rejected value, verbatim
-  // context.componentStack: present for the three render kinds
+  // context.componentStack: optional, not supplied by the Solid renderer
   myLogger.report(error, context);
 });
 ```
 
 Handlers run in registration order. A handler that itself throws is caught and logged, never
 escalated. Same HMR caveat as `app.onActivate`: a module-top-level registration subscribes a fresh
-closure on every hot re-eval, so register from `useMountEffect` or a module that runs once.
+closure on every hot re-eval, so register from `onSettled` (with `onCleanup` calling the returned unsubscribe) or a module that runs once.
 
 ## Changing the policy
 
 ```ts
-import { setUnhandledErrorPolicy } from "@nativedesktop/react";
+import { setUnhandledErrorPolicy } from "@nativedesktop/solid";
 
 setUnhandledErrorPolicy({
   unhandledRejection: "fatal",   // die on orphaned rejections
@@ -65,7 +65,7 @@ defaults. The two render-phase report kinds and the uncaught render throw are no
 
 ## Error boundaries
 
-Boundaries work the standard React way (`getDerivedStateFromError` / `componentDidCatch`); the
+Wrap a subtree in `<Errored fallback={(error) => ...}>` from `solid-js`; `error` is an accessor. The
 framework additionally reports each caught error as a non-fatal `renderCaught` so it reaches
 stderr and `onUnhandledError` instead of vanishing. See `examples/errors/main.tsx` for a working
 boundary next to every async failure mode.

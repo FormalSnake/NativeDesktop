@@ -13,7 +13,8 @@ Cmd-K pattern. The widget never filters, ranks, or reorders anything. Every keys
 ![The command palette open over the demo app on GNOME (GTK)](../../../assets/screens/gtk/commandpalette-open.png)
 
 ```tsx
-import { render, useMemo, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createMemo, createSignal } from "solid-js";
 
 interface Command {
   id: string;
@@ -29,16 +30,16 @@ const COMMANDS: Command[] = [
   { id: "toggle-sidebar", title: "Toggle Sidebar", subtitle: "View > Sidebar", iconName: "sidebar-show" },
 ];
 
-function App(): React.ReactNode {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
+function App() {
+  const [open, setOpen] = createSignal(false);
+  const [query, setQuery] = createSignal("");
 
   // App-side ranking: the widget only ever renders what this returns, in order.
-  const items = useMemo(() => {
-    const q = query.toLowerCase();
+  const items = createMemo(() => {
+    const q = query().toLowerCase();
     return COMMANDS.filter((c) => c.title.toLowerCase().includes(q))
       .sort((a, b) => a.title.localeCompare(b.title));
-  }, [query]);
+  });
 
   const runCommand = (id: string): void => {
     console.log("run", id);
@@ -50,10 +51,10 @@ function App(): React.ReactNode {
       <box orientation="vertical" spacing={8}>
         <button label="Open (Cmd-K)" onClick={() => { setQuery(""); setOpen(true); }} />
         <commandpalette
-          open={open}
+          open={open()}
           placeholder="Type a command…"
-          query={query}
-          items={items}
+          query={query()}
+          items={items()}
           onQueryChanged={(e) => setQuery(e.text)}
           onActivate={(e) => runCommand(e.text)} // e.text is the activated row's id
           onSubmit={() => setOpen(false)}
@@ -64,7 +65,7 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 ## Props
@@ -115,7 +116,7 @@ ordered array you hand back.
 Highlight (the row Up/Down/Enter act on) is the one piece of state the widget keeps internally. It
 clamps within the current `items` on Up/Down/Home/End and resets to the top row whenever a fresh
 `items` array lands. Both backends diff row content and skip the rebuild when nothing changed, so
-an app re-rendering on a timer or a poll can hand back a new `items` array every render without
+an app updating on a timer or a poll can hand back a new `items` array on every update without
 losing keyboard focus or the current highlight.
 
 ## Cancel vs. programmatic close
@@ -158,6 +159,6 @@ going through the generic click/type dispatch:
   action dispatchers report it as not-actionable while closed.
 
 `scripts/command-palette-drive.ts` exercises all of this against `examples/command-palette` under
-background re-render churn. See [Automation Socket](/automation-testing/automation-socket/) for the
+background update churn. See [Automation Socket](/automation-testing/automation-socket/) for the
 full RPC surface, `examples/command-palette/main.tsx` for the complete example, and the
 [Widget Reference](/components/widget-reference/) for the generated prop table.

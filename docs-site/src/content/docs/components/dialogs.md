@@ -28,19 +28,20 @@ result-event props wired back to the matching helper, once, however many places 
 trigger a dialog:
 
 ```tsx
+import { createSignal } from "solid-js";
 import {
   showAlert, openFile, saveFile, showAbout,
   onAlertResult, onOpenFileResult, onSaveFileResult,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
 
 function App() {
-  const winRef = useRef<NdNodeRef<"window">>(null);
-  const [result, setResult] = useState("(none yet)");
+  let winRef: NdNodeRef<"window"> | undefined;
+  const [result, setResult] = createSignal("(none yet)");
 
   async function handleDelete() {
-    if (!winRef.current) return;
-    const { buttonId } = await showAlert(winRef.current, {
+    if (!winRef) return;
+    const { buttonId } = await showAlert(winRef, {
       title: "Delete this item?",
       body: "This action cannot be undone.",
       buttons: [
@@ -55,9 +56,9 @@ function App() {
     <window
       ref={winRef}
       title="My App"
-      onAlertResult={(e) => onAlertResult(winRef.current!, e)}
-      onOpenFileResult={(e) => onOpenFileResult(winRef.current!, e)}
-      onSaveFileResult={(e) => onSaveFileResult(winRef.current!, e)}
+      onAlertResult={(e) => onAlertResult(winRef!, e)}
+      onOpenFileResult={(e) => onOpenFileResult(winRef!, e)}
+      onSaveFileResult={(e) => onSaveFileResult(winRef!, e)}
     >
       <button label="Delete…" onClick={handleDelete} />
     </window>

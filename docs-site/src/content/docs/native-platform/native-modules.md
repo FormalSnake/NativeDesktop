@@ -13,13 +13,13 @@ registers.
 
 Use a native module when you need a real platform view with its own drawing, input handling, or SDK.
 Compose `<box>`, `<table>`, `<image>`, and friends for anything else: a native module is opaque to
-React (no children mount inside it), costs two platform-specific implementations, and sits outside
+the Solid tree (no children mount inside it), costs two platform-specific implementations, and sits outside
 the schema's compile-time guarantees.
 
-## React API
+## Solid API
 
 ```tsx
-import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/react";
+import { defineNativeComponent, type NativeComponentRef } from "@nativedesktop/solid";
 
 interface ColorProps { color: string }
 interface ColorEvent { source: "gtk" | "appkit" }
@@ -37,8 +37,8 @@ const ColorView = defineNativeComponent<ColorProps, ColorEvent>({ viewKind: "app
 `defineNativeComponent` wraps the `<nativeview>` intrinsic in a typed component. `viewKind`
 identifies which factory the plugin registered, `props` is JSON-serialized across the ABI, and
 `onNativeEvent` receives `{ name, data }` as the plugin emits them. A ref exposes
-`send(command, arg?)` for one-shot imperative calls, or call `sendNativeCommand(ref.current,
-command, arg)` from `@nativedesktop/react` directly. That is a sibling channel to the schema-typed
+`send(command, arg?)` for one-shot imperative calls, or call `sendNativeCommand(ref,
+command, arg)` from `@nativedesktop/solid` directly. That is a sibling channel to the schema-typed
 `sendCommand`/`hasCommand` in [Imperative Commands & Refs](/core-concepts/imperative-commands/):
 `<nativeview>` declares no `commands` in `schema/widgets.json`, so `sendNativeCommand` skips
 validation and hands the command straight to the plugin's `command` handler.
@@ -132,13 +132,13 @@ kind, `init` calls the registry's `register_view(registry, view_kind, &nd_view_i
 - `create(props_json)`: returns the native widget as an opaque pointer (`GtkWidget*` on Linux,
   `NSView*` on macOS). The core never dereferences it; it only moves the pointer through
   append/unparent by parent kind.
-- `apply_props(view, props_json)`: handles later React prop updates.
+- `apply_props(view, props_json)`: handles later prop updates.
 - `command(view, command, arg_json)`: handles `sendNativeCommand` calls.
 - `destroy(view)`: releases app-owned state exactly once.
 - `connect(view, node_id)`: (ABI v3) records the node's identity so the view can emit events.
 
 Once connected, the plugin calls `registry->emit_event(registry, node_id, name, payload_json)` to
-send a `nativeEvent` back to React. The registry pointer and its callbacks stay valid for the
+send a `nativeEvent` back to the app. The registry pointer and its callbacks stay valid for the
 lifetime of the loaded plugin, and any call touching a widget happens on the platform UI thread.
 Adding a capability to this ABI means appending a field at the end of the struct and bumping
 `ND_PLUGIN_ABI_VERSION`, never reordering or removing one, the same append-only discipline the
@@ -151,7 +151,8 @@ forwards a `color` prop, emits a `pressed` event on click, and answers a `reset`
 
 ```tsx
 // examples/nativeview-demo/main.tsx
-import { defineNativeComponent, render, useRef, useState, type NativeComponentRef } from "@nativedesktop/react";
+import { defineNativeComponent, render, type NativeComponentRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 interface ColorProps { color: string }
 interface ColorEvent { source: "gtk" | "appkit" }
@@ -159,32 +160,32 @@ type ColorCommand = Record<string, never>;
 
 const ColorView = defineNativeComponent<ColorProps, ColorEvent, ColorCommand>({ viewKind: "app.colorview" });
 
-function App(): React.ReactNode {
-  const [color, setColor] = useState("#3b82f6");
-  const [lastSource, setLastSource] = useState("none");
-  const native = useRef<NativeComponentRef>(null);
+function App() {
+  const [color, setColor] = createSignal("#3b82f6");
+  const [lastSource, setLastSource] = createSignal("none");
+  let native: NativeComponentRef<ColorCommand> | undefined;
   return (
     <window title="App-owned Native Component" defaultWidth={480} defaultHeight={360}>
       <box orientation="vertical" spacing={12}>
         <ColorView
           ref={native}
-          props={{ color }}
+          props={{ color: color() }}
           onNativeEvent={({ name, data }) => {
             if (name === "pressed") setLastSource(data.source);
           }}
           style={{ hexpand: true, vexpand: true }}
         />
-        <label text={`Native event source: ${lastSource}`} />
+        <label text={`Native event source: ${lastSource()}`} />
         <box orientation="horizontal" spacing={8}>
-          <button label="Change color" onClick={() => setColor(color === "#3b82f6" ? "#ef4444" : "#3b82f6")} />
-          <button label="Reset natively" onClick={() => native.current?.send("reset", {})} />
+          <button label="Change color" onClick={() => setColor((c) => (c === "#3b82f6" ? "#ef4444" : "#3b82f6"))} />
+          <button label="Reset natively" onClick={() => native?.send("reset", {})} />
         </box>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 Its `native/linux/colorview.c` and `native/macos/ColorView.swift` implement the `nd_view_impl` and

@@ -14,7 +14,7 @@ generates:
 
 - `src/generated/`, the Zig bindings for the GTK backend: widget construction, prop application,
   event wiring.
-- TypeScript intrinsics and schema metadata consumed by `packages/react`.
+- TypeScript intrinsics and schema metadata consumed by `packages/solid` and `packages/core`.
 - The Swift arms of the AppKit backend under `swift/Sources/NDGen/`.
 - The generated reference docs, `docs/widgets.md` and `docs/styling.md`.
 
@@ -50,23 +50,23 @@ bridges `libnd.a`.
 
 | Package | What it is |
 |---|---|
-| `@nativedesktop/react` | The renderer app code imports. Turns React commits into NDP `CommitBatch` ops and re-exports the hooks your app uses. `react` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
-| `@nativedesktop/cli` | The `nd` CLI (bin `nd`). `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation, `nd build` runs the Babel and React Compiler pre-pass, `nd package` assembles the platform bundle, `nd doctor` checks toolchain/config readiness. See [Quick Start](/get-started/quick-start/) and [Packaging](/packaging/). |
+| `@nativedesktop/solid` | The renderer app code imports: `render`, `Portal`, `moveNode`, `defineNativeComponent`, the intrinsic widget types, and the app APIs re-exported from core. Turns Solid's updates into NDP `CommitBatch` ops. `solid-js` is a `peerDependency`, so one hoisted instance is shared across the app and the linked package. Its `register` entry is the Bun preload that compiles Solid JSX, and `nd-solid-build` compiles an app ahead of time. See [State & Hot Reload](/core-concepts/state-hot-reload/). |
+| `@nativedesktop/core` | The renderer-agnostic half: the NDP client, dialogs, toasts, the webview and system APIs, `createStore`, error policy. Shipped as TypeScript source. |
+| `@nativedesktop/cli` | The `nd` CLI (bin `nd`). `nd dev [entry]` wraps the raw `ND_DEV=1 ND_SCRIPT=<entry> <host-binary>` invocation, `nd build` runs the app's `compile` script (`nd-solid-build`), `nd package` assembles the platform bundle, `nd doctor` checks toolchain/config readiness. See [Quick Start](/get-started/quick-start/) and [Packaging](/packaging/). |
 | `@nativedesktop/host` | `resolveHostBinary()` finds the prebuilt host for the current platform under `bin/<os>-<arch>/`, and builds one on first run inside this checkout. |
-| `@nativedesktop/data` | Worker-backed `bun:sqlite`, so queries never block React's commit loop. See [App Data & Storage](/core-concepts/app-data-storage/). |
+| `@nativedesktop/data` | Worker-backed `bun:sqlite`, so queries never block the commit loop. `@nativedesktop/data/solid` adds `createQuery`. See [App Data & Storage](/core-concepts/app-data-storage/). |
 | `@nativedesktop/native` | Support for app-owned native plugins. |
-| `@nativedesktop/rpc` | A resilient JSON-RPC 2.0 client (reconnect ladder, call queueing, liveness watchdog) for an app that talks to a daemon or remote server. See [RPC Client](/core-concepts/rpc-client/). |
-| `@nativedesktop/panes` | Pane-tree state for resizable split layouts (split/close/focus/resize a tree of panes) plus a `PaneTree`/`usePaneTree` React binding. |
+| `@nativedesktop/rpc` | A resilient JSON-RPC 2.0 client (reconnect ladder, call queueing, liveness watchdog) for an app that talks to a daemon or remote server; `@nativedesktop/rpc/solid` adds `createRpcStatus`. See [RPC Client](/core-concepts/rpc-client/). |
+| `@nativedesktop/panes` | Pane-tree state for resizable split layouts (split/close/focus/resize a tree of panes) plus Solid views: `PaneTree`/`createPaneTree`, `DockView`/`createDock` and `TilesView`/`createTiles`. |
 | `@nativedesktop/test` | `launchApp`/`AppHandle`: spawn a host, connect, and drive it over the automation socket from a Bun test or drive script. See [Test Harness](/automation-testing/test-harness/). |
 | `@nativedesktop/mcp` | A stdio MCP server bridging the automation socket to MCP tool calls. See [MCP Tools](/automation-testing/mcp-tools/). |
-| `babel-plugin-nativedesktop` | Rewrites `react` hook imports to `@nativedesktop/react` in shared logic modules. |
 
 ## `examples/`
 
 Eighteen driven apps that stress-test the framework (see [Example Apps](/get-started/examples/) for
 all of them with screenshots). The ones to read first:
 
-- `examples/counter/`: the minimal app. State, a click handler, `Suspense`, and an interval, in one
+- `examples/counter/`: the minimal app. State, a click handler, an async memo under `<Loading>`, and an interval, in one
   `<window>`.
 - `examples/notes/`: a two-pane notes app exercising native chrome (`<splitview>`, `<headerbar>`,
   `<toolbarview>`), `cssClasses`, and search.
@@ -80,14 +80,13 @@ all of them with screenshots). The ones to read first:
 
 What `scripts/new-app.sh` copies to start a new app:
 
-- A `package.json` linking `@nativedesktop/react`, `@nativedesktop/native`, `@nativedesktop/cli`
+- A `package.json` linking `@nativedesktop/solid`, `@nativedesktop/native`, `@nativedesktop/cli`
   (bin `nd`), and transitively `@nativedesktop/host` through `file:` paths into this checkout, so a
   scaffold made from a checkout exercises the checkout rather than the npm registry the template's
   own `^0.1.0` ranges point at.
 - A `src/main.tsx` entry.
-- A `babel.config.json` for the opt-in React Compiler and hook-import rewrite.
-- A `bunfig.toml` preloading the `bun --hot` twin of that rewrite, pinning
-  `install.linker = "hoisted"`. Bun 1.3+ defaults a lockfile-less install to the isolated linker
+- A `tsconfig.json` with `jsx: "preserve"` and `jsxImportSource: "@nativedesktop/solid"`.
+- A `bunfig.toml` pinning `install.linker = "hoisted"`. Bun 1.3+ defaults a lockfile-less install to the isolated linker
   once workspaces are involved, which can leave a `file:`/`link:`-referenced package's own
   dependencies unresolved at runtime.
 

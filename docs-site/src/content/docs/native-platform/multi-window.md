@@ -1,10 +1,10 @@
 ---
 title: Multi-Window
-description: Render more than one <window> root from a single React tree, and move a live widget between windows without reloading it.
+description: Render more than one <window> root from a single Solid tree, and move a live widget between windows without reloading it.
 ---
 
 Render multiple `<window>` roots, typically as siblings inside a fragment, and each becomes an
-independent OS window on both backends, all driven by the same Bun/React process. Windows sharing a
+independent OS window on both backends, all driven by the same Bun/Solid process. Windows sharing a
 `tabGroup` prop render as one tabbed window instead; see [Native Tabs](/native-platform/tabs/).
 `examples/multiwindow/main.tsx` is the reference app for this page.
 
@@ -15,9 +15,9 @@ independent OS window on both backends, all driven by the same Bun/React process
 ## Rendering more than one window
 
 ```tsx
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
-function App(): React.ReactNode {
+function App() {
   return (
     <>
       <window title="Window A" defaultWidth={560} defaultHeight={380}>
@@ -30,13 +30,13 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 The core reconciler (`src/tree.zig`) pools window handles by node id, so a `--hot` edit rebinds
 existing windows instead of reopening them, and a genuinely new `<window>` node opens a fresh OS
 window. Every window is rendered by the same tree in one process, so sharing state between them is
-ordinary React state and closures. No IPC, unlike a multi-window Electron app where each window is
+ordinary signals and closures. No IPC, unlike a multi-window Electron app where each window is
 its own renderer process.
 
 Automation, the crash overlay, window chrome, and the ACL are all per-window correct:
@@ -61,27 +61,26 @@ correct, resolved against its own window as above.
 
 ## Moving a widget between windows without reloading it
 
-Plain React cannot express this move safely. A node under a new parent is a different position in
-the fiber tree, so React unmounts the old instance and mounts a fresh one, which the host turns into
+Plain JSX cannot express this move safely. A node under a new parent is a different position in
+the owner tree, so Solid disposes the old instance and creates a fresh one, which the host turns into
 a native destroy and create. For a `<webview>` that throws away the WKWebView/WebKitGTK instance and
 rebuilds it: the page reloads and scroll position, form input, and JS state go with it.
 
-Two functions from `@nativedesktop/react` (`packages/react/src/renderer.ts`) work around it:
+Three exports from `@nativedesktop/solid` (`packages/solid/src/renderer.ts`) work around it:
 
 ```ts
 function createPool(): Pool
-function createPortal(children: ReactNode, pool?: Pool): ReactPortal
+function Portal(props: { pool?: Pool; children?: JSX.Element }): JSX.Element
 function moveNode(node: NdNodeRef, toParent: NdNodeRef, before?: NdNodeRef | null): void
 ```
 
-- **`createPortal(children, pool?)`** renders `children` into a stable, off-window pool instead
-  of wherever it's called from in the tree, but its React fiber stays at that call site. Because the
-  fiber's position never changes, React never unmounts it, no matter which window later shows it.
-  If you omit `pool`, a single process-lifetime pool shared across the app is used; call
-  `createPool()` yourself (once, at module scope or in a ref, never inside render) if you want more
-  than one.
+- **`<Portal pool?>`** renders its children into a stable, off-window pool instead of wherever it
+  sits in the tree, but its owner stays at that call site. Because the owner never moves, Solid
+  never disposes the children, no matter which window later shows them. If you omit `pool`, a
+  single process-lifetime pool shared across the app is used; call `createPool()` yourself (once,
+  at module scope, never inside a component) if you want more than one.
 - **`moveNode(node, toParent, before?)`** relocates only the live native widget under `toParent`
-  (optionally positioned before another node); it never touches the React tree. `node` and
+  (optionally positioned before another node); it never touches the Solid tree. `node` and
   `toParent` are what a host-element `ref` resolves to (`NdNodeRef`, the same handle
   [Imperative Commands & Refs](/core-concepts/imperative-commands/) uses).
 
@@ -89,57 +88,65 @@ A node rendered via `createPortal` is a live native widget the moment it mounts.
 no window until the first `moveNode` call places it somewhere visible.
 
 ```tsx
-import { render, createPortal, moveNode, useEffect, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, Portal, moveNode } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { Show, createSignal } from "solid-js";
 
-function App(): React.ReactNode {
-  const tab = useRef<NdNodeRef<"webview">>(null);
-  const slotA = useRef<NdNodeRef<"box">>(null);
-  const slotB = useRef<NdNodeRef<"box">>(null);
-  const [host, setHost] = useState<"A" | "B">("A");
+function App() {
+  let tab: NdNodeRef<"webview"> | undefined;
+  let slotA: NdNodeRef<"box"> | undefined;
+  let slotB: NdNodeRef<"box"> | undefined;
+  const [host, setHost] = createSignal<"A" | "B">("A");
 
-  function show(slot: NdNodeRef<"box"> | null, name: "A" | "B") {
-    if (tab.current && slot) {
-      moveNode(tab.current, slot);
+  function show(slot: NdNodeRef<"box"> | undefined, name: "A" | "B") {
+    if (tab && slot) {
+      moveNode(tab, slot);
       setHost(name);
     }
   }
 
   return (
     <>
-      {/* The tab, pinned in the pool. Its React position never changes, so it's
-          never unmounted when it moves between windows. */}
-      {createPortal(
-        <webview ref={tab} url="https://example.com/" style={{ hexpand: true, vexpand: true }} />,
-      )}
+      {/* The tab, pinned in the pool. Its owner never moves, so it is
+          never disposed when it moves between windows. */}
+      <Portal>
+        <webview
+          ref={(w) => (tab = w)}
+          url="https://example.com/"
+          style={{ hexpand: true, vexpand: true }}
+        />
+      </Portal>
 
       <window title="Window A" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotA} orientation="vertical">
-          <button label="Bring tab here" onClick={() => show(slotA.current, "A")} />
-          {host !== "A" && <label text="(tab is in Window B)" />}
+        <box ref={(b) => (slotA = b)} orientation="vertical">
+          <button label="Bring tab here" onClick={() => show(slotA, "A")} />
+          <Show when={host() !== "A"}>
+            <label text="(tab is in Window B)" />
+          </Show>
         </box>
       </window>
 
       <window title="Window B" defaultWidth={560} defaultHeight={380}>
-        <box ref={slotB} orientation="vertical">
-          <button label="Bring tab here" onClick={() => show(slotB.current, "B")} />
-          {host !== "B" && <label text="(tab is in Window A)" />}
+        <box ref={(b) => (slotB = b)} orientation="vertical">
+          <button label="Bring tab here" onClick={() => show(slotB, "B")} />
+          <Show when={host() !== "B"}>
+            <label text="(tab is in Window A)" />
+          </Show>
         </box>
       </window>
     </>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
-Render the portal at a stable position (one per movable item, keyed by its own id, at or near the
-app root) so it outlives any single window it might currently be showing in.
+Render the portal at a stable position (one per movable item, at or near the app root) so it outlives any single window it might currently be showing in.
 
 ### Why it is imperative
 
 `moveNode` breaks from the declarative model the rest of the toolkit follows because the thing being
-preserved, a widget's live native state, is exactly what React's model would destroy. It rides the
+preserved, a widget's live native state, is exactly what disposing and recreating the node would destroy. It rides the
 same `widgetCommand` channel as [`sendCommand`](/core-concepts/imperative-commands/) under a
 reserved command name, into a `reparent_child` op on the host ABI vtable, so it reaches the native
 widget through the same C-ABI seam as every other host operation with no protocol or schema change.

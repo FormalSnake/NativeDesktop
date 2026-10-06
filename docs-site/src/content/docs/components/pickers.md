@@ -14,9 +14,9 @@ SwiftUI `ColorPicker` (itself an `NSColorWell` in `.minimal` style, opening the 
 `#rrggbbaa` when the color is not fully opaque, the same convention `style.background` uses.
 
 ```tsx
-const [color, setColor] = useState("#3366cc");
+const [color, setColor] = createSignal("#3366cc");
 
-<colorpicker value={color} supportsAlpha onColorChanged={(e) => setColor(e.text)} />;
+<colorpicker value={color()} supportsAlpha onColorChanged={(e) => setColor(e.text)} />;
 ```
 
 | Prop | Type | Applied | Notes |
@@ -31,9 +31,9 @@ const [color, setColor] = useState("#3366cc");
 Date only, no time component. The value is an ISO `YYYY-MM-DD` string, never a full timestamp.
 
 ```tsx
-const [pickedDate, setPickedDate] = useState("");
+const [pickedDate, setPickedDate] = createSignal("");
 
-<datepicker value={pickedDate} displayStyle="calendar" onDateChanged={(e) => setPickedDate(e.text)} />;
+<datepicker value={pickedDate()} displayStyle="calendar" onDateChanged={(e) => setPickedDate(e.text)} />;
 ```
 
 | Prop | Type | Applied | Notes |
@@ -58,9 +58,9 @@ and reports the chosen font back. The value is Pango font description syntax
 The macOS side converts between Pango and `NSFont` so app code never has to.
 
 ```tsx
-const [fontDesc, setFontDesc] = useState("Sans 12");
+const [fontDesc, setFontDesc] = createSignal("Sans 12");
 
-<fontpicker value={fontDesc} onFontChanged={(e) => setFontDesc(e.text)} />;
+<fontpicker value={fontDesc()} onFontChanged={(e) => setFontDesc(e.text)} />;
 ```
 
 | Prop | Type | Applied | Notes |

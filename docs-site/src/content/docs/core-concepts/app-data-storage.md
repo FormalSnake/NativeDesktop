@@ -1,18 +1,18 @@
 ---
 title: App Data & Storage
-description: Where an app's persistent data lives on disk, and the worker-backed SQLite layer for querying it without blocking React's commit loop.
+description: Where an app's persistent data lives on disk, and the worker-backed SQLite layer for querying it without blocking the render loop.
 ---
 
 Every app gets a per-platform, per-app directory for persistent data, the same idea as Electron's
-`app.getPath('userData')`, plus a SQLite layer that keeps disk I/O off the thread driving React's
-commit loop.
+`app.getPath('userData')`, plus a SQLite layer that keeps disk I/O off the thread running
+your components.
 
 ## `getAppDataDir()` / `ensureAppDataDir()`
 
-Both are exported from `@nativedesktop/react` (`packages/core/src/paths.ts`):
+Both are exported from `@nativedesktop/solid` and `@nativedesktop/core` (`packages/core/src/paths.ts`):
 
 ```tsx
-import { ensureAppDataDir, getAppDataDir } from "@nativedesktop/react";
+import { ensureAppDataDir, getAppDataDir } from "@nativedesktop/solid";
 
 getAppDataDir(); // resolve the path; does not create it
 ensureAppDataDir(); // resolve AND mkdir -p it, returning the same path
@@ -37,11 +37,11 @@ opening a database there.
 ## `createStore`: versioned JSON settings
 
 For settings, layouts, and other small persistent state, `createStore` (exported from
-`@nativedesktop/react`, `packages/core/src/store.ts`) manages one `${name}.json` file under
+`@nativedesktop/solid` and `@nativedesktop/core`, `packages/core/src/store.ts`; not the `createStore` from `solid-js`) manages one `${name}.json` file under
 `getAppDataDir()` (or a `dir` override):
 
 ```tsx
-import { createStore, render, useStoreValue } from "@nativedesktop/react";
+import { createStore, render, useStoreValue } from "@nativedesktop/solid";
 
 const settings = createStore<{ theme: string }>({
   name: "settings", // -> <appDataDir>/settings.json
@@ -57,16 +57,16 @@ const settings = createStore<{ theme: string }>({
 });
 
 await settings.load(); // top-level await, right before render()
-await render(<App />);
+await render(() => <App />);
 ```
 
-Load before render. The app entry is already `await render(<App />)`, so `await store.load()` on the
+Load before render. The app entry is already `await render(() => <App />)`, so `await store.load()` on the
 line above makes `store.get()` synchronous inside every component: no loading flash, no restore
-effect, no Suspense boundary. A `get()` before `load()` resolves throws a named error rather than
+effect, no `<Loading>` boundary. A `get()` before `load()` resolves throws a named error rather than
 returning a silent default.
 
-Inside components, subscribe with `useStoreValue(store)` (optionally `useStoreValue(store, select)`),
-and write with `store.set(next)` or `store.update(fn)`. The API:
+Inside components, `useStoreValue(store)` (optionally `useStoreValue(store, select)`) returns an
+accessor, so read it as `value()`. Write with `store.set(next)` or `store.update(fn)`. The API:
 
 ```ts
 createStore<T>(options: StoreOptions<T>): Store<T> // deduped by resolved file path
@@ -100,13 +100,13 @@ Bring your own validator (zod and friends) inside `migrate`. The store depends o
 
 The Bun child is a full runtime rather than a sandboxed renderer (see
 [Architecture](/core-concepts/architecture/)), so `bun:sqlite` is right there. It is also the same
-thread that drives React's commit loop, where a slow query stalls UI updates.
+thread that runs your components, where a slow query stalls UI updates.
 `@nativedesktop/data` (`packages/data/`) runs the `bun:sqlite` connection inside a Bun `Worker`
 (`packages/data/src/sqlite.worker.ts`) and exposes a Promise-based client on the main thread. Every
 call is a `postMessage` round-trip, so a slow `SELECT` blocks the worker instead of your app.
 
 ```tsx
-import { ensureAppDataDir } from "@nativedesktop/react";
+import { ensureAppDataDir } from "@nativedesktop/solid";
 import { openDatabase } from "@nativedesktop/data";
 
 const db = await openDatabase(`${ensureAppDataDir()}/app.sqlite`);
@@ -145,26 +145,33 @@ worker boundary as structured-clone-safe values (`string | number | bigint | boo
 Uint8Array`). A `transaction` is a plain array of `{ sql, params? }` steps rather than a callback,
 because a closure can't be cloned across `postMessage`.
 
-### `useQuery`: the React binding
+### `createQuery`: the Solid binding
 
-An optional hook lives at a separate entry point, `@nativedesktop/data/react`, so the core client
-stays free of a React dependency for apps that don't want it:
+An optional helper lives at a separate entry point, `@nativedesktop/data/solid`, so the core client
+stays free of a `solid-js` dependency for apps that don't want it. `createQuery(db, sql, params)`
+is an async memo: read it inside `<Loading>`, and a failed query goes to the nearest `<Errored>`.
 
 ```tsx
-import { useQuery } from "@nativedesktop/data/react";
+import { createQuery } from "@nativedesktop/data/solid";
+import { Errored, For, Loading } from "solid-js";
 
-function NoteList({ db }: { db: SqliteDatabase | null }) {
-  const { data, error, loading } = useQuery<{ id: number; title: string }>(db, "SELECT * FROM notes ORDER BY id");
-  // re-runs when db, sql, or params change; a superseded or unmounted query is ignored
-  // so a late reply can never clobber fresher state
-  if (loading) return <label text="Loading…" />;
-  if (error) return <label text={`Error: ${error.message}`} />;
-  return <box>{data!.map((n) => <label key={n.id} text={n.title} />)}</box>;
+function NoteList(props: { db: SqliteDatabase | null }) {
+  const notes = createQuery<{ id: number; title: string }>(() => props.db, "SELECT * FROM notes ORDER BY id");
+  // re-runs when db, sql, or params change; a superseded result is dropped
+  return (
+    <Errored fallback={(err) => <label text={`Error: ${(err as Error).message}`} />}>
+      <Loading fallback={<label text="Loading…" />}>
+        <box>
+          <For each={notes()}>{(n) => <label text={n.title} />}</For>
+        </box>
+      </Loading>
+    </Errored>
+  );
 }
 ```
 
-Pass a nullish `db` (e.g. while `openDatabase()` is still resolving) to stay in the loading state
-without querying.
+`db`, `sql` and `params` each accept a value or an accessor. A nullish `db` (e.g. while
+`openDatabase()` is still resolving) keeps the query pending, so `<Loading>` shows its fallback.
 
 ### Bringing your own ORM
 

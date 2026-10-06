@@ -17,7 +17,8 @@ Settings windows are a sidebar plus a content pane. `<splitview>` is the real na
 `<toolbarview>`:
 
 ```tsx
-import { render, useState } from "@nativedesktop/react";
+import { createSignal } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
 const pages = [
   { id: "general", label: "General", blurb: "Startup and status" },
@@ -25,8 +26,8 @@ const pages = [
 ] as const;
 
 function App() {
-  const [pageIndex, setPageIndex] = useState(0);
-  const page = pages[pageIndex] ?? pages[0];
+  const [pageIndex, setPageIndex] = createSignal(0);
+  const page = () => pages[pageIndex()] ?? pages[0];
 
   return (
     <window title="Settings" defaultWidth={720} defaultHeight={480}>
@@ -35,21 +36,21 @@ function App() {
           <headerbar title="Settings" />
           <sourcelist
             items={pages.map((p) => ({ title: p.label }))}
-            selectedIndex={pageIndex}
+            selectedIndex={pageIndex()}
             onSelectionChanged={(e) => setPageIndex(e.index)}
             style={{ vexpand: true }}
           />
         </toolbarview>
         <toolbarview slot="content">
-          <headerbar title={page.label} subtitle={page.blurb} />
-          <label text={`The ${page.label} page`} style={{ vexpand: true }} />
+          <headerbar title={page().label} subtitle={page().blurb} />
+          <label text={`The ${page().label} page`} style={{ vexpand: true }} />
         </toolbarview>
       </splitview>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 Three things to notice:
@@ -59,7 +60,8 @@ Three things to notice:
 - `breakpoint={480}` collapses the sidebar automatically when the window gets narrower than 480
   points.
 - `<headerbar title subtitle>` on the content pane: both update in place, so the header follows the
-  selected page with no `key` and no remount.
+  selected page without remounting. `page` is a function of the signal, so only these props re-run
+  when the selection changes.
 
 Run `bun run dev` and click between the pages.
 
@@ -70,7 +72,8 @@ of rows (`AdwPreferencesGroup` on GNOME, the grouped settings style on macOS), a
 a row with a built-in toggle. `<clamp>` caps the content width so rows do not stretch across a wide
 window.
 
-Add the settings shape and state above `App`:
+Import `createStore` and `Show` from `solid-js` next to `createSignal`, and add the settings shape
+above `App`:
 
 ```tsx
 interface Settings {
@@ -88,17 +91,20 @@ const defaults: Settings = {
 };
 ```
 
-Inside `App`, hold the settings in state with one typed updater:
+Inside `App`, hold the settings in a Solid store with one typed updater. The store from `solid-js` is a
+reactive object: reading `settings.themeIndex` inside JSX tracks that field alone.
 
 ```tsx
-const [settings, setSettings] = useState<Settings>(defaults);
+const [settings, setSettings] = createStore<Settings>({ ...defaults });
 
 function set<K extends keyof Settings>(key: K, value: Settings[K]) {
-  setSettings((prev) => ({ ...prev, [key]: value }));
+  setSettings((draft) => {
+    draft[key] = value;
+  });
 }
 ```
 
-Then swap the content pane's `<label>` for the General page:
+Then swap the content pane's `<label>` for the General page, with `<Show>` choosing the page:
 
 ```tsx
 <scrollview minContentHeight={380} style={{ vexpand: true }}>
@@ -108,7 +114,7 @@ Then swap the content pane's `<label>` for the General page:
       spacing={18}
       style={{ hexpand: true, padding: { top: 18, bottom: 18, left: 12, right: 12 } }}
     >
-      {page.id === "general" && (
+      <Show when={page().id === "general"}>
         <settingsgroup title="General">
           <switchrow
             title="Launch at login"
@@ -122,7 +128,7 @@ Then swap the content pane's `<label>` for the General page:
             onToggled={(e) => set("showStatusIcon", e.checked)}
           />
         </settingsgroup>
-      )}
+      </Show>
     </box>
   </clamp>
 </scrollview>
@@ -134,7 +140,7 @@ A plain `<row>` carries a title and an optional subtitle, and places any child w
 trailing slot. Add the Appearance page next to the General block:
 
 ```tsx
-{page.id === "appearance" && (
+<Show when={page().id === "appearance"}>
   <settingsgroup title="Appearance" description="Changes apply immediately.">
     <row title="Theme">
       <select
@@ -154,7 +160,7 @@ trailing slot. Add the Appearance page next to the General block:
       />
     </row>
   </settingsgroup>
-)}
+</Show>
 ```
 
 with the options at module scope:
@@ -171,15 +177,17 @@ GNOME's own settings sliders do the same.
 Right now every launch starts from defaults. `createStore` gives you a versioned JSON file under
 the app's data directory, with debounced, crash-safe writes and a flush on exit.
 
-Replace the `useState` with a store at module scope:
+Replace the Solid store with a framework store at module scope. It shares a name with the
+`createStore` from `solid-js`, so import it under another name:
 
 ```tsx
-import { createStore, render, useState, useStoreValue } from "@nativedesktop/react";
+import { createStore as createSettingsStore, render, useStoreValue } from "@nativedesktop/solid";
 
-const store = createStore<Settings>({ name: "settings", version: 1, defaults });
+const store = createSettingsStore<Settings>({ name: "settings", version: 1, defaults });
 ```
 
-Inside `App`, read it with `useStoreValue` and write through the store:
+Inside `App`, read it with `useStoreValue`, which returns an accessor, and write through the store.
+Every `settings.x` in the JSX becomes `settings().x`:
 
 ```tsx
 const settings = useStoreValue(store);
@@ -193,11 +201,11 @@ Load it once, before rendering:
 
 ```tsx
 await store.load();
-await render(<App />);
+await render(() => <App />);
 ```
 
-Loading before `render()` makes `store.get()` synchronous inside components: no loading flash, no
-restore effect. The file lands at `settings.json` under the app data dir, which is
+Loading before `render()` makes `store.get()` synchronous inside components, so there is no
+loading flash. The file lands at `settings.json` under the app data dir, which is
 `~/Library/Application Support/<name>` on macOS and `~/.local/share/<name>` on Linux, where
 `<name>` comes from your `package.json`. When you later change the shape, bump `version` and add a
 `migrate` hook; it runs on every load and returns the upgraded value, or `null` to reset.
@@ -207,27 +215,25 @@ Toggle a switch, quit, and run again. The values come back.
 ## 5. Confirm the reset with a native dialog
 
 Dialog helpers are promise-wrapped commands on a `<window>`. They need two pieces of wiring: a ref
-to the window node, and the window's `onAlertResult` prop routed back into the helper so the
+variable for the window node, and the window's `onAlertResult` prop routed back into the helper so the
 promise can settle.
 
 ```tsx
+import { createSignal, Show } from "solid-js";
 import {
-  createStore,
+  createStore as createSettingsStore,
   onAlertResult,
   render,
   showAlert,
-  useRef,
-  useState,
   useStoreValue,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
 ```
 
 ```tsx
-const winRef = useRef<NdNodeRef<"window">>(null);
+let win: NdNodeRef<"window"> | undefined;
 
 async function confirmReset() {
-  const win = winRef.current;
   if (!win) return;
   const result = await showAlert(win, {
     title: "Reset all settings?",
@@ -243,11 +249,11 @@ async function confirmReset() {
 
 ```tsx
 <window
-  ref={winRef}
+  ref={win}
   title="Settings"
   defaultWidth={720}
   defaultHeight={480}
-  onAlertResult={(e) => onAlertResult(winRef.current!, e)}
+  onAlertResult={(e) => onAlertResult(win!, e)}
 >
 ```
 
@@ -279,16 +285,15 @@ bun run dev
 The finished file:
 
 ```tsx
+import { createSignal, Show } from "solid-js";
 import {
-  createStore,
+  createStore as createSettingsStore,
   onAlertResult,
   render,
   showAlert,
-  useRef,
-  useState,
   useStoreValue,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
 
 interface Settings {
   launchAtLogin: boolean;
@@ -304,7 +309,7 @@ const defaults: Settings = {
   textSize: 14,
 };
 
-const store = createStore<Settings>({ name: "settings", version: 1, defaults });
+const store = createSettingsStore<Settings>({ name: "settings", version: 1, defaults });
 
 const pages = [
   { id: "general", label: "General", blurb: "Startup and status" },
@@ -315,16 +320,15 @@ const themes = ["System", "Light", "Dark"];
 
 function App() {
   const settings = useStoreValue(store);
-  const [pageIndex, setPageIndex] = useState(0);
-  const winRef = useRef<NdNodeRef<"window">>(null);
-  const page = pages[pageIndex] ?? pages[0];
+  const [pageIndex, setPageIndex] = createSignal(0);
+  const page = () => pages[pageIndex()] ?? pages[0];
+  let win: NdNodeRef<"window"> | undefined;
 
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     store.update((prev) => ({ ...prev, [key]: value }));
   }
 
   async function confirmReset() {
-    const win = winRef.current;
     if (!win) return;
     const result = await showAlert(win, {
       title: "Reset all settings?",
@@ -339,25 +343,25 @@ function App() {
 
   return (
     <window
-      ref={winRef}
+      ref={win}
       title="Settings"
       defaultWidth={720}
       defaultHeight={480}
-      onAlertResult={(e) => onAlertResult(winRef.current!, e)}
+      onAlertResult={(e) => onAlertResult(win!, e)}
     >
       <splitview sidebarWidth={0.32} breakpoint={480}>
         <toolbarview slot="sidebar">
           <headerbar title="Settings" />
           <sourcelist
             items={pages.map((p) => ({ title: p.label }))}
-            selectedIndex={pageIndex}
+            selectedIndex={pageIndex()}
             onSelectionChanged={(e) => setPageIndex(e.index)}
             style={{ vexpand: true }}
           />
         </toolbarview>
 
         <toolbarview slot="content">
-          <headerbar title={page.label} subtitle={page.blurb} />
+          <headerbar title={page().label} subtitle={page().blurb} />
           <scrollview minContentHeight={380} style={{ vexpand: true }}>
             <clamp maximumSize={560}>
               <box
@@ -365,43 +369,43 @@ function App() {
                 spacing={18}
                 style={{ hexpand: true, padding: { top: 18, bottom: 18, left: 12, right: 12 } }}
               >
-                {page.id === "general" && (
+                <Show when={page().id === "general"}>
                   <settingsgroup title="General">
                     <switchrow
                       title="Launch at login"
-                      checked={settings.launchAtLogin}
+                      checked={settings().launchAtLogin}
                       onToggled={(e) => set("launchAtLogin", e.checked)}
                     />
                     <switchrow
                       title="Show status icon"
                       subtitle="Menu bar and tray presence"
-                      checked={settings.showStatusIcon}
+                      checked={settings().showStatusIcon}
                       onToggled={(e) => set("showStatusIcon", e.checked)}
                     />
                   </settingsgroup>
-                )}
+                </Show>
 
-                {page.id === "appearance" && (
+                <Show when={page().id === "appearance"}>
                   <settingsgroup title="Appearance" description="Changes apply immediately.">
                     <row title="Theme">
                       <select
                         options={themes}
-                        selectedIndex={settings.themeIndex}
+                        selectedIndex={settings().themeIndex}
                         onSelectionChanged={(e) => set("themeIndex", e.index)}
                       />
                     </row>
-                    <row title="Text size" subtitle={`${Math.round(settings.textSize)}pt`}>
+                    <row title="Text size" subtitle={`${Math.round(settings().textSize)}pt`}>
                       <slider
                         min={10}
                         max={24}
                         step={1}
-                        value={settings.textSize}
+                        value={settings().textSize}
                         onValueChanged={(e) => set("textSize", e.value)}
                         style={{ hexpand: true }}
                       />
                     </row>
                   </settingsgroup>
-                )}
+                </Show>
 
                 <button
                   label="Reset All Settings"
@@ -419,7 +423,7 @@ function App() {
 }
 
 await store.load();
-await render(<App />);
+await render(() => <App />);
 ```
 
 ## Next

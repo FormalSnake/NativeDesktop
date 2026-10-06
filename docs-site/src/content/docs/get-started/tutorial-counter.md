@@ -1,6 +1,6 @@
 ---
 title: "Build a Counter"
-description: "The first NativeDesktop tutorial: a window, layout boxes, labels, buttons, and React state."
+description: "The first NativeDesktop tutorial: a window, layout boxes, labels, buttons, and Solid signals."
 ---
 
 You build a counter with increment and decrement buttons, a derived status line, and platform-native
@@ -15,7 +15,7 @@ button styling. Along the way you meet the four widgets every app starts with: `
 Start with a static window:
 
 ```tsx
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 function Counter() {
   return (
@@ -27,7 +27,7 @@ function Counter() {
   );
 }
 
-await render(<Counter />);
+await render(() => <Counter />);
 ```
 
 A `<window>` is the root of the tree. `<box>` is the layout primitive: it stacks children
@@ -36,46 +36,47 @@ it. `<label>` renders text through a real native text widget.
 
 ## 2. Add state
 
-Wire the count to `useState` and add a button:
+Wire the count to a signal and add a button:
 
 ```tsx
-import { render, useState } from "@nativedesktop/react";
+import { createSignal } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
 function Counter() {
-  const [count, setCount] = useState(0);
+  const [count, setCount] = createSignal(0);
 
   return (
     <window title="Counter" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Count: ${count}`} />
+        <label text={`Count: ${count()}`} />
         <button label="Increment" onClick={() => setCount((c) => c + 1)} />
       </box>
     </window>
   );
 }
 
-await render(<Counter />);
+await render(() => <Counter />);
 ```
 
-The hook comes from `@nativedesktop/react`, not `react`. That is the one import rule in
-NativeDesktop; it keeps hooks working across hot reloads
-([why](/core-concepts/state-hot-reload/)).
+`Counter` runs once. `count()` is read inside the `text` expression, so Solid re-runs that
+expression alone when the signal changes and sends one prop update for the label. Nothing else
+in the tree is touched, and there is nothing to memoize.
 
 Clicking the button fires a native click event in the host process. It crosses the socket to your
-React process, runs your handler, and the resulting commit crosses back. You never notice the trip.
+Solid process, runs your handler, and the resulting commit crosses back. You never notice the trip.
 
 ## 3. Derive, don't store
 
-Values computed from state are computed inline, not stored in more state. Add a parity line under
+A value computed from state is a function of the signal, not more state. Add a parity line under
 the count:
 
 ```tsx
-const parity = count % 2 === 0 ? "even" : "odd";
+const parity = () => (count() % 2 === 0 ? "even" : "odd");
 ```
 
 ```tsx
-<label text={`Count: ${count}`} />
-<label text={`That is ${parity}.`} cssClasses={["dimmed"]} />
+<label text={`Count: ${count()}`} />
+<label text={`That is ${parity()}.`} cssClasses={["dimmed"]} />
 ```
 
 `cssClasses` is the styling escape hatch into each platform's design language. The names come from
@@ -104,17 +105,18 @@ treatment on macOS. `style` is not CSS; it covers theme-neutral geometry and ali
 The finished file:
 
 ```tsx
-import { render, useState } from "@nativedesktop/react";
+import { createSignal } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
 function Counter() {
-  const [count, setCount] = useState(0);
-  const parity = count % 2 === 0 ? "even" : "odd";
+  const [count, setCount] = createSignal(0);
+  const parity = () => (count() % 2 === 0 ? "even" : "odd");
 
   return (
     <window title="Counter" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Count: ${count}`} />
-        <label text={`That is ${parity}.`} cssClasses={["dimmed"]} />
+        <label text={`Count: ${count()}`} />
+        <label text={`That is ${parity()}.`} cssClasses={["dimmed"]} />
         <box orientation="horizontal" spacing={8} style={{ halign: "center" }}>
           <button label="Decrement" onClick={() => setCount((c) => c - 1)} />
           <button
@@ -128,7 +130,7 @@ function Counter() {
   );
 }
 
-await render(<Counter />);
+await render(() => <Counter />);
 ```
 
 ## Run it

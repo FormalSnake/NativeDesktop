@@ -3,7 +3,7 @@ title: System Capabilities
 description: Native file dialogs, clipboard, notifications, recent documents, credentials, live appearance, and app-level OS events, with one API and real native behavior on each backend.
 ---
 
-`@nativedesktop/react` exposes the OS-level surface a desktop app eventually needs as promise-based
+`@nativedesktop/solid` exposes the OS-level surface a desktop app eventually needs as promise-based
 calls: file pickers, clipboard, notifications, Open Recent, the system credential store, audio
 playback, live light/dark and accent color, and app lifecycle events like activation and file drops.
 Every call runs the real native API on the host (`NSOpenPanel`/`GtkFileDialog`,
@@ -13,7 +13,7 @@ Service, `AVPlayer` and GStreamer) from the same app code on both backends.
 ## Dialogs
 
 ```tsx
-import { dialog } from "@nativedesktop/react";
+import { dialog } from "@nativedesktop/solid";
 
 async function openMarkdownFile() {
   const paths = await dialog.openFile({
@@ -45,7 +45,7 @@ command channel, or the About panel, which only the `<window>` version exposes.
 ## Clipboard
 
 ```tsx
-import { clipboard } from "@nativedesktop/react";
+import { clipboard } from "@nativedesktop/solid";
 
 <button label="Copy link" onClick={() => clipboard.writeText("https://example.com/")} />;
 ```
@@ -57,18 +57,26 @@ clipboard holds no text, but reading the clipboard is default-denied; see
 ## Notifications
 
 ```tsx
-import { notifications, useEffect } from "@nativedesktop/react";
+import { notifications } from "@nativedesktop/solid";
+import { createEffect, onCleanup, onSettled } from "solid-js";
 
-function useNotifyOnDone(done: boolean, runId: string) {
-  useEffect(() => {
+function NotifyOnDone(props: { done: boolean; runId: string }) {
+  onSettled(() => {
     const unsubscribe = notifications.onClick((e) => {
       const clicked = (e.data ?? {}) as { runId?: string };
       if (clicked.runId) revealRun(clicked.runId);
     });
-    return unsubscribe;
-  }, []);
+    onCleanup(unsubscribe);
+  });
 
-  if (done) notifications.show({ title: "Build finished", body: "0 errors, 0 warnings", data: { runId } });
+  createEffect(
+    () => props.done,
+    (done) => {
+      if (done) notifications.show({ title: "Build finished", body: "0 errors, 0 warnings", data: { runId: props.runId } });
+    },
+  );
+
+  return null;
 }
 ```
 
@@ -78,12 +86,12 @@ is whatever you passed to `show()`. The payload lives in a process-local map, ne
 host, capped at 128 entries and cleared per notification once its click dispatches. It survives
 `bun --hot` re-evals but not an app restart, which costs nothing today: a click arriving after a
 restart is dropped by the transport anyway, the same gap as `onOpenUrl` below. `onClick` returns an
-unsubscribe function, so it composes with a `useEffect` cleanup.
+unsubscribe function, so it composes with `onCleanup`.
 
 ## Recent documents
 
 ```tsx
-import { recentDocuments } from "@nativedesktop/react";
+import { recentDocuments } from "@nativedesktop/solid";
 
 await recentDocuments.add("/Users/me/notes.md");
 ```
@@ -94,7 +102,7 @@ Recent" menu on macOS and `GtkRecentManager` on GTK.
 ## Credentials
 
 ```tsx
-import { credentials } from "@nativedesktop/react";
+import { credentials } from "@nativedesktop/solid";
 
 await credentials.set("my-app", "api-token", secretValue);
 const token = await credentials.get("my-app", "api-token"); // null if not found
@@ -108,38 +116,39 @@ is default-denied.
 ## Audio
 
 ```tsx
-import { audio, useEffect, useRef, useState } from "@nativedesktop/react";
+import { audio } from "@nativedesktop/solid";
+import { createSignal, onCleanup, onSettled } from "solid-js";
 
-function PlayerWithMeter({ path }: { path: string }) {
-  const handle = useRef<string | null>(null);
-  const [level, setLevel] = useState(0);
+function PlayerWithMeter(props: { path: string }) {
+  let handle: string | null = null;
+  const [level, setLevel] = createSignal(0);
 
-  useEffect(() => {
+  onSettled(() => {
     const offSpectrum = audio.onSpectrum((e) => {
-      if (e.handle === handle.current) setLevel(Math.max(...e.bins));
+      if (e.handle === handle) setLevel(Math.max(...e.bins));
     });
     const offState = audio.onState((e) => {
-      if (e.handle === handle.current && (e.state === "ended" || e.state === "error")) {
-        handle.current = null;
+      if (e.handle === handle && (e.state === "ended" || e.state === "error")) {
+        handle = null;
         setLevel(0);
       }
     });
-    return () => {
+    onCleanup(() => {
       offSpectrum();
       offState();
-      if (handle.current) audio.stop(handle.current);
-    };
-  }, []);
+      if (handle) audio.stop(handle);
+    });
+  });
 
   return (
     <box orientation="vertical" spacing={8}>
       <button
         label="Play"
         onClick={async () => {
-          handle.current = await audio.play({ path, volume: 0.8, spectrum: true });
+          handle = await audio.play({ path: props.path, volume: 0.8, spectrum: true });
         }}
       />
-      <progressbar fraction={level} />
+      <progressbar fraction={level()} />
     </box>
   );
 }
@@ -175,15 +184,16 @@ There are two event subscriptions; each returns an unsubscribe function like the
 ## Appearance
 
 ```tsx
-import { system, useEffect, useState } from "@nativedesktop/react";
+import { system } from "@nativedesktop/solid";
+import { createSignal, onCleanup, onSettled } from "solid-js";
 
-function AccentDot(): React.ReactNode {
-  const [info, setInfo] = useState({ appearance: "light", accentColor: "#0066cc" });
-  useEffect(() => {
+function AccentDot() {
+  const [info, setInfo] = createSignal({ appearance: "light", accentColor: "#0066cc" });
+  onSettled(() => {
     system.getAppearance().then(setInfo);
-    return system.onAppearanceChange(setInfo);
-  }, []);
-  return <box style={{ background: info.accentColor }} />;
+    onCleanup(system.onAppearanceChange(setInfo));
+  });
+  return <box style={{ background: info().accentColor }} />;
 }
 ```
 
@@ -197,18 +207,20 @@ See [Styling & Design Language](/core-concepts/styling-design-language/#dark-mod
 ## App-level events
 
 ```tsx
-import { app, useEffect } from "@nativedesktop/react";
+import { app } from "@nativedesktop/solid";
+import { onCleanup, onSettled } from "solid-js";
 
-function useFileDrop(onFiles: (paths: string[]) => void) {
-  useEffect(() => {
-    return app.onFileDrop((e) => onFiles(e.paths));
-  }, [onFiles]);
+function FileDropTarget(props: { onFiles: (paths: string[]) => void }) {
+  onSettled(() => {
+    onCleanup(app.onFileDrop((e) => props.onFiles(e.paths)));
+  });
+  return null;
 }
 ```
 
 `app.isActive()` answers the standing question synchronously (no await, no subscription), backed
 by the same activation stream. The host replays the current state right after the NDP handshake, so
-it's already correct in your first render (and after an HMR or crash respawn).
+it's already correct when your components first run (and after an HMR or crash respawn).
 
 | Subscription | Fires when… |
 | --- | --- |
@@ -217,15 +229,14 @@ it's already correct in your first render (and after an HMR or crash respawn).
 | `app.onOpenFile(h: (paths: string[]) => void)` | The OS delivers a launch for a registered file association (e.g. double-clicking a document). |
 | `app.onFileDrop(h: (e: { paths: string[]; windowId: number }) => void)` | Files are dragged onto an app window. `windowId` is currently always `0`. |
 
-Every subscription returns an unsubscribe function, so it composes directly with a `useEffect`
-cleanup. `onOpenUrl`/`onOpenFile` events fired before the app's first render can be missed (there's
+Every subscription returns an unsubscribe function, so it composes directly with `onCleanup`. `onOpenUrl`/`onOpenFile` events fired before the app's first render can be missed (there's
 no buffering yet), so register these as early as possible. See [Packaging](/packaging/) for how
 `fileAssociations`/`urlSchemes` get registered with the OS in the first place.
 
 ## Shell helpers
 
 ```tsx
-import { openExternal, openPath, revealPath } from "@nativedesktop/react";
+import { openExternal, openPath, revealPath } from "@nativedesktop/solid";
 
 await openExternal("https://example.com/");   // OS default browser
 await openPath("/Users/me/notes.md");          // OS default app for the file
