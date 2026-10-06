@@ -20,9 +20,10 @@ export default defineConfig({
   // },
 
   // Packaging (`nd package [mac|linux]`). Defaults: entry "src/main.tsx",
-  // compile "auto" (runs the `compile` script when declared), outDir "dist",
-  // no updates (opt in with package.updates).
-  // package: {
-  //   updates: { baseUrl: "https://updates.example.com/myapp" },
-  // },
+  // outDir "dist", no updates (opt in with package.updates). The `compile`
+  // script bundles src/ into dist/main.js, the entry the bundle launches.
+  package: {
+    compile: { entry: "dist/main.js" },
+    // updates: { baseUrl: "https://updates.example.com/myapp" },
+  },
 });

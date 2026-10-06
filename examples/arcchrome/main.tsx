@@ -1,5 +1,6 @@
-import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // The Arc window shape: no toolbar, a full-height sidebar whose first row
 // holds the window's own controls, the page in a rounded card beside it, and
@@ -13,11 +14,11 @@ const PAGE =
       "h1{margin:0;padding:24px;color:#fff;font:600 28px system-ui}</style><h1>Page edge to edge</h1>",
   );
 
-function App(): React.ReactNode {
-  const [hidden, setHidden] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-  const [clicks, setClicks] = useState(0);
-  const split = useRef<NdNodeRef<"splitview">>(null);
+function App() {
+  const [hidden, setHidden] = createSignal(false);
+  const [revealed, setRevealed] = createSignal(false);
+  const [clicks, setClicks] = createSignal(0);
+  let split: NdNodeRef<"splitview"> | undefined;
 
   return (
     <window title="ND Arc Chrome" defaultWidth={1100} defaultHeight={700}>
@@ -25,7 +26,7 @@ function App(): React.ReactNode {
         ref={split}
         testID="split"
         sidebarWidth={0.24}
-        collapsed={hidden}
+        collapsed={hidden()}
         edgeReveal
         contentStyle="card"
         onRevealChanged={(e) => setRevealed(e.checked)}
@@ -37,10 +38,10 @@ function App(): React.ReactNode {
             <button
               testID="toggle"
               iconName="sidebar-show-symbolic"
-              tooltip={hidden ? "Show Sidebar" : "Hide Sidebar"}
+              tooltip={hidden() ? "Show Sidebar" : "Hide Sidebar"}
               cssClasses={["flat"]}
               style={{ valign: "center" }}
-              onClick={() => setHidden(!hidden)}
+              onClick={() => setHidden((h) => !h)}
             />
             <button testID="back" iconName="go-previous-symbolic" tooltip="Back" cssClasses={["flat"]} style={{ valign: "center" }} />
             <button
@@ -53,7 +54,7 @@ function App(): React.ReactNode {
             />
             <windowcontrols testID="controls-end" side="end" style={{ valign: "center" }} />
           </box>
-          <label testID="state" text={`hidden=${hidden} revealed=${revealed} clicks=${clicks}`} ellipsize />
+          <label testID="state" text={`hidden=${hidden()} revealed=${revealed()} clicks=${clicks()}`} ellipsize />
         </box>
         <box slot="content" testID="card" orientation="vertical" style={{ hexpand: true, vexpand: true }}>
           {/* The command path to the reveal, for a backend with no pointer
@@ -63,16 +64,16 @@ function App(): React.ReactNode {
               testID="reveal"
               label="Reveal"
               cssClasses={["flat"]}
-              onClick={() => split.current && sendCommand(split.current, "revealSidebar")}
+              onClick={() => split && sendCommand(split, "revealSidebar")}
             />
             <button
               testID="conceal"
               label="Conceal"
               cssClasses={["flat"]}
-              onClick={() => split.current && sendCommand(split.current, "concealSidebar")}
+              onClick={() => split && sendCommand(split, "concealSidebar")}
             />
             <button testID="show" label="Show Sidebar" cssClasses={["flat"]} onClick={() => setHidden(false)} />
-            <label testID="card-state" text={`hidden=${hidden} revealed=${revealed}`} />
+            <label testID="card-state" text={`hidden=${hidden()} revealed=${revealed()}`} />
           </box>
           <webview testID="page" url={PAGE} style={{ hexpand: true, vexpand: true }} />
         </box>
@@ -81,4 +82,4 @@ function App(): React.ReactNode {
   );
 }
 
-render(<App />);
+await render(() => <App />);

@@ -1,16 +1,23 @@
 import { test, expect, beforeAll } from "bun:test";
-import { createSignal, For, Show } from "solid-js";
-import { Batch, NodeRegistry, setSession, type Op } from "@nativedesktop/core";
+import { createSignal, Errored, For, Show } from "solid-js";
+import { Batch, NodeRegistry, onUnhandledError, setSession, setUnhandledErrorPolicy, type Op } from "@nativedesktop/core";
 import { render, nextCommit, Portal, createPool } from "./renderer.ts";
+import { defineNativeComponent, type NativeComponentRef } from "./native-component.ts";
 import { eventForHandler } from "@nativedesktop/core";
 
 const commits: Op[][] = [];
 const registry = new NodeRegistry();
+const widgetCommands: { id: number; command: string; arg: unknown }[] = [];
 
 beforeAll(() => {
   const batch = new Batch();
   setSession({
-    ndp: {} as never,
+    ndp: {
+      sendWidgetCommand(id: number, command: string, arg: unknown) {
+        widgetCommands.push({ id, command, arg });
+      },
+      sendRuntimeError() {},
+    } as never,
     registry,
     batch,
     commit() {
@@ -163,4 +170,78 @@ test("portal children mount detached in the pool, side by side, and leave with t
   const attached = new Set(ops.filter((o) => o.op === "append").map((o) => (o as { child: number }).child));
   expect(views.some((v) => attached.has(v.id))).toBe(false);
   expect(await next(() => setOpen(false))).toEqual([{ op: "remove", id: views[0]!.id }]);
+});
+
+test("a native component sends viewKind and its props as JSON, and re-sends them on change", async () => {
+  const Color = defineNativeComponent<{ color: string }>({ viewKind: "app.color" });
+  const [color, setColor] = createSignal("red");
+  let id = 0;
+  const ops = await mount(() => (
+    <window>
+      <Color ref={(r) => (id = r.id)} props={{ color: color() }} testID="c" style={{ hexpand: true }} />
+    </window>
+  ));
+  expect(ops).toContainEqual({
+    op: "create",
+    id,
+    widget: "NativeView",
+    props: { viewKind: "app.color", props: '{"color":"red"}', testID: "c", style: { hexpand: true } },
+  });
+  expect(await next(() => setColor("blue"))).toEqual([{ op: "update", id, props: { props: '{"color":"blue"}' } }]);
+});
+
+test("a native component maps the native event name and sends commands through its ref", async () => {
+  const View = defineNativeComponent<object, { n: number }, { to: string }>({ viewKind: "app.v" });
+  const events: { name: string; data: { n: number } }[] = [];
+  let native: NativeComponentRef<{ to: string }> | undefined;
+  await mount(() => (
+    <window>
+      <View ref={native} props={{}} onNativeEvent={(e) => events.push(e)} />
+    </window>
+  ));
+  registry.get(native!.id)!.handlers[eventForHandler("nativeview", "onNativeEvent")!]!({ nativeName: "pressed", data: { n: 2 } });
+  expect(events).toEqual([{ name: "pressed", data: { n: 2 } }]);
+  widgetCommands.length = 0;
+  native!.send("reset", { to: "x" });
+  expect(widgetCommands).toEqual([{ id: native!.id, command: "reset", arg: { to: "x" } }]);
+});
+
+test("a render error an <Errored> boundary catches is reported non-fatal and the tree keeps updating", async () => {
+  setUnhandledErrorPolicy({ log: false });
+  const reports: { message: string; kind: string; fatal: boolean }[] = [];
+  const off = onUnhandledError((e, ctx) => reports.push({ message: e.message, kind: ctx.kind, fatal: ctx.fatal }));
+  const [armed, setArmed] = createSignal(false);
+  const [n, setN] = createSignal(0);
+  const Boom = (): never => {
+    throw new Error("render-throw");
+  };
+  let fallbackId = 0;
+  await mount(() => (
+    <window>
+      <label>{n()}</label>
+      <Errored fallback={(e) => <label ref={(l) => (fallbackId = l.id)} text={`caught: ${(e() as Error).message}`} />}>
+        <Show when={armed()}>
+          <Boom />
+        </Show>
+      </Errored>
+    </window>
+  ));
+  const ops = await next(() => setArmed(true));
+  expect(ops).toContainEqual(expect.objectContaining({ op: "create", id: fallbackId, props: { text: "caught: render-throw" } }));
+  expect(reports).toEqual([{ message: "render-throw", kind: "renderCaught", fatal: false }]);
+  expect((await next(() => setN(1))).map((o) => o.op)).toEqual(["setText"]);
+  off();
+});
+
+test("a render error no boundary catches exits the process, whatever the policy says", async () => {
+  const child = Bun.spawn(["bun", "--preload", "./src/register.ts", "./src/fixtures/uncaught-render.tsx"], {
+    cwd: `${import.meta.dir}/..`,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(out).not.toContain("STILL_ALIVE");
+  expect(err).toContain("[nd] render error: uncaught-render");
+  expect(err).not.toContain("caught by boundary");
+  expect(code).toBe(1);
 });

@@ -1,8 +1,9 @@
 import { createRenderer } from "@solidjs/universal";
-import { flush, onCleanup, type Element as SolidElement } from "solid-js";
+import { Errored, configureClientErrors, flush, onCleanup, type Element as SolidElement } from "solid-js";
 import {
   connect,
   installErrorHandlers,
+  reportRenderError,
   nextNodeId,
   intrinsicToName,
   handlerPropNames,
@@ -403,10 +404,45 @@ declare global {
   var __nd_solid_remount: (() => void) | undefined;
 }
 
+// Render-phase errors. One an <Errored> boundary renders a fallback for
+// reaches Solid's client error hook and is reported, non-fatal. One no app
+// boundary catches lands in the boundary wrapped around the whole tree, which
+// is fatal regardless of policy, as React's uncaught render error is: without
+// it Solid halts reactivity and leaves a window that looks alive. The hook
+// fires for that root boundary too, before its fallback runs, so a caught
+// report waits a microtask and is dropped once the root has claimed the error.
+const fatalRender = new WeakSet<object>();
+
+function installRenderErrorHooks(): void {
+  configureClientErrors({
+    onError(error) {
+      queueMicrotask(() => {
+        if (typeof error === "object" && error !== null && fatalRender.has(error)) return;
+        reportRenderError(error, "renderCaught");
+      });
+    },
+  });
+}
+
+function guarded(code: () => SolidElement): () => SolidElement {
+  return () =>
+    renderer.createComponent(Errored as (props: Parameters<typeof Errored>[0]) => SolidNode, {
+      fallback: (error: () => unknown) => {
+        const raw = error();
+        if (typeof raw === "object" && raw !== null) fatalRender.add(raw);
+        reportRenderError(raw, "renderUncaught");
+        return process.exit(1);
+      },
+      get children() {
+        return code();
+      },
+    });
+}
+
 function mountRoot(code: () => SolidElement): void {
   globalThis.__nd_solid_mounted?.dispose();
   const root = makeNode("#root");
-  globalThis.__nd_solid_mounted = { code, dispose: renderer.render(code as () => SolidNode, root) };
+  globalThis.__nd_solid_mounted = { code, dispose: renderer.render(guarded(code) as () => SolidNode, root) };
 }
 
 /// Connects to the host and mounts `code`'s tree; the open host socket keeps
@@ -422,6 +458,7 @@ function mountRoot(code: () => SolidElement): void {
 /// newest `code`. Without the refresh runtime a re-eval disposes and remounts.
 export async function render(code: () => SolidElement): Promise<void> {
   installErrorHandlers();
+  installRenderErrorHooks();
   session = await connect();
   session.flush = shipBatch;
   const mounted = globalThis.__nd_solid_mounted;

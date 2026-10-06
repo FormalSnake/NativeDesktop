@@ -11,6 +11,7 @@
 // so on Linux the rig must be an X server and xdotool does it
 // (scripts/headless-blur-activate.sh). Marker: ND_BLUR_ACTIVATE_OK.
 import { resolve } from "node:path";
+import { SOLID_PRELOAD, withPreload } from "@nativedesktop/host";
 import { type AppHandle, launchApp } from "../packages/test/src/index.ts";
 
 const MAC = process.platform === "darwin";
@@ -48,6 +49,8 @@ const app = await launchApp({
   entry: "scripts/blur-activate-app.tsx",
   cwd: resolve(import.meta.dir, ".."),
   hostBinary: process.env.ND_HOST_BINARY,
+  // The fixture sits outside any Solid package, so the register preload is passed by hand.
+  env: { BUN_OPTIONS: withPreload(process.env.BUN_OPTIONS, SOLID_PRELOAD) },
 });
 try {
   await Bun.sleep(1000);

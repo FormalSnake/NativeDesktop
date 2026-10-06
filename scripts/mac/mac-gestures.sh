@@ -27,7 +27,7 @@ run_leg() {
   local script="$1" drive="$2" log="$3" drive_log="$4" marker="$5"
   pkill -f 'swift/.build/release/NDShell' 2>/dev/null || true
   rm -f "$log" "$drive_log"
-  ND_SCRIPT="$script" NATIVE_AUTOMATION=1 swift/.build/release/NDShell >"$log" 2>&1 &
+  BUN_OPTIONS="$(bun scripts/bun-options.ts "$script")" ND_SCRIPT="$script" NATIVE_AUTOMATION=1 swift/.build/release/NDShell >"$log" 2>&1 &
   local pid=$!
   for _ in $(seq 1 120); do
     grep -q ND_AUTOMATION_LISTENING "$log" 2>/dev/null && grep -q ND_COMMIT_APPLIED "$log" && break

@@ -60,7 +60,7 @@ for _ in $(seq 1 50); do
 done
 
 LOG="$XDG_RUNTIME_DIR/host-$TAG.log"
-ND_SCRIPT="$EXAMPLE" ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+BUN_OPTIONS="$(bun scripts/bun-options.ts "$EXAMPLE")" ND_SCRIPT="$EXAMPLE" ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 for _ in $(seq 1 600); do

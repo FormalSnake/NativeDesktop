@@ -1,5 +1,6 @@
-import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // nd-widgets probe (2026-07-17 wave): a deterministic assertion target for
 // three new capabilities — C3 icon+label/icon-only button parity, C4
@@ -7,11 +8,11 @@ import type { NdNodeRef } from "@nativedesktop/react";
 // backends. Two always-mounted windows (peer of examples/multiwindow) so
 // "present" has something to bring back to front.
 
-function App(): React.ReactNode {
-  const winB = useRef<NdNodeRef<"window">>(null);
-  const [buttonHover, setButtonHover] = useState(false);
-  const [boxHover, setBoxHover] = useState(false);
-  const [selectedRun, setSelectedRun] = useState("a1");
+function App() {
+  let winB: NdNodeRef<"window"> | undefined;
+  const [buttonHover, setButtonHover] = createSignal(false);
+  const [boxHover, setBoxHover] = createSignal(false);
+  const [selectedRun, setSelectedRun] = createSignal("a1");
 
   return (
     <>
@@ -25,19 +26,19 @@ function App(): React.ReactNode {
 
           {/* C4: onHoverChanged on button. */}
           <button testID="hover-btn" label="Hover me" onHoverChanged={(e) => setButtonHover(e.checked)} />
-          <label testID="hover-btn-label" text={`Button hover: ${buttonHover ? "yes" : "no"}`} />
+          <label testID="hover-btn-label" text={`Button hover: ${buttonHover() ? "yes" : "no"}`} />
 
           {/* C4: onHoverChanged on box. */}
           <box testID="hover-box" orientation="vertical" spacing={4} style={{ padding: 12 }} onHoverChanged={(e) => setBoxHover(e.checked)}>
             <label text="Hover zone (box)" />
           </box>
-          <label testID="hover-box-label" text={`Box hover: ${boxHover ? "yes" : "no"}`} />
+          <label testID="hover-box-label" text={`Box hover: ${boxHover() ? "yes" : "no"}`} />
 
           {/* C5: window "present" — raise/focus Window B from Window A. */}
           <button
             testID="present-b-btn"
             label="Present Window B"
-            onClick={() => { if (winB.current) sendCommand(winB.current, "present"); }}
+            onClick={() => { if (winB) sendCommand(winB, "present"); }}
           />
 
           {/* AppKit navigation-sidebar reach check: row buttons nested two
@@ -53,7 +54,7 @@ function App(): React.ReactNode {
                 iconName="media-playback-start-symbolic"
                 labelAlign="start"
                 onClick={() => setSelectedRun("a1")}
-                cssClasses={selectedRun === "a1" ? ["flat", "suggested-action"] : ["flat"]}
+                cssClasses={selectedRun() === "a1" ? ["flat", "suggested-action"] : ["flat"]}
               />
               <button
                 testID="run-a2"
@@ -61,7 +62,7 @@ function App(): React.ReactNode {
                 iconName="media-playback-start-symbolic"
                 labelAlign="start"
                 onClick={() => setSelectedRun("a2")}
-                cssClasses={selectedRun === "a2" ? ["flat", "suggested-action"] : ["flat"]}
+                cssClasses={selectedRun() === "a2" ? ["flat", "suggested-action"] : ["flat"]}
               />
             </box>
             <box orientation="vertical" spacing={4} testID="host-b">
@@ -72,7 +73,7 @@ function App(): React.ReactNode {
                 iconName="media-playback-start-symbolic"
                 labelAlign="start"
                 onClick={() => setSelectedRun("b1")}
-                cssClasses={selectedRun === "b1" ? ["flat", "suggested-action"] : ["flat"]}
+                cssClasses={selectedRun() === "b1" ? ["flat", "suggested-action"] : ["flat"]}
               />
             </box>
           </box>
@@ -88,4 +89,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);

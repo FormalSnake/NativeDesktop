@@ -115,7 +115,7 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
       await runCompile(appDir, script);
       entry = typeof compileCfg === "object" && compileCfg.entry ? compileCfg.entry : compiledEntryFor(sourceEntry, outDir);
     } else {
-      console.error('nd: no "compile" script - packaging raw src/ (react-compiler pass skipped)');
+      console.error('nd: no "compile" script - packaging raw src/');
     }
   }
 

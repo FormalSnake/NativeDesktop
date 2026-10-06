@@ -1,33 +1,17 @@
-import { render, useState } from "@nativedesktop/react";
-// Class components hold no hook state, so the dev-react re-export rule
-// (hooks come from @nativedesktop/react) does not apply to the base class.
-import { Component, type ReactNode } from "react";
+import { render } from "@nativedesktop/solid";
+import { Errored, Show, createSignal } from "solid-js";
 
-class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null };
-  static getDerivedStateFromError(error: Error): { error: Error } {
-    return { error };
-  }
-  render(): ReactNode {
-    if (this.state.error) {
-      return <label testID="boundary-fallback" text={`caught: ${this.state.error.message}`} />;
-    }
-    return this.props.children;
-  }
+function Thrower(): never {
+  throw new Error("render-throw");
 }
 
-function Thrower({ armed }: { armed: boolean }): ReactNode {
-  if (armed) throw new Error("render-throw");
-  return <label testID="boundary-content" text="boundary content ok" />;
-}
-
-function App(): ReactNode {
-  const [count, setCount] = useState(0);
-  const [armed, setArmed] = useState(false);
+function App() {
+  const [count, setCount] = createSignal(0);
+  const [armed, setArmed] = createSignal(false);
   return (
     <window title="NativeDesktop Error Policy" defaultWidth={480} defaultHeight={360}>
       <box orientation="vertical" spacing={8}>
-        <label testID="counter-label" text={`Count: ${count}`} />
+        <label testID="counter-label" text={`Count: ${count()}`} />
         <button testID="bump" label="Bump" onClick={() => setCount((c) => c + 1)} />
         <button
           testID="reject-async"
@@ -42,18 +26,22 @@ function App(): ReactNode {
           testID="throw-sync"
           label="Throw sync"
           onClick={() => {
-            // Outside any React callback: an uncaughtException, fatal by default.
+            // Outside any Solid computation: an uncaughtException, fatal by default.
             setTimeout(() => {
               throw new Error("sync-throw");
             }, 0);
           }}
         />
-        <Boundary>
-          <Thrower armed={armed} />
-        </Boundary>
+        {/* The caught throw is reported non-fatal and the app keeps running;
+            the same throw with no boundary around it would exit. */}
+        <Errored fallback={(error) => <label testID="boundary-fallback" text={`caught: ${(error() as Error).message}`} />}>
+          <Show when={armed()} fallback={<label testID="boundary-content" text="boundary content ok" />}>
+            <Thrower />
+          </Show>
+        </Errored>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

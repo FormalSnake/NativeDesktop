@@ -1,4 +1,5 @@
-import { render, useRef, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { For, Show, createSignal } from "solid-js";
 
 // A terminal app with REAL native chrome AND native system tabs — the
 // Ghostty setup: every tab is its own <window tabGroup="terminal"> root, so
@@ -7,31 +8,31 @@ import { render, useRef, useState } from "@nativedesktop/react";
 // independent shell; the native "+" fires onNewTabRequested and a user close
 // fires onClosed, so the app only manages a list of tab ids. Dragging a tab
 // out into its own window (or back in) is native on both platforms and never
-// touches the React tree — the running shell just moves.
+// touches the Solid tree — the running shell just moves.
 //
 // The <terminal> widget hosts a native drawing surface (GtkDrawingArea on GTK,
 // NDTerminalView/CoreText on AppKit) driven by libghostty-vt over the ndterm core:
 // a PTY runs $SHELL and its output is parsed into the cell grid, with keystrokes
 // fed straight back to the PTY host-side.
-function TerminalTab({ id, withMenu, onNewTab, onClose }: { id: number; withMenu: boolean; onNewTab: () => void; onClose: () => void }): React.ReactNode {
+function TerminalTab(props: { id: number; withMenu: boolean; onNewTab: () => void; onClose: () => void }) {
   return (
     <window
-      title={id === 0 ? "Terminal" : `Terminal — ${id + 1}`}
+      title={props.id === 0 ? "Terminal" : `Terminal — ${props.id + 1}`}
       defaultWidth={860}
       defaultHeight={560}
       tabGroup="terminal"
-      onNewTabRequested={onNewTab}
-      onClosed={onClose}
+      onNewTabRequested={() => props.onNewTab()}
+      onClosed={() => props.onClose()}
     >
       {/* Process-wide app menu on the first open tab (same move as the
           browser example); File > Close from `defaults` closes a tab. */}
-      {withMenu && (
+      <Show when={props.withMenu}>
         <menubar defaults>
           <menu label="File" testID="menu-file">
-            <menuitem testID="menu-new-tab" label="New Tab" accelerator="primary+t" onSelect={onNewTab} />
+            <menuitem testID="menu-new-tab" label="New Tab" accelerator="primary+t" onSelect={() => props.onNewTab()} />
           </menu>
         </menubar>
-      )}
+      </Show>
       <toolbarview>
         <headerbar title="Terminal" testID="chrome" />
         {/* <terminal> is the pane's own content, sized by its own hexpand/
@@ -47,24 +48,23 @@ function TerminalTab({ id, withMenu, onNewTab, onClose }: { id: number; withMenu
   );
 }
 
-function App(): React.ReactNode {
-  const [tabs, setTabs] = useState<number[]>([0]);
-  const nextId = useRef(1);
-  const addTab = () => setTabs((open) => [...open, nextId.current++]);
+function App() {
+  const [tabs, setTabs] = createSignal<number[]>([0]);
+  let nextId = 1;
+  const addTab = () => setTabs((open) => [...open, nextId++]);
 
   return (
-    <>
-      {tabs.map((id, i) => (
+    <For each={tabs()}>
+      {(id, i) => (
         <TerminalTab
-          key={id}
           id={id}
-          withMenu={i === 0}
+          withMenu={i() === 0}
           onNewTab={addTab}
           onClose={() => setTabs((open) => open.filter((t) => t !== id))}
         />
-      ))}
-    </>
+      )}
+    </For>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

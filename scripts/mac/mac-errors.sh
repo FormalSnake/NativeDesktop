@@ -30,7 +30,8 @@ DRIVE=/tmp/nd-mac-errors-drive.log
 pkill -f 'swift/.build/release/NDShell' 2>/dev/null || true
 rm -f "$LOG" "$DRIVE"
 
-ND_SCRIPT="$ROOT/examples/errors/main.tsx" NATIVE_AUTOMATION=1 ND_DEV=1 \
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/errors/main.tsx)" \
+  ND_SCRIPT="$ROOT/examples/errors/main.tsx" NATIVE_AUTOMATION=1 ND_DEV=1 \
   swift/.build/release/NDShell >"$LOG" 2>&1 &
 PID=$!
 trap 'kill "$PID" 2>/dev/null || true' EXIT

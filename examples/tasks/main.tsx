@@ -1,4 +1,5 @@
-import { render, useMemo, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { For, createMemo, createSignal } from "solid-js";
 
 // ND Tasks: the "smallest real app", a single-pane task list. The chrome
 // machinery (menu bar + toolbar/headerbar) behind the three-pane Notes
@@ -37,22 +38,22 @@ const initialTasks: Task[] = [
   { id: 8, title: "Back up database", done: true },
 ];
 
-function App(): React.ReactNode {
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [query, setQuery] = useState("");
+function App() {
+  const [tasks, setTasks] = createSignal<Task[]>(initialTasks);
+  const [query, setQuery] = createSignal("");
 
   // Search narrows the VISIBLE rows only — the progress fraction and the
   // "N of M done" caption always track the full task list, independent of
   // the filter (they answer "how much is done", not "how much is showing").
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q === "") return tasks;
-    return tasks.filter((t) => t.title.toLowerCase().includes(q));
-  }, [tasks, query]);
+  const filtered = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    if (q === "") return tasks();
+    return tasks().filter((t) => t.title.toLowerCase().includes(q));
+  });
 
-  const total = tasks.length;
-  const doneCount = tasks.filter((t) => t.done).length;
-  const fraction = total === 0 ? 0 : doneCount / total;
+  const total = () => tasks().length;
+  const doneCount = () => tasks().filter((t) => t.done).length;
+  const fraction = () => (total() === 0 ? 0 : doneCount() / total());
 
   function addTask(): void {
     setTasks((prev) => [...prev, { id: nextId++, title: "New task", done: false }]);
@@ -104,34 +105,34 @@ function App(): React.ReactNode {
         >
           <searchinput
             testID="task-search"
-            text={query}
+            text={query()}
             placeholder="Filter tasks"
             onChanged={(e) => setQuery(e.text)}
           />
           {/* vexpand: the row list fills the remaining pane height. */}
           <scrollview testID="task-scroll" minContentHeight={360} style={{ vexpand: true }}>
             <box orientation="vertical" spacing={2}>
-              {filtered.map((t) => (
-                <box
-                  key={t.id}
-                  orientation="horizontal"
-                  style={{ padding: { top: 6, bottom: 6, left: 4, right: 4 } }}
-                >
-                  <checkbox
-                    testID={`task-row-${t.id}`}
-                    label={t.title}
-                    checked={t.done}
-                    onToggled={(e) => toggleTask(t.id, e.checked)}
-                  />
-                </box>
-              ))}
+              {/* Keyed by id: a toggle replaces the task object, and the row
+                  has to update in place rather than remount. */}
+              <For each={filtered()} keyed={(t) => t.id}>
+                {(t) => (
+                  <box orientation="horizontal" style={{ padding: { top: 6, bottom: 6, left: 4, right: 4 } }}>
+                    <checkbox
+                      testID={`task-row-${t().id}`}
+                      label={t().title}
+                      checked={t().done}
+                      onToggled={(e) => toggleTask(t().id, e.checked)}
+                    />
+                  </box>
+                )}
+              </For>
             </box>
           </scrollview>
           <separator orientation="horizontal" />
-          <progressbar testID="task-progress" fraction={fraction} />
+          <progressbar testID="task-progress" fraction={fraction()} />
           <label
             testID="task-count"
-            text={`${doneCount} of ${total} done`}
+            text={`${doneCount()} of ${total()} done`}
             cssClasses={["dimmed", "caption"]}
           />
         </box>
@@ -140,4 +141,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);

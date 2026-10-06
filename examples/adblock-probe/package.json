@@ -1,13 +1,11 @@
 {
-  "name": "nativeview-demo-example",
+  "name": "adblock-probe-example",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "nd dev main.tsx",
-    "compile": "nd-solid-build main.tsx --outdir dist"
+    "dev": "nd dev main.tsx"
   },
   "dependencies": {
-    "@nativedesktop/native": "workspace:*",
     "@nativedesktop/solid": "workspace:*",
     "@nativedesktop/cli": "workspace:*",
     "solid-js": "2.0.0-rc.13"

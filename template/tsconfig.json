@@ -3,9 +3,9 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext", "DOM"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@nativedesktop/react",
+    "lib": ["ESNext"],
+    "jsx": "preserve",
+    "jsxImportSource": "@nativedesktop/solid",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["bun", "react"]
+    "types": ["bun"]
   },
   "include": ["**/*.ts", "**/*.tsx"]
 }

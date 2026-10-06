@@ -1,4 +1,5 @@
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // Inspector example — the acceptance surface for the HIG design-gap batch:
 //   - a `slot="inspector"` splitview pane (NSSplitViewItem inspector on the
@@ -8,9 +9,9 @@ import { render, useState } from "@nativedesktop/react";
 //   - a `pill`-classed count label (native capsule badge on both backends).
 // Driven by scripts/ndshot for the visual pass; interactions are plain state.
 
-function App(): React.ReactNode {
-  const [inbox, setInbox] = useState(3);
-  const [saved, setSaved] = useState(0);
+function App() {
+  const [inbox, setInbox] = createSignal(3);
+  const [saved, setSaved] = createSignal(0);
 
   return (
     <window title="ND Inspector" defaultWidth={1000} defaultHeight={620}>
@@ -20,7 +21,7 @@ function App(): React.ReactNode {
           <box orientation="vertical" testID="sidebar-content" style={{ padding: 8 }}>
             <box orientation="horizontal" cssClasses={["activatable"]} style={{ padding: { top: 6, bottom: 6, left: 12, right: 8 } }}>
               <label text="Inbox" style={{ hexpand: true }} />
-              <label testID="inbox-pill" text={String(inbox)} cssClasses={["pill", "numeric", "caption"]} />
+              <label testID="inbox-pill" text={String(inbox())} cssClasses={["pill", "numeric", "caption"]} />
             </box>
             <box orientation="horizontal" cssClasses={["activatable"]} style={{ padding: { top: 6, bottom: 6, left: 12, right: 8 } }}>
               <label text="Archive" style={{ hexpand: true }} />
@@ -42,7 +43,7 @@ function App(): React.ReactNode {
               testID="inbox-button"
               label=""
               iconName="mail-unread"
-              badge={String(inbox)}
+              badge={String(inbox())}
               onClick={() => setInbox((n) => n + 1)}
             />
           </headerbar>
@@ -60,7 +61,7 @@ function App(): React.ReactNode {
           <headerbar testID="inspector-header" title="Details" />
           <box orientation="vertical" testID="inspector-content" style={{ padding: 12 }}>
             <label text="Details" cssClasses={["heading"]} />
-            <label testID="saved-label" text={`Saved ${saved} times, ${inbox} unread`} cssClasses={["caption"]} />
+            <label testID="saved-label" text={`Saved ${saved()} times, ${inbox()} unread`} cssClasses={["caption"]} />
             <label text="From: nd@example.com" cssClasses={["caption"]} />
             <label text="Attachments: 2" cssClasses={["caption"]} />
             <button
@@ -76,4 +77,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
