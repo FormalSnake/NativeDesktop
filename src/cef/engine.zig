@@ -25,6 +25,7 @@ const gobject = @import("gobject");
 const adw = @import("adw");
 const graphene = @import("graphene");
 const protocol = @import("../protocol.zig");
+const marker = @import("../marker.zig");
 const capi = @import("capi.zig");
 const c = capi.c;
 const ref = @import("ref.zig");
@@ -1956,6 +1957,12 @@ const View = struct {
     placed: bool = false,
     page_minimized: bool = false,
     park_timer: c_uint = 0,
+    /// The deferred `parkContainer` of an unmapped view. See `onUnmap`.
+    park_source: c_uint = 0,
+    /// The frame clock (held) and its `after-paint` handler a deferred park
+    /// waits on. See `onUnmap`.
+    park_clock: ?*gdk.FrameClock = null,
+    park_handler: c_ulong = 0,
     pending_url: ?[:0]u8 = null,
 
     // The CDP substrate. GTK thread only: results and events are marshaled
@@ -2196,11 +2203,17 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
 
 fn onMap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
+    marker.lat("cef.map", "node={d} minimized={}", .{ view.node_id, view.page_minimized });
+    defer marker.lat("cef.mapped", "node={d} x={d} y={d} w={d} h={d}", .{ view.node_id, view.bounds.x, view.bounds.y, view.bounds.w, view.bounds.h });
     connectLayout(view);
     connectActive(view);
     syncBounds(view);
     maybeCreateBrowser(view);
     x11.show(view.container);
+    // Above the page it replaces, which stays where it is until the commit
+    // is through (`onUnmap`): stacked under it, the tab switched to stayed
+    // covered until then.
+    x11.raise(view.container);
     releasePopoverGrab(view);
 }
 
@@ -2299,6 +2312,7 @@ fn connectLayout(view: *View) void {
     if (view.layout_handler != 0) return;
     const native = gtk.Widget.getNative(view.widget) orelse return;
     const surface = gtk.Native.getSurface(native) orelse return;
+    if (marker.latOn()) latPaints(surface);
     view.layout_surface = surface;
     view.layout_handler = gobject.signalConnectData(
         @ptrCast(@alignCast(surface)),
@@ -2308,6 +2322,50 @@ fn connectLayout(view: *View) void {
         null,
         .{},
     );
+}
+
+/// ND_LAT_TRACE: a `gtk.paint` line each time GTK has drawn the window a page
+/// is in, which is when the app's own chrome (a sidebar row marked as the one
+/// on show) has been redrawn.
+var lat_paint_surface: ?*gdk.Surface = null;
+
+fn latPaints(surface: *gdk.Surface) void {
+    if (lat_paint_surface == surface) return;
+    lat_paint_surface = surface;
+    const clock = gdk.Surface.getFrameClock(surface);
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "before-paint", @ptrCast(&onLatFrame), null, null, .{});
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "layout", @ptrCast(&onLatLayout), null, null, .{});
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "paint", @ptrCast(&onLatPaintStart), null, null, .{});
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "after-paint", @ptrCast(&onLatPaint), null, null, .{});
+    lat_tick_last = marker.nowMicros();
+    _ = glib.timeoutAdd(2, &onLatTick, null);
+}
+
+/// ND_LAT_TRACE: a `host.stall` line, at its end, for each stretch the GTK
+/// thread went without getting back to its main loop.
+var lat_tick_last: i64 = 0;
+
+fn onLatTick(_: ?*anyopaque) callconv(.c) c_int {
+    const now = marker.nowMicros();
+    if (now - lat_tick_last > 8 * std.time.us_per_ms) marker.lat("host.stall", "us={d}", .{now - lat_tick_last});
+    lat_tick_last = now;
+    return 1;
+}
+
+fn onLatFrame(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.frame", "", .{});
+}
+
+fn onLatLayout(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.layout", "", .{});
+}
+
+fn onLatPaintStart(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.paintStart", "", .{});
+}
+
+fn onLatPaint(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.paint", "", .{});
 }
 
 /// Keyboard routing between the app's own widgets and the page.
@@ -2523,6 +2581,7 @@ fn disconnectLayout(view: *View) void {
 
 fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
+    marker.lat("cef.layout", "node={d}", .{view.node_id});
     syncBounds(view);
     maybeCreateBrowser(view);
     releasePopoverGrab(view);
@@ -2534,12 +2593,25 @@ fn onSurfaceLayout(_: *gobject.Object, _: c_int, _: c_int, data: ?*anyopaque) ca
 /// to its parent, so a window parked this far outside the parent's bounds is
 /// mapped, running, and completely invisible.
 const park_origin: c_int = -8192;
-const park_w: c_uint = 1024;
-const park_h: c_uint = 768;
+
+/// A parked page keeps the size it had on screen, and a page never shown takes
+/// the size of the last one that was, so showing it is a move and not a resize:
+/// a resize costs the page a relayout and a full raster before its first frame,
+/// which on a tab switch was most of the time to pixels. 1024x768 until any
+/// page has been on screen.
+var shown_w: c_uint = 1024;
+var shown_h: c_uint = 768;
+
+const ParkSize = struct { w: c_uint, h: c_uint };
+
+fn parkSize(view: *View) ParkSize {
+    if (view.placed and view.bounds.w >= focusable_min_px and view.bounds.h >= focusable_min_px) return .{ .w = view.bounds.w, .h = view.bounds.h };
+    return .{ .w = shown_w, .h = shown_h };
+}
 
 /// Puts the view's window where a hidden view's window belongs, and keeps it
-/// mapped. Sized like a real viewport rather than 1x1 so the page lays out the
-/// way it will when the view is shown.
+/// mapped. Sized like the page on screen rather than 1x1 so the page lays out
+/// the way it will when the view is shown (see `parkSize`).
 fn parkContainer(view: *View) void {
     if (view.container == 0) return;
     // A page parked while it holds X input focus (a tab switched away from, a
@@ -2548,9 +2620,10 @@ fn parkContainer(view: *View) void {
     // included, went to the parked page.
     const cef_window = view.cef_window.load(.acquire);
     if (cef_window != 0 and x11.focused() == @as(x11.Window, @intCast(cef_window))) x11.focusToplevel(view.widget);
-    x11.moveResize(view.container, park_origin, park_origin, park_w, park_h);
+    const size = parkSize(view);
+    x11.moveResize(view.container, park_origin, park_origin, size.w, size.h);
     x11.show(view.container);
-    layoutContents(view, park_w, park_h);
+    layoutContents(view, size.w, size.h);
     parkPage(view);
 }
 
@@ -2667,13 +2740,59 @@ fn onCreateTimer(data: ?*anyopaque) callconv(.c) c_int {
 fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     const view: *View = @ptrCast(@alignCast(data.?));
     view.in_popover.store(false, .release);
+    marker.lat("cef.unmap", "node={d}", .{view.node_id});
     disconnectLayout(view);
     disconnectActive(view);
     motionFinish(view, false);
     // Parked, not hidden: a background tab whose window is unmapped stops
     // running, and a tab the user comes back to has to still be the page they
     // left. `onMap` puts it back where it belongs.
-    parkContainer(view);
+    //
+    // Once the commit that hid it is through: a tab switch hides the old page
+    // before it shows the new one, and parking at once uncovered the window
+    // behind it, black, for the 3 ms until the new page was on screen and the
+    // frame after that until it had drawn. Left in place, the old page's
+    // pixels stay until the new page's replace them, as in Chrome.
+    //
+    // And once the window has painted that commit: parking makes X round
+    // trips (3 to 9 ms under XWayland), and run before the frame they held
+    // back the app's own chrome, the sidebar row marked as on show.
+    if (view.park_source != 0 or view.park_clock != null) return;
+    if (gtk.Widget.getFrameClock(view.widget)) |clock| {
+        view.park_clock = clock;
+        _ = gobject.Object.ref(clock.as(gobject.Object));
+        view.park_handler = gobject.signalConnectData(clock.as(gobject.Object), "after-paint", @ptrCast(&onParkPaint), view, null, .{});
+        gdk.FrameClock.requestPhase(clock, .{ .after_paint = true });
+        return;
+    }
+    view.park_source = glib.timeoutAdd(0, &onParkSource, view);
+}
+
+fn onParkSource(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    view.park_source = 0;
+    parkUnmapped(view);
+    return 0;
+}
+
+fn onParkPaint(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    dropParkPaint(view);
+    parkUnmapped(view);
+}
+
+fn dropParkPaint(view: *View) void {
+    const clock = view.park_clock orelse return;
+    gobject.signalHandlerDisconnect(clock.as(gobject.Object), view.park_handler);
+    gobject.Object.unref(clock.as(gobject.Object));
+    view.park_clock = null;
+    view.park_handler = 0;
+}
+
+fn parkUnmapped(view: *View) void {
+    marker.lat("cef.park", "node={d}", .{view.node_id});
+    defer marker.lat("cef.parked", "node={d}", .{view.node_id});
+    if (gtk.Widget.getMapped(view.widget) == 0) parkContainer(view);
 }
 
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -2682,6 +2801,11 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     if (focused_view == view) focused_view = null;
     forgetParked(view);
     motionFinish(view, false);
+    if (view.park_source != 0) {
+        _ = glib.Source.remove(view.park_source);
+        view.park_source = 0;
+    }
+    dropParkPaint(view);
     closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
@@ -2727,10 +2851,11 @@ fn createBrowser(view: *View) void {
     }
     syncBounds(view);
     const hidden = gtk.Widget.getMapped(view.widget) == 0;
+    const park = parkSize(view);
     const start_x: c_int = if (hidden) park_origin else view.bounds.x;
     const start_y: c_int = if (hidden) park_origin else view.bounds.y;
-    const start_w: c_uint = if (hidden) park_w else view.bounds.w;
-    const start_h: c_uint = if (hidden) park_h else view.bounds.h;
+    const start_w: c_uint = if (hidden) park.w else view.bounds.w;
+    const start_h: c_uint = if (hidden) park.h else view.bounds.h;
     const container = x11.createChild(parent, start_x, start_y, start_w, start_h);
     if (container == 0) {
         std.debug.print("ND_WARN WebView engine=chromium: could not create the embedding window; browser not created\n", .{});
@@ -2743,7 +2868,7 @@ fn createBrowser(view: *View) void {
     if (mapped) {
         x11.show(container);
     } else {
-        x11.moveResize(container, park_origin, park_origin, park_w, park_h);
+        x11.moveResize(container, park_origin, park_origin, park.w, park.h);
         x11.show(container);
     }
     tr("embed node={d} parent=0x{x} container=0x{x} bounds={d}x{d}+{d}+{d} mapped={}", .{
@@ -3028,6 +3153,16 @@ fn syncBounds(view: *View) void {
     // left the webview stuck at the wrong size after a live resize. The
     // layout signal only fires on frames GTK actually laid the toplevel out,
     // so re-asserting costs one request per real layout, not one per tick.
+    //
+    // A view shown again (a tab switched to) is mapped before GTK has
+    // allocated it, and until its next layout it reads as 1x1 at the slot's
+    // corner. Moving the page there resized it to nothing and back, a relayout
+    // and a full raster before the tab's first frame; it goes back where it
+    // was last on show instead, and the layout pass that follows corrects it
+    // if the slot has moved since.
+    const unallocated = next.w <= 1 or next.h <= 1;
+    const reuse = unallocated and view.placed and view.bounds.w > 1 and view.bounds.h > 1;
+    if (reuse) next = view.bounds;
     view.bounds = next;
     view.size_w.store(next.w, .release);
     view.size_h.store(next.h, .release);
@@ -3046,6 +3181,10 @@ fn syncBounds(view: *View) void {
     }
     x11.moveResize(view.container, next.x, next.y, next.w, next.h);
     view.placed = true;
+    if (next.w >= focusable_min_px and next.h >= focusable_min_px) {
+        shown_w = next.w;
+        shown_h = next.h;
+    }
     forgetParked(view);
     if (view.page_minimized) {
         const page = view.cef_window.load(.acquire);
@@ -3061,7 +3200,7 @@ fn syncBounds(view: *View) void {
         layoutContents(view, next.w, next.h);
         return;
     }
-    syncShape(view, native_widget, rect, scale, bar_rect);
+    if (!reuse) syncShape(view, native_widget, rect, scale, bar_rect);
     layoutContents(view, next.w, next.h);
     setUnderBar(view, bar != null);
 }
@@ -4070,6 +4209,7 @@ fn onPreKeyEvent(
         return 0;
     };
     tr("appAccel {s} -> {s}", .{ accel, owned });
+    marker.lat("cef.accel", "{s}", .{accel});
     const task = AccelObj.create(.{ .action = owned }) orelse {
         alloc.free(owned);
         return 0;
@@ -4082,8 +4222,8 @@ fn onPreKeyEvent(
 fn postAccel(task: *AccelObj) void {
     // The activation itself belongs on the GTK thread; `post` is this engine's
     // only hop onto it, and it carries a view, so the task rides the idle
-    // queue through glib instead.
-    _ = glib.idleAdd(&runAccelIdle, task);
+    // queue through glib instead, at input's priority (see `post`).
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &runAccelIdle, task, null);
 }
 
 fn runAccelTask(_: [*c]c.cef_task_t) callconv(.c) void {}
@@ -4102,6 +4242,7 @@ fn runAccelIdle(data: ?*anyopaque) callconv(.c) c_int {
     const name = if (std.mem.startsWith(u8, detailed, "app.")) detailed[4..] else detailed;
     const owned = alloc.dupeZ(u8, name) catch return 0;
     defer alloc.free(owned);
+    marker.lat("cef.accelRun", "{s}", .{name});
     gio.ActionGroup.activateAction(app.as(gio.ActionGroup), owned, null);
     return 0;
 }
@@ -5293,8 +5434,11 @@ fn post(e: Emission) void {
     };
     box.* = e;
     // g_idle_add is the one glib entry point safe to call from a foreign
-    // thread; everything downstream of `deliver` runs on the GTK loop.
-    _ = glib.idleAdd(&deliver, box);
+    // thread; everything downstream of `deliver` runs on the GTK loop. At
+    // G_PRIORITY_DEFAULT, the priority GDK gives input, not g_idle_add's own:
+    // that one is below GTK's redraw, and on a slow machine with a frame
+    // always due, a ctrl+tab typed into a page waited seconds behind them.
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliver, box, null);
 }
 
 fn deliver(data: ?*anyopaque) callconv(.c) c_int {

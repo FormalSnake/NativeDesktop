@@ -20,7 +20,7 @@ import {
   type Session,
   type WidgetType,
 } from "@nativedesktop/core";
-import type { Op } from "@nativedesktop/core";
+import { lat, type Op } from "@nativedesktop/core";
 
 type Kind = WidgetType | "#text" | "#root";
 
@@ -86,6 +86,7 @@ function emit(op: Op): void {
 }
 
 function commitNow(): void {
+  lat("js.commitStart");
   // Drain Solid's own queue first so effects a signal write staged this tick
   // land in this CommitBatch rather than the next.
   flush();

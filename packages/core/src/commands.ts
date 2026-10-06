@@ -1,12 +1,14 @@
 import type { NdNodeRef, WidgetType } from "./generated/widgets.ts";
 import { widgetCommands, type WidgetCommandNames } from "./generated/schema-meta.ts";
 import { hasCommand } from "./platform.ts";
+import { lat } from "./lat.ts";
 import { getSession, isHot } from "./session.ts";
 
 function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string, arg: unknown): void {
   const session = getSession();
   if (!session) throw new Error(`${caller}() before render(): no NDP connection yet`);
   session.flush();
+  lat("js.widgetCommand", `node=${node.id} command=${command}`);
   session.ndp.sendWidgetCommand(node.id, command, arg ?? null);
 }
 

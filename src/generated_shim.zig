@@ -30,3 +30,4 @@ pub const style_subkeys = g.style_subkeys;
 pub const css_class_spec = g.css_class_spec;
 pub const ndDefaultAlign = g.ndDefaultAlign;
 pub const scrolledWindowInner = g.scrolledWindowInner;
+pub const ND_TOOLTIP = g.ND_TOOLTIP;

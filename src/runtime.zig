@@ -306,6 +306,7 @@ pub const Runtime = struct {
 
     pub fn sendEvent(self: *Runtime, node_id: u32, name: []const u8, payload: protocol.EventPayload) void {
         self.seq += 1;
+        marker.lat("host.event", "seq={d} node={d} name={s}", .{ self.seq, node_id, name });
         const ev = protocol.Event{ .seq = self.seq, .nodeId = node_id, .name = name, .payload = payload };
         self.writeFrameOpts(ev, .{ .emit_null_optional_fields = false });
     }
@@ -484,6 +485,7 @@ pub const Runtime = struct {
                         self.gpa.free(jj);
                     }
                 }
+                marker.lat("host.commitRecv", "bytes={d}", .{bytes.len});
                 self.marshalBinaryCommit(bytes); // ownership transfers
                 continue;
             }
@@ -493,6 +495,7 @@ pub const Runtime = struct {
                 continue;
             };
             if (std.mem.eql(u8, kind, "commitBatch")) {
+                marker.lat("host.commitRecv", "bytes={d}", .{bytes.len});
                 self.marshalCommit(bytes); // ownership transfers (JSON path)
             } else if (std.mem.eql(u8, kind, "ping")) {
                 self.gpa.free(bytes);
@@ -732,7 +735,9 @@ pub const Runtime = struct {
             if (job.bytes) |b| self.gpa.free(b);
             self.gpa.destroy(job);
         }
+        marker.lat("host.applyStart", "commit={d} ops={d}", .{ job.batch.commitId, job.batch.ops.len });
         self.tree.apply(job.batch);
+        marker.lat("host.applyEnd", "commit={d}", .{job.batch.commitId});
     }
 
     /// True if the batch may be applied; on denial prints ND_ACL_DENY, sends a

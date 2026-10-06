@@ -100,6 +100,7 @@ export type { Op, CommitBatch, EventMsg } from "./ndp.ts";
 
 // Renderer SDK: what a renderer package builds its host bindings from.
 export { connect, getSession, setSession, isHot } from "./session.ts";
+export { lat } from "./lat.ts";
 export type { Session } from "./session.ts";
 export { Batch, NodeRegistry, onNodeRemoved } from "./ops.ts";
 export type { Handler, NodeRecord } from "./ops.ts";

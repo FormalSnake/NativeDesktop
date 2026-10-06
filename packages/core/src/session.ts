@@ -3,6 +3,7 @@
 // top level on an edit: a module-local binding would reconnect, or lose the
 // registry that routes events to live handlers.
 
+import { lat } from "./lat.ts";
 import { Ndp, type EventMsg } from "./ndp.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
@@ -76,6 +77,7 @@ export async function connect(): Promise<Session> {
     commit() {
       const ops = batch.drain();
       if (!ops.length) return;
+      lat("js.commitSend", `commit=${commitId} ops=${ops.length}`);
       ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
       if (trace) {
         const t = at();
@@ -89,12 +91,15 @@ export async function connect(): Promise<Session> {
     },
   };
   ndp.onEvent((e: EventMsg) => {
+    lat("js.event", `seq=${e.seq} node=${e.nodeId} name=${e.name}`);
     if (!trace) {
       registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+      lat("js.handled", `seq=${e.seq}`);
       return;
     }
     const t = at();
     registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
+    lat("js.handled", `seq=${e.seq}`);
     if (!lastEventAt) {
       lastEvent = e.name;
       lastEventAt = t;

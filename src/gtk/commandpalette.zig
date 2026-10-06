@@ -93,6 +93,12 @@ const State = struct {
     // yanking keyboard focus off the search entry. Rebuild only when the
     // signature actually changes.
     items_sig: ?[]u8 = null,
+    /// `items` that arrived while the palette was closed, as JSON, built into
+    /// rows when it opens. An app whose switcher lists its tabs hands over a
+    /// new list on every tab switch, and building rows nobody sees cost ~4 ms
+    /// of the switch.
+    deferred_items: ?[]u8 = null,
+    dupe_z: ?*const fn ([]const u8) [:0]const u8 = null,
     /// The first row's `completion`, if it has one.
     first_completion: ?[]u8 = null,
     /// The app's last `query`. Every present starts from it.
@@ -333,6 +339,33 @@ fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8)
     return row;
 }
 
+/// `rebuildRows` now if the palette is up (or about to be), at `present`
+/// otherwise.
+fn setItems(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    state.dupe_z = dupeZ;
+    if (state.deferred_items) |d| alloc.free(d);
+    state.deferred_items = null;
+    if (!state.presented and !state.pending_open) {
+        if (arr) |items| {
+            if (std.json.Stringify.valueAlloc(alloc, std.json.Value{ .array = items }, .{})) |json| {
+                state.deferred_items = json;
+                return;
+            } else |_| {}
+        }
+    }
+    rebuildRows(state, arr, dupeZ);
+}
+
+fn flushDeferredItems(state: *State) void {
+    const json = state.deferred_items orelse return;
+    state.deferred_items = null;
+    defer alloc.free(json);
+    const dupeZ = state.dupe_z orelse return;
+    const parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch return;
+    defer parsed.deinit();
+    if (parsed.value == .array) rebuildRows(state, parsed.value.array, dupeZ);
+}
+
 fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const new_sig = itemsSignature(arr);
     if (state.items_sig) |old| {
@@ -522,6 +555,7 @@ fn present(state: *State) void {
         };
     }
 
+    flushDeferredItems(state);
     setOwned(&state.typed, state.controlled);
     setOwned(&state.suffix, "");
     state.may_complete = false;
@@ -764,8 +798,8 @@ pub fn create(props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8
         .scroller = scroller,
     };
     if (propStr(props, "query")) |q| setOwned(&state.controlled, q);
-    rebuildRows(state, propArray(props, "items"), dupeZ);
     if (propBool(props, "open") orelse false) state.pending_open = true;
+    setItems(state, propArray(props, "items"), dupeZ);
 
     // A click on the layer outside the card is a click on the page behind it.
     const click = gtk.GestureClick.new();
@@ -792,7 +826,7 @@ pub fn applyProps(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn 
             selectAllFromStart(state);
         }
     }
-    if (propArray(props, "items")) |arr| rebuildRows(state, arr, dupeZ);
+    if (propArray(props, "items")) |arr| setItems(state, arr, dupeZ);
     if (propBool(props, "open")) |o| {
         if (o) present(state) else dismiss(state, true);
     }
@@ -1145,6 +1179,7 @@ fn cbHandleDestroyed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     freeIds(state);
     state.ids.deinit(alloc);
     if (state.items_sig) |sig| alloc.free(sig);
+    if (state.deferred_items) |d| alloc.free(d);
     if (state.first_completion) |c| alloc.free(c);
     for ([_][]u8{ state.controlled, state.typed, state.suffix }) |s| {
         if (s.len > 0) alloc.free(s);

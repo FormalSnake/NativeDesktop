@@ -9,9 +9,9 @@
     "package": "nd package"
   },
   "dependencies": {
-    "@nativedesktop/solid": "^0.4.54",
-    "@nativedesktop/native": "^0.4.54",
-    "@nativedesktop/cli": "^0.4.54",
+    "@nativedesktop/solid": "^0.4.55",
+    "@nativedesktop/native": "^0.4.55",
+    "@nativedesktop/cli": "^0.4.55",
     "solid-js": "2.0.0-rc.13"
   },
   "devDependencies": {
