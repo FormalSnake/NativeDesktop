@@ -10,8 +10,7 @@ the GTK host under GNOME, both rendering the same unchanged app tree.
 
 ## Counter
 
-The hello-world app: a click counter plus `Suspense` and `useTransition` running under a ticking
-re-render. [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/counter)
+The hello-world app: a click counter plus an async memo under `<Loading>`, with a timer ticking beside it. [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/counter)
 
 ![The counter example on macOS (AppKit)](../../../assets/screens/appkit/counter.png)
 
@@ -116,7 +115,7 @@ result list per keystroke.
 
 ## Multi-Window
 
-Two windows driven by one React tree, with a live `<webview>` that portals between them without
+Two windows driven by one Solid tree, with a live `<webview>` that moves between them through `Portal` and `moveNode` without
 reloading. [Source](https://github.com/FormalSnake/NativeDesktop/tree/main/examples/multiwindow)
 
 ![The multiwindow example on macOS (AppKit)](../../../assets/screens/appkit/multiwindow.png)

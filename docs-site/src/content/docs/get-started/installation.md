@@ -3,7 +3,7 @@ title: Installation
 description: Install NativeDesktop from npm, understand the prebuilt host packages, and check your setup with nd doctor.
 ---
 
-NativeDesktop ships on npm. You install two packages plus React; the native host binary for your
+NativeDesktop ships on npm. You install three packages; the native host binary for your
 platform comes along automatically.
 
 ## Requirements
@@ -16,30 +16,30 @@ platform comes along automatically.
   everything required. The full table, including the optional libraries behind `<webview>`, audio,
   and credentials, is in
   [runtime-deps.md](https://github.com/FormalSnake/NativeDesktop/blob/main/docs/runtime-deps.md).
-- **React 19.** `@nativedesktop/react` declares `react@^19.2.7` as a peer dependency.
+- **Solid 2.0.** `@nativedesktop/solid` declares `solid-js@2.0.0-rc.13` as a peer dependency.
 
 ## Install
 
 ```bash
-bun add @nativedesktop/cli @nativedesktop/react react
+bun add @nativedesktop/cli @nativedesktop/solid solid-js
 ```
 
 This gives you:
 
 - `@nativedesktop/cli`: the `nd` command (`nd dev`, `nd build`, `nd package`, `nd doctor`).
-- `@nativedesktop/react`: the renderer, the intrinsic widgets, hooks, and the system APIs.
-- `react`: a real peer copy, shared with any web or React Native code beside it.
+- `@nativedesktop/solid`: the renderer, the intrinsic widgets, and the system APIs. Its JSX transform loads as a Bun preload, which `nd dev`, `nd build` and `nd package` pass for you.
+- `solid-js`: a real peer copy, shared with any other Solid code beside it.
 
 For editor support and typechecking, add the type packages:
 
 ```bash
-bun add -d typescript @types/react @types/bun
+bun add -d typescript @types/bun
 ```
 
 ## The platform host packages
 
 Every NativeDesktop app is two processes: a native host that owns the OS event loop and the widgets,
-and a Bun child that runs your React code. The host is a prebuilt binary, shipped in a per-platform
+and a Bun child that runs your Solid code. The host is a prebuilt binary, shipped in a per-platform
 npm package:
 
 | Package | Binary | Platform |

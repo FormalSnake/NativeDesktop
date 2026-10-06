@@ -14,10 +14,10 @@ new tabs, and Cmd+T (Ctrl+T on Linux) works through a real menu accelerator.
 
 `<terminal>` hosts a real terminal surface. The host process runs your `$SHELL` in a PTY, parses
 its output with libghostty-vt, and draws the cell grid natively. Keystrokes go straight to the PTY;
-your React code never touches them.
+your Solid code never touches them.
 
 ```tsx
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 function App() {
   return (
@@ -30,7 +30,7 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 `cols` and `rows` set the initial grid; resizing the window resizes the PTY. Run `bun run dev` and
@@ -48,25 +48,18 @@ button (and any native "new tab" gesture) fires `onNewTabRequested`, and a nativ
 `onClosed`.
 
 ```tsx
-import { render, useRef, useState } from "@nativedesktop/react";
+import { createSignal, For } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
-function TerminalTab({
-  id,
-  onNewTab,
-  onClose,
-}: {
-  id: number;
-  onNewTab: () => void;
-  onClose: () => void;
-}) {
+function TerminalTab(props: { id: number; onNewTab: () => void; onClose: () => void }) {
   return (
     <window
-      title={id === 0 ? "Terminal" : `Terminal ${id + 1}`}
+      title={props.id === 0 ? "Terminal" : `Terminal ${props.id + 1}`}
       defaultWidth={860}
       defaultHeight={560}
       tabGroup="terminal"
-      onNewTabRequested={onNewTab}
-      onClosed={onClose}
+      onNewTabRequested={props.onNewTab}
+      onClosed={props.onClose}
     >
       <toolbarview>
         <headerbar title="Terminal" />
@@ -77,29 +70,28 @@ function TerminalTab({
 }
 
 function App() {
-  const [tabs, setTabs] = useState<number[]>([0]);
-  const nextId = useRef(1);
-  const addTab = () => setTabs((open) => [...open, nextId.current++]);
+  const [tabs, setTabs] = createSignal([0]);
+  let nextId = 1;
+  const addTab = () => setTabs((open) => [...open, nextId++]);
 
   return (
-    <>
-      {tabs.map((id) => (
+    <For each={tabs()}>
+      {(id) => (
         <TerminalTab
-          key={id}
           id={id}
           onNewTab={addTab}
           onClose={() => setTabs((open) => open.filter((t) => t !== id))}
         />
-      ))}
-    </>
+      )}
+    </For>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 Rendering another `<TerminalTab>` opens another tab; unmounting one closes it natively. All tabs
-live in one React process, so sharing state between them is a variable, not IPC.
+live in one Solid process, so sharing state between them is a variable, not IPC.
 
 ## 3. Add a New Tab menu item
 
@@ -107,26 +99,16 @@ Menu accelerators are native key equivalents, not key listeners. `primary` means
 Ctrl on Linux. Put the menu on the first tab only, since the menu bar is process-wide:
 
 ```tsx
-function TerminalTab({
-  id,
-  withMenu,
-  onNewTab,
-  onClose,
-}: {
-  id: number;
-  withMenu: boolean;
-  onNewTab: () => void;
-  onClose: () => void;
-}) {
+function TerminalTab(props: { id: number; withMenu: boolean; onNewTab: () => void; onClose: () => void }) {
   return (
     <window /* ...same props as before... */>
-      {withMenu && (
+      <Show when={props.withMenu}>
         <menubar defaults>
           <menu label="File">
-            <menuitem label="New Tab" accelerator="primary+t" onSelect={onNewTab} />
+            <menuitem label="New Tab" accelerator="primary+t" onSelect={props.onNewTab} />
           </menu>
         </menubar>
-      )}
+      </Show>
       <toolbarview>{/* ...unchanged... */}</toolbarview>
     </window>
   );
@@ -136,52 +118,45 @@ function TerminalTab({
 And pass the flag from `App`:
 
 ```tsx
-{tabs.map((id, i) => (
-  <TerminalTab
-    key={id}
-    id={id}
-    withMenu={i === 0}
-    onNewTab={addTab}
-    onClose={() => setTabs((open) => open.filter((t) => t !== id))}
-  />
-))}
+<For each={tabs()}>
+  {(id, i) => (
+    <TerminalTab
+      id={id}
+      withMenu={i() === 0}
+      onNewTab={addTab}
+      onClose={() => setTabs((open) => open.filter((t) => t !== id))}
+    />
+  )}
+</For>
 ```
 
+`i` is an accessor, so `withMenu` follows the tab's position if an earlier tab closes.
 `<menubar defaults>` also installs the standard platform menus, including File > Close to close the
 active tab.
 
 The finished file:
 
 ```tsx
-import { render, useRef, useState } from "@nativedesktop/react";
+import { createSignal, For, Show } from "solid-js";
+import { render } from "@nativedesktop/solid";
 
-function TerminalTab({
-  id,
-  withMenu,
-  onNewTab,
-  onClose,
-}: {
-  id: number;
-  withMenu: boolean;
-  onNewTab: () => void;
-  onClose: () => void;
-}) {
+function TerminalTab(props: { id: number; withMenu: boolean; onNewTab: () => void; onClose: () => void }) {
   return (
     <window
-      title={id === 0 ? "Terminal" : `Terminal ${id + 1}`}
+      title={props.id === 0 ? "Terminal" : `Terminal ${props.id + 1}`}
       defaultWidth={860}
       defaultHeight={560}
       tabGroup="terminal"
-      onNewTabRequested={onNewTab}
-      onClosed={onClose}
+      onNewTabRequested={props.onNewTab}
+      onClosed={props.onClose}
     >
-      {withMenu && (
+      <Show when={props.withMenu}>
         <menubar defaults>
           <menu label="File">
-            <menuitem label="New Tab" accelerator="primary+t" onSelect={onNewTab} />
+            <menuitem label="New Tab" accelerator="primary+t" onSelect={props.onNewTab} />
           </menu>
         </menubar>
-      )}
+      </Show>
       <toolbarview>
         <headerbar title="Terminal" />
         <terminal cols={100} rows={30} fontSize={13} style={{ hexpand: true, vexpand: true }} />
@@ -191,26 +166,25 @@ function TerminalTab({
 }
 
 function App() {
-  const [tabs, setTabs] = useState<number[]>([0]);
-  const nextId = useRef(1);
-  const addTab = () => setTabs((open) => [...open, nextId.current++]);
+  const [tabs, setTabs] = createSignal([0]);
+  let nextId = 1;
+  const addTab = () => setTabs((open) => [...open, nextId++]);
 
   return (
-    <>
-      {tabs.map((id, i) => (
+    <For each={tabs()}>
+      {(id, i) => (
         <TerminalTab
-          key={id}
           id={id}
-          withMenu={i === 0}
+          withMenu={i() === 0}
           onNewTab={addTab}
           onClose={() => setTabs((open) => open.filter((t) => t !== id))}
         />
-      ))}
-    </>
+      )}
+    </For>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 ## Run it

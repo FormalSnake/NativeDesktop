@@ -1,67 +1,67 @@
 ---
 title: State & Hot Reload
-description: The hooks re-export contract that makes hot reload state-preserving, and React Compiler's opt-in status.
+description: What an edit under nd dev preserves, how Solid's refresh runtime patches components in place, and where state should live.
 ---
 
-## Import hooks from `@nativedesktop/react`
+Components keep their state across an edit under `nd dev`. Edit a component and Solid's refresh
+runtime patches it in place; the window, the native widgets, and the signals of every component you
+did not touch stay as they were.
 
-```ts
-import { useState, useEffect, useMemo } from "@nativedesktop/react";
-```
+## What `nd dev` runs
 
 `ND_DEV=1` runs the Bun child under `bun --hot`, which keeps the same OS process and NDP socket
-across an edit but re-evaluates the entire module graph, `react` and `react-reconciler` included. A
-hook imported straight from `react` resolves against a fresh module instance whose dispatcher was
-never attached to any reconciler, which surfaces as
-`Invalid hook call: resolveDispatcher().useState`.
+across an edit but re-evaluates the module graph. Three pieces make that state-preserving, all in
+`@nativedesktop/solid/register`, the preload `nd dev` passes to Bun:
 
-`packages/react/src/dev-react.ts` stashes the first-eval `react` module instance in `globalThis` and
-re-exports its hooks through wrappers that always dispatch to that stashed instance. The reconciler
-created on first boot closes over the same instance, so a hook resolved through
-`@nativedesktop/react` always talks to the dispatcher the live reconciler drives.
+- **Refresh transform.** Each component module compiles with Solid's refresh transform. A component
+  becomes a proxy over its current implementation, and the module registers an accept callback.
+  When the edited module has evaluated, that callback swaps the live proxies to the new code.
+- **Pinned modules.** `solid-js`, its reactive core, the universal renderer, and
+  `@nativedesktop/solid` keep the instance from first evaluation. A fresh copy would own a second
+  reactive graph that the mounted tree knows nothing about, or lose the renderer's retained tree.
+- **`render()` after the first call.** Re-evaluating the entry calls `render()` again. Under the
+  refresh runtime it records the new `() => <App />` and leaves the mounted tree alone.
 
-The rule applies to `.tsx` and `.desktop.tsx` component files. Shared platform-agnostic hooks, the
-ones web or React Native code in the same monorepo also consumes, are the exception: author those in
-a plain `.ts` module with `import { useState } from "react"` and `babel-plugin-nativedesktop`
-rewrites the import for you, both under `bun run compile` and under `bun --hot` through a Bun plugin
-preloaded from `bunfig.toml`.
+## What an edit preserves
 
-The dev-path rewrite touches `.ts` files only. Intercepting a component file in Bun's `onLoad` would
-drop it from `--hot`'s watch set and break its hot reload. One consequence: a shared `.ts` hook is
-pinned at first eval, so editing one needs a host restart, while its `.tsx` consumers keep
-hot-reloading normally.
+Editing a component re-runs that component's body, in place. Its parent, its siblings, the native
+window, and the signals and stores owned by components you did not edit keep their values. Only
+the edited component's own state is created again.
 
-## What preserves state across an edit
+Removing a component, or any change the runtime cannot patch, remounts the whole tree from the
+newest `render()` call. The window count and node count stay the same; the state does not.
 
-`render()`'s hot-reload path does not call `updateContainer` again on re-eval. A fresh `<App/>`
-element's `.type` is a new function reference every re-eval, which the reconciler would treat as a
-type change and fully remount. Instead it calls `hotUpdateRoot()`, which re-registers the new
-component type under the same `react-refresh` family key the first boot established and asks
-`react-refresh` to patch the live fiber tree in place. `react-refresh`'s family and root registries
-are pinned to the first-eval module instance via the same `globalThis` stash.
+## Where state should live
 
-Bun-level module aliasing does not work here, so do not reach for it: `Bun.plugin` aliasing throws
-`Requested module is already fetched` as soon as an aliased specifier is touched by both ESM
-`import` and CJS `require()`, and `react-reconciler`'s bundled CJS requires `"react"` internally
-while every app entry uses ESM.
+State created inside a component body survives an edit to a sibling. State created at module scope
+is created again whenever that module is re-evaluated, and `bun --hot` re-evaluates modules on
+an edit. A module-scope signal in a file you edit therefore resets.
 
-## React Compiler
+A fresh object created at module scope also counts as a changed dependency of the components that
+read it, and the runtime remounts them. `examples/counter/main.tsx` creates its pending promise
+inside `App` for this reason.
 
-Opt-in, off by default. `babel-plugin-react-compiler@1.0.0` runs as a build pre-pass and its output
-runs correctly against `@nativedesktop/react`. It has to be a pre-pass because Bun's runtime
-transpiler does not run Babel plugins, and `bun --hot` re-evaluates modules through Bun's own
-transpiler.
+Put long-lived data in `createStore` from `@nativedesktop/solid`, whose value is persisted to disk
+and loaded before `render()` (see [App Data & Storage](/core-concepts/app-data-storage/)), or keep
+it in a component that is not the one being edited. Split a component out when you want to edit
+its markup without resetting its parent's state, as `ClicksLabel` is split from `App` in the
+counter example.
 
-The compile step runs three Babel plugins in one pass:
+## Production builds
 
-- `babel-plugin-react-compiler` does the memoization transform.
-- `@babel/plugin-transform-react-jsx` turns JSX into `@nativedesktop/react/jsx-runtime` calls, so
-  the compiled output has no JSX syntax left for Bun to pragma-select on.
-- `babel-plugin-nativedesktop` applies the hook-import rewrite across every extension.
-
-`nd dev` still points at uncompiled `src/`, so hot reload and react-refresh behave the same whether
-or not the compiler is enabled. For a production-style run:
+`nd build` has no watcher. It runs the app's `compile` script, `nd-solid-build src/main.tsx --outdir
+dist`, which applies the same JSX transform ahead of time and bundles the app's own modules into
+`dist/main.js`. Packages stay external imports, so `solid-js` resolves through the register preload
+when the app launches. A packaged app starts without loading Babel.
 
 ```bash
-bun run compile && ND_SCRIPT=dist/main.tsx ./zig-out/bin/nd-hello
+bun run compile
+```
+
+## Raw invocation
+
+When you iterate on the framework's own host, run the child yourself and pass the preload:
+
+```bash
+BUN_OPTIONS=--preload=@nativedesktop/solid/register ND_DEV=1 ND_SCRIPT=src/main.tsx <path-to-nd-host-binary>
 ```
