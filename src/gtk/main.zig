@@ -8,6 +8,7 @@ const abi = @import("../abi.zig");
 const backend = @import("backend.zig");
 const system = @import("system.zig");
 const cef = @import("../cef/backend.zig");
+const icons = @import("icons.zig");
 
 // Overridable per packaged app: `nd package` bakes ND_APP_ID=<app.id> into the
 // AppRun so window grouping / StartupWMClass bind to the app's own identity.
@@ -116,6 +117,7 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
     // The embedder crosses the C ABI instead of building the Tree/Runtime/
     // automation.Server directly; the core owns them behind nd_init/
     // nd_register_backend/nd_start_runtime/nd_start_automation.
+    icons.preloadTheme();
     backend.setApp(app);
     const ctx = abi.nd_init() orelse {
         std.debug.print("ND_RUNTIME_ERROR nd_init failed\n", .{});

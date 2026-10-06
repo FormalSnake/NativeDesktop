@@ -34,6 +34,25 @@ pub fn symbolic(name: [:0]const u8) [:0]const u8 {
     return name;
 }
 
+/// Starts loading the icon theme on a worker thread. GTK loads it in a thread
+/// at startup, but adw_init then adds libadwaita's icon resource path, which
+/// throws that load away, and the first `gtk_icon_theme_has_icon` (the first
+/// commit's first icon) rescanned every theme directory on the UI thread. The
+/// theme serializes its own loading under its lock, and has_icon reaches no
+/// main-thread-only path, so the UI thread's first lookup finds the theme
+/// loaded or waits only for the rest of the load (gtkicontheme.c: "Public APIs
+/// that never call _mainthread are threadsafe").
+pub fn preloadTheme() void {
+    const display = gdk.Display.getDefault() orelse return;
+    const theme = gtk.IconTheme.getForDisplay(display);
+    const thread = std.Thread.spawn(.{}, loadTheme, .{theme}) catch return;
+    thread.detach();
+}
+
+fn loadTheme(theme: *gtk.IconTheme) void {
+    _ = gtk.IconTheme.hasIcon(theme, "image-missing");
+}
+
 var warned: std.StringHashMapUnmanaged(void) = .empty;
 
 /// A name the theme does not have draws GTK's missing-image glyph; said once
