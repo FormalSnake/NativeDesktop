@@ -104,6 +104,24 @@ private func ndInputFocus(_ pid: pid_t) -> Bool {
     return front == .success
 }
 
+/// The app that would take a press at `at`, named, when it is not `pid`. A
+/// press posted at the HID tap goes to whatever window the window server hits
+/// there, and a system prompt left unanswered (UserNotificationCenter's
+/// screen-capture alerts stack at the middle of the screen, one per new host
+/// binary) silently swallows it. Accessibility's hit test follows the same
+/// routing, so it skips click-through overlays that the window list reports
+/// over everything. Nil when the hit test cannot answer.
+private func ndInputPressOwner(_ at: CGPoint, notPid pid: pid_t) -> String? {
+    let system = AXUIElementCreateSystemWide()
+    AXUIElementSetMessagingTimeout(system, 0.5)
+    var element: AXUIElement?
+    guard AXUIElementCopyElementAtPosition(system, Float(at.x), Float(at.y), &element) == .success, let element
+    else { return nil }
+    var owner: pid_t = 0
+    guard AXUIElementGetPid(element, &owner) == .success, owner != pid else { return nil }
+    return "\(NSRunningApplication(processIdentifier: owner)?.localizedName ?? "another process") (pid \(owner))"
+}
+
 private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [String: Any] {
     let op = cmd["op"] as? String ?? ""
     let x = (cmd["x"] as? NSNumber)?.doubleValue
@@ -140,6 +158,9 @@ private func ndInputRun(_ cmd: [String: Any], _ state: inout NDInputState) -> [S
         return ["ok": true]
     case "down":
         let button = ndButton(cmd["button"])
+        if let pid = (cmd["pid"] as? NSNumber)?.int32Value, let owner = ndInputPressOwner(state.position, notPid: pid) {
+            return ["ok": false, "error": "a window of \(owner) covers the app at (\(Int(state.position.x)), \(Int(state.position.y))) and would take this press"]
+        }
         state.clickCount = (cmd["clickCount"] as? NSNumber)?.int64Value ?? 1
         ndPost(ndMouseTypes(button).down, state.position, button, clickCount: state.clickCount,
                flags: ndFlags(cmd["modifiers"]))

@@ -33,8 +33,9 @@ export interface CursorMoveOptions {
 
 interface CursorDeps {
   binary: () => Promise<string>;
-  /** The host's pid, to bring it forward before the first event. An attached
-   * app does not know it, and relies on the first click to focus instead. */
+  /** The host's pid, to bring it forward before the first event and to check
+   * each press lands in it. An attached app knows it only when its caller
+   * passed one to connectApp; without it the first click focuses instead. */
   pid?: number;
   windows: () => Promise<WindowsResult>;
   /** Window node ref whose top-left `{x, y}` points and locator geometry are
@@ -62,8 +63,11 @@ export class Cursor {
     return this.move(target, opts);
   }
 
+  /** Presses at the current position. With the host's pid known, a press
+   * that another app's window would take there (an unanswered system prompt)
+   * fails instead of landing outside the app. */
   async down(opts: CursorButtonOptions = {}): Promise<void> {
-    await this.send({ op: "down", ...opts });
+    await this.send({ op: "down", ...opts, ...(this.deps.pid !== undefined ? { pid: this.deps.pid } : {}) });
   }
 
   async up(opts: CursorButtonOptions = {}): Promise<void> {
