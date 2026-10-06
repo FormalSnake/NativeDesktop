@@ -36,15 +36,20 @@ final class NDTrafficLights {
     /// a title bar pass in between would read the slot's landing place, or
     /// find it clipped and hide them.
     private var riding: [ObjectIdentifier: NSRect] = [:]
+    /// Stand-ins for the buttons while a split view slides its sidebar
+    /// (`ghostRide`).
+    private var ghosts: [ObjectIdentifier: NSView] = [:]
 
     /// Starts a ride: the buttons go where the slot is now, which has to be
     /// where it rests (the title bar will not keep a button outside its
     /// bounds, so the travel itself is drawn by `slide`), and stay there
     /// until the ride ends, wherever the slot's container is meanwhile.
-    func beginRide(_ window: NSWindow) {
+    /// `shift` moves the resting place off the slot's current one, for a slot
+    /// whose container has not reached its rest yet.
+    func beginRide(_ window: NSWindow, shift: CGFloat = 0) {
         guard let slot = (slots[ObjectIdentifier(window)] ?? []).lazy.compactMap(\.view).first(where: { $0.window === window && $0.bounds.width > 0 })
         else { return }
-        riding[ObjectIdentifier(window)] = slot.convert(slot.bounds, to: nil)
+        riding[ObjectIdentifier(window)] = slot.convert(slot.bounds, to: nil).offsetBy(dx: shift, dy: 0)
         apply(window)
     }
 
@@ -68,6 +73,52 @@ final class NDTrafficLights {
         }
     }
 
+    /// Swaps the buttons, placed where the ride rests, for pictures of
+    /// themselves for the length of a ride. A split view sliding its sidebar
+    /// lays the title bar out on every frame, and puts the zoom button back at
+    /// its stock place in the render tree on each one, under any placement
+    /// made on the view; the pictures are views the title bar never lays out.
+    func ghostRide(_ window: NSWindow) {
+        let bs = buttons(window)
+        guard ghosts[ObjectIdentifier(window)] == nil, bs.count == 3, let bar = bs[0].superview,
+              bs.allSatisfy({ $0.superview === bar && !$0.isHidden }) else { return }
+        let frame = bs.map(\.frame).reduce(bs[0].frame) { $0.union($1) }
+        let ghost = NSView(frame: frame)
+        ghost.wantsLayer = true
+        for b in bs {
+            guard let rep = b.bitmapImageRepForCachingDisplay(in: b.bounds) else { continue }
+            b.cacheDisplay(in: b.bounds, to: rep)
+            let image = NSImage(size: b.bounds.size)
+            image.addRepresentation(rep)
+            let picture = NSImageView(frame: b.frame.offsetBy(dx: -frame.minX, dy: -frame.minY))
+            picture.image = image
+            picture.imageScaling = .scaleNone
+            ghost.addSubview(picture)
+        }
+        bar.addSubview(ghost, positioned: .above, relativeTo: nil)
+        ghosts[ObjectIdentifier(window)] = ghost
+        for b in bs { b.alphaValue = 0 }
+    }
+
+    /// Draws the buttons (or their stand-ins) `dx` points off their place for
+    /// one frame of a slide the main thread follows (SplitMotion.swift).
+    /// Additive on the layer, like `slide`: the title bar does not keep a
+    /// button frame outside it.
+    func offsetRide(_ window: NSWindow, by dx: CGFloat) {
+        let layers = ghosts[ObjectIdentifier(window)].map { [$0] } ?? buttons(window)
+        for v in layers {
+            v.wantsLayer = true
+            let a = CABasicAnimation(keyPath: "position.x")
+            a.isAdditive = true
+            a.fromValue = dx
+            a.toValue = dx
+            a.duration = 3600
+            a.fillMode = .both
+            a.isRemovedOnCompletion = false
+            v.layer?.add(a, forKey: "ndRide")
+        }
+    }
+
     /// Reduced motion: the buttons fade with the panel instead of travelling.
     func fade(_ window: NSWindow, from: CGFloat, to: CGFloat) {
         for b in buttons(window) {
@@ -79,6 +130,7 @@ final class NDTrafficLights {
     /// Ends a ride and hands the buttons back to the slot's normal placement.
     func endRide(_ window: NSWindow) {
         riding[ObjectIdentifier(window)] = nil
+        ghosts.removeValue(forKey: ObjectIdentifier(window))?.removeFromSuperview()
         for b in buttons(window) {
             b.layer?.removeAnimation(forKey: "ndRide")
             b.alphaValue = 1

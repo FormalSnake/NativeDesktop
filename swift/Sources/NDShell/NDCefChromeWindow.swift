@@ -550,7 +550,7 @@ import Foundation
     /// Both lifted subtrees at their rectangle. The page's Views window is the
     /// page rectangle's size too (`syncAnchor`), so the page lays out at it.
     private func layoutLifted() {
-        guard let view else { return }
+        guard let view, !view.motionFrozen else { return }
         let (page, tools) = columns(view.bounds)
         if let lifted, lifted.superview === view, lifted.frame != page { lifted.frame = page }
         if let toolsLifted, toolsLifted.superview === view, toolsLifted.frame != tools { toolsLifted.frame = tools }
@@ -667,6 +667,9 @@ import Foundation
     /// can have changed. The anchor carries no pixels, so this only has to be
     /// correct, not immediate.
     func hostGeometryChanged() {
+        // A sliding sidebar draws a still of the page instead
+        // (NDCefMotion.swift); it takes its new size once, when the slide lands.
+        if view?.motionFrozen == true { return }
         if view?.window !== observedWindow { observeGeometry() }
         syncAnchor()
         liftWebContents()
@@ -694,7 +697,9 @@ import Foundation
     }
 
     private func syncAnchor() {
-        guard !closed, let view else { return }
+        // A frozen page keeps its size until the slide lands (see
+        // `hostGeometryChanged`), whichever notification asks.
+        guard !closed, let view, !view.motionFrozen else { return }
         let visible = targetScreenFrame() != nil
         let (page, tools) = columns(view.bounds)
         if let anchor, let cefWindow {

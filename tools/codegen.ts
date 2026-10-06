@@ -4454,7 +4454,7 @@ function genZigCreateBody(w: Widget): string {
     out += "        // flip it on when a sidebar child actually lands.\n";
     out += "        ndSplitViewSetShowSidebar(sv, false);\n";
     out += "        if (propFloat(props, \"sidebarWidth\")) |sw| {\n            if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw);\n        }\n";
-    out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));\n";
+    out += "        if (propBool(props, \"collapsed\")) |c| ndchrome_gtk.setCollapsed(sv.as(gtk.Widget), c);\n";
     out += "        if (propFloat(props, \"listWidth\")) |lw| {\n            if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {};\n        }\n";
     out += "        // Adaptive collapse: the AdwBreakpoint needs the window, which doesn't\n";
     out += "        // exist yet — stash the px value and install on map (cbSplitViewMapped),\n";
@@ -5120,7 +5120,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "            }\n";
       out += "        }\n";
     } else if (w.name === "SplitView" && p.name === "collapsed") {
-      out += "        if (propBool(props, \"collapsed\")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));\n";
+      out += "        if (propBool(props, \"collapsed\")) |c| ndchrome_gtk.setCollapsed(widget, c);\n";
     } else if (w.name === "MenuItem" && p.name === "enabled") {
       out += "        if (propBool(props, \"enabled\")) |en| ndMenuItemSetEnabled(widget, en);\n";
     } else if (w.name === "Button" && p.name === "label") {
@@ -8917,11 +8917,9 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
       // The value the breakpoint restores once the window widens back past
       // the threshold (NDSplitViewController.explicitCollapsed).
       out += "            controller.explicitCollapsed = c\n";
-      // By behavior, not by index: with no sidebar mounted, item 0 is the
-      // content pane, and collapsing that empties the window.
-      out += "            if let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {\n";
-      out += "                sidebarItem.isCollapsed = c\n";
-      out += "            }\n";
+      // The sidebar slides (SplitMotion.swift); with none mounted there is
+      // nothing to collapse.
+      out += "            controller.setSidebarCollapsed(c)\n";
       out += "        }\n";
     } else if (w.name === "Paned" && p.name === "position") {
       out += '        if let f = propDouble(props, "position"), let split = view as? NSSplitView,\n';

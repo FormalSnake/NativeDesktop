@@ -66,6 +66,16 @@ final class NDCefWebView: NSView {
 
     lazy var devTools = NDCefDevTools(view: self)
 
+    /// A sidebar slide is drawing a still of this page over it rather than
+    /// resizing it (NDCefMotion.swift): the web contents keep their size
+    /// until it lands.
+    var motionFrozen = false
+    var motionCover: CALayer?
+    var motionEndedAt: CFTimeInterval = 0
+    var motionGeneration = 0
+
+    func hostGeometryNeedsSync() { chrome?.hostGeometryChanged() }
+
     /// Non-nil under `ND_CEF_STYLE=chrome`: the Views window the browser was
     /// born in, and the lift of its web contents into this view.
     var chrome: NDCefChromeWindow?
@@ -220,6 +230,10 @@ final class NDCefWebView: NSView {
     /// only reconciles the case where it was created before this view had a
     /// real size.
     override func resizeSubviews(withOldSize oldSize: NSSize) {
+        if motionFrozen {
+            motionStretch()
+            return
+        }
         super.resizeSubviews(withOldSize: oldSize)
         for child in subviews where child.frame != bounds { child.frame = bounds }
         chrome?.hostGeometryChanged()

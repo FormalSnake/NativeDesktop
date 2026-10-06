@@ -53,7 +53,7 @@ final class NDCefDevTools {
     /// may go out until it has answered: a params dictionary handed to an
     /// unattached agent takes the whole process down. `Runtime` carries the
     /// bindings and the world contexts, `Page` the document-start scripts.
-    private var isReady = false
+    private(set) var isReady = false
     private var queued: [(method: String, params: [String: Any], reply: Reply?)] = []
     var whenReady: (() -> Void)?
 
