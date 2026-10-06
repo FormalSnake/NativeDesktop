@@ -17,6 +17,7 @@
 //   whose compiled output imports its helpers from @nativedesktop/solid.
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
 import type { PluginObj, TransformOptions } from "@babel/core";
+import { existsSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
 const dev = process.env.ND_DEV === "1";
@@ -50,6 +51,18 @@ const jsx = /\.[jt]sx$/;
 //   refresh runtime compares (a component's `dependencies`) stable, so an
 //   edit remounts only the components whose code changed.
 const signalsDir = dirname(require.resolve("@solidjs/signals/package.json", { paths: [solidDir] }));
+const universalDir = dirname(require.resolve("@solidjs/universal/package.json", { paths: [import.meta.dir] }));
+// Every other copy of the reactive core is loaded as this one. An app whose
+// node_modules holds its own solid-js beside a linked framework checkout (or a
+// half-finished install) otherwise runs two reactive graphs: the renderer's
+// effects track none of the app's signals, so the tree never changes after
+// its first commit while the app's own effects keep running.
+const coreDirs = new Map([
+  ["solid-js", solidDir],
+  ["@solidjs/signals", signalsDir],
+  ["@solidjs/universal", universalDir],
+]);
+const corePackage = /[\\/]node_modules[\\/](solid-js|@solidjs[\\/](?:signals|universal))[\\/](.+\.[cm]?js)$/;
 // Bun's conditions never include "development", so the dev builds the
 // refresh runtime needs (its own, and solid-js's reactive core under the dev
 // solid-js) are swapped in by path the same way.
@@ -65,7 +78,7 @@ const pinnedDirs = dev
   ? [
       join(solidDir, "dist"),
       signalsDir,
-      dirname(require.resolve("@solidjs/universal/package.json", { paths: [import.meta.dir] })),
+      universalDir,
       import.meta.dir,
     ].map((d) => d + sep)
   : [];
@@ -178,7 +191,17 @@ async function compileJsx(path: string, original: string): Promise<string> {
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const filters = [serverBuild.source, jsx.source, ...pinnedDirs.map((d) => `^${escape(d)}.*\\.[cm]?[jt]s$`)];
+const filters = [serverBuild.source, jsx.source, corePackage.source, ...pinnedDirs.map((d) => `^${escape(d)}.*\\.[cm]?[jt]s$`)];
+
+/** The same file in this package's copy of the reactive core, for a load of another copy. */
+function ownCore(path: string): string | undefined {
+  const m = corePackage.exec(path);
+  if (!m) return undefined;
+  const dir = coreDirs.get(m[1]!.replace(/\\/g, "/"))!;
+  if (path.startsWith(dir + sep)) return undefined;
+  const target = join(dir, m[2]!);
+  return existsSync(target) ? target : undefined;
+}
 
 Bun.plugin({
   name: "nativedesktop-solid",
@@ -186,6 +209,8 @@ Bun.plugin({
     build.onLoad({ filter: new RegExp(filters.join("|")) }, async (args) => {
       const path = args.path;
       if (serverBuild.test(path)) return { contents: `export * from ${JSON.stringify(clientBuild)};`, loader: "js" };
+      const own = ownCore(path);
+      if (own) return { contents: `export * from ${JSON.stringify(own)};`, loader: "js" };
       const redirect = devRedirects.get(path);
       if (redirect) return { contents: `export * from ${JSON.stringify(redirect)};`, loader: "js" };
       if (isPinned(path)) {
@@ -195,8 +220,9 @@ Bun.plugin({
         return { contents: selfPin(path, await Bun.file(path).text()), loader };
       }
       if (jsx.test(path)) return { contents: await compileJsx(path, await Bun.file(path).text()), loader: "js" };
+      // This copy of the core, which Bun's filters cannot leave out, and
       // register.ts itself, matched by its directory's filter.
-      return { contents: await Bun.file(path).text(), loader: "ts" };
+      return { contents: await Bun.file(path).text(), loader: /\.[cm]?ts$/.test(path) ? "ts" : "js" };
     });
   },
 });
