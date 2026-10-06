@@ -1,9 +1,10 @@
-import { createPortal, moveNode, render, sendCommand, useEffect, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { Portal, moveNode, render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { Show, createSignal, onSettled } from "solid-js";
 
 // Moving one live `<webview>` between two host windows, driven by
-// scripts/mac/cef-reparent-drive.ts. The view is rendered into the reparent
-// pool so React never unmounts it; `moveNode` relocates only the native widget,
+// scripts/mac/cef-reparent-drive.ts. The view is rendered through a Portal into the
+// reparent pool so it is never unmounted; `moveNode` relocates only the native widget,
 // which is what a tab dragged to another window has to do without reloading the
 // page it is showing.
 const PAGE = `<!doctype html>
@@ -35,22 +36,25 @@ const fixture = Bun.serve({
 const BASE = `http://127.0.0.1:${fixture.port}/`;
 
 function App() {
-  const view = useRef<NdNodeRef<"webview"> | null>(null);
-  const slotA = useRef<NdNodeRef<"box"> | null>(null);
-  const slotB = useRef<NdNodeRef<"box"> | null>(null);
-  const [where, setWhere] = useState("a");
-  const [secondOpen, setSecondOpen] = useState(true);
+  const [view, setView] = createSignal<NdNodeRef<"webview">>();
+  const [slotA, setSlotA] = createSignal<NdNodeRef<"box">>();
+  const [slotB, setSlotB] = createSignal<NdNodeRef<"box">>();
+  const [where, setWhere] = createSignal("a");
+  const [secondOpen, setSecondOpen] = createSignal(true);
 
   // The portal holds the view outside every window until it is placed, so the
   // first placement is the mount.
-  useEffect(() => {
-    if (view.current && slotA.current) moveNode(view.current, slotA.current);
-  }, []);
+  onSettled(() => {
+    const v = view();
+    const a = slotA();
+    if (v && a) moveNode(v, a);
+  });
 
   const moveTo = (slot: "a" | "b") => {
-    const target = slot === "a" ? slotA.current : slotB.current;
-    if (!view.current || !target) return;
-    moveNode(view.current, target);
+    const target = slot === "a" ? slotA() : slotB();
+    const v = view();
+    if (!v || !target) return;
+    moveNode(v, target);
     setWhere(slot);
   };
 
@@ -58,33 +62,36 @@ function App() {
     <>
       <window testID="r-window-a" title="ND reparent A" defaultWidth={860} defaultHeight={620}>
         <box orientation="vertical" spacing={4} style={{ padding: 8 }}>
-          <label testID="r-where" text={`where=${where}`} />
+          <label testID="r-where" text={`where=${where()}`} />
           <box orientation="horizontal" spacing={8}>
             <button testID="r-to-a" label="To A" onClick={() => moveTo("a")} />
             <button testID="r-to-b" label="To B" onClick={() => moveTo("b")} />
             <button
               testID="r-devtools"
               label="DevTools"
-              onClick={() => view.current && sendCommand(view.current, "openDevTools", {})}
+              onClick={() => {
+                const v = view();
+                if (v) sendCommand(v, "openDevTools", {});
+              }}
             />
             <button testID="r-close-b" label="Close B" onClick={() => setSecondOpen(false)} />
           </box>
-          <box testID="r-slot-a" ref={slotA} orientation="vertical" style={{ hexpand: true, vexpand: true }} />
+          <box testID="r-slot-a" ref={setSlotA} orientation="vertical" style={{ hexpand: true, vexpand: true }} />
         </box>
       </window>
-      {secondOpen && (
+      <Show when={secondOpen()}>
         <window testID="r-window-b" title="ND reparent B" defaultWidth={720} defaultHeight={520}>
           <box orientation="vertical" spacing={4} style={{ padding: 8 }}>
             <label testID="r-b-label" text="window B" />
-            <box testID="r-slot-b" ref={slotB} orientation="vertical" style={{ hexpand: true, vexpand: true }} />
+            <box testID="r-slot-b" ref={setSlotB} orientation="vertical" style={{ hexpand: true, vexpand: true }} />
           </box>
         </window>
-      )}
-      {createPortal(
-        <webview ref={view} testID="r-view" url={BASE} style={{ hexpand: true, vexpand: true }} />,
-      )}
+      </Show>
+      <Portal>
+        <webview ref={setView} testID="r-view" url={BASE} style={{ hexpand: true, vexpand: true }} />
+      </Portal>
     </>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

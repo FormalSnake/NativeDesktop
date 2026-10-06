@@ -1,5 +1,6 @@
-import { render, sendCommand, useEffect, useRef, useState, webviewEngine } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand, webviewEngine } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { Show, createSignal, onSettled } from "solid-js";
 
 // Bench for the reserved-scheme question: can a scheme handler factory serve
 // chrome-extension://, which Chromium claims for its own extension loader?
@@ -11,15 +12,15 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8" /><title>ND SCHEM
 const EXT_ID = "aaaabbbbccccddddeeeeffffgggghhhh";
 
 function App() {
-  const control = useRef<NdNodeRef<"webview"> | null>(null);
-  const extension = useRef<NdNodeRef<"webview"> | null>(null);
-  const [ready, setReady] = useState(false);
-  const [registration, setRegistration] = useState("pending");
-  const [requests, setRequests] = useState<string[]>([]);
-  const [controlState, setControlState] = useState("pending");
-  const [extensionState, setExtensionState] = useState("pending");
+  const [control, setControl] = createSignal<NdNodeRef<"webview">>();
+  const [extension, setExtension] = createSignal<NdNodeRef<"webview">>();
+  const [ready, setReady] = createSignal(false);
+  const [registration, setRegistration] = createSignal("pending");
+  const [requests, setRequests] = createSignal<string[]>([]);
+  const [controlState, setControlState] = createSignal("pending");
+  const [extensionState, setExtensionState] = createSignal("pending");
 
-  useEffect(() => {
+  onSettled(() => {
     Promise.allSettled([
       webviewEngine.registerScheme("ndtest"),
       webviewEngine.registerScheme("chrome-extension"),
@@ -31,9 +32,9 @@ function App() {
       );
       setReady(true);
     });
-  }, []);
+  });
 
-  const answer = (ref: NdNodeRef<"webview"> | null, data: unknown): void => {
+  const answer = (ref: NdNodeRef<"webview"> | undefined, data: unknown): void => {
     const request = data as { id: string; url: string; scheme: string };
     setRequests((prev) => [...prev, request.url]);
     if (!ref) return;
@@ -48,33 +49,33 @@ function App() {
   return (
     <window title="ND CEF Scheme" defaultWidth={900} defaultHeight={520}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="s-register" text={`register=${registration}`} />
-        <label testID="s-requests" text={`requests=${requests.join(",") || "none"}`} />
-        <label testID="s-control" text={`control=${controlState}`} />
-        <label testID="s-extension" text={`extension=${extensionState}`} />
-        {ready ? (
+        <label testID="s-register" text={`register=${registration()}`} />
+        <label testID="s-requests" text={`requests=${requests().join(",") || "none"}`} />
+        <label testID="s-control" text={`control=${controlState()}`} />
+        <label testID="s-extension" text={`extension=${extensionState()}`} />
+        <Show when={ready()}>
           <box orientation="horizontal" spacing={8} style={{ vexpand: true }}>
             <webview
-              ref={control}
+              ref={setControl}
               testID="s-wv-control"
               url="ndtest://probe/index.html"
-              onSchemeRequest={(e) => answer(control.current, e.data)}
+              onSchemeRequest={(e) => answer(control(), e.data)}
               onNavigate={(e) => setControlState(`nav ${e.text}`)}
               onLoadFailed={(e) => setControlState(`failed ${JSON.stringify(e.data)}`)}
             />
             <webview
-              ref={extension}
+              ref={setExtension}
               testID="s-wv-extension"
               url={`chrome-extension://${EXT_ID}/index.html`}
-              onSchemeRequest={(e) => answer(extension.current, e.data)}
+              onSchemeRequest={(e) => answer(extension(), e.data)}
               onNavigate={(e) => setExtensionState(`nav ${e.text}`)}
               onLoadFailed={(e) => setExtensionState(`failed ${JSON.stringify(e.data)}`)}
             />
           </box>
-        ) : null}
+        </Show>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

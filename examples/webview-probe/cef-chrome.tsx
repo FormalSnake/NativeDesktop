@@ -1,5 +1,6 @@
-import { render, sendCommand, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand, setContextMenuItems } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal, onSettled } from "solid-js";
 import {
   answerPermission,
   dialogSurfacesRoute,
@@ -46,52 +47,54 @@ const fixture = Bun.serve({
 const BASE = `http://127.0.0.1:${fixture.port}/`;
 
 function App() {
-  const view = useRef<NdNodeRef<"webview"> | null>(null);
-  const [title, setTitle] = useState("");
-  const [popup, setPopup] = useState("none");
-  const [tab, setTab] = useState(0);
-  const [devtools, setDevtools] = useState("closed");
-  useEffect(() => {
-    if (!view.current) return;
+  const [view, setView] = createSignal<NdNodeRef<"webview">>();
+  const [title, setTitle] = createSignal("");
+  const [popup, setPopup] = createSignal("none");
+  const [tab, setTab] = createSignal(0);
+  const [devtools, setDevtools] = createSignal("closed");
+  onSettled(() => {
+    const v = view();
+    if (!v) return;
     // Merged into Chromium's own menu; the host trace reports what the model
     // received and whether it received it while the callback was still running.
-    setContextMenuItems(view.current, [
+    setContextMenuItems(v, [
       { id: "c-alpha", label: "Alpha", contexts: ["all"] },
       { id: "c-beta", label: "Beta", contexts: ["all"] },
       { id: "c-gamma", label: "Gamma", contexts: ["all"] },
     ]);
-  }, []);
+  });
   return (
     <window title="ND CEF chrome" defaultWidth={1000} defaultHeight={700}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="c-title" text={`title=${title}`} />
-        <label testID="c-popup" text={`popup=${popup}`} />
-        <label testID="c-devtools" text={`devtools=${devtools}`} />
+        <label testID="c-title" text={`title=${title()}`} />
+        <label testID="c-popup" text={`popup=${popup()}`} />
+        <label testID="c-devtools" text={`devtools=${devtools()}`} />
         <box orientation="horizontal" spacing={8}>
           <button
             testID="c-devtools-open"
             label="DevTools"
             onClick={() => {
-              if (!view.current) return;
-              sendCommand(view.current, "openDevTools", {});
+              const v = view();
+              if (!v) return;
+              sendCommand(v, "openDevTools", {});
               setDevtools("requested");
             }}
           />
           <button testID="c-background" label="Background" onClick={() => setTab((t) => (t === 0 ? 1 : 0))} />
-          <textinput testID="c-field" value="native" />
+          <textinput testID="c-field" text="native" />
         </box>
-        <tabview testID="c-tabs" selectedIndex={tab} style={{ vexpand: true }}>
+        <tabview testID="c-tabs" selectedIndex={tab()} style={{ vexpand: true }}>
           <box tabLabel="Page" orientation="horizontal" style={{ vexpand: true }}>
             <webview
-              ref={view}
+              ref={setView}
               testID="c-view"
               url={BASE}
               style={{ hexpand: true, vexpand: true }}
               onTitleChanged={(e) => setTitle(e.text)}
               onNewWindow={(e) => setPopup(e.text)}
-              onNavigate={(e) => permissionNavigated(view.current, e.text)}
-              onPermissionRequest={(e) => answerPermission(view.current, e.data as PermissionPayload)}
-              onPermissionRequestDismissed={(e) => permissionWithdrawn(view.current, (e.data as { id: string }).id)}
+              onNavigate={(e) => permissionNavigated(view() ?? null, e.text)}
+              onPermissionRequest={(e) => answerPermission(view() ?? null, e.data as PermissionPayload)}
+              onPermissionRequestDismissed={(e) => permissionWithdrawn(view() ?? null, (e.data as { id: string }).id)}
             />
           </box>
           <box tabLabel="Other" orientation="vertical">
@@ -103,4 +106,4 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
