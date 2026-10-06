@@ -62,6 +62,7 @@ describe("assemblePayload", () => {
     id: "com.example.fixture",
     name: "Fixture",
     displayName: "Fixture",
+    dataName: "fixture",
     slug: "fixture",
     version: "1.0.0",
     categories: ["Utility"],
@@ -94,6 +95,7 @@ describe("assemblePayload", () => {
     expect(manifest).toEqual({
       id: "com.example.fixture",
       name: "Fixture",
+      dataName: "fixture",
       version: "1.0.0",
       entry: "apps/fixture/src/main.tsx",
       cwd: "apps/fixture",

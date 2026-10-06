@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppIconLayered, AppIcon } from "../config.ts";
 import { installLinuxIcon, installMacIcon } from "./icons.ts";
-import { composeSvg, iconManifest, layeredComposition } from "./iconcomposer.ts";
+import { composeSvg, iconManifest, layeredComposition, readIconBundle, writeIconBundle } from "./iconcomposer.ts";
 import type { ResolvedIdentity } from "./identity.ts";
 import { PLACEHOLDER_PNG } from "./templates.ts";
 
@@ -35,7 +35,7 @@ function runInstall(appDir: string, appdir: string, path: string): { exitCode: n
   const script = `
     import { installLinuxIcon } from ${JSON.stringify(ICONS_MODULE)};
     await installLinuxIcon(
-      { name: "Fixture", displayName: "Fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon: { source: "icon.png" } },
+      { name: "Fixture", displayName: "Fixture", dataName: "fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon: { source: "icon.png" } },
       ${JSON.stringify(appDir)},
       ${JSON.stringify(appdir)},
     );
@@ -77,7 +77,7 @@ function layeredFixture(layered: AppIconLayered): { appDir: string; identity: Re
 }
 
 function identityWith(icon: AppIcon): ResolvedIdentity {
-  return { name: "Fixture", displayName: "Fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon };
+  return { name: "Fixture", displayName: "Fixture", dataName: "fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon };
 }
 
 describe("iconManifest", () => {
@@ -88,11 +88,21 @@ describe("iconManifest", () => {
       appDir,
     ));
     expect(manifest.fill["linear-gradient"]).toEqual(["extended-srgb:0.03922,0.51765,1.00000,1.00000", "extended-srgb:0.36863,0.36078,0.90196,1.00000"]);
+    // icon.json runs front to back: the config's last layer is the first group.
     expect(manifest.groups).toHaveLength(2);
-    expect(manifest.groups[0].layers[0]).toEqual({ "image-name": "glyph.svg", name: "glyph" });
-    expect(manifest.groups[0].shadow).toEqual({ kind: "neutral", opacity: 0.5 });
-    expect(manifest.groups[1].shadow).toEqual({ kind: "none", opacity: 0 });
-    expect(manifest.groups[1].translucency).toEqual({ enabled: true, value: 0.2 });
+    expect(manifest.groups[1].layers[0]).toEqual({ "image-name": "glyph.svg", name: "glyph" });
+    expect(manifest.groups[1].shadow).toEqual({ kind: "neutral", opacity: 0.5 });
+    expect(manifest.groups[0].layers[0]).toEqual({ "image-name": "shine.png", name: "shine" });
+    expect(manifest.groups[0].shadow).toEqual({ kind: "none", opacity: 0 });
+    expect(manifest.groups[0].translucency).toEqual({ enabled: true, value: 0.2 });
+  });
+
+  test("a written bundle reads back in config order", () => {
+    const { appDir } = layeredFixture({ layers: [] });
+    const bundle = join(appDir, "Fixture.icon");
+    writeIconBundle({ layers: ["shine.png", "glyph.svg"] }, appDir, bundle);
+    const { layers } = readIconBundle(bundle);
+    expect(layers.map((path) => path.slice(path.lastIndexOf("/") + 1))).toEqual(["shine.png", "glyph.svg"]);
   });
 
   test("a color-space string passes through untouched", () => {

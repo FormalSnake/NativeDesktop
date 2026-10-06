@@ -30,7 +30,7 @@ const T = 8000;
 const SHOTS = process.env.ND_ARC_SHOTS ?? "/tmp/nd-arcchrome";
 Bun.spawnSync(["mkdir", "-p", SHOTS]);
 
-const app = attached ? await connectApp() : await launchApp({ entry: "examples/arcchrome/main.tsx", backend });
+const app = attached ? await connectApp(undefined, { pid: Number(process.env.ND_HOST_PID) || undefined }) : await launchApp({ entry: "examples/arcchrome/main.tsx", backend });
 const hostPid = Number(process.env.ND_HOST_PID ?? ("pid" in app ? app.pid : 0));
 const ndshot = process.env.ND_NDSHOT;
 

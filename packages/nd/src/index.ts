@@ -49,6 +49,7 @@ async function runDev(entry: string, backend?: Backend): Promise<number> {
       ...preloadEnv(process.cwd()),
       ...(await nativeEnv(config)),
       ...engineEnv(config),
+      ...(config.app?.previousName ? { ND_APP_PREVIOUS_NAME: config.app.previousName } : {}),
       ND_DEV: "1",
       ND_SCRIPT: entry,
     },

@@ -29,13 +29,18 @@ export class AttachedApp implements LocatorClient {
 
   private readonly factory: LocatorFactory;
 
-  private constructor(readonly rpc: AutomationClient) {
+  private constructor(
+    readonly rpc: AutomationClient,
+    private readonly pid?: number,
+  ) {
     this.factory = new LocatorFactory(this);
   }
 
-  /** Connects to `path`, defaulting to ND_AUTOMATION_SOCKET. */
-  static async connect(path = process.env.ND_AUTOMATION_SOCKET): Promise<AttachedApp> {
-    return new AttachedApp(await AutomationClient.connect(path));
+  /** Connects to `path`, defaulting to ND_AUTOMATION_SOCKET. `pid` is the
+   * host's, when the caller launched it: app.cursor then brings it forward and
+   * refuses a press another app's window would take. */
+  static async connect(path = process.env.ND_AUTOMATION_SOCKET, opts: { pid?: number } = {}): Promise<AttachedApp> {
+    return new AttachedApp(await AutomationClient.connect(path), opts.pid);
   }
 
   tree(window?: number): Promise<GetTreeResult> {
@@ -115,6 +120,7 @@ export class AttachedApp implements LocatorClient {
   get cursor(): Cursor {
     return (this.cursorDriver ??= new Cursor({
       binary: () => resolveHostBinary({ backend: "appkit" }),
+      pid: this.pid,
       windows: () => this.windows(),
     }));
   }
@@ -166,6 +172,6 @@ export class AttachedApp implements LocatorClient {
 }
 
 /** Shorthand for AttachedApp.connect(). */
-export function connectApp(path?: string): Promise<AttachedApp> {
-  return AttachedApp.connect(path);
+export function connectApp(path?: string, opts: { pid?: number } = {}): Promise<AttachedApp> {
+  return AttachedApp.connect(path, opts);
 }

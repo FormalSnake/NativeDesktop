@@ -52,6 +52,21 @@ enum NDBundleBootstrap {
         }
     }
 
+    /// A renamed app (`app.previousName`) keeps its Chromium profile: the cache
+    /// root is keyed by executable name, so the old one moves to `dir` once,
+    /// before cef_initialize opens anything there.
+    static func adoptPreviousCache(at dir: String) {
+        guard let previous = manifest()?["previousName"] as? String, !previous.isEmpty else { return }
+        let fm = FileManager.default
+        let old = ((dir as NSString).deletingLastPathComponent as NSString).appendingPathComponent(previous)
+        guard old != dir, !fm.fileExists(atPath: dir), fm.fileExists(atPath: old) else { return }
+        do {
+            try fm.moveItem(atPath: old, toPath: dir)
+        } catch {
+            FileHandle.standardError.write("ND_WARN could not move \(old) to \(dir): \(error)\n".data(using: .utf8)!)
+        }
+    }
+
     static func apply() {
         guard let manifest = manifest(), let resources = Bundle.main.resourceURL else { return }
         let appRoot = resources.appendingPathComponent("app")

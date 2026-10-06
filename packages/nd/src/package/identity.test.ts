@@ -21,7 +21,7 @@ import { appRunTemplate, desktopEntryTemplate, infoPlistSkeleton } from "./templ
 const IDENTITY: ResolvedIdentity = {
   id: "com.nativedesktop.gallery",
   name: "Gallery",
-  displayName: "NativeDesktop Gallery",
+  displayName: "NativeDesktop Gallery", dataName: "gallery",
   slug: "gallery",
   version: "0.9.0",
   categories: ["Utility"],
@@ -128,6 +128,13 @@ describe("resolveIdentity", () => {
     expect(identity.name).toBe("Fixture");
     expect(identity.slug).toBe("fixture");
     expect(identity.version).toBe("3.0.0");
+  });
+
+  test("the data directory keeps the package name whatever the product name is", () => {
+    const identity = resolveIdentity({ app: { name: "Fixture Browser", previousName: "OldFixture" } }, dir);
+    expect(identity.dataName).toBe("fixture-app");
+    expect(identity.previousName).toBe("OldFixture");
+    expect(identity.slug).toBe("fixture-browser");
   });
 
   test("string icon becomes AppIcon.source", () => {

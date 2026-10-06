@@ -76,10 +76,14 @@ export interface AppIcon {
 export interface AppIdentity {
   /** Reverse-DNS bundle id. Required for icons, mime registration, and updates. */
   id?: string;
-  /** Product name: <Name>.app, usr/bin/<slug>, AppImage basename. Default: package.json name. */
+  /** Product name: <Name>.app and usr/bin/<slug>; the AppImage is <slug>-<version>.AppImage. Default: package.json name. */
   name?: string;
   /** CFBundleDisplayName / .desktop Name. Default: name. */
   displayName?: string;
+  /** The name this app shipped under before a rename. On first launch under the
+   * new name, the old data directory (this name, or its lowercase slug) and the
+   * old macOS Chromium profile move across once, when the new ones do not exist yet. */
+  previousName?: string;
   /** Default: package.json version, then "0.0.0". ND_APP_VERSION and --version override. */
   version?: string;
   icon?: string | AppIcon;

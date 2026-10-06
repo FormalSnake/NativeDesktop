@@ -12,7 +12,7 @@ distributable native bundle: a deep-signed `.app` on macOS, an AppImage or AppDi
 ```bash
 nd package               # package for the host platform (mac on darwin, linux on linux)
 nd package mac           # <Name>.app, deep-signed, optional notarize + update archive
-nd package linux         # AppDir + AppImage (mksquashfs fallback) + optional update archive
+nd package linux         # AppDir + <slug>-<version>.AppImage (mksquashfs fallback) + optional update archive
 nd doctor [--json]       # readiness checks; non-zero exit only on real gaps
 
 nd package [mac|linux] [--out <dir>] [--entry <file>] [--version <v>] [--cwd <dir>]
@@ -32,6 +32,7 @@ export default defineConfig({
     id: "com.example.myapp",        // reverse-DNS; required for icons/mime/updates
     name: "MyApp",                  // <Name>.app, usr/bin/<slug>. Default: package.json name
     displayName: "My App",          // CFBundleDisplayName / .desktop Name
+    previousName: "OldApp",         // after a rename: move the old data dir and mac Chromium profile once
     version: "1.0.0",               // default: package.json version, then "0.0.0"
     icon: { source: "assets/icon.png" },   // or a string, or { macos, linux, layered }
     categories: ["Utility"],        // .desktop Categories=
