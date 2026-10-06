@@ -10,6 +10,7 @@
 //   key:<keysym>[+<keysym>...]   e.g. key:Control_L+l, key:a, key:Escape
 //   move:<x>,<y>                 pointer to window-relative x,y
 //   click:<x>,<y> / rclick:<x>,<y>
+//   wheel:<x>,<y>,<up|down>      one wheel notch
 //   wait:<ms>
 //   region:<x>,<y>,<w>,<h>       where the next measured steps look for change
 //   measure:<label>              the following input step is timed under label
@@ -279,12 +280,12 @@ for (const step of steps) {
       keys(arg, false);
       x.XFlush(dpy);
     };
-  } else if (kind === "move" || kind === "click" || kind === "rclick") {
-    const [wx, wy] = arg.split(",").map(Number) as [number, number];
-    const [ax, ay] = abs(win, wx, wy);
+  } else if (kind === "move" || kind === "click" || kind === "rclick" || kind === "wheel") {
+    const [wx, wy, dir] = arg.split(",") as [string, string, string?];
+    const [ax, ay] = abs(win, Number(wx), Number(wy));
     if (kind === "move") fire = () => t.XTestFakeMotionEvent(dpy, -1, ax, ay, 0n);
     else {
-      const button = kind === "click" ? 1 : 3;
+      const button = kind === "click" ? 1 : kind === "rclick" ? 3 : dir === "up" ? 4 : 5;
       t.XTestFakeMotionEvent(dpy, -1, ax, ay, 0n);
       x.XFlush(dpy);
       await Bun.sleep(150);
