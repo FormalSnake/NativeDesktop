@@ -1,5 +1,6 @@
-import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // Zoom gate (ND_CEF_STYLE=chrome), driven by scripts/cef-zoom-drive.ts on both
 // backends. Every way a page's zoom can change has to reach the app as
@@ -39,24 +40,25 @@ const fixture = Bun.serve({
 const BASE = `http://127.0.0.1:${fixture.port}/`;
 
 function App() {
-  const view = useRef<NdNodeRef<"webview"> | null>(null);
-  const [title, setTitle] = useState("");
-  const [zoom, setZoom] = useState("none");
-  const [changes, setChanges] = useState(0);
-  const send = (name: string, arg?: unknown) => {
-    if (view.current) sendCommand(view.current, name, arg);
+  const [view, setView] = createSignal<NdNodeRef<"webview">>();
+  const [title, setTitle] = createSignal("");
+  const [zoom, setZoom] = createSignal("none");
+  const [changes, setChanges] = createSignal(0);
+  const send = (name: Parameters<typeof sendCommand<"webview">>[1], arg?: unknown) => {
+    const v = view();
+    if (v) sendCommand(v, name, arg);
   };
   return (
     <window title="ND CEF zoom" defaultWidth={900} defaultHeight={640}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="z-title" text={`title=${title}`} />
-        <label testID="z-zoom" text={`zoom=${zoom} changes=${changes}`} />
+        <label testID="z-title" text={`title=${title()}`} />
+        <label testID="z-zoom" text={`zoom=${zoom()} changes=${changes()}`} />
         <box orientation="horizontal" spacing={8}>
           <button testID="z-set150" label="150%" onClick={() => send("setZoom", 1.5)} />
           <button testID="z-set100" label="100%" onClick={() => send("setZoom", 1)} />
         </box>
         <webview
-          ref={view}
+          ref={setView}
           testID="z-view"
           url={BASE}
           style={{ vexpand: true, hexpand: true }}
@@ -72,4 +74,4 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);

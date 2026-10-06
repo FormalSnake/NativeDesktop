@@ -1,5 +1,6 @@
-import { createPortal, render, sendCommand, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { Portal, render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // The browser-toolbar shape: nav buttons at the start, an address field that
 // takes the whole run between the packs, actions at the end, and a site-info
@@ -7,14 +8,14 @@ import type { NdNodeRef } from "@nativedesktop/react";
 // a zoom magnifier at the field's trailing end doing the same.
 // Driven by scripts/headerfield-drive.ts on both backends.
 
-function App(): React.ReactNode {
-  const field = useRef<NdNodeRef<"searchinput">>(null);
-  const [url, setUrl] = useState("example.com");
-  const [icons, setIcons] = useState(0);
-  const [info, setInfo] = useState(false);
-  const [zoomed, setZoomed] = useState(true);
-  const [trailing, setTrailing] = useState(0);
-  const [zoom, setZoom] = useState(false);
+function App() {
+  const [field, setField] = createSignal<NdNodeRef<"searchinput">>();
+  const [url, setUrl] = createSignal("example.com");
+  const [icons, setIcons] = createSignal(0);
+  const [info, setInfo] = createSignal(false);
+  const [zoomed, setZoomed] = createSignal(true);
+  const [trailing, setTrailing] = createSignal(0);
+  const [zoom, setZoom] = createSignal(false);
 
   return (
     <window title="ND Header Field" defaultWidth={1100} defaultHeight={420}>
@@ -33,9 +34,9 @@ function App(): React.ReactNode {
             <button testID="weight-plain" label="Bookmarks" />
           </box>
           <searchinput
-            ref={field}
+            ref={setField}
             testID="address"
-            text={url}
+            text={url()}
             placeholder="Search or enter address"
             leadingIconName="channel-secure-symbolic"
             leadingIconTooltip="Connection is secure"
@@ -45,7 +46,7 @@ function App(): React.ReactNode {
               setIcons((n) => n + 1);
               setInfo(true);
             }}
-            trailingIconName={zoomed ? "zoom-in-symbolic" : ""}
+            trailingIconName={zoomed() ? "zoom-in-symbolic" : ""}
             trailingIconTooltip="Zoom: 125%"
             trailingIconLabel="Page zoom"
             onTrailingIconClicked={() => {
@@ -58,9 +59,9 @@ function App(): React.ReactNode {
           <button slot="end" testID="end-add" iconName="list-add-symbolic" />
         </headerbar>
         <box orientation="vertical" spacing={8} style={{ padding: 16 }}>
-          <label testID="url-label" text={url} />
-          <label testID="icon-count" text={`icon clicks: ${icons}`} />
-          <label testID="trailing-count" text={`trailing clicks: ${trailing}`} />
+          <label testID="url-label" text={url()} />
+          <label testID="icon-count" text={`icon clicks: ${icons()}`} />
+          <label testID="trailing-count" text={`trailing clicks: ${trailing()}`} />
           {/* The icon is not a widget of its own on either backend, so this is
               how an app (and the gate on GTK, where GTK4 refuses synthesized
               input) reaches it without a pointer. */}
@@ -68,49 +69,51 @@ function App(): React.ReactNode {
             testID="fire-icon"
             label="Open site info"
             onClick={() => {
-              if (field.current) sendCommand(field.current, "activateLeadingIcon");
+              const f = field();
+              if (f) sendCommand(f, "activateLeadingIcon");
             }}
           />
           <button
             testID="fire-trailing"
             label="Open zoom"
             onClick={() => {
-              if (field.current) sendCommand(field.current, "activateTrailingIcon");
+              const f = field();
+              if (f) sendCommand(f, "activateTrailingIcon");
             }}
           />
           <button testID="toggle-trailing" label="Toggle zoom icon" onClick={() => setZoomed((z) => !z)} />
         </box>
       </toolbarview>
-      {createPortal(
+      <Portal>
         <popover
           testID="site-info"
-          anchorRef={field}
+          anchorRef={field()}
           anchorSlot="leadingIcon"
-          open={info}
+          open={info()}
           position="bottom"
           onClosed={() => setInfo(false)}
         >
           <box testID="site-info-body" orientation="vertical" spacing={8}>
             <label testID="site-info-label" text="Connection is secure" />
           </box>
-        </popover>,
-      )}
-      {createPortal(
+        </popover>
+      </Portal>
+      <Portal>
         <popover
           testID="zoom"
-          anchorRef={field}
+          anchorRef={field()}
           anchorSlot="trailingIcon"
-          open={zoom}
+          open={zoom()}
           position="bottom"
           onClosed={() => setZoom(false)}
         >
           <box testID="zoom-body" orientation="horizontal" spacing={8}>
             <label testID="zoom-label" text="125%" />
           </box>
-        </popover>,
-      )}
+        </popover>
+      </Portal>
     </window>
   );
 }
 
-render(<App />);
+await render(() => <App />);

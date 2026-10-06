@@ -254,8 +254,7 @@ native widget* imperatively with `moveNode(ref, slotRef)`. That rides the
 existing `widgetCommand` frame (reserved `__ndReparent`) into the appended
 `reparent_child` ABI op (vtable word 21); GTK brackets the move in
 `g_object_ref`/`unref`, AppKit relies on the core's `passRetained` +1. See
-`examples/multiwindow/`, and `examples/multiwindow-solid/` for Solid's
-`<Portal>` (gate `scripts/multiwindow-solid-drive.ts`). `moveNode` is imperative BY DESIGN — preserving state
+`examples/multiwindow/` (Solid `<Portal>`, gate `scripts/multiwindow-drive.ts`). `moveNode` is imperative BY DESIGN — preserving state
 React would otherwise destroy is outside `UI = f(state)`. Widget commands
 (`moveNode`, `sendCommand`) call `session.flush()` before their own frame, so
 one sent in the tick its target was created (Solid refs, `onSettled`) never

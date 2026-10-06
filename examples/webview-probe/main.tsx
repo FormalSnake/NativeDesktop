@@ -9,12 +9,11 @@ import {
   saveSession,
   sendCommand,
   setContextMenuItems,
-  useEffect,
-  useRef,
-  useState,
   webviewEngine,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { For, Show, createSignal, onSettled } from "solid-js";
+import type { Accessor } from "solid-js";
 
 // Assertion target for the webview browser/extension surface: user scripts,
 // script messages, isolated worlds, custom URI schemes, cookies, per-view
@@ -153,50 +152,44 @@ const CHECKS = [
 ] as const;
 type CheckName = (typeof CHECKS)[number];
 
-function App(): React.ReactNode {
-  const main = useRef<NdNodeRef<"webview">>(null);
-  const priv = useRef<NdNodeRef<"webview">>(null);
-  const scheme = useRef<NdNodeRef<"webview">>(null);
-  const echo = useRef<NdNodeRef<"webview">>(null);
-  const [echoUrl, setEchoUrl] = useState("");
-  const started = useRef(false);
-  const [schemeReady, setSchemeReady] = useState(false);
-  const [phase, setPhase] = useState("starting");
-  const [results, setResults] = useState<Record<string, string>>({});
+function App() {
+  const [main, setMain] = createSignal<NdNodeRef<"webview">>();
+  const [priv, setPriv] = createSignal<NdNodeRef<"webview">>();
+  const [scheme, setScheme] = createSignal<NdNodeRef<"webview">>();
+  const [echo, setEcho] = createSignal<NdNodeRef<"webview">>();
+  const [echoUrl, setEchoUrl] = createSignal("");
+  const [schemeReady, setSchemeReady] = createSignal(false);
+  const [phase, setPhase] = createSignal("starting");
+  const [results, setResults] = createSignal<Record<string, string>>({});
 
-  const setResult = (name: CheckName, value: string): void =>
+  const setResult = (name: CheckName, value: string): void => {
     setResults((prev) => ({ ...prev, [name]: value }));
+  };
 
   // Scheme registration has to land before the first <webview> mounts, so the
   // views stay unrendered until it resolves.
-  useEffect(() => {
+  onSettled(() => {
     webviewEngine
       .registerScheme("ndprobe")
-      .then(() => setSchemeReady(true))
-      .catch((error: Error) => {
-        setResult("scheme", `fail: ${error.message}`);
+      .catch((error: Error) => setResult("scheme", `fail: ${error.message}`))
+      .then(() => {
         setSchemeReady(true);
+        void runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPhase });
       });
-  }, []);
-
-  useEffect(() => {
-    if (!schemeReady || started.current) return;
-    started.current = true;
-    void runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPhase });
-  }, [schemeReady]);
+  });
 
   return (
     <window title="ND WebView Probe" defaultWidth={900} defaultHeight={640}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="probe-phase" text={`phase=${phase}`} />
+        <label testID="probe-phase" text={`phase=${phase()}`} />
         <label testID="probe-base" text={`base=${BASE}`} />
-        {CHECKS.map((name) => (
-          <label key={name} testID={`chk-${name}`} text={`${name}=${results[name] ?? "pending"}`} />
-        ))}
-        {schemeReady ? (
+        <For each={CHECKS}>
+          {(name) => <label testID={`chk-${name}`} text={`${name}=${results()[name] ?? "pending"}`} />}
+        </For>
+        <Show when={schemeReady()}>
           <box orientation="horizontal" spacing={8} style={{ vexpand: true }}>
             <webview
-              ref={main}
+              ref={setMain}
               testID="wv-main"
               url=""
               contextMenuMode="suppress"
@@ -219,13 +212,13 @@ function App(): React.ReactNode {
                 load is in flight. Nothing else drives it, so every `setUrl`
                 the host traces for /echo-committed came from this check. */}
             <webview
-              ref={echo}
+              ref={setEcho}
               testID="wv-echo"
-              url={echoUrl}
+              url={echoUrl()}
               onJavaScriptResult={onJavaScriptResult}
             />
             <webview
-              ref={priv}
+              ref={setPriv}
               testID="wv-private"
               profile="private"
               url={`${BASE}/`}
@@ -233,7 +226,7 @@ function App(): React.ReactNode {
               onCookiesResult={onCookiesResult}
             />
             <webview
-              ref={scheme}
+              ref={setScheme}
               testID="wv-scheme"
               url="ndprobe://probe/index.html"
               onJavaScriptResult={onJavaScriptResult}
@@ -244,8 +237,9 @@ function App(): React.ReactNode {
               onSchemeRequest={(e) => {
                 const request = e.data as { id: string; url: string; scheme: string };
                 record("schemeRequest", request);
-                if (!scheme.current) return;
-                sendCommand(scheme.current, "respondScheme", {
+                const view = scheme();
+                if (!view) return;
+                sendCommand(view, "respondScheme", {
                   id: request.id,
                   base64: Buffer.from(SCHEME_HTML).toString("base64"),
                   mime: "text/html",
@@ -254,17 +248,17 @@ function App(): React.ReactNode {
               }}
             />
           </box>
-        ) : null}
+        </Show>
       </box>
     </window>
   );
 }
 
 interface ProbeArgs {
-  main: React.RefObject<NdNodeRef<"webview"> | null>;
-  priv: React.RefObject<NdNodeRef<"webview"> | null>;
-  scheme: React.RefObject<NdNodeRef<"webview"> | null>;
-  echo: React.RefObject<NdNodeRef<"webview"> | null>;
+  main: Accessor<NdNodeRef<"webview"> | undefined>;
+  priv: Accessor<NdNodeRef<"webview"> | undefined>;
+  scheme: Accessor<NdNodeRef<"webview"> | undefined>;
+  echo: Accessor<NdNodeRef<"webview"> | undefined>;
   setEchoUrl: (value: string) => void;
   setResult: (name: CheckName, value: string) => void;
   setPhase: (value: string) => void;
@@ -272,10 +266,10 @@ interface ProbeArgs {
 
 async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPhase }: ProbeArgs): Promise<void> {
   const gtk = Platform.backend === "gtk";
-  const wv = await poll(async () => main.current, (v) => v != null, "webview ref");
-  const wvScheme = await poll(async () => scheme.current, (v) => v != null, "scheme webview ref");
-  const wvPrivate = await poll(async () => priv.current, (v) => v != null, "private webview ref");
-  const wvEcho = await poll(async () => echo.current, (v) => v != null, "echo webview ref");
+  const wv = await poll(async () => main(), (v) => v != null, "webview ref");
+  const wvScheme = await poll(async () => scheme(), (v) => v != null, "scheme webview ref");
+  const wvPrivate = await poll(async () => priv(), (v) => v != null, "private webview ref");
+  const wvEcho = await poll(async () => echo(), (v) => v != null, "echo webview ref");
 
   const step = async (name: CheckName, fn: () => Promise<string>): Promise<void> => {
     setPhase(name);
@@ -482,6 +476,7 @@ async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPh
       return `fail: ${events.length} downloadRequested events for one download (${JSON.stringify(events.map((e) => e.view))})`;
     }
     const [event] = events;
+    if (!event) return "fail: no downloadRequested event";
     if (event.view !== "main") return `fail: event routed to the ${event.view} view`;
     if (!event.url?.endsWith("/download")) return `fail: url was ${JSON.stringify(event.url)}`;
     if (event.suggestedFilename !== "probe-download.bin") {
@@ -648,4 +643,4 @@ async function runProbe({ main, priv, scheme, echo, setEchoUrl, setResult, setPh
   setPhase("done");
 }
 
-await render(<App />);
+await render(() => <App />);

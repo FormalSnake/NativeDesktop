@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// scripts/multiwindow-solid-drive.ts: Portal + moveNode end to end on the
-// Solid renderer. examples/multiwindow-solid's <webview> loads a local page
+// scripts/multiwindow-drive.ts: Portal + moveNode end to end on the
+// Solid renderer. examples/multiwindow's <webview> loads a local page
 // once, then moves from Window A to Window B and back. After each move the
 // host tree has the webview under the slot it was moved to, and the page
 // still carries the mark it was given on its first load, with no second load:
@@ -26,7 +26,7 @@ function find(n: JsonNode, testID: string): JsonNode | undefined {
 let app: Awaited<ReturnType<typeof launchApp>> | undefined;
 try {
   app = await launchApp({
-    entry: "examples/multiwindow-solid/main.tsx",
+    entry: "examples/multiwindow/main.tsx",
     hostBinary: process.env.ND_HOST_BINARY,
     env: { ND_DEMO_URL: `http://127.0.0.1:${server.port}/` },
   });
@@ -61,7 +61,7 @@ try {
   await a.getByTestId("check").click();
   await expect(state).toHaveText("loads: 1 mark: kept");
 
-  console.log("ND_MULTIWINDOW_SOLID_OK webview moved A -> B -> A with one page load and its page state intact");
+  console.log("ND_MULTIWINDOW_OK webview moved A -> B -> A with one page load and its page state intact");
 } finally {
   await app?.close();
   server.stop(true);

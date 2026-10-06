@@ -1,5 +1,6 @@
-import { render, sendCommand, setContextMenuItems, useEffect, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand, setContextMenuItems } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal, onSettled } from "solid-js";
 
 // M1 gate for the Chromium engine on macOS. Everything it asserts arrives on
 // the schema's own event surface, so the same file runs on either engine:
@@ -44,27 +45,28 @@ const fixture = Bun.serve({
 const BASE = `http://127.0.0.1:${fixture.port}/`;
 
 function App() {
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = createSignal("");
   // A view mounted with no address and armed on a LATER commit. That is the
   // shape a tab, a background page and the framework's own hideOnceArmed
   // pattern all use, and the engine has to load the address even when it
   // arrives while the browser is still being created.
-  const [armedUrl, setArmedUrl] = useState("");
-  const [armed, setArmed] = useState("pending");
-  const view = useRef<NdNodeRef<"webview"> | null>(null);
-  const armedView = useRef<NdNodeRef<"webview"> | null>(null);
-  const [title, setTitle] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [back, setBack] = useState(false);
-  const [forward, setForward] = useState(false);
-  const [popup, setPopup] = useState("none");
-  useEffect(() => {
+  const [armedUrl, setArmedUrl] = createSignal("");
+  const [armed, setArmed] = createSignal("pending");
+  const [view, setView] = createSignal<NdNodeRef<"webview">>();
+  const [armedView, setArmedView] = createSignal<NdNodeRef<"webview">>();
+  const [title, setTitle] = createSignal("");
+  const [loading, setLoading] = createSignal(false);
+  const [progress, setProgress] = createSignal(0);
+  const [back, setBack] = createSignal(false);
+  const [forward, setForward] = createSignal(false);
+  const [popup, setPopup] = createSignal("none");
+  onSettled(() => {
     // Injected into every frame, so the page and its iframe both report a
     // context for world "probe". A world cache keyed by name alone lets the
     // iframe's win, and every world-scoped eval then runs in the iframe.
-    if (armedView.current) {
-      sendCommand(armedView.current, "addUserScript", {
+    const armedNode = armedView();
+    if (armedNode) {
+      sendCommand(armedNode, "addUserScript", {
         id: "m1-world",
         source: 'window.__ndFrameIsTop = String(window.top === window.self);',
         injectionTime: "start",
@@ -73,33 +75,34 @@ function App() {
       });
     }
     setArmedUrl(`${BASE}?armed=1`);
-  }, []);
+  });
 
   // The engine menu leg: these have to reach Chromium's own model while
   // on_before_context_menu is still on the stack, so the drive right-clicks
   // the view and the host trace reports what the model received.
-  useEffect(() => {
-    if (!view.current) return;
-    setContextMenuItems(view.current, [
+  onSettled(() => {
+    const v = view();
+    if (!v) return;
+    setContextMenuItems(v, [
       { id: "m1-alpha", label: "Alpha", contexts: ["all"] },
       { id: "m1-beta", label: "Beta", contexts: ["all"] },
       { id: "m1-gamma", label: "Gamma", contexts: ["all"] },
     ]);
-  }, []);
+  });
 
   return (
     <window title="ND CEF M1" defaultWidth={900} defaultHeight={640}>
       <box orientation="vertical" spacing={4} style={{ padding: 12 }}>
-        <label testID="m1-url" text={`url=${url}`} />
-        <label testID="m1-title" text={`title=${title}`} />
-        <label testID="m1-loading" text={`loading=${loading}`} />
-        <label testID="m1-progress" text={`progress=${progress}`} />
-        <label testID="m1-nav" text={`nav=${back},${forward}`} />
-        <label testID="m1-popup" text={`popup=${popup}`} />
-        <label testID="m1-armed" text={`armed=${armed}`} />
+        <label testID="m1-url" text={`url=${url()}`} />
+        <label testID="m1-title" text={`title=${title()}`} />
+        <label testID="m1-loading" text={`loading=${loading()}`} />
+        <label testID="m1-progress" text={`progress=${progress()}`} />
+        <label testID="m1-nav" text={`nav=${back()},${forward()}`} />
+        <label testID="m1-popup" text={`popup=${popup()}`} />
+        <label testID="m1-armed" text={`armed=${armed()}`} />
         <box orientation="horizontal" style={{ vexpand: true }}>
           <webview
-            ref={view}
+            ref={setView}
             testID="m1-view"
             url={BASE}
             onNavigate={(e) => setUrl(e.text)}
@@ -111,9 +114,9 @@ function App() {
             onNewWindow={(e) => setPopup(e.text)}
           />
           <webview
-            ref={armedView}
+            ref={setArmedView}
             testID="m1-armed-view"
-            url={armedUrl}
+            url={armedUrl()}
             onNavigate={(e) => setArmed(e.text)}
           />
         </box>
@@ -122,4 +125,4 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
