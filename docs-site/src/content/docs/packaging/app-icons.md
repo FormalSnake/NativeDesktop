@@ -92,7 +92,8 @@ icon: {
   (`#0a84ff`, `#0a84ffcc`) or an Icon Composer color string (`display-p3:0,0.5,1,1`), which passes
   through untouched. Omit it for a transparent icon body.
 - `layers` holds 1 to 4 entries, back to front, drawn full-bleed on the 1024x1024 grid Icon
-  Composer uses. A bare string is shorthand for `{ image }`; `.svg` and `.png` are both accepted.
+  Composer uses. A bare string is shorthand for `{ image }`; `.svg` and `.png` are both accepted. The
+  generated `icon.json` lists them front to back, which is Icon Composer's own order.
 - Per layer, `specular` (default `true`), `translucency` (0..1, default `0.5`, `false` to disable)
   and `shadow` (0..1, default `0.5`, `false` to disable) control the glass treatment. Each layer
   becomes its own Icon Composer group, which is what makes those per-layer.

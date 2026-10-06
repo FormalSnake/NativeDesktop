@@ -112,11 +112,12 @@ export function iconManifest(layered: AppIconLayered, appDir: string): string {
   return manifestJson(layered, resolveLayers(layered, appDir));
 }
 
-/** One group per layer, so the glass controls stay per-layer in the config. */
+/** One group per layer, so the glass controls stay per-layer in the config.
+ * icon.json lists groups front to back, the reverse of the config's order. */
 function manifestJson(layered: AppIconLayered, layers: ResolvedLayer[]): string {
   const manifest: Record<string, unknown> = {};
   if (layered.background) manifest.fill = fillManifest(layered.background);
-  manifest.groups = layers.map(({ file, name, layer }) => ({
+  manifest.groups = layers.toReversed().map(({ file, name, layer }) => ({
     layers: [{ "image-name": file, name }],
     specular: layer.specular ?? true,
     translucency: layer.translucency === false
@@ -198,8 +199,10 @@ export function readIconBundle(bundle: string): { background?: AppIconFill; laye
   };
   const background = readFill(manifest.fill, basename(bundle));
   const layers: string[] = [];
-  for (const group of manifest.groups ?? []) {
-    for (const layer of group.layers ?? []) {
+  // icon.json runs front to back, at both the group and the layer level; the
+  // flatten paints back to front.
+  for (const group of (manifest.groups ?? []).toReversed()) {
+    for (const layer of (group.layers ?? []).toReversed()) {
       const file = layer["image-name"];
       if (!file) continue;
       const path = join(bundle, "Assets", file);
