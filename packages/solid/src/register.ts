@@ -13,13 +13,15 @@
 //   fires for it), so the SSR file is replaced at load time with a re-export
 //   of the client build instead (the dev build under `nd dev`, which the
 //   refresh runtime requires).
-// - .jsx/.tsx go through babel-preset-solid's universal transform, whose
-//   compiled output imports its helpers from @nativedesktop/solid.
+// - A Solid app's .jsx/.tsx go through babel-preset-solid's universal
+//   transform, whose compiled output imports its helpers from
+//   @nativedesktop/solid.
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
 /// <reference path="./babel-presets.d.ts" />
 import { transformAsync, types as t, type PluginObj, type TransformOptions } from "@babel/core";
 import presetTypescript from "@babel/preset-typescript";
 import presetSolid from "babel-preset-solid";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
 const dev = process.env.ND_DEV === "1";
@@ -108,6 +110,32 @@ if (dev) {
       invalidate: () => globalThis.__nd_solid_remount?.(),
     };
   };
+}
+
+// A Solid .tsx is one whose nearest package.json is this package or depends
+// on it; any other .tsx (React code in the same process, as under a
+// repo-wide `bun test`) keeps Bun's own transform.
+const solidPackages = new Map<string, boolean>();
+function isSolidSource(path: string): boolean {
+  for (let dir = dirname(path); ; dir = dirname(dir)) {
+    const known = solidPackages.get(dir);
+    if (known !== undefined) return known;
+    const manifest = join(dir, "package.json");
+    if (existsSync(manifest)) {
+      const pkg = JSON.parse(readFileSync(manifest, "utf8")) as {
+        name?: string;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      const solid =
+        pkg.name === "@nativedesktop/solid" ||
+        pkg.dependencies?.["@nativedesktop/solid"] !== undefined ||
+        pkg.devDependencies?.["@nativedesktop/solid"] !== undefined;
+      solidPackages.set(dir, solid);
+      return solid;
+    }
+    if (dirname(dir) === dir) return false;
+  }
 }
 
 function facade(path: string, ns: Record<string, unknown>): string {
@@ -203,7 +231,10 @@ Bun.plugin({
         const loader = /\.[cm]?ts$/.test(path) ? "ts" : "js";
         return { contents: selfPin(path, await Bun.file(path).text()), loader };
       }
-      if (jsx.test(path)) return { contents: await compileJsx(path), loader: "js" };
+      if (jsx.test(path)) {
+        if (isSolidSource(path)) return { contents: await compileJsx(path), loader: "js" };
+        return { contents: await Bun.file(path).text(), loader: path.endsWith(".jsx") ? "jsx" : "tsx" };
+      }
       // register.ts itself, matched by its directory's filter.
       return { contents: await Bun.file(path).text(), loader: "ts" };
     });

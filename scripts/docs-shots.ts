@@ -15,7 +15,7 @@ import { mkdirSync, mkdtempSync, copyFileSync, existsSync, renameSync } from "no
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { type AppHandle, type JsonNode, launchApp, findMatchingNode, pngSize } from "@nativedesktop/test";
-import type { Geometry } from "@nativedesktop/react/rpc";
+import type { Geometry } from "@nativedesktop/core/rpc";
 
 const backend = process.argv[2] as "appkit" | "gtk";
 const outDir = process.argv[3];

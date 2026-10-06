@@ -3,7 +3,7 @@
 // hung host (deadlock, crashed reader thread) fails a test in rpcTimeoutMs
 // instead of the whole run hanging forever.
 import { AutomationClient } from "./socket.ts";
-import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/react/rpc";
+import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/core/rpc";
 
 /// Room for the host to answer after its own deadline expires, for calls that
 /// declare one (waitFor, webviewEval). Small: the host answers a timeout in

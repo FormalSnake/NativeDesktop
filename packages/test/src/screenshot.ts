@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { Backend } from "@nativedesktop/host";
-import { RPC_ERRORS, type ScreenshotResult } from "@nativedesktop/react/rpc";
+import { RPC_ERRORS, type ScreenshotResult } from "@nativedesktop/core/rpc";
 import { pngSize } from "./png.ts";
 import { AutomationRpcError } from "./socket.ts";
 

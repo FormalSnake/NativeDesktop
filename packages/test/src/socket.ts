@@ -6,7 +6,7 @@
 // src/generated/rpc.zig) — `call` is constrained by the generated RpcMethods
 // map, so a schema change is a compile error here, tRPC-style.
 
-import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/react/rpc";
+import type { RpcMethodName, RpcParams, RpcResult } from "@nativedesktop/core/rpc";
 
 interface JsonRpcError {
   code: number;

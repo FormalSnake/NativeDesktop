@@ -12,7 +12,7 @@
 // never clicked. A dispatch that comes back -32001 (the ref went stale
 // between resolve and dispatch) goes around the loop again.
 import { AutomationRpcError } from "./socket.ts";
-import { RPC_ERRORS, type GetTreeResult, type ScreenshotResult } from "@nativedesktop/react/rpc";
+import { RPC_ERRORS, type GetTreeResult, type ScreenshotResult } from "@nativedesktop/core/rpc";
 import {
   allNodes,
   asNdNode,

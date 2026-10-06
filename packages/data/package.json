@@ -20,18 +20,24 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./react": "./src/react.ts"
+    "./react": "./src/react.ts",
+    "./solid": "./src/solid.ts"
   },
   "peerDependencies": {
-    "@nativedesktop/react": "workspace:^"
+    "@nativedesktop/react": "workspace:^",
+    "solid-js": "2.0.0-rc.13"
   },
   "peerDependenciesMeta": {
     "@nativedesktop/react": {
+      "optional": true
+    },
+    "solid-js": {
       "optional": true
     }
   },
   "devDependencies": {
     "drizzle-orm": "0.45.2",
-    "kysely": "0.29.2"
+    "kysely": "0.29.2",
+    "solid-js": "2.0.0-rc.13"
   }
 }

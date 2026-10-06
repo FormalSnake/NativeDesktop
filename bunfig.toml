@@ -11,3 +11,10 @@
 # built and tested against, lockfile or not.
 [install]
 linker = "hoisted"
+
+# Solid tests (packages/solid, the /solid entries of data and rpc) need
+# solid-js's client build and the Solid JSX transform. The register scopes
+# its JSX transform to Solid packages, so React .tsx tests in the same run
+# keep Bun's own transform.
+[test]
+preload = ["./packages/solid/src/register.ts"]

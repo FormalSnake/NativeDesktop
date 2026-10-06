@@ -30,14 +30,10 @@
     "./jsx-dev-runtime": {
       "types": "./dist/packages/react/src/jsx-dev-runtime.d.ts",
       "default": "./dist/jsx-dev-runtime.js"
-    },
-    "./rpc": {
-      "types": "./dist/packages/react/src/rpc.d.ts",
-      "default": "./dist/rpc.js"
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts ./src/rpc.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh --external @nativedesktop/core",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/jsx-runtime.ts ./src/jsx-dev-runtime.ts --outdir dist --target node --format esm --external react --external react-reconciler --external react-refresh --external @nativedesktop/core",
     "prepack": "bun run build",
     "prepare": "bun run build"
   },

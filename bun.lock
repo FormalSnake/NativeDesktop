@@ -320,12 +320,15 @@
       "devDependencies": {
         "drizzle-orm": "0.45.2",
         "kysely": "0.29.2",
+        "solid-js": "2.0.0-rc.13",
       },
       "peerDependencies": {
-        "@nativedesktop/react": "workspace:*",
+        "@nativedesktop/react": "workspace:^",
+        "solid-js": "2.0.0-rc.13",
       },
       "optionalPeers": [
         "@nativedesktop/react",
+        "solid-js",
       ],
     },
     "packages/host": {
@@ -403,11 +406,16 @@
     "packages/rpc": {
       "name": "@nativedesktop/rpc",
       "version": "0.4.54",
+      "devDependencies": {
+        "solid-js": "2.0.0-rc.13",
+      },
       "peerDependencies": {
         "@nativedesktop/react": "workspace:^",
+        "solid-js": "2.0.0-rc.13",
       },
       "optionalPeers": [
         "@nativedesktop/react",
+        "solid-js",
       ],
     },
     "packages/solid": {
@@ -434,8 +442,8 @@
       "name": "@nativedesktop/test",
       "version": "0.4.54",
       "dependencies": {
+        "@nativedesktop/core": "workspace:*",
         "@nativedesktop/host": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
       },
     },
     "packages/ui": {

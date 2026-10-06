@@ -13,7 +13,7 @@ import type {
   WaitForResult,
   WindowInfo,
   WindowsResult,
-} from "@nativedesktop/react/rpc";
+} from "@nativedesktop/core/rpc";
 import { AutomationClient } from "./socket.ts";
 import { resolveHostBinary } from "@nativedesktop/host";
 import { Cursor } from "./cursor.ts";

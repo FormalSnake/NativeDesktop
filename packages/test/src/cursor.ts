@@ -7,7 +7,7 @@
 // moves, and the app is brought to the front first. macOS only, and the host
 // binary needs Accessibility (`<host> --nd-grant` with SIP off, or System
 // Settings).
-import type { WindowsResult } from "@nativedesktop/react/rpc";
+import type { WindowsResult } from "@nativedesktop/core/rpc";
 import type { Locator } from "./locator.ts";
 
 const PHASE = { began: "began", changed: "changed", ended: "ended" } as const;
