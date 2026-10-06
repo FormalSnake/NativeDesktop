@@ -96,7 +96,7 @@ export type { NdErrorKind, NdErrorContext, NdErrorHandler, UnhandledErrorPolicy 
 export { createStore } from "./store.ts";
 export type { Store, StoreOptions } from "./store.ts";
 export type * from "./generated/widgets.ts";
-export type { Op, CommitBatch, EventMsg } from "../../../runtime/ndp.ts";
+export type { Op, CommitBatch, EventMsg } from "./ndp.ts";
 
 // Renderer SDK: what a renderer package builds its host bindings from.
 export { connect, getSession, setSession, isHot } from "./session.ts";

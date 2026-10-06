@@ -313,9 +313,6 @@
     "packages/core": {
       "name": "@nativedesktop/core",
       "version": "0.4.54",
-      "devDependencies": {
-        "typescript": "7.0.2",
-      },
     },
     "packages/data": {
       "name": "@nativedesktop/data",

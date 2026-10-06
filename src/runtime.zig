@@ -277,7 +277,7 @@ pub const Runtime = struct {
         defer env.deinit();
         for (self.parent_env.keys(), self.parent_env.values()) |k, v| try env.put(k, v);
         try env.put("ND_SOCKET", self.sock_path);
-        const script = self.parent_env.get("ND_SCRIPT") orelse "runtime/m2-demo.ts";
+        const script = self.parent_env.get("ND_SCRIPT") orelse "scripts/m2-demo.ts";
         const argv: []const []const u8 = if (self.dev)
             &.{ "bun", "--hot", script }
         else

@@ -2,7 +2,7 @@
 // dialogs, clipboard, notifications, recent documents, credentials, and
 // app-level lifecycle/OS events (activate/deactivate, open-url, open-file,
 // file drop). Every method below rides a systemRequest/systemResponse round
-// trip over NDP (runtime/ndp.ts's `request()`); every `on*` subscribes to a
+// trip over NDP (ndp.ts's `request()`); every `on*` subscribes to a
 // systemEvent channel. Methods are gated host-side by ACL — dialog/
 // notification/recent/clipboard.writeText/audio.* are default-granted;
 // readText and credentials.* are default-denied and reject with "capability

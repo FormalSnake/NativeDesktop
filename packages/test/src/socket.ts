@@ -1,5 +1,5 @@
 // Framed JSON-RPC 2.0 client for the NativeDesktop automation socket.
-// Wire format matches NDP: u32 LE length prefix + UTF-8 JSON (runtime/ndp.ts),
+// Wire format matches NDP: u32 LE length prefix + UTF-8 JSON (packages/core/src/ndp.ts),
 // but the payload here is a JSON-RPC 2.0 request/response, not an NDP message.
 // Method names and params/result shapes are GENERATED from schema/rpc.json
 // (the single source of truth shared with the Zig host, src/automation.zig via

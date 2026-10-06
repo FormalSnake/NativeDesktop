@@ -3,7 +3,7 @@
 // top level on an edit: a module-local binding would reconnect, or lose the
 // registry that routes events to live handlers.
 
-import { Ndp, type EventMsg } from "../../../runtime/ndp.ts";
+import { Ndp, type EventMsg } from "./ndp.ts";
 import { Batch, NodeRegistry } from "./ops.ts";
 import { currentGeneration } from "./ids.ts";
 import { setBackend, setHostManifest } from "./platform.ts";

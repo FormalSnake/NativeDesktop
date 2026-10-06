@@ -10365,7 +10365,7 @@ function genZigHostManifest(s: Schema): string {
 // ---- artifacts (g)+(h): NDP protocol frames + automation RPC (tRPC-style dual emission) ----
 // schema/protocol.json and schema/rpc.json are the single sources of truth for
 // the Zig<->Bun wire contracts that used to be hand-mirrored (src/protocol.zig
-// vs runtime/ndp.ts; src/automation.zig vs packages/mcp). Both sides are
+// vs packages/core/src/ndp.ts; src/automation.zig vs packages/mcp). Both sides are
 // emitted from the same schema, so a field rename or type change becomes a
 // compile error on whichever side still uses the old shape instead of a
 // silent runtime break. Zig field DECLARATION ORDER is wire byte order
@@ -10569,7 +10569,7 @@ function genProtocolTs(s: ProtocolSchema, widgets: Schema): string {
   out += "// Zig host — verbatim, no renaming.\n\n";
   out += `export const NDP_VERSION = ${s.ndpVersion};\n\n`;
   // Same union genWidgetsShared emits, duplicated here (from the same schema, so
-  // no drift is possible) to keep this module dependency-free: runtime/ndp.ts
+  // no drift is possible) to keep this module dependency-free: packages/core/src/ndp.ts
   // imports it and must not drag react types into the runtime's typecheck.
   out += "export type WidgetName = " + widgets.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n\n";
   for (const t of s.types) {

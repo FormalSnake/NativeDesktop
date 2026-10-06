@@ -76,12 +76,12 @@ processes). Use `@nativedesktop/data` (below) to keep the main thread free.
 Renaming a field is a compile error on both the Zig and TS sides. Never
 hand-edit `tools/codegen.ts` or the generated files.
 
-**Wire protocol perf:** the binary NDP commit encoder (`runtime/ndp-binary.ts`)
+**Wire protocol perf:** the binary NDP commit encoder (`packages/core/src/ndp-binary.ts`)
 now measures faster than `JSON.stringify` on a large mount: a single growable
 `ArrayBuffer` with one cached `DataView`, rebuilt only when the buffer grows,
 replaces a `new DataView` allocation on every primitive write
 (`scripts/bench-10k.ts`, sized by `ND_BENCH_NODES`, is the gate). Inbound
-framing (`runtime/ndp.ts`) tracks head/tail offsets into the accumulated
+framing (`packages/core/src/ndp.ts`) tracks head/tail offsets into the accumulated
 buffer instead of `Buffer.concat`-ing every chunk. Host-side (`src/runtime.zig`,
 `src/protocol.zig`): a `CommitBatch` is decoded and gated on the reader
 thread, and the UI thread only runs `tree.apply`; outbound frames (events,
@@ -513,8 +513,9 @@ band around the threshold).
 - **AppKit backend:** `swift/Sources/NDShell/` (hand-written) +
   `swift/Sources/NDGen/` (generated) + `swift/Sources/CNd/` (bridges `libnd.a`);
   build scripts under `scripts/mac/`.
-- **JS packages:** `packages/core` (`@nativedesktop/core`: renderer-agnostic
-  session/NDP handshake, Batch/NodeRegistry, wire ids, prop diff and
+- **JS packages:** `packages/core` (`@nativedesktop/core`, shipped as source:
+  renderer-agnostic NDP client `ndp.ts` + binary encoder `ndp-binary.ts`,
+  session/handshake, Batch/NodeRegistry, wire ids, prop diff and
   dropped-prop reset, sendCommand/moveNode, `Platform`, paths, store, errors,
   system/dialogs/toast/webview APIs, and the generated schema-meta/protocol/
   rpc/widgets TS), `packages/react` (`@nativedesktop/react`: reconciler,

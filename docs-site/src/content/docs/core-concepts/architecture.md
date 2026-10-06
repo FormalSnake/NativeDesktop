@@ -15,7 +15,7 @@ flowchart TB
         direction TB
         APP["Your React app · TSX"]
         RECON["@nativedesktop/react<br/>React 19 reconciler"]
-        NDPC["NDP client<br/>runtime/ndp.ts"]
+        NDPC["NDP client<br/>packages/core/src/ndp.ts"]
         PLAT["Platform.backend · Platform.os"]
         APP --> RECON --> NDPC
         NDPC -.->|"backend from helloAck"| PLAT
@@ -52,7 +52,7 @@ The diff itself compares object props (`style`, `cssClasses`, `rows`/`columns`/`
 rather than by identity, so a fresh-object-per-render JSX literal with unchanged contents emits no
 update op. A prop the new render dropped is sent as an explicit removal rather than silently vanishing
 from the commit (`null`, except `style`/`cssClasses`, whose empty value already means "reset" on
-their own set-replace path). The binary NDP encoder (`runtime/ndp-binary.ts`) measures faster than
+their own set-replace path). The binary NDP encoder (`packages/core/src/ndp-binary.ts`) measures faster than
 `JSON.stringify` on a large mount: a single growable buffer with one cached view, reused across
 writes instead of reallocated per primitive.
 

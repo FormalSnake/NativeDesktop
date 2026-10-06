@@ -12,8 +12,8 @@ import { encodeCommitBatchBinary, BinaryUnsupportedValue } from "./ndp-binary";
 // of truth shared with the Zig mirror, src/generated/protocol.zig) — a field
 // rename or type change there regenerates both sides, so drift is a compile
 // error, not a silent wire break.
-import { NDP_VERSION } from "../packages/core/src/generated/protocol";
-import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "../packages/core/src/generated/protocol";
+import { NDP_VERSION } from "./generated/protocol";
+import type { Runtime, Op, CommitBatch, EventMsg, HostToRuntimeMsg } from "./generated/protocol";
 
 interface PendingRequest {
   resolve: (result: unknown) => void;

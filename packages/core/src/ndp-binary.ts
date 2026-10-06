@@ -4,7 +4,7 @@
 // u32 LE frame-length prefix (shared with the JSON path, spec §1.1) — this
 // module never touches the socket or the outbox.
 
-import { WIDGET_TYPE } from "../packages/core/src/generated/widget-types";
+import { WIDGET_TYPE } from "./generated/widget-types";
 
 type Op =
   | { op: "create"; id: number; widget: string; props: Record<string, unknown> }
@@ -18,7 +18,7 @@ type Op =
 type Batch = { commitId: number; generation: number; ops: readonly Op[] };
 
 // Thrown when a prop value has no binary value tag (spec §5.3: stringRef/i64/
-// f64/bool/null only — no array/object tag). Callers (runtime/ndp.ts) catch
+// f64/bool/null only — no array/object tag). Callers (ndp.ts) catch
 // this specifically to fall back to sending the offending batch as JSON;
 // any other error out of this module is a genuine bug/corruption and should
 // propagate uncaught.

@@ -43,7 +43,7 @@ jobs:
       - name: headless errors
         run: nix develop -c ./scripts/headless-errors.sh
       - name: bun tests (runtime)
-        run: nix develop -c bun test runtime/ndp-binary.test.ts
+        run: nix develop -c bun test packages/core/src/ndp-binary.test.ts packages/core/src/ndp.test.ts
       - name: build demo plugin
         run: nix develop -c zig build plugin-hello
       - name: headless m10 (binary bench + acl + plugins)

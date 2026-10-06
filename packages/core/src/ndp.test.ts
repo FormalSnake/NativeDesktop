@@ -1,6 +1,6 @@
-// Standalone verification for runtime/ndp.ts against a mock unix-socket host,
+// Standalone verification for ndp.ts against a mock unix-socket host,
 // since the Zig host (src/protocol.zig, src/runtime.zig) does not exist yet.
-// Run with: nix develop -c bun test runtime/
+// Run with: bun test packages/core/src/ndp.test.ts
 
 import { test, expect, afterAll } from "bun:test";
 import { Ndp } from "./ndp";

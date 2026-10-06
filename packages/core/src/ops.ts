@@ -1,4 +1,4 @@
-import type { Op } from "../../../runtime/ndp.ts";
+import type { Op } from "./ndp.ts";
 
 export class Batch {
   private ops: Op[] = [];

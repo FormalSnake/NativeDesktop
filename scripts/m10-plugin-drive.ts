@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Minimal pluginCommand driver for headless-m10.sh leg 3. `pluginCommand`
-// isn't a typed Ndp method (M10 scope kept runtime/ndp.ts untouched for this
+// isn't a typed Ndp method (M10 scope kept the NDP client untouched for this
 // task), so this opens the NDP socket directly and hand-frames two messages:
 // a `hello` handshake (required before the host will route anything) and one
 // `pluginCommand` invoking the demo plugin's `greet` command. Works for both

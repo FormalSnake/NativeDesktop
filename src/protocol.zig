@@ -92,7 +92,7 @@ const type_name_max = 32;
 /// The frame's `type`, for routing, without parsing the frame.
 ///
 /// Every frame the host receives is our own encoder's output
-/// (runtime/ndp.ts), which builds each frame from an object literal whose
+/// (packages/core/src/ndp.ts), which builds each frame from an object literal whose
 /// first member is `type`, so the value starts at a fixed offset and routing
 /// costs a prefix compare instead of a JSON parse of the whole (possibly
 /// multi-megabyte) frame. A frame shaped any other way falls back to the full

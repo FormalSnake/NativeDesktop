@@ -14,26 +14,12 @@
     "access": "public"
   },
   "files": [
-    "dist"
+    "src"
   ],
-  "main": "./dist/index.js",
-  "types": "./dist/packages/core/src/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/packages/core/src/index.d.ts",
-      "default": "./dist/index.js"
-    },
-    "./rpc": {
-      "types": "./dist/packages/core/src/generated/rpc.d.ts",
-      "default": "./dist/generated/rpc.js"
-    }
-  },
-  "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build ./src/index.ts ./src/generated/rpc.ts --outdir dist --target node --format esm",
-    "prepack": "bun run build",
-    "prepare": "bun run build"
-  },
-  "devDependencies": {
-    "typescript": "7.0.2"
+    ".": "./src/index.ts",
+    "./rpc": "./src/generated/rpc.ts"
   }
 }
