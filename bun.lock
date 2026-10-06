@@ -34,22 +34,16 @@
       "name": "cef-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/command-palette": {
       "name": "command-palette-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/counter": {
@@ -194,11 +188,8 @@
       "name": "notes-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/panes": {
@@ -263,22 +254,16 @@
       "name": "settings-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/sourcetree": {
       "name": "sourcetree-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/tasks": {
