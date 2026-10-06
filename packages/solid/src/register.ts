@@ -19,7 +19,7 @@
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
 import type { PluginObj, TransformOptions } from "@babel/core";
 import { dirname, join, sep } from "node:path";
-import { isSolidSource, jsxFile as jsx } from "./solid-source.ts";
+import { isSolidModule, jsxFile as jsx } from "./solid-source.ts";
 
 const dev = process.env.ND_DEV === "1";
 // A native addon, needed for the dev refresh pass only; a packaged app never loads it.
@@ -158,8 +158,8 @@ function hotContext(id: string): PluginObj {
   };
 }
 
-async function compileJsx(path: string): Promise<string> {
-  let source = await Bun.file(path).text();
+async function compileJsx(path: string, original: string): Promise<string> {
+  let source = original;
   let inputSourceMap: TransformOptions["inputSourceMap"];
   if (refreshCompiler) {
     const refreshed = await refreshCompiler.transformRefreshAsync(source, {
@@ -196,8 +196,9 @@ Bun.plugin({
         return { contents: selfPin(path, await Bun.file(path).text()), loader };
       }
       if (jsx.test(path)) {
-        if (isSolidSource(path)) return { contents: await compileJsx(path), loader: "js" };
-        return { contents: await Bun.file(path).text(), loader: path.endsWith(".jsx") ? "jsx" : "tsx" };
+        const source = await Bun.file(path).text();
+        if (isSolidModule(path, source)) return { contents: await compileJsx(path, source), loader: "js" };
+        return { contents: source, loader: path.endsWith(".jsx") ? "jsx" : "tsx" };
       }
       // register.ts itself, matched by its directory's filter.
       return { contents: await Bun.file(path).text(), loader: "ts" };
