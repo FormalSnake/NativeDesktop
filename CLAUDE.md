@@ -254,8 +254,12 @@ native widget* imperatively with `moveNode(ref, slotRef)`. That rides the
 existing `widgetCommand` frame (reserved `__ndReparent`) into the appended
 `reparent_child` ABI op (vtable word 21); GTK brackets the move in
 `g_object_ref`/`unref`, AppKit relies on the core's `passRetained` +1. See
-`examples/multiwindow/`. `moveNode` is imperative BY DESIGN — preserving state
-React would otherwise destroy is outside `UI = f(state)`.
+`examples/multiwindow/`, and `examples/multiwindow-solid/` for Solid's
+`<Portal>` (gate `scripts/multiwindow-solid-drive.ts`). `moveNode` is imperative BY DESIGN — preserving state
+React would otherwise destroy is outside `UI = f(state)`. Widget commands
+(`moveNode`, `sendCommand`) call `session.flush()` before their own frame, so
+one sent in the tick its target was created (Solid refs, `onSettled`) never
+reaches the host ahead of the create.
 
 **Webview / browser-style apps:** `<webview>` wraps the platform engine
 (WKWebView / WebKitGTK) with a browser-grade surface — full docs in
@@ -367,7 +371,8 @@ band around the threshold).
   (→ `~/.local/share/<name>`).
 - **Worker-backed SQLite** — `@nativedesktop/data` (`packages/data/`).
   `openDatabase(path)` → `query` / `mutate` / `transaction` / `close`, plus a
-  `useQuery` hook from `@nativedesktop/data/react`. The `bun:sqlite` connection
+  `useQuery` hook from `@nativedesktop/data/react` and a `createQuery` async
+  memo from `@nativedesktop/data/solid`. The `bun:sqlite` connection
   runs in a Bun `Worker`, so queries never block React's commit loop. Composes
   with `ensureAppDataDir()`. **ORM-agnostic by design:** the library depends on
   NO ORM; it exports a stable `SqliteExecutor` contract (async
@@ -431,8 +436,9 @@ band around the threshold).
   app's own external services: typed `RpcContract`, `socketTransport` /
   `webSocketTransport`, `ConnectionLadder` reconnect backoff with a stability
   window. React binding lives at `@nativedesktop/rpc/react` (`useRpcStatus`
-  subscribes to connection status) so the core client stays React-free;
-  `@nativedesktop/react` is an optional peer dep.
+  subscribes to connection status), Solid's at `@nativedesktop/rpc/solid`
+  (`createRpcStatus`), so the core client stays renderer-free;
+  `@nativedesktop/react` and `solid-js` are optional peer deps.
 - **`@nativedesktop/panes`** (`packages/panes/`): pure split-pane tree model
   over the existing `<paned>` widget (no schema/ABI change). Every model op
   (`splitPane`/`closePane`/`focusNeighbor`/`setPaneRatio`/`seedPanes`/
