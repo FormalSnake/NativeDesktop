@@ -3614,7 +3614,7 @@ fn createWidget(
         if (propFloat(props, "sidebarWidth")) |sw| {
             if (sw > 0) adw.OverlaySplitView.setSidebarWidthFraction(sv, sw);
         }
-        if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(sv, @intFromBool(c));
+        if (propBool(props, "collapsed")) |c| ndchrome_gtk.setCollapsed(sv.as(gtk.Widget), c);
         if (propFloat(props, "listWidth")) |lw| {
             if (lw > 0) split_list_widths.put(events_gpa, @intFromPtr(sv), lw) catch {};
         }
@@ -5131,7 +5131,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
             }
         }
     } else if (std.mem.eql(u8, kind, "SplitView")) {
-        if (propBool(props, "collapsed")) |c| adw.OverlaySplitView.setCollapsed(@ptrCast(@alignCast(widget)), @intFromBool(c));
+        if (propBool(props, "collapsed")) |c| ndchrome_gtk.setCollapsed(widget, c);
         if (propBool(props, "edgeReveal")) |r| ndchrome_gtk.setEdgeReveal(widget, r);
         if (propStr(props, "contentStyle")) |cs| ndchrome_gtk.setContentStyle(widget, cs);
     } else if (std.mem.eql(u8, kind, "HeaderBar")) {

@@ -1891,6 +1891,22 @@ const View = struct {
     /// The page stays where it is under the command bar, dimmed, cut around
     /// the bar's card and letting the pointer through. See `setUnderBar`.
     under_bar: bool = false,
+    /// The split the page is in is sliding its sidebar. See `syncMotion`.
+    moving: bool = false,
+    /// What the page showed when the slide began, drawn stretched over the
+    /// page's rectangle while its window is cut to nothing.
+    still: ?*gdk.Texture = null,
+    motion_started_us: i64 = 0,
+    motion_ended_us: i64 = 0,
+    /// Each resize of the page during a slide asks the page to report back
+    /// once it has painted at that size; the still goes when the last one has.
+    probe_gen: u32 = 0,
+    painted_gen: u32 = 0,
+    probe_bounds: Bounds = .{},
+    motion_timer: c_uint = 0,
+    /// The frame from which the page's window may be cut away: the still has
+    /// to have been drawn under it first. 0 once it has been.
+    motion_hide_frame: i64 = 0,
     /// The toplevel the container is a child of. A view moved into another
     /// window by `moveNode` has to take its X child with it.
     container_parent: x11.Window = 0,
@@ -2059,10 +2075,12 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     }
     if (!ensureInitialized()) return null;
 
-    // A plain drawable widget: it never paints anything itself, it reserves
-    // the rectangle the X11 child window is tracked against.
-    const area = gtk.DrawingArea.new();
-    const widget = area.as(gtk.Widget);
+    // Reserves the rectangle the X11 child window is tracked against, and
+    // draws nothing but the still a sliding sidebar stretches (syncMotion).
+    const picture = gtk.Picture.new();
+    gtk.Picture.setCanShrink(picture, 1);
+    gtk.Picture.setContentFit(picture, .fill);
+    const widget = picture.as(gtk.Widget);
 
     const view = alloc.create(View) catch return null;
     const client = ClientObj.create(view) orelse return abandon(view, null, null, null);
@@ -2165,7 +2183,7 @@ pub fn create(url: ?[*:0]const u8, profile: []const u8, context_menu_mode: []con
     gtk.Widget.setHexpand(widget, 1);
     gtk.Widget.setVexpand(widget, 1);
     // The `focus` command grabs GTK focus as well as CEF's, and a
-    // GtkDrawingArea takes none by default.
+    // GtkPicture takes none by default.
     gtk.Widget.setCanFocus(widget, 1);
     gtk.Widget.setFocusable(widget, 1);
 
@@ -2651,6 +2669,7 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     view.in_popover.store(false, .release);
     disconnectLayout(view);
     disconnectActive(view);
+    motionFinish(view, false);
     // Parked, not hidden: a background tab whose window is unmapped stops
     // running, and a tab the user comes back to has to still be the page they
     // left. `onMap` puts it back where it belongs.
@@ -2662,6 +2681,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     _ = live_views.remove(@intFromPtr(view));
     if (focused_view == view) focused_view = null;
     forgetParked(view);
+    motionFinish(view, false);
     closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
@@ -2971,12 +2991,37 @@ fn syncBounds(view: *View) void {
     // X11 coordinates are device pixels; GTK's are logical.
     const scale: f64 = @floatFromInt(gtk.Widget.getScaleFactor(view.widget));
 
-    const next: Bounds = .{
+    var next: Bounds = .{
         .x = @intFromFloat(@round((@as(f64, rect.f_origin.f_x) + tx) * scale)),
         .y = @intFromFloat(@round((@as(f64, rect.f_origin.f_y) + ty) * scale)),
         .w = @intFromFloat(@max(@round(@as(f64, rect.f_size.f_width) * scale), 1)),
         .h = @intFromFloat(@max(@round(@as(f64, rect.f_size.f_height) * scale), 1)),
     };
+    const shift = ndchrome.pageMotionShift(view.widget);
+    if (shift != null and !view.moving and bar == null) {
+        // The first frames of a slide only put the still up: the window
+        // keeps its place until it is out of sight.
+        if (motionBegin(view)) return;
+    }
+    if (view.moving and view.motion_hide_frame != 0) {
+        // The still goes under the page before the page goes: the window
+        // keeps its place, on top, until a frame with the still has been
+        // drawn, or cutting it away shows the frame before it, which has
+        // nothing there.
+        if (frameCounter(view) < view.motion_hide_frame) {
+            // A slide that is already over lays out no more frames of its own.
+            gtk.Widget.queueAllocate(view.widget);
+            return;
+        }
+        hideForMotion(view);
+    }
+    if (view.moving) {
+        if (shift) |dx| {
+            const d: i64 = @intFromFloat(@round(dx * scale));
+            if (gtk.Widget.getDirection(view.widget) != .rtl) next.x += @intCast(d);
+            next.w = @intCast(@max(@as(i64, next.w) - d, 1));
+        }
+    }
     // No unchanged early-out: under XWayland both the container and CEF's
     // inner window can be reconfigured behind GTK's back (the compositor's
     // resizes land on the X windows first), and a stale cache here is what
@@ -3012,10 +3057,161 @@ fn syncBounds(view: *View) void {
         var r: graphene.Rect = undefined;
         if (gtk.Widget.computeBounds(card, native_widget, &r) != 0) bar_rect = r;
     }
+    if (view.moving and !syncMotion(view, shift == null)) {
+        layoutContents(view, next.w, next.h);
+        return;
+    }
     syncShape(view, native_widget, rect, scale, bar_rect);
     layoutContents(view, next.w, next.h);
     setUnderBar(view, bar != null);
 }
+
+// ---- A sliding sidebar -------------------------------------------------------
+// While the split the page is in slides its sidebar (src/gtk/chrome.zig), the
+// page does not follow it frame by frame: Chromium re-laying out and
+// re-rastering on every frame of a 200 ms slide is what a slow machine drops
+// frames on, and the page lags its window anyway. Instead the page is
+// swapped for a still of itself, which GTK stretches over the page's
+// rectangle as it moves, and its window, cut to nothing, takes the size the
+// slide lands on right away. The still goes once the slide is over and the
+// page has painted at that size, so there is never a frame of stale or blank
+// page.
+
+/// How long a page that never reports a paint keeps its still past the end of
+/// the slide.
+const motion_paint_patience_ms: c_uint = 400;
+
+var motion_live: ?bool = null;
+
+/// ND_SPLIT_PAGE_MOTION=live: the page follows the slide frame by frame, for
+/// comparing the two.
+fn motionStillsWanted() bool {
+    const live = motion_live orelse blk: {
+        const v = std.c.getenv("ND_SPLIT_PAGE_MOTION");
+        const on = v != null and std.mem.eql(u8, std.mem.span(v.?), "live");
+        motion_live = on;
+        break :blk on;
+    };
+    return !live;
+}
+
+/// Takes the still and puts it up in the page's place. False when there is
+/// nothing to take one of, which leaves the page following the slide live.
+fn motionBegin(view: *View) bool {
+    if (!motionStillsWanted() or view.container == 0 or !view.placed) return false;
+    if (view.bounds.w < 32 or view.bounds.h < 32 or view.devtoolsOpen()) return false;
+    const began = glib.getMonotonicTime();
+    const page = view.cef_window.load(.acquire);
+    const still = x11.capture(if (page != 0) @intCast(page) else view.container) orelse return false;
+    view.moving = true;
+    view.still = still;
+    view.motion_started_us = began;
+    view.motion_ended_us = 0;
+    view.painted_gen = view.probe_gen;
+    view.probe_bounds = view.bounds;
+    gtk.Picture.setPaintable(@ptrCast(@alignCast(view.widget)), @ptrCast(still));
+    view.motion_hide_frame = frameCounter(view) + 2;
+    if (motionTraced()) std.debug.print("ND_PAGE_MOTION_BEGIN node={d} still={d}x{d} capture_us={d}\n", .{
+        view.node_id, gdk.Texture.getWidth(still), gdk.Texture.getHeight(still), glib.getMonotonicTime() - began,
+    });
+    return true;
+}
+
+fn frameCounter(view: *View) i64 {
+    const clock = gtk.Widget.getFrameClock(view.widget) orelse return 0;
+    return gdk.FrameClock.getFrameCounter(clock);
+}
+
+/// Cuts the page's window down to one pixel in its bottom corner. Cut to
+/// nothing, the X server reports the window fully obscured and Chromium stops
+/// drawing it, so the page would never paint at the size the slide lands it
+/// on until it was back on show, stale for a frame or more. One pixel keeps
+/// it drawing, and for the length of a slide nobody sees it.
+fn hideForMotion(view: *View) void {
+    x11.keepExposedContents(x11.toplevelXid(view.widget));
+    const corner = [_]x11.Rect{.{ .x = 0, .y = @intCast(@max(@as(i64, view.bounds.h) - 1, 0)), .width = 1, .height = 1 }};
+    x11.setShape(view.container, &corner);
+    view.shaped = true;
+    view.motion_hide_frame = 0;
+}
+
+/// One layout of a page under a slide, after its window has been moved to
+/// `view.bounds`. True once the still can go: the slide is over and the page
+/// has painted at the size it landed on.
+fn syncMotion(view: *View, ended: bool) bool {
+    if (view.probe_bounds.w != view.bounds.w or view.probe_bounds.h != view.bounds.h) probePaint(view);
+    if (!ended) return false;
+    if (view.motion_ended_us == 0) {
+        view.motion_ended_us = glib.getMonotonicTime();
+        view.motion_timer = glib.timeoutAdd(motion_paint_patience_ms, &onMotionPatience, view);
+    }
+    if (view.painted_gen != view.probe_gen) return false;
+    motionFinish(view, false);
+    return true;
+}
+
+fn motionFinish(view: *View, timed_out: bool) void {
+    if (!view.moving) return;
+    view.moving = false;
+    if (view.motion_timer != 0) {
+        _ = glib.Source.remove(view.motion_timer);
+        view.motion_timer = 0;
+    }
+    gtk.Picture.setPaintable(@ptrCast(@alignCast(view.widget)), null);
+    if (view.still) |still| gobject.Object.unref(@ptrCast(@alignCast(still)));
+    view.still = null;
+    const now = glib.getMonotonicTime();
+    if (motionTraced()) std.debug.print("ND_PAGE_MOTION node={d} held_ms={d:.1} after_end_ms={d:.1} resizes={d} timed_out={}\n", .{
+        view.node_id,
+        @as(f64, @floatFromInt(now - view.motion_started_us)) / 1000,
+        @as(f64, @floatFromInt(if (view.motion_ended_us != 0) now - view.motion_ended_us else 0)) / 1000,
+        view.probe_gen -% view.painted_gen +% 1,
+        timed_out,
+    });
+}
+
+var motion_trace_on: ?bool = null;
+
+fn motionTraced() bool {
+    return motion_trace_on orelse blk: {
+        const on = std.c.getenv("ND_MOTION_TRACE") != null;
+        motion_trace_on = on;
+        break :blk on;
+    };
+}
+
+/// Asks the page to answer once it has drawn a frame at the window's current
+/// width: two animation frames after `innerWidth` reaches it, the second so
+/// the frame carrying that width has been handed to the compositor.
+fn probePaint(view: *View) void {
+    view.probe_gen +%= 1;
+    view.probe_bounds = view.bounds;
+    if (!view.cdp_ready) {
+        view.painted_gen = view.probe_gen;
+        return;
+    }
+    var buf: [512]u8 = undefined;
+    const params = std.fmt.bufPrint(&buf, "{{\"expression\":\"new Promise(r=>{{const w={d},t=performance.now(),f=()=>{{if(Math.abs(innerWidth*devicePixelRatio-w)<3||performance.now()-t>{d})requestAnimationFrame(()=>r(1));else requestAnimationFrame(f)}};requestAnimationFrame(f)}})\",\"awaitPromise\":true,\"returnByValue\":true}}", .{ view.bounds.w, motion_paint_patience_ms }) catch return;
+    if (!cdpSend(view, "Runtime.evaluate", params, .{ .painted = view.probe_gen })) view.painted_gen = view.probe_gen;
+}
+
+fn motionPainted(view: *View, gen: u32) void {
+    if (gen != view.probe_gen or !view.moving) return;
+    view.painted_gen = gen;
+    if (view.motion_ended_us != 0) syncBounds(view);
+}
+
+fn onMotionPatience(data: ?*anyopaque) callconv(.c) c_int {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    if (!live_views.contains(@intFromPtr(view))) return 0;
+    view.motion_timer = 0;
+    if (!view.moving) return 0;
+    tr("motionPatience node={d} probe={d} painted={d}", .{ view.node_id, view.probe_gen, view.painted_gen });
+    motionFinish(view, true);
+    syncBounds(view);
+    return 0;
+}
+
 
 /// The command bar's card when the bar is the dialog up over `view`'s window
 /// (commandpalette.zig). The bar is a card on a light scrim, so the page is
@@ -5723,6 +5919,8 @@ const Call = union(enum) {
     /// Target.getTargetInfo's reply for `triggerExtensionAction`: the page
     /// target whose tab the click is for.
     trigger: struct { id: []u8, extension: []u8 },
+    /// `probePaint`'s answer: the page painted at the size it was probed for.
+    painted: u32,
 };
 
 const Queued = struct { method: []u8, params: []u8, call: Call };
@@ -5826,7 +6024,7 @@ fn callFree(call: Call) void {
         },
         .add_channel_script => |s| alloc.free(s.name),
         .cookies => |id| alloc.free(id),
-        .agent_ready, .frame_tree => {},
+        .agent_ready, .frame_tree, .painted => {},
         .trigger => |t| {
             alloc.free(t.id);
             alloc.free(t.extension);
@@ -6462,6 +6660,7 @@ fn onCdpResult(view: *View, message_id: c_int, ok: bool, json: []const u8) void 
 
     switch (call) {
         .ignore, .agent_ready => {},
+        .painted => |gen| motionPainted(view, gen),
         .trigger => |t| {
             const target = switch (root) {
                 .object => |o| o.get("targetInfo") orelse .null,
@@ -6596,6 +6795,8 @@ fn failCall(view: *View, call: Call, message: []const u8) void {
             defer callFree(call);
             emitTriggered(view, t.id, message);
         },
+        // A page that cannot answer is not waited on.
+        .painted => |gen| motionPainted(view, gen),
         else => callFree(call),
     }
 }

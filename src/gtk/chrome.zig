@@ -313,7 +313,8 @@ fn cbShowSidebar(obj: *gobject.Object, _: ?*anyopaque, _: ?*anyopaque) callconv(
     // inside libadwaita's own collapsed notify left its slide stuck at the
     // start, the sidebar allocated off screen with show-sidebar true.
     const s = splitOf(sv);
-    if (adw.OverlaySplitView.getCollapsed(s) == 0 and adw.OverlaySplitView.getSidebar(s) != null) {
+    // A sidebar sliding out on its way to collapsing is the app's own doing.
+    if (adw.OverlaySplitView.getCollapsed(s) == 0 and adw.OverlaySplitView.getSidebar(s) != null and !getFlag(sv, K_WANT_HIDDEN)) {
         _ = glib.idleAdd(&cbShowSidebarIdle, gobject.Object.ref(obj));
         // libadwaita hides the sidebar's pane when its hide slide ends. A show
         // that starts before that end lands (a conceal right before an
@@ -335,7 +336,7 @@ fn cbShowSidebarIdle(data: ?*anyopaque) callconv(.c) c_int {
     defer gobject.Object.unref(obj);
     const s: *adw.OverlaySplitView = @ptrCast(@alignCast(obj));
     if (adw.OverlaySplitView.getCollapsed(s) == 0 and adw.OverlaySplitView.getShowSidebar(s) == 0 and
-        adw.OverlaySplitView.getSidebar(s) != null) adw.OverlaySplitView.setShowSidebar(s, 1);
+        adw.OverlaySplitView.getSidebar(s) != null and !getFlag(obj, K_WANT_HIDDEN)) adw.OverlaySplitView.setShowSidebar(s, 1);
     return 0;
 }
 
@@ -383,6 +384,181 @@ pub fn splitCommand(sv: *gtk.Widget, command: []const u8) void {
     } else if (std.mem.eql(u8, command, "concealSidebar")) {
         if (isRevealed(sv)) adw.OverlaySplitView.setShowSidebar(splitOf(sv), 0);
     }
+}
+
+// ---- <splitview collapsed>: the sidebar slides -------------------------------
+// Collapsing an AdwOverlaySplitView swaps its layout in one frame. The slide is
+// the split's own uncollapsed show-sidebar spring instead (critically damped,
+// about 210 ms to within a pixel, skipped when animations are off), with the
+// collapse itself applied once the sidebar is out of sight, and undone before
+// it slides back in. `pin-sidebar` is held only around those two
+// set_collapsed calls: unpinned, set_collapsed snaps show-sidebar to match.
+//
+// An embedded engine's page is a native child window that cannot follow a
+// GTK transform, and re-laying a page out on every frame is what a slow
+// machine cannot keep up with, so the page reads `pageMotionShift` and
+// stretches a still of itself over the slide instead (src/cef/engine.zig).
+
+/// The app's own `collapsed`, which the slide is heading for.
+const K_WANT_HIDDEN = "nd-split-want-hidden";
+const K_MOTION = "nd-split-motion";
+
+const Motion = struct {
+    tick: c_uint = 0,
+    /// Frame clock times (µs) of every frame the slide ran, for ND_MOTION_TRACE.
+    frames: [96]i64 = undefined,
+    frame_n: usize = 0,
+    refresh_us: i64 = 0,
+    reversals: u32 = 0,
+    /// The page has been told the slide is over: it swaps its still for the
+    /// live page as soon as that has painted at its new size.
+    page_released: bool = false,
+};
+
+const motion_trace = struct {
+    var checked = false;
+    var on = false;
+    fn enabled() bool {
+        if (!checked) {
+            checked = true;
+            on = std.c.getenv("ND_MOTION_TRACE") != null;
+        }
+        return on;
+    }
+};
+
+fn motionOf(sv: *gtk.Widget) ?*Motion {
+    const raw = gobject.Object.getData(asObject(sv), K_MOTION) orelse return null;
+    return @ptrCast(@alignCast(raw));
+}
+
+fn setCollapsedPinned(s: *adw.OverlaySplitView, collapsed: bool) void {
+    const pinned = adw.OverlaySplitView.getPinSidebar(s);
+    adw.OverlaySplitView.setPinSidebar(s, 1);
+    adw.OverlaySplitView.setCollapsed(s, @intFromBool(collapsed));
+    adw.OverlaySplitView.setPinSidebar(s, pinned);
+}
+
+/// The `collapsed` prop. Not on screen, or with no sidebar, it lands at once.
+pub fn setCollapsed(sv: *gtk.Widget, collapsed: bool) void {
+    const s = splitOf(sv);
+    setFlag(sv, K_WANT_HIDDEN, collapsed);
+    if (adw.OverlaySplitView.getSidebar(s) == null or gtk.Widget.getMapped(sv) == 0) {
+        adw.OverlaySplitView.setCollapsed(s, @intFromBool(collapsed));
+        return;
+    }
+    wireReveal(sv);
+    const is_collapsed = adw.OverlaySplitView.getCollapsed(s) != 0;
+    const shown = adw.OverlaySplitView.getShowSidebar(s) != 0;
+    if (collapsed) {
+        // Already collapsed, peeking or not: the app's state is already this.
+        if (is_collapsed or !shown) return;
+        startMotion(sv);
+        adw.OverlaySplitView.setShowSidebar(s, 0);
+    } else if (!is_collapsed) {
+        // A slide out still running turns round where it is.
+        if (shown) return;
+        startMotion(sv);
+        adw.OverlaySplitView.setShowSidebar(s, 1);
+    } else {
+        // A peeking sidebar is already in place: only the page moves.
+        startMotion(sv);
+        setCollapsedPinned(s, false);
+        if (!shown) adw.OverlaySplitView.setShowSidebar(s, 1);
+    }
+}
+
+fn startMotion(sv: *gtk.Widget) void {
+    if (motionOf(sv)) |m| {
+        m.reversals += 1;
+        m.page_released = false;
+        return;
+    }
+    const m = std.heap.c_allocator.create(Motion) catch return;
+    m.* = .{};
+    gobject.Object.setData(asObject(sv), K_MOTION, m);
+    m.tick = gtk.Widget.addTickCallback(sv, &cbMotionTick, null, null);
+    // The page reads the slide on the next layout; this is what makes one.
+    gtk.Widget.queueAllocate(sv);
+}
+
+/// How far the slide still has to move the content's leading edge, in logical
+/// pixels, while `w` is inside a split that is sliding; null otherwise. The
+/// content sits at the sidebar's offset, a whole pixel, as libadwaita
+/// allocates it (adw-overlay-split-view.c, allocate_uncollapsed).
+pub fn pageMotionShift(w: *gtk.Widget) ?f64 {
+    var it: ?*gtk.Widget = gtk.Widget.getParent(w);
+    while (it) |cur| : (it = gtk.Widget.getParent(cur)) {
+        if (!gobject.ext.isA(cur, adw.OverlaySplitView)) continue;
+        const m = motionOf(cur) orelse continue;
+        if (m.page_released) return null;
+        const s = splitOf(cur);
+        const sidebar = adw.OverlaySplitView.getSidebar(s) orelse return null;
+        if (gtk.Widget.isAncestor(w, sidebar) != 0) return null;
+        const width: f64 = @floatFromInt(gtk.Widget.getWidth(gtk.Widget.getParent(sidebar) orelse sidebar));
+        const progress = adw.Swipeable.getProgress(@ptrCast(@alignCast(cur)));
+        const target: f64 = if (adw.OverlaySplitView.getShowSidebar(s) != 0) 1 else 0;
+        return @trunc(width * target) - @trunc(width * @max(0, @min(1, progress)));
+    }
+    return null;
+}
+
+fn cbMotionTick(w: *gtk.Widget, clock: *gdk.FrameClock, _: ?*anyopaque) callconv(.c) c_int {
+    const m = motionOf(w) orelse return 0;
+    if (m.frame_n < m.frames.len) {
+        m.frames[m.frame_n] = gdk.FrameClock.getFrameTime(clock);
+        m.frame_n += 1;
+    }
+    if (m.refresh_us == 0) {
+        var refresh: i64 = 0;
+        var presentation: i64 = 0;
+        gdk.FrameClock.getRefreshInfo(clock, gdk.FrameClock.getFrameTime(clock), &refresh, &presentation);
+        m.refresh_us = refresh;
+    }
+    const s = splitOf(w);
+    const target: f64 = if (adw.OverlaySplitView.getShowSidebar(s) != 0) 1 else 0;
+    const progress = adw.Swipeable.getProgress(@ptrCast(@alignCast(w)));
+    const sidebar = adw.OverlaySplitView.getSidebar(s);
+    const width: f64 = if (sidebar) |sb| @floatFromInt(gtk.Widget.getWidth(gtk.Widget.getParent(sb) orelse sb)) else 0;
+    // Within a pixel the allocation no longer changes: the page can take its
+    // place while the spring's tail runs out.
+    if (!m.page_released and @abs(progress - target) * width < 0.5) {
+        m.page_released = true;
+        gtk.Widget.queueAllocate(w);
+        traceMotion(m, target);
+    }
+    if (@abs(progress - target) > 1e-6) return 1;
+    if (target == 0 and getFlag(w, K_WANT_HIDDEN) and adw.OverlaySplitView.getCollapsed(s) == 0) {
+        setCollapsedPinned(s, true);
+    }
+    if (!m.page_released) gtk.Widget.queueAllocate(w);
+    gobject.Object.setData(asObject(w), K_MOTION, null);
+    std.heap.c_allocator.destroy(m);
+    return 0;
+}
+
+/// ND_MOTION_TRACE: one line per slide with its frame pacing, from the frame
+/// clock the slide itself ran on.
+fn traceMotion(m: *Motion, target: f64) void {
+    if (!motion_trace.enabled() or m.frame_n < 2) return;
+    const refresh: i64 = if (m.refresh_us > 0) m.refresh_us else 16_667;
+    var worst: i64 = 0;
+    var late: usize = 0;
+    var i: usize = 1;
+    while (i < m.frame_n) : (i += 1) {
+        const d = m.frames[i] - m.frames[i - 1];
+        worst = @max(worst, d);
+        if (d * 2 > refresh * 3) late += 1;
+    }
+    std.debug.print("ND_SPLIT_MOTION dir={s} frames={d} span_ms={d:.1} worst_ms={d:.1} late={d} refresh_ms={d:.2} reversals={d}\n", .{
+        if (target > 0.5) "show" else "hide",
+        m.frame_n,
+        @as(f64, @floatFromInt(m.frames[m.frame_n - 1] - m.frames[0])) / 1000,
+        @as(f64, @floatFromInt(worst)) / 1000,
+        late,
+        @as(f64, @floatFromInt(refresh)) / 1000,
+        m.reversals,
+    });
 }
 
 // ---- <splitview contentStyle="card"> -----------------------------------------

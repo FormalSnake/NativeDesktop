@@ -713,6 +713,20 @@ Chrome's own windows and dialogs, measured on CEF 151.3.23 (Chromium
   bar closes. Its sheet and scrim rules sit above
   `GTK_STYLE_PROVIDER_PRIORITY_USER`: a user theme in `gtk.css` restyles every
   AdwDialog sheet at that priority, and the bar then sat on an opaque sheet.
+- A `<splitview>` toggling `collapsed` slides its sidebar (libadwaita's own
+  show-sidebar spring on GTK, the split item's animated collapse on AppKit),
+  and a page in its content does not follow frame by frame: Chromium resizing
+  on every frame is what a slow machine drops frames on, and its frames trail
+  the window they were drawn for (a black band along the growing edge on
+  GTK). The page is swapped for a still of itself (MIT-SHM `XShmGetImage` of
+  its window on GTK, `Page.captureScreenshot` on AppKit), drawn stretched over
+  the page's rectangle as it moves, while the page takes the size the slide
+  lands on once (at the start on GTK, its window cut to one pixel so Chromium
+  keeps drawing it, at the end on AppKit). The still goes once the page
+  reports a frame at that width (a two-`requestAnimationFrame` probe), or
+  after 400 ms. On GTK `ND_SPLIT_PAGE_MOTION=live` keeps the page following the
+  slide, for comparison; `ND_MOTION_TRACE=1` prints `ND_SPLIT_MOTION` (frame
+  pacing of the slide) and `ND_PAGE_MOTION` (when the still went) per slide.
 - Every window Chromium puts on the root (a dialog, the bubble it shows when a
   page goes fullscreen, the small parked ones) arrives with no `WM_CLASS` at
   all, and a compositor hands that straight to whatever enumerates windows: on

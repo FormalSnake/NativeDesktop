@@ -13,6 +13,7 @@ const std = @import("std");
 const gdk = @import("gdk");
 const gtk = @import("gtk");
 const gobject = @import("gobject");
+const glib = @import("glib");
 
 pub const Window = c_ulong;
 pub const Display = anyopaque;
@@ -605,6 +606,177 @@ pub fn geometry(window: Window) ?Geometry {
     return .{ .x = gx, .y = gy, .w = gw, .h = gh };
 }
 
+// ---- XGetImage: a still of the page --------------------------------------------
+
+/// Xlib's XImage, LP64, up to the fields read here. Only ever handled through
+/// the pointer XGetImage returns.
+const XImage = extern struct {
+    width: c_int,
+    height: c_int,
+    xoffset: c_int,
+    format: c_int,
+    data: ?[*]u8,
+    byte_order: c_int,
+    bitmap_unit: c_int,
+    bitmap_bit_order: c_int,
+    bitmap_pad: c_int,
+    depth: c_int,
+    bytes_per_line: c_int,
+    bits_per_pixel: c_int,
+};
+const FnGetImage = *const fn (*Display, Window, c_int, c_int, c_uint, c_uint, c_ulong, c_int) callconv(.c) ?*XImage;
+const FnDestroyImage = *const fn (*XImage) callconv(.c) c_int;
+const z_pixmap: c_int = 2;
+const lsb_first: c_int = 0;
+
+var image_attempted = false;
+var get_image: ?FnGetImage = null;
+var destroy_image: ?FnDestroyImage = null;
+
+/// What `window` shows right now, as a texture GTK can draw in its place, or
+/// null when the server cannot read it back as 32-bit little-endian pixels
+/// (any other layout is left to the caller's fallback rather than converted).
+/// Inferiors of the same depth are included, which is where Chromium draws.
+///
+/// Through a shared memory segment where the server offers one (MIT-SHM):
+/// a page's worth of pixels written down the socket is most of the cost
+/// otherwise, and this runs inside the frame a slide starts on.
+pub fn capture(window: Window) ?*gdk.Texture {
+    if (window == 0) return null;
+    if (!image_attempted) {
+        image_attempted = true;
+        get_image = xlib.lookup(FnGetImage, "XGetImage");
+        destroy_image = xlib.lookup(FnDestroyImage, "XDestroyImage");
+    }
+    const destroyImage = destroy_image orelse return null;
+    const c = conn() orelse return null;
+    var attrs: WindowAttributes = undefined;
+    c.push();
+    const known = c.api.get_window_attributes(c.x, window, &attrs);
+    c.pop();
+    if (known == 0 or attrs.width < 2 or attrs.height < 2) return null;
+    const w: c_uint = @intCast(attrs.width);
+    const h: c_uint = @intCast(attrs.height);
+    if (captureShm(c, window, attrs, w, h)) |tex| return tex;
+    const getImage = get_image orelse return null;
+    c.push();
+    const img = getImage(c.x, window, 0, 0, w, h, ~@as(c_ulong, 0), z_pixmap);
+    c.pop();
+    const image = img orelse return null;
+    defer _ = destroyImage(image);
+    return textureOf(image);
+}
+
+fn textureOf(image: *XImage) ?*gdk.Texture {
+    if (image.bits_per_pixel != 32 or image.byte_order != lsb_first or image.data == null) return null;
+    const stride: usize = @intCast(image.bytes_per_line);
+    const rows: usize = @intCast(image.height);
+    const bytes = glib.Bytes.new(image.data.?, stride * rows);
+    defer glib.Bytes.unref(bytes);
+    const tex = gdk.MemoryTexture.new(image.width, image.height, .b8g8r8x8, bytes, stride);
+    return @ptrCast(tex);
+}
+
+/// Xext's XShmSegmentInfo.
+const ShmSegment = extern struct {
+    shmseg: c_ulong = 0,
+    shmid: c_int = -1,
+    shmaddr: ?[*]u8 = null,
+    read_only: c_int = 0,
+};
+const FnShmQuery = *const fn (*Display) callconv(.c) c_int;
+const FnShmCreateImage = *const fn (*Display, ?*Visual, c_uint, c_int, ?[*]u8, *ShmSegment, c_uint, c_uint) callconv(.c) ?*XImage;
+const FnShmAttach = *const fn (*Display, *ShmSegment) callconv(.c) c_int;
+const FnShmGetImage = *const fn (*Display, Window, *XImage, c_int, c_int, c_ulong) callconv(.c) c_int;
+
+extern "c" fn shmget(key: c_int, size: usize, flags: c_int) c_int;
+extern "c" fn shmat(id: c_int, addr: ?*anyopaque, flags: c_int) ?*anyopaque;
+extern "c" fn shmdt(addr: ?*const anyopaque) c_int;
+extern "c" fn shmctl(id: c_int, cmd: c_int, buf: ?*anyopaque) c_int;
+const ipc_private: c_int = 0;
+const ipc_creat: c_int = 0o1000;
+const ipc_rmid: c_int = 0;
+
+const Shm = struct {
+    query: FnShmQuery,
+    create_image: FnShmCreateImage,
+    attach: FnShmAttach,
+    get_image: FnShmGetImage,
+    detach: FnShmAttach,
+};
+var shm_attempted = false;
+var shm: ?Shm = null;
+/// One segment, kept attached and grown when a bigger page asks: attaching is
+/// a round trip of its own.
+var shm_segment: ShmSegment = .{};
+var shm_size: usize = 0;
+
+fn loadShm(c: Conn) ?*const Shm {
+    if (!shm_attempted) {
+        shm_attempted = true;
+        var ext = std.DynLib.open("libXext.so.6") catch std.DynLib.open("libXext.so") catch return null;
+        const fns: Shm = .{
+            .query = ext.lookup(FnShmQuery, "XShmQueryExtension") orelse return null,
+            .create_image = ext.lookup(FnShmCreateImage, "XShmCreateImage") orelse return null,
+            .attach = ext.lookup(FnShmAttach, "XShmAttach") orelse return null,
+            .get_image = ext.lookup(FnShmGetImage, "XShmGetImage") orelse return null,
+            .detach = ext.lookup(FnShmAttach, "XShmDetach") orelse return null,
+        };
+        if (fns.query(c.x) == 0) return null;
+        shm = fns;
+    }
+    return if (shm != null) &shm.? else null;
+}
+
+fn captureShm(c: Conn, window: Window, attrs: WindowAttributes, w: c_uint, h: c_uint) ?*gdk.Texture {
+    const ext = loadShm(c) orelse return null;
+    const destroyImage = destroy_image orelse return null;
+    if (attrs.depth != 24 and attrs.depth != 32) return null;
+    const size: usize = @as(usize, w) * @as(usize, h) * 4;
+    if (size > shm_size) {
+        if (shm_segment.shmaddr != null) {
+            c.push();
+            _ = ext.detach(c.x, &shm_segment);
+            _ = c.api.sync(c.x, 0);
+            c.pop();
+            _ = shmdt(shm_segment.shmaddr);
+            shm_segment = .{};
+            shm_size = 0;
+        }
+        const id = shmget(ipc_private, size, ipc_creat | 0o600);
+        if (id < 0) return null;
+        const addr = shmat(id, null, 0);
+        // Marked for removal at once: it goes when the last process detaches,
+        // a crash included.
+        _ = shmctl(id, ipc_rmid, null);
+        if (addr == null or @intFromPtr(addr) == std.math.maxInt(usize)) return null;
+        shm_segment = .{ .shmid = id, .shmaddr = @ptrCast(addr), .read_only = 0 };
+        c.push();
+        const attached = ext.attach(c.x, &shm_segment);
+        _ = c.api.sync(c.x, 0);
+        c.pop();
+        if (attached == 0) {
+            _ = shmdt(addr);
+            shm_segment = .{};
+            return null;
+        }
+        shm_size = size;
+    }
+    // The image names the segment it reads into (XShmGetImage finds it there).
+    const image = ext.create_image(c.x, attrs.visual, @intCast(attrs.depth), z_pixmap, shm_segment.shmaddr, &shm_segment, w, h) orelse return null;
+    defer _ = destroyImage(image);
+    if (@as(usize, @intCast(image.bytes_per_line)) * @as(usize, @intCast(image.height)) > shm_size) {
+        image.data = null;
+        return null;
+    }
+    c.push();
+    const ok = ext.get_image(c.x, window, image, 0, 0, ~@as(c_ulong, 0));
+    c.pop();
+    defer image.data = null;
+    if (ok == 0) return null;
+    return textureOf(image);
+}
+
 /// `_NET_WM_PID`, or 0 when the window does not carry it. This is what tells a
 /// window Chromium put up from every other client's window on the same display:
 /// Chromium's browser process is this process, so its top-levels carry this
@@ -949,6 +1121,26 @@ fn loadShape() bool {
         shape_mask = ext.lookup(FnShapeMask, "XShapeCombineMask");
     }
     return shape_rects != null and shape_mask != null;
+}
+
+const FnSetBackgroundPixmap = *const fn (*Display, Window, c_ulong) callconv(.c) c_int;
+var set_background_pixmap: ?FnSetBackgroundPixmap = null;
+var background_attempted = false;
+
+/// Takes `window`'s background away (`None`): the server then leaves what is
+/// already in a region that becomes exposed instead of filling it. The page's
+/// window drawn there is what stays, until the toolkit has drawn over it.
+pub fn keepExposedContents(window: Window) void {
+    if (window == 0) return;
+    if (!background_attempted) {
+        background_attempted = true;
+        set_background_pixmap = xlib.lookup(FnSetBackgroundPixmap, "XSetWindowBackgroundPixmap");
+    }
+    const f = set_background_pixmap orelse return;
+    const c = conn() orelse return;
+    c.push();
+    _ = f(c.x, window, 0);
+    c.pop();
 }
 
 /// Gives `window` the bounding region `rects` (window coordinates, device
