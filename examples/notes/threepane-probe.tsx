@@ -1,11 +1,11 @@
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 // NOT imported by main.tsx. A minimal three-pane (folders / list / content)
 // SplitView probe: exercises the `list` slot end-to-end (schema + both
 // backends) with a distinct testID per pane, driven headlessly by
 // scripts/threepane-drive.ts. This is a throwaway acceptance fixture for the
 // SplitView machinery, not the real notes app in main.tsx.
-function App(): React.ReactNode {
+function App() {
   return (
     <window title="ND Three-Pane Probe" defaultWidth={900} defaultHeight={600}>
       <splitview testID="probe-split" sidebarWidth={0.25} listWidth={0.3}>
@@ -34,4 +34,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);

@@ -1,4 +1,5 @@
-import { render, useMemo, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { For, Show, createMemo, createSignal, createStore } from "solid-js";
 
 // ND Notes — a note-taking app used as a framework-suitability stress test
 // (see scripts/notes-drive.ts for the headless proof). All state is in
@@ -79,86 +80,78 @@ function folderScoped(all: Note[], view: FolderView): Note[] {
   }
 }
 
-function folderLabel(view: FolderView): string {
-  switch (view) {
-    case "all":
-      return "All Notes";
-    case "personal":
-      return "Personal";
-    case "work":
-      return "Work";
-    case "trash":
-      return "Trash";
-  }
-}
+const folders: { id: FolderView; label: string }[] = [
+  { id: "all", label: "All Notes" },
+  { id: "personal", label: "Personal" },
+  { id: "work", label: "Work" },
+  { id: "trash", label: "Trash" },
+];
 
-function App(): React.ReactNode {
-  const [notes, setNotes] = useState<Note[]>(initialNotes);
-  const [selectedId, setSelectedId] = useState<number | null>(1);
-  const [folder, setFolder] = useState<FolderView>("all");
-  const [query, setQuery] = useState("");
-  const [savedPulse, setSavedPulse] = useState(true);
+function App() {
+  const [store, setStore] = createStore({ notes: initialNotes });
+  const [selectedId, setSelectedId] = createSignal<number | null>(1);
+  const [folder, setFolder] = createSignal<FolderView>("all");
+  const [query, setQuery] = createSignal("");
 
-  const scopedNotes = useMemo(() => folderScoped(notes, folder), [notes, folder]);
-  const sorted = useMemo(() => sortNotes(scopedNotes), [scopedNotes]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  const scopedNotes = createMemo(() => folderScoped(store.notes, folder()));
+  const filtered = createMemo(() => {
+    const sorted = sortNotes(scopedNotes());
+    const q = query().trim().toLowerCase();
     if (q === "") return sorted;
     return sorted.filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q));
-  }, [sorted, query]);
+  });
 
-  const nonDeleted = useMemo(() => notes.filter((n) => !n.deleted), [notes]);
-  const allCount = nonDeleted.length;
-  const personalCount = nonDeleted.filter((n) => n.folderId === "personal").length;
-  const workCount = nonDeleted.filter((n) => n.folderId === "work").length;
-  const trashCount = notes.length - nonDeleted.length;
-
-  const selected = notes.find((n) => n.id === selectedId) ?? null;
+  const count = (view: FolderView): number => folderScoped(store.notes, view).length;
+  const selected = createMemo(() => store.notes.find((n) => n.id === selectedId()) ?? null);
 
   function updateSelected(patch: Partial<Note>): void {
-    if (selected == null) return;
-    setNotes((prev) => prev.map((n) => (n.id === selected.id ? { ...n, ...patch } : n)));
-    setSavedPulse(true);
+    const id = selectedId();
+    setStore((s) => {
+      const note = s.notes.find((n) => n.id === id);
+      if (note) Object.assign(note, patch);
+    });
   }
 
   function togglePinSelected(): void {
-    if (selected == null) return;
-    updateSelected({ pinned: !selected.pinned });
+    const note = selected();
+    if (note == null) return;
+    updateSelected({ pinned: !note.pinned });
   }
 
   function selectFolder(next: FolderView): void {
     setFolder(next);
     setQuery("");
-    const scoped = sortNotes(folderScoped(notes, next));
+    const scoped = sortNotes(folderScoped(store.notes, next));
     setSelectedId(scoped.length > 0 ? scoped[0]!.id : null);
   }
 
   function createNote(): void {
     // New notes land in the selected folder, or Personal when created from
     // All Notes / Trash (a folder view that isn't a real destination).
-    const targetFolder: FolderId = folder === "personal" || folder === "work" ? folder : "personal";
+    const current = folder();
+    const targetFolder: FolderId = current === "personal" || current === "work" ? current : "personal";
     const note: Note = { id: nextId++, title: "Untitled note", body: "", pinned: false, folderId: targetFolder, deleted: false };
-    setNotes((prev) => [...prev, note]);
+    setStore((s) => {
+      s.notes.push(note);
+    });
     setSelectedId(note.id);
     setQuery("");
-    if (folder === "trash") setFolder(targetFolder);
+    if (current === "trash") setFolder(targetFolder);
   }
 
   function deleteSelected(): void {
-    if (selected == null) return;
-    if (selected.deleted) {
-      // Already in Trash: this is a permanent delete.
-      const remaining = notes.filter((n) => n.id !== selected.id);
-      setNotes(remaining);
-      const nextScoped = sortNotes(folderScoped(remaining, folder));
-      setSelectedId(nextScoped.length > 0 ? nextScoped[0]!.id : null);
-    } else {
-      // Soft delete: flip the flag, the note moves to Trash.
-      const updated = notes.map((n) => (n.id === selected.id ? { ...n, deleted: true } : n));
-      setNotes(updated);
-      const nextScoped = sortNotes(folderScoped(updated, folder));
-      setSelectedId(nextScoped.length > 0 ? nextScoped[0]!.id : null);
-    }
+    const note = selected();
+    if (note == null) return;
+    // Already in Trash: a permanent delete. Otherwise the note moves to Trash.
+    const remaining = note.deleted
+      ? store.notes.filter((n) => n.id !== note.id)
+      : store.notes.map((n) => (n.id === note.id ? { ...n, deleted: true } : n));
+    setStore((s) => {
+      if (note.deleted) s.notes.splice(s.notes.findIndex((n) => n.id === note.id), 1);
+      else s.notes.find((n) => n.id === note.id)!.deleted = true;
+    });
+    const nextScoped = sortNotes(folderScoped(remaining, folder()));
+    setSelectedId(nextScoped.length > 0 ? nextScoped[0]!.id : null);
   }
 
   return (
@@ -176,9 +169,9 @@ function App(): React.ReactNode {
         <menu label="Note" testID="menu-note">
           <menuitem
             testID="menu-toggle-pin"
-            label={selected != null && selected.pinned ? "Unpin" : "Pin"}
+            label={selected()?.pinned ? "Unpin" : "Pin"}
             accelerator="primary+p"
-            enabled={selected != null}
+            enabled={selected() != null}
             onSelect={togglePinSelected}
           />
           <menuitem role="separator" testID="menu-note-sep" />
@@ -187,7 +180,7 @@ function App(): React.ReactNode {
             label="Delete"
             iconName="edit-delete"
             accelerator="primary+backspace"
-            enabled={selected != null}
+            enabled={selected() != null}
             onSelect={deleteSelected}
           />
         </menu>
@@ -210,47 +203,27 @@ function App(): React.ReactNode {
                 (GTK's row fill, AppKit's .sourceList selection), and
                 labelAlign, because GTK4 CSS has no text-align and a
                 GtkButton label centres by default. */}
-            <button
-              testID="folder-row-all"
-              label={`All Notes  ${allCount}`}
-              labelAlign="start"
-              onClick={() => selectFolder("all")}
-              cssClasses={folder === "all" ? ["suggested-action"] : []}
-              style={{ halign: "fill" }}
-            />
-            <button
-              testID="folder-row-personal"
-              label={`Personal  ${personalCount}`}
-              labelAlign="start"
-              onClick={() => selectFolder("personal")}
-              cssClasses={folder === "personal" ? ["suggested-action"] : []}
-              style={{ halign: "fill" }}
-            />
-            <button
-              testID="folder-row-work"
-              label={`Work  ${workCount}`}
-              labelAlign="start"
-              onClick={() => selectFolder("work")}
-              cssClasses={folder === "work" ? ["suggested-action"] : []}
-              style={{ halign: "fill" }}
-            />
-            <button
-              testID="folder-row-trash"
-              label={`Trash  ${trashCount}`}
-              labelAlign="start"
-              onClick={() => selectFolder("trash")}
-              cssClasses={folder === "trash" ? ["suggested-action"] : []}
-              style={{ halign: "fill" }}
-            />
+            <For each={folders}>
+              {(f) => (
+                <button
+                  testID={`folder-row-${f.id}`}
+                  label={`${f.label}  ${count(f.id)}`}
+                  labelAlign="start"
+                  onClick={() => selectFolder(f.id)}
+                  cssClasses={folder() === f.id ? ["suggested-action"] : []}
+                  style={{ halign: "fill" }}
+                />
+              )}
+            </For>
           </box>
         </toolbarview>
 
         <toolbarview slot="list" testID="list-toolbar">
-          <headerbar testID="list-header" title={folderLabel(folder)} />
+          <headerbar testID="list-header" title={folders.find((f) => f.id === folder())?.label} />
           <box testID="list-content" orientation="vertical" spacing={8} style={{ vexpand: true, padding: { top: 8, bottom: 8, left: 10, right: 10 } }}>
             <searchinput
               testID="search-input"
-              text={query}
+              text={query()}
               placeholder="Search notes"
               onChanged={(e) => setQuery(e.text)}
             />
@@ -265,20 +238,20 @@ function App(): React.ReactNode {
             <sourcelist
               testID="note-list"
               style={{ vexpand: true }}
-              items={filtered.map((n) => ({
+              items={filtered().map((n) => ({
                 title: n.title || "Untitled note",
                 iconName: n.pinned ? "starred-symbolic" : undefined,
                 badge: wordCount(n.body) > 0 ? String(wordCount(n.body)) : undefined,
               }))}
-              selectedIndex={filtered.findIndex((n) => n.id === selectedId)}
+              selectedIndex={filtered().findIndex((n) => n.id === selectedId())}
               onSelectionChanged={(e) => {
-                const n = filtered[e.index];
+                const n = filtered()[e.index];
                 if (n) setSelectedId(n.id);
               }}
             />
             <label
               testID="note-count-label"
-              text={`${filtered.length} of ${scopedNotes.length} note${scopedNotes.length === 1 ? "" : "s"}`}
+              text={`${filtered().length} of ${scopedNotes().length} note${scopedNotes().length === 1 ? "" : "s"}`}
               cssClasses={["dimmed", "caption"]}
             />
           </box>
@@ -293,7 +266,7 @@ function App(): React.ReactNode {
               label=""
               tooltip="Pin"
               onClick={togglePinSelected}
-              cssClasses={selected != null && selected.pinned ? ["flat", "accent"] : ["flat"]}
+              cssClasses={selected()?.pinned ? ["flat", "accent"] : ["flat"]}
             />
             <button slot="end" testID="delete-note-button" iconName="edit-delete" label="" tooltip="Delete" onClick={deleteSelected} cssClasses={["flat"]} />
             <button slot="end" testID="new-note-button" iconName="document-new" label="" tooltip="New Note" onClick={createNote} cssClasses={["flat"]} />
@@ -302,34 +275,37 @@ function App(): React.ReactNode {
               use. hexpand is not needed: a Box fills its parent's cross axis
               by default on both backends. */}
           <box testID="content-body" orientation="vertical" spacing={12} cssClasses={["view"]} style={{ vexpand: true, padding: 20 }}>
-            {selected != null ? (
-            <box orientation="vertical" spacing={12} style={{ vexpand: true }}>
-              <textinput
-                testID="title-input"
-                text={selected.title}
-                placeholder="Title"
-                onChanged={(e) => updateSelected({ title: e.text })}
-                style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4 }}
-              />
-              <separator orientation="horizontal" />
-              {/* TextArea has its own minContentHeight floor, so it needs no
-                  ScrollView wrapper; vexpand lets it fill the pane. */}
-              <textarea
-                testID="editor-textarea"
-                minContentHeight={320}
-                text={selected.body}
-                onChanged={(e) => updateSelected({ body: e.text })}
-                style={{ font: { fontSize: 14 }, padding: 4, vexpand: true }}
-              />
-              <label
-                testID="status-label"
-                text={`${wordCount(selected.body)} word${wordCount(selected.body) === 1 ? "" : "s"} · ${savedPulse ? "Saved" : ""}`}
-                cssClasses={["dimmed", "caption"]}
-              />
-            </box>
-          ) : (
-            <label testID="empty-state-label" text="No note selected. Create one to get started." cssClasses={["dimmed"]} />
-          )}
+            <Show
+              when={selected()}
+              fallback={<label testID="empty-state-label" text="No note selected. Create one to get started." cssClasses={["dimmed"]} />}
+            >
+              {(note) => (
+                <box orientation="vertical" spacing={12} style={{ vexpand: true }}>
+                  <textinput
+                    testID="title-input"
+                    text={note().title}
+                    placeholder="Title"
+                    onChanged={(e) => updateSelected({ title: e.text })}
+                    style={{ font: { fontSize: 20, fontWeight: "bold" }, padding: 4 }}
+                  />
+                  <separator orientation="horizontal" />
+                  {/* TextArea has its own minContentHeight floor, so it needs no
+                      ScrollView wrapper; vexpand lets it fill the pane. */}
+                  <textarea
+                    testID="editor-textarea"
+                    minContentHeight={320}
+                    text={note().body}
+                    onChanged={(e) => updateSelected({ body: e.text })}
+                    style={{ font: { fontSize: 14 }, padding: 4, vexpand: true }}
+                  />
+                  <label
+                    testID="status-label"
+                    text={`${wordCount(note().body)} word${wordCount(note().body) === 1 ? "" : "s"} · Saved`}
+                    cssClasses={["dimmed", "caption"]}
+                  />
+                </box>
+              )}
+            </Show>
           </box>
         </toolbarview>
       </splitview>
@@ -337,4 +313,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);

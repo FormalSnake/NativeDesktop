@@ -1,4 +1,5 @@
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { Show, createSignal } from "solid-js";
 
 // Regression probe for the radio-group use-after-free: a conditionally
 // rendered radio group that unmounts and remounts under the SAME group name.
@@ -7,9 +8,9 @@ import { render, useState } from "@nativedesktop/react";
 // Driven by the scratch radio drive (click toggle x4, assert host alive and
 // radios re-present); not imported by main.tsx.
 
-function App(): React.ReactNode {
-  const [show, setShow] = useState(true);
-  const [cycles, setCycles] = useState(0);
+function App() {
+  const [show, setShow] = createSignal(true);
+  const [cycles, setCycles] = createSignal(0);
 
   return (
     <window title="Radio Probe" defaultWidth={420} defaultHeight={300}>
@@ -22,19 +23,17 @@ function App(): React.ReactNode {
             setCycles((c) => c + 1);
           }}
         />
-        <label testID="cycles" text={`cycles: ${cycles}`} />
-        {show ? (
+        <label testID="cycles" text={`cycles: ${cycles()}`} />
+        <Show when={show()} fallback={<label testID="hidden-marker" text="group unmounted" />}>
           <box orientation="vertical" spacing={4} testID="radio-box">
             <radio group="theme" label="System" checked />
             <radio group="theme" label="Dark" />
             <radio group="theme" label="Light" />
           </box>
-        ) : (
-          <label testID="hidden-marker" text="group unmounted" />
-        )}
+        </Show>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
