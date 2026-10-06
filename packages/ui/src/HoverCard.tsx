@@ -1,11 +1,9 @@
-/** @jsxImportSource @nativedesktop/react */
-
-import type { ReactNode } from "react";
-import { useMountEffect, useRef, useState } from "@nativedesktop/react";
+import { createSignal, onCleanup } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
 
 export interface HoverCardProps {
-  content: ReactNode;
-  children: ReactNode;
+  content: JSX.Element;
+  children: JSX.Element;
   /** Ms of continuous hover before the card opens. */
   openDelay?: number;
   /** Ms after the pointer leaves before the card closes. */
@@ -16,30 +14,29 @@ export interface HoverCardProps {
 /** The anchor's `hoverChanged` is the only signal available (no separate
  * enter/leave events), so open/close both key off that one boolean, each on
  * its own timer so a quick pass-through never flashes the card open. */
-export function HoverCard(props: HoverCardProps): ReactNode {
-  const { content, children, openDelay = 400, closeDelay = 200, testID } = props;
-  const [open, setOpen] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+export function HoverCard(props: HoverCardProps): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   function clearPending(): void {
-    if (timerRef.current !== undefined) {
-      clearTimeout(timerRef.current);
-      timerRef.current = undefined;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
     }
   }
 
-  useMountEffect(() => clearPending);
+  onCleanup(clearPending);
 
   function handleHoverChanged(hovering: boolean): void {
     clearPending();
-    timerRef.current = setTimeout(() => setOpen(hovering), hovering ? openDelay : closeDelay);
+    timer = setTimeout(() => setOpen(hovering), hovering ? (props.openDelay ?? 400) : (props.closeDelay ?? 200));
   }
 
   return (
-    <box orientation="vertical" onHoverChanged={(e) => handleHoverChanged(e.checked)} testID={testID}>
-      {children}
-      <popover open={open} onClosed={() => setOpen(false)} testID={testID ? `${testID}-popover` : undefined}>
-        {content}
+    <box orientation="vertical" onHoverChanged={(e) => handleHoverChanged(e.checked)} testID={props.testID}>
+      {props.children}
+      <popover open={open()} onClosed={() => setOpen(false)} testID={props.testID ? `${props.testID}-popover` : undefined}>
+        {props.content}
       </popover>
     </box>
   );

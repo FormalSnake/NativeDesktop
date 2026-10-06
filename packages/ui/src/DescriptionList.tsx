@@ -1,6 +1,5 @@
-/** @jsxImportSource @nativedesktop/react */
-
-import type { ReactNode } from "react";
+import { For } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
 
 export interface DescriptionListItem {
   label: string;
@@ -13,19 +12,19 @@ export interface DescriptionListProps {
   testID?: string;
 }
 
-export function DescriptionList(props: DescriptionListProps): ReactNode {
-  const { items, title, testID } = props;
+export function DescriptionList(props: DescriptionListProps): JSX.Element {
   return (
-    <settingsgroup title={title} testID={testID}>
-      {items.map((item, i) => (
-        <row
-          key={`${item.label}-${i}`}
-          title={item.label}
-          subtitle={item.value}
-          cssClasses={["property"]}
-          testID={testID ? `${testID}-row-${i}` : undefined}
-        />
-      ))}
+    <settingsgroup title={props.title} testID={props.testID}>
+      <For each={props.items} keyed={false}>
+        {(item, i) => (
+          <row
+            title={item().label}
+            subtitle={item().value}
+            cssClasses={["property"]}
+            testID={props.testID ? `${props.testID}-row-${i}` : undefined}
+          />
+        )}
+      </For>
     </settingsgroup>
   );
 }

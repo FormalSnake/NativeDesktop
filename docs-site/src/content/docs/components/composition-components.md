@@ -8,7 +8,7 @@ component here renders ordinary intrinsics (`<box>`, `<row>`, `<button>`, `<expa
 no state of its own beyond what a controlled prop gives it. Nothing in this package touches
 `schema/widgets.json` or the ABI, the same precedent `@nativedesktop/panes` set for `PaneTree` (see
 [Split Views](/native-platform/split-views/)). Install it as a workspace dependency and import from
-`@nativedesktop/ui`; it peer-depends on `@nativedesktop/react`.
+`@nativedesktop/ui`; it peer-depends on `@nativedesktop/solid` and `solid-js`.
 
 ## Accordion
 
@@ -21,18 +21,18 @@ item closes the others.
 ![An open Accordion item on GNOME (GTK)](../../../assets/screens/gtk/parity-accordion.png)
 
 ```tsx
-const [expandedIds, setExpandedIds] = useState<string[]>(["intro"]);
+const [expandedIds, setExpandedIds] = createSignal<string[]>(["intro"]);
 
 <Accordion
   items={[{ id: "intro", label: "Introduction", content: <label text="..." /> }]}
-  expandedIds={expandedIds}
+  expandedIds={expandedIds()}
   onExpandedChange={setExpandedIds}
 />;
 ```
 
 | Prop | Type | Notes |
 | --- | --- | --- |
-| `items` | `{ id, label, content: ReactNode }[]` | |
+| `items` | `{ id, label, content: JSX.Element }[]` | |
 | `expandedIds` | `string[]` | Controlled: ids of the currently open items. |
 | `onExpandedChange` | `(ids: string[]) => void` | |
 | `allowMultiple` | boolean | Default `false`: opening one item closes the others. |
@@ -68,9 +68,9 @@ around the current page.
 ![Pagination across 12 pages on GNOME (GTK)](../../../assets/screens/gtk/parity-pagination.png)
 
 ```tsx
-const [page, setPage] = useState(1);
+const [page, setPage] = createSignal(1);
 
-<Pagination page={page} pageCount={12} onPageChange={setPage} />;
+<Pagination page={page()} pageCount={12} onPageChange={setPage} />;
 ```
 
 | Prop | Type | Notes |
@@ -93,9 +93,9 @@ A horizontal row of numbered circles and separators for a multi-step flow, each 
 ![A Stepper mid-flow on GNOME (GTK)](../../../assets/screens/gtk/parity-stepper.png)
 
 ```tsx
-const [step, setStep] = useState(0);
+const [step, setStep] = createSignal(0);
 
-<Stepper steps={[{ id: "account", title: "Account" }]} activeIndex={step} onStepClick={setStep} />;
+<Stepper steps={[{ id: "account", title: "Account" }]} activeIndex={step()} onStepClick={setStep} />;
 ```
 
 | Prop | Type | Notes |
@@ -124,8 +124,8 @@ children.
 
 | Prop | Type | Notes |
 | --- | --- | --- |
-| `content` | ReactNode | The popover's body. |
-| `children` | ReactNode | The anchor. |
+| `content` | JSX.Element | The popover's body. |
+| `children` | JSX.Element | The anchor. |
 | `openDelay` / `closeDelay` | number (ms) | Default `400` / `200`. |
 
 There is no separate hover-enter/hover-leave event on the underlying widget, only one
@@ -168,12 +168,12 @@ row's control slot.
 ![A Form with inline validation on GNOME (GTK)](../../../assets/screens/gtk/parity-form.png)
 
 ```tsx
-const [email, setEmail] = useState("");
+const [email, setEmail] = createSignal("");
 const error = email.length > 0 && !email.includes("@") ? "Must contain @" : undefined;
 
 <Form title="Sign up">
   <FormField label="Email" error={error} hint="We'll only use this for updates">
-    <textinput text={email} onChanged={(e) => setEmail(e.text)} />
+    <textinput text={email()} onChanged={(e) => setEmail(e.text)} />
   </FormField>
 </Form>;
 ```
@@ -197,9 +197,9 @@ auto-advance on entry and paste-fill across cells handled for you.
 ![OtpInput's six empty cells on GNOME (GTK)](../../../assets/screens/gtk/parity-otp.png)
 
 ```tsx
-const [code, setCode] = useState("");
+const [code, setCode] = createSignal("");
 
-<OtpInput length={6} value={code} onChange={setCode} onComplete={(v) => console.log("done", v)} />;
+<OtpInput length={6} value={code()} onChange={setCode} onComplete={(v) => console.log("done", v)} />;
 ```
 
 | Prop | Type | Notes |
@@ -224,9 +224,9 @@ group (the matching button renders `prominent`).
 ![A ButtonGroup toggle with one button selected on GNOME (GTK)](../../../assets/screens/gtk/parity-buttongroup.png)
 
 ```tsx
-const [range, setRange] = useState("week");
+const [range, setRange] = createSignal("week");
 
-<ButtonGroup items={[{ id: "day", label: "Day" }, { id: "week", label: "Week" }]} selectedId={range} onPress={setRange} />;
+<ButtonGroup items={[{ id: "day", label: "Day" }, { id: "week", label: "Week" }]} selectedId={range()} onPress={setRange} />;
 ```
 
 | Prop | Type | Notes |
@@ -250,6 +250,6 @@ A three-slot horizontal bar (`.toolbar` cssClass) for a window or panel's bottom
 
 | Prop | Type | Notes |
 | --- | --- | --- |
-| `left`, `center`, `right` | ReactNode | Each renders in its own `halign`ed sub-box; any are optional. |
+| `left`, `center`, `right` | JSX.Element | Each renders in its own `halign`ed sub-box; any are optional. |
 
 See `examples/parity/main.tsx`'s Composition section for all ten components wired to live state.

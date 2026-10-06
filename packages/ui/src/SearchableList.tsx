@@ -1,7 +1,6 @@
-/** @jsxImportSource @nativedesktop/react */
-
-import type { ReactNode } from "react";
-import { Spacing, useMemo, useState } from "@nativedesktop/react";
+import { createMemo, createSignal } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
+import { Spacing } from "@nativedesktop/solid";
 import { filterItems } from "./searchable-list.ts";
 import type { SearchableListFilter, SearchableListItem } from "./searchable-list.ts";
 
@@ -16,30 +15,29 @@ export interface SearchableListProps {
   testID?: string;
 }
 
-export function SearchableList(props: SearchableListProps): ReactNode {
-  const { items, onActivate, filter, placeholder, emptyIconName, emptyTitle, emptyDescription, testID } = props;
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(() => filterItems(items, query, filter), [items, query, filter]);
+export function SearchableList(props: SearchableListProps): JSX.Element {
+  const [query, setQuery] = createSignal("");
+  const filtered = createMemo(() => filterItems(props.items, query(), props.filter));
 
   return (
-    <box orientation="vertical" spacing={Spacing.sm} testID={testID}>
+    <box orientation="vertical" spacing={Spacing.sm} testID={props.testID}>
       <searchinput
-        text={query}
-        placeholder={placeholder}
+        text={query()}
+        placeholder={props.placeholder}
         onChanged={(e) => setQuery(e.text)}
-        testID={testID ? `${testID}-search` : undefined}
+        testID={props.testID ? `${props.testID}-search` : undefined}
       />
       <listview
-        items={filtered.map((item) => item.label)}
-        emptyIconName={emptyIconName}
-        emptyTitle={emptyTitle}
-        emptyDescription={emptyDescription}
+        items={filtered().map((item) => item.label)}
+        emptyIconName={props.emptyIconName}
+        emptyTitle={props.emptyTitle}
+        emptyDescription={props.emptyDescription}
         style={{ vexpand: true }}
         onRowActivated={(e) => {
-          const item = filtered[e.index];
-          if (item) onActivate(item);
+          const item = filtered()[e.index];
+          if (item) props.onActivate(item);
         }}
-        testID={testID ? `${testID}-list` : undefined}
+        testID={props.testID ? `${props.testID}-list` : undefined}
       />
     </box>
   );

@@ -1,6 +1,5 @@
-/** @jsxImportSource @nativedesktop/react */
-
-import type { ReactNode } from "react";
+import { For } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
 
 export interface ButtonGroupItem {
   id: string;
@@ -17,20 +16,20 @@ export interface ButtonGroupProps {
   testID?: string;
 }
 
-export function ButtonGroup(props: ButtonGroupProps): ReactNode {
-  const { items, onPress, selectedId, testID } = props;
+export function ButtonGroup(props: ButtonGroupProps): JSX.Element {
   return (
-    <box orientation="horizontal" cssClasses={["linked"]} testID={testID}>
-      {items.map((item) => (
-        <button
-          key={item.id}
-          label={item.label}
-          iconName={item.iconName}
-          prominent={item.id === selectedId}
-          onClick={() => onPress(item.id)}
-          testID={testID ? `${testID}-${item.id}` : undefined}
-        />
-      ))}
+    <box orientation="horizontal" cssClasses={["linked"]} testID={props.testID}>
+      <For each={props.items} keyed={(item) => item.id}>
+        {(item) => (
+          <button
+            label={item().label}
+            iconName={item().iconName}
+            prominent={item().id === props.selectedId}
+            onClick={() => props.onPress(item().id)}
+            testID={props.testID ? `${props.testID}-${item().id}` : undefined}
+          />
+        )}
+      </For>
     </box>
   );
 }
