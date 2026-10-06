@@ -1,5 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["bun", "react"] },
+  "compilerOptions": {
+    "types": ["bun"],
+    "jsx": "preserve",
+    "jsxImportSource": "@nativedesktop/solid"
+  },
   "include": ["**/*.ts", "**/*.tsx"]
 }
