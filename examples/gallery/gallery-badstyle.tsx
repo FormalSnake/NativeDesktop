@@ -1,4 +1,4 @@
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 // Negative test: an invalid web-CSS style key must be rejected at mount
 // with the fix-it StyleError (see packages/core/src/style-validate.ts).
@@ -10,8 +10,8 @@ import { render } from "@nativedesktop/react";
 // fix-it message).
 const badStyle: Record<string, unknown> = { display: "flex" };
 
-function App(): React.ReactNode {
+function App() {
   return <label style={badStyle} />;
 }
 
-await render(<App />);
+await render(() => <App />);

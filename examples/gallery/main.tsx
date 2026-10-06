@@ -1,8 +1,5 @@
 import {
   render,
-  useMemo,
-  useRef,
-  useState,
   Platform,
   showAlert,
   openFile,
@@ -14,8 +11,9 @@ import {
   showToast,
   onToastButtonClicked,
   onToastDismissed,
-} from "@nativedesktop/react";
-import type { NdNodeRef, SourceTreeAction, SourceTreeNode, TableColumn, TableRow, TreeNode } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import { For, Show, createMemo, createSignal } from "solid-js";
+import type { NdNodeRef, SourceTreeAction, SourceTreeNode, TableColumn, TableRow, TreeNode } from "@nativedesktop/solid";
 
 // Widget gallery: every widget here has live controlled state + testIDs,
 // driven headlessly by scripts/m5b-drive.ts and scripts/m5c-drive.ts over
@@ -101,66 +99,67 @@ const sourceTreeMeta: Omit<SourceTreeNode, "expanded">[] = [
   { id: "run-old", parentId: "sec-settled", title: "old run", caption: "settled yesterday", testID: "st-run-old" },
 ];
 
-function App(): React.ReactNode {
-  const [name, setName] = useState("");
-  const [notes, setNotes] = useState("");
-  const [agreed, setAgreed] = useState(false);
-  const [size, setSize] = useState("small");
-  const [fruitIndex, setFruitIndex] = useState(0);
-  const [volume, setVolume] = useState(25);
-  const [submitted, setSubmitted] = useState(false);
+function App() {
+  const [name, setName] = createSignal("");
+  const [notes, setNotes] = createSignal("");
+  const [agreed, setAgreed] = createSignal(false);
+  const [size, setSize] = createSignal("small");
+  const [fruitIndex, setFruitIndex] = createSignal(0);
+  const [volume, setVolume] = createSignal(25);
+  const [submitted, setSubmitted] = createSignal(false);
   const fruits = ["apple", "banana", "cherry"];
-  const rows = useMemo(() => Array.from({ length: 100_000 }, (_, i) => `Item ${i}`), []);
-  const [selectedRow, setSelectedRow] = useState(0);
-  const [activatedRow, setActivatedRow] = useState(-1);
+  const logRows = Array.from({ length: 40 }, (_, i) => i);
+  const rows = Array.from({ length: 100_000 }, (_, i) => `Item ${i}`);
+  const [selectedRow, setSelectedRow] = createSignal(0);
+  const [activatedRow, setActivatedRow] = createSignal(-1);
   const sourceItems = [
     { title: "Inbox", badge: "3" },
     { title: "Starred", iconName: "starred-symbolic" },
     { title: "Sent" },
     { title: "Archive" },
   ];
-  const [sourceSelected, setSourceSelected] = useState(0);
+  const [sourceSelected, setSourceSelected] = createSignal(0);
 
   // Window ref: showAlert/openFile/saveFile/showAbout are commands scoped to
   // this <window> node, correlated to their *Result events by the window's
   // own wire id (see packages/core/src/dialogs.ts's header comment).
-  const winRef = useRef<NdNodeRef<"window">>(null);
-  const toastRef = useRef<NdNodeRef<"toastoverlay">>(null);
+  const [win, setWin] = createSignal<NdNodeRef<"window">>();
+  const [toast, setToast] = createSignal<NdNodeRef<"toastoverlay">>();
 
   // --- Controls tab ---
-  const [bold, setBold] = useState(false);
+  const [bold, setBold] = createSignal(false);
   const sizeOptions = ["Small", "Medium", "Large"];
   const sizePreviewPt = [12, 16, 24];
-  const [sizeSegmentIndex, setSizeSegmentIndex] = useState(1);
-  const [seats, setSeats] = useState(4);
-  const [lastLinkActivated, setLastLinkActivated] = useState("");
+  const [sizeSegmentIndex, setSizeSegmentIndex] = createSignal(1);
+  const [seats, setSeats] = createSignal(4);
+  const [lastLinkActivated, setLastLinkActivated] = createSignal("");
 
   // --- Pickers tab ---
-  const [color, setColor] = useState("#3366cc");
-  const [pickedDate, setPickedDate] = useState("");
-  const [fontDesc, setFontDesc] = useState("Sans 12");
-  const [levelValue, setLevelValue] = useState(0.4);
+  const [color, setColor] = createSignal("#3366cc");
+  const [pickedDate, setPickedDate] = createSignal("");
+  const [fontDesc, setFontDesc] = createSignal("Sans 12");
+  const [levelValue, setLevelValue] = createSignal(0.4);
 
   // --- Popovers & Menus tab ---
-  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = createSignal(false);
   // The popover below anchors here rather than on its own tree parent.
-  const popoverTrigger = useRef<NdNodeRef<"button">>(null);
-  const [lastMenuAction, setLastMenuAction] = useState("");
-  const [expanderOpen, setExpanderOpen] = useState(false);
-  const [expanderChecked, setExpanderChecked] = useState(false);
+  const [popoverTrigger, setPopoverTrigger] = createSignal<NdNodeRef<"button">>();
+  const [lastMenuAction, setLastMenuAction] = createSignal("");
+  const [expanderOpen, setExpanderOpen] = createSignal(false);
+  const [expanderChecked, setExpanderChecked] = createSignal(false);
 
   // --- Status & Banner tab ---
-  const [bannerRevealed, setBannerRevealed] = useState(true);
-  const [statusActionCount, setStatusActionCount] = useState(0);
+  const [bannerRevealed, setBannerRevealed] = createSignal(true);
+  const [statusActionCount, setStatusActionCount] = createSignal(0);
 
   // --- Toasts tab ---
-  const [lastToastResult, setLastToastResult] = useState("");
+  const [lastToastResult, setLastToastResult] = createSignal("");
 
   // --- Table tab ---
-  const [employees, setEmployees] = useState(initialEmployees);
-  const [selectedEmployeeIndex, setSelectedEmployeeIndex] = useState(-1);
-  const [activatedEmployeeIndex, setActivatedEmployeeIndex] = useState(-1);
-  const [lastSort, setLastSort] = useState("");
+  const [employees, setEmployees] = createSignal(initialEmployees);
+  const [selectedEmployeeIndex, setSelectedEmployeeIndex] = createSignal(-1);
+  const [activatedEmployeeIndex, setActivatedEmployeeIndex] = createSignal(-1);
+  const [lastSort, setLastSort] = createSignal("");
 
   function handleSortChanged(e: { data: unknown }): void {
     const { columnId, direction } = e.data as { columnId: string; direction: "ascending" | "descending" };
@@ -178,27 +177,28 @@ function App(): React.ReactNode {
   }
 
   // --- Tree tab ---
-  const [treeExpanded, setTreeExpanded] = useState<Set<string>>(new Set(["fruits"]));
-  const [selectedTreeNodeId, setSelectedTreeNodeId] = useState<string | null>(null);
-  const [activatedTreeNodeId, setActivatedTreeNodeId] = useState<string | null>(null);
-  const treeNodes: TreeNode[] = treeNodeMeta.map((n) => ({ ...n, expanded: treeExpanded.has(n.id) }));
+  const [treeExpanded, setTreeExpanded] = createSignal<Set<string>>(new Set(["fruits"]));
+  const [selectedTreeNodeId, setSelectedTreeNodeId] = createSignal<string | null>(null);
+  const [activatedTreeNodeId, setActivatedTreeNodeId] = createSignal<string | null>(null);
+  const treeNodes = createMemo<TreeNode[]>(() => treeNodeMeta.map((n) => ({ ...n, expanded: treeExpanded().has(n.id) })));
 
   // --- SourceTree tab ---
-  const [stExpanded, setStExpanded] = useState<Set<string>>(new Set(["sec-hosts", "host-mac", "proj-nd"]));
-  const [stSelectedId, setStSelectedId] = useState("");
-  const [stLastAction, setStLastAction] = useState("");
-  const [stLastActivated, setStLastActivated] = useState("");
-  const [stLastExpandEvent, setStLastExpandEvent] = useState("");
-  const stNodes: SourceTreeNode[] = sourceTreeMeta.map((n) => ({ ...n, expanded: stExpanded.has(n.id) }));
+  const [stExpanded, setStExpanded] = createSignal<Set<string>>(new Set(["sec-hosts", "host-mac", "proj-nd"]));
+  const [stSelectedId, setStSelectedId] = createSignal("");
+  const [stLastAction, setStLastAction] = createSignal("");
+  const [stLastActivated, setStLastActivated] = createSignal("");
+  const [stLastExpandEvent, setStLastExpandEvent] = createSignal("");
+  const stNodes = createMemo<SourceTreeNode[]>(() => sourceTreeMeta.map((n) => ({ ...n, expanded: stExpanded().has(n.id) })));
 
   // --- Dialogs tab ---
-  const [alertResultText, setAlertResultText] = useState("(none yet)");
-  const [openFileResultText, setOpenFileResultText] = useState("(none yet)");
-  const [saveFileResultText, setSaveFileResultText] = useState("(none yet)");
+  const [alertResultText, setAlertResultText] = createSignal("(none yet)");
+  const [openFileResultText, setOpenFileResultText] = createSignal("(none yet)");
+  const [saveFileResultText, setSaveFileResultText] = createSignal("(none yet)");
 
   async function handleShowAlert(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await showAlert(winRef.current, {
+    const w = win();
+    if (!w) return;
+    const result = await showAlert(w, {
       title: "Delete this item?",
       body: "This action cannot be undone.",
       buttons: [
@@ -210,22 +210,25 @@ function App(): React.ReactNode {
   }
 
   async function handleOpenFile(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await openFile(winRef.current, {
+    const w = win();
+    if (!w) return;
+    const result = await openFile(w, {
       filters: [{ name: "Text", extensions: ["txt", "md"] }],
     });
     setOpenFileResultText(result.canceled ? "canceled" : result.paths.join(", "));
   }
 
   async function handleSaveFile(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await saveFile(winRef.current, { suggestedName: "export.json" });
+    const w = win();
+    if (!w) return;
+    const result = await saveFile(w, { suggestedName: "export.json" });
     setSaveFileResultText(result.canceled ? "canceled" : (result.path ?? "(null)"));
   }
 
   function handleShowAbout(): void {
-    if (!winRef.current) return;
-    showAbout(winRef.current, {
+    const w = win();
+    if (!w) return;
+    showAbout(w, {
       appName: "NativeDesktop Gallery",
       version: "0.1.0",
       developer: "NativeDesktop",
@@ -234,11 +237,12 @@ function App(): React.ReactNode {
   }
 
   // --- Video tab ---
-  const [videoSrc, setVideoSrc] = useState(sampleVideoPath);
+  const [videoSrc, setVideoSrc] = createSignal(sampleVideoPath);
 
   async function handleChooseVideo(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await openFile(winRef.current, {
+    const w = win();
+    if (!w) return;
+    const result = await openFile(w, {
       filters: [{ name: "Video", extensions: ["mp4", "webm", "mov", "ogv"] }],
     });
     if (!result.canceled && result.paths[0]) setVideoSrc(result.paths[0]);
@@ -246,19 +250,19 @@ function App(): React.ReactNode {
 
   return (
     <window
-      ref={winRef}
+      ref={setWin}
       title="NativeDesktop Gallery"
       defaultWidth={1000}
       defaultHeight={720}
-      onAlertResult={(e) => onAlertResult(winRef.current!, e)}
-      onOpenFileResult={(e) => onOpenFileResult(winRef.current!, e)}
-      onSaveFileResult={(e) => onSaveFileResult(winRef.current!, e)}
+      onAlertResult={(e) => onAlertResult(win()!, e)}
+      onOpenFileResult={(e) => onOpenFileResult(win()!, e)}
+      onSaveFileResult={(e) => onSaveFileResult(win()!, e)}
     >
       {/* ToastOverlay wraps the whole tree (childModel: single) so
           showToast() can float a toast above every tab, not just the one
           that triggered it. */}
       <toastoverlay
-        ref={toastRef}
+        ref={setToast}
         testID="gallery-toast-overlay"
         onToastButtonClicked={onToastButtonClicked}
         onToastDismissed={onToastDismissed}
@@ -268,30 +272,30 @@ function App(): React.ReactNode {
             <box tabLabel="Form" orientation="vertical" spacing={6}>
               <textinput
                 testID="name-input"
-                text={name}
+                text={name()}
                 placeholder="Your name"
                 onChanged={(e) => setName(e.text)}
                 onActivate={() => setSubmitted(true)}
               />
-              <label testID="echo-label" text={`Echo: ${name}`} />
-              <label testID="submit-label" text={`Submitted: ${submitted ? "yes" : "no"}`} />
+              <label testID="echo-label" text={`Echo: ${name()}`} />
+              <label testID="submit-label" text={`Submitted: ${submitted() ? "yes" : "no"}`} />
               <separator orientation="horizontal" />
-              <textarea testID="notes-area" text={notes} onChanged={(e) => setNotes(e.text)} />
-              <label testID="notes-label" text={`Notes: ${notes}`} />
-              <checkbox testID="agree-check" label="I agree" checked={agreed} onToggled={(e) => setAgreed(e.checked)} />
-              <label testID="agree-label" text={`Agreed: ${agreed ? "yes" : "no"}`} />
-              <radio testID="size-small" group="size" label="Small" checked={size === "small"}
+              <textarea testID="notes-area" text={notes()} onChanged={(e) => setNotes(e.text)} />
+              <label testID="notes-label" text={`Notes: ${notes()}`} />
+              <checkbox testID="agree-check" label="I agree" checked={agreed()} onToggled={(e) => setAgreed(e.checked)} />
+              <label testID="agree-label" text={`Agreed: ${agreed() ? "yes" : "no"}`} />
+              <radio testID="size-small" group="size" label="Small" checked={size() === "small"}
                 onToggled={(e) => { if (e.checked) setSize("small"); }} />
-              <radio testID="size-large" group="size" label="Large" checked={size === "large"}
+              <radio testID="size-large" group="size" label="Large" checked={size() === "large"}
                 onToggled={(e) => { if (e.checked) setSize("large"); }} />
-              <label testID="size-label" text={`Size: ${size}`} />
-              <select testID="fruit-select" options={fruits} selectedIndex={fruitIndex}
+              <label testID="size-label" text={`Size: ${size()}`} />
+              <select testID="fruit-select" options={fruits} selectedIndex={fruitIndex()}
                 onSelectionChanged={(e) => setFruitIndex(e.index)} />
-              <label testID="fruit-label" text={`Fruit: ${fruits[fruitIndex]}`} />
-              <slider testID="volume-slider" min={0} max={100} step={1} value={volume}
+              <label testID="fruit-label" text={`Fruit: ${fruits[fruitIndex()]}`} />
+              <slider testID="volume-slider" min={0} max={100} step={1} value={volume()}
                 onValueChanged={(e) => setVolume(e.value)} />
-              <progressbar testID="volume-progress" fraction={volume / 100} />
-              <label testID="volume-label" text={`Volume: ${volume}`} />
+              <progressbar testID="volume-progress" fraction={volume() / 100} />
+              <label testID="volume-label" text={`Volume: ${volume()}`} />
               <box orientation="horizontal" spacing={6}>
                 <spinner testID="busy-spinner" spinning={true} />
                 <image testID="smile-icon" iconName="face-smile-symbolic" />
@@ -313,41 +317,41 @@ function App(): React.ReactNode {
             </box>
             <listview tabLabel="List" testID="big-list"
               items={rows}
-              selectedIndex={selectedRow}
+              selectedIndex={selectedRow()}
               onRowActivated={(e) => setActivatedRow(e.index)} />
             <box tabLabel="SourceList" orientation="vertical" spacing={6}>
               <sourcelist testID="gallery-sourcelist"
                 items={sourceItems}
-                selectedIndex={sourceSelected}
+                selectedIndex={sourceSelected()}
                 onSelectionChanged={(e) => setSourceSelected(e.index)} />
-              <label testID="sourcelist-selected-label" text={`SourceList selected: ${sourceSelected}`} />
+              <label testID="sourcelist-selected-label" text={`SourceList selected: ${sourceSelected()}`} />
             </box>
 
             <box tabLabel="Controls" orientation="vertical" spacing={10} testID="controls-tab" style={{ padding: 12 }}>
               <label text="ToggleButton" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
-                <togglebutton testID="bold-toggle" label="Bold" active={bold} onToggled={(e) => setBold(e.checked)} />
+                <togglebutton testID="bold-toggle" label="Bold" active={bold()} onToggled={(e) => setBold(e.checked)} />
                 <label testID="bold-preview" text="The quick brown fox"
-                  style={{ font: { fontWeight: bold ? "bold" : "normal" }, valign: "center" }} />
+                  style={{ font: { fontWeight: bold() ? "bold" : "normal" }, valign: "center" }} />
               </box>
 
               <separator orientation="horizontal" />
 
               <label text="SegmentedControl" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
-                <segmentedcontrol testID="size-segmented" options={sizeOptions} selectedIndex={sizeSegmentIndex}
+                <segmentedcontrol testID="size-segmented" options={sizeOptions} selectedIndex={sizeSegmentIndex()}
                   onSelectionChanged={(e) => setSizeSegmentIndex(e.index)} />
                 <label testID="size-preview" text="Aa"
-                  style={{ font: { fontSize: sizePreviewPt[sizeSegmentIndex] }, valign: "center" }} />
+                  style={{ font: { fontSize: sizePreviewPt[sizeSegmentIndex()] }, valign: "center" }} />
               </box>
 
               <separator orientation="horizontal" />
 
               <label text="NumberInput" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
-                <numberinput testID="seats-number" value={seats} min={1} max={10} step={1} digits={0}
+                <numberinput testID="seats-number" value={seats()} min={1} max={10} step={1} digits={0}
                   onValueChanged={(e) => setSeats(e.value)} />
-                <label testID="seats-label" text={`Seats: ${seats}`} style={{ valign: "center" }} />
+                <label testID="seats-label" text={`Seats: ${seats()}`} style={{ valign: "center" }} />
               </box>
 
               <separator orientation="horizontal" />
@@ -359,7 +363,7 @@ function App(): React.ReactNode {
                     uri as its payload, which is what drives the readout. */}
                 <linkbutton testID="docs-link" label="NativeDesktop Docs" uri="https://nativedesktop.dev"
                   onActivate={(e) => setLastLinkActivated(e.text)} />
-                <label testID="link-activated-label" text={`Activated: ${lastLinkActivated || "(not yet)"}`}
+                <label testID="link-activated-label" text={`Activated: ${lastLinkActivated() || "(not yet)"}`}
                   cssClasses={["dimmed", "caption"]} style={{ valign: "center" }} />
               </box>
             </box>
@@ -367,18 +371,18 @@ function App(): React.ReactNode {
             <box tabLabel="Pickers" orientation="vertical" spacing={10} testID="pickers-tab" style={{ padding: 12 }}>
               <label text="ColorPicker" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
-                <colorpicker testID="color-picker" value={color} supportsAlpha
+                <colorpicker testID="color-picker" value={color()} supportsAlpha
                   onColorChanged={(e) => setColor(e.text)} />
-                <label testID="color-readout" text={`Color: ${color}`} style={{ valign: "center" }} />
+                <label testID="color-readout" text={`Color: ${color()}`} style={{ valign: "center" }} />
               </box>
 
               <separator orientation="horizontal" />
 
               <label text="DatePicker" cssClasses={["heading"]} />
               <box orientation="vertical" spacing={8}>
-                <datepicker testID="date-picker" value={pickedDate} displayStyle="calendar"
+                <datepicker testID="date-picker" value={pickedDate()} displayStyle="calendar"
                   onDateChanged={(e) => setPickedDate(e.text)} />
-                <label testID="date-readout" text={`Date: ${pickedDate || "(none picked)"}`}
+                <label testID="date-readout" text={`Date: ${pickedDate() || "(none picked)"}`}
                   cssClasses={["dimmed", "caption"]} />
               </box>
 
@@ -386,19 +390,19 @@ function App(): React.ReactNode {
 
               <label text="FontPicker" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
-                <fontpicker testID="font-picker" value={fontDesc} onFontChanged={(e) => setFontDesc(e.text)} />
-                <label testID="font-readout" text={`Font: ${fontDesc}`} style={{ valign: "center" }} />
+                <fontpicker testID="font-picker" value={fontDesc()} onFontChanged={(e) => setFontDesc(e.text)} />
+                <label testID="font-readout" text={`Font: ${fontDesc()}`} style={{ valign: "center" }} />
               </box>
 
               <separator orientation="horizontal" />
 
               <label text="LevelIndicator (driven by Slider)" cssClasses={["heading"]} />
               <box orientation="vertical" spacing={6}>
-                <slider testID="level-slider" min={0} max={1} step={0.01} value={levelValue}
+                <slider testID="level-slider" min={0} max={1} step={0.01} value={levelValue()}
                   onValueChanged={(e) => setLevelValue(e.value)} />
-                <levelindicator testID="level-indicator" min={0} max={1} value={levelValue}
+                <levelindicator testID="level-indicator" min={0} max={1} value={levelValue()}
                   warningValue={0.6} criticalValue={0.85} />
-                <label testID="level-readout" text={`Level: ${levelValue.toFixed(2)}`} cssClasses={["dimmed", "caption"]} />
+                <label testID="level-readout" text={`Level: ${levelValue().toFixed(2)}`} cssClasses={["dimmed", "caption"]} />
               </box>
             </box>
 
@@ -409,10 +413,10 @@ function App(): React.ReactNode {
                   falls back to anchoring on its tree parent, which is why
                   it used to have to sit in a box beside its own button. */}
               <box orientation="horizontal" spacing={8}>
-                <button ref={popoverTrigger} testID="popover-trigger" label="Open Popover" onClick={() => setPopoverOpen(true)} />
+                <button ref={setPopoverTrigger} testID="popover-trigger" label="Open Popover" onClick={() => setPopoverOpen(true)} />
               </box>
               <box orientation="horizontal" spacing={8}>
-                <popover testID="demo-popover" anchorRef={popoverTrigger} open={popoverOpen} position="bottom" onClosed={() => setPopoverOpen(false)}>
+                <popover testID="demo-popover" anchorRef={popoverTrigger()} open={popoverOpen()} position="bottom" onClosed={() => setPopoverOpen(false)}>
                   <box orientation="vertical" spacing={8} style={{ padding: 12 }}>
                     <label text="Popover content" />
                     <button testID="popover-close" label="Close" onClick={() => setPopoverOpen(false)} />
@@ -437,17 +441,17 @@ function App(): React.ReactNode {
                 <menuitem testID="split-action-save-copy" label="Save a Copy" onSelect={() => setLastMenuAction("Save a Copy")} />
               </splitbutton>
 
-              <label testID="menu-action-readout" text={`Last menu action: ${lastMenuAction || "(none)"}`}
+              <label testID="menu-action-readout" text={`Last menu action: ${lastMenuAction() || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
 
               <separator orientation="horizontal" />
 
               <label text="Expander" cssClasses={["heading"]} />
-              <expander testID="more-options-expander" label="More options" expanded={expanderOpen}
+              <expander testID="more-options-expander" label="More options" expanded={expanderOpen()}
                 onToggled={(e) => setExpanderOpen(e.checked)}>
                 <box orientation="vertical" spacing={6} style={{ padding: 8 }}>
                   <label text="Hidden until expanded." cssClasses={["dimmed"]} />
-                  <checkbox testID="expander-check" label="An option inside the expander" checked={expanderChecked}
+                  <checkbox testID="expander-check" label="An option inside the expander" checked={expanderChecked()}
                     onToggled={(e) => setExpanderChecked(e.checked)} />
                 </box>
               </expander>
@@ -457,10 +461,10 @@ function App(): React.ReactNode {
               <label text="Banner" cssClasses={["heading"]} />
               <box orientation="horizontal" spacing={8}>
                 <label text="Show banner" style={{ valign: "center" }} />
-                <switch testID="banner-reveal-switch" checked={bannerRevealed} onToggled={(e) => setBannerRevealed(e.checked)} />
+                <switch testID="banner-reveal-switch" checked={bannerRevealed()} onToggled={(e) => setBannerRevealed(e.checked)} />
               </box>
               <banner testID="update-banner" title="A new version is available" buttonLabel="Update Now"
-                revealed={bannerRevealed} onButtonClicked={() => setBannerRevealed(false)} />
+                revealed={bannerRevealed()} onButtonClicked={() => setBannerRevealed(false)} />
 
               <separator orientation="horizontal" />
 
@@ -469,7 +473,7 @@ function App(): React.ReactNode {
                 description="Add your first file to get started.">
                 <button testID="status-page-action" label="Add File" onClick={() => setStatusActionCount((c) => c + 1)} />
               </statuspage>
-              <label testID="status-action-readout" text={`Add File clicked: ${statusActionCount} time(s)`}
+              <label testID="status-action-readout" text={`Add File clicked: ${statusActionCount()} time(s)`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 
@@ -477,18 +481,18 @@ function App(): React.ReactNode {
               <label text="ToastOverlay wraps this whole window — these buttons call showToast() on it."
                 cssClasses={["dimmed", "caption"]} />
               <button testID="toast-simple-button" label="Show Toast" onClick={async () => {
-                const result = await showToast(toastRef.current!, { title: "Saved successfully" });
+                const result = await showToast(toast()!, { title: "Saved successfully" });
                 setLastToastResult(`buttonClicked: ${result.buttonClicked}`);
               }} />
               <button testID="toast-action-button" label="Show Toast with Action" onClick={async () => {
-                const result = await showToast(toastRef.current!, {
+                const result = await showToast(toast()!, {
                   title: "File deleted",
                   buttonLabel: "Undo",
                   timeoutSeconds: 6,
                 });
                 setLastToastResult(`buttonClicked: ${result.buttonClicked}`);
               }} />
-              <label testID="toast-result-readout" text={`Last toast result: ${lastToastResult || "(none yet)"}`}
+              <label testID="toast-result-readout" text={`Last toast result: ${lastToastResult() || "(none yet)"}`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 
@@ -498,11 +502,11 @@ function App(): React.ReactNode {
               <table
                 testID="employee-table"
                 columns={tableColumns}
-                rows={employees.map((e): TableRow => ({
+                rows={employees().map((e): TableRow => ({
                   id: e.id,
                   cells: [e.name, e.role, e.department, String(e.years), e.status],
                 }))}
-                selectedIndex={selectedEmployeeIndex}
+                selectedIndex={selectedEmployeeIndex()}
                 showRowSeparators
                 onSelectionChanged={(e) => setSelectedEmployeeIndex(e.index)}
                 onRowActivated={(e) => setActivatedEmployeeIndex(e.index)}
@@ -510,16 +514,16 @@ function App(): React.ReactNode {
                 style={{ vexpand: true }}
               />
               <label testID="table-selection-readout"
-                text={`Selected: ${selectedEmployeeIndex >= 0 ? (employees[selectedEmployeeIndex]?.name ?? "(none)") : "(none)"} · Activated row: ${activatedEmployeeIndex}`}
+                text={`Selected: ${selectedEmployeeIndex() >= 0 ? (employees()[selectedEmployeeIndex()]?.name ?? "(none)") : "(none)"} · Activated row: ${activatedEmployeeIndex()}`}
                 cssClasses={["dimmed", "caption"]} />
-              <label testID="table-sort-readout" text={`Last sort: ${lastSort || "(unsorted)"}`}
+              <label testID="table-sort-readout" text={`Last sort: ${lastSort() || "(unsorted)"}`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 
             <box tabLabel="Tree" orientation="vertical" spacing={8} testID="tree-tab" style={{ padding: 12 }}>
               <treeview
                 testID="category-tree"
-                nodes={treeNodes}
+                nodes={treeNodes()}
                 indentationPerLevel={16}
                 onSelectionChanged={(e) => setSelectedTreeNodeId((e.data as { nodeId: string | null }).nodeId)}
                 onRowActivated={(e) => setActivatedTreeNodeId((e.data as { nodeId: string | null }).nodeId)}
@@ -538,7 +542,7 @@ function App(): React.ReactNode {
                 style={{ vexpand: true }}
               />
               <label testID="tree-selection-readout"
-                text={`Selected: ${treeNodeTitle(selectedTreeNodeId)} · Activated: ${treeNodeTitle(activatedTreeNodeId)}`}
+                text={`Selected: ${treeNodeTitle(selectedTreeNodeId())} · Activated: ${treeNodeTitle(activatedTreeNodeId())}`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 
@@ -552,9 +556,9 @@ function App(): React.ReactNode {
               </box>
               <sourcetree
                 testID="gallery-sourcetree-tree"
-                nodes={stNodes}
+                nodes={stNodes()}
                 actions={sourceTreeActions}
-                selectedId={stSelectedId}
+                selectedId={stSelectedId()}
                 onSelectionChanged={(e) => setStSelectedId((e.data as { nodeId: string | null }).nodeId ?? "")}
                 onRowActivated={(e) => setStLastActivated((e.data as { nodeId: string }).nodeId)}
                 onNodeExpanded={(e) => {
@@ -577,37 +581,37 @@ function App(): React.ReactNode {
                 }}
                 style={{ vexpand: true }}
               />
-              <checkbox testID="st-settled-toggle" label="Show settled" checked={stExpanded.has("sec-settled")}
+              <checkbox testID="st-settled-toggle" label="Show settled" checked={stExpanded().has("sec-settled")}
                 onToggled={(e) => setStExpanded((prev) => {
                   const next = new Set(prev);
                   if (e.checked) next.add("sec-settled");
                   else next.delete("sec-settled");
                   return next;
                 })} />
-              <label testID="st-selected-readout" text={`Selected: ${stSelectedId || "(none)"}`}
+              <label testID="st-selected-readout" text={`Selected: ${stSelectedId() || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
-              <label testID="st-activated-readout" text={`Activated: ${stLastActivated || "(none)"}`}
+              <label testID="st-activated-readout" text={`Activated: ${stLastActivated() || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
-              <label testID="st-action-readout" text={`Action: ${stLastAction || "(none)"}`}
+              <label testID="st-action-readout" text={`Action: ${stLastAction() || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
-              <label testID="st-expand-readout" text={`Expand event: ${stLastExpandEvent || "(none)"}`}
+              <label testID="st-expand-readout" text={`Expand event: ${stLastExpandEvent() || "(none)"}`}
                 cssClasses={["dimmed", "caption"]} />
             </box>
 
             <box tabLabel="Dialogs" orientation="vertical" spacing={10} testID="dialogs-tab" style={{ padding: 12 }}>
               <box orientation="horizontal" spacing={8}>
                 <button testID="show-alert-button" label="Show Alert" onClick={handleShowAlert} />
-                <label testID="alert-result-readout" text={`Result: ${alertResultText}`}
+                <label testID="alert-result-readout" text={`Result: ${alertResultText()}`}
                   cssClasses={["dimmed", "caption"]} style={{ valign: "center" }} />
               </box>
               <box orientation="horizontal" spacing={8}>
                 <button testID="open-file-button" label="Open File…" onClick={handleOpenFile} />
-                <label testID="open-file-result-readout" text={`Result: ${openFileResultText}`}
+                <label testID="open-file-result-readout" text={`Result: ${openFileResultText()}`}
                   cssClasses={["dimmed", "caption"]} style={{ valign: "center" }} />
               </box>
               <box orientation="horizontal" spacing={8}>
                 <button testID="save-file-button" label="Save File…" onClick={handleSaveFile} />
-                <label testID="save-file-result-readout" text={`Result: ${saveFileResultText}`}
+                <label testID="save-file-result-readout" text={`Result: ${saveFileResultText()}`}
                   cssClasses={["dimmed", "caption"]} style={{ valign: "center" }} />
               </box>
               <button testID="show-about-button" label="About This App" onClick={handleShowAbout} />
@@ -616,9 +620,9 @@ function App(): React.ReactNode {
             <box tabLabel="Video" orientation="vertical" spacing={8} testID="video-tab" style={{ padding: 12 }}>
               <label text="Bundled sample clip below; Choose Video File… swaps in any local video via the same openFile() dialog used in the Dialogs tab."
                 cssClasses={["dimmed", "caption"]} />
-              <video testID="gallery-video" src={videoSrc} controls loop />
+              <video testID="gallery-video" src={videoSrc()} controls loop />
               <button testID="choose-video-button" label="Choose Video File…" onClick={handleChooseVideo} />
-              <label testID="video-src-readout" text={`Source: ${videoSrc}`} cssClasses={["dimmed", "caption"]} />
+              <label testID="video-src-readout" text={`Source: ${videoSrc()}`} cssClasses={["dimmed", "caption"]} />
             </box>
 
             <box tabLabel="macOS" orientation="vertical" spacing={10} testID="macos-tab" style={{ padding: 12 }}>
@@ -627,7 +631,13 @@ function App(): React.ReactNode {
                   that only exist as native APIs on macOS, independent of
                   which rendering backend (GTK-via-Quartz or AppKit) is
                   driving this particular process. */}
-              {Platform.os === "macos" ? (
+              <Show
+                when={Platform.os === "macos"}
+                fallback={
+                  <label testID="macos-only-label" text="TrayItem and ShareButton are macOS-only widgets. Not available on this platform."
+                    cssClasses={["dimmed"]} />
+                }
+              >
                 <>
                   <label text="TrayItem" cssClasses={["heading"]} />
                   <trayitem testID="tray-item-demo" iconName="face-smile-symbolic" tooltip="NativeDesktop Gallery" />
@@ -643,16 +653,13 @@ function App(): React.ReactNode {
                     text="Same story: AppKit shows the native NSSharingServicePicker button; GTK mounts an invisible placeholder (there is no GTK share-sheet equivalent)."
                     cssClasses={["dimmed", "caption"]} />
                 </>
-              ) : (
-                <label testID="macos-only-label" text="TrayItem and ShareButton are macOS-only widgets. Not available on this platform."
-                  cssClasses={["dimmed"]} />
-              )}
+              </Show>
             </box>
           </tabview>
-          <label testID="activated-label" text={`Activated: ${activatedRow}`} />
+          <label testID="activated-label" text={`Activated: ${activatedRow()}`} />
           <scrollview testID="log-scroll" minContentHeight={120}>
             <box orientation="vertical" spacing={2}>
-              {Array.from({ length: 40 }, (_, i) => <label key={i} text={`Row ${i}`} />)}
+              <For each={logRows}>{(i) => <label text={`Row ${i}`} />}</For>
             </box>
           </scrollview>
         </box>
@@ -661,4 +668,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
