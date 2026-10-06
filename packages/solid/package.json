@@ -17,7 +17,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./register": "./src/register.ts",
-    "./jsx-runtime": "./src/jsx-runtime.ts"
+    "./jsx-runtime": "./src/jsx-runtime.ts",
+    "./build": "./src/build.ts"
+  },
+  "bin": {
+    "nd-solid-build": "./src/build.ts"
   },
   "files": [
     "src"

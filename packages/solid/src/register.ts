@@ -17,20 +17,20 @@
 //   transform, whose compiled output imports its helpers from
 //   @nativedesktop/solid.
 // - Under `nd dev` (ND_DEV=1, `bun --hot`), see the hot reload notes below.
-/// <reference path="./babel-presets.d.ts" />
-import { transformAsync, types as t, type PluginObj, type TransformOptions } from "@babel/core";
-import presetTypescript from "@babel/preset-typescript";
-import presetSolid from "babel-preset-solid";
-import { existsSync, readFileSync } from "node:fs";
+import type { PluginObj, TransformOptions } from "@babel/core";
 import { dirname, join, sep } from "node:path";
+import { isSolidSource, jsxFile as jsx } from "./solid-source.ts";
 
 const dev = process.env.ND_DEV === "1";
 // A native addon, needed for the dev refresh pass only; a packaged app never loads it.
 const refreshCompiler = dev ? await import("@solidjs/compiler") : undefined;
+const babelTypes = dev ? (await import("@babel/core")).types : undefined;
+// Babel loads on the first .tsx, so an app built ahead of time (build.ts),
+// whose own code is plain .js, starts without it.
+let transform: Promise<typeof import("./transform.ts")> | undefined;
 const solidDir = dirname(require.resolve("solid-js/package.json"));
 const clientBuild = join(solidDir, "dist", dev ? "solid.dev.js" : "solid.js");
 const serverBuild = /[\\/]solid-js[\\/]dist[\\/]server(\.dev)?\.js$/;
-const jsx = /\.[jt]sx$/;
 
 // Hot reload. `bun --hot` re-evaluates every module on an edit, node_modules
 // included, and keeps only globalThis. Two consequences:
@@ -112,32 +112,6 @@ if (dev) {
   };
 }
 
-// A Solid .tsx is one whose nearest package.json is this package or depends
-// on it; any other .tsx (React code in the same process, as under a
-// repo-wide `bun test`) keeps Bun's own transform.
-const solidPackages = new Map<string, boolean>();
-function isSolidSource(path: string): boolean {
-  for (let dir = dirname(path); ; dir = dirname(dir)) {
-    const known = solidPackages.get(dir);
-    if (known !== undefined) return known;
-    const manifest = join(dir, "package.json");
-    if (existsSync(manifest)) {
-      const pkg = JSON.parse(readFileSync(manifest, "utf8")) as {
-        name?: string;
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      const solid =
-        pkg.name === "@nativedesktop/solid" ||
-        pkg.dependencies?.["@nativedesktop/solid"] !== undefined ||
-        pkg.devDependencies?.["@nativedesktop/solid"] !== undefined;
-      solidPackages.set(dir, solid);
-      return solid;
-    }
-    if (dirname(dir) === dir) return false;
-  }
-}
-
 function facade(path: string, ns: Record<string, unknown>): string {
   const key = JSON.stringify(path);
   let out = `const __nd_ns = globalThis.__nd_solid_pins.get(${key});\n`;
@@ -155,6 +129,7 @@ function selfPin(path: string, contents: string): string {
 
 /** Points the refresh transform's `import.meta.hot` at this module's `__nd_solid_hot` context. */
 function hotContext(id: string): PluginObj {
+  const t = babelTypes!;
   return {
     visitor: {
       Program(program) {
@@ -198,20 +173,9 @@ async function compileJsx(path: string): Promise<string> {
     source = refreshed.code;
     if (refreshed.map) inputSourceMap = JSON.parse(String(refreshed.map));
   }
-  const out = await transformAsync(source, {
-    filename: path,
-    babelrc: false,
-    configFile: false,
-    sourceMaps: "inline",
-    inputSourceMap,
-    plugins: dev ? [hotContext(path)] : [],
-    presets: [
-      [presetTypescript, { isTSX: true, allExtensions: true }],
-      [presetSolid, { generate: "universal", moduleName: "@nativedesktop/solid" }],
-    ],
-  });
-  if (!out?.code) throw new Error(`babel-preset-solid produced no output for ${path}`);
-  return out.code;
+  transform ??= import("./transform.ts");
+  const { transformSolid } = await transform;
+  return transformSolid(source, path, { inputSourceMap, plugins: dev ? [hotContext(path)] : [] });
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
