@@ -45,13 +45,10 @@ export function eventForHandler(type: string, prop: string): string | undefined 
   return undefined;
 }
 
-/** Wire id behind a ref-valued prop: a node handle itself, or a React-style
- *  `{ current }` object holding one. */
+/** Wire id behind a ref-valued prop, a node handle. */
 export function refTargetId(v: unknown): number | undefined {
   if (v === null || typeof v !== "object") return undefined;
-  const direct = (v as { id?: unknown }).id;
-  if (typeof direct === "number") return direct;
-  const id = (v as { current?: { id?: unknown } | null }).current?.id;
+  const id = (v as { id?: unknown }).id;
   return typeof id === "number" ? id : undefined;
 }
 

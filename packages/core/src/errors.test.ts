@@ -26,7 +26,6 @@ test("render kinds are not configurable", () => {
   const p = { unhandledRejection: "fatal", uncaughtException: "report" } as const;
   expect(decide("renderUncaught", p)).toBe("fatal");
   expect(decide("renderCaught", p)).toBe("report");
-  expect(decide("renderRecoverable", p)).toBe("report");
 });
 
 test("explicit policy overrides the defaults", () => {
@@ -51,11 +50,10 @@ test("subscribers fire in registration order with kind/fatal/raw context", () =>
     seen.push("second");
     ctx = c;
   });
-  reportRenderError(new Error("boom"), "renderCaught", "in App");
+  reportRenderError(new Error("boom"), "renderCaught");
   expect(seen).toEqual(["first", "second"]);
   expect(ctx?.kind).toBe("renderCaught");
   expect(ctx?.fatal).toBe(false);
-  expect(ctx?.componentStack).toBe("in App");
   expect((ctx?.raw as Error).message).toBe("boom");
 });
 
@@ -80,7 +78,7 @@ test("a throwing handler never breaks the next one", () => {
   onUnhandledError(() => {
     reached = true;
   });
-  reportRenderError(new Error("boom"), "renderRecoverable");
+  reportRenderError(new Error("boom"), "renderCaught");
   expect(reached).toBe(true);
 });
 

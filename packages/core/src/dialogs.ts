@@ -13,11 +13,11 @@
 // here — including the result handlers — takes that node explicitly so
 // multiple windows never share state. Wire a window's result props as:
 //
-//   const winRef = useRef<NdNodeRef<"window">>(null);
-//   <window ref={winRef}
-//     onAlertResult={(e) => onAlertResult(winRef.current!, e)}
-//     onOpenFileResult={(e) => onOpenFileResult(winRef.current!, e)}
-//     onSaveFileResult={(e) => onSaveFileResult(winRef.current!, e)}
+//   let win!: NdNodeRef<"window">;
+//   <window ref={win}
+//     onAlertResult={(e) => onAlertResult(win, e)}
+//     onOpenFileResult={(e) => onOpenFileResult(win, e)}
+//     onSaveFileResult={(e) => onSaveFileResult(win, e)}
 //   />
 //
 // Only one dialog may be pending per window at a time — the host has no

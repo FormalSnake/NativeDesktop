@@ -24,10 +24,6 @@ export interface Session {
   flush(): void;
 }
 
-export interface ConnectOptions {
-  /** Runs before an event reaches its handler (React sets the update lane here). */
-  beforeEvent?: (e: EventMsg) => void;
-}
 
 declare global {
   // eslint-disable-next-line no-var
@@ -49,7 +45,7 @@ export function isHot(): boolean {
 
 /** Connects and handshakes once per process; later calls (a hot re-eval)
  *  return the live session. */
-export async function connect(options: ConnectOptions = {}): Promise<Session> {
+export async function connect(): Promise<Session> {
   const existing = getSession();
   if (existing) return existing;
   const ndp = await Ndp.connect();
@@ -78,9 +74,7 @@ export async function connect(options: ConnectOptions = {}): Promise<Session> {
       session.commit();
     },
   };
-  const { beforeEvent } = options;
   ndp.onEvent((e: EventMsg) => {
-    beforeEvent?.(e);
     registry.get(e.nodeId)?.handlers[e.name]?.(e.payload);
   });
   setSession(session);

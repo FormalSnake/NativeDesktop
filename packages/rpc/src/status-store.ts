@@ -1,4 +1,4 @@
-// Snapshot store behind useRpcStatus, React-free so the subscribe-time
+// Snapshot store behind createRpcStatus, renderer-free so the subscribe-time
 // resync is testable without a renderer. The snapshot is rebuilt inside the
 // state-change callback, where `attempt`/`nextRetryInMs` are guaranteed to
 // already reflect the transition being notified.
@@ -30,12 +30,11 @@ export function createRpcStatusStore<C extends RpcContract>(client: RpcClient<C>
         snapshot = { state, attempt: client.attempt, nextRetryInMs: client.nextRetryInMs, detail };
         onChange();
       });
-      // A transition in the render-to-subscribe gap (a local handshake can
-      // settle before passive effects flush) fired into an empty handler
-      // set. Rebuild the snapshot so useSyncExternalStore's post-subscribe
-      // getSnapshot() re-read observes it; returning the stale capture
-      // would defeat that guard and stick the UI on the old state forever.
-      // Its detail belonged to the missed transition, so it resets.
+      // A transition between the store's creation and subscribe fired into
+      // an empty handler set. Rebuild the snapshot and notify so the
+      // subscriber's re-read observes it; returning the stale capture would
+      // stick the UI on the old state forever. Its detail belonged to the
+      // missed transition, so it resets.
       if (
         client.state !== snapshot.state ||
         client.attempt !== snapshot.attempt ||

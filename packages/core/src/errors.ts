@@ -1,7 +1,7 @@
 // Async-error policy: decides, per error kind, whether the process reports
 // and keeps running or reports and exits. Render-phase errors belong to
-// error boundaries (react-reconciler's createContainer callbacks land here
-// via reportRenderError); this module owns the process-level
+// error boundaries (the renderer reports them here through
+// reportRenderError); this module owns the process-level
 // `unhandledRejection` / `uncaughtException` handlers. All state lives on
 // globalThis (same idiom as session.ts) so a `bun --hot` re-eval neither
 // double-installs process listeners nor resets subscriptions mid-session.
@@ -12,8 +12,7 @@ export type NdErrorKind =
   | "unhandledRejection"
   | "uncaughtException"
   | "renderUncaught"
-  | "renderCaught"
-  | "renderRecoverable";
+  | "renderCaught";
 
 export interface NdErrorContext {
   kind: NdErrorKind;
@@ -21,8 +20,6 @@ export interface NdErrorContext {
   fatal: boolean;
   /** Original thrown/rejected value, verbatim (may not be an Error). */
   raw: unknown;
-  /** React component stack; present only for the three render-phase kinds. */
-  componentStack?: string;
 }
 
 export type NdErrorHandler = (error: Error, context: NdErrorContext) => void;
@@ -48,10 +45,6 @@ interface ErrorsState {
   stamps: number[];
   suppressedLogged: boolean;
   hintShown: boolean;
-  /** Errors already reported as renderUncaught: the follow-on
-   *  uncaughtException (React rethrows the callback's throw in a setTimeout)
-   *  must exit without a duplicate report. */
-  renderFatal: WeakSet<object>;
 }
 
 declare global {
@@ -69,7 +62,6 @@ function state(): ErrorsState {
       stamps: [],
       suppressedLogged: false,
       hintShown: false,
-      renderFatal: new WeakSet(),
     };
   }
   return globalThis.__nd_errors;
@@ -80,10 +72,9 @@ function state(): ErrorsState {
 export function decide(kind: NdErrorKind, p: UnhandledErrorPolicy): "report" | "fatal" {
   switch (kind) {
     case "renderUncaught":
-      // React already unmounted the root; the window is blank. Not configurable.
+      // No boundary caught it and the tree's reactivity has halted. Not configurable.
       return "fatal";
     case "renderCaught":
-    case "renderRecoverable":
       return "report";
     case "uncaughtException":
       // A sync throw unwound an arbitrary stack; the heap may be mid-mutation.
@@ -97,7 +88,7 @@ export function decide(kind: NdErrorKind, p: UnhandledErrorPolicy): "report" | "
  *  run in registration order; a handler that itself throws is caught and
  *  logged, never escalated. Same HMR caveat as system.ts's app.on*: a
  *  module-top-level call re-subscribes a fresh closure each hot re-eval, so
- *  register from useMountEffect or a module that runs once. */
+ *  register from onSettled or a module that runs once. */
 export function onUnhandledError(handler: NdErrorHandler): () => void {
   const handlers = state().handlers;
   handlers.add(handler);
@@ -115,7 +106,6 @@ const KIND_LABEL: Record<NdErrorKind, string> = {
   uncaughtException: "uncaught exception",
   renderUncaught: "render error",
   renderCaught: "render error (caught by boundary)",
-  renderRecoverable: "render error (recoverable)",
 };
 
 function toError(raw: unknown): Error {
@@ -140,7 +130,7 @@ export function admitReport(): boolean {
   return true;
 }
 
-function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?: string): void {
+function report(raw: unknown, kind: NdErrorKind, fatal: boolean): void {
   const s = state();
   const error = toError(raw);
   // The cap drops the console line and the wire frame, never the subscriber
@@ -150,7 +140,7 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?
       let line = `[nd] ${KIND_LABEL[kind]}: ${error.message}\n${error.stack ?? ""}`;
       if (!fatal && isHot() && !s.hintShown) {
         s.hintShown = true;
-        line += "\n[nd] the app kept running. Register onUnhandledError() from @nativedesktop/react to handle these.";
+        line += "\n[nd] the app kept running. Register onUnhandledError() from @nativedesktop/solid to handle these.";
       }
       console.error(line);
     }
@@ -158,7 +148,6 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?
     getSession()?.ndp.sendRuntimeError(error.message, error.stack ?? "", fatal);
   }
   const context: NdErrorContext = { kind, fatal, raw };
-  if (componentStack !== undefined) context.componentStack = componentStack;
   for (const handler of s.handlers) {
     try {
       handler(error, context);
@@ -168,22 +157,9 @@ function report(raw: unknown, kind: NdErrorKind, fatal: boolean, componentStack?
   }
 }
 
-/** Called by a renderer's own error callbacks (React: createContainer's). Not public API. */
-export function reportRenderError(
-  raw: unknown,
-  kind: "renderUncaught" | "renderCaught" | "renderRecoverable",
-  componentStack?: string,
-): void {
-  if (kind === "renderUncaught") {
-    // Fatal, not configurable: React already committed {element: null}. Mark
-    // the error so the follow-on uncaughtException (packages/react's renderer.ts rethrows,
-    // React re-raises that in a setTimeout) exits without a second report.
-    // A non-object throw can't be marked and double-logs; documented.
-    if (typeof raw === "object" && raw !== null) state().renderFatal.add(raw);
-    report(raw, kind, true, componentStack);
-    return;
-  }
-  report(raw, kind, false, componentStack);
+/** Called by a renderer's own error boundaries. Not public API. */
+export function reportRenderError(raw: unknown, kind: "renderUncaught" | "renderCaught"): void {
+  report(raw, kind, kind === "renderUncaught");
 }
 
 /** Installs the process-level handlers once per process; render() calls this
@@ -198,11 +174,7 @@ export function installErrorHandlers(): void {
     if (fatal) process.exit(1);
   });
   process.on("uncaughtException", (err) => {
-    const s = state();
-    // Already reported as renderUncaught: exit regardless of policy, no
-    // duplicate report.
-    if (typeof err === "object" && err !== null && s.renderFatal.has(err)) process.exit(1);
-    const fatal = decide("uncaughtException", s.policy) === "fatal";
+    const fatal = decide("uncaughtException", state().policy) === "fatal";
     report(err, "uncaughtException", fatal);
     if (fatal) process.exit(1);
   });

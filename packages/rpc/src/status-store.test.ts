@@ -1,7 +1,6 @@
 // Pins the subscribe-time resync: a transition landing between the store's
-// creation (render) and subscribe (passive effect) fires into an empty
-// handler set, and subscribe must rebuild the snapshot so the
-// useSyncExternalStore post-subscribe re-read can observe it.
+// creation and subscribe fires into an empty handler set, and subscribe must
+// rebuild the snapshot so the subscriber's re-read can observe it.
 
 import { describe, expect, test } from "bun:test";
 import { RpcClient } from "./client.ts";

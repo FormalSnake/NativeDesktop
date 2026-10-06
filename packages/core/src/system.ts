@@ -188,7 +188,7 @@ export const notifications = {
     }
     return id;
   },
-  /** Subscribes to notification-click events; `e.data` is the payload passed to `show()`, same-session only. Returns an unsubscribe function, usable directly as a `useEffect` cleanup. */
+  /** Subscribes to notification-click events; `e.data` is the payload passed to `show()`, same-session only. Returns an unsubscribe function, usable directly as an `onCleanup` callback. */
   onClick(handler: (e: { id: string; data?: unknown }) => void): () => void {
     return subscribe("notification.click", "notifications.onClick", (raw) => {
       const { id } = raw as { id: string };
