@@ -1,5 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["bun", "react"] },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
-}

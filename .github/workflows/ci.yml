@@ -19,7 +19,7 @@ jobs:
       - name: codegen freshness
         run: |
           nix develop -c bun tools/codegen.ts
-          git diff --exit-code -- schema packages/core/src/generated packages/react/src/generated packages/solid/src/generated \
+          git diff --exit-code -- schema packages/core/src/generated packages/solid/src/generated \
             src/generated swift/Sources/NDGen docs/widgets.md docs/styling.md docs-site/src/content/docs/components/widget-reference.md
       - name: build
         run: nix develop -c zig build

@@ -470,7 +470,7 @@ func ndFocusSelects(_ argJson: String) -> Bool {
 }
 
 /// TabView's selection event. NSTabViewController is its own NSTabView
-/// delegate, so the override IS the delegate callback. React-driven
+/// delegate, so the override IS the delegate callback. App-driven
 /// `selectedIndex` writes ride withEchoSuppressed on the handle view, which
 /// is exactly what ndIsEchoSuppressed probes here.
 final class NDTabViewController: NSTabViewController {
@@ -1232,7 +1232,7 @@ final class NDSegmentedControlView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven `selectedIndex` write, echo-suppressed like every other
+    /// App-driven `selectedIndex` write, echo-suppressed like every other
     /// controlled prop.
     func setSelectedIndexFromProps(_ idx: Int) {
         guard idx != selectedIndex else { return }
@@ -1300,7 +1300,7 @@ final class NDSliderView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven `value` write, echo-suppressed like every other
+    /// App-driven `value` write, echo-suppressed like every other
     /// controlled prop.
     func setValueFromProps(_ v: Double) {
         guard abs(v - value) > 1e-9 else { return }
@@ -1308,7 +1308,7 @@ final class NDSliderView: NDHostedLeaf {
     }
 
     /// `semanticSetValue`'s Slider arm (Automation.swift): a driven write
-    /// behaves like a user drag, not a React update — it emits.
+    /// behaves like a user drag, not an app update, it emits.
     func driveValue(_ v: Double) { setValue(v, emit: true) }
 
     private func setValue(_ v: Double, emit: Bool) {
@@ -1350,7 +1350,7 @@ final class NDSwitchView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven `checked` write, echo-suppressed like every other
+    /// App-driven `checked` write, echo-suppressed like every other
     /// controlled prop.
     func setCheckedFromProps(_ c: Bool) {
         guard c != checked else { return }
@@ -1358,7 +1358,7 @@ final class NDSwitchView: NDHostedLeaf {
     }
 
     /// `semanticSetValue`'s Switch arm: a driven write behaves like a user
-    /// tap, not a React update — it emits.
+    /// tap, not an app update, it emits.
     func driveChecked(_ c: Bool) { setChecked(c, emit: true) }
 
     private func setChecked(_ c: Bool, emit: Bool) {
@@ -2139,7 +2139,7 @@ func ndCreateWidget(_ kind: String, _ propsJson: String) -> NSView? {
     } else if kind == "TabView" {
         if let idx = propInt(props, "selectedIndex"), let tabs = ndTabViewController(for: view),
            idx >= 0 && idx < tabs.tabViewItems.count, tabs.selectedTabViewItemIndex != idx {
-            // A React-driven page change must not echo back as selectionChanged.
+            // An app-driven page change must not echo back as selectionChanged.
             withEchoSuppressed(view) { tabs.selectedTabViewItemIndex = idx }
         }
     } else if kind == "ListView" {
@@ -2716,7 +2716,7 @@ func ndAppendChild(_ parent: NSView, _ parentKind: String, _ child: NSView, _ at
         ndMenuAttachChild(parent, child, before: nil)
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
-        group.appendReactView(child)
+        group.appendTreeView(child)
     } else if parentKind == "Row" {
         ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
     } else if parentKind == "Clamp" {
@@ -2846,7 +2846,7 @@ func ndInsertBefore(_ parent: NSView, _ parentKind: String, _ child: NSView, _ b
         ndMenuAttachChild(parent, child, before: before)
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
-        group.insertReactView(child, before: before)
+        group.insertTreeView(child, before: before)
     } else if parentKind == "Row" {
         ndRowPack(parent as! NDRowView, child, slot: attachedSlot)
     } else if parentKind == "Overlay" {
@@ -2948,7 +2948,7 @@ func ndRemoveChild(_ parent: NSView, _ parentKind: String, _ child: NSView) {
         ndMenuRemoveChild(parent, child)
     } else if parentKind == "SettingsGroup" {
         let group = parent as! NDSettingsGroupView
-        group.removeReactView(child)
+        group.removeTreeView(child)
     } else if parentKind == "Row" {
         ndRowUnpack(parent as! NDRowView, child)
     } else if parentKind == "Clamp" {

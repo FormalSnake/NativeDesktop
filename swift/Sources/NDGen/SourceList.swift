@@ -46,7 +46,7 @@ final class SourceListDataSource: NSObject, NSTableViewDataSource, NSTableViewDe
     /// asymmetry `Automation.swift`'s `semanticSetValue` SourceList arm
     /// relies on instead of re-firing manually). `ndSourceListSetItems`/
     /// `ndSourceListSetSelectedIndex` suppress the echo via
-    /// `withEchoSuppressed` for the React-driven (non-semantic) path.
+    /// `withEchoSuppressed` for the app-driven (non-semantic) path.
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let tableView = notification.object as? NSTableView,
               let scrollView = tableView.enclosingScrollView else { return }

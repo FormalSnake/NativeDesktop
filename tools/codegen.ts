@@ -37,8 +37,8 @@ interface Prop {
    *  Omitted = the legacy SourceList row shape (back-compat). */
   itemShape?: string;
   /** For an `int` prop carrying another node's wire id: the JSX prop name that
-   *  takes a React ref to that node instead of the raw number. The reconciler
-   *  reads `.current.id` off the ref and wires it under THIS prop's name, so
+   *  takes that node's ref instead of the raw number. The renderer reads
+   *  `.id` off the ref and wires it under THIS prop's name, so
    *  an app never has to know node ids exist. */
   refProp?: string;
 }
@@ -259,21 +259,12 @@ function genWidgetsShared(s: Schema): string {
   return out;
 }
 
-type JsxFlavor = "react" | "solid";
-
-// Renderer half: one JSX namespace per renderer over the same widget table.
-// They differ only in how a ref-valued prop, `ref`, `key` and children are typed.
-function genIntrinsics(s: Schema, flavor: JsxFlavor): string {
+// Renderer half: the Solid JSX namespace over the shared widget table.
+function genIntrinsics(s: Schema): string {
   const shared = ["WidgetName", "WidgetType", "NdNodeRef", "StyleProp", ...(s.types ?? []).map((t) => t.name)];
   let out = HEADER_TS;
-  if (flavor === "react") {
-    out += 'import type { ReactNode, Ref, RefObject } from "react";\n';
-    out += `import type { ${shared.join(", ")} } from "@nativedesktop/core";\n\n`;
-    out += "export { jsx, jsxs, Fragment } from \"react/jsx-runtime\";\n";
-  } else {
-    out += 'import type { Element as SolidElement } from "solid-js";\n';
-    out += `import type { ${shared.join(", ")} } from "@nativedesktop/core";\n\n`;
-  }
+  out += 'import type { Element as SolidElement } from "solid-js";\n';
+  out += `import type { ${shared.join(", ")} } from "@nativedesktop/core";\n\n`;
   out += `export type { ${shared.join(", ")} };\n\n`;
   out += "export namespace JSX {\n";
   out += "  export interface IntrinsicElements {\n";
@@ -282,30 +273,19 @@ function genIntrinsics(s: Schema, flavor: JsxFlavor): string {
     const fields: string[] = [];
     for (const p of w.props) {
       fields.push(`${p.name}?: ${tsTypeOf(p)}`);
-      if (p.refProp) fields.push(`${p.refProp}?: ${flavor === "react" ? "RefObject<NdNodeRef | null>" : "NdNodeRef | null"}`);
+      if (p.refProp) fields.push(`${p.refProp}?: NdNodeRef | null`);
     }
     for (const e of w.events) fields.push(`${e.ndpName ?? e.name}?: ${tsHandlerType(e)}`);
     for (const ap of attached) fields.push(`${ap.name}?: ${tsTypeOf(ap)}`);
     fields.push("style?: StyleProp");
     fields.push("cssClasses?: string[]");
     const node = `NdNodeRef<${JSON.stringify(w.intrinsic)}>`;
-    if (flavor === "react") {
-      fields.push("key?: string | number | null");
-      fields.push(`ref?: Ref<${node}>`);
-      fields.push("children?: ReactNode");
-    } else {
-      fields.push(`ref?: ${node} | ((node: ${node}) => void)`);
-      fields.push("children?: SolidElement");
-    }
+    fields.push(`ref?: ${node} | ((node: ${node}) => void)`);
+    fields.push("children?: SolidElement");
     out += `    ${w.intrinsic}: { ${fields.join("; ")} };\n`;
   }
   out += "  }\n";
-  if (flavor === "react") {
-    out += "  export type Element = ReactNode;\n";
-    out += "  export interface IntrinsicAttributes {\n    key?: string | number | null;\n  }\n";
-  } else {
-    out += "  export type Element = SolidElement;\n";
-  }
+  out += "  export type Element = SolidElement;\n";
   out += "  export interface ElementChildrenAttribute {\n    children: {};\n  }\n";
   out += "}\n";
   return out;
@@ -337,7 +317,7 @@ function genSchemaMeta(s: Schema): string {
   out += "};\n";
 
   out += "\n/** JSX ref-prop name -> the wire prop that carries the target's node id\n";
-  out += " *  (schema `refProp`). The reconciler reads `.current.id` off the ref and\n";
+  out += " *  (schema `refProp`). The renderer reads `.id` off the ref and\n";
   out += " *  sends the number, so an app never handles a node id itself; only the\n";
   out += " *  widgets listed here have one. */\n";
   out += "export const widgetRefProps: Record<string, Record<string, string>> = {\n";
@@ -1205,8 +1185,8 @@ fn ndMenuChildList(parent: usize) ?*std.ArrayList(usize) {
     return null;
 }
 
-/// Drops \`child\` from the list it currently sits in. React moves a child by
-/// emitting insertBefore/append with NO preceding remove, so every attach
+/// Drops \`child\` from the list it currently sits in. A child move arrives as
+/// insertBefore/append with NO preceding remove, so every attach
 /// detaches first; otherwise the model gains a second copy of the same item
 /// (a 3-item tab list drew 5 entries after one reorder).
 fn ndMenuDetachNode(child_w: *gtk.Widget) void {
@@ -2675,7 +2655,7 @@ fn ndRatingRebuild(widget: *gtk.Widget, value: f64) void {
 
 /// ComboBox wires BOTH its events off one \`notify::selected\` handler: the
 /// echo-suppression map holds one handler id per object, so two connections
-/// would leave the second unblockable during a React-driven update.
+/// would leave the second unblockable during an app-driven update.
 fn ndComboBoxConnect(widget: *gtk.Widget, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     const hid = gobject.signalConnectData(asObject(widget), "notify::selected", @ptrCast(&cbComboBoxSelected), data, null, .{});
@@ -2857,8 +2837,8 @@ fn ndDialogDetach(child: *gtk.Widget, parent: *gtk.Widget) void {
 
 /// Controlled \`open\`, idempotent in both directions: presented and pending
 /// are tracked here, so a re-render carrying an unchanged \`open\` is free.
-/// React mounts bottom-up, so at attach time the tree parent has not reached
-/// the window yet and presenting now would open a separate toplevel instead
+/// A child can attach before its tree parent has reached
+/// the window, so and presenting now would open a separate toplevel instead
 /// of an in-window dialog. Every open therefore waits one main-loop turn, by
 /// which point the window exists.
 fn ndDialogSetOpen(widget: *gtk.Widget, open: bool) void {
@@ -2867,7 +2847,7 @@ fn ndDialogSetOpen(widget: *gtk.Widget, open: bool) void {
         if (gobject.Object.getData(obj, ND_DIALOG_PENDING_OPEN) != null) return;
         if (gobject.Object.getData(obj, ND_DIALOG_PRESENTED) != null) return;
         gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, @ptrFromInt(1));
-        _ = gobject.Object.ref(obj); // survive the turn even if React unmounts first
+        _ = gobject.Object.ref(obj); // survive the turn even if the app unmounts first
         _ = glib.idleAdd(&cbDialogPresentIdle, widget);
         return;
     }
@@ -5047,7 +5027,7 @@ function genZigApplyBody(w: Widget, updProps: Prop[]): string {
       out += "                while (page_child) |c| : (page_child = gtk.Widget.getNextSibling(c)) {\n";
       out += "                    if (i == idx) {\n";
       out += "                        // The selection handler hangs off the stack, so that is the\n";
-      out += "                        // object to block: a React-driven page change must not echo.\n";
+      out += "                        // object to block: an app-driven page change must not echo.\n";
       out += "                        blockEcho(asObject(stack));\n";
       out += "                        adw.ViewStack.setVisibleChild(stack, c);\n";
       out += "                        unblockEcho(asObject(stack));\n";
@@ -7065,7 +7045,7 @@ func ndFocusSelects(_ argJson: String) -> Bool {
 }
 
 /// TabView's selection event. NSTabViewController is its own NSTabView
-/// delegate, so the override IS the delegate callback. React-driven
+/// delegate, so the override IS the delegate callback. App-driven
 /// \`selectedIndex\` writes ride withEchoSuppressed on the handle view, which
 /// is exactly what ndIsEchoSuppressed probes here.
 final class NDTabViewController: NSTabViewController {
@@ -7851,7 +7831,7 @@ final class NDSegmentedControlView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven \`selectedIndex\` write, echo-suppressed like every other
+    /// App-driven \`selectedIndex\` write, echo-suppressed like every other
     /// controlled prop.
     func setSelectedIndexFromProps(_ idx: Int) {
         guard idx != selectedIndex else { return }
@@ -7919,7 +7899,7 @@ final class NDSliderView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven \`value\` write, echo-suppressed like every other
+    /// App-driven \`value\` write, echo-suppressed like every other
     /// controlled prop.
     func setValueFromProps(_ v: Double) {
         guard abs(v - value) > 1e-9 else { return }
@@ -7927,7 +7907,7 @@ final class NDSliderView: NDHostedLeaf {
     }
 
     /// \`semanticSetValue\`'s Slider arm (Automation.swift): a driven write
-    /// behaves like a user drag, not a React update — it emits.
+    /// behaves like a user drag, not an app update, it emits.
     func driveValue(_ v: Double) { setValue(v, emit: true) }
 
     private func setValue(_ v: Double, emit: Bool) {
@@ -7969,7 +7949,7 @@ final class NDSwitchView: NDHostedLeaf {
         refreshLeaf()
     }
 
-    /// React-driven \`checked\` write, echo-suppressed like every other
+    /// App-driven \`checked\` write, echo-suppressed like every other
     /// controlled prop.
     func setCheckedFromProps(_ c: Bool) {
         guard c != checked else { return }
@@ -7977,7 +7957,7 @@ final class NDSwitchView: NDHostedLeaf {
     }
 
     /// \`semanticSetValue\`'s Switch arm: a driven write behaves like a user
-    /// tap, not a React update — it emits.
+    /// tap, not an app update, it emits.
     func driveChecked(_ c: Bool) { setChecked(c, emit: true) }
 
     private func setChecked(_ c: Bool, emit: Bool) {
@@ -8884,7 +8864,7 @@ function genSwiftApplyBody(w: Widget, updProps: Prop[]): string {
     } else if (w.name === "TabView" && p.name === "selectedIndex") {
       out += '        if let idx = propInt(props, "selectedIndex"), let tabs = ndTabViewController(for: view),\n';
       out += "           idx >= 0 && idx < tabs.tabViewItems.count, tabs.selectedTabViewItemIndex != idx {\n";
-      out += "            // A React-driven page change must not echo back as selectionChanged.\n";
+      out += "            // An app-driven page change must not echo back as selectionChanged.\n";
       out += "            withEchoSuppressed(view) { tabs.selectedTabViewItemIndex = idx }\n";
       out += "        }\n";
     } else if (w.name === "ListView" && p.name === "items") {
@@ -9804,11 +9784,11 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        }\n",
   },
   SettingsGroup: {
-    append: () => "        let group = parent as! NDSettingsGroupView\n        group.appendReactView(child)\n",
+    append: () => "        let group = parent as! NDSettingsGroupView\n        group.appendTreeView(child)\n",
     insertBefore: () =>
       "        let group = parent as! NDSettingsGroupView\n" +
-      "        group.insertReactView(child, before: before)\n",
-    remove: () => "        let group = parent as! NDSettingsGroupView\n        group.removeReactView(child)\n",
+      "        group.insertTreeView(child, before: before)\n",
+    remove: () => "        let group = parent as! NDSettingsGroupView\n        group.removeTreeView(child)\n",
   },
   // Slot-addressed (prefix/suffix) — insertBefore is identical to append,
   // mirroring the Zig Row template.
@@ -9869,7 +9849,7 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
       "        let split = parent as! NSSplitView\n" +
       "        split.addSubview(child)\n" +
       "        ndPanedController(for: split)?.reapplyFraction()\n",
-    // React commits deletions before placements, so a pane remount arrives as
+    // A pane remount can arrive as
     // insertBefore against the surviving pane; landing the child ahead of
     // `before` in the subview order keeps the pane order (a plain addSubview
     // appended it, swapping the panes left/right).
@@ -9967,8 +9947,8 @@ const SWIFT_STRUCTURAL: Record<string, SwiftStructuralTemplate> = {
   // M13 menu containers: parent/child are NDMenuNodeView host handles. The
   // hand-written helpers link them into the menu model and schedule an
   // NDMenuManager rebuild. `before` places the child, and an already-attached
-  // child moves rather than joining the list twice (React reorders a keyed
-  // list with a bare insertBefore, no remove).
+  // child moves rather than joining the list twice (a keyed reorder
+  // can be a bare insertBefore, no remove).
   Menubar: {
     append: () => "        ndMenuAttachChild(parent, child, before: nil)\n",
     insertBefore: () => "        ndMenuAttachChild(parent, child, before: before)\n",
@@ -10568,7 +10548,7 @@ function genProtocolTs(s: ProtocolSchema, widgets: Schema): string {
   out += `export const NDP_VERSION = ${s.ndpVersion};\n\n`;
   // Same union genWidgetsShared emits, duplicated here (from the same schema, so
   // no drift is possible) to keep this module dependency-free: packages/core/src/ndp.ts
-  // imports it and must not drag react types into the runtime's typecheck.
+  // imports it and must not drag renderer types into the runtime's typecheck.
   out += "export type WidgetName = " + widgets.widgets.map((w) => JSON.stringify(w.name)).join(" | ") + ";\n\n";
   for (const t of s.types) {
     out += tsDocLine(t.doc);
@@ -10718,8 +10698,7 @@ const schema = (await Bun.file(resolve(ROOT, "schema/widgets.json")).json()) as 
   }
 }
 await writeIfChanged("packages/core/src/generated/widgets.ts", genWidgetsShared(schema));
-await writeIfChanged("packages/react/src/generated/intrinsics.ts", genIntrinsics(schema, "react"));
-await writeIfChanged("packages/solid/src/generated/intrinsics.ts", genIntrinsics(schema, "solid"));
+await writeIfChanged("packages/solid/src/generated/intrinsics.ts", genIntrinsics(schema));
 await writeIfChanged("packages/core/src/generated/schema-meta.ts", genSchemaMeta(schema));
 await writeIfChanged("src/generated/widgets.zig", genZig(schema));
 await writeIfChanged("docs/widgets.md", genDocs(schema));

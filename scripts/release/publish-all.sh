@@ -21,7 +21,6 @@ for dir in \
   packages/host-linux-x64 \
   packages/host \
   packages/core \
-  packages/react \
   packages/solid \
   packages/rpc \
   packages/test \
@@ -29,7 +28,6 @@ for dir in \
   packages/data \
   packages/panes \
   packages/ui \
-  packages/babel-plugin-nativedesktop \
   packages/nd; do
   echo "publishing $dir"
   (

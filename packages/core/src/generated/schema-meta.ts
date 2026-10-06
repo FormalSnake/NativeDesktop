@@ -236,7 +236,7 @@ export const widgetEvents: Record<string, WidgetEvent[]> = {
 };
 
 /** JSX ref-prop name -> the wire prop that carries the target's node id
- *  (schema `refProp`). The reconciler reads `.current.id` off the ref and
+ *  (schema `refProp`). The renderer reads `.id` off the ref and
  *  sends the number, so an app never handles a node id itself; only the
  *  widgets listed here have one. */
 export const widgetRefProps: Record<string, Record<string, string>> = {

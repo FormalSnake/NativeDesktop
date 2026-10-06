@@ -22,10 +22,6 @@ FRAMEWORK="$PWD"
 ln -sfn "$ND_CEF_DIST"/Resources/* "$ND_CEF_DIST/Release/"
 export ND_CEF_ROOT="$ND_CEF_DIST/Release"
 [ -x "$FRAMEWORK/zig-out/bin/nd-hello" ] || { echo "FAIL: build the host first (zig build)"; exit 1; }
-# @nativedesktop/test reaches the schema types through @nativedesktop/react's
-# "./rpc" export, which points at built output; a checkout that has never run
-# the package build cannot even import the drive.
-[ -f "$FRAMEWORK/packages/react/dist/generated/rpc.js" ] || bun run --cwd "$FRAMEWORK/packages/react" build >/dev/null
 
 if [ -n "${ND_CEF_LD_LIBRARY_PATH:-}" ]; then
   export LD_LIBRARY_PATH="$ND_CEF_LD_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -84,7 +80,7 @@ curl -s --max-time 1 "$FIXTURE" >/dev/null || { echo "FAIL: the fixture server n
 
 # The app under test starts on the fixture with two tabs, so no leg depends on
 # typing an address before it can assert anything, and the tab-switch legs have
-# a second live view. An app that does not use @nativedesktop/react's store
+# a second live view. An app that does not use @nativedesktop/core's store
 # ignores this and starts wherever it starts.
 seed_store() {
   local dir="$1"

@@ -192,7 +192,7 @@ export interface WebViewInfo {
   canGoForward: boolean;
 }
 
-/** `items` is the LIVE native menu model flattened in draw order (the GMenuModel the owner carries on GTK, the NSMenu it carries on AppKit), never the React tree. A nested submenu contributes its own entry followed by its children prefixed `Parent > Child`; a separator (a GMenu section boundary, an NSMenuItem separator) is the entry `---`, never leading, trailing, or doubled. */
+/** `items` is the LIVE native menu model flattened in draw order (the GMenuModel the owner carries on GTK, the NSMenu it carries on AppKit), never the app's tree. A nested submenu contributes its own entry followed by its children prefixed `Parent > Child`; a separator (a GMenu section boundary, an NSMenuItem separator) is the entry `---`, never leading, trailing, or doubled. */
 export interface MenuModelResult {
   ref: number;
   items: string[];
@@ -340,7 +340,7 @@ export interface PaletteLayoutParams {
   window?: number;
 }
 
-/** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the React tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, a TrayItem, or on GTK a node whose contextMenu is open; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
+/** Reads a menu owner's live native menu back, flattened in draw order, so a drive can assert what the user would actually see instead of what the app's tree says. Targets a Menubar node (the installed app menu, including the platform's default menus on AppKit), a MenuButton/SplitButton, a TrayItem, or on GTK a node whose contextMenu is open; a Menu node answers -32602, since a <menu> only ever draws inside one of those owners. Target by exactly one of ref / testId. */
 export interface MenuModelParams {
   ref?: number;
   testId?: string;

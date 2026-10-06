@@ -840,8 +840,8 @@ fn ndMenuChildList(parent: usize) ?*std.ArrayList(usize) {
     return null;
 }
 
-/// Drops `child` from the list it currently sits in. React moves a child by
-/// emitting insertBefore/append with NO preceding remove, so every attach
+/// Drops `child` from the list it currently sits in. A child move arrives as
+/// insertBefore/append with NO preceding remove, so every attach
 /// detaches first; otherwise the model gains a second copy of the same item
 /// (a 3-item tab list drew 5 entries after one reorder).
 fn ndMenuDetachNode(child_w: *gtk.Widget) void {
@@ -2304,7 +2304,7 @@ fn ndRatingRebuild(widget: *gtk.Widget, value: f64) void {
 
 /// ComboBox wires BOTH its events off one `notify::selected` handler: the
 /// echo-suppression map holds one handler id per object, so two connections
-/// would leave the second unblockable during a React-driven update.
+/// would leave the second unblockable during an app-driven update.
 fn ndComboBoxConnect(widget: *gtk.Widget, node_id: u32) void {
     const data: ?*anyopaque = @ptrFromInt(@as(usize, node_id));
     const hid = gobject.signalConnectData(asObject(widget), "notify::selected", @ptrCast(&cbComboBoxSelected), data, null, .{});
@@ -2482,8 +2482,8 @@ fn ndDialogDetach(child: *gtk.Widget, parent: *gtk.Widget) void {
 
 /// Controlled `open`, idempotent in both directions: presented and pending
 /// are tracked here, so a re-render carrying an unchanged `open` is free.
-/// React mounts bottom-up, so at attach time the tree parent has not reached
-/// the window yet and presenting now would open a separate toplevel instead
+/// A child can attach before its tree parent has reached
+/// the window, so and presenting now would open a separate toplevel instead
 /// of an in-window dialog. Every open therefore waits one main-loop turn, by
 /// which point the window exists.
 fn ndDialogSetOpen(widget: *gtk.Widget, open: bool) void {
@@ -2492,7 +2492,7 @@ fn ndDialogSetOpen(widget: *gtk.Widget, open: bool) void {
         if (gobject.Object.getData(obj, ND_DIALOG_PENDING_OPEN) != null) return;
         if (gobject.Object.getData(obj, ND_DIALOG_PRESENTED) != null) return;
         gobject.Object.setData(obj, ND_DIALOG_PENDING_OPEN, @ptrFromInt(1));
-        _ = gobject.Object.ref(obj); // survive the turn even if React unmounts first
+        _ = gobject.Object.ref(obj); // survive the turn even if the app unmounts first
         _ = glib.idleAdd(&cbDialogPresentIdle, widget);
         return;
     }
@@ -5086,7 +5086,7 @@ pub fn applyProps(widget: *gtk.Widget, kind: []const u8, props: ?std.json.Value,
                 while (page_child) |c| : (page_child = gtk.Widget.getNextSibling(c)) {
                     if (i == idx) {
                         // The selection handler hangs off the stack, so that is the
-                        // object to block: a React-driven page change must not echo.
+                        // object to block: an app-driven page change must not echo.
                         blockEcho(asObject(stack));
                         adw.ViewStack.setVisibleChild(stack, c);
                         unblockEcho(asObject(stack));

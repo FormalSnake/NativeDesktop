@@ -141,8 +141,6 @@ jobs:
           bun scripts/release/check-versions.ts "$version"
       - name: bun install (bun publish resolves workspace:* from the lockfile)
         run: bun install --frozen-lockfile
-      - name: Build @nativedesktop/react dist
-        run: bun run --cwd packages/react build
       - name: Require an OIDC-capable npm and no registry credentials
         run: |
           npm install -g npm@latest

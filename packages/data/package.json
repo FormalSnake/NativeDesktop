@@ -20,17 +20,12 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./react": "./src/react.ts",
     "./solid": "./src/solid.ts"
   },
   "peerDependencies": {
-    "@nativedesktop/react": "workspace:^",
     "solid-js": "2.0.0-rc.13"
   },
   "peerDependenciesMeta": {
-    "@nativedesktop/react": {
-      "optional": true
-    },
     "solid-js": {
       "optional": true
     }

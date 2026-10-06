@@ -17,7 +17,6 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
 [ -x "$ROOT/zig-out/bin/nd-hello" ] || { echo "FAIL: build the host first (zig build)"; exit 1; }
-[ -f "$ROOT/packages/react/dist/generated/rpc.js" ] || bun run --cwd "$ROOT/packages/react" build >/dev/null
 
 DISPLAY_NUM="${ND_DECO_DISPLAY:-:96}"
 WORK="$(mktemp -d)"
