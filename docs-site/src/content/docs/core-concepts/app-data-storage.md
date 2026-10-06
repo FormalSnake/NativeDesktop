@@ -18,17 +18,27 @@ getAppDataDir(); // resolve the path; does not create it
 ensureAppDataDir(); // resolve AND mkdir -p it, returning the same path
 ```
 
-In a packaged app the name comes from the bundle's `nd-app.json` (written by
-[`nd package`](/packaging/) from `app.name`); in dev it comes from the nearest `package.json`'s
-`name` field (the same `cwd` `loadConfig()` resolves `nativedesktop.config.ts` from), so apps that
-configure no `app.name` keep the same directory in both modes. The resolved path follows each OS's
-own convention:
+The directory is named after the app's `package.json` `name`, never `app.name`, so a product
+name like "My App" does not split dev and packaged runs into two profiles. In dev the name comes
+from the nearest `package.json` (the same `cwd` `loadConfig()` resolves `nativedesktop.config.ts`
+from); in a packaged app it comes from the bundle's `nd-app.json`, where
+[`nd package`](/packaging/) records it as `dataName`. The resolved path follows each OS's own
+convention:
 
 | Platform | Path |
 | --- | --- |
 | macOS | `~/Library/Application Support/<name>` |
 | Linux | `$XDG_DATA_HOME/<name>` (falls back to `~/.local/share/<name>`) |
 | Windows | `%APPDATA%/<name>` (backend not yet implemented; see [Platform Support](/native-platform/platform-support/)) |
+
+An app that changes its name keeps its data by declaring the old one as `app.previousName`. The
+first `getAppDataDir()` call under the new name moves `<previousName>` (or, failing that, its
+lowercase slug, which is what an old dev run used) to the new directory, once, and only while the
+new one does not exist. `nd dev` hands the name down as `ND_APP_PREVIOUS_NAME`; a launch that runs
+the host by hand sets that variable itself. On macOS the packaged app's Chromium profile, which
+lives under `~/Library/Caches/nativedesktop/cef/<executable>`, moves the same way before Chromium
+starts. Linux keeps one Chromium profile for every app under `$XDG_DATA_HOME/nd-webview-cef`, so
+nothing moves there.
 
 `getAppDataDir()` just resolves the path; `ensureAppDataDir()` also creates it (`mkdirSync` with
 `recursive: true`) and hands back the same string, so it's the one you want before writing a file or

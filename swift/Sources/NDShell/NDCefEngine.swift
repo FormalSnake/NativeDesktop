@@ -303,9 +303,11 @@ struct NDCefPaths {
         if let override = ProcessInfo.processInfo.environment["ND_CEF_CACHE"], !override.isEmpty {
             return override
         }
-        return URL(fileURLWithPath: NSHomeDirectory())
+        let dir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Caches/nativedesktop/cef/\(executableName)")
             .path
+        NDBundleBootstrap.adoptPreviousCache(at: dir)
+        return dir
     }
 }
 

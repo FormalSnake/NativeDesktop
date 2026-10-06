@@ -35,7 +35,7 @@ function runInstall(appDir: string, appdir: string, path: string): { exitCode: n
   const script = `
     import { installLinuxIcon } from ${JSON.stringify(ICONS_MODULE)};
     await installLinuxIcon(
-      { name: "Fixture", displayName: "Fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon: { source: "icon.png" } },
+      { name: "Fixture", displayName: "Fixture", dataName: "fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon: { source: "icon.png" } },
       ${JSON.stringify(appDir)},
       ${JSON.stringify(appdir)},
     );
@@ -77,7 +77,7 @@ function layeredFixture(layered: AppIconLayered): { appDir: string; identity: Re
 }
 
 function identityWith(icon: AppIcon): ResolvedIdentity {
-  return { name: "Fixture", displayName: "Fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon };
+  return { name: "Fixture", displayName: "Fixture", dataName: "fixture", slug: "fixture", version: "1.0.0", categories: ["Utility"], icon };
 }
 
 describe("iconManifest", () => {

@@ -86,7 +86,7 @@ export async function packageLinuxApp(
   let bundlePath = appdir;
   const format = options.format ?? linux?.format ?? "appimage";
   if (format === "appimage") {
-    const appImage = join(dist, `${identity.name}-${identity.version}.AppImage`);
+    const appImage = join(dist, `${identity.slug}-${identity.version}.AppImage`);
     await $`appimagetool ${appdir} ${appImage}`.quiet()
       .catch(async () => { await $`mksquashfs ${appdir} ${appImage} -root-owned -noappend`.quiet(); });
     console.error(`ND_PACKAGE_APPIMAGE ${appImage}`);

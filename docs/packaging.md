@@ -12,7 +12,7 @@ example through it (the M9 gates and `package.yml` call it that way).
 ```bash
 nd package               # package for the host platform (mac on darwin, linux on linux)
 nd package mac           # <Name>.app, deep-signed, optional notarize + update archive
-nd package linux         # AppDir + AppImage (mksquashfs fallback) + optional update archive
+nd package linux         # AppDir + <slug>-<version>.AppImage (mksquashfs fallback) + optional update archive
 nd doctor [--json]       # readiness checks; non-zero exit only on real gaps
 
 nd package [mac|linux] [--out <dir>] [--entry <file>] [--version <v>] [--cwd <dir>]
