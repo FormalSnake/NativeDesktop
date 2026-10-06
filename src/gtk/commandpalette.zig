@@ -47,6 +47,11 @@ const ROW_ICON_KEY = "nd-palette-icon";
 const ROW_TITLE_KEY = "nd-palette-title";
 const ROW_SUBTITLE_KEY = "nd-palette-subtitle";
 const ROW_HINT_KEY = "nd-palette-hint";
+// The row's own widgets, which the keys above name only while they show.
+const ROW_IMG_W = "nd-palette-img";
+const ROW_SUBTITLE_W = "nd-palette-subtitle-w";
+const ROW_HINT_W = "nd-palette-hint-w";
+const ROW_ICON_SRC = "nd-palette-icon-src";
 
 /// Card geometry, the same numbers as NDPaletteMetrics on AppKit.
 const panel_width: c_int = 640;
@@ -88,17 +93,19 @@ const State = struct {
     ids: std.ArrayListUnmanaged([]u8) = .empty,
     // Content signature of the currently-rendered rows. A controlled app
     // re-renders on every state change and hands back a fresh `items` array
-    // each time; without this, applyProps would tear down and rebuild the
-    // ListBox on every render, dropping clicks onto rows being destroyed and
-    // yanking keyboard focus off the search entry. Rebuild only when the
-    // signature actually changes.
-    items_sig: ?[]u8 = null,
-    /// `items` that arrived while the palette was closed, as JSON, built into
-    /// rows when it opens. An app whose switcher lists its tabs hands over a
-    /// new list on every tab switch, and building rows nobody sees cost ~4 ms
-    /// of the switch.
-    deferred_items: ?[]u8 = null,
-    dupe_z: ?*const fn ([]const u8) [:0]const u8 = null,
+    // each time; without this, applyProps would refill the ListBox on every
+    // render, resetting the highlight and yanking keyboard focus off the
+    // search entry. Refill only when the signature actually changes.
+    items_sig: ?u64 = null,
+    /// `items` that arrived while the palette was closed, copied out of the
+    /// commit's arena and filled into the rows from an idle, after the frame
+    /// the commit is for. An app whose switcher lists its tabs hands over a
+    /// new list on every tab switch, and filling rows nobody sees would sit
+    /// inside the switch.
+    pending_items: ?std.heap.ArenaAllocator = null,
+    pending_value: std.json.Value = .null,
+    pending_dupe_z: ?*const fn ([]const u8) [:0]const u8 = null,
+    fill_idle: c_uint = 0,
     /// The first row's `completion`, if it has one.
     first_completion: ?[]u8 = null,
     /// The app's last `query`. Every present starts from it.
@@ -214,23 +221,21 @@ fn freeIds(state: *State) void {
     state.ids.clearRetainingCapacity();
 }
 
-/// Content fingerprint of `arr`, used to skip the destructive ListBox rebuild
-/// when a re-render hands back rows that render identically. Caller owns the
-/// returned slice.
-fn itemsSignature(arr: ?std.json.Array) ?[]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    errdefer buf.deinit(alloc);
+/// Content fingerprint of `arr`, used to skip the ListBox refill
+/// when a re-render hands back rows that render identically.
+fn itemsSignature(arr: ?std.json.Array) u64 {
+    var h = std.hash.Wyhash.init(0);
     if (arr) |items| {
         for (items.items) |it| {
             if (it != .object) continue;
             inline for (.{ "id", "title", "subtitle", "iconName", "iconData", "hint", "completion" }) |key| {
-                buf.appendSlice(alloc, objStr(it.object, key) orelse "") catch return null;
-                buf.append(alloc, 0x1f) catch return null;
+                h.update(objStr(it.object, key) orelse "");
+                h.update("\x1f");
             }
-            buf.append(alloc, 0x1e) catch return null;
+            h.update("\x1e");
         }
     }
-    return buf.toOwnedSlice(alloc) catch null;
+    return h.final();
 }
 
 /// Re-assert keyboard focus on the search entry after a rebuild, but only when
@@ -265,29 +270,19 @@ fn rowLabel(text: [:0]const u8, dimmed: bool, ellipsize: bool) *gtk.Label {
 /// One line: a 16px icon, the title, the subtitle dimmed after it, and the
 /// hint dimmed at the trailing edge. The subtitle gives way first, then the
 /// title; the hint never ellipsizes. An icon-less row keeps an empty 16px slot
-/// so titles line up down the list.
-fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8) *gtk.ListBoxRow {
+/// so titles line up down the list. `fillRow` puts an item's content in.
+fn buildRow() *gtk.ListBoxRow {
     const row = gtk.ListBoxRow.new();
     gtk.Widget.setFocusable(row.as(gtk.Widget), 0); // keyboard stays on the entry; see the ListBox setup in create()
     const line = gtk.Box.new(.horizontal, 0);
     gtk.Widget.setValign(line.as(gtk.Widget), .center);
 
-    var icon: ?*gtk.Image = null;
-    if (objStr(obj, "iconData")) |d| {
-        if (d.len > 0) icon = ndicons.imageFromData(d, "CommandPalette");
-    }
-    if (icon == null) {
-        if (objStr(obj, "iconName")) |ic| {
-            if (ic.len > 0) icon = gtk.Image.newFromIconName(ndicons.symbolic(dupeZ(ic)));
-        }
-    }
-    const img = icon orelse gtk.Image.new();
+    const img = gtk.Image.new();
     gtk.Image.setPixelSize(img, icon_side);
     gtk.Widget.setSizeRequest(img.as(gtk.Widget), icon_side, icon_side);
     gtk.Widget.setValign(img.as(gtk.Widget), .center);
     gtk.Widget.setHalign(img.as(gtk.Widget), .center);
     gtk.Widget.setMarginEnd(img.as(gtk.Widget), 10);
-    if (icon == null) gtk.Widget.setVisible(img.as(gtk.Widget), 0);
     // A hidden image gives up its width; the placeholder keeps the column.
     const slot = gtk.Box.new(.horizontal, 0);
     gtk.Widget.setSizeRequest(slot.as(gtk.Widget), icon_side + 10, icon_side);
@@ -295,36 +290,87 @@ fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8)
     gtk.Box.append(slot, img.as(gtk.Widget));
     gtk.Box.append(line, slot.as(gtk.Widget));
 
-    const title = rowLabel(dupeZ(objStr(obj, "title") orelse ""), false, true);
+    const title = rowLabel("", false, true);
     gtk.Label.setMaxWidthChars(title, title_max_chars);
     gtk.Box.append(line, title.as(gtk.Widget));
 
-    const sub_text = objStr(obj, "subtitle") orelse "";
-    const subtitle = rowLabel(dupeZ(sub_text), true, true);
+    const subtitle = rowLabel("", true, true);
     gtk.Widget.setHexpand(subtitle.as(gtk.Widget), 1);
     gtk.Widget.setMarginStart(subtitle.as(gtk.Widget), 8);
-    if (sub_text.len == 0) gtk.Widget.setVisible(subtitle.as(gtk.Widget), 0);
     gtk.Box.append(line, subtitle.as(gtk.Widget));
 
-    const hint_text = objStr(obj, "hint") orelse "";
-    const hint = rowLabel(dupeZ(hint_text), true, false);
+    const hint = rowLabel("", true, false);
     gtk.Widget.setMarginStart(hint.as(gtk.Widget), 16);
     gtk.Widget.setHalign(hint.as(gtk.Widget), .end);
-    if (hint_text.len == 0) gtk.Widget.setVisible(hint.as(gtk.Widget), 0);
-    // With no subtitle nothing else expands, and the hint must still sit on
-    // the trailing edge.
-    if (sub_text.len == 0) gtk.Widget.setHexpand(hint.as(gtk.Widget), 1);
     gtk.Box.append(line, hint.as(gtk.Widget));
 
     gtk.ListBoxRow.setChild(row, line.as(gtk.Widget));
-    gobject.Object.setData(asObj(row), ROW_ICON_KEY, if (icon != null) img else null);
+    gobject.Object.setData(asObj(row), ROW_IMG_W, img);
     gobject.Object.setData(asObj(row), ROW_TITLE_KEY, title);
+    gobject.Object.setData(asObj(row), ROW_SUBTITLE_W, subtitle);
+    gobject.Object.setData(asObj(row), ROW_HINT_W, hint);
+    return row;
+}
+
+/// Writes one item into a row from `buildRow`, so a new `items` array reuses
+/// the rows already on screen: building and styling fresh rows was most of
+/// the cost of opening the bar.
+fn fillRow(row: *gtk.ListBoxRow, obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    const img: *gtk.Image = @ptrCast(@alignCast(gobject.Object.getData(asObj(row), ROW_IMG_W).?));
+    const title: *gtk.Label = @ptrCast(@alignCast(gobject.Object.getData(asObj(row), ROW_TITLE_KEY).?));
+    const subtitle: *gtk.Label = @ptrCast(@alignCast(gobject.Object.getData(asObj(row), ROW_SUBTITLE_W).?));
+    const hint: *gtk.Label = @ptrCast(@alignCast(gobject.Object.getData(asObj(row), ROW_HINT_W).?));
+
+    // The icon's source is remembered by hash, so an unchanged favicon is not
+    // decoded again. 0 means no icon.
+    const data = objStr(obj, "iconData") orelse "";
+    const name = objStr(obj, "iconName") orelse "";
+    const src: usize = if (data.len > 0)
+        @truncate(std.hash.Wyhash.hash(1, data) | 1)
+    else if (name.len > 0)
+        @truncate(std.hash.Wyhash.hash(2, name) | 1)
+    else
+        0;
+    const had: usize = @intFromPtr(gobject.Object.getData(asObj(row), ROW_ICON_SRC));
+    var shown = had != 0;
+    if (src != had) {
+        shown = false;
+        if (data.len > 0) {
+            if (ndicons.textureFromData(data, "CommandPalette")) |texture| {
+                defer gobject.Object.unref(texture.as(gobject.Object));
+                gtk.Image.setFromPaintable(img, texture.as(gdk.Paintable));
+                shown = true;
+            }
+        }
+        if (!shown and name.len > 0) {
+            gtk.Image.setFromIconName(img, ndicons.symbolic(dupeZ(name)));
+            shown = true;
+        }
+        if (!shown) gtk.Image.clear(img);
+        gobject.Object.setData(asObj(row), ROW_ICON_SRC, if (shown) @ptrFromInt(src) else null);
+    }
+    gtk.Widget.setVisible(img.as(gtk.Widget), @intFromBool(shown));
+    gobject.Object.setData(asObj(row), ROW_ICON_KEY, if (shown) img else null);
+
+    const title_text = objStr(obj, "title") orelse "";
+    setLabel(title, title_text, dupeZ);
+
+    const sub_text = objStr(obj, "subtitle") orelse "";
+    setLabel(subtitle, sub_text, dupeZ);
+    gtk.Widget.setVisible(subtitle.as(gtk.Widget), @intFromBool(sub_text.len > 0));
     gobject.Object.setData(asObj(row), ROW_SUBTITLE_KEY, if (sub_text.len > 0) subtitle else null);
+
+    const hint_text = objStr(obj, "hint") orelse "";
+    setLabel(hint, hint_text, dupeZ);
+    gtk.Widget.setVisible(hint.as(gtk.Widget), @intFromBool(hint_text.len > 0));
+    // With no subtitle nothing else expands, and the hint must still sit on
+    // the trailing edge.
+    gtk.Widget.setHexpand(hint.as(gtk.Widget), @intFromBool(sub_text.len == 0));
     gobject.Object.setData(asObj(row), ROW_HINT_KEY, if (hint_text.len > 0) hint else null);
 
     var parts: [3][]const u8 = undefined;
     var n: usize = 0;
-    for ([_][]const u8{ objStr(obj, "title") orelse "", sub_text, hint_text }) |p| {
+    for ([_][]const u8{ title_text, sub_text, hint_text }) |p| {
         if (p.len == 0) continue;
         parts[n] = p;
         n += 1;
@@ -336,54 +382,87 @@ fn buildRow(obj: std.json.ObjectMap, dupeZ: *const fn ([]const u8) [:0]const u8)
         // the label into garbage and wedges the main loop.
         gtk.Accessible.updateProperty(row.as(gtk.Accessible), .label, dupeZ(j).ptr, @as(c_int, -1));
     }
-    return row;
 }
 
-/// `rebuildRows` now if the palette is up (or about to be), at `present`
-/// otherwise.
+/// A label set to the text it already holds would still queue a resize.
+fn setLabel(label: *gtk.Label, text: []const u8, dupeZ: *const fn ([]const u8) [:0]const u8) void {
+    if (std.mem.eql(u8, std.mem.span(gtk.Label.getText(label)), text)) return;
+    gtk.Label.setText(label, dupeZ(text));
+}
+
+/// Fills the rows now while the palette is up (or about to be), from an idle
+/// otherwise, so opening it later finds them filled.
 fn setItems(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
-    state.dupe_z = dupeZ;
-    if (state.deferred_items) |d| alloc.free(d);
-    state.deferred_items = null;
-    if (!state.presented and !state.pending_open) {
-        if (arr) |items| {
-            if (std.json.Stringify.valueAlloc(alloc, std.json.Value{ .array = items }, .{})) |json| {
-                state.deferred_items = json;
-                return;
-            } else |_| {}
-        }
-    }
-    rebuildRows(state, arr, dupeZ);
+    dropPendingItems(state);
+    if (state.presented or state.pending_open) return rebuildRows(state, arr, dupeZ);
+    const items = arr orelse return rebuildRows(state, null, dupeZ);
+    if (state.items_sig == itemsSignature(arr)) return;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    const copy = cloneJson(arena.allocator(), .{ .array = items }) catch {
+        arena.deinit();
+        return rebuildRows(state, arr, dupeZ);
+    };
+    state.pending_items = arena;
+    state.pending_value = copy;
+    state.pending_dupe_z = dupeZ;
+    state.fill_idle = glib.idleAdd(&fillIdle, state);
 }
 
-fn flushDeferredItems(state: *State) void {
-    const json = state.deferred_items orelse return;
-    state.deferred_items = null;
-    defer alloc.free(json);
-    const dupeZ = state.dupe_z orelse return;
-    const parsed = std.json.parseFromSlice(std.json.Value, alloc, json, .{}) catch return;
-    defer parsed.deinit();
-    if (parsed.value == .array) rebuildRows(state, parsed.value.array, dupeZ);
+fn cloneJson(a: std.mem.Allocator, v: std.json.Value) !std.json.Value {
+    return switch (v) {
+        .string => |str| .{ .string = try a.dupe(u8, str) },
+        .number_string => |str| .{ .number_string = try a.dupe(u8, str) },
+        .array => |arr| blk: {
+            var out = try std.json.Array.initCapacity(a, arr.items.len);
+            for (arr.items) |it| out.appendAssumeCapacity(try cloneJson(a, it));
+            break :blk .{ .array = out };
+        },
+        .object => |obj| blk: {
+            var out: std.json.ObjectMap = .empty;
+            try out.ensureTotalCapacity(a, obj.count());
+            var it = obj.iterator();
+            while (it.next()) |e| out.putAssumeCapacity(try a.dupe(u8, e.key_ptr.*), try cloneJson(a, e.value_ptr.*));
+            break :blk .{ .object = out };
+        },
+        else => v,
+    };
 }
 
+fn dropPendingItems(state: *State) void {
+    if (state.fill_idle != 0) _ = glib.Source.remove(state.fill_idle);
+    state.fill_idle = 0;
+    if (state.pending_items) |*arena| arena.deinit();
+    state.pending_items = null;
+    state.pending_value = .null;
+}
+
+fn fillPendingItems(state: *State) void {
+    if (state.pending_items == null) return;
+    state.fill_idle = 0;
+    rebuildRows(state, state.pending_value.array, state.pending_dupe_z.?);
+    dropPendingItems(state);
+}
+
+fn fillIdle(data: ?*anyopaque) callconv(.c) c_int {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    state.fill_idle = 0;
+    fillPendingItems(state);
+    return 0; // G_SOURCE_REMOVE
+}
+
+/// Rows are reused across item lists: a new list is a few label writes.
 fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const new_sig = itemsSignature(arr);
-    if (state.items_sig) |old| {
-        if (new_sig) |ns| {
-            if (std.mem.eql(u8, old, ns)) {
-                alloc.free(ns);
-                if (state.presented) scheduleCompletion(state);
-                return; // rows render identically: no teardown, keep highlight/focus
-            }
-        }
+    if (state.items_sig == new_sig) {
+        if (state.presented) scheduleCompletion(state);
+        return; // rows render identically: keep highlight/focus
     }
-    if (state.items_sig) |old| alloc.free(old);
     state.items_sig = new_sig;
     if (state.first_completion) |c| alloc.free(c);
     state.first_completion = null;
 
-    gtk.ListBox.removeAll(state.list);
     freeIds(state);
+    var n: c_int = 0;
     if (arr) |items| {
         for (items.items) |it| {
             if (it != .object) continue;
@@ -392,12 +471,21 @@ fn rebuildRows(state: *State, arr: ?std.json.Array, dupeZ: *const fn ([]const u8
                     if (c.len > 0) state.first_completion = alloc.dupe(u8, c) catch null;
                 }
             }
-            const row = buildRow(it.object, dupeZ);
-            gtk.ListBox.append(state.list, row.as(gtk.Widget));
             const id_copy = alloc.dupe(u8, objStr(it.object, "id") orelse "") catch continue;
-            state.ids.append(alloc, id_copy) catch alloc.free(id_copy);
+            state.ids.append(alloc, id_copy) catch {
+                alloc.free(id_copy);
+                continue;
+            };
+            const row = gtk.ListBox.getRowAtIndex(state.list, n) orelse blk: {
+                const fresh = buildRow();
+                gtk.ListBox.append(state.list, fresh.as(gtk.Widget));
+                break :blk fresh;
+            };
+            fillRow(row, it.object, dupeZ);
+            n += 1;
         }
     }
+    while (gtk.ListBox.getRowAtIndex(state.list, n)) |extra| gtk.ListBox.remove(state.list, extra.as(gtk.Widget));
     const empty = state.ids.items.len == 0;
     gtk.Widget.setVisible(state.separator, @intFromBool(!empty));
     gtk.Widget.setVisible(state.scroller.as(gtk.Widget), @intFromBool(!empty));
@@ -555,7 +643,7 @@ fn present(state: *State) void {
         };
     }
 
-    flushDeferredItems(state);
+    fillPendingItems(state);
     setOwned(&state.typed, state.controlled);
     setOwned(&state.suffix, "");
     state.may_complete = false;
@@ -1178,8 +1266,7 @@ fn cbHandleDestroyed(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     gobject.Object.unref(asObj(state.dialog));
     freeIds(state);
     state.ids.deinit(alloc);
-    if (state.items_sig) |sig| alloc.free(sig);
-    if (state.deferred_items) |d| alloc.free(d);
+    dropPendingItems(state);
     if (state.first_completion) |c| alloc.free(c);
     for ([_][]u8{ state.controlled, state.typed, state.suffix }) |s| {
         if (s.len > 0) alloc.free(s);
