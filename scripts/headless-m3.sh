@@ -7,6 +7,7 @@ export WAYLAND_DISPLAY=nd-headless-m3
 export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
 export ND_SCRIPT=examples/counter/main.tsx
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
@@ -25,5 +26,5 @@ grep -q "ND_HELLO_OK" <<<"$OUT" || { echo "FAIL: no handshake"; exit 1; }
 COMMITS=$(grep -c "ND_COMMIT_APPLIED" <<<"$OUT" || true)
 [ "$COMMITS" -ge 3 ] || { echo "FAIL: only $COMMITS commits applied"; exit 1; }
 # Suspense resolution observable (see Task 7 Step 2 — either marker proves it).
-grep -Eq "ND_UNHIDE|ready:suspense-resolved" <<<"$OUT" || { echo "FAIL: suspense did not resolve"; exit 1; }
+grep -Eq "ND_UNHIDE|ready:loading-resolved" <<<"$OUT" || { echo "FAIL: suspense did not resolve"; exit 1; }
 echo "headless m3: OK ($COMMITS commits, suspense resolved)"

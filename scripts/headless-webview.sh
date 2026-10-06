@@ -39,7 +39,7 @@ LOG=$(mktemp)
 # The webview trace is what makes setContextMenuItems assertable: no automation
 # can open a real context menu (GTK4 synthesises no pointer input), so the proof
 # is the host reporting the tree it parsed and stored.
-ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/webview-probe/main.tsx)" ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 # 60s, not 20: the probe's first commit waits on the engine's own scheme

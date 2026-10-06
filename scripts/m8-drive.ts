@@ -4,11 +4,11 @@
 // Three modes:
 //   --hmr-check:  coordinate-space check -> click increment-button x2 -> waitFor "Clicks: 2" ->
 //                 print the label text -> M8_HMR_PRECHECK_OK (run BEFORE the fixture edit)
-//   --hmr-verify: assert clicks-label still reads "Clicks: 2" (state preserved)
-//                 AND the button's own text reflects the edited label -> M8_HMR_OK
+//   --hmr-verify: assert clicks-label reads "Taps: 2": the edited ClicksLabel
+//                 text with the clicks signal preserved -> M8_HMR_OK
 //                 (run AFTER the fixture edit)
 //   default (crash leg): assert nd-overlay-error present with non-empty text ->
-//                 click nd-overlay-restart -> waitFor "Clicks:" (app re-mounted) -> M8_CRASH_OK
+//                 click nd-overlay-restart -> waitFor "Uptime:" (app re-mounted) -> M8_CRASH_OK
 import { connectApp, expect } from "../packages/test/src/index.ts";
 
 const mode = process.argv.includes("--hmr-check")
@@ -37,10 +37,8 @@ if (mode === "hmr-check") {
 
 if (mode === "hmr-verify") {
   const label = app.getByTestId("clicks-label");
-  const btn = app.getByTestId("increment-button");
-  await expect(label).toHaveText("Clicks: 2");
-  await expect(btn).toContainText("!");
-  console.log(`M8_HMR_OK label=${JSON.stringify(await label.textContent())} button=${JSON.stringify(await btn.textContent())}`);
+  await expect(label).toHaveText("Taps: 2");
+  console.log(`M8_HMR_OK label=${JSON.stringify(await label.textContent())}`);
   await app.close();
   process.exit(0);
 }
@@ -52,7 +50,7 @@ await expect(errNode).not.toHaveText("");
 const errText = await errNode.textContent();
 
 await app.getByTestId("nd-overlay-restart").click();
-await app.waitForText("Clicks:", { timeoutMs: 5000 });
+await app.waitForText("Uptime:", { timeoutMs: 5000 });
 
 console.log(`M8_CRASH_OK error=${JSON.stringify(errText)}`);
 await app.close();

@@ -56,6 +56,7 @@ grep -q ND_PORTAL_STUB_READY "$dir/stub.log" || { echo "FAIL: the stub portal ne
 export XDG_RUNTIME_DIR="$dir/xdg"
 export GDK_BACKEND=x11 GSK_RENDERER=cairo NATIVE_AUTOMATION=1
 export ND_SCRIPT=examples/counter/main.tsx
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 export ND_APP_ID="dev.nativedesktop.headlessDeco$tag\$\$"
 "$ROOT/zig-out/bin/nd-hello" >"$dir/host.log" 2>&1 &
 HOST=\$!

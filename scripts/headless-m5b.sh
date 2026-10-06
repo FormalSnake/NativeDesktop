@@ -7,6 +7,7 @@ export WAYLAND_DISPLAY=nd-headless-m5b
 export GSK_RENDERER=cairo
 export GDK_BACKEND=wayland
 export ND_SCRIPT=examples/gallery/main.tsx
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 export NATIVE_AUTOMATION=1
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
