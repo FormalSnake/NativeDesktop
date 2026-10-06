@@ -4222,8 +4222,8 @@ fn onPreKeyEvent(
 fn postAccel(task: *AccelObj) void {
     // The activation itself belongs on the GTK thread; `post` is this engine's
     // only hop onto it, and it carries a view, so the task rides the idle
-    // queue through glib instead.
-    _ = glib.idleAdd(&runAccelIdle, task);
+    // queue through glib instead, at input's priority (see `post`).
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &runAccelIdle, task, null);
 }
 
 fn runAccelTask(_: [*c]c.cef_task_t) callconv(.c) void {}
@@ -5434,8 +5434,11 @@ fn post(e: Emission) void {
     };
     box.* = e;
     // g_idle_add is the one glib entry point safe to call from a foreign
-    // thread; everything downstream of `deliver` runs on the GTK loop.
-    _ = glib.idleAdd(&deliver, box);
+    // thread; everything downstream of `deliver` runs on the GTK loop. At
+    // G_PRIORITY_DEFAULT, the priority GDK gives input, not g_idle_add's own:
+    // that one is below GTK's redraw, and on a slow machine with a frame
+    // always due, a ctrl+tab typed into a page waited seconds behind them.
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliver, box, null);
 }
 
 fn deliver(data: ?*anyopaque) callconv(.c) c_int {
