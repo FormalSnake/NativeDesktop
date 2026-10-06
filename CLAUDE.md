@@ -523,9 +523,13 @@ band around the threshold).
   (`@nativedesktop/solid`: `@solidjs/universal` renderer over core, Solid JSX
   intrinsics, `Portal`/`createPool`; `register.ts` is the Bun plugin that runs
   babel-preset-solid's universal transform and swaps solid-js's SSR build
-  for its client build, so a Solid entry is a `.ts` file that imports
-  `@nativedesktop/solid/register` and then `await import`s the `.tsx` app; no
-  Solid HMR yet), `packages/nd`
+  for its client build; `nd dev`, `nd build`, `nd package` and `launchApp`
+  preload it through `BUN_OPTIONS=--preload=@nativedesktop/solid/register`
+  for an app whose `dependencies` list `@nativedesktop/solid`
+  (`packages/host/src/preload.ts`; packaged launches read `preload` from
+  nd-app.json), so a Solid app is a single `.tsx` entry. Bun's BUN_OPTIONS
+  has no reliable quoting, hence the bare specifier rather than a path),
+  `packages/nd`
   (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
   (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`
   (worker SQLite), `packages/rpc`, `packages/panes`, `packages/test`

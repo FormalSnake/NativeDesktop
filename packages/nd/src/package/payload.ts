@@ -5,6 +5,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { buildNativePlugins, type CefStyle, type NativeDesktopConfig, type PackageConfig, type WebViewEngine } from "../config.ts";
+import { preloadEnv, rendererPreload } from "@nativedesktop/host";
 import type { ResolvedIdentity } from "./identity.ts";
 import { assertResolvableEntries, flattenRuntimeModules } from "./modules.ts";
 
@@ -32,6 +33,8 @@ export interface PayloadResult {
   cwd: string;
   /** App-root-relative native plugin paths. */
   pluginPaths: string[];
+  /** Module specifier the bun child preloads (BUN_OPTIONS), set for a Solid app. */
+  preload?: string;
 }
 
 export interface PayloadOptions {
@@ -83,7 +86,7 @@ function copyPayloadTree(src: string, dest: string, appRoot: string, filter: (p:
 async function runCompile(appDir: string, script: string): Promise<void> {
   const proc = Bun.spawn(["bun", "run", script], {
     cwd: appDir,
-    env: process.env,
+    env: { ...process.env, ...preloadEnv(appDir) },
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
@@ -150,6 +153,10 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
   });
   assertResolvableEntries(o.appRoot, flat);
 
+  // The packaged child resolves it from its cwd, so it has to resolve from the staged copy.
+  const preload = rendererPreload(appDir);
+  if (preload) Bun.resolveSync(preload, destAppDir);
+
   // Native plugins: build (or reuse) the app's declared outputs, ship them
   // under app/native/, and record app-root-relative paths for the bootstrap.
   const outputs = await buildNativePlugins(o.config, appDir);
@@ -170,10 +177,11 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
     entry: appEntry,
     cwd,
     pluginPaths,
+    ...(preload ? { preload } : {}),
     engine: o.engine,
     schemes: o.schemes,
     style: o.style,
   }, null, 2)}\n`);
 
-  return { entry: appEntry, cwd, pluginPaths };
+  return { entry: appEntry, cwd, pluginPaths, ...(preload ? { preload } : {}) };
 }

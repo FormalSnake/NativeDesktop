@@ -101,6 +101,8 @@ export interface AppRunSpec {
   schemes?: string[];
   /** CEF browser style the AppDir was staged for. */
   style?: string;
+  /** Module specifier the bun child preloads. */
+  preload?: string;
 }
 
 export function appRunTemplate(s: AppRunSpec): string {
@@ -120,6 +122,7 @@ export function appRunTemplate(s: AppRunSpec): string {
     script += 'export ND_PLUGINS="1"\n';
     script += `export ND_PLUGIN_PATHS="${s.pluginPaths.map((p) => `$HERE/app/${p}`).join(":")}"\n`;
   }
+  if (s.preload) script += `export BUN_OPTIONS="\${BUN_OPTIONS:+$BUN_OPTIONS }--preload=${s.preload}"\n`;
   script += `cd "$HERE/app/${s.cwd}"\n`;
   script += `exec "$HERE/usr/bin/${s.slug}" "$@"\n`;
   return script;

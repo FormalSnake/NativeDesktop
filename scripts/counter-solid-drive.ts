@@ -6,7 +6,7 @@
 // resolved badge. ND_HOST_BINARY picks the host (e.g. swift/.build/release/NDShell).
 import { launchApp, expect } from "../packages/test/src/index.ts";
 
-const app = await launchApp({ entry: "examples/counter-solid/main.ts", hostBinary: process.env.ND_HOST_BINARY });
+const app = await launchApp({ entry: "examples/counter-solid/main.tsx", hostBinary: process.env.ND_HOST_BINARY });
 try {
   const label = app.getByTestId("clicks-label");
   await expect(label).toHaveText("Clicks: 0");

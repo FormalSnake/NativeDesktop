@@ -51,6 +51,7 @@ export async function packageLinuxApp(
     slug: identity.slug,
     appId: identity.id,
     pluginPaths: payload.pluginPaths,
+    preload: payload.preload,
     engine,
     schemes,
     style,

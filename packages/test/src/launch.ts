@@ -5,9 +5,9 @@
 // restart() tears it down and relaunches in place.
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Backend } from "@nativedesktop/host";
-import { resolveBackend, resolveHostBinary } from "@nativedesktop/host";
+import { findAppDir, preloadEnv, resolveBackend, resolveHostBinary } from "@nativedesktop/host";
 import { AutomationClient, AutomationRpcError } from "./socket.ts";
 import {
   type DragParams,
@@ -84,8 +84,10 @@ const STDERR_DRAIN_GRACE_MS = 1000;
 const SOCKET_PATH_RE = /ND_AUTOMATION_LISTENING path=(\S+)/;
 
 function buildEnv(opts: LaunchOptions): Record<string, string> {
+  const appDir = findAppDir(dirname(resolve(opts.cwd ?? process.cwd(), opts.entry)));
   const merged: Record<string, string | undefined> = {
     ...process.env,
+    ...(appDir ? preloadEnv(appDir) : {}),
     NATIVE_AUTOMATION: "1",
     ND_SCRIPT: opts.entry,
   };

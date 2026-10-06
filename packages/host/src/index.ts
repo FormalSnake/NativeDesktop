@@ -277,3 +277,5 @@ async function run(command: string[], cwd: string, env: Record<string, string | 
   const status = await proc.exited;
   if (status !== 0) throw new Error(`@nativedesktop/host: build step failed (${command.join(" ")})`);
 }
+
+export { SOLID_PRELOAD, findAppDir, preloadEnv, rendererPreload, usesSolid, withPreload } from "./preload.ts";

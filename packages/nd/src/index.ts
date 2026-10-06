@@ -6,7 +6,7 @@
 //   `nd build`        ==  bun run compile   (babel + react-compiler pre-pass, see template/README.md)
 //   `nd package`      ==  assemble + sign the platform bundle (packages/nd/src/package/)
 //   `nd doctor`       ==  packaging/toolchain readiness checks
-import { type Backend, resolveHostBinary } from "@nativedesktop/host";
+import { type Backend, preloadEnv, resolveHostBinary } from "@nativedesktop/host";
 import {
   buildNativePlugins,
   engineTargetFor,
@@ -44,7 +44,14 @@ async function runDev(entry: string, backend?: Backend): Promise<number> {
   const config = await loadConfig();
   const proc = Bun.spawn([hostBinary], {
     cwd: process.cwd(),
-    env: { ...process.env, ...(await nativeEnv(config)), ...engineEnv(config), ND_DEV: "1", ND_SCRIPT: entry },
+    env: {
+      ...process.env,
+      ...preloadEnv(process.cwd()),
+      ...(await nativeEnv(config)),
+      ...engineEnv(config),
+      ND_DEV: "1",
+      ND_SCRIPT: entry,
+    },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -58,7 +65,7 @@ async function runBuild(): Promise<number> {
   await buildNativePlugins(await loadConfig());
   const proc = Bun.spawn(["bun", "run", "compile"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: { ...process.env, ...preloadEnv(process.cwd()) },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

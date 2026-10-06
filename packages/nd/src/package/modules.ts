@@ -151,13 +151,14 @@ export function assertResolvableEntries(appRoot: string, names: string[]): void 
       Bun.resolveSync(name, appRoot);
     } catch {
       // A package that declares no entry point at all (binary/asset carriers
-      // like the platform host packages) is legitimately unresolvable.
+      // like the platform host packages, or a types-only package such as
+      // csstype, which publishes `"main": ""`) is legitimately unresolvable.
       const pkg = JSON.parse(readFileSync(join(appRoot, "node_modules", name, "package.json"), "utf8")) as {
         main?: string;
         module?: string;
         exports?: unknown;
       };
-      if (pkg.main === undefined && pkg.module === undefined && !declaresRootEntry(pkg.exports)) continue;
+      if (!pkg.main && !pkg.module && !declaresRootEntry(pkg.exports)) continue;
       throw new Error(
         `nd: bundled package "${name}" has no resolvable entry (its build output is missing). ` +
         `Run \`bun run build\` in ${name} and package again.`,

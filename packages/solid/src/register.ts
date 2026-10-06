@@ -1,6 +1,9 @@
-// Makes a plain `bun <entry>` able to run a Solid app: load this module before
-// anything imports solid-js, either as the entry's first static import (then
-// `await import("./app.tsx")`) or through a bunfig.toml `preload`.
+// Makes `bun <entry>.tsx` able to run a Solid app. It has to load before
+// anything imports solid-js, so it runs as a preload: `nd dev`, `nd package`
+// and @nativedesktop/test's launchApp put `--preload=@nativedesktop/solid/register`
+// in BUN_OPTIONS for an app that depends on @nativedesktop/solid
+// (@nativedesktop/host's preload.ts), and this package's bunfig.toml preloads
+// it for `bun test`.
 //
 // Two jobs, both runtime Bun plugins:
 // - solid-js's package exports send the "node" condition, which Bun's runtime

@@ -1,13 +1,14 @@
 import Foundation
 
 // Packaged-app launch contract: `nd package` writes Resources/app/nd-app.json
-// ({ id, name, version, entry, cwd, pluginPaths, engine, schemes }, entry/cwd
-// app-root-relative) and this bootstrap turns a bare double-click launch into
-// the same environment `nd dev` sets up by hand: ND_SCRIPT pointing at the
+// ({ id, name, version, entry, cwd, pluginPaths, preload?, engine, schemes },
+// entry/cwd app-root-relative) and this bootstrap turns a bare double-click
+// launch into the same environment `nd dev` sets up by hand: ND_SCRIPT pointing at the
 // bundled entry, the bundled `bun` first on PATH, the app's own directory as
 // cwd (so getAppDataDir() and relative fs reads behave the same packaged as in
-// dev), ND_PLUGINS/ND_PLUGIN_PATHS for bundled native plugins, and
-// ND_WEBVIEW_ENGINE/ND_CEF_SCHEMES for the webview engine.
+// dev), ND_PLUGINS/ND_PLUGIN_PATHS for bundled native plugins,
+// ND_WEBVIEW_ENGINE/ND_CEF_SCHEMES for the webview engine, and BUN_OPTIONS
+// carrying a renderer preload (a Solid app).
 //
 // Two phases, because the engine is decided earlier than everything else.
 // `applyEngine()` runs first in main.swift, ahead of NDCefRuntime.prepare() and
@@ -75,6 +76,16 @@ enum NDBundleBootstrap {
         if let plugins = manifest["pluginPaths"] as? [String], !plugins.isEmpty {
             setenv("ND_PLUGINS", "1", 1)
             setenv("ND_PLUGIN_PATHS", plugins.map { appRoot.appendingPathComponent($0).path }.joined(separator: ":"), 1)
+        }
+        // A Solid app's renderer plugin has to load before its entry; the bun
+        // child picks it up from BUN_OPTIONS, the same way `nd dev` passes it.
+        if let preload = manifest["preload"] as? String, !preload.isEmpty {
+            let flag = "--preload=\(preload)"
+            if let existing = getenv("BUN_OPTIONS"), !String(cString: existing).isEmpty {
+                setenv("BUN_OPTIONS", "\(String(cString: existing)) \(flag)", 1)
+            } else {
+                setenv("BUN_OPTIONS", flag, 1)
+            }
         }
     }
 }

@@ -143,6 +143,14 @@ describe("assertResolvableEntries", () => {
     expect(() => assertResolvableEntries(root, ["host-binary"])).not.toThrow();
   });
 
+  test("tolerates a types-only package with an empty main (csstype's shape)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
+    const types = join(root, "node_modules", "types-only");
+    mkdirSync(types, { recursive: true });
+    writeFileSync(join(types, "package.json"), JSON.stringify({ name: "types-only", main: "", types: "index.d.ts" }));
+    expect(() => assertResolvableEntries(root, ["types-only"])).not.toThrow();
+  });
+
   test("tolerates subpath-only exports (@nativedesktop/native's shape)", () => {
     const root = mkdtempSync(join(tmpdir(), "nd-modules-"));
     const headers = join(root, "node_modules", "header-carrier");
