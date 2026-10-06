@@ -1,4 +1,5 @@
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // NOT imported by main.tsx. A minimal acceptance fixture for the
 // <menubar>/<menu>/<menuitem> machinery, driven headlessly by
@@ -7,9 +8,9 @@ import { render, useState } from "@nativedesktop/react";
 // Probe menu with a disabled custom item, a separator, and an `about` role
 // item; and a plain counter label. This is a throwaway probe, not the real
 // notes app in main.tsx.
-function App(): React.ReactNode {
-  const [count, setCount] = useState(0);
-  const [thing, setThing] = useState("no thing yet");
+function App() {
+  const [count, setCount] = createSignal(0);
+  const [thing, setThing] = createSignal("no thing yet");
   return (
     <window title="ND Menubar Probe" defaultWidth={640} defaultHeight={420}>
       <menubar testID="probe-menubar">
@@ -37,11 +38,11 @@ function App(): React.ReactNode {
         </menu>
       </menubar>
       <box orientation="vertical" style={{ padding: 16 }}>
-        <label testID="probe-counter" text={`count=${count}`} />
-        <label testID="probe-thing" text={thing} />
+        <label testID="probe-counter" text={`count=${count()}`} />
+        <label testID="probe-thing" text={thing()} />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

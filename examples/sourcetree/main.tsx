@@ -6,8 +6,9 @@
 // actionable project row FIRST so the AppKit pointer leg can hit its
 // trailing action button at a predictable y. actionVisibility "always" for
 // the same reason (hover can't be a precondition for a coordinate click).
-import { render, useState, useMountEffect, app, hasCommand, hasWidget } from "@nativedesktop/react";
-import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
+import { render, app, hasCommand, hasWidget } from "@nativedesktop/solid";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/solid";
+import { createMemo, createSignal, createStore, onSettled } from "solid-js";
 
 const actions: SourceTreeAction[] = [
   { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },
@@ -80,21 +81,21 @@ const probeNodes = (variant: string): SourceTreeNode[] => {
   return rows;
 };
 
-function GeometryProbe({ variant }: { variant: string }): React.ReactNode {
+function GeometryProbe(props: { variant: string }) {
   return (
     <window
       title="SourceTree Geometry"
-      defaultWidth={variant === "long" ? LONG_PROBE_WIDTH : 480}
+      defaultWidth={props.variant === "long" ? LONG_PROBE_WIDTH : 480}
       defaultHeight={520}
     >
       {/* `long` insets the tree from the window, so a row that overruns its
           own right edge is measurable as ink outside the widget rect. */}
-      <box orientation="vertical" spacing={0} style={{ padding: variant === "long" ? 20 : 0 }}>
+      <box orientation="vertical" spacing={0} style={{ padding: props.variant === "long" ? 20 : 0 }}>
         <sourcetree
           testID="st-geo"
-          nodes={probeNodes(variant)}
+          nodes={probeNodes(props.variant)}
           actions={actions}
-          actionVisibility={variant === "hover" ? "hover" : "always"}
+          actionVisibility={props.variant === "hover" ? "hover" : "always"}
           style={{ vexpand: true }}
         />
       </box>
@@ -102,33 +103,36 @@ function GeometryProbe({ variant }: { variant: string }): React.ReactNode {
   );
 }
 
-function App(): React.ReactNode {
-  const [expanded, setExpanded] = useState<Set<string>>(
-    new Set(["proj-nd", "sec-hosts", "host-mac", "proj-two"]),
-  );
-  const [selectedId, setSelectedId] = useState("");
-  const [lastActivated, setLastActivated] = useState("");
-  const [lastAction, setLastAction] = useState("");
-  const [lastExpandEvent, setLastExpandEvent] = useState("");
-  const [lastToolbar, setLastToolbar] = useState("");
-  const nodes: SourceTreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.id) }));
+function App() {
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({
+    "proj-nd": true,
+    "sec-hosts": true,
+    "host-mac": true,
+    "proj-two": true,
+  });
+  const [selectedId, setSelectedId] = createSignal("");
+  const [lastActivated, setLastActivated] = createSignal("");
+  const [lastAction, setLastAction] = createSignal("");
+  const [lastExpandEvent, setLastExpandEvent] = createSignal("");
+  const [lastToolbar, setLastToolbar] = createSignal("");
+  const nodes = createMemo<SourceTreeNode[]>(() => nodeMeta.map((n) => ({ ...n, expanded: !!expanded[n.id] })));
 
   // Activation transitions re-render the readouts below; the drive frontmosts
   // the process and waits for the active label to flip.
-  const [, setActivationTick] = useState(0);
-  useMountEffect(() => {
-    const offActivate = app.onActivate(() => setActivationTick((t) => t + 1));
-    const offDeactivate = app.onDeactivate(() => setActivationTick((t) => t + 1));
+  const [active, setActive] = createSignal(app.isActive());
+  onSettled(() => {
+    const offActivate = app.onActivate(() => setActive(app.isActive()));
+    const offDeactivate = app.onDeactivate(() => setActive(app.isActive()));
     return () => {
       offActivate();
       offDeactivate();
     };
   });
 
-  // Render-time (no await): hasCommand/hasWidget answer from the handshake
-  // manifest; app.isActive() from the host's replayed activation state.
+  // hasCommand/hasWidget answer from the handshake manifest; app.isActive()
+  // from the host's replayed activation state.
   const capsText = `caps present=${hasCommand("window", "present")} nope=${hasCommand("window", "nope")} sourcetree=${hasWidget("sourcetree")}`;
-  const activeText = `active ${app.isActive()} replay=${globalThis.__nd_app_active !== undefined ? "yes" : "no"}`;
+  const activeText = () => `active ${active()} replay=${globalThis.__nd_app_active !== undefined ? "yes" : "no"}`;
 
   return (
     <window title="SourceTree Drive" defaultWidth={480} defaultHeight={760}>
@@ -142,25 +146,21 @@ function App(): React.ReactNode {
         </box>
         <sourcetree
           testID="st-tree"
-          nodes={nodes}
+          nodes={nodes()}
           actions={actions}
-          selectedId={selectedId}
+          selectedId={selectedId()}
           actionVisibility="always"
           onSelectionChanged={(e) => setSelectedId((e.data as { nodeId: string | null }).nodeId ?? "")}
           onRowActivated={(e) => setLastActivated((e.data as { nodeId: string }).nodeId)}
           onNodeExpanded={(e) => {
             const { nodeId } = e.data as { nodeId: string };
             setLastExpandEvent(`expanded:${nodeId}`);
-            setExpanded((prev) => new Set(prev).add(nodeId));
+            setExpanded((s) => { s[nodeId] = true; });
           }}
           onNodeCollapsed={(e) => {
             const { nodeId } = e.data as { nodeId: string };
             setLastExpandEvent(`collapsed:${nodeId}`);
-            setExpanded((prev) => {
-              const next = new Set(prev);
-              next.delete(nodeId);
-              return next;
-            });
+            setExpanded((s) => { s[nodeId] = false; });
           }}
           onActionClicked={(e) => {
             const { nodeId, actionId } = e.data as { nodeId: string; actionId: string };
@@ -168,24 +168,19 @@ function App(): React.ReactNode {
           }}
           style={{ vexpand: true }}
         />
-        <checkbox testID="st-settled-toggle" label="Show settled" checked={expanded.has("sec-settled")}
-          onToggled={(e) => setExpanded((prev) => {
-            const next = new Set(prev);
-            if (e.checked) next.add("sec-settled");
-            else next.delete("sec-settled");
-            return next;
-          })} />
-        <label testID="st-selected-readout" text={`sel ${selectedId || "(none)"}`} />
-        <label testID="st-activated-readout" text={`act ${lastActivated || "(none)"}`} />
-        <label testID="st-action-readout" text={`action ${lastAction || "(none)"}`} />
-        <label testID="st-expand-readout" text={`expand ${lastExpandEvent || "(none)"}`} />
-        <label testID="st-toolbar-readout" text={`toolbar ${lastToolbar || "(none)"}`} />
+        <checkbox testID="st-settled-toggle" label="Show settled" checked={!!expanded["sec-settled"]}
+          onToggled={(e) => setExpanded((s) => { s["sec-settled"] = e.checked; })} />
+        <label testID="st-selected-readout" text={`sel ${selectedId() || "(none)"}`} />
+        <label testID="st-activated-readout" text={`act ${lastActivated() || "(none)"}`} />
+        <label testID="st-action-readout" text={`action ${lastAction() || "(none)"}`} />
+        <label testID="st-expand-readout" text={`expand ${lastExpandEvent() || "(none)"}`} />
+        <label testID="st-toolbar-readout" text={`toolbar ${lastToolbar() || "(none)"}`} />
         <label testID="st-caps-readout" text={capsText} />
-        <label testID="st-active-readout" text={activeText} />
+        <label testID="st-active-readout" text={activeText()} />
       </box>
     </window>
   );
 }
 
 const geometryVariant = process.env.ND_ST_GEOMETRY;
-await render(geometryVariant ? <GeometryProbe variant={geometryVariant} /> : <App />);
+await render(() => (geometryVariant ? <GeometryProbe variant={geometryVariant} /> : <App />));
