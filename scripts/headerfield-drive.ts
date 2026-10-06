@@ -43,7 +43,7 @@ const START = gtk
   : ["nav-back", "nav-forward", "nav-reload", "weight-styled", "weight-plain"];
 const END = ["end-menu", "end-add"];
 
-const app = attached ? await connectApp() : await launchApp({ entry: "examples/headerfield/main.tsx", backend });
+const app = attached ? await connectApp(undefined, { pid: Number(process.env.ND_HOST_PID) || undefined }) : await launchApp({ entry: "examples/headerfield/main.tsx", backend });
 const hostPid = Number(process.env.ND_HOST_PID ?? ("pid" in app ? app.pid : 0));
 
 type CensusWindow = { layer: number; alpha: number; x: number; y: number; width: number; height: number };
