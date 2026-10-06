@@ -163,6 +163,7 @@ fn onActivate(app: *gtk.Application, _: ?*anyopaque) callconv(.c) void {
         return;
     }
     backend.setTree(&ctx.tree); // nd_start_runtime just initialized ctx.tree
+    cef.warmUp();
 
     if (global_environ_map.?.get("NATIVE_AUTOMATION")) |v| {
         if (std.mem.eql(u8, v, "1")) {

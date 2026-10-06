@@ -1562,6 +1562,13 @@ fn ensureInitialized() bool {
 
 var on_initialized: ?*const fn () callconv(.c) void = null;
 
+/// Runs cef_initialize now rather than at the first <webview>. The host calls
+/// it right after spawning the Bun child, so Chromium's startup overlaps the
+/// child loading its modules instead of sitting inside the first commit.
+pub fn warmUp() void {
+    if (process_ready) _ = ensureInitialized();
+}
+
 /// Called on the thread that ran cef_initialize, right after it succeeds.
 pub fn setOnInitialized(cb: *const fn () callconv(.c) void) void {
     on_initialized = cb;
@@ -2879,6 +2886,11 @@ fn createBrowser(view: *View) void {
 
     const parent = x11.toplevelXid(view.widget);
     if (parent == 0) {
+        // A toplevel with no surface yet is not realized: the create timer
+        // gets here first when the first commit lands before the window does,
+        // and its next tick finds the window.
+        const native = gtk.Widget.getNative(view.widget);
+        if (native == null or gtk.Native.getSurface(native.?) == null) return;
         if (!view.warned_no_parent) {
             view.warned_no_parent = true;
             std.debug.print("ND_WARN WebView engine=chromium: the toplevel has no X11 window (Wayland without the x11 backend pin?); browser not created\n", .{});

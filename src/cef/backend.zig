@@ -21,6 +21,7 @@ pub const started = impl.started;
 pub const chromeStyle = impl.chromeStyle;
 pub const shutdown = impl.shutdown;
 pub const setOnInitialized = impl.setOnInitialized;
+pub const warmUp = impl.warmUp;
 pub const create = impl.create;
 pub const isReal = impl.isReal;
 pub const setUrl = impl.setUrl;
