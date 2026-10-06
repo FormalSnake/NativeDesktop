@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Project-level guidance for NativeDesktop — a cross-platform native UI toolkit
-where one React/TSX codebase renders to real native widgets (libadwaita/GTK on
+where one SolidJS/TSX codebase renders to real native widgets (libadwaita/GTK on
 Linux, AppKit on macOS).
 
 ## Fix UI at the framework level, not the app level
@@ -31,8 +31,10 @@ silently.
 
 **Two processes per app.** A native **host** (Zig, owns `main()` + the OS event
 loop + the authoritative retained widget tree) and a **Bun/TypeScript child**
-(runs your React app). React's reconciler diffs the tree and sends
-`CommitBatch`es to the host over **NDP** — length-prefixed JSON over a local
+(runs your Solid 2.0 app). `@nativedesktop/solid` is an `@solidjs/universal`
+renderer: components run once, signals update only the props and children
+that read them, and each change becomes an op batched into a `CommitBatch`
+sent to the host over **NDP**: length-prefixed JSON over a local
 socket; events flow back the same pipe. A JS crash or hang does not take the
 window down — the host stays up.
 
@@ -66,7 +68,7 @@ language.
 renderer, the app process has `node:fs`, `bun:sqlite`, process spawning, and
 network — no `contextBridge`/IPC. "Backend" logic lives in the same process as
 the UI. Consequence: heavy *synchronous* work on the Bun main thread stalls
-React's commit loop (UI updates pause), but NOT the native window or an embedded
+the renderer (UI updates pause), but NOT the native window or an embedded
 webview — those render in the separate host process (web content in WebKit's own
 processes). Use `@nativedesktop/data` (below) to keep the main thread free.
 
@@ -80,19 +82,24 @@ hand-edit `tools/codegen.ts` or the generated files.
 now measures faster than `JSON.stringify` on a large mount: a single growable
 `ArrayBuffer` with one cached `DataView`, rebuilt only when the buffer grows,
 replaces a `new DataView` allocation on every primitive write
-(`scripts/bench-10k.ts`, sized by `ND_BENCH_NODES`, is the gate). Inbound
+(`scripts/bench-10k.ts`, sized by `ND_BENCH_NODES`, is the wire gate;
+`scripts/bench-solid.tsx`, timing mount, one-row and all-rows updates to the
+CommitBatch, is the renderer gate). Inbound
 framing (`packages/core/src/ndp.ts`) tracks head/tail offsets into the accumulated
 buffer instead of `Buffer.concat`-ing every chunk. Host-side (`src/runtime.zig`,
 `src/protocol.zig`): a `CommitBatch` is decoded and gated on the reader
 thread, and the UI thread only runs `tree.apply`; outbound frames (events,
 `changed`, terminal output) are handed to a writer thread instead of written
-inline, so a full socket buffer never blocks the run loop. React's prop diff
-now compares object props (`style`, `cssClasses`, `rows`/`columns`/`nodes`) by
-value up to 4 levels deep instead of by identity, so a fresh-object-per-render
-JSX literal (`style={{...}}`) with unchanged contents emits no update op; a
-prop the new render dropped now reaches the host as an explicit removal
-(`null`, except `style` becomes `{}` and `cssClasses` becomes `[]`, since both
-apply through a set-replace path where the empty value IS the reset).
+inline, so a full socket buffer never blocks the run loop. The Solid
+renderer's `setProperty` (`packages/solid/src/renderer.ts`) runs per prop
+when the signal behind it changes; it compares the new value against the
+previous one with core's `propsEqual` (by value, up to 4 levels deep), so an
+effect that rebuilds an equal `style`/`rows` object emits no update op. Props
+set before the node's create has shipped fold into that create, and several
+in one tick merge into one `update` op per node. A prop that becomes
+`undefined` reaches the host as an explicit removal (`null`, except `style`
+becomes `{}` and `cssClasses` becomes `[]`, since both apply through a
+set-replace path where the empty value IS the reset).
 
 **Dropped-prop reset + popover anchor:** a prop that left an app's JSX used to
 reach the host as JSON `null` forever, since every applier type-checked before
@@ -113,7 +120,7 @@ on this pass).
 fragment) and each opens an independent OS window on both backends. The core
 reconciler (`src/tree.zig`) pools window handles by node id; the ABI's
 `resolve_window` op rebinds windows on crash/HMR respawn. Because all windows
-live in one Bun/React process, cross-window state sync is trivial — shared
+live in one Bun process, cross-window state sync is trivial: shared
 state, no IPC. Per-window scoping is done: automation measures each widget
 against its OWN window, `screenshot` targets the requested `window` (existing
 `resolve_window` op, no new ABI op), the crash overlay paints on every open
@@ -245,17 +252,19 @@ async JS round-trip can't produce. Acceptance: `scripts/tabs-drive.ts`
 (browser + terminal examples, cmd+t/cmd+w through real menu key equivalents)
 → `ND_TABS_OK`. Docs: `docs-site/src/content/docs/native-platform/tabs.md`.
 
-**Cross-window reparenting (drag a tab between windows without reload):** React
-can't express a widget-preserving cross-parent move — moving a node to a new
-parent unmounts+remounts it, destroying the native widget (a `<webview>` would
-reload). Solution: render the movable node via `createPortal(node, pool)` into a
-process-lifetime **pool** so React never unmounts it, then relocate the *live
-native widget* imperatively with `moveNode(ref, slotRef)`. That rides the
+**Cross-window reparenting (drag a tab between windows without reload):** the
+renderer can't express a widget-preserving cross-parent move: moving a node to
+a new parent removes and recreates it, destroying the native widget (a
+`<webview>` would reload). Solution: render the movable node through
+`<Portal>` into a process-lifetime off-window **pool** (or one from
+`createPool`, via `pool=`) so it is never unmounted, then relocate the *live native widget* imperatively with
+`moveNode(ref, slotRef)`. That rides the
 existing `widgetCommand` frame (reserved `__ndReparent`) into the appended
 `reparent_child` ABI op (vtable word 21); GTK brackets the move in
 `g_object_ref`/`unref`, AppKit relies on the core's `passRetained` +1. See
-`examples/multiwindow/` (Solid `<Portal>`, gate `scripts/multiwindow-drive.ts`). `moveNode` is imperative BY DESIGN — preserving state
-React would otherwise destroy is outside `UI = f(state)`. Widget commands
+`examples/multiwindow/` (gate `scripts/multiwindow-drive.ts`). `moveNode` is
+imperative BY DESIGN: preserving state the renderer would otherwise destroy is
+outside `UI = f(state)`. Widget commands
 (`moveNode`, `sendCommand`) call `session.flush()` before their own frame, so
 one sent in the tick its target was created (Solid refs, `onSettled`) never
 reaches the host ahead of the create.
@@ -267,7 +276,7 @@ reaches the host ahead of the create.
 `loadFailed`, `newWindow` (host denies the popup, app opens a native tab),
 `downloadRequested` (engine download cancelled, app downloads via Bun),
 `javaScriptResult`; commands `goBack`, `goForward`, `reload`, `stop`,
-`executeJavaScript` (promise helper in `@nativedesktop/react`), `setZoom`,
+`executeJavaScript` (promise helper in `@nativedesktop/solid`), `setZoom`,
 `setUserAgent`, `openDevTools`. Context menus are the engine's own by default
 (`contextMenuMode="native"`, the alternative being `"suppress"`): the app's
 `setContextMenuItems` tree (types, checkboxes, radio groups, submenus,
@@ -329,7 +338,7 @@ band around the threshold).
 
 ### App-facing APIs added recently
 - **System capabilities** (parity with native-sdk.dev's capability pack) —
-  promise-based APIs from `@nativedesktop/react` (`packages/core/src/
+  promise-based APIs from `@nativedesktop/solid` (`packages/core/src/
   system.ts`): `dialog.openFile/saveFile/showMessage`, `clipboard.readText/
   writeText`, `notifications.show/onClick`, `recentDocuments.add/clear`,
   `credentials.set/get/delete` (Keychain / dlopen'd libsecret), and app-level
@@ -364,15 +373,14 @@ band around the threshold).
   XML (`packages/nd/src/package/identity.ts`). OS launches land as
   `app.onOpenFile` / `app.onOpenUrl` events.
 - **App data dir** — `getAppDataDir()` / `ensureAppDataDir()` from
-  `@nativedesktop/react` (`packages/core/src/paths.ts`). Electron-style
+  `@nativedesktop/solid` (`packages/core/src/paths.ts`). Electron-style
   userData path; app name comes from the app's `package.json` `name`. macOS
   `~/Library/Application Support/<name>`, Linux `$XDG_DATA_HOME/<name>`
   (→ `~/.local/share/<name>`).
 - **Worker-backed SQLite** — `@nativedesktop/data` (`packages/data/`).
   `openDatabase(path)` → `query` / `mutate` / `transaction` / `close`, plus a
-  `useQuery` hook from `@nativedesktop/data/react` and a `createQuery` async
-  memo from `@nativedesktop/data/solid`. The `bun:sqlite` connection
-  runs in a Bun `Worker`, so queries never block React's commit loop. Composes
+  `createQuery` async memo from `@nativedesktop/data/solid`. The `bun:sqlite`
+  connection runs in a Bun `Worker`, so queries never block the renderer. Composes
   with `ensureAppDataDir()`. **ORM-agnostic by design:** the library depends on
   NO ORM; it exports a stable `SqliteExecutor` contract (async
   `query`/`mutate`/`transaction`) that adapters target in userland. Worked,
@@ -398,7 +406,7 @@ band around the threshold).
   (`Widget.platforms` in `tools/codegen.ts`) permanently no-ops a widget's
   create/apply/structural arms on excluded backends (`ND_PLATFORM_NOOP` —
   distinct from the temporary stub registry below) and is exported to JS as
-  `schema-meta.ts`'s `widgetPlatforms`. `host-config.ts`'s `checkPlatform` logs
+  `schema-meta.ts`'s `widgetPlatforms`. Core's `checkPlatform` logs
   a one-time `console.warn` in `nd dev` (`isHot()`-gated, absent from `nd
   build`) when such a widget mounts on an excluded platform. Gate app code with
   `Platform.os` (an OS-level API like `NSStatusItem` exists or doesn't),
@@ -417,15 +425,17 @@ band around the threshold).
 - **Survivable error policy**: `setUnhandledErrorPolicy` / `onUnhandledError`
   (`packages/core/src/errors.ts`): `uncaughtException` defaults to fatal,
   `unhandledRejection` to report-and-survive (`ND_FATAL_REJECTIONS=1` flips
-  it); render-phase errors route through the reconciler's createContainer
-  callbacks. Non-fatal reports are rate-capped (20 per 10s) so an error loop
-  can't saturate the NDP outbox. The `runtimeError` frame carries `fatal`: the
+  it). Render-phase errors: one an app `<Errored>` boundary catches reports
+  non-fatal; one no boundary catches lands in the boundary the renderer wraps
+  around the whole tree and exits, since Solid halts reactivity after it.
+  Non-fatal reports are rate-capped (20 per 10s) so an error loop can't
+  saturate the NDP outbox. The `runtimeError` frame carries `fatal`: the
   host stashes overlay text only for fatal=true and prints
   `ND_RUNTIME_ERROR_NONFATAL` otherwise, so a stale report never becomes
   overlay text.
-- **Settings store**: `createStore` / `useStoreValue`
-  (`packages/core/src/store.ts`): versioned `${name}.json` under the app data
-  dir. Intended launch shape: `await store.load()` above `render()`, which
+- **Settings store**: `createStore` (`packages/core/src/store.ts`) /
+  `useStoreValue` (`packages/solid/src/store.ts`, an accessor): versioned
+  `${name}.json` under the app data dir. Intended launch shape: `await store.load()` above `render()`, which
   makes `get()` synchronous inside components (no loading flash, no restore
   effect). Writes are debounced, serialized on one promise chain, land via
   tmp+rename, with a synchronous last-resort flush on exit/SIGINT/SIGTERM.
@@ -434,24 +444,24 @@ band around the threshold).
 - **`@nativedesktop/rpc`** (`packages/rpc/`): resilient JSON-RPC client for an
   app's own external services: typed `RpcContract`, `socketTransport` /
   `webSocketTransport`, `ConnectionLadder` reconnect backoff with a stability
-  window. React binding lives at `@nativedesktop/rpc/react` (`useRpcStatus`
-  subscribes to connection status), Solid's at `@nativedesktop/rpc/solid`
-  (`createRpcStatus`), so the core client stays renderer-free;
-  `@nativedesktop/react` and `solid-js` are optional peer deps.
+  window. The Solid binding lives at `@nativedesktop/rpc/solid`
+  (`createRpcStatus`, connection status as a signal), so the core client
+  stays renderer-free; `solid-js` is an optional peer dep.
 - **`@nativedesktop/panes`** (`packages/panes/`): pure split-pane tree model
   over the existing `<paned>` widget (no schema/ABI change). Every model op
   (`splitPane`/`closePane`/`focusNeighbor`/`setPaneRatio`/`seedPanes`/
   `migratePanes`) returns the SAME reference when nothing changed, which stops
   a native positionChanged echo from looping a render+persist cycle.
-  `PaneTree`/`usePaneTree` render the nested paneds; `renderLeaf` owns all
-  per-pane chrome.
+  `PaneTree`/`createPaneTree` render the nested paneds (`DockView`/`createDock`
+  and `TilesView`/`createTiles` likewise); `renderLeaf` owns all per-pane
+  chrome and receives reactive getters.
 - **SourceTree sidebar**: `<sourcetree>`, a data-driven hierarchical sidebar
   (flat `id`/`parentId` nodes like `<treeview>`, controlled `selectedId` and
   expansion, per-row trailing `actions` with hover|always visibility, section
   group rows, badges, empty-state props). Events all carry `{nodeId}`
   (`actionClicked` adds `actionId`); no index payloads, since visible indexes
   are unstable across expand/collapse. macOS: `.sourceList` NSOutlineView that
-  REUSES item instances by id so open branches survive React updates; GTK:
+  REUSES item instances by id so open branches survive app updates; GTK:
   `navigation-sidebar` GtkListBox of AdwActionRows, rebuilt per update. See
   `examples/sourcetree` + `scripts/sourcetree-drive.ts`.
 - **HIG batch (GNOME + macOS 26/27 design language)**: new `<row>` /
@@ -523,13 +533,12 @@ band around the threshold).
   session/handshake, Batch/NodeRegistry, wire ids, prop diff and
   dropped-prop reset, sendCommand/moveNode, `Platform`, paths, store, errors,
   system/dialogs/toast/webview APIs, and the generated schema-meta/protocol/
-  rpc/widgets TS), `packages/react` (`@nativedesktop/react`: reconciler,
-  React JSX intrinsics, hooks, re-exports core), `packages/solid`
+  rpc/widgets TS), `packages/solid`
   (`@nativedesktop/solid`: `@solidjs/universal` renderer over core, Solid JSX
   intrinsics, `Portal`/`createPool`; `register.ts` is the Bun plugin that runs
   babel-preset-solid's universal transform and swaps solid-js's SSR build
-  for its client build; `nd dev`, `nd build`, `nd package` and `launchApp`
-  preload it through `BUN_OPTIONS=--preload=@nativedesktop/solid/register`
+  for its client build, and treats every `.jsx`/`.tsx` as Solid; `nd dev`,
+  `nd build`, `nd package` and `launchApp` preload it through `BUN_OPTIONS=--preload=@nativedesktop/solid/register`
   for an app whose `dependencies` list `@nativedesktop/solid`
   (`packages/host/src/preload.ts`; packaged launches read `preload` from
   nd-app.json), so a Solid app is a single `.tsx` entry. Bun's BUN_OPTIONS
@@ -542,13 +551,16 @@ band around the threshold).
   changed components and the window plus other components' state stay;
   an unpatchable edit remounts the tree. Solid's `render()` resolves
   instead of parking: Bun watches a plugin-compiled module only once its
-  evaluation finishes. Gate: `scripts/counter-solid-hmr-drive.ts`),
+  evaluation finishes. Gate: `scripts/counter-hmr-drive.ts`. `nd-solid-build`
+  (`build.ts`) compiles an app ahead of time into one bundle for `nd build` /
+  `nd package`. The `nd` template (`template/`) is a Solid app whose
+  `compile` script is `nd-solid-build src/main.tsx --outdir dist`),
   `packages/nd`
   (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
   (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`
   (worker SQLite), `packages/rpc`, `packages/panes`, `packages/test`
   (automation harness: locators, expect, keyboard/mouse), `packages/mcp`
-  (MCP bridge: execute/snapshot/reset), `packages/babel-plugin-nativedesktop`.
+  (MCP bridge: execute/snapshot/reset).
 - **Schemas:** `schema/{widgets,protocol,rpc}.json` → `tools/codegen.ts` →
   generated Zig/TS/Swift.
 - **Build:** `zig build` → `zig-out/bin/nd-hello` (Zig host); the SwiftPM
