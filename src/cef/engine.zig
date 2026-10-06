@@ -1959,6 +1959,10 @@ const View = struct {
     park_timer: c_uint = 0,
     /// The deferred `parkContainer` of an unmapped view. See `onUnmap`.
     park_source: c_uint = 0,
+    /// The frame clock (held) and its `after-paint` handler a deferred park
+    /// waits on. See `onUnmap`.
+    park_clock: ?*gdk.FrameClock = null,
+    park_handler: c_ulong = 0,
     pending_url: ?[:0]u8 = null,
 
     // The CDP substrate. GTK thread only: results and events are marshaled
@@ -2749,14 +2753,46 @@ fn onUnmap(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
     // behind it, black, for the 3 ms until the new page was on screen and the
     // frame after that until it had drawn. Left in place, the old page's
     // pixels stay until the new page's replace them, as in Chrome.
-    if (view.park_source == 0) view.park_source = glib.timeoutAdd(0, &onParkSource, view);
+    //
+    // And once the window has painted that commit: parking makes X round
+    // trips (3 to 9 ms under XWayland), and run before the frame they held
+    // back the app's own chrome, the sidebar row marked as on show.
+    if (view.park_source != 0 or view.park_clock != null) return;
+    if (gtk.Widget.getFrameClock(view.widget)) |clock| {
+        view.park_clock = clock;
+        _ = gobject.Object.ref(clock.as(gobject.Object));
+        view.park_handler = gobject.signalConnectData(clock.as(gobject.Object), "after-paint", @ptrCast(&onParkPaint), view, null, .{});
+        gdk.FrameClock.requestPhase(clock, .{ .after_paint = true });
+        return;
+    }
+    view.park_source = glib.timeoutAdd(0, &onParkSource, view);
 }
 
 fn onParkSource(data: ?*anyopaque) callconv(.c) c_int {
     const view: *View = @ptrCast(@alignCast(data.?));
     view.park_source = 0;
-    if (gtk.Widget.getMapped(view.widget) == 0) parkContainer(view);
+    parkUnmapped(view);
     return 0;
+}
+
+fn onParkPaint(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
+    const view: *View = @ptrCast(@alignCast(data.?));
+    dropParkPaint(view);
+    parkUnmapped(view);
+}
+
+fn dropParkPaint(view: *View) void {
+    const clock = view.park_clock orelse return;
+    gobject.signalHandlerDisconnect(clock.as(gobject.Object), view.park_handler);
+    gobject.Object.unref(clock.as(gobject.Object));
+    view.park_clock = null;
+    view.park_handler = 0;
+}
+
+fn parkUnmapped(view: *View) void {
+    marker.lat("cef.park", "node={d}", .{view.node_id});
+    defer marker.lat("cef.parked", "node={d}", .{view.node_id});
+    if (gtk.Widget.getMapped(view.widget) == 0) parkContainer(view);
 }
 
 fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
@@ -2769,6 +2805,7 @@ fn onDestroy(_: *gobject.Object, data: ?*anyopaque) callconv(.c) void {
         _ = glib.Source.remove(view.park_source);
         view.park_source = 0;
     }
+    dropParkPaint(view);
     closeNativeMenu(view);
     disarmCreateTimer(view);
     if (view.deferred_timer != 0) {
