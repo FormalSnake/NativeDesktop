@@ -46,6 +46,7 @@ pub const menuItemEnabled = g.menuItemEnabled;
 pub const ndMenuNodeAttached = g.ndMenuNodeAttached;
 pub const ndMenuSweepNode = g.ndMenuSweepNode;
 pub const ndMenuModelItems = g.ndMenuModelItems;
+pub const ND_TOOLTIP = g.ND_TOOLTIP;
 
 pub const main = @import("gtk/main.zig").main;
 

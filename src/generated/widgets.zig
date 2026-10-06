@@ -3290,19 +3290,35 @@ fn ndHeaderBarSlotBoxOf(hb: *adw.HeaderBar, child: *gtk.Widget) ?*gtk.Box {
 fn ndApplyTooltip(widget: *gtk.Widget, props: ?std.json.Value, dupeZ: *const fn ([]const u8) [:0]const u8) void {
     const tip = propStr(props, "tooltip") orelse return;
     if (!gobject.ext.isA(widget, gtk.Widget)) return;
-    // Setting a tooltip on a visible widget asks the display where the
-    // pointer is (gtk_tooltip_trigger_tooltip_query), an X round trip of
-    // ~5 ms under XWayland, paid for every button an app mounts. A widget
-    // that is in no window yet has no tooltip to show, so it is set hidden.
-    const detached = gtk.Widget.getRoot(widget) == null and gtk.Widget.getVisible(widget) != 0;
-    if (detached) gtk.Widget.setVisible(widget, 0);
-    gtk.Widget.setTooltipText(widget, if (tip.len > 0) dupeZ(tip).ptr else null);
-    if (detached) gtk.Widget.setVisible(widget, 1);
+    // gtk_widget_set_tooltip_text asks the display where the pointer is
+    // (gtk_tooltip_trigger_tooltip_query) each time it is called on a visible
+    // widget, an X round trip of 5 to 17 ms under XWayland, and a tab switch
+    // changes several tooltips at once. The text is kept on the widget and
+    // given to GTK when it asks for it, and only a widget under the pointer,
+    // whose tooltip can be up, asks again.
+    const obj = asObject(widget);
+    if (gobject.Object.getData(obj, ND_TOOLTIP) == null) {
+        _ = gtk.Widget.signals.query_tooltip.connect(widget, ?*anyopaque, &ndQueryTooltip, null, .{});
+    }
+    gobject.Object.setDataFull(obj, ND_TOOLTIP, glib.strndup(@ptrCast(tip.ptr), tip.len), @ptrCast(&glib.free));
+    gtk.Widget.setHasTooltip(widget, @intFromBool(tip.len > 0));
+    if (tip.len > 0 and gtk.Widget.getStateFlags(widget).prelight) gtk.Widget.triggerTooltipQuery(widget);
     // GTK derives no accessible name from a tooltip, so an icon-only control
     // would be announced by nothing; the tooltip is the short name the HIG
     // asks every element to carry.
     if (tip.len > 0) ndSetAccessibleLabel(widget, dupeZ(tip)) else gtk.Accessible.resetProperty(widget.as(gtk.Accessible), .label);
 }
+
+fn ndQueryTooltip(widget: *gtk.Widget, _: c_int, _: c_int, _: c_int, tooltip: *gtk.Tooltip, _: ?*anyopaque) callconv(.c) c_int {
+    const text = gobject.Object.getData(asObject(widget), ND_TOOLTIP) orelse return 0;
+    const z: [*:0]const u8 = @ptrCast(text);
+    if (z[0] == 0) return 0;
+    gtk.Tooltip.setText(tooltip, z);
+    return 1;
+}
+
+/// qdata key: the tooltip text a widget hands out from `query-tooltip`.
+pub const ND_TOOLTIP = "nd-tooltip";
 
 fn ndSetAccessibleLabel(widget: *gtk.Widget, name: [:0]const u8) void {
     var props = [_]gtk.AccessibleProperty{.label};

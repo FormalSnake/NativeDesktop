@@ -981,6 +981,10 @@ fn a11yLabel(widget: *gtk.Widget) ?[]const u8 {
     if (gobject.ext.isA(widget, adw.PreferencesRow)) {
         return std.mem.span(adw.PreferencesRow.getTitle(@ptrCast(@alignCast(widget))));
     }
+    if (gobject.Object.getData(widget.as(gobject.Object), generated.ND_TOOLTIP)) |tip| {
+        const text = std.mem.span(@as([*:0]const u8, @ptrCast(tip)));
+        return if (text.len > 0) text else null;
+    }
     const tip = gtk.Widget.getTooltipText(widget) orelse return null;
     return std.mem.span(tip);
 }
