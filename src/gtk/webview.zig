@@ -1053,13 +1053,11 @@ fn cbJsEvalReady(source: ?*anyopaque, res: ?*anyopaque, user_data: ?*anyopaque) 
     }
 
     objPutBool(&payload, "ok", false);
-    if (err) |e| {
-        defer e.free();
-        const msg: []const u8 = if (e.f_message) |m| std.mem.span(m) else "unknown error";
-        objPutStr(&payload, "error", msg);
-    } else {
-        objPutStr(&payload, "error", "unknown error");
-    }
+    // The payload borrows the message, so the error is freed only once `f` has
+    // serialized it.
+    defer if (err) |e| e.free();
+    const msg: []const u8 = if (err) |e| (if (e.f_message) |m| std.mem.span(m) else "unknown error") else "unknown error";
+    objPutStr(&payload, "error", msg);
     f(ctx.node_id, "javaScriptResult", .{ .data = .{ .object = payload } });
 }
 
