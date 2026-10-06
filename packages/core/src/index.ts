@@ -4,7 +4,7 @@ export { Platform, hasWidget, hasCommand } from "./platform.ts";
 export type { Backend, OS } from "./platform.ts";
 export { Spacing, ContentMargin, ContentWidth } from "./metrics.ts";
 export type { SpacingScale } from "./metrics.ts";
-export { getAppDataDir, ensureAppDataDir } from "./paths.ts";
+export { getAppDataDir, ensureAppDataDir, getCefProfileDir } from "./paths.ts";
 export {
   executeJavaScript,
   onJavaScriptResult,

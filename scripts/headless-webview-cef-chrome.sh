@@ -169,6 +169,15 @@ quit_host() {
 run_pass first
 quit_host first
 
+# With no ND_CEF_CACHE the profile is the app's own, keyed on package.json's
+# name, never a directory every NativeDesktop app shares.
+if [ -z "${ND_CEF_CACHE:-}" ]; then
+  APP_PROFILE="$XDG_DATA_HOME/$(bun -e 'console.log(require("./package.json").name)')/cef"
+  [ -d "$APP_PROFILE/default" ] || { echo "FAIL: no profile at $APP_PROFILE"; ls -R "$XDG_DATA_HOME" | head -20; exit 1; }
+  [ ! -e "$XDG_DATA_HOME/nd-webview-cef" ] || { echo "FAIL: the shared nd-webview-cef profile was written"; exit 1; }
+  echo "ND_CEF_APP_PROFILE_OK $APP_PROFILE"
+fi
+
 AFTER_X11="$(toplevels | wc -l)"
 ADDED=$((AFTER_X11 - BEFORE_X11))
 if [ "$ADDED" -gt 0 ]; then

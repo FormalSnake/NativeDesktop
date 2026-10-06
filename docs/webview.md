@@ -80,6 +80,13 @@ sendCommand(wv!, "deleteCookie", { name: "a", domain: "example.com", path: "/" }
 Create-only prop: `profile` (`""` = shared default, `private…` = ephemeral, any other name = its
 own persistent partition).
 
+On the Chromium engine every persistent partition lives under one root per app:
+`~/Library/Application Support/<app>/cef` on macOS, `$XDG_DATA_HOME/<app>/cef` on Linux, where
+`<app>` is the app's `package.json` name (a packaged app reads it from `nd-app.json`'s `dataName`).
+Dev and packaged runs of one app share it; two apps never do. `ND_CEF_CACHE` overrides the root,
+and `getCefProfileDir()` from `@nativedesktop/react` returns it. A second host on the same root
+logs `ND_CEF_PROFILE_IN_USE` and does not start Chromium.
+
 ## Context menus
 
 `contextMenuMode` (create-and-update) decides who owns the menu:

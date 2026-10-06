@@ -32,6 +32,7 @@ const ref = @import("ref.zig");
 const loader = @import("loader.zig");
 const x11 = @import("x11.zig");
 const shape = @import("shape.zig");
+const app_dir = @import("app_dir.zig");
 const cdp = @import("cdp.zig");
 const browser_pipe = @import("browser_pipe.zig");
 const hyprland = @import("hyprland.zig");
@@ -1664,8 +1665,8 @@ fn linkManifestsFrom(src: [:0]const u8, dest: [:0]const u8) usize {
     return linked;
 }
 
-/// Per-profile cache directories hang off this in M2; M1 only needs CEF to
-/// have somewhere of its own that is not the app's data root.
+/// Chromium's root_cache_path: `$XDG_DATA_HOME/<app>/cef`, inside the app's own
+/// data directory (app_dir.zig), so no two NativeDesktop apps share a profile.
 fn defaultCacheRoot() ?[:0]u8 {
     // ND_CEF_CACHE names the root, as on AppKit (NDCefEngine.swift). A run
     // that sets it expects its own profile; without this a Linux rig opened
@@ -1678,10 +1679,45 @@ fn defaultCacheRoot() ?[:0]u8 {
             return path;
         }
     }
+    const name = appDataName() orelse return null;
+    defer alloc.free(name);
     const base = glib.getUserDataDir();
-    const path = std.fmt.allocPrintSentinel(alloc, "{s}/nd-webview-cef", .{std.mem.span(base)}, 0) catch return null;
+    const path = std.fmt.allocPrintSentinel(alloc, "{s}/{s}/cef", .{ std.mem.span(base), name }, 0) catch return null;
     _ = glib.mkdirWithParents(path.ptr, 0o700);
     return path;
+}
+
+extern "c" fn g_get_current_dir() [*:0]u8;
+extern "c" fn g_get_prgname() ?[*:0]const u8;
+extern "c" fn g_file_get_contents(path: [*:0]const u8, contents: *?[*]u8, length: *usize, err: ?*anyopaque) c_int;
+extern "c" fn g_free(ptr: ?*anyopaque) void;
+
+/// nd-app.json found walking up from cwd (a packaged run's AppRun cds into the
+/// bundle's app dir), else the cwd's package.json (a dev run), else the
+/// executable's own name.
+fn appDataName() ?[]u8 {
+    const cwd = g_get_current_dir();
+    defer g_free(cwd);
+    var dir: []const u8 = std.mem.span(cwd);
+    while (true) {
+        if (nameInFile(dir, "nd-app.json", &app_dir.manifest_keys)) |name| return name;
+        const parent = std.fs.path.dirname(dir) orelse break;
+        if (std.mem.eql(u8, parent, dir)) break;
+        dir = parent;
+    }
+    if (nameInFile(std.mem.span(cwd), "package.json", &app_dir.package_keys)) |name| return name;
+    const prg = g_get_prgname() orelse return alloc.dupe(u8, "nativedesktop") catch null;
+    return alloc.dupe(u8, std.mem.span(prg)) catch null;
+}
+
+fn nameInFile(dir: []const u8, file: []const u8, keys: []const []const u8) ?[]u8 {
+    var path_buf: [4096]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dir, file }) catch return null;
+    var contents: ?[*]u8 = null;
+    var len: usize = 0;
+    if (g_file_get_contents(path.ptr, &contents, &len, null) == 0) return null;
+    defer g_free(contents);
+    return app_dir.nameFrom(alloc, contents.?[0..len], keys);
 }
 
 // ============================================================================

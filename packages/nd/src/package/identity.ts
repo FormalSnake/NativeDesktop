@@ -95,7 +95,6 @@ export interface ResolvedIdentity {
   displayName: string;
   /** Per-user data directory name: package.json name, so dev and packaged runs share it. */
   dataName: string;
-  previousName?: string;
   /** Filesystem-safe lowercase name: usr/bin/<slug>, icon names, archive basenames. */
   slug: string;
   version: string;
@@ -132,7 +131,6 @@ export function resolveIdentity(
     name,
     displayName: app.displayName ?? name,
     dataName: pkg.name ?? name,
-    previousName: app.previousName,
     slug: slugify(name),
     version: overrides.version ?? process.env.ND_APP_VERSION ?? app.version ?? pkg.version ?? "0.0.0",
     icon,

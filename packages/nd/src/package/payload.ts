@@ -174,7 +174,6 @@ export async function assemblePayload(o: PayloadOptions): Promise<PayloadResult>
     id: o.identity.id,
     name: o.identity.name,
     dataName: o.identity.dataName,
-    ...(o.identity.previousName ? { previousName: o.identity.previousName } : {}),
     version: o.identity.version,
     entry: appEntry,
     cwd,

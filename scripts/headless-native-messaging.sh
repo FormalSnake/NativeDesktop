@@ -33,8 +33,9 @@ export ND_CDP_PORT="$CDP_PORT"
 RUN_DIR="$(mktemp -d)"
 export XDG_DATA_HOME="$RUN_DIR/data"
 export XDG_CONFIG_HOME="$RUN_DIR/config"
+export ND_CEF_CACHE="$RUN_DIR/cef"
 CHROME_HOSTS="$XDG_CONFIG_HOME/google-chrome/NativeMessagingHosts"
-OWN_HOSTS="$XDG_DATA_HOME/nd-webview-cef/NativeMessagingHosts"
+OWN_HOSTS="$ND_CEF_CACHE/NativeMessagingHosts"
 mkdir -p "$CHROME_HOSTS" "$OWN_HOSTS"
 cat >"$CHROME_HOSTS/dev.nativedesktop.echo.json" <<JSON
 {

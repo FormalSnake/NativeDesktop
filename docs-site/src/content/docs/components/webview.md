@@ -329,6 +329,11 @@ supply; both backends look the live cookie up first, because both engines delete
 cache and local storage; `private…` gets an ephemeral partition that leaves nothing on disk. On GTK
 this is a `WebKitNetworkSession`, on macOS a `WKWebsiteDataStore` (named stores need macOS 14+).
 
+On the Chromium engine the partitions live under one root per app, `cef` inside the app's
+[data directory](/core-concepts/app-data-storage/): `~/Library/Application Support/<app>/cef` on
+macOS, `$XDG_DATA_HOME/<app>/cef` on Linux. Dev and packaged runs of one app share it and no two
+apps do. `ND_CEF_CACHE` overrides it.
+
 ## Choosing the engine
 
 `<webview>` runs on one of two engines, chosen per platform in `nativedesktop.config.ts`. The

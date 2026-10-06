@@ -298,16 +298,20 @@ struct NDCefPaths {
         return nil
     }
 
-    /// One root cache for the process; per-profile caches hang off it in M2.
+    /// Chromium's root_cache_path: `cef` inside the app's own data directory,
+    /// `~/Library/Application Support/<app>/cef`, keyed on the app's
+    /// package.json name so dev and packaged runs share it and no two apps do
+    /// (src/cef/app_dir.zig does the same on Linux). Application Support rather
+    /// than Caches, since the profile holds cookies and logins.
     private static func cacheDirectory(for executableName: String) -> String {
         if let override = ProcessInfo.processInfo.environment["ND_CEF_CACHE"], !override.isEmpty {
             return override
         }
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/Caches/nativedesktop/cef/\(executableName)")
+        return URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support")
+            .appendingPathComponent(NDBundleBootstrap.dataName() ?? executableName)
+            .appendingPathComponent("cef")
             .path
-        NDBundleBootstrap.adoptPreviousCache(at: dir)
-        return dir
     }
 }
 
