@@ -3,6 +3,8 @@ import { defineConfig } from "@nativedesktop/cli/config";
 // nd dev/build run these with ND_NATIVE_PACKAGE set to the installed
 // @nativedesktop/native root and, on darwin, a cleaned Xcode toolchain env.
 export default defineConfig({
+  // The entry sits at the app root, so the compiled entry is named outright.
+  package: { entry: "main.tsx", compile: { entry: "dist/main.js" } },
   native: {
     plugins: [{
       darwin: "native/build/libcolorview.dylib",

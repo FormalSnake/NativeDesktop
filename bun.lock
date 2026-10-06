@@ -8,26 +8,28 @@
         "@types/bun": "1.3.13",
       },
     },
+    "examples/adblock-probe": {
+      "name": "adblock-probe-example",
+      "dependencies": {
+        "@nativedesktop/cli": "workspace:*",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
+      },
+    },
     "examples/arcchrome": {
       "name": "arcchrome-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/browser": {
       "name": "browser-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/cef-probe": {
@@ -75,22 +77,16 @@
       "name": "dialogs-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/errors": {
       "name": "errors-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/gallery": {
@@ -108,11 +104,8 @@
       "name": "gestures-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/headerfield": {
@@ -130,22 +123,16 @@
       "name": "inspector-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/locators": {
       "name": "locators-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/multiwindow": {
@@ -172,22 +159,16 @@
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
         "@nativedesktop/native": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/ndwidgets-probe": {
       "name": "ndwidgets-probe-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/notes": {
@@ -241,22 +222,16 @@
       "name": "propreset-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/remote-terminal": {
       "name": "remote-terminal-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/settings": {
@@ -285,22 +260,16 @@
       "name": "tasks-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/terminal": {
       "name": "terminal-example",
       "dependencies": {
         "@nativedesktop/cli": "workspace:*",
-        "@nativedesktop/react": "workspace:*",
-        "react": "19.2.7",
-      },
-      "devDependencies": {
-        "@types/react": "19.2.17",
+        "@nativedesktop/solid": "workspace:*",
+        "solid-js": "2.0.0-rc.13",
       },
     },
     "examples/webview-probe": {
@@ -429,6 +398,9 @@
     "packages/solid": {
       "name": "@nativedesktop/solid",
       "version": "0.4.54",
+      "bin": {
+        "nd-solid-build": "./src/build.ts",
+      },
       "dependencies": {
         "@babel/core": "7.29.7",
         "@babel/preset-typescript": "7.29.7",
@@ -654,6 +626,8 @@
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
 
     "accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "^3.0.0", "negotiator": "^1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
+
+    "adblock-probe-example": ["adblock-probe-example@workspace:examples/adblock-probe"],
 
     "ajv": ["ajv@8.20.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
 

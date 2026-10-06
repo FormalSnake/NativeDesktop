@@ -1,4 +1,5 @@
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { For, createSignal } from "solid-js";
 
 // Locator probe: the widgets scripts/locator-drive.ts needs to exercise the
 // Playwright-shaped surface against a real host. A focusable field, a
@@ -9,43 +10,41 @@ import { render, useState } from "@nativedesktop/react";
 const folders = ["Home", "Documents", "Downloads", "Pictures"];
 const rows = Array.from({ length: 40 }, (_, i) => i);
 
-function App(): React.ReactNode {
-  const [query, setQuery] = useState("");
-  const [notify, setNotify] = useState(false);
-  const [folder, setFolder] = useState(0);
+function App() {
+  const [query, setQuery] = createSignal("");
+  const [notify, setNotify] = createSignal(false);
+  const [folder, setFolder] = createSignal(0);
 
   return (
     <window title="ND Locators" defaultWidth={520} defaultHeight={420}>
       <box orientation="vertical" spacing={8} style={{ padding: 16 }}>
         <textinput
           testID="query-input"
-          text={query}
+          text={query()}
           placeholder="Search notes"
           onChanged={(e) => setQuery(e.text)}
         />
-        <label testID="query-label" text={`Query: ${query}`} />
+        <label testID="query-label" text={`Query: ${query()}`} />
 
         <checkbox
           testID="notify-check"
           label="Notify me"
-          checked={notify}
+          checked={notify()}
           onToggled={(e) => setNotify(e.checked)}
         />
-        <label testID="notify-label" text={`Notify: ${notify ? "on" : "off"}`} />
+        <label testID="notify-label" text={`Notify: ${notify() ? "on" : "off"}`} />
 
         <select
           testID="folder-select"
           options={folders}
-          selectedIndex={folder}
+          selectedIndex={folder()}
           onSelectionChanged={(e) => setFolder(e.index)}
         />
-        <label testID="folder-label" text={`Folder: ${folders[folder]}`} />
+        <label testID="folder-label" text={`Folder: ${folders[folder()]}`} />
 
         <scrollview testID="row-scroll" minContentHeight={120} style={{ vexpand: true }}>
           <box orientation="vertical" spacing={4}>
-            {rows.map((i) => (
-              <label key={i} testID={`row-${i}`} text={`Row ${i}`} />
-            ))}
+            <For each={rows}>{(i) => <label testID={`row-${i}`} text={`Row ${i}`} />}</For>
           </box>
         </scrollview>
       </box>
@@ -53,4 +52,4 @@ function App(): React.ReactNode {
   );
 }
 
-render(<App />);
+await render(() => <App />);

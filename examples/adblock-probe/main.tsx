@@ -1,5 +1,6 @@
-import { executeJavaScript, onJavaScriptResult, render, useEffect, useRef, useState, webviewEngine } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { executeJavaScript, onJavaScriptResult, render, webviewEngine } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createEffect, createSignal, onSettled, untrack } from "solid-js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,7 +69,7 @@ const top = Bun.serve({
     if (path === "/ad-script.js") return new Response("window.__adLoaded = 1", { headers: { "content-type": "text/javascript" } });
     if (path === "/worker.js") return new Response("postMessage(1)", { headers: { "content-type": "text/javascript" } });
     if (path === "/redirected.js") return new Response("window.__redirReal = 1", { headers: { "content-type": "text/javascript" } });
-    return new Response(PAGE(child.port), { headers: { "content-type": "text/html" } });
+    return new Response(PAGE(child.port!), { headers: { "content-type": "text/html" } });
   },
 });
 
@@ -102,13 +103,13 @@ type Phase = "on" | "siteOff" | "userRule";
 const PHASES: Phase[] = ["on", "siteOff", "userRule"];
 
 function App() {
-  const view = useRef<NdNodeRef<"webview"> | null>(null);
-  const [url, setUrl] = useState("about:blank");
-  const [phase, setPhase] = useState(0);
-  const [blocked, setBlocked] = useState(0);
-  const [title, setTitle] = useState("");
+  let view: NdNodeRef<"webview"> | undefined;
+  const [url, setUrl] = createSignal("about:blank");
+  const [phase, setPhase] = createSignal(0);
+  const [blocked, setBlocked] = createSignal(0);
+  const [title, setTitle] = createSignal("");
 
-  useEffect(() => {
+  onSettled(() => {
     void (async () => {
       const loaded = await webviewEngine.contentBlocking.load({
         lists: [{ path: listPath }],
@@ -119,18 +120,21 @@ function App() {
       console.log(`ND_ADBLOCK_LOAD ${JSON.stringify(loaded)}`);
       setUrl(`${BASE}?phase=on`);
     })();
-  }, []);
+  });
 
-  useEffect(() => {
-    if (!title.startsWith("R")) return;
-    const name = PHASES[phase];
+  // Runs on a title change only: the phase and the blocked count are read at
+  // that moment, never tracked.
+  createEffect(title, (current) => {
+    if (!current.startsWith("R")) return;
+    const index = untrack(phase);
+    const name = PHASES[index];
     void (async () => {
       // An isolated world of the page (an extension's content scripts live in
       // one) must not get the page's scriptlets.
-      const isolated = view.current ? await executeJavaScript(view.current, "String(window.__ndScriptlet)", "nd-probe-isolated").catch(String) : "";
-      const report = { ...JSON.parse(title.slice(1)), isolatedScriptlet: isolated === "42" };
-      console.log(`ND_ADBLOCK_PHASE ${name} blocked=${blocked} ${JSON.stringify(report)}`);
-      const next = phase + 1;
+      const isolated = view ? await executeJavaScript(view, "String(window.__ndScriptlet)", "nd-probe-isolated").catch(String) : "";
+      const report = { ...JSON.parse(current.slice(1)), isolatedScriptlet: isolated === "42" };
+      console.log(`ND_ADBLOCK_PHASE ${name} blocked=${untrack(blocked)} ${JSON.stringify(report)}`);
+      const next = index + 1;
       if (next >= PHASES.length) {
         console.log("ND_ADBLOCK_PROBE_DONE");
         return;
@@ -143,16 +147,16 @@ function App() {
       setPhase(next);
       setUrl(`${BASE}?phase=${PHASES[next]}`);
     })();
-  }, [title]);
+  });
 
   return (
     <window title="adblock probe" defaultWidth={1000} defaultHeight={700}>
       <box orientation="vertical" style={{ vexpand: true }}>
-        <label testID="ab-state" text={`phase=${PHASES[phase]} blocked=${blocked}`} />
+        <label testID="ab-state" text={`phase=${PHASES[phase()]} blocked=${blocked()}`} />
         <webview
           ref={view}
           testID="ab-view"
-          url={url}
+          url={url()}
           style={{ vexpand: true, hexpand: true }}
           onTitleChanged={(e) => setTitle(e.text)}
           onContentBlocked={(e) => setBlocked((e.data as { count: number }).count)}
@@ -163,4 +167,4 @@ function App() {
   );
 }
 
-render(<App />);
+await render(() => <App />);

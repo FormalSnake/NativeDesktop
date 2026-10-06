@@ -1,5 +1,6 @@
-import { render, useState } from "@nativedesktop/react";
-import type { TableColumn, TableRow } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import type { TableColumn, TableRow } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // M16 gestures probe: every widget here exists to give the input-synthesis
 // automation RPCs (pointer/drag/doubleClick/rightClick/hover/keys) and the
@@ -18,12 +19,12 @@ const rows: TableRow[] = [
   { id: "margaret", cells: ["Margaret Hamilton", "Lead Engineer"] },
 ];
 
-function App(): React.ReactNode {
-  const [volume, setVolume] = useState(20);
-  const [agreed, setAgreed] = useState(false);
-  const [name, setName] = useState("");
-  const [activatedRow, setActivatedRow] = useState(-1);
-  const [selectedRow, setSelectedRow] = useState(-1);
+function App() {
+  const [volume, setVolume] = createSignal(20);
+  const [agreed, setAgreed] = createSignal(false);
+  const [name, setName] = createSignal("");
+  const [activatedRow, setActivatedRow] = createSignal(-1);
+  const [selectedRow, setSelectedRow] = createSignal(-1);
 
   return (
     <window title="ND Gestures" defaultWidth={640} defaultHeight={560}>
@@ -33,41 +34,41 @@ function App(): React.ReactNode {
           min={0}
           max={100}
           step={1}
-          value={volume}
+          value={volume()}
           onValueChanged={(e) => setVolume(Math.round(e.value))}
         />
-        <label testID="volume-label" text={`Volume: ${volume}`} />
+        <label testID="volume-label" text={`Volume: ${volume()}`} />
 
         <checkbox
           testID="agree-check"
           label="I agree"
-          checked={agreed}
+          checked={agreed()}
           onToggled={(e) => setAgreed(e.checked)}
         />
-        <label testID="agree-label" text={`Agreed: ${agreed ? "yes" : "no"}`} />
+        <label testID="agree-label" text={`Agreed: ${agreed() ? "yes" : "no"}`} />
 
         <textinput
           testID="name-input"
-          text={name}
+          text={name()}
           placeholder="Type here"
           onChanged={(e) => setName(e.text)}
         />
-        <label testID="echo-label" text={`Echo: ${name}`} />
+        <label testID="echo-label" text={`Echo: ${name()}`} />
 
         <table
           testID="people-table"
           columns={columns}
           rows={rows}
-          selectedIndex={selectedRow}
+          selectedIndex={selectedRow()}
           onSelectionChanged={(e) => setSelectedRow(e.index)}
           onRowActivated={(e) => setActivatedRow(e.index)}
           style={{ vexpand: true }}
         />
-        <label testID="activated-label" text={`Activated: ${activatedRow}`} />
+        <label testID="activated-label" text={`Activated: ${activatedRow()}`} />
         <label testID="hover-target" text="Hover / right-click target" />
       </box>
     </window>
   );
 }
 
-render(<App />);
+await render(() => <App />);

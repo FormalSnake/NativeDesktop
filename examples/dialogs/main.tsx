@@ -1,7 +1,5 @@
 import {
   render,
-  useRef,
-  useState,
   dialog,
   showAlert,
   openFile,
@@ -9,8 +7,9 @@ import {
   onAlertResult,
   onOpenFileResult,
   onSaveFileResult,
-} from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+} from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // Minimal, untabbed native-dialog surface for scripts/dialog-script-drive.ts.
 // examples/gallery wires the same six calls, but behind a TabView page
@@ -22,18 +21,18 @@ import type { NdNodeRef } from "@nativedesktop/react";
 //
 // Covers both interception paths: the app-level `dialog.*` systemRequest
 // (packages/core/src/system.ts, ACL-gated but default-granted) and the
-// window-scoped showAlert/openFile/saveFile widgetCommand (packages/react/
+// window-scoped showAlert/openFile/saveFile widgetCommand (packages/core/
 // src/dialogs.ts).
 
-function App(): React.ReactNode {
-  const winRef = useRef<NdNodeRef<"window">>(null);
+function App() {
+  let win: NdNodeRef<"window"> | undefined;
 
-  const [appOpenFileResult, setAppOpenFileResult] = useState("(none yet)");
-  const [appSaveFileResult, setAppSaveFileResult] = useState("(none yet)");
-  const [appShowMessageResult, setAppShowMessageResult] = useState("(none yet)");
-  const [windowAlertResult, setWindowAlertResult] = useState("(none yet)");
-  const [windowOpenFileResult, setWindowOpenFileResult] = useState("(none yet)");
-  const [windowSaveFileResult, setWindowSaveFileResult] = useState("(none yet)");
+  const [appOpenFileResult, setAppOpenFileResult] = createSignal("(none yet)");
+  const [appSaveFileResult, setAppSaveFileResult] = createSignal("(none yet)");
+  const [appShowMessageResult, setAppShowMessageResult] = createSignal("(none yet)");
+  const [windowAlertResult, setWindowAlertResult] = createSignal("(none yet)");
+  const [windowOpenFileResult, setWindowOpenFileResult] = createSignal("(none yet)");
+  const [windowSaveFileResult, setWindowSaveFileResult] = createSignal("(none yet)");
 
   async function handleAppOpenFile(): Promise<void> {
     const paths = await dialog.openFile();
@@ -51,8 +50,8 @@ function App(): React.ReactNode {
   }
 
   async function handleWindowShowAlert(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await showAlert(winRef.current, {
+    if (!win) return;
+    const result = await showAlert(win, {
       title: "Delete this item?",
       body: "This action cannot be undone.",
       buttons: [
@@ -64,55 +63,55 @@ function App(): React.ReactNode {
   }
 
   async function handleWindowOpenFile(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await openFile(winRef.current, { filters: [{ name: "Text", extensions: ["txt", "md"] }] });
+    if (!win) return;
+    const result = await openFile(win, { filters: [{ name: "Text", extensions: ["txt", "md"] }] });
     setWindowOpenFileResult(result.canceled ? "canceled" : result.paths.join(", "));
   }
 
   async function handleWindowSaveFile(): Promise<void> {
-    if (!winRef.current) return;
-    const result = await saveFile(winRef.current, { suggestedName: "export.json" });
+    if (!win) return;
+    const result = await saveFile(win, { suggestedName: "export.json" });
     setWindowSaveFileResult(result.canceled ? "canceled" : (result.path ?? "(null)"));
   }
 
   return (
     <window
-      ref={winRef}
+      ref={win}
       title="NativeDesktop Dialogs"
       defaultWidth={520}
       defaultHeight={420}
-      onAlertResult={(e) => onAlertResult(winRef.current!, e)}
-      onOpenFileResult={(e) => onOpenFileResult(winRef.current!, e)}
-      onSaveFileResult={(e) => onSaveFileResult(winRef.current!, e)}
+      onAlertResult={(e) => onAlertResult(win!, e)}
+      onOpenFileResult={(e) => onOpenFileResult(win!, e)}
+      onSaveFileResult={(e) => onSaveFileResult(win!, e)}
     >
       <box orientation="vertical" spacing={10} style={{ padding: 12 }}>
         <box orientation="horizontal" spacing={8}>
           <button testID="app-open-file-button" label="App: Open File…" onClick={handleAppOpenFile} />
-          <label testID="app-open-file-result" text={`Result: ${appOpenFileResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="app-open-file-result" text={`Result: ${appOpenFileResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
         <box orientation="horizontal" spacing={8}>
           <button testID="app-save-file-button" label="App: Save File…" onClick={handleAppSaveFile} />
-          <label testID="app-save-file-result" text={`Result: ${appSaveFileResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="app-save-file-result" text={`Result: ${appSaveFileResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
         <box orientation="horizontal" spacing={8}>
           <button testID="app-show-message-button" label="App: Show Message" onClick={handleAppShowMessage} />
-          <label testID="app-show-message-result" text={`Result: ${appShowMessageResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="app-show-message-result" text={`Result: ${appShowMessageResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
         <box orientation="horizontal" spacing={8}>
           <button testID="window-show-alert-button" label="Window: Show Alert" onClick={handleWindowShowAlert} />
-          <label testID="window-alert-result" text={`Result: ${windowAlertResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="window-alert-result" text={`Result: ${windowAlertResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
         <box orientation="horizontal" spacing={8}>
           <button testID="window-open-file-button" label="Window: Open File…" onClick={handleWindowOpenFile} />
-          <label testID="window-open-file-result" text={`Result: ${windowOpenFileResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="window-open-file-result" text={`Result: ${windowOpenFileResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
         <box orientation="horizontal" spacing={8}>
           <button testID="window-save-file-button" label="Window: Save File…" onClick={handleWindowSaveFile} />
-          <label testID="window-save-file-result" text={`Result: ${windowSaveFileResult}`} cssClasses={["dimmed", "caption"]} />
+          <label testID="window-save-file-result" text={`Result: ${windowSaveFileResult()}`} cssClasses={["dimmed", "caption"]} />
         </box>
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);

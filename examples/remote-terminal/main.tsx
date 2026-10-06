@@ -1,9 +1,10 @@
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 // A REMOTE terminal: the <terminal remote> widget opens the ndremote byte-plane
 // transport (host-side, in the ND process) instead of a local PTY, attaches a
 // session on a Canary daemon, and renders the streamed output. No terminal
-// bytes ever cross NDP/React — the app only sees the effect + connection-state
+// bytes ever cross NDP/Solid — the app only sees the effect + connection-state
 // events (title/bell/exit/connectionState), which it surfaces into labels here.
 //
 // Connection target comes from the environment so a fake server on an ephemeral
@@ -19,11 +20,11 @@ const FONT_FAMILY = process.env.ND_TERM_FONT_FAMILY;
 // nd_rt_state order (include/ndremote.h).
 const STATE_NAMES = ["connecting", "authed", "attached", "reconnecting", "failed", "closed"];
 
-function App(): React.ReactNode {
-  const [conn, setConn] = useState("connecting");
-  const [title, setTitle] = useState("");
-  const [bells, setBells] = useState(0);
-  const [exitCode, setExitCode] = useState<number | null>(null);
+function App() {
+  const [conn, setConn] = createSignal("connecting");
+  const [title, setTitle] = createSignal("");
+  const [bells, setBells] = createSignal(0);
+  const [exitCode, setExitCode] = createSignal<number | null>(null);
 
   return (
     <window title="Remote Terminal" defaultWidth={860} defaultHeight={560}>
@@ -39,10 +40,10 @@ function App(): React.ReactNode {
           }}
         >
           <box orientation="horizontal" spacing={18}>
-            <label testID="conn-state" text={`conn: ${conn}`} />
-            <label testID="term-title" text={`title: ${title}`} />
-            <label testID="term-bell" text={`bells: ${bells}`} />
-            <label testID="term-exited" text={exitCode === null ? "exit: -" : `exit: ${exitCode}`} />
+            <label testID="conn-state" text={`conn: ${conn()}`} />
+            <label testID="term-title" text={`title: ${title()}`} />
+            <label testID="term-bell" text={`bells: ${bells()}`} />
+            <label testID="term-exited" text={exitCode() === null ? "exit: -" : `exit: ${exitCode()}`} />
           </box>
           <terminal
             remote
@@ -70,4 +71,4 @@ function App(): React.ReactNode {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
