@@ -8,11 +8,8 @@
   "dependencies": {
     "@nativedesktop/panes": "workspace:*",
     "@nativedesktop/ui": "workspace:*",
-    "@nativedesktop/react": "workspace:*",
+    "@nativedesktop/solid": "workspace:*",
     "@nativedesktop/cli": "workspace:*",
-    "react": "19.2.7"
-  },
-  "devDependencies": {
-    "@types/react": "19.2.17"
+    "solid-js": "2.0.0-rc.13"
   }
 }

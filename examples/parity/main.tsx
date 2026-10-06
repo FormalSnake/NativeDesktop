@@ -1,5 +1,6 @@
-import { render, useState, Spacing, ContentMargin, ContentWidth, openExternal } from "@nativedesktop/react";
-import type { SourceTreeNode, TableColumn, TableRow } from "@nativedesktop/react";
+import { For, Show, createSignal } from "solid-js";
+import { render, Spacing, ContentMargin, ContentWidth, openExternal } from "@nativedesktop/solid";
+import type { JSX, SourceTreeNode, TableColumn, TableRow } from "@nativedesktop/solid";
 import {
   Accordion,
   DescriptionList,
@@ -19,7 +20,7 @@ import type {
   ButtonGroupItem,
   StepperStep,
 } from "@nativedesktop/ui";
-import { DockView, useDock, seedDock, TilesView, useTiles, seedTiles } from "@nativedesktop/panes";
+import { DockView, createDock, seedDock, TilesView, createTiles, seedTiles } from "@nativedesktop/panes";
 import type { DockModel, DockZone, TileModel } from "@nativedesktop/panes";
 
 // gpui-component parity gallery (docs/plans/gpui-parity.md): a showcase for
@@ -94,28 +95,28 @@ interface TagChip {
 
 // --- Display ---------------------------------------------------------------
 
-function DisplaySection(): React.ReactNode {
-  const [avatarName, setAvatarName] = useState("Ada Lovelace");
-  const [badgeVariantIndex, setBadgeVariantIndex] = useState(1);
-  const [tags, setTags] = useState<TagChip[]>([
+function DisplaySection(): JSX.Element {
+  const [avatarName, setAvatarName] = createSignal("Ada Lovelace");
+  const [badgeVariantIndex, setBadgeVariantIndex] = createSignal(1);
+  const [tags, setTags] = createSignal<TagChip[]>([
     { id: "t1", label: "React", variant: "accent" },
     { id: "t2", label: "Zig", variant: "warning" },
     { id: "t3", label: "Swift", variant: "success" },
   ]);
-  const [nextTagId, setNextTagId] = useState(4);
-  const [newTagLabel, setNewTagLabel] = useState("");
+  const [nextTagId, setNextTagId] = createSignal(4);
+  const [newTagLabel, setNewTagLabel] = createSignal("");
   // LevelIndicator has no change event of its own (it is a read-only
   // display widget, like ProgressBar), so each style below is paired with a
   // real control that owns the state and drives `value`.
-  const [ratingValue, setRatingValue] = useState(3);
-  const [continuousValue, setContinuousValue] = useState(0.6);
-  const [discreteValue, setDiscreteValue] = useState(2);
+  const [ratingValue, setRatingValue] = createSignal(3);
+  const [continuousValue, setContinuousValue] = createSignal(0.6);
+  const [discreteValue, setDiscreteValue] = createSignal(2);
 
   function addTag(): void {
-    const label = newTagLabel.trim();
+    const label = newTagLabel().trim();
     if (label === "") return;
-    const variant = badgeVariants[tags.length % badgeVariants.length]!;
-    setTags((prev) => [...prev, { id: `t${nextTagId}`, label, variant }]);
+    const variant = badgeVariants[tags().length % badgeVariants.length]!;
+    setTags((prev) => [...prev, { id: `t${nextTagId()}`, label, variant }]);
     setNextTagId((n) => n + 1);
     setNewTagLabel("");
   }
@@ -130,14 +131,14 @@ function DisplaySection(): React.ReactNode {
         <box orientation="vertical" style={{ padding: ContentMargin }}>
           <settingsgroup title="Avatar" description="Text initials, live from the name below." testID="display-avatar-group">
             <row title="Name" testID="display-avatar-name-row">
-              <textinput text={avatarName} onChanged={(e) => setAvatarName(e.text)} testID="display-avatar-input" />
+              <textinput text={avatarName()} onChanged={(e) => setAvatarName(e.text)} testID="display-avatar-input" />
             </row>
             <row title="Sizes" testID="display-avatar-sizes-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
-                <avatar text={avatarName} size={24} testID="display-avatar-24" />
-                <avatar text={avatarName} size={32} testID="display-avatar-32" />
-                <avatar text={avatarName} size={48} testID="display-avatar-48" />
-                <avatar text={avatarName} size={64} testID="display-avatar-64" />
+                <avatar text={avatarName()} size={24} testID="display-avatar-24" />
+                <avatar text={avatarName()} size={32} testID="display-avatar-32" />
+                <avatar text={avatarName()} size={48} testID="display-avatar-48" />
+                <avatar text={avatarName()} size={64} testID="display-avatar-64" />
               </box>
             </row>
           </settingsgroup>
@@ -146,16 +147,16 @@ function DisplaySection(): React.ReactNode {
             <row title="Live variant" testID="display-badge-variant-row">
               <select
                 options={badgeVariants}
-                selectedIndex={badgeVariantIndex}
+                selectedIndex={badgeVariantIndex()}
                 onSelectionChanged={(e) => setBadgeVariantIndex(e.index)}
                 testID="display-badge-select"
               />
             </row>
             <row title="Preview" testID="display-badge-preview-row">
               <box orientation="horizontal" spacing={Spacing.xs}>
-                <badge label="Live" variant={badgeVariants[badgeVariantIndex]} testID="display-badge-live" />
+                <badge label="Live" variant={badgeVariants[badgeVariantIndex()]} testID="display-badge-live" />
                 {badgeVariants.map((v) => (
-                  <badge key={v} label={v} variant={v} testID={`display-badge-${v}`} />
+                  <badge label={v} variant={v} testID={`display-badge-${v}`} />
                 ))}
                 <badge dot variant="accent" testID="display-badge-dot" />
               </box>
@@ -165,16 +166,18 @@ function DisplaySection(): React.ReactNode {
           <settingsgroup title="Tag" description="Removable chips backed by real state." testID="display-tag-group">
             <row title="Add" testID="display-tag-add-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
-                <textinput text={newTagLabel} placeholder="New tag" onChanged={(e) => setNewTagLabel(e.text)} testID="display-tag-input" />
+                <textinput text={newTagLabel()} placeholder="New tag" onChanged={(e) => setNewTagLabel(e.text)} testID="display-tag-input" />
                 <button label="Add" onClick={addTag} testID="display-tag-add-button" />
               </box>
             </row>
             <row title="Tags" testID="display-tag-list-row">
               <box orientation="horizontal" spacing={Spacing.xs}>
-                {tags.map((t) => (
-                  <tag key={t.id} label={t.label} variant={t.variant} removable onRemoved={() => removeTag(t.id)} testID={`display-tag-${t.id}`} />
-                ))}
-                {tags.length === 0 && <label text="No tags" cssClasses={["dimmed"]} testID="display-tag-empty" />}
+                <For each={tags()}>
+                  {(t) => <tag label={t.label} variant={t.variant} removable onRemoved={() => removeTag(t.id)} testID={`display-tag-${t.id}`} />}
+                </For>
+                <Show when={tags().length === 0}>
+                  <label text="No tags" cssClasses={["dimmed"]} testID="display-tag-empty" />
+                </Show>
               </box>
             </row>
           </settingsgroup>
@@ -194,7 +197,7 @@ function DisplaySection(): React.ReactNode {
           <settingsgroup title="Level Indicator" description="Rating, continuous, and discrete styles, each driven by a real control." testID="display-level-group">
             <row title="Rating" testID="display-rating-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
-                <levelindicator indicatorStyle="rating" min={0} max={5} value={ratingValue} testID="display-rating-indicator" />
+                <levelindicator indicatorStyle="rating" min={0} max={5} value={ratingValue()} testID="display-rating-indicator" />
                 <button label="-" onClick={() => setRatingValue((v) => Math.max(0, v - 1))} testID="display-rating-minus" />
                 <button label="+" onClick={() => setRatingValue((v) => Math.min(5, v + 1))} testID="display-rating-plus" />
               </box>
@@ -205,7 +208,7 @@ function DisplaySection(): React.ReactNode {
                   indicatorStyle="continuous"
                   min={0}
                   max={1}
-                  value={continuousValue}
+                  value={continuousValue()}
                   style={{ hexpand: true }}
                   testID="display-continuous-indicator"
                 />
@@ -213,7 +216,7 @@ function DisplaySection(): React.ReactNode {
                   min={0}
                   max={1}
                   step={0.01}
-                  value={continuousValue}
+                  value={continuousValue()}
                   onValueChanged={(e) => setContinuousValue(e.value)}
                   testID="display-continuous-slider"
                 />
@@ -221,7 +224,7 @@ function DisplaySection(): React.ReactNode {
             </row>
             <row title="Discrete" testID="display-discrete-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
-                <levelindicator indicatorStyle="discrete" min={0} max={5} value={discreteValue} testID="display-discrete-indicator" />
+                <levelindicator indicatorStyle="discrete" min={0} max={5} value={discreteValue()} testID="display-discrete-indicator" />
                 <button label="-" onClick={() => setDiscreteValue((v) => Math.max(0, v - 1))} testID="display-discrete-minus" />
                 <button label="+" onClick={() => setDiscreteValue((v) => Math.min(5, v + 1))} testID="display-discrete-plus" />
               </box>
@@ -237,12 +240,12 @@ function DisplaySection(): React.ReactNode {
 
 const fruitOptions = ["Apple", "Banana", "Cherry", "Durian", "Elderberry"];
 
-function InputSection(): React.ReactNode {
-  const [selectIndex, setSelectIndex] = useState(0);
-  const [comboIndex, setComboIndex] = useState(0);
-  const [comboText, setComboText] = useState(fruitOptions[0]!);
-  const [controlsEnabled, setControlsEnabled] = useState(true);
-  const [enabledClickCount, setEnabledClickCount] = useState(0);
+function InputSection(): JSX.Element {
+  const [selectIndex, setSelectIndex] = createSignal(0);
+  const [comboIndex, setComboIndex] = createSignal(0);
+  const [comboText, setComboText] = createSignal(fruitOptions[0]!);
+  const [controlsEnabled, setControlsEnabled] = createSignal(true);
+  const [enabledClickCount, setEnabledClickCount] = createSignal(0);
 
   return (
     <scrollview testID="input-scroll" style={{ vexpand: true }}>
@@ -254,27 +257,27 @@ function InputSection(): React.ReactNode {
             testID="input-group"
           >
             <row title="Select" subtitle="Fixed list, no typing" testID="input-select-row">
-              <select options={fruitOptions} selectedIndex={selectIndex} onSelectionChanged={(e) => setSelectIndex(e.index)} testID="input-select" />
+              <select options={fruitOptions} selectedIndex={selectIndex()} onSelectionChanged={(e) => setSelectIndex(e.index)} testID="input-select" />
             </row>
             <row title="ComboBox" subtitle="Searchable and editable" testID="input-combobox-row">
               <combobox
                 options={fruitOptions}
-                selectedIndex={comboIndex}
-                text={comboText}
+                selectedIndex={comboIndex()}
+                text={comboText()}
                 placeholder="Type or pick a fruit"
                 onSelectionChanged={(e) => {
                   setComboIndex(e.index);
-                  setComboText(fruitOptions[e.index] ?? comboText);
+                  setComboText(fruitOptions[e.index] ?? comboText());
                 }}
                 onChanged={(e) => setComboText(e.text)}
                 testID="input-combobox"
               />
             </row>
             <row title="Select value" testID="input-select-readout-row">
-              <label text={fruitOptions[selectIndex] ?? "(none)"} cssClasses={["dimmed"]} testID="input-select-readout" />
+              <label text={fruitOptions[selectIndex()] ?? "(none)"} cssClasses={["dimmed"]} testID="input-select-readout" />
             </row>
             <row title="ComboBox value" testID="input-combobox-readout-row">
-              <label text={comboText || "(empty)"} cssClasses={["dimmed"]} testID="input-combobox-readout" />
+              <label text={comboText() || "(empty)"} cssClasses={["dimmed"]} testID="input-combobox-readout" />
             </row>
           </settingsgroup>
 
@@ -284,19 +287,19 @@ function InputSection(): React.ReactNode {
             testID="input-enabled-group"
           >
             <row title="Controls enabled" testID="input-enabled-toggle-row">
-              <switch checked={controlsEnabled} onToggled={(e) => setControlsEnabled(e.checked)} testID="input-enabled-toggle" />
+              <switch checked={controlsEnabled()} onToggled={(e) => setControlsEnabled(e.checked)} testID="input-enabled-toggle" />
             </row>
             <row title="Button" testID="input-enabled-button-row">
-              <button label={`Clicked ${enabledClickCount}`} enabled={controlsEnabled} onClick={() => setEnabledClickCount((n) => n + 1)} testID="input-enabled-button" />
+              <button label={`Clicked ${enabledClickCount()}`} enabled={controlsEnabled()} onClick={() => setEnabledClickCount((n) => n + 1)} testID="input-enabled-button" />
             </row>
             <row title="TextInput" testID="input-enabled-textinput-row">
-              <textinput placeholder="Type here" enabled={controlsEnabled} testID="input-enabled-textinput" />
+              <textinput placeholder="Type here" enabled={controlsEnabled()} testID="input-enabled-textinput" />
             </row>
             <row title="Select" testID="input-enabled-select-row">
-              <select options={fruitOptions} selectedIndex={0} enabled={controlsEnabled} testID="input-enabled-select" />
+              <select options={fruitOptions} selectedIndex={0} enabled={controlsEnabled()} testID="input-enabled-select" />
             </row>
             <row title="Slider" testID="input-enabled-slider-row">
-              <slider min={0} max={1} value={0.5} enabled={controlsEnabled} style={{ hexpand: true }} testID="input-enabled-slider" />
+              <slider min={0} max={1} value={0.5} enabled={controlsEnabled()} style={{ hexpand: true }} testID="input-enabled-slider" />
             </row>
           </settingsgroup>
         </box>
@@ -316,10 +319,10 @@ const stepperSteps: StepperStep[] = [
   { id: "done", title: "Done" },
 ];
 
-function NavigationSection(): React.ReactNode {
-  const [breadcrumbIndex, setBreadcrumbIndex] = useState(breadcrumbPath.length - 1);
-  const [page, setPage] = useState(1);
-  const [stepIndex, setStepIndex] = useState(0);
+function NavigationSection(): JSX.Element {
+  const [breadcrumbIndex, setBreadcrumbIndex] = createSignal(breadcrumbPath.length - 1);
+  const [page, setPage] = createSignal(1);
+  const [stepIndex, setStepIndex] = createSignal(0);
 
   return (
     <scrollview testID="navigation-scroll" style={{ vexpand: true }}>
@@ -327,25 +330,25 @@ function NavigationSection(): React.ReactNode {
         <box orientation="vertical" style={{ padding: ContentMargin }}>
           <settingsgroup title="Breadcrumb" description="Click a segment to jump the path." testID="nav-breadcrumb-group">
             <row title="Path" testID="nav-breadcrumb-row">
-              <breadcrumb items={breadcrumbPath} selectedIndex={breadcrumbIndex} onItemActivated={(e) => setBreadcrumbIndex(e.index)} testID="nav-breadcrumb" />
+              <breadcrumb items={breadcrumbPath} selectedIndex={breadcrumbIndex()} onItemActivated={(e) => setBreadcrumbIndex(e.index)} testID="nav-breadcrumb" />
             </row>
             <row title="Current" testID="nav-breadcrumb-readout-row">
-              <label text={breadcrumbPath[breadcrumbIndex] ?? ""} cssClasses={["dimmed"]} testID="nav-breadcrumb-readout" />
+              <label text={breadcrumbPath[breadcrumbIndex()] ?? ""} cssClasses={["dimmed"]} testID="nav-breadcrumb-readout" />
             </row>
           </settingsgroup>
 
           <settingsgroup title="Pagination" description="12 pages, one sibling around the current page." testID="nav-pagination-group">
             <row title="Page" testID="nav-pagination-row">
-              <Pagination page={page} pageCount={12} onPageChange={setPage} testID="nav-pagination" />
+              <Pagination page={page()} pageCount={12} onPageChange={setPage} testID="nav-pagination" />
             </row>
             <row title="Current" testID="nav-pagination-readout-row">
-              <label text={`Page ${page} of 12`} cssClasses={["dimmed"]} testID="nav-pagination-readout" />
+              <label text={`Page ${page()} of 12`} cssClasses={["dimmed"]} testID="nav-pagination-readout" />
             </row>
           </settingsgroup>
 
           <settingsgroup title="Stepper" description="Click a step, or move with the buttons below." testID="nav-stepper-group">
             <row title="Steps" testID="nav-stepper-row">
-              <Stepper steps={stepperSteps} activeIndex={stepIndex} onStepClick={setStepIndex} testID="nav-stepper" />
+              <Stepper steps={stepperSteps} activeIndex={stepIndex()} onStepClick={setStepIndex} testID="nav-stepper" />
             </row>
             <row title="Controls" testID="nav-stepper-controls-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
@@ -399,17 +402,24 @@ const rangeItems: ButtonGroupItem[] = [
   { id: "month", label: "Month" },
 ];
 
-function CompositionSection(): React.ReactNode {
-  const [expandedIds, setExpandedIds] = useState<string[]>(["widgets"]);
-  const [lastActivated, setLastActivated] = useState("(none)");
+function CompositionSection(): JSX.Element {
+  const [expandedIds, setExpandedIds] = createSignal<string[]>(["widgets"]);
+  const [lastActivated, setLastActivated] = createSignal("(none)");
   // Seeded invalid on purpose so FormField's error state is visible without
   // requiring input first.
-  const [email, setEmail] = useState("invalid-email");
-  const [otp, setOtp] = useState("");
-  const [otpStatus, setOtpStatus] = useState("Enter the 6-digit code");
-  const [range, setRange] = useState("week");
+  const [email, setEmail] = createSignal("invalid-email");
+  const [otp, setOtp] = createSignal("");
+  const [otpStatus, setOtpStatus] = createSignal("Enter the 6-digit code");
+  const [range, setRange] = createSignal("week");
 
-  const emailError = email.length > 0 && !email.includes("@") ? "Must contain @" : undefined;
+  // Built once: an element in a prop is created each time the prop is read.
+  const accordionItems = accordionSources.map((s) => ({
+    id: s.id,
+    label: s.label,
+    content: <label text={s.body} cssClasses={["dimmed"]} style={{ padding: Spacing.sm }} />,
+  }));
+
+  const emailError = (): string | undefined => (email().length > 0 && !email().includes("@") ? "Must contain @" : undefined);
 
   return (
     <scrollview testID="composition-scroll" style={{ vexpand: true }}>
@@ -417,12 +427,8 @@ function CompositionSection(): React.ReactNode {
         <box orientation="vertical" style={{ padding: ContentMargin }}>
           <settingsgroup title="Accordion" testID="composition-accordion-group">
             <Accordion
-              items={accordionSources.map((s) => ({
-                id: s.id,
-                label: s.label,
-                content: <label text={s.body} cssClasses={["dimmed"]} style={{ padding: Spacing.sm }} />,
-              }))}
-              expandedIds={expandedIds}
+              items={accordionItems}
+              expandedIds={expandedIds()}
               onExpandedChange={setExpandedIds}
               allowMultiple
               testID="composition-accordion"
@@ -439,33 +445,33 @@ function CompositionSection(): React.ReactNode {
               testID="composition-searchable"
             />
             <row title="Last activated" testID="composition-searchable-readout-row">
-              <label text={lastActivated} cssClasses={["dimmed"]} testID="composition-searchable-readout" />
+              <label text={lastActivated()} cssClasses={["dimmed"]} testID="composition-searchable-readout" />
             </row>
           </settingsgroup>
 
           <Form title="Sign up" description="Validated inline, native settings-row chrome." testID="composition-form">
             <FormField
               label="Email"
-              error={emailError}
-              hint={emailError ? undefined : "We'll only use this for release notes"}
+              error={emailError()}
+              hint={emailError() ? undefined : "We'll only use this for release notes"}
               testID="composition-form-email-field"
             >
-              <textinput text={email} placeholder="you@example.com" onChanged={(e) => setEmail(e.text)} testID="composition-form-email-input" />
+              <textinput text={email()} placeholder="you@example.com" onChanged={(e) => setEmail(e.text)} testID="composition-form-email-input" />
             </FormField>
           </Form>
 
           <settingsgroup title="OtpInput" testID="composition-otp-group">
             <row title="Verification code" testID="composition-otp-row">
-              <OtpInput length={6} value={otp} onChange={setOtp} onComplete={(v) => setOtpStatus(`Code complete: ${v}`)} testID="composition-otp" />
+              <OtpInput length={6} value={otp()} onChange={setOtp} onComplete={(v) => setOtpStatus(`Code complete: ${v}`)} testID="composition-otp" />
             </row>
             <row title="Status" testID="composition-otp-status-row">
-              <label text={otpStatus} cssClasses={["dimmed"]} testID="composition-otp-readout" />
+              <label text={otpStatus()} cssClasses={["dimmed"]} testID="composition-otp-readout" />
             </row>
           </settingsgroup>
 
           <settingsgroup title="ButtonGroup" testID="composition-buttongroup-group">
             <row title="Range" testID="composition-buttongroup-row">
-              <ButtonGroup items={rangeItems} selectedId={range} onPress={setRange} testID="composition-buttongroup" />
+              <ButtonGroup items={rangeItems} selectedId={range()} onPress={setRange} testID="composition-buttongroup" />
             </row>
           </settingsgroup>
 
@@ -479,9 +485,9 @@ function CompositionSection(): React.ReactNode {
 
           <StatusBar
             testID="composition-statusbar"
-            left={<label text={`${expandedIds.length} accordion open`} cssClasses={["caption"]} />}
-            center={<label text={`Range: ${range}`} cssClasses={["caption"]} />}
-            right={<label text={otp.length > 0 ? `OTP ${otp.length}/6` : "OTP empty"} cssClasses={["caption"]} />}
+            left={<label text={`${expandedIds().length} accordion open`} cssClasses={["caption"]} />}
+            center={<label text={`Range: ${range()}`} cssClasses={["caption"]} />}
+            right={<label text={otp().length > 0 ? `OTP ${otp().length}/6` : "OTP empty"} cssClasses={["caption"]} />}
           />
         </box>
       </clamp>
@@ -511,10 +517,10 @@ const contactColumns: TableColumn[] = [
   { id: "team", title: "Team" },
 ];
 
-function DataSection(): React.ReactNode {
-  const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
+function DataSection(): JSX.Element {
+  const [selectedIndexes, setSelectedIndexes] = createSignal<number[]>([]);
 
-  const selectedNames = selectedIndexes.map((i) => contacts[i]?.name ?? "?").join(", ");
+  const selectedNames = (): string => selectedIndexes().map((i) => contacts[i]?.name ?? "?").join(", ");
 
   return (
     <box orientation="vertical" spacing={Spacing.sm} style={{ vexpand: true, padding: ContentMargin }} testID="data-section">
@@ -527,14 +533,14 @@ function DataSection(): React.ReactNode {
         columns={contactColumns}
         rows={contacts.map((c): TableRow => ({ id: c.id, cells: [c.name, c.role, c.team] }))}
         selectionMode="multiple"
-        selectedIndexes={selectedIndexes}
+        selectedIndexes={selectedIndexes()}
         columnsReorderable
         onSelectionChanged={(e) => setSelectedIndexes(e.data.indexes)}
         style={{ vexpand: true }}
         testID="data-table"
       />
       <label
-        text={`Selected: ${selectedIndexes.length > 0 ? selectedNames : "(none)"}`}
+        text={`Selected: ${selectedIndexes().length > 0 ? selectedNames() : "(none)"}`}
         cssClasses={["dimmed"]}
         testID="data-selected-readout"
       />
@@ -547,18 +553,18 @@ function DataSection(): React.ReactNode {
 type SheetEdge = "top" | "bottom" | "leading" | "trailing";
 const sheetEdges: SheetEdge[] = ["top", "bottom", "leading", "trailing"];
 
-function OverlaysSection(): React.ReactNode {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [formName, setFormName] = useState("");
-  const [formEmail, setFormEmail] = useState("");
-  const [lastDialogAction, setLastDialogAction] = useState("(none yet)");
+function OverlaysSection(): JSX.Element {
+  const [dialogOpen, setDialogOpen] = createSignal(false);
+  const [formName, setFormName] = createSignal("");
+  const [formEmail, setFormEmail] = createSignal("");
+  const [lastDialogAction, setLastDialogAction] = createSignal("(none yet)");
 
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetEdge, setSheetEdge] = useState<SheetEdge>("bottom");
-  const [barShown, setBarShown] = useState(false);
+  const [sheetOpen, setSheetOpen] = createSignal(false);
+  const [sheetEdge, setSheetEdge] = createSignal<SheetEdge>("bottom");
+  const [barShown, setBarShown] = createSignal(false);
 
   function saveDialog(): void {
-    setLastDialogAction(`Saved ${formName || "(empty)"} <${formEmail || "(empty)"}>`);
+    setLastDialogAction(`Saved ${formName() || "(empty)"} <${formEmail() || "(empty)"}>`);
     setDialogOpen(false);
   }
 
@@ -581,7 +587,7 @@ function OverlaysSection(): React.ReactNode {
               <button label="Edit Profile…" onClick={() => setDialogOpen(true)} testID="overlays-dialog-open-button" />
             </row>
             <row title="Last action" testID="overlays-dialog-readout-row">
-              <label text={lastDialogAction} cssClasses={["dimmed"]} testID="overlays-dialog-readout" />
+              <label text={lastDialogAction()} cssClasses={["dimmed"]} testID="overlays-dialog-readout" />
             </row>
           </settingsgroup>
 
@@ -589,20 +595,20 @@ function OverlaysSection(): React.ReactNode {
             <row title="Open from" testID="overlays-sheet-row">
               <box orientation="horizontal" spacing={Spacing.sm} cssClasses={["linked"]}>
                 {sheetEdges.map((edge) => (
-                  <button key={edge} label={edge} onClick={() => openSheet(edge)} testID={`overlays-sheet-open-${edge}`} />
+                  <button label={edge} onClick={() => openSheet(edge)} testID={`overlays-sheet-open-${edge}`} />
                 ))}
               </box>
             </row>
             <row title="State" testID="overlays-sheet-state-row">
-              <label text={sheetOpen ? `Open from ${sheetEdge}` : "Closed"} cssClasses={["dimmed"]} testID="overlays-sheet-readout" />
+              <label text={sheetOpen() ? `Open from ${sheetEdge()}` : "Closed"} cssClasses={["dimmed"]} testID="overlays-sheet-readout" />
             </row>
           </settingsgroup>
 
           <settingsgroup title="Overlay" description="A z-stack: the bar floats over the content without resizing it." testID="overlays-stack-group">
             <row title="Floating bar" testID="overlays-stack-row">
               <button
-                label={barShown ? "Hide Bar" : "Show Bar"}
-                onClick={() => setBarShown(!barShown)}
+                label={barShown() ? "Hide Bar" : "Show Bar"}
+                onClick={() => setBarShown(!barShown())}
                 testID="overlays-stack-toggle"
               />
             </row>
@@ -617,18 +623,18 @@ function OverlaysSection(): React.ReactNode {
             >
               <label text="Content under the bar keeps its size." testID="overlays-stack-body" style={{ halign: "start" }} />
             </box>
-            {barShown && (
+            <Show when={barShown()}>
               <progressbar
                 testID="overlays-stack-bar"
                 fraction={0.4}
                 cssClasses={["osd"]}
                 style={{ valign: "start", hexpand: true }}
               />
-            )}
+            </Show>
           </overlay>
 
           <dialog
-            open={dialogOpen}
+            open={dialogOpen()}
             title="Edit Profile"
             contentWidth={380}
             onClosed={() => setDialogOpen(false)}
@@ -637,10 +643,10 @@ function OverlaysSection(): React.ReactNode {
             <box orientation="vertical" spacing={Spacing.md}>
               <settingsgroup>
                 <row title="Name" testID="overlays-dialog-name-row">
-                  <textinput text={formName} onChanged={(e) => setFormName(e.text)} testID="overlays-dialog-name-input" />
+                  <textinput text={formName()} onChanged={(e) => setFormName(e.text)} testID="overlays-dialog-name-input" />
                 </row>
                 <row title="Email" testID="overlays-dialog-email-row">
-                  <textinput text={formEmail} onChanged={(e) => setFormEmail(e.text)} testID="overlays-dialog-email-input" />
+                  <textinput text={formEmail()} onChanged={(e) => setFormEmail(e.text)} testID="overlays-dialog-email-input" />
                 </row>
               </settingsgroup>
               <box orientation="horizontal" spacing={Spacing.sm} style={{ halign: "end" }}>
@@ -650,9 +656,9 @@ function OverlaysSection(): React.ReactNode {
             </box>
           </dialog>
 
-          <sheet open={sheetOpen} edge={sheetEdge} size={280} onClosed={() => setSheetOpen(false)} testID="overlays-sheet">
+          <sheet open={sheetOpen()} edge={sheetEdge()} size={280} onClosed={() => setSheetOpen(false)} testID="overlays-sheet">
             <box orientation="vertical" spacing={Spacing.sm}>
-              <label text={`Sheet from ${sheetEdge}`} cssClasses={["heading"]} testID="overlays-sheet-title" />
+              <label text={`Sheet from ${sheetEdge()}`} cssClasses={["heading"]} testID="overlays-sheet-title" />
               <label text="Slides in from the edge you picked." cssClasses={["dimmed"]} />
               <button label="Close" onClick={() => setSheetOpen(false)} testID="overlays-sheet-close" />
             </box>
@@ -694,9 +700,9 @@ function greet(name) {
 Ordered lists, block quotes, tables, images, and raw HTML sit outside the parsed subset, so they
 render as plain text if they appear at all.`;
 
-function RichTextSection(): React.ReactNode {
-  const [lastLink, setLastLink] = useState("(none yet)");
-  const [selectable, setSelectable] = useState(true);
+function RichTextSection(): JSX.Element {
+  const [lastLink, setLastLink] = createSignal("(none yet)");
+  const [selectable, setSelectable] = createSignal(true);
 
   return (
     <scrollview testID="richtext-scroll" style={{ vexpand: true }}>
@@ -704,19 +710,19 @@ function RichTextSection(): React.ReactNode {
         <box orientation="vertical" spacing={Spacing.sm} style={{ padding: ContentMargin }}>
           <settingsgroup title="RichText" description="Every supported Markdown construct, plus the notable ones that aren't." testID="richtext-group">
             <row title="Selectable" testID="richtext-selectable-row">
-              <switch checked={selectable} onToggled={(e) => setSelectable(e.checked)} testID="richtext-selectable-toggle" />
+              <switch checked={selectable()} onToggled={(e) => setSelectable(e.checked)} testID="richtext-selectable-toggle" />
             </row>
           </settingsgroup>
           <richtext
             markdown={richTextMarkdown}
-            selectable={selectable}
+            selectable={selectable()}
             onLinkActivated={(e) => {
               setLastLink(e.text);
               void openExternal(e.text);
             }}
             testID="richtext-view"
           />
-          <label text={`Last link activated: ${lastLink}`} cssClasses={["dimmed", "caption"]} testID="richtext-link-readout" />
+          <label text={`Last link activated: ${lastLink()}`} cssClasses={["dimmed", "caption"]} testID="richtext-link-readout" />
         </box>
       </clamp>
     </scrollview>
@@ -855,20 +861,20 @@ const liveSeries = [
   },
 ];
 
-function ChartsSection(): React.ReactNode {
-  const [tabIndex, setTabIndex] = useState(0);
-  const [typeIndex, setTypeIndex] = useState(0);
-  const [showLegend, setShowLegend] = useState(true);
-  const [showGrid, setShowGrid] = useState(true);
-  const [animated, setAnimated] = useState(true);
-  const [lastSelection, setLastSelection] = useState("(none yet)");
+function ChartsSection(): JSX.Element {
+  const [tabIndex, setTabIndex] = createSignal(0);
+  const [typeIndex, setTypeIndex] = createSignal(0);
+  const [showLegend, setShowLegend] = createSignal(true);
+  const [showGrid, setShowGrid] = createSignal(true);
+  const [animated, setAnimated] = createSignal(true);
+  const [lastSelection, setLastSelection] = createSignal("(none yet)");
 
-  const liveType: ChartType = chartTypeOptions[typeIndex] ?? "line";
+  const liveType = (): ChartType => chartTypeOptions[typeIndex()] ?? "line";
 
   return (
     <box orientation="vertical" spacing={Spacing.sm} style={{ vexpand: true, padding: ContentMargin }} testID="charts-section">
       <tabview
-        selectedIndex={tabIndex}
+        selectedIndex={tabIndex()}
         onSelectionChanged={(e) => setTabIndex(e.index)}
         style={{ vexpand: true }}
         testID="charts-tabs"
@@ -952,36 +958,36 @@ function ChartsSection(): React.ReactNode {
             <row title="Type" testID="charts-live-type-row">
               <select
                 options={chartTypeOptions}
-                selectedIndex={typeIndex}
+                selectedIndex={typeIndex()}
                 onSelectionChanged={(e) => setTypeIndex(e.index)}
                 testID="charts-live-type-select"
               />
             </row>
             <row title="Legend" testID="charts-live-legend-row">
-              <switch checked={showLegend} onToggled={(e) => setShowLegend(e.checked)} testID="charts-live-legend-toggle" />
+              <switch checked={showLegend()} onToggled={(e) => setShowLegend(e.checked)} testID="charts-live-legend-toggle" />
             </row>
             <row title="Grid" testID="charts-live-grid-row">
-              <switch checked={showGrid} onToggled={(e) => setShowGrid(e.checked)} testID="charts-live-grid-toggle" />
+              <switch checked={showGrid()} onToggled={(e) => setShowGrid(e.checked)} testID="charts-live-grid-toggle" />
             </row>
             <row title="Animated" testID="charts-live-animated-row">
-              <switch checked={animated} onToggled={(e) => setAnimated(e.checked)} testID="charts-live-animated-toggle" />
+              <switch checked={animated()} onToggled={(e) => setAnimated(e.checked)} testID="charts-live-animated-toggle" />
             </row>
           </settingsgroup>
           <chart
-            type={liveType}
+            type={liveType()}
             series={liveSeries}
             xLabel="Day"
             yLabel="Value"
-            showLegend={showLegend}
-            showGrid={showGrid}
-            animated={animated}
+            showLegend={showLegend()}
+            showGrid={showGrid()}
+            animated={animated()}
             onPointSelected={(e) => setLastSelection(describeSelection("Live", e))}
             style={{ vexpand: true }}
             testID="charts-live-chart"
           />
         </box>
       </tabview>
-      <label text={`Last selected: ${lastSelection}`} cssClasses={["dimmed"]} testID="charts-selection-readout" />
+      <label text={`Last selected: ${lastSelection()}`} cssClasses={["dimmed"]} testID="charts-selection-readout" />
     </box>
   );
 }
@@ -990,9 +996,9 @@ function ChartsSection(): React.ReactNode {
 
 const progressFractions = [0, 0.25, 0.5, 0.75, 1];
 
-function ProgressSection(): React.ReactNode {
-  const [fraction, setFraction] = useState(0.35);
-  const [spinning, setSpinning] = useState(true);
+function ProgressSection(): JSX.Element {
+  const [fraction, setFraction] = createSignal(0.35);
+  const [spinning, setSpinning] = createSignal(true);
 
   return (
     <scrollview testID="progress-scroll" style={{ vexpand: true }}>
@@ -1001,15 +1007,15 @@ function ProgressSection(): React.ReactNode {
           <settingsgroup title="Live fraction" description="One slider drives a ProgressBar and a ProgressCircle together." testID="progress-live-group">
             <row title="Fraction" testID="progress-live-row">
               <box orientation="horizontal" spacing={Spacing.sm} style={{ hexpand: true }}>
-                <slider min={0} max={1} step={0.01} value={fraction} onValueChanged={(e) => setFraction(e.value)} style={{ hexpand: true }} testID="progress-live-slider" />
-                <label text={`${Math.round(fraction * 100)}%`} cssClasses={["dimmed", "numeric"]} testID="progress-live-readout" />
+                <slider min={0} max={1} step={0.01} value={fraction()} onValueChanged={(e) => setFraction(e.value)} style={{ hexpand: true }} testID="progress-live-slider" />
+                <label text={`${Math.round(fraction() * 100)}%`} cssClasses={["dimmed", "numeric"]} testID="progress-live-readout" />
               </box>
             </row>
             <row title="ProgressBar" testID="progress-live-bar-row">
-              <progressbar fraction={fraction} style={{ hexpand: true }} testID="progress-live-bar" />
+              <progressbar fraction={fraction()} style={{ hexpand: true }} testID="progress-live-bar" />
             </row>
             <row title="ProgressCircle" testID="progress-live-circle-row">
-              <progresscircle fraction={fraction} showLabel testID="progress-live-circle" />
+              <progresscircle fraction={fraction()} showLabel testID="progress-live-circle" />
             </row>
           </settingsgroup>
 
@@ -1017,14 +1023,14 @@ function ProgressSection(): React.ReactNode {
             <row title="Label on" testID="progress-circle-labeled-row">
               <box orientation="horizontal" spacing={Spacing.md}>
                 {progressFractions.map((f) => (
-                  <progresscircle key={f} fraction={f} showLabel testID={`progress-circle-labeled-${Math.round(f * 100)}`} />
+                  <progresscircle fraction={f} showLabel testID={`progress-circle-labeled-${Math.round(f * 100)}`} />
                 ))}
               </box>
             </row>
             <row title="Label off" testID="progress-circle-unlabeled-row">
               <box orientation="horizontal" spacing={Spacing.md}>
                 {progressFractions.map((f) => (
-                  <progresscircle key={f} fraction={f} testID={`progress-circle-unlabeled-${Math.round(f * 100)}`} />
+                  <progresscircle fraction={f} testID={`progress-circle-unlabeled-${Math.round(f * 100)}`} />
                 ))}
               </box>
             </row>
@@ -1033,8 +1039,8 @@ function ProgressSection(): React.ReactNode {
           <settingsgroup title="Spinner" description="Indeterminate activity, toggled on and off." testID="progress-spinner-group">
             <row title="Spinning" testID="progress-spinner-row">
               <box orientation="horizontal" spacing={Spacing.sm}>
-                <spinner spinning={spinning} testID="progress-spinner" />
-                <switch checked={spinning} onToggled={(e) => setSpinning(e.checked)} testID="progress-spinner-toggle" />
+                <spinner spinning={spinning()} testID="progress-spinner" />
+                <switch checked={spinning()} onToggled={(e) => setSpinning(e.checked)} testID="progress-spinner-toggle" />
               </box>
             </row>
           </settingsgroup>
@@ -1058,8 +1064,8 @@ const loadingRows: LoadingRow[] = [
   { id: "r3", name: "Alan Turing", detail: "Security · Offline" },
 ];
 
-function LoadingSection(): React.ReactNode {
-  const [loaded, setLoaded] = useState(false);
+function LoadingSection(): JSX.Element {
+  const [loaded, setLoaded] = createSignal(false);
 
   return (
     <scrollview testID="loading-scroll" style={{ vexpand: true }}>
@@ -1067,33 +1073,29 @@ function LoadingSection(): React.ReactNode {
         <box orientation="vertical" style={{ padding: ContentMargin }}>
           <settingsgroup title="List placeholder" description="Skeletons respect the OS reduce-motion setting." testID="loading-group">
             <row title="Loaded" testID="loading-toggle-row">
-              <switch checked={loaded} onToggled={(e) => setLoaded(e.checked)} testID="loading-toggle" />
+              <switch checked={loaded()} onToggled={(e) => setLoaded(e.checked)} testID="loading-toggle" />
             </row>
           </settingsgroup>
 
           <box orientation="vertical" testID="loading-list">
             {loadingRows.map((r, i) => (
-              <box key={r.id} orientation="vertical" testID={`loading-row-${r.id}`}>
+              <box orientation="vertical" testID={`loading-row-${r.id}`}>
                 <box orientation="horizontal" spacing={Spacing.md} style={{ padding: Spacing.sm }}>
-                  {loaded ? (
+                  <Show when={loaded()} fallback={<skeleton width={40} height={40} radius={20} testID={`loading-row-${r.id}-avatar-skeleton`} />}>
                     <avatar text={r.name} size={40} testID={`loading-row-${r.id}-avatar`} />
-                  ) : (
-                    <skeleton width={40} height={40} radius={20} testID={`loading-row-${r.id}-avatar-skeleton`} />
-                  )}
+                  </Show>
                   <box orientation="vertical" spacing={Spacing.xs} style={{ hexpand: true, valign: "center" }}>
-                    {loaded ? (
+                    <Show when={loaded()} fallback={<skeleton width={140} height={14} testID={`loading-row-${r.id}-name-skeleton`} />}>
                       <label text={r.name} cssClasses={["heading"]} testID={`loading-row-${r.id}-name`} />
-                    ) : (
-                      <skeleton width={140} height={14} testID={`loading-row-${r.id}-name-skeleton`} />
-                    )}
-                    {loaded ? (
+                    </Show>
+                    <Show when={loaded()} fallback={<skeleton width={90} height={10} testID={`loading-row-${r.id}-detail-skeleton`} />}>
                       <label text={r.detail} cssClasses={["dimmed", "caption"]} testID={`loading-row-${r.id}-detail`} />
-                    ) : (
-                      <skeleton width={90} height={10} testID={`loading-row-${r.id}-detail-skeleton`} />
-                    )}
+                    </Show>
                   </box>
                 </box>
-                {i < loadingRows.length - 1 && <separator orientation="horizontal" />}
+                <Show when={i < loadingRows.length - 1}>
+                  <separator orientation="horizontal" />
+                </Show>
               </box>
             ))}
           </box>
@@ -1124,16 +1126,16 @@ function seedDockModel(): DockModel<DockTabData> {
 // id, String(i+1)): "1" is Explorer/Search, "2" is Output, "3" is Terminal.
 const dockZones: DockZone[] = ["left", "right", "top", "bottom", "center"];
 
-function DockSection(): React.ReactNode {
-  const dock = useDock<DockTabData>(seedDockModel);
-  const [nextTabId, setNextTabId] = useState(1);
+function DockSection(): JSX.Element {
+  const dock = createDock<DockTabData>(seedDockModel);
+  const [nextTabId, setNextTabId] = createSignal(1);
 
   return (
     <box orientation="vertical" style={{ vexpand: true, padding: ContentMargin }} testID="dock-section">
       <label text="Dock panel 2 (Output) relative to panel 1 (Explorer/Search)" cssClasses={["dimmed", "caption"]} testID="dock-zone-label" />
       <box orientation="horizontal" spacing={Spacing.xs} cssClasses={["linked"]} testID="dock-zone-row">
         {dockZones.map((zone) => (
-          <button key={zone} label={zone} onClick={() => dock.dock("2", "1", zone)} testID={`dock-zone-${zone}`} />
+          <button label={zone} onClick={() => dock.dock("2", "1", zone)} testID={`dock-zone-${zone}`} />
         ))}
       </box>
       <box orientation="horizontal" spacing={Spacing.sm} testID="dock-action-row">
@@ -1142,7 +1144,7 @@ function DockSection(): React.ReactNode {
         <button
           label="Add tab to panel 1"
           onClick={() => {
-            dock.addTab("1", { id: `extra-${nextTabId}`, title: `Extra ${nextTabId}`, data: { body: "Added at runtime." } });
+            dock.addTab("1", { id: `extra-${nextTabId()}`, title: `Extra ${nextTabId()}`, data: { body: "Added at runtime." } });
             setNextTabId((n) => n + 1);
           }}
           testID="dock-add-tab"
@@ -1151,12 +1153,12 @@ function DockSection(): React.ReactNode {
       <separator orientation="horizontal" />
       <box style={{ vexpand: true }} testID="dock-canvas">
         <DockView
-          model={dock.model}
+          model={dock.model()}
           onChange={dock.setModel}
           testID="parity-dock"
-          renderTab={({ tab }) => (
-            <box orientation="vertical" style={{ padding: Spacing.md, vexpand: true }} testID={`dock-tab-body-${tab.id}`}>
-              <label text={tab.data.body} cssClasses={["dimmed"]} />
+          renderTab={(ctx) => (
+            <box orientation="vertical" style={{ padding: Spacing.md, vexpand: true }} testID={`dock-tab-body-${ctx.tab.id}`}>
+              <label text={ctx.tab.data.body} cssClasses={["dimmed"]} />
             </box>
           )}
         />
@@ -1182,9 +1184,9 @@ function seedTilesModel(): TileModel<TileData> {
   );
 }
 
-function TilesSection(): React.ReactNode {
-  const tiles = useTiles<TileData>(seedTilesModel);
-  const [nextTileId, setNextTileId] = useState(1);
+function TilesSection(): JSX.Element {
+  const tiles = createTiles<TileData>(seedTilesModel);
+  const [nextTileId, setNextTileId] = createSignal(1);
 
   return (
     <box orientation="vertical" style={{ vexpand: true, padding: ContentMargin }} testID="tiles-section">
@@ -1192,7 +1194,7 @@ function TilesSection(): React.ReactNode {
         <button
           label="Place tile at (0,0)"
           onClick={() => {
-            tiles.place({ id: `extra-${nextTileId}`, x: 0, y: 0, w: 1, h: 1, data: { label: `Extra ${nextTileId}` } });
+            tiles.place({ id: `extra-${nextTileId()}`, x: 0, y: 0, w: 1, h: 1, data: { label: `Extra ${nextTileId()}` } });
             setNextTileId((n) => n + 1);
           }}
           testID="tiles-place"
@@ -1205,18 +1207,18 @@ function TilesSection(): React.ReactNode {
       <separator orientation="horizontal" />
       <box style={{ vexpand: true }} testID="tiles-canvas">
         <TilesView
-          model={tiles.model}
+          model={tiles.model()}
           testID="parity-tiles"
-          renderTile={({ tile, raised }) => (
+          renderTile={(ctx) => (
             <box
               orientation="vertical"
               spacing={Spacing.xs}
               style={{ padding: Spacing.md, vexpand: true, hexpand: true }}
-              cssClasses={raised ? ["card", "accent"] : ["card"]}
-              testID={`tiles-tile-${tile.id}`}
+              cssClasses={ctx.raised ? ["card", "accent"] : ["card"]}
+              testID={`tiles-tile-${ctx.id}`}
             >
-              <label text={tile.data.label} cssClasses={["heading"]} />
-              <label text={`${tile.w}x${tile.h} @ (${tile.x},${tile.y})`} cssClasses={["dimmed", "caption"]} />
+              <label text={ctx.tile.data.label} cssClasses={["heading"]} />
+              <label text={`${ctx.tile.w}x${ctx.tile.h} @ (${ctx.tile.x},${ctx.tile.y})`} cssClasses={["dimmed", "caption"]} />
             </box>
           )}
         />
@@ -1252,19 +1254,22 @@ const initialKanbanCards: KanbanCard[] = [
   { id: "card-4", title: "Review parity gallery", columnId: "done" },
 ];
 
-function DragDropSection(): React.ReactNode {
-  const [cards, setCards] = useState<KanbanCard[]>(initialKanbanCards);
+function DragDropSection(): JSX.Element {
+  const [cards, setCards] = createSignal<KanbanCard[]>(initialKanbanCards);
   // dragPoint doubles as the hover highlight: it is set on every dragOver and
   // cleared on drop or on dragEnded, so a column's accent state and its x/y
   // readout always agree.
-  const [dragPoint, setDragPoint] = useState<{ columnId: KanbanColumnId; x: number; y: number } | null>(null);
-  const [lastDropped, setLastDropped] = useState("(none yet)");
+  const [dragPoint, setDragPoint] = createSignal<{ columnId: KanbanColumnId; x: number; y: number } | null>(null);
+  const [lastDropped, setLastDropped] = createSignal("(none yet)");
 
   function moveCard(cardId: string, columnId: KanbanColumnId): void {
     setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, columnId } : c)));
   }
 
-  const hoveredColumn = dragPoint ? kanbanColumns.find((c) => c.id === dragPoint.columnId) : undefined;
+  const hoveredColumn = (): (typeof kanbanColumns)[number] | undefined => {
+    const point = dragPoint();
+    return point ? kanbanColumns.find((c) => c.id === point.columnId) : undefined;
+  };
 
   return (
     <scrollview testID="dragdrop-scroll" style={{ vexpand: true }}>
@@ -1276,31 +1281,30 @@ function DragDropSection(): React.ReactNode {
             testID="dragdrop-group"
           >
             <row title="Hovered column" testID="dragdrop-hover-row">
-              <label text={hoveredColumn ? hoveredColumn.title : "(none)"} cssClasses={["dimmed"]} testID="dragdrop-hover-readout" />
+              <label text={hoveredColumn()?.title ?? "(none)"} cssClasses={["dimmed"]} testID="dragdrop-hover-readout" />
             </row>
             <row title="dragOver x, y" subtitle="Target widget's own coordinate space, top-left origin" testID="dragdrop-point-row">
               <label
-                text={dragPoint ? `x=${Math.round(dragPoint.x)}, y=${Math.round(dragPoint.y)}` : "(not dragging)"}
+                text={((p) => (p ? `x=${Math.round(p.x)}, y=${Math.round(p.y)}` : "(not dragging)"))(dragPoint())}
                 cssClasses={["dimmed", "numeric"]}
                 testID="dragdrop-point-readout"
               />
             </row>
             <row title="Last dropped" testID="dragdrop-last-row">
-              <label text={lastDropped} cssClasses={["dimmed"]} testID="dragdrop-last-readout" />
+              <label text={lastDropped()} cssClasses={["dimmed"]} testID="dragdrop-last-readout" />
             </row>
           </settingsgroup>
 
           <box orientation="horizontal" spacing={Spacing.md} style={{ vexpand: true }} testID="dragdrop-board">
             {kanbanColumns.map((column) => {
-              const columnCards = cards.filter((c) => c.columnId === column.id);
-              const hovered = dragPoint?.columnId === column.id;
+              const columnCards = (): KanbanCard[] => cards().filter((c) => c.columnId === column.id);
+              const hovered = (): boolean => dragPoint()?.columnId === column.id;
               return (
                 <box
-                  key={column.id}
                   orientation="vertical"
                   spacing={Spacing.xs}
                   style={{ padding: Spacing.sm, hexpand: true, vexpand: true }}
-                  cssClasses={hovered ? ["card", "accent"] : ["card"]}
+                  cssClasses={hovered() ? ["card", "accent"] : ["card"]}
                   dropTarget
                   onDragOver={(e) => setDragPoint({ columnId: column.id, x: e.data.x, y: e.data.y })}
                   onDropped={(e) => {
@@ -1311,23 +1315,24 @@ function DragDropSection(): React.ReactNode {
                   testID={`dragdrop-column-${column.id}`}
                 >
                   <label text={column.title} cssClasses={["heading"]} testID={`dragdrop-column-${column.id}-title`} />
-                  {columnCards.map((card) => (
+                  <For each={columnCards()} keyed={(card) => card.id}>
+                    {(card) => (
                     <box
-                      key={card.id}
                       orientation="vertical"
                       style={{ padding: Spacing.sm }}
                       cssClasses={["card", "activatable"]}
                       draggable
-                      dragPayload={card.id}
+                      dragPayload={card().id}
                       onDragEnded={() => setDragPoint(null)}
-                      testID={`dragdrop-card-${card.id}`}
+                      testID={`dragdrop-card-${card().id}`}
                     >
-                      <label text={card.title} testID={`dragdrop-card-${card.id}-title`} />
+                      <label text={card().title} testID={`dragdrop-card-${card().id}-title`} />
                     </box>
-                  ))}
-                  {columnCards.length === 0 && (
+                    )}
+                  </For>
+                  <Show when={columnCards().length === 0}>
                     <label text="Drop here" cssClasses={["dimmed", "caption"]} testID={`dragdrop-column-${column.id}-empty`} />
-                  )}
+                  </Show>
                 </box>
               );
             })}
@@ -1358,13 +1363,13 @@ const codeEditorDiagnostics = [
   { line: 5, column: 19, severity: "warning", message: "'undefinedVar' is not defined." },
 ];
 
-function CodeEditorSection(): React.ReactNode {
-  const [code, setCode] = useState(codeEditorSample);
-  const [languageIndex, setLanguageIndex] = useState(0);
-  const [showLineNumbers, setShowLineNumbers] = useState(true);
-  const [readOnly, setReadOnly] = useState(false);
-  const [cursor, setCursor] = useState("(none yet)");
-  const [lastDiagnostic, setLastDiagnostic] = useState("(none yet)");
+function CodeEditorSection(): JSX.Element {
+  const [code, setCode] = createSignal(codeEditorSample);
+  const [languageIndex, setLanguageIndex] = createSignal(0);
+  const [showLineNumbers, setShowLineNumbers] = createSignal(true);
+  const [readOnly, setReadOnly] = createSignal(false);
+  const [cursor, setCursor] = createSignal("(none yet)");
+  const [lastDiagnostic, setLastDiagnostic] = createSignal("(none yet)");
 
   return (
     <scrollview testID="codeeditor-scroll" style={{ vexpand: true }}>
@@ -1378,30 +1383,30 @@ function CodeEditorSection(): React.ReactNode {
             <row title="Language" testID="codeeditor-language-row">
               <select
                 options={codeEditorLanguages}
-                selectedIndex={languageIndex}
+                selectedIndex={languageIndex()}
                 onSelectionChanged={(e) => setLanguageIndex(e.index)}
                 testID="codeeditor-language-select"
               />
             </row>
             <row title="Line numbers" testID="codeeditor-linenumbers-row">
-              <switch checked={showLineNumbers} onToggled={(e) => setShowLineNumbers(e.checked)} testID="codeeditor-linenumbers-toggle" />
+              <switch checked={showLineNumbers()} onToggled={(e) => setShowLineNumbers(e.checked)} testID="codeeditor-linenumbers-toggle" />
             </row>
             <row title="Read only" testID="codeeditor-readonly-row">
-              <switch checked={readOnly} onToggled={(e) => setReadOnly(e.checked)} testID="codeeditor-readonly-toggle" />
+              <switch checked={readOnly()} onToggled={(e) => setReadOnly(e.checked)} testID="codeeditor-readonly-toggle" />
             </row>
             <row title="Cursor" testID="codeeditor-cursor-row">
-              <label text={cursor} cssClasses={["dimmed", "numeric"]} testID="codeeditor-cursor-readout" />
+              <label text={cursor()} cssClasses={["dimmed", "numeric"]} testID="codeeditor-cursor-readout" />
             </row>
             <row title="Last diagnostic clicked" testID="codeeditor-diagnostic-row">
-              <label text={lastDiagnostic} cssClasses={["dimmed"]} testID="codeeditor-diagnostic-readout" />
+              <label text={lastDiagnostic()} cssClasses={["dimmed"]} testID="codeeditor-diagnostic-readout" />
             </row>
           </settingsgroup>
 
           <codeeditor
-            text={code}
-            language={codeEditorLanguages[languageIndex]}
-            showLineNumbers={showLineNumbers}
-            readOnly={readOnly}
+            text={code()}
+            language={codeEditorLanguages[languageIndex()]}
+            showLineNumbers={showLineNumbers()}
+            readOnly={readOnly()}
             diagnostics={codeEditorDiagnostics}
             onChange={(e) => setCode(e.text)}
             onCursorMoved={(e) => {
@@ -1423,7 +1428,7 @@ function CodeEditorSection(): React.ReactNode {
 
 // --- App ---------------------------------------------------------------
 
-function renderSection(section: SectionId): React.ReactNode {
+function renderSection(section: SectionId): JSX.Element {
   switch (section) {
     case "display":
       return <DisplaySection />;
@@ -1456,8 +1461,8 @@ function renderSection(section: SectionId): React.ReactNode {
   }
 }
 
-function App(): React.ReactNode {
-  const [section, setSection] = useState<SectionId>("display");
+function App(): JSX.Element {
+  const [section, setSection] = createSignal<SectionId>("display");
 
   return (
     <window title="Parity Gallery" defaultWidth={1200} defaultHeight={780}>
@@ -1467,7 +1472,7 @@ function App(): React.ReactNode {
           <sourcetree
             testID="parity-nav"
             nodes={navNodes}
-            selectedId={section}
+            selectedId={section()}
             onSelectionChanged={(e) => {
               const { nodeId } = e.data as { nodeId: string | null };
               if (nodeId) setSection(nodeId as SectionId);
@@ -1476,12 +1481,12 @@ function App(): React.ReactNode {
           />
         </toolbarview>
         <toolbarview slot="content" testID="content-toolbar">
-          <headerbar title={sectionTitles[section]} testID="content-header" />
-          {renderSection(section)}
+          <headerbar title={sectionTitles[section()]} testID="content-header" />
+          {renderSection(section())}
         </toolbarview>
       </splitview>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
