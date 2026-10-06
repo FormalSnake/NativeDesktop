@@ -62,7 +62,7 @@ done
 xwininfo -root >/dev/null 2>&1 || { echo "FAIL: no X server on $DISPLAY"; exit 1; }
 
 LOG="$RUN_DIR/host.log"
-ND_SCRIPT=examples/webview-probe/cef-native-messaging.tsx ./zig-out/bin/nd-hello \
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/webview-probe/cef-native-messaging.tsx)" ND_SCRIPT=examples/webview-probe/cef-native-messaging.tsx ./zig-out/bin/nd-hello \
   --load-extension="$ROOT/scripts/fixtures/native-messaging/ext" \
   --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
 HOST_PID=$!

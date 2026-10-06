@@ -48,7 +48,7 @@ done
 xwininfo -root >/dev/null 2>&1 || { echo "FAIL: no X server on $DISPLAY"; exit 1; }
 
 LOG="$XDG_RUNTIME_DIR/host-cef-zoom.log"
-ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/cef-zoom.tsx ./zig-out/bin/nd-hello \
+ND_WEBVIEW_TRACE=1 BUN_OPTIONS="$(bun scripts/bun-options.ts examples/webview-probe/cef-zoom.tsx)" ND_SCRIPT=examples/webview-probe/cef-zoom.tsx ./zig-out/bin/nd-hello \
   --load-extension="$PWD/scripts/fixtures/password-filler" --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 900); do

@@ -39,7 +39,7 @@ done
 xwininfo -root >/dev/null 2>&1 || { echo "FAIL: Xvfb never came up on $DISPLAY"; exit 1; }
 
 LOG=$(mktemp)
-ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+ND_WEBVIEW_TRACE=1 BUN_OPTIONS="$(bun scripts/bun-options.ts examples/webview-probe/main.tsx)" ND_SCRIPT=examples/webview-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 for _ in $(seq 1 1200); do

@@ -25,7 +25,7 @@ trap 'kill "$HOST_PID" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 pass=0
 for i in $(seq 1 "$CYCLES"); do
   LOG="$WORK/host-$i.log"
-  ND_SCRIPT=examples/notes/main.tsx "$HOST" >"$LOG" 2>&1 &
+  BUN_OPTIONS="$(bun scripts/bun-options.ts examples/notes/main.tsx)" ND_SCRIPT=examples/notes/main.tsx "$HOST" >"$LOG" 2>&1 &
   HOST_PID=$!
 
   ready=0

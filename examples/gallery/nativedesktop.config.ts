@@ -13,7 +13,7 @@ export default defineConfig({
     // The bundle app root mirrors the repo root, so the gallery lands at
     // app/examples/gallery and the gates' counter launch path keeps working.
     workspaceRoot: "../..",
-    include: ["examples/counter", "runtime"],
+    include: ["examples/counter"],
     outDir: "dist",
     updates: { baseUrl: "http://127.0.0.1:0", ephemeralKey: true },
   },

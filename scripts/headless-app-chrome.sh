@@ -128,6 +128,7 @@ launch_host() {
     export ND_WEBVIEW_ENGINE=chromium
     export ND_CEF_STYLE=chrome
     export ND_SCRIPT="$APP_SCRIPT"
+    export BUN_OPTIONS="$(bun "$FRAMEWORK/scripts/bun-options.ts" "$ND_SCRIPT")"
     export ND_DEMO_URL="$FIXTURE"
     export ND_WEBVIEW_TRACE=1
     # The page's file chooser leg: one pick, then one cancel. A drive that
