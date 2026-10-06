@@ -743,8 +743,9 @@ private func setErrRaw(_ out: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
 /// at create time instead of reflected after the fact, keyed by view
 /// identity (peer of `Events.swift`'s `radioGroupIdentifier` side-table,
 /// same reasoning). Only needed for kinds that collide on a shared concrete
-/// class — every other kind (TextInput, TextArea, Slider, Select,
-/// ScrollView) is already unambiguous from its concrete AppKit class.
+/// class (Label and TextInput are both an NSTextField) — every other kind
+/// (TextArea, Slider, Select, ScrollView) is already unambiguous from its
+/// concrete AppKit class.
 nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] = [:]
 
 /// Called by `Backend.swift`'s `create` vtable closure right after
@@ -753,7 +754,8 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
 /// guess at via reflection.
 @MainActor func ndRecordButtonKind(_ view: NSView, _ kind: String) {
     guard kind == "Checkbox" || kind == "Radio" || kind == "Switch" || kind == "Button"
-        || kind == "SourceList" || kind == "SourceTree" || kind == "Table" || kind == "TreeView" else { return }
+        || kind == "SourceList" || kind == "SourceTree" || kind == "Table" || kind == "TreeView"
+        || kind == "Label" else { return }
     buttonKindOverride[ObjectIdentifier(view)] = kind
 }
 
@@ -795,7 +797,7 @@ nonisolated(unsafe) private var buttonKindOverride: [ObjectIdentifier: String] =
     if view is NSButton {
         return buttonKindOverride[ObjectIdentifier(view)] ?? "Button"
     }
-    if view is NSTextField { return "TextInput" }
+    if view is NSTextField { return buttonKindOverride[ObjectIdentifier(view)] ?? "TextInput" }
     if view is NSSlider || view is NDSliderView { return "Slider" }
     if view is NDSegmentedControlView { return "SegmentedControl" }
     return ""
@@ -1191,7 +1193,7 @@ private func invalidValue(_ errOut: UnsafeMutablePointer<UnsafeMutablePointer<CC
     // alone and falls through to that control's own case.
     var valueJson = (view as? NDHostedLeaf)?.ndA11yValueJSON ?? "null"
     if valueJson == "null" { switch widgetKind(view) {
-    case "TextInput", "SearchInput":
+    case "TextInput", "SearchInput", "Label":
         if let field = view as? NSTextField { valueJson = "\"\(escapeJSONString(field.stringValue))\"" }
     case "TextArea":
         if let scroll = view as? NSScrollView, let tv = scroll.documentView as? NSTextView {
