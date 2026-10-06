@@ -28,7 +28,7 @@ scaled to sit inside it.
 
 | Prop | Type | Applied | Notes |
 | --- | --- | --- | --- |
-| `fraction` | float | createAndUpdate | `0`–`1`. Default `0`. |
+| `fraction` | float | createAndUpdate | `0` to `1`. Default `0`. |
 | `lineWidth` | int | createAndUpdate | Ring thickness in points/px, honoured on both backends. Clamped to a third of the ring's diameter so the stroke can never close the hole. Default `3`. |
 | `showLabel` | bool | createAndUpdate | Renders the percentage as centered text. Default `false`. |
 

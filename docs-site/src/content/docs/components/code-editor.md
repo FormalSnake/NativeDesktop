@@ -8,7 +8,7 @@ TextKit 2 `NSTextView` with a ruler gutter on macOS. It renders the `diagnostics
 handed and never analyzes the text itself, the same division `<table>` draws between its rows and
 whatever produced them. A language server belongs in app-side TypeScript, not in the widget.
 
-The macOS editor turns off every system text convenience — continuous spell checking, autocorrect,
+The macOS editor turns off every system text convenience: continuous spell checking, autocorrect,
 smart quotes and dashes, text replacement, link and data detection. Code is not prose, so the only
 squiggle under an identifier is a diagnostic's, and an autocorrected identifier would silently
 change what compiles.
@@ -52,10 +52,10 @@ interface CodeDiagnostic {
 }
 ```
 
-`CodeDiagnostic` is re-exported from `@nativedesktop/react`, so import it directly:
+`CodeDiagnostic` is re-exported from `@nativedesktop/solid`, so import it directly:
 
 ```ts
-import type { CodeDiagnostic } from "@nativedesktop/react";
+import type { CodeDiagnostic } from "@nativedesktop/solid";
 ```
 
 `line`/`column` are 1-based, what every compiler and language server reports. A click on a squiggle

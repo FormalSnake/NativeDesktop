@@ -12,12 +12,12 @@ A dismissible in-flow strip (`AdwBanner` on GTK, an equivalent bar on macOS) for
 notice such as "a new version is available", visible until the user acts or you hide it.
 
 ```tsx
-const [revealed, setRevealed] = useState(true);
+const [revealed, setRevealed] = createSignal(true);
 
 <banner
   title="A new version is available"
   buttonLabel="Update Now"
-  revealed={revealed}
+  revealed={revealed()}
   onButtonClicked={() => setRevealed(false)}
 />;
 ```
@@ -57,10 +57,10 @@ content rather than one tab or panel, so a toast floats above every screen the u
 when you queue it:
 
 ```tsx
-import { showToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { showToast, onToastButtonClicked, onToastDismissed } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
 
-const toastRef = useRef<NdNodeRef<"toastoverlay">>(null);
+let toastRef: NdNodeRef<"toastoverlay"> | undefined;
 
 <toastoverlay
   ref={toastRef}
@@ -73,7 +73,7 @@ const toastRef = useRef<NdNodeRef<"toastoverlay">>(null);
 // ...later, from an event handler:
 async function handleDelete() {
   await deleteItem();
-  const result = await showToast(toastRef.current!, {
+  const result = await showToast(toastRef!, {
     title: "Item deleted",
     buttonLabel: "Undo",
     timeoutSeconds: 6,
@@ -82,7 +82,7 @@ async function handleDelete() {
 }
 ```
 
-`showToast` and `dismissToast` (from `@nativedesktop/react`, backed by `packages/core/src/toast.ts`)
+`showToast` and `dismissToast` (from `@nativedesktop/solid`, backed by `packages/core/src/toast.ts`)
 are [imperative commands](/core-concepts/imperative-commands/) wrapped in a promise:
 
 | Function | Signature | Resolves to |

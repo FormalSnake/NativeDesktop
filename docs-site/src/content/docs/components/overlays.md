@@ -27,12 +27,12 @@ A modal window for arbitrary content: `AdwDialog` on GTK, an `NSWindow` sheet on
 ![An open Dialog editing a name field on GNOME (GTK)](../../../assets/screens/gtk/parity-dialog.png)
 
 ```tsx
-const [open, setOpen] = useState(false);
-const [name, setName] = useState("");
+const [open, setOpen] = createSignal(false);
+const [name, setName] = createSignal("");
 
-<dialog open={open} title="Edit Profile" contentWidth={360} contentHeight={220} onClosed={() => setOpen(false)}>
+<dialog open={open()} title="Edit Profile" contentWidth={360} contentHeight={220} onClosed={() => setOpen(false)}>
   <box orientation="vertical" spacing={Spacing.md} style={{ padding: Spacing.lg }}>
-    <textinput text={name} onChanged={(e) => setName(e.text)} />
+    <textinput text={name()} onChanged={(e) => setName(e.text)} />
     <button label="Save" onClick={() => setOpen(false)} />
   </box>
 </dialog>;
@@ -63,9 +63,9 @@ slides in and out. Same container shape as Dialog: single child, your own layout
 ![An open Sheet presented from the bottom edge on GNOME (GTK)](../../../assets/screens/gtk/parity-sheet.png)
 
 ```tsx
-const [open, setOpen] = useState(false);
+const [open, setOpen] = createSignal(false);
 
-<sheet open={open} edge="trailing" size={320} onClosed={() => setOpen(false)}>
+<sheet open={open()} edge="trailing" size={320} onClosed={() => setOpen(false)}>
   <box orientation="vertical" spacing={Spacing.sm} style={{ padding: Spacing.lg }}>
     <label text="Details" cssClasses={["heading"]} />
   </box>

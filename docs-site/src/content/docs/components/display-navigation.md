@@ -64,9 +64,13 @@ selected-skill lists, and similar small removable-item rows.
 ![Removable Tag chips backed by real state on GNOME (GTK)](../../../assets/screens/gtk/parity-tag.png)
 
 ```tsx
-const [tags, setTags] = useState(["React", "Zig"]);
+const [tags, setTags] = createSignal(["Solid", "Zig"]);
 
-<tag label="React" variant="accent" removable onRemoved={() => setTags((t) => t.filter((x) => x !== "React"))} />;
+<For each={tags()}>
+  {(tag) => (
+    <tag label={tag} variant="accent" removable onRemoved={() => setTags((t) => t.filter((x) => x !== tag))} />
+  )}
+</For>;
 ```
 
 | Prop | Type | Applied | Notes |
@@ -111,12 +115,12 @@ typed, free text, unlike [`Select`](/components/widget-reference/), which only p
 ![The ComboBox dropdown with a typed value on GNOME (GTK)](../../../assets/screens/gtk/parity-combobox.png)
 
 ```tsx
-const [text, setText] = useState("Apple");
+const [text, setText] = createSignal("Apple");
 
 <combobox
   options={["Apple", "Banana", "Cherry"]}
-  text={text}
-  onSelectionChanged={(e) => setText(["Apple", "Banana", "Cherry"][e.index] ?? text)}
+  text={text()}
+  onSelectionChanged={(e) => setText(["Apple", "Banana", "Cherry"][e.index] ?? text())}
   onChanged={(e) => setText(e.text)}
 />;
 ```
@@ -144,9 +148,9 @@ can click back up: a folder path, a wizard's completed steps.
 ![The Breadcrumb path control on GNOME (GTK)](../../../assets/screens/gtk/parity-breadcrumb.png)
 
 ```tsx
-const [index, setIndex] = useState(2);
+const [index, setIndex] = createSignal(2);
 
-<breadcrumb items={["Home", "Documents", "Projects"]} selectedIndex={index} onItemActivated={(e) => setIndex(e.index)} />;
+<breadcrumb items={["Home", "Documents", "Projects"]} selectedIndex={index()} onItemActivated={(e) => setIndex(e.index)} />;
 ```
 
 | Prop | Type | Applied | Notes |

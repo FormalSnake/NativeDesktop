@@ -13,7 +13,7 @@ own text stack: CoreText on macOS, cairo and Pango on GTK. Keystrokes go straigh
 ![The terminal widget running a shell on GNOME (GTK)](../../../assets/screens/gtk/terminal.png)
 
 ```tsx
-import { render } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
 
 function App() {
   return (
@@ -23,7 +23,7 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 That is a working terminal with no native code in your app. Type at the prompt, run `vim`, get
@@ -96,6 +96,6 @@ succeed. Mint a fresh ticket and remount.
 ## Not implemented yet
 
 The terminal renders the grid and routes keyboard input on both backends. Terminal-initiated events
-back to React (title changes, bell, child exit) are raised internally by the core but not yet
+back to the app (title changes, bell, child exit) are raised internally by the core but not yet
 surfaced as `onTitle`/`onBell`/`onExit` handlers. Mouse reporting, IME and dead-key composition, and
 live font-size changes are also outstanding.

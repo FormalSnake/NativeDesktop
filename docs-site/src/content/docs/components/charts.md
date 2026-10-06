@@ -64,11 +64,11 @@ ignored by every other chart type, which read `y` instead.
 palette. The widget never sorts, filters, or rewrites `points`. The app owns the data, the same
 contract as `<table>`'s `rows`.
 
-`ChartSeries` and `ChartPoint` are re-exported from `@nativedesktop/react`, so import them
+`ChartSeries` and `ChartPoint` are re-exported from `@nativedesktop/solid`, so import them
 directly rather than relying on structural typing:
 
 ```ts
-import type { ChartPoint, ChartSeries } from "@nativedesktop/react";
+import type { ChartPoint, ChartSeries } from "@nativedesktop/solid";
 ```
 
 ## Props
@@ -99,15 +99,15 @@ backends.
 
 ![All six chart types on GNOME (GTK)](../../../assets/screens/gtk/parity-charts.png)
 
-- **line** – one connected line per series, drawn with a smooth (Catmull-Rom) interpolation.
-- **area** – the same line, filled down to the axis.
-- **bar** – grouped bars per series, one band per point. Bars are centred in their own band rather
+- **line**: one connected line per series, drawn with a smooth (Catmull-Rom) interpolation.
+- **area**: the same line, filled down to the axis.
+- **bar**: grouped bars per series, one band per point. Bars are centred in their own band rather
   than on their `x` value, so the first and last bar sit fully inside the axes.
-- **pie** – reads only `series[0]`. Each point becomes one slice: `label` names it, `abs(y)` sizes
+- **pie**: reads only `series[0]`. Each point becomes one slice: `label` names it, `abs(y)` sizes
   it. A second series would be a second angular scale on the same plot, which isn't a pie, so it's
   ignored.
-- **scatter** – unconnected points per series, no line between them.
-- **candlestick** – reads `open`/`high`/`low`/`close` per point: a wick spans `low`…`high`, a body
+- **scatter**: unconnected points per series, no line between them.
+- **candlestick**: reads `open`/`high`/`low`/`close` per point: a wick spans `low`…`high`, a body
   spans `open`…`close`. The body/wick colour is the series' `color` if set, otherwise the system
   green/red up/down convention (green when `close >= open`).
 
@@ -117,7 +117,7 @@ backends.
   ramp (orange, green, purple, yellow, red, brown on macOS). A series' explicit `color` overrides
   its slot. Candlesticks ignore the ramp and use the up/down convention unless `color` is set.
 - **Theme.** Both backends read colours at draw/render time rather than caching them, so an accent
-  or light/dark switch repaints every live chart without an app re-render.
+  or light/dark switch repaints every live chart without the app updating.
 - **macOS.** Swift Charts owns axes, ticks, and legend placement; the widget only hands it the
   parsed series. Point selection is a zero-distance `DragGesture` over the plot area, the standard
   Swift Charts tap-to-select pattern, matched against the nearest point's screen position.

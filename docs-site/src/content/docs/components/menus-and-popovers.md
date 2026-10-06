@@ -43,11 +43,11 @@ attached to a trigger. Its child is a full widget tree rather than `<menuitem>`s
 anything a `<box>` could.
 
 ```tsx
-const [open, setOpen] = useState(false);
+const [open, setOpen] = createSignal(false);
 
 <box orientation="horizontal" spacing={8}>
   <button label="Open Popover" onClick={() => setOpen(true)} />
-  <popover open={open} position="bottom" onClosed={() => setOpen(false)}>
+  <popover open={open()} position="bottom" onClosed={() => setOpen(false)}>
     <box orientation="vertical" spacing={8} style={{ padding: 12 }}>
       <label text="Popover content" />
       <button label="Close" onClick={() => setOpen(false)} />
@@ -72,25 +72,24 @@ puts it in the same `<box>` as its button. `anchorRef` names the trigger instead
 popover sits in the tree decides nothing:
 
 ```tsx
-const trigger = useRef<NdNodeRef<"button">>(null);
-const [open, setOpen] = useState(false);
+const [trigger, setTrigger] = createSignal<NdNodeRef<"button">>();
+const [open, setOpen] = createSignal(false);
 
-<button ref={trigger} label="Open" onClick={() => setOpen(true)} />
-{/* anywhere in the tree, including a createPortal pool */}
-<popover anchorRef={trigger} open={open} position="bottom" onClosed={() => setOpen(false)}>
+<button ref={setTrigger} label="Open" onClick={() => setOpen(true)} />
+{/* anywhere in the tree, including a Portal pool */}
+<popover anchorRef={trigger()} open={open()} position="bottom" onClosed={() => setOpen(false)}>
   <label text="Popover content" />
 </popover>;
 ```
 
-The ref is a plain host-element ref (`Ref<NdNodeRef>`), the same handle `sendCommand` addresses, and
-it may point at any intrinsic. Two things follow from React's commit order:
+The ref is a plain host-element ref (`NdNodeRef`), the same handle `sendCommand` addresses, and
+it may point at any intrinsic. Two things follow from when the ref is set:
 
-- React attaches host refs after the commit that mounts them, so a ref to a widget mounting in the
-  same render still reads `null` and the anchor lands on the next render that updates the popover.
-  Both backends resolve the anchor when the popover presents, not when the prop arrives, so an
-  anchor created later in the same batch still works.
+- The ref is empty until the host element exists, so `trigger()` is `undefined` on the first read
+  and the anchor lands once the signal updates. Both backends resolve the anchor when the popover
+  presents, not when the prop arrives, so an anchor created later in the same batch still works.
 - Dropping `anchorRef` resets the anchor and the popover falls back to its tree parent. A popover
-  with no tree parent (rendered through `createPortal` into the off-window pool) then has nowhere to
+  with no tree parent (rendered through `Portal` into the off-window pool) then has nowhere to
   present, which is what `scripts/popover-anchor-drive.ts` asserts.
 
 Under the hood the prop crosses the wire as `anchor`, the target's node id; `anchorRef` is the
@@ -103,9 +102,9 @@ content that stays in the layout flow instead of floating above it like a `Popov
 row is a click target on macOS, matching GTK's expander.
 
 ```tsx
-const [open, setOpen] = useState(false);
+const [open, setOpen] = createSignal(false);
 
-<expander label="More options" expanded={open} onToggled={(e) => setOpen(e.checked)}>
+<expander label="More options" expanded={open()} onToggled={(e) => setOpen(e.checked)}>
   <box orientation="vertical" spacing={6} style={{ padding: 8 }}>
     <checkbox label="An option inside the expander" checked={/* ... */} onToggled={/* ... */} />
   </box>

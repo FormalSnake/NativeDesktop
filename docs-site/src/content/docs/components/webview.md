@@ -14,28 +14,29 @@ to both engines unless a difference is called out.
 ![The webview widget rendering a page inside the browser example on GNOME (GTK)](../../../assets/screens/gtk/browser.png)
 
 ```tsx
-import { render, sendCommand, useRef, useState } from "@nativedesktop/react";
-import type { NdNodeRef } from "@nativedesktop/react";
+import { render, sendCommand } from "@nativedesktop/solid";
+import type { NdNodeRef } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 function App() {
-  const page = useRef<NdNodeRef<"webview">>(null);
-  const [url, setUrl] = useState("https://example.com/");
-  const [title, setTitle] = useState("Browser");
+  let page: NdNodeRef<"webview"> | undefined;
+  const [url, setUrl] = createSignal("https://example.com/");
+  const [title, setTitle] = createSignal("Browser");
 
   return (
-    <window title={title} defaultWidth={960} defaultHeight={640}>
+    <window title={title()} defaultWidth={960} defaultHeight={640}>
       <box orientation="vertical" spacing={0}>
         <box orientation="horizontal" spacing={8} style={{ padding: 8 }}>
           <button
             label="←"
             cssClasses={["flat"]}
-            onClick={() => { if (page.current) sendCommand(page.current, "goBack"); }}
+            onClick={() => { if (page) sendCommand(page, "goBack"); }}
           />
         </box>
         <separator />
         <webview
           ref={page}
-          url={url}
+          url={url()}
           style={{ hexpand: true, vexpand: true }}
           onNavigate={(e) => setUrl(e.text)}
           onTitleChanged={(e) => setTitle(e.text || "Browser")}
@@ -45,7 +46,7 @@ function App() {
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 The full version of this example lives at `examples/browser/main.tsx`.
@@ -127,11 +128,11 @@ Set the `url` prop to load a page. History, load control, and page-level actions
 call `sendCommand`:
 
 ```tsx
-const page = useRef<NdNodeRef<"webview">>(null);
+let page: NdNodeRef<"webview"> | undefined;
 // …
-sendCommand(page.current, "goBack");
-sendCommand(page.current, "reload");
-sendCommand(page.current, "setZoom", 1.5);
+sendCommand(page, "goBack");
+sendCommand(page, "reload");
+sendCommand(page, "setZoom", 1.5);
 ```
 
 | Command             | Argument                | Effect                                                       |
@@ -162,18 +163,18 @@ sendCommand(page.current, "setZoom", 1.5);
 | `setContextMenuItems` | `{ items: ContextMenuItem[] }` | Replaces the items merged into the engine's context menu (see below). |
 
 `executeJavaScript` has no synchronous return path. Use the `executeJavaScript(node, code)` helper
-from `@nativedesktop/react` rather than the raw command: it generates the `id`, sends the command,
+from `@nativedesktop/solid` rather than the raw command: it generates the `id`, sends the command,
 and returns a `Promise<string>` that settles from the matching `javaScriptResult` event. Wire the
 widget's `onJavaScriptResult` prop straight to the paired `onJavaScriptResult` export so the
 promise has something to settle it:
 
 ```tsx
-import { executeJavaScript, onJavaScriptResult } from "@nativedesktop/react";
+import { executeJavaScript, onJavaScriptResult } from "@nativedesktop/solid";
 
-<webview ref={page} url={url} onJavaScriptResult={onJavaScriptResult} />;
+<webview ref={page} url={url()} onJavaScriptResult={onJavaScriptResult} />;
 // …later:
-const title = await executeJavaScript(page.current!, "document.title");
-const hidden = await executeJavaScript(page.current!, "window.secret", "my-extension");
+const title = await executeJavaScript(page!, "document.title");
+const hidden = await executeJavaScript(page!, "window.secret", "my-extension");
 ```
 
 `getCookies` and `saveSession` follow the same pattern with the `onCookiesResult` and
@@ -187,9 +188,9 @@ developer extras are on) and the app's items are appended to it after a separato
 per view with the `setContextMenuItems` helper; the host stores the tree until it is replaced.
 
 ```tsx
-import { setContextMenuItems } from "@nativedesktop/react";
+import { setContextMenuItems } from "@nativedesktop/solid";
 
-setContextMenuItems(page.current!, [
+setContextMenuItems(page!, [
   { id: "open-link", label: "Open Link in New Tab", contexts: ["link"] },
   { id: "save-image", label: "Save Image", contexts: ["image"] },
   { type: "separator" },
@@ -204,7 +205,7 @@ setContextMenuItems(page.current!, [
   },
 ]);
 
-<webview ref={page} url={url} onContextMenuItemClicked={(e) => run(e.data as ContextMenuItemClick)} />;
+<webview ref={page} url={url()} onContextMenuItemClicked={(e) => run(e.data as ContextMenuItemClick)} />;
 ```
 
 | Field | Type | Meaning |
@@ -246,7 +247,7 @@ and two extensions cannot see each other. `executeJavaScript` takes the same wor
 host can read back what an injected script stored.
 
 ```tsx
-sendCommand(page.current!, "addUserScript", {
+sendCommand(page!, "addUserScript", {
   id: "dark-reader",
   source: "window.__theme = 'dark'",
   injectionTime: "start",
@@ -256,7 +257,7 @@ sendCommand(page.current!, "addUserScript", {
 ```
 
 `allowList`/`blockList` are URL match patterns. WebKitGTK applies them natively; WKWebView has no
-such API, so the framework compiles the patterns into a guard around the script source — the same
+such API, so the framework compiles the patterns into a guard around the script source, the same
 observable behaviour, expressed where WebKit allows it.
 
 Scripts are a keyed registry: re-adding an `id` replaces it, `removeUserScript` drops one,
@@ -269,12 +270,12 @@ WKUserContentController can only clear everything, so the AppKit side replays th
 receives `scriptMessage` with the decoded value:
 
 ```tsx
-sendCommand(page.current!, "registerScriptMessage", { name: "bridge", world: "dark-reader" });
+sendCommand(page!, "registerScriptMessage", { name: "bridge", world: "dark-reader" });
 // page side (in that world): window.webkit.messageHandlers.bridge.postMessage({ ok: true })
 <webview onScriptMessage={(e) => console.log(e.data)} />
 ```
 
-`body` is the posted value itself, already decoded — an object arrives as an object, not a string.
+`body` is the posted value itself, already decoded: an object arrives as an object, not a string.
 
 A channel name is per view, not per world. WebKitGTK routes `script-message-received` by the name
 and refuses a name already registered on that view whatever world is asked for; WKUserContentController
@@ -298,14 +299,14 @@ from config; `registerScheme` then installs the handler behind it. The call itse
 both engines.
 
 ```tsx
-import { webviewEngine } from "@nativedesktop/react";
+import { webviewEngine } from "@nativedesktop/solid";
 
 await webviewEngine.registerScheme("crx");
 // then, on the webview that made the request:
 <webview
   onSchemeRequest={(e) => {
     const { id, url } = e.data as { id: string; url: string };
-    sendCommand(page.current!, "respondScheme", {
+    sendCommand(page!, "respondScheme", {
       id,
       base64: Buffer.from(bytesFor(url)).toString("base64"),
       mime: "text/html",

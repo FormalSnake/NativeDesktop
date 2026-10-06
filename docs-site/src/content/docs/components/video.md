@@ -8,9 +8,9 @@ and `AVPlayer` on macOS, `GtkVideo` on GTK. No engine is bundled, same as `<webv
 [Audio API](/native-platform/system-capabilities/#audio).
 
 ```tsx
-const [src, setSrc] = useState("/Users/me/clip.mp4");
+const [src, setSrc] = createSignal("/Users/me/clip.mp4");
 
-<video src={src} controls loop style={{ vexpand: true }} />;
+<video src={src()} controls loop style={{ vexpand: true }} />;
 ```
 
 ## Props

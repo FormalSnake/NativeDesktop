@@ -3,7 +3,7 @@ title: Data Views
 description: "Table, TreeView, and SourceTree render multi-column and hierarchical data. The native widget never reorders or re-nests your data."
 ---
 
-`<table>`, `<treeview>`, and `<sourcetree>` take a plain data prop you own in React state. The
+`<table>`, `<treeview>`, and `<sourcetree>` take a plain data prop you own in app state (a signal or a store). The
 native widget renders exactly what you give it and fires an event when the user wants something to
 change. It never reorders or re-nests the data itself.
 
@@ -23,7 +23,7 @@ and Mail list chrome.
 ![A sorted Table with three columns on GNOME (GTK)](../../../assets/screens/gtk/parity-table.png)
 
 ```tsx
-import type { TableColumn, TableRow } from "@nativedesktop/react";
+import type { TableColumn, TableRow } from "@nativedesktop/solid";
 
 const columns: TableColumn[] = [
   { id: "name", title: "Name" },
@@ -87,7 +87,7 @@ are a flat array keyed by `id`/`parentId`, not nested objects. Root nodes omit `
 the same inset style as `<table>` on macOS.
 
 ```tsx
-import type { TreeNode } from "@nativedesktop/react";
+import type { TreeNode } from "@nativedesktop/solid";
 
 const nodeMeta: Omit<TreeNode, "expanded">[] = [
   { id: "fruits", title: "Fruits", hasChildren: true },
@@ -95,11 +95,11 @@ const nodeMeta: Omit<TreeNode, "expanded">[] = [
   { id: "banana", parentId: "fruits", title: "Banana", hasChildren: false },
 ];
 
-const [expanded, setExpanded] = useState<Set<string>>(new Set(["fruits"]));
-const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.id) }));
+const [expanded, setExpanded] = createSignal<Set<string>>(new Set(["fruits"]));
+const nodes = (): TreeNode[] => nodeMeta.map((n) => ({ ...n, expanded: expanded().has(n.id) }));
 
 <treeview
-  nodes={nodes}
+  nodes={nodes()}
   indentationPerLevel={16}
   onSelectionChanged={(e) => setSelected((e.data as { nodeId: string | null }).nodeId)}
   onNodeExpanded={(e) => {
@@ -127,7 +127,7 @@ const nodes: TreeNode[] = nodeMeta.map((n) => ({ ...n, expanded: expanded.has(n.
 | `nodeCollapsed` | `onNodeCollapsed` | `{ data: { nodeId } }` |
 
 Expansion is controlled state, not native state. Track a `Set<string>` of expanded ids as above and
-feed it back into every node's `expanded` field, otherwise an unrelated re-render can collapse a
+feed it back into every node's `expanded` field, otherwise an unrelated update can collapse a
 branch the user opened.
 
 ## SourceTree (`<sourcetree>`)
@@ -141,7 +141,7 @@ Pick between the three sidebar-ish widgets: `<sourcelist>` for a flat index-addr
 structure.
 
 ```tsx
-import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/react";
+import type { SourceTreeAction, SourceTreeNode } from "@nativedesktop/solid";
 
 const actions: SourceTreeAction[] = [
   { id: "new-run", iconName: "list-add-symbolic", label: "New Run" },
