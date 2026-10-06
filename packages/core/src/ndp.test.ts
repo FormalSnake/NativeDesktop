@@ -28,10 +28,17 @@ function decodeFrames(bytes: Uint8Array): string[] {
 // Ndp's close() handler calls process.exit(0) — correct for the real child
 // process, but fatal to the test runner if a mock server closes a client
 // socket mid-suite. Keep every server (and thus every client connection)
-// alive until the whole file is done, torn down once via afterAll.
+// alive until the whole file is done, torn down once via afterAll. The
+// teardown closes those clients too, and in a multi-file `bun test` that
+// exit would end the run before the remaining files, so it is held off
+// until their close handlers have fired.
 const servers: ReturnType<typeof Bun.listen>[] = [];
-afterAll(() => {
+afterAll(async () => {
+  const exit = process.exit;
+  process.exit = (() => {}) as typeof process.exit;
   for (const s of servers) s.stop(true);
+  await new Promise((r) => setTimeout(r, 50));
+  process.exit = exit;
 });
 
 test("golden frame: u32 LE length prefix + json byte layout", () => {
