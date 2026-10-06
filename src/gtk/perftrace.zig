@@ -2,9 +2,11 @@
 //! `ND_PERF job us=<n> at=<t>` for each job the core hands the UI thread (a
 //! commit apply, mostly), and `ND_PERF frame layout_us=<n> paint_us=<n> at=<t>`
 //! for every frame of each app window that laid out or painted (the rest are
-//! counted in `ND_PERF empty_frames`): layout covers style validation and
-//! size allocation, paint the snapshot and render. `at` is wall-clock
-//! microseconds, as on the Bun side's `ND_PERF` lines.
+//! counted in `ND_PERF empty_frames`). The hooks are connected after GTK's own
+//! frame-clock handlers, so they run once GTK's work for that phase is done:
+//! layout is the update phase (tick callbacks), style validation, size
+//! allocation and the CEF views' bounds sync, paint the snapshot and render.
+//! `at` is wall-clock microseconds, as on the Bun side's `ND_PERF` lines.
 const std = @import("std");
 const glib = @import("glib");
 const gobject = @import("gobject");
@@ -75,7 +77,8 @@ fn onAfter(_: *gdk.FrameClock, p: *Phases) callconv(.c) void {
         if (empty_frames % 100 == 0) std.debug.print("ND_PERF empty_frames n={d} at={d}\n", .{ empty_frames, wall() });
         return;
     }
-    const layout = if (p.layout >= p.begin and p.paint >= p.layout) p.paint - p.layout else 0;
-    const paint = if (p.paint >= p.begin) end - p.paint else 0;
+    const laid_out = p.layout >= p.begin;
+    const layout = if (laid_out) p.layout - p.begin else 0;
+    const paint = if (p.paint >= p.begin) p.paint - (if (laid_out) p.layout else p.begin) else 0;
     std.debug.print("ND_PERF frame layout_us={d} paint_us={d} total_us={d} at={d}\n", .{ layout, paint, end - p.begin, wall() });
 }
