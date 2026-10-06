@@ -44,6 +44,9 @@ nd_conf="${XDG_RUNTIME_DIR:-/tmp}/nd-headless-fonts.conf"
   # answers whatever sorts first, which is usually the mono face.
   echo '  <alias><family>Cantarell</family><prefer><family>Adwaita Sans</family></prefer></alias>'
   echo '  <match target="pattern"><edit name="family" mode="append_last"><string>Adwaita Sans</string></edit></match>'
+  # Colour emoji fonts are bitmap strikes; this distro rule scales a strike to
+  # the requested size, or a label draws the emoji at the strike's own size.
+  echo '  <include ignore_missing="yes">/etc/fonts/conf.d/10-scale-bitmap-fonts.conf</include>'
   echo '  <match target="font"><edit name="antialias" mode="assign"><bool>true</bool></edit></match>'
   echo '  <match target="font"><edit name="hinting" mode="assign"><bool>true</bool></edit></match>'
   echo '</fontconfig>'
