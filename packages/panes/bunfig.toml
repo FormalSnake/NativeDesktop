@@ -1,0 +1,4 @@
+# `bun test` from this directory: component tests are Solid JSX, and solid-js
+# must resolve to its client build (see @nativedesktop/solid's register.ts).
+[test]
+preload = ["@nativedesktop/solid/register"]

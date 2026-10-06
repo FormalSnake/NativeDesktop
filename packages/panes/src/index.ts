@@ -15,8 +15,8 @@ export {
   updatePane,
 } from "./model.ts";
 export type { PaneLeaf, PaneModel, PaneNode, PaneSplit, SplitOrientation } from "./model.ts";
-export { PaneTree, usePaneTree } from "./PaneTree.tsx";
-export type { PaneTreeProps, UsePaneTree } from "./PaneTree.tsx";
+export { PaneTree, createPaneTree } from "./PaneTree.tsx";
+export type { PaneLeafContext, PaneTreeProps, PaneTreeState } from "./PaneTree.tsx";
 export {
   activateTab,
   activeDockTab,
@@ -54,8 +54,8 @@ export type {
   DockTabLocation,
   DockZone,
 } from "./dock.ts";
-export { DockView, useDock } from "./DockView.tsx";
-export type { DockDragProps, DockPanelContext, DockTabContext, DockViewProps, UseDock } from "./DockView.tsx";
+export { DockView, createDock } from "./DockView.tsx";
+export type { DockDragProps, DockPanelContext, DockState, DockTabContext, DockViewProps } from "./DockView.tsx";
 export {
   applyTileDrop,
   deserializeTiles,
@@ -75,5 +75,5 @@ export {
   updateTile,
 } from "./tiles.ts";
 export type { Tile, TileCell, TileModel, TilePlacement, TileSize } from "./tiles.ts";
-export { TilesView, useTiles } from "./TilesView.tsx";
-export type { TileContext, TilesViewProps, UseTiles } from "./TilesView.tsx";
+export { TilesView, createTiles } from "./TilesView.tsx";
+export type { TileContext, TilesState, TilesViewProps } from "./TilesView.tsx";

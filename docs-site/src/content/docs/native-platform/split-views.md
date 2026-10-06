@@ -79,7 +79,7 @@ floors win over the fraction whenever the window is narrow enough that the fract
 A small `listWidth` such as `0.15` will not render a genuinely narrow list column at typical window
 widths. Measure against the 240pt floor before relying on an exact initial pixel width.
 
-## Tiling panes: `PaneTree` / `usePaneTree`
+## Tiling panes: `PaneTree` / `createPaneTree`
 
 `<splitview>` is the app-frame shape. For user-driven tiling (terminal splits, editor panes,
 anything the user splits and closes at will), use `@nativedesktop/panes` (`packages/panes/`): a pure
@@ -87,19 +87,23 @@ model plus a component over the existing `<paned>` widget. No new widget, no sch
 Each split renders as a real native `GtkPaned` or `NSSplitView` with a draggable divider.
 
 ```tsx
-import { PaneTree, seedPanes, usePaneTree } from "@nativedesktop/panes";
+import { Show } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
+import { PaneTree, createPaneTree, seedPanes } from "@nativedesktop/panes";
 
-function Editor(): React.ReactNode {
-  const panes = usePaneTree(seedPanes([{ file: "notes.md" }]));
+function Editor(): JSX.Element {
+  const panes = createPaneTree(seedPanes([{ file: "notes.md" }]));
   return (
     <PaneTree
-      model={panes.model}
+      model={panes.model()}
       onChange={panes.setModel}
-      renderLeaf={({ id, data, focused, solo }) => (
+      renderLeaf={(leaf) => (
         <box orientation="vertical">
-          <label text={`${data.file}${focused ? " (focused)" : ""}`} />
-          <button label="Split" onClick={() => panes.split(id, "horizontal", { file: "new.md" })} />
-          {!solo && <button label="Close" onClick={() => panes.close(id)} />}
+          <label text={`${leaf.data.file}${leaf.focused ? " (focused)" : ""}`} />
+          <button label="Split" onClick={() => panes.split(leaf.id, "horizontal", { file: "new.md" })} />
+          <Show when={!leaf.solo}>
+            <button label="Close" onClick={() => panes.close(leaf.id)} />
+          </Show>
         </box>
       )}
     />
@@ -116,13 +120,16 @@ echo after a programmatic ratio write from looping a render and persist cycle. R
 bounds are dropped as mid-layout noise, since a settled drag cannot reach them past the backends'
 native minimum pane extents.
 
-`usePaneTree` holds the model in state and applies every op against a ref rather than the
-render-time model, so an `await`-resuming split cannot revert a divider drag that happened in
-between. `latest()` exposes that ref for persistence. `renderLeaf` owns all per-pane chrome (focus
-ring, toolbar); `PaneTree` supplies `focused` and `solo` plus one expanding `<box>` wrapper per
-leaf. Splits are keyed on the split node's id because `orientation` is create-only on both backends,
-so a structural collapse landing a different split at the same position remounts instead of
-mutating.
+`createPaneTree` holds the model in a signal (`panes.model()`) and applies every op against the
+latest model rather than the committed one, so two ops in one tick, or a split resuming after an
+`await`, cannot revert each other. `latest()` reads that model for persistence; it already holds a
+write Solid has not flushed yet. `renderLeaf` runs once per leaf mount and owns all per-pane chrome
+(focus ring, toolbar); `PaneTree` supplies one expanding `<box>` wrapper per leaf and a context
+whose `data`, `focused` and `solo` are reactive getters, so read them where they are used rather
+than destructuring them. Leaves and splits are keyed on their node id, so a model op updates the
+live widgets in place, and because `orientation` is create-only on both backends a structural
+collapse landing a different split at the same position remounts instead of mutating.
+`createDock` and `createTiles` follow the same shape for `DockView` and `TilesView`.
 
 Persist the model with [`createStore`](/core-concepts/app-data-storage/): `store.set(panes.latest())`
 on change, `flush()` when `samePaneShape` says the change was structural. `examples/panes/` is the

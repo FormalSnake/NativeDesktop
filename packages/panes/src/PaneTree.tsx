@@ -1,13 +1,5 @@
-/** @jsxImportSource @nativedesktop/react */
-// The pragma is load-bearing: this is a raw-src package, and Bun transpiles
-// node_modules TSX with the ROOT tsconfig's JSX settings, so the per-file
-// pragma is what guarantees the ND jsx-runtime regardless of the consumer.
-//
-// Hooks come from @nativedesktop/react, never react directly (dev-react.ts's
-// pinned-dispatcher contract for `nd dev` hot re-eval).
-
-import { useRef, useState } from "@nativedesktop/react";
-import type { ReactNode } from "react";
+import { createSignal, type Accessor } from "solid-js";
+import type { JSX } from "@nativedesktop/solid";
 import {
   closePane,
   focusNeighbor,
@@ -17,86 +9,96 @@ import {
   splitPane,
   updatePane,
 } from "./model.ts";
-import type { PaneModel, PaneNode, SplitOrientation } from "./model.ts";
+import type { PaneLeaf, PaneModel, PaneNode, PaneSplit, SplitOrientation } from "./model.ts";
+import { KeyedNode, isSettledRatio } from "./keyed.tsx";
+
+/** What renderLeaf receives. Every field but `id` is a reactive getter, the
+ * way component props are: read it where it is used, never destructure it in
+ * the parameter list, or the leaf stops following the model. */
+export interface PaneLeafContext<T> {
+  readonly id: string;
+  readonly data: T;
+  readonly focused: boolean;
+  readonly solo: boolean;
+}
 
 export interface PaneTreeProps<T> {
   model: PaneModel<T>;
   onChange: (next: PaneModel<T>) => void;
   /** Owns all per-pane chrome (focus ring, toolbar); PaneTree supplies only
-   * the flags and one expanding <box> wrapper per leaf. */
-  renderLeaf: (ctx: { id: string; data: T; focused: boolean; solo: boolean }) => ReactNode;
+   * the flags and one expanding <box> wrapper per leaf. Runs once per leaf
+   * mount, not once per model change. */
+  renderLeaf: (ctx: PaneLeafContext<T>) => JSX.Element;
   testID?: string;
 }
 
-export function PaneTree<T>(props: PaneTreeProps<T>): ReactNode {
-  // Latest-ref: the native positionChanged echo lands via a handler captured
-  // at an earlier render; applying it against that render's model would
-  // revert everything committed since (a concurrent split, another divider's
-  // drag). Both refs are refreshed every render, so handlers always see the
-  // current model and onChange.
-  const modelRef = useRef(props.model);
-  modelRef.current = props.model;
-  const onChangeRef = useRef(props.onChange);
-  onChangeRef.current = props.onChange;
+export function PaneTree<T>(props: PaneTreeProps<T>): JSX.Element {
+  const solo = (): boolean => props.model.root?.kind === "leaf";
+  const id = (suffix: string): string | undefined => (props.testID ? `${props.testID}-${suffix}` : undefined);
 
-  const { model, renderLeaf, testID } = props;
-  if (!model.root) return null;
-  const solo = model.root.kind === "leaf";
-
-  function renderNode(node: PaneNode<T>): ReactNode {
-    if (node.kind === "leaf") {
-      return (
-        <box
-          key={node.id}
-          style={{ hexpand: true, vexpand: true }}
-          testID={testID ? `${testID}-leaf-${node.id}` : undefined}
-        >
-          {renderLeaf({ id: node.id, data: node.data, focused: node.id === model.focusedId, solo })}
-        </box>
-      );
-    }
+  function renderLeaf(leaf: Accessor<PaneLeaf<T>>): JSX.Element {
+    const leafId = leaf().id;
+    const ctx: PaneLeafContext<T> = {
+      id: leafId,
+      get data() {
+        return leaf().data;
+      },
+      get focused() {
+        return leafId === props.model.focusedId;
+      },
+      get solo() {
+        return solo();
+      },
+    };
     return (
-      // Keyed on the split node id: orientation is create-only on both
-      // backends, so a structural collapse landing a DIFFERENT split at this
-      // position must remount rather than mutate.
+      <box style={{ hexpand: true, vexpand: true }} testID={id(`leaf-${leafId}`)}>
+        {props.renderLeaf(ctx)}
+      </box>
+    );
+  }
+
+  function renderSplit(split: Accessor<PaneSplit<T>>): JSX.Element {
+    const splitId = split().id;
+    return (
       <paned
-        key={node.id}
-        orientation={node.orientation}
-        position={node.ratio}
-        testID={testID ? `${testID}-split-${node.id}` : undefined}
+        orientation={split().orientation}
+        position={split().ratio}
+        testID={id(`split-${splitId}`)}
         onPositionChanged={(e) => {
-          // Exact 0/1 (or non-finite) is dropped: structural commits racing
-          // the backend's debounced echo report a zero-size mid-layout
-          // artifact at exactly those values, and feeding one to the model
-          // would collapse the pane on the next render. Anything inside
-          // (0, 1) is a settled drag and flows through — AppKit pins a
-          // 120pt minimum pane extent, but GTK only floors at the CHILD's
-          // own minimum size, so a min-size-zero child can rest out past
-          // the clamp bounds; setPaneRatio's clamp then updates the model
-          // and the position prop write snaps the native divider back to
-          // the bound instead of desyncing the two.
-          if (!Number.isFinite(e.position) || e.position <= 0 || e.position >= 1) return;
-          const current = modelRef.current;
+          if (!isSettledRatio(e.position)) return;
+          // Handlers read props at event time, so the echo applies against the
+          // latest model, never the one current when this paned mounted.
           // setPaneRatio returns the same reference when the clamped ratio is
           // unchanged; skipping onChange there is what stops the programmatic
           // write -> echo -> render -> write loop.
-          const next = setPaneRatio(current, node.id, e.position);
-          if (next !== current) onChangeRef.current(next);
+          const current = props.model;
+          const next = setPaneRatio(current, splitId, e.position);
+          if (next !== current) props.onChange(next);
         }}
       >
-        {renderNode(node.children[0])}
-        {renderNode(node.children[1])}
+        {renderNode(() => split().children[0])}
+        {renderNode(() => split().children[1])}
       </paned>
     );
   }
 
-  return renderNode(model.root);
+  function renderNode(node: () => PaneNode<T> | undefined): JSX.Element {
+    return (
+      <KeyedNode node={node()}>
+        {(n) =>
+          n().kind === "leaf" ? renderLeaf(n as Accessor<PaneLeaf<T>>) : renderSplit(n as Accessor<PaneSplit<T>>)
+        }
+      </KeyedNode>
+    );
+  }
+
+  return renderNode(() => props.model.root);
 }
 
-export interface UsePaneTree<T> {
-  model: PaneModel<T>;
-  /** The latest-ref invariant, built in: reads the model as of the last op,
-   * not the last render. */
+export interface PaneTreeState<T> {
+  model: Accessor<PaneModel<T>>;
+  /** The model as of the last op, not the last flush: a write is staged until
+   * Solid flushes, and `model()` reads the committed value until then. */
   latest: () => PaneModel<T>;
   setModel(m: PaneModel<T>): void;
   split(paneId: string, o: SplitOrientation, data: T): void;
@@ -108,29 +110,30 @@ export interface UsePaneTree<T> {
   update(paneId: string, fn: (d: T) => T): void;
 }
 
-/** Holds the model in state and applies every op against a ref, never the
- * render-time model, so an await-resuming op can't revert a concurrent
- * divider drag. */
-export function usePaneTree<T>(initial: PaneModel<T> | (() => PaneModel<T>)): UsePaneTree<T> {
-  const [model, setState] = useState(initial);
-  const ref = useRef(model);
+/** Holds the model in a signal and applies every op against the latest
+ * model, never the committed one, so two ops in one tick (or an op after an
+ * await) compose instead of the second reverting the first. An op that
+ * changes nothing returns the same reference and writes nothing. */
+export function createPaneTree<T>(initial: PaneModel<T> | (() => PaneModel<T>)): PaneTreeState<T> {
+  let current = typeof initial === "function" ? initial() : initial;
+  const [model, setState] = createSignal(current);
 
   const apply = (next: PaneModel<T>): void => {
-    if (next === ref.current) return;
-    ref.current = next;
-    setState(next);
+    if (next === current) return;
+    current = next;
+    setState(() => next);
   };
 
   return {
     model,
-    latest: () => ref.current,
+    latest: () => current,
     setModel: apply,
-    split: (paneId, o, data) => apply(splitPane(ref.current, paneId, o, data)),
-    close: (paneId) => apply(closePane(ref.current, paneId)),
-    focus: (paneId) => apply(focusPane(ref.current, paneId)),
-    focusAt: (index) => apply(focusPaneAt(ref.current, index)),
-    focusNeighbor: (dir) => apply(focusNeighbor(ref.current, dir)),
-    setRatio: (splitId, ratio) => apply(setPaneRatio(ref.current, splitId, ratio)),
-    update: (paneId, fn) => apply(updatePane(ref.current, paneId, fn)),
+    split: (paneId, o, data) => apply(splitPane(current, paneId, o, data)),
+    close: (paneId) => apply(closePane(current, paneId)),
+    focus: (paneId) => apply(focusPane(current, paneId)),
+    focusAt: (index) => apply(focusPaneAt(current, index)),
+    focusNeighbor: (dir) => apply(focusNeighbor(current, dir)),
+    setRatio: (splitId, ratio) => apply(setPaneRatio(current, splitId, ratio)),
+    update: (paneId, fn) => apply(updatePane(current, paneId, fn)),
   };
 }

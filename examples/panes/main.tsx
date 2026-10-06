@@ -4,8 +4,9 @@
 // changes flush() immediately, ratio drags ride the debounce (plus the
 // store's exit hook when the host SIGTERMs the child).
 
-import { createStore, render } from "@nativedesktop/react";
-import { PaneTree, migratePanes, paneLeaves, samePaneShape, seedPanes, usePaneTree } from "@nativedesktop/panes";
+import { createStore, render } from "@nativedesktop/solid";
+import { PaneTree, createPaneTree, migratePanes, paneLeaves, samePaneShape, seedPanes } from "@nativedesktop/panes";
+import type { JSX } from "@nativedesktop/solid";
 import type { PaneModel } from "@nativedesktop/panes";
 
 interface PaneData {
@@ -26,8 +27,8 @@ const store = createStore<PaneModel<PaneData>>({
 });
 const initial = await store.load();
 
-function App(): React.ReactNode {
-  const panes = usePaneTree<PaneData>(initial);
+function App(): JSX.Element {
+  const panes = createPaneTree<PaneData>(initial);
 
   const persist = (): void => {
     const next = panes.latest();
@@ -37,8 +38,11 @@ function App(): React.ReactNode {
   };
 
   const model = panes.model;
-  const leaves = paneLeaves(model);
-  const rootSplit = model.root?.kind === "split" ? model.root : undefined;
+  const leaves = (): number => paneLeaves(model()).length;
+  const rootSplit = () => {
+    const root = model().root;
+    return root?.kind === "split" ? root : undefined;
+  };
 
   return (
     <window title="ND Panes" defaultWidth={1000} defaultHeight={640}>
@@ -46,60 +50,64 @@ function App(): React.ReactNode {
         <box orientation="horizontal" spacing={6}>
           <label
             testID="panes-status"
-            text={`panes:${leaves.length} ratio:${(rootSplit?.ratio ?? 0.5).toFixed(2)} focus:${model.focusedId}`}
+            text={`panes:${leaves()} ratio:${(rootSplit()?.ratio ?? 0.5).toFixed(2)} focus:${model().focusedId}`}
           />
           <button
             testID="ratio-30"
             label="Root ratio 0.3"
             onClick={() => {
-              if (!rootSplit) return;
-              panes.setRatio(rootSplit.id, 0.3);
+              const split = rootSplit();
+              if (!split) return;
+              panes.setRatio(split.id, 0.3);
               persist();
             }}
           />
         </box>
         <PaneTree
-          model={model}
+          model={model()}
           onChange={(next) => {
             panes.setModel(next);
             persist();
           }}
           testID="panes"
-          renderLeaf={({ id, data, focused }) => (
-            <box orientation="vertical" spacing={4}>
-              <label testID={`pane-label-${id}`} text={`pane:${id}${focused ? " (focused)" : ""} ${data.label}`} />
-              <box orientation="horizontal" spacing={4}>
-                <button
-                  testID={`split-h-${id}`}
-                  label="Split H"
-                  onClick={() => {
-                    panes.split(id, "horizontal", { label: "split" });
-                    persist();
-                  }}
-                />
-                <button
-                  testID={`split-v-${id}`}
-                  label="Split V"
-                  onClick={() => {
-                    panes.split(id, "vertical", { label: "split" });
-                    persist();
-                  }}
-                />
-                <button
-                  testID={`close-${id}`}
-                  label="Close"
-                  onClick={() => {
-                    panes.close(id);
-                    persist();
-                  }}
-                />
+          renderLeaf={(leaf) => {
+            const id = leaf.id;
+            return (
+              <box orientation="vertical" spacing={4}>
+                <label testID={`pane-label-${id}`} text={`pane:${id}${leaf.focused ? " (focused)" : ""} ${leaf.data.label}`} />
+                <box orientation="horizontal" spacing={4}>
+                  <button
+                    testID={`split-h-${id}`}
+                    label="Split H"
+                    onClick={() => {
+                      panes.split(id, "horizontal", { label: "split" });
+                      persist();
+                    }}
+                  />
+                  <button
+                    testID={`split-v-${id}`}
+                    label="Split V"
+                    onClick={() => {
+                      panes.split(id, "vertical", { label: "split" });
+                      persist();
+                    }}
+                  />
+                  <button
+                    testID={`close-${id}`}
+                    label="Close"
+                    onClick={() => {
+                      panes.close(id);
+                      persist();
+                    }}
+                  />
+                </box>
               </box>
-            </box>
-          )}
+            );
+          }}
         />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
