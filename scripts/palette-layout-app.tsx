@@ -2,7 +2,9 @@
 // fills one. Long titles and URLs, a favicon, symbol icons, a row with no icon,
 // right-aligned hints, and inline completion on the first row. The window
 // width comes from PALETTE_WIDTH so the drive can run it normal and narrow.
-import { render, useState } from "@nativedesktop/react";
+/** @jsxImportSource @nativedesktop/solid */
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 const FAVICON =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAMUlEQVR4nGNgoDZ4FqXxHx+mSDNeQ4jVjNUQUjVjGDJqwLAwgOKERJWkTKwheDWTAwB+c51E2IyQHgAAAABJRU5ErkJggg==";
@@ -43,16 +45,16 @@ function rank(query: string): Item[] {
   return rows;
 }
 
-function App(): React.ReactNode {
-  const [open, setOpen] = useState(true);
-  const [seed, setSeed] = useState("");
-  const [query, setQuery] = useState("");
-  const [last, setLast] = useState("(none)");
+function App() {
+  const [open, setOpen] = createSignal(true);
+  const [seed, setSeed] = createSignal("");
+  const [query, setQuery] = createSignal("");
+  const [last, setLast] = createSignal("(none)");
   return (
     <window title="Palette layout" defaultWidth={Number(process.env.PALETTE_WIDTH ?? 1280)} defaultHeight={800}>
       <box orientation="vertical" spacing={8}>
-        <label testID="query" text={`Query: ${query}`} />
-        <label testID="last" text={`Last: ${last}`} />
+        <label testID="query" text={`Query: ${query()}`} />
+        <label testID="last" text={`Last: ${last()}`} />
         <button
           testID="reopen"
           label="Open"
@@ -65,10 +67,10 @@ function App(): React.ReactNode {
         <button testID="reopen-empty" label="Open empty" onClick={() => setOpen(true)} />
         <commandpalette
           testID="palette"
-          open={open}
+          open={open()}
           placeholder="Search or enter address"
-          query={seed}
-          items={rank(query)}
+          query={seed()}
+          items={rank(query())}
           onQueryChanged={(e) => setQuery(e.text)}
           onActivate={(e) => {
             setLast(`activate ${e.text}`);
@@ -94,4 +96,4 @@ function App(): React.ReactNode {
   );
 }
 
-render(<App />);
+await render(() => <App />);

@@ -17,7 +17,7 @@ trap cleanup EXIT
 cef_gate_lock
 LOG="${ND_ADBLOCK_LOG:-$RUN_DIR/host.log}"
 
-NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE="${ND_CEF_STYLE:-chrome}" ND_WEBVIEW_TRACE=1 \
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/adblock-probe/main.tsx)" NATIVE_AUTOMATION=1 ND_WEBVIEW_ENGINE=chromium ND_CEF_STYLE="${ND_CEF_STYLE:-chrome}" ND_WEBVIEW_TRACE=1 \
   ND_CEF_CACHE="${ND_CEF_CACHE:-$RUN_DIR/cef}" ND_SCRIPT=examples/adblock-probe/main.tsx "$HOST" >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 600); do

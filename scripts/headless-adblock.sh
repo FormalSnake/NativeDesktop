@@ -39,7 +39,7 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 
-ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/adblock-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/adblock-probe/main.tsx)" ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/adblock-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 for _ in $(seq 1 900); do
   grep -q "ND_ADBLOCK_PROBE_DONE" "$LOG" && break

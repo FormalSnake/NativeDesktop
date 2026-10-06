@@ -7,6 +7,7 @@ export WAYLAND_DISPLAY=nd-headless-errors
 export GSK_RENDERER=cairo GDK_BACKEND=wayland
 export NATIVE_AUTOMATION=1 ND_DEV=1
 export ND_SCRIPT="$(pwd)/examples/errors/main.tsx"
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!

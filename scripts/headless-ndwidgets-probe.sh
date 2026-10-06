@@ -20,7 +20,7 @@ for _ in $(seq 1 50); do
 done
 
 LOG=$(mktemp)
-ND_SCRIPT=examples/ndwidgets-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/ndwidgets-probe/main.tsx)" ND_SCRIPT=examples/ndwidgets-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 for _ in $(seq 1 120); do

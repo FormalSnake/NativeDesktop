@@ -15,6 +15,7 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { PaletteLayout } from "@nativedesktop/core/rpc";
+import { SOLID_PRELOAD, withPreload } from "@nativedesktop/host";
 import { type AppHandle, launchApp } from "../packages/test/src/index.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -153,7 +154,8 @@ for (const width of WIDTHS) {
     entry: "scripts/palette-layout-app.tsx",
     cwd: ROOT,
     hostBinary: process.env.ND_HOST_BINARY,
-    env: { PALETTE_WIDTH: String(width), ND_AUTOMATION_CAPTURE: MAC ? "region" : undefined },
+    // The fixture sits outside any Solid package, so the register preload is passed by hand.
+    env: { PALETTE_WIDTH: String(width), ND_AUTOMATION_CAPTURE: MAC ? "region" : undefined, BUN_OPTIONS: withPreload(process.env.BUN_OPTIONS, SOLID_PRELOAD) },
     logPath: `${OUT}/host-${width}.log`,
   });
   const shot = async (name: string) => {
