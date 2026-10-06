@@ -4459,7 +4459,7 @@ fn handOutside(url: []u8, user_gesture: bool) void {
         return;
     };
     alloc.free(url);
-    _ = glib.idleAdd(&launchOutside, owned.ptr);
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &launchOutside, owned.ptr, null);
 }
 
 fn launchOutside(data: ?*anyopaque) callconv(.c) c_int {
@@ -5173,7 +5173,7 @@ fn onAfterCreated(self: [*c]c.cef_life_span_handler_t, browser: [*c]c.cef_browse
 /// reference of their own; releasing ours from here, on the CEF UI thread,
 /// could free the host between that read and that reference.
 fn releaseHostOnGtk(raw: usize) void {
-    _ = glib.idleAdd(&releaseHostIdle, @ptrFromInt(raw));
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &releaseHostIdle, @ptrFromInt(raw), null);
 }
 
 fn releaseHostIdle(data: ?*anyopaque) callconv(.c) c_int {
@@ -7628,7 +7628,7 @@ fn onTriggered(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
 fn finishTrigger(t: *Trigger, error_text: ?[]const u8) void {
     if (error_text) |e| t.error_text = std.fmt.allocPrint(alloc, "triggerExtensionAction: {s}", .{e}) catch null;
     if (error_text != null and t.error_text == null) t.error_text = alloc.dupe(u8, "triggerExtensionAction failed") catch null;
-    _ = glib.idleAdd(&deliverTrigger, t);
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliverTrigger, t, null);
 }
 
 fn deliverTrigger(data: ?*anyopaque) callconv(.c) c_int {
@@ -8027,7 +8027,7 @@ fn onRemovalSent(ctx: *anyopaque, ok: bool, result: std.json.Value) void {
 fn finishRemoval(r: *Removal, error_text: ?[]const u8) void {
     if (error_text) |e| r.error_text = std.fmt.allocPrint(alloc, "uninstallExtension: {s}", .{e}) catch null;
     if (error_text != null and r.error_text == null) r.error_text = alloc.dupe(u8, "uninstallExtension failed") catch null;
-    _ = glib.idleAdd(&deliverRemoval, r);
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &deliverRemoval, r, null);
 }
 
 fn deliverRemoval(data: ?*anyopaque) callconv(.c) c_int {
@@ -8966,7 +8966,7 @@ fn pageFileDialog(
     }
     ref.addRefParam(callback);
     tr("pageFileDialog node={d} mode={d}", .{ view.node_id, mode });
-    _ = glib.idleAdd(&showPageFileDialog, job);
+    _ = glib.idleAddFull(glib.PRIORITY_DEFAULT, &showPageFileDialog, job, null);
     return 1;
 }
 
