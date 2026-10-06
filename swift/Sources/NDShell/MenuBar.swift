@@ -368,14 +368,20 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         return it
     }
 
+    /// The name the menu bar shows in bold, which the HIG repeats in About,
+    /// Hide and Quit.
+    private var appName: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? ProcessInfo.processInfo.processName
+    }
+
     private func addAppDefaults(_ m: NSMenu) {
-        m.addItem(item("About", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", [], target: NSApp))
+        m.addItem(item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", [], target: NSApp))
         m.addItem(.separator())
-        m.addItem(item("Hide", #selector(NSApplication.hide(_:)), "h", .command, target: NSApp))
+        m.addItem(item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h", .command, target: NSApp))
         m.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], target: NSApp))
         m.addItem(item("Show All", #selector(NSApplication.unhideAllApplications(_:)), "", [], target: NSApp))
         m.addItem(.separator())
-        m.addItem(item("Quit", #selector(NSApplication.terminate(_:)), "q", .command, target: NSApp))
+        m.addItem(item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q", .command, target: NSApp))
     }
 
     private func addFileDefaults(_ m: NSMenu) {
@@ -421,7 +427,7 @@ final class NDMenuManager: NSObject, NSMenuItemValidation {
         var title = node.label
         if title.isEmpty {
             if node.role == .settings { title = "Preferences…" }
-            else if node.role == .about { title = "About" }
+            else if node.role == .about { title = "About \(appName)" }
         }
         let it = NSMenuItem()
         it.title = title
