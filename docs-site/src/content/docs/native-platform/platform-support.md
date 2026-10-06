@@ -11,10 +11,10 @@ description: What's landed, what's planned, and how each platform is verified.
 
 ## Detecting the platform at runtime
 
-`Platform` from `@nativedesktop/react` exposes two independent axes, because they can disagree:
+`Platform` from `@nativedesktop/solid` exposes two independent axes, because they can disagree:
 
 ```tsx
-import { Platform } from "@nativedesktop/react";
+import { Platform } from "@nativedesktop/solid";
 
 Platform.backend; // "gtk" | "appkit": the native widget layer actually drawing
 Platform.os;      // "macos" | "linux" | "windows": where the process runs
@@ -50,9 +50,9 @@ This is a supported pattern for platform-specific polish. Gate the surrounding U
 `Platform.os === "macos"` so Linux users do not see empty space where the widget would have been:
 
 ```tsx
-{Platform.os === "macos" ? (
+<Show when={Platform.os === "macos"}>
   <trayitem iconName="face-smile-symbolic" tooltip="My App" />
-) : null}
+</Show>
 ```
 
 In development (`nd dev`, `ND_DEV=1`), mounting a platform-excluded widget on a platform it doesn't

@@ -20,33 +20,33 @@ The app model is [multi-window](/native-platform/multi-window/) plus one prop. E
 `<window>` root, and `tabGroup` names the group it belongs to:
 
 ```tsx
-import { render, useRef, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { For, createSignal } from "solid-js";
 
-function TerminalTab({ onNewTab, onClose }: { onNewTab: () => void; onClose: () => void }) {
+function TerminalTab(props: { onNewTab: () => void; onClose: () => void }) {
   return (
-    <window title="Terminal" tabGroup="terminal" onNewTabRequested={onNewTab} onClosed={onClose}>
+    <window title="Terminal" tabGroup="terminal" onNewTabRequested={props.onNewTab} onClosed={props.onClose}>
       {/* any window content: its own headerbar, its own state */}
     </window>
   );
 }
 
-function App(): React.ReactNode {
-  const [tabs, setTabs] = useState<number[]>([0]);
-  const nextId = useRef(1);
+function App() {
+  const [tabs, setTabs] = createSignal<number[]>([0]);
+  let nextId = 1;
   return (
-    <>
-      {tabs.map((id) => (
+    <For each={tabs()}>
+      {(id) => (
         <TerminalTab
-          key={id}
-          onNewTab={() => setTabs((open) => [...open, nextId.current++])}
+          onNewTab={() => setTabs((open) => [...open, nextId++])}
           onClose={() => setTabs((open) => open.filter((t) => t !== id))}
         />
-      ))}
-    </>
+      )}
+    </For>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 Because a tab is a window, everything window-scoped keeps working per tab unchanged: per-window
@@ -80,7 +80,7 @@ native tabs: the outgoing tab gets `checked: false`, the incoming one `checked: 
 Use this for app-level state that acts on whichever tab is frontmost right now rather than whichever
 rendered last: menu items, keyboard shortcuts, a command palette. Without it an app tracking its own
 selected value has no way to learn the user switched tabs natively, because that switch never
-touches React.
+touches the Solid tree.
 
 ```tsx
 <window
@@ -105,15 +105,15 @@ your `<headerbar>`; on macOS it's the system Show All Tabs (⇧⌘\, View menu, 
 bar). To open it programmatically:
 
 ```tsx
-import { showTabOverview } from "@nativedesktop/react";
+import { showTabOverview } from "@nativedesktop/solid";
 
-showTabOverview(winRef.current); // AdwTabOverview open on GTK, toggleTabOverview on macOS
+showTabOverview(win); // AdwTabOverview open on GTK, toggleTabOverview on macOS
 ```
 
 ## Drag and drop
 
 Dragging tabs out to the desktop, into another window of the same group, and reordering are native
-on both backends, and none of it touches your React tree. The `<window>` node's identity is stable
+on both backends, and none of it touches your Solid tree. The `<window>` node's identity is stable
 across drags. On macOS the tab is its `NSWindow`, so moving it between groups moves the live window.
 On GTK the framework spawns a fresh scaffold window on `create-window` and `AdwTabView` transfers
 the page widget intact. A `<webview>` tab keeps its session and a `<terminal>` tab keeps its running

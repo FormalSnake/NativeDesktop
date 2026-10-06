@@ -5,7 +5,7 @@ GTK styling is not web CSS. The authoritative, always-current key list is genera
 
 Do not hallucinate `flex`, `grid`, `position`, `display`, or `justifyContent`; none of these exist
 on the `style` prop. Layout comes from container widgets (`<box>`/`<grid>`), never from `style`.
-Unknown or web-only keys are rejected at the React renderer with a Levenshtein fix-it message
+Unknown or web-only keys are rejected at the Solid renderer with a Levenshtein fix-it message
 (`validateStyle`) and defensively rejected host-side too, so a bad key fails loudly at commit time
 rather than silently doing nothing.
 
@@ -23,7 +23,7 @@ This file is intentionally short and is not kept in sync with schema changes by 
 
 ## cssClasses across platforms
 
-`cssClasses?: string[]` is validated on the React side against an Adwaita/GTK allowlist
+`cssClasses?: string[]` is validated on the Solid side against an Adwaita/GTK allowlist
 (`packages/core/src/css-classes-validate.ts`) and rides in the ordinary create/update `props`
 JSON; it is not nested under `style` and does not touch the C-ABI vtable.
 

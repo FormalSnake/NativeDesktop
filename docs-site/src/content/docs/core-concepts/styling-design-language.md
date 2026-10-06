@@ -25,7 +25,7 @@ from `schema/widgets.json`:
 
 `margin` differs from `padding` because GTK margins genuinely are widget properties rather than CSS.
 The schema encodes that distinction so codegen emits the right call on each backend. Unknown or
-web-only keys like `display` and `justifyContent` are rejected at the React renderer with a
+web-only keys like `display` and `justifyContent` are rejected at the Solid renderer with a
 Levenshtein fix-it message, and rejected again host-side, so a bad key fails loudly at commit time.
 
 The generated `docs/styling.md` carries the always-current key list. This page summarizes it.
@@ -106,11 +106,11 @@ For a live accent color (a status dot, a chart series), read `system.getAppearan
 
 ## Spacing scale
 
-For bespoke layout (`<box spacing>`, `style.padding`), `@nativedesktop/react` exports the platform's
+For bespoke layout (`<box spacing>`, `style.padding`), `@nativedesktop/solid` exports the platform's
 design-language scale instead of magic numbers:
 
 ```tsx
-import { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/react";
+import { Spacing, ContentMargin, ContentWidth } from "@nativedesktop/solid";
 
 <box spacing={Spacing.sm} style={{ padding: ContentMargin }} />;
 ```

@@ -3,7 +3,7 @@ title: Automation-First
 description: Every widget is inspectable and drivable over a JSON-RPC socket, so coding agents are a first-class user.
 ---
 
-Every widget the React tree creates is tracked host-side and answerable over a socket, so an agent
+Every widget the Solid tree creates is tracked host-side and answerable over a socket, so an agent
 or a headless CI script inspects and drives an app the way a person does.
 
 ## The RPC surface

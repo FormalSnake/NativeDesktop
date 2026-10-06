@@ -3,25 +3,26 @@ title: App Model
 description: How a NativeDesktop app is structured as a JSX tree rooted at a window.
 ---
 
-A NativeDesktop app is a React tree rooted at a `<window>` intrinsic, rendered with `render()` from
-`@nativedesktop/react`:
+A NativeDesktop app is a Solid component tree rooted at a `<window>` intrinsic, rendered with `render()` from
+`@nativedesktop/solid`:
 
 ```tsx
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
-function App(): React.ReactNode {
-  const [clicks, setClicks] = useState(0);
+function App() {
+  const [clicks, setClicks] = createSignal(0);
   return (
     <window title="My App" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Clicks: ${clicks}`} />
+        <label text={`Clicks: ${clicks()}`} />
         <button label="Increment" onClick={() => setClicks((c) => c + 1)} />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
 An app can mount more than one `<window>` at once. Render several `<window>` roots, for example in a
@@ -45,7 +46,7 @@ declared as JSX children rather than configured through an imperative window API
       {/* sidebar content */}
     </toolbarview>
     <toolbarview slot="content">
-      <headerbar title={selected?.title ?? "ND Notes"} />
+      <headerbar title={selected()?.title ?? "ND Notes"} />
       {/* content pane */}
     </toolbarview>
   </splitview>
@@ -59,17 +60,20 @@ props apply at attach time only, so changing one after mount is a no-op. See
 
 ## Events are props
 
-Widget events arrive as ordinary React props (`onClick`, `onChanged`, `onToggled`,
+Widget events arrive as ordinary props (`onClick`, `onChanged`, `onToggled`,
 `onSelectionChanged`, and so on), each wired from the schema's `events` list for that widget.
 `<textinput onChanged={(e) => setText(e.text)} />` receives the new text on its event payload,
-exactly like any other controlled-component callback.
+exactly like any other event callback.
 
 ## Create-only vs. createAndUpdate props
 
 Not every prop can be changed after a widget mounts. The schema marks each prop's `appliesTo` as
-`create` (set once, at construction), `createAndUpdate` (can change on any re-render), or `meta`
-(framework bookkeeping, e.g. `testID`). `Label.text`, for example, is `create`-only: changing it on
-a live label is a no-op, so a label whose text tracks state needs a `key` on that state to force a
-remount instead of relying on a prop update. Check a widget's `Applied` column before assuming a
+`create` (set once, at construction), `createAndUpdate` (follows its signal on any change), or `meta`
+(framework bookkeeping, e.g. `testID`). `Label.ellipsize`, for example, is `create`-only: changing
+it on a live label is a no-op, so a label that needs a new value remounts under
+`<Show when={mode()} keyed>{(m) => <label ellipsize={m === "short"} text="..." />}</Show>`
+instead of relying on a prop update. (`Label.text` is also marked `create`, but the Solid renderer
+sends text changes as `setText` ops, so a reactive `text` stays live.)
+Check a widget's `Applied` column before assuming a
 prop is live-updatable; the full breakdown is in the
 [Widget Reference](/components/widget-reference/).

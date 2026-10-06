@@ -7,7 +7,7 @@ The Bun child is a full runtime, so an app that talks to a local daemon or a rem
 opens a socket. `@nativedesktop/rpc` (`packages/rpc/`) handles what goes wrong afterwards: silent
 half-open sockets, reconnect storms, calls fired during a blip, laptops waking from suspend. It is a
 JSON-RPC 2.0 client with an exponential-backoff reconnect ladder, a handshake gate, call queueing
-across drops, and an rx-silence watchdog. Zero runtime dependencies, and no React in the core entry.
+across drops, and an rx-silence watchdog. Zero runtime dependencies, and no UI framework in the core entry.
 
 ## Setup
 
@@ -94,18 +94,25 @@ an `onStateChange` callback; they never drift from what is actually scheduled).
 `onReconnected(cb)` fires after a successful post-drop reconnect, the hook for re-hydrating
 whatever the app missed while disconnected.
 
-The React binding lives at its own entry point so the core stays React-free:
+The Solid binding lives at its own entry point so the core stays free of `solid-js`.
+`createRpcStatus(client)` returns an accessor, unsubscribed when the owner is disposed:
 
 ```tsx
-import { useRpcStatus } from "@nativedesktop/rpc/react";
+import { createRpcStatus } from "@nativedesktop/rpc/solid";
+import { Match, Switch } from "solid-js";
 
-function ConnectionBadge(): React.ReactNode {
-  const { state, attempt, nextRetryInMs } = useRpcStatus(client);
-  if (state === "ready") return <label text="Connected" />;
-  if (state === "reconnecting") {
-    return <label text={`Reconnecting (attempt ${attempt}, next in ${Math.round(nextRetryInMs ?? 0) / 1000}s)`} />;
-  }
-  return <label text={state} />;
+function ConnectionBadge() {
+  const status = createRpcStatus(client);
+  return (
+    <Switch fallback={<label text={status().state} />}>
+      <Match when={status().state === "ready"}>
+        <label text="Connected" />
+      </Match>
+      <Match when={status().state === "reconnecting"}>
+        <label text={`Reconnecting (attempt ${status().attempt}, next in ${Math.round(status().nextRetryInMs ?? 0) / 1000}s)`} />
+      </Match>
+    </Switch>
+  );
 }
 ```
 

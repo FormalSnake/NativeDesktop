@@ -98,7 +98,7 @@ runtime surprise.
   adjustments). A `ListView` node cannot be scrolled directly; scroll its wrapping `ScrollView`
   instead, if one wraps it.
 - **No `TabView` page-switch RPC.** There is no automation action to change which tab is active.
-- **No `ListView` row-activate/select action.** The widget emits `onRowActivated` upward to React,
+- **No `ListView` row-activate/select action.** The widget emits `onRowActivated` upward to the app,
   but there is no automation method to trigger row activation/selection from the RPC side.
 - **Screenshot-after-scroll can race frame invalidation.** Taking a `screenshot` immediately after a
   `scroll` can occasionally return a texture from before the scroll finished compositing
