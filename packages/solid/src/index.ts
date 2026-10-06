@@ -16,6 +16,8 @@ export {
 } from "./renderer.ts";
 export { render, Portal, createPool, nextCommit } from "./renderer.ts";
 export type { Pool, SolidNode } from "./renderer.ts";
+export { defineNativeComponent } from "./native-component.ts";
+export type { NativeComponentOptions, NativeComponentProps, NativeComponentRef } from "./native-component.ts";
 export { useStoreValue } from "./store.ts";
 export type { JSX } from "./generated/intrinsics.ts";
 export { sendCommand, sendNativeCommand, moveNode } from "@nativedesktop/core";
