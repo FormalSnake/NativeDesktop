@@ -2329,7 +2329,35 @@ fn latPaints(surface: *gdk.Surface) void {
     if (lat_paint_surface == surface) return;
     lat_paint_surface = surface;
     const clock = gdk.Surface.getFrameClock(surface);
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "before-paint", @ptrCast(&onLatFrame), null, null, .{});
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "layout", @ptrCast(&onLatLayout), null, null, .{});
+    _ = gobject.signalConnectData(clock.as(gobject.Object), "paint", @ptrCast(&onLatPaintStart), null, null, .{});
     _ = gobject.signalConnectData(clock.as(gobject.Object), "after-paint", @ptrCast(&onLatPaint), null, null, .{});
+    lat_tick_last = marker.nowMicros();
+    _ = glib.timeoutAdd(2, &onLatTick, null);
+}
+
+/// ND_LAT_TRACE: a `host.stall` line, at its end, for each stretch the GTK
+/// thread went without getting back to its main loop.
+var lat_tick_last: i64 = 0;
+
+fn onLatTick(_: ?*anyopaque) callconv(.c) c_int {
+    const now = marker.nowMicros();
+    if (now - lat_tick_last > 8 * std.time.us_per_ms) marker.lat("host.stall", "us={d}", .{now - lat_tick_last});
+    lat_tick_last = now;
+    return 1;
+}
+
+fn onLatFrame(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.frame", "", .{});
+}
+
+fn onLatLayout(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.layout", "", .{});
+}
+
+fn onLatPaintStart(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {
+    marker.lat("gtk.paintStart", "", .{});
 }
 
 fn onLatPaint(_: *gobject.Object, _: ?*anyopaque) callconv(.c) void {

@@ -183,6 +183,7 @@ function biggest(ids: string[]): string {
 
 // Far apart in every channel, so a half-blended frame never matches.
 const palette = [0xd01010, 0x10a020, 0x1030d0, 0xd0c010, 0xc010c0, 0x10c0c0, 0x803010, 0x308050, 0x502090, 0x909010, 0x101060, 0x601010];
+for (let i = palette.length; i < tabs; i++) palette.push((((i * 37) % 160) + 40) * 0x10000 + (((i * 71) % 160) + 40) * 0x100 + (((i * 113) % 160) + 40));
 
 /** The fixture URL the rig seeds tab `n` (1-based) with. */
 function urlOf(n: number): string {
@@ -295,7 +296,10 @@ function report(label: string, list: Switch[], all: Lat[]): void {
     const end = s.px > 0 ? s.px : s.t0 + timeoutMs * 1000;
     const events = all.filter((l) => l.t >= s.t0 && l.t <= end && l.tag === "host.event").map((l) => l.rest.replace(/^.*name=/, ""));
     const slow = all.filter((l) => l.t >= s.t0 && l.t <= end && l.tag === "host.slowOp").map((l) => l.rest.replace(/ props=$/, ""));
-    console.log(`    #${i} ${cols.map((h) => `${h}=${per[i]![h]?.toFixed(1) ?? "-"}`).join(" ")} seen ${s.seen.join(" ")} events ${events.join(",")}${slow.length ? ` slow ${slow.join("; ")}` : ""}`);
+    const cold = all.some((l) => l.tag === "cef.map" && l.t >= s.t0 && l.t <= end && l.rest.includes("minimized=true"));
+    const paintEnd = Math.max(end, s.row && s.row > 0 ? s.row : 0);
+    const paints = all.filter((l) => l.tag === "gtk.paint" && l.t >= s.t0 && l.t <= paintEnd).map((l) => ((l.t - s.t0) / 1000).toFixed(1));
+    console.log(`    #${i}${cold ? " cold" : ""} ${cols.map((h) => `${h}=${per[i]![h]?.toFixed(1) ?? "-"}`).join(" ")} seen ${s.seen.join(" ")} events ${events.join(",")} paints ${paints.join(",") || "-"}${slow.length ? ` slow ${slow.join("; ")}` : ""}`);
   }
 }
 
@@ -371,6 +375,11 @@ if (process.env.ND_SWITCH_SKIP_APP !== "1") {
   // few kept running.
   for (let i = 0; i < tabs * 2; i++) await step("app key round", () => sendChord("ctrl+Tab"), (cur + 1) % tabs);
 
+  for (let i = 0; i < Math.min(tabs, 8); i++) {
+    const next = (cur + 1) % tabs;
+    await step("app ctrl+digit", () => sendChord(`ctrl+${next + 1}`), next);
+  }
+
   // Clicks on the tab's own row (sidebar) or tab (compact).
   const rowOf = async (n: number) => {
     for (const id of [`tab-t${n}`, `tab-item-t${n}`]) {
@@ -400,6 +409,7 @@ if (process.env.ND_SWITCH_SKIP_APP !== "1") {
   }
 
   const lat = latLines();
+  writeFileSync(join(work, "lat.log"), lat.map((l) => `${l.t} ${l.tag} ${l.rest}`).join("\n"));
   for (const scenario of [...new Set(all.map((s) => s.scenario))]) report(scenario, all.filter((s) => s.scenario === scenario), lat);
 }
 
