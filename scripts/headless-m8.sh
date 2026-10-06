@@ -26,6 +26,7 @@ cp examples/counter/tsconfig.json "$APPDIR/tsconfig.json"
 # not copied -- copying `node_modules` breaks its relative symlinks).
 ln -s "$(pwd)/examples/counter/node_modules" "$APPDIR/node_modules"
 export ND_SCRIPT="$APPDIR/main.tsx"
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 &
 WESTON_PID=$!
@@ -47,8 +48,9 @@ cat "$XDG_RUNTIME_DIR/hmr1.log"
 grep -q M8_HMR_PRECHECK_OK "$XDG_RUNTIME_DIR/hmr1.log" || { echo "FAIL: precheck marker"; exit 1; }
 
 EXITED_BEFORE=$(grep -c ND_CHILD_EXITED "$LOG" || true)
-# State-preserving edit: change a label string only (NOT the counter).
-sed -i 's/Increment/Increment!/' "$APPDIR/main.tsx"
+# ClicksLabel is its own component, so an edit to it patches in place and leaves
+# the clicks signal App owns mounted.
+sed -i 's/text={`Clicks: /text={`Taps: /' "$APPDIR/main.tsx"
 sleep 2.5   # let --hot re-eval land
 
 bun scripts/m8-drive.ts --hmr-verify >"$XDG_RUNTIME_DIR/hmr2.log" 2>&1 || { echo "FAIL hmr verify"; cat "$XDG_RUNTIME_DIR/hmr2.log" "$LOG"; exit 1; }

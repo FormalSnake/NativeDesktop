@@ -85,7 +85,7 @@ run_pass() {
   # The trace names the parent, container and CEF window XIDs plus the
   # allocation they were created against; an embedding failure is invisible
   # without them.
-  ND_WEBVIEW_TRACE=1 ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+  ND_WEBVIEW_TRACE=1 BUN_OPTIONS="$(bun scripts/bun-options.ts examples/cef-probe/main.tsx)" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
   HOST_PID=$!
 
   for _ in $(seq 1 900); do

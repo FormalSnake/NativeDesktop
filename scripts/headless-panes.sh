@@ -7,6 +7,7 @@ export WAYLAND_DISPLAY=nd-headless-panes
 export GSK_RENDERER=cairo GDK_BACKEND=wayland
 export NATIVE_AUTOMATION=1
 export ND_SCRIPT="$(pwd)/examples/panes/main.tsx"
+export BUN_OPTIONS="$(bun scripts/bun-options.ts "$ND_SCRIPT")"
 # The example passes ND_STORE_DIR as the store's dir override, so both host
 # runs share one throwaway settings dir and run 2 proves the restore.
 export ND_STORE_DIR="$(mktemp -d)"

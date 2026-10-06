@@ -128,6 +128,7 @@ launch_host() {
     export ND_WEBVIEW_ENGINE=chromium
     export ND_CEF_STYLE=chrome
     export ND_SCRIPT="$APP_SCRIPT"
+    export BUN_OPTIONS="$(bun "$FRAMEWORK/scripts/bun-options.ts" "$ND_SCRIPT")"
     export ND_DEMO_URL="$FIXTURE"
     # ND_ACCEPT_WEBVIEW_TRACE=0 keeps the engine's narration off, for a drive
     # that times what the host does.

@@ -85,7 +85,7 @@ run_pass() {
   local pass="$1"
   : >"$LOG"
   # The registry legs run in the first pass only: they change the profile.
-  ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS="$pass" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
+  ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS="$pass" BUN_OPTIONS="$(bun scripts/bun-options.ts examples/cef-probe/main.tsx)" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
     --load-extension="$EXTENSION,$ACTION_EXTENSION,$CLICK_EXTENSION" \
     --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
@@ -218,7 +218,7 @@ quit_host devtools
 # may reach the X server, the sink or the window watcher.
 launch_relaunch_host() {
   : >"$LOG"
-  ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
+  ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs BUN_OPTIONS="$(bun scripts/bun-options.ts examples/cef-probe/main.tsx)" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
     --load-extension="$EXTENSION" --remote-debugging-port="$CDP_PORT" --remote-allow-origins='*' >"$LOG" 2>&1 &
   HOST_PID=$!
   for _ in $(seq 1 900); do
@@ -252,7 +252,7 @@ SECOND_LOG="$RUN_DIR/relaunch-second.log"
 # An app id of its own: with the same one GApplication hands the launch to the
 # running host before Chromium is reached at all, and the cache directory is
 # what the two share.
-ND_APP_ID="$ND_APP_ID.second" ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
+ND_APP_ID="$ND_APP_ID.second" ND_WEBVIEW_TRACE=1 ND_CEF_PROBE_PASS=dialogs BUN_OPTIONS="$(bun scripts/bun-options.ts examples/cef-probe/main.tsx)" ND_SCRIPT=examples/cef-probe/main.tsx ./zig-out/bin/nd-hello \
   --load-extension="$EXTENSION" --remote-debugging-port="$((CDP_PORT + 1))" --remote-allow-origins='*' \
   >"$SECOND_LOG" 2>&1 &
 SECOND_PID=$!

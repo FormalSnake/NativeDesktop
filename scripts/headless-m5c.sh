@@ -19,7 +19,7 @@ done
 
 # Phase A: styled tab + 100k-row ListView gallery drive.
 LOG=$(mktemp)
-ND_SCRIPT=examples/gallery/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/gallery/main.tsx)" ND_SCRIPT=examples/gallery/main.tsx ./zig-out/bin/nd-hello >"$LOG" 2>&1 &
 HOST_PID=$!
 
 for _ in $(seq 1 120); do
@@ -46,7 +46,7 @@ HOST_PID=""
 # does not exit on its own, so bound the run with timeout and grep stderr
 # (`|| true` — a nonzero/timeout exit here is expected, not a script failure).
 BADLOG=$(mktemp)
-ND_SCRIPT=examples/gallery/gallery-badstyle.tsx timeout 10s ./zig-out/bin/nd-hello >"$BADLOG" 2>&1 || true
+BUN_OPTIONS="$(bun scripts/bun-options.ts examples/gallery/gallery-badstyle.tsx)" ND_SCRIPT=examples/gallery/gallery-badstyle.tsx timeout 10s ./zig-out/bin/nd-hello >"$BADLOG" 2>&1 || true
 grep -q 'Invalid style key "display" — GTK styling is not web CSS' "$BADLOG" || { echo "FAIL: no fix-it rejection"; cat "$BADLOG"; exit 1; }
 grep -q 'docs/styling.md' "$BADLOG" || { echo "FAIL: fix-it missing docs pointer"; cat "$BADLOG"; exit 1; }
 
