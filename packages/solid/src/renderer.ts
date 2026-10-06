@@ -106,7 +106,26 @@ function shipBatch(): void {
     n.pendingUpdate = null;
   }
   touched.length = 0;
+  updatesLast(session!.batch);
   session!.commit();
+}
+
+/// React's commit applies a node's prop update after the inserts and removals
+/// of the same commit, and hosts depend on it: an AppKit popover opened
+/// before its new content is attached sizes for the old content and then
+/// dismisses itself. Solid runs a prop effect wherever it falls, so updates
+/// move behind the batch's structural ops here. An update to a node the batch
+/// also removes stays ahead of the remove, since its id is dead after it.
+function updatesLast(batch: Session["batch"]): void {
+  const ops = batch.drain();
+  const removed = new Set<number>();
+  for (const op of ops) if (op.op === "remove") removed.add(op.id);
+  const late: Op[] = [];
+  for (const op of ops) {
+    if (op.op === "update" && !removed.has(op.id)) late.push(op);
+    else batch.push(op);
+  }
+  for (const op of late) batch.push(op);
 }
 
 /// Resolves once the next CommitBatch has been handed to NDP.

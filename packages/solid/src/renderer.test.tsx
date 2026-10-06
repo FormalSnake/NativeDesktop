@@ -262,3 +262,22 @@ test("a render error no boundary catches exits the process, whatever the policy 
   expect(err).not.toContain("caught by boundary");
   expect(code).toBe(1);
 });
+
+test("a write that swaps a popover's content and opens it ships the new content before the open", async () => {
+  const [row, setRow] = createSignal("");
+  const ops0 = await mount(() => (
+    <window>
+      <popover open={row() !== ""}>
+        <Show when={row()} fallback={<box orientation="horizontal" />}>
+          {(r) => <box testID={`body-${r()}`} orientation="vertical" />}
+        </Show>
+      </popover>
+    </window>
+  ));
+  const popover = ops0.find((o) => o.op === "create" && o.widget === "Popover")!;
+  const ops = await next(() => setRow("x"));
+  const open = ops.findIndex((o) => o.op === "update" && o.id === (popover as { id: number }).id);
+  const insert = ops.findIndex((o) => (o.op === "insertBefore" || o.op === "append") && o.parent === (popover as { id: number }).id);
+  expect(insert).toBeGreaterThanOrEqual(0);
+  expect(open).toBeGreaterThan(insert);
+});
