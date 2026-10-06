@@ -31,14 +31,11 @@ convention:
 | Linux | `$XDG_DATA_HOME/<name>` (falls back to `~/.local/share/<name>`) |
 | Windows | `%APPDATA%/<name>` (backend not yet implemented; see [Platform Support](/native-platform/platform-support/)) |
 
-An app that changes its name keeps its data by declaring the old one as `app.previousName`. The
-first `getAppDataDir()` call under the new name moves `<previousName>` (or, failing that, its
-lowercase slug, which is what an old dev run used) to the new directory, once, and only while the
-new one does not exist. `nd dev` hands the name down as `ND_APP_PREVIOUS_NAME`; a launch that runs
-the host by hand sets that variable itself. On macOS the packaged app's Chromium profile, which
-lives under `~/Library/Caches/nativedesktop/cef/<executable>`, moves the same way before Chromium
-starts. Linux keeps one Chromium profile for every app under `$XDG_DATA_HOME/nd-webview-cef`, so
-nothing moves there.
+The Chromium engine keeps its profile (cookies, logins, extensions) in `cef` inside that directory,
+`~/Library/Application Support/<name>/cef` on macOS and `$XDG_DATA_HOME/<name>/cef` on Linux, so dev
+and packaged runs of one app share it and no two apps ever do. `getCefProfileDir()` returns the
+path. `ND_CEF_CACHE` points it somewhere else, which is what gate scripts and test rigs do to keep
+out of a real profile.
 
 `getAppDataDir()` just resolves the path; `ensureAppDataDir()` also creates it (`mkdirSync` with
 `recursive: true`) and hands back the same string, so it's the one you want before writing a file or

@@ -131,9 +131,8 @@ describe("resolveIdentity", () => {
   });
 
   test("the data directory keeps the package name whatever the product name is", () => {
-    const identity = resolveIdentity({ app: { name: "Fixture Browser", previousName: "OldFixture" } }, dir);
+    const identity = resolveIdentity({ app: { name: "Fixture Browser" } }, dir);
     expect(identity.dataName).toBe("fixture-app");
-    expect(identity.previousName).toBe("OldFixture");
     expect(identity.slug).toBe("fixture-browser");
   });
 

@@ -4,14 +4,13 @@
 // app finds it in the bundle's nd-app.json, written by `nd package` and found by
 // walking up from cwd), so both modes share one profile.
 
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 interface BundleManifest {
   name?: string;
   dataName?: string;
-  previousName?: string;
 }
 
 function bundleManifest(): BundleManifest | undefined {
@@ -25,14 +24,14 @@ function bundleManifest(): BundleManifest | undefined {
   }
 }
 
-function appNames(): { name: string; previous?: string } {
+function appName(): string {
   const manifest = bundleManifest();
   // Bundles packaged before dataName existed named the directory after app.name.
   const packaged = manifest?.dataName ?? manifest?.name;
-  if (packaged) return { name: packaged, previous: manifest?.previousName };
+  if (packaged) return packaged;
   const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as { name?: string };
   if (!pkg.name) throw new Error("nd: could not resolve app name from package.json");
-  return { name: pkg.name, previous: process.env.ND_APP_PREVIOUS_NAME || undefined };
+  return pkg.name;
 }
 
 function dataRoot(): string {
@@ -46,21 +45,17 @@ function dataRoot(): string {
   }
 }
 
-/** The per-platform user-data directory for this app. Does not create it.
- * After a rename (`app.previousName`), the first call moves the old directory
- * here, once, when this one does not exist yet. */
+/** The per-platform user-data directory for this app. Does not create it. */
 export function getAppDataDir(): string {
-  const { name, previous } = appNames();
-  const root = dataRoot();
-  const dir = join(root, name);
-  if (previous && !existsSync(dir)) {
-    // Packaged runs used the old app name, dev runs the old package name,
-    // which is normally its lowercase slug.
-    const slug = previous.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    const old = [previous, slug].map((candidate) => join(root, candidate)).find((path) => existsSync(path));
-    if (old) renameSync(old, dir);
-  }
-  return dir;
+  return join(dataRoot(), appName());
+}
+
+/** The Chromium engine's profile root for this app: `cef` inside the app's data
+ * directory, unless ND_CEF_CACHE names another. The hosts resolve the same path
+ * before Chromium starts (src/cef/app_dir.zig, NDCefEngine.swift), so no two
+ * apps share cookies, logins or extensions. Does not create it. */
+export function getCefProfileDir(): string {
+  return process.env.ND_CEF_CACHE || join(getAppDataDir(), "cef");
 }
 
 /** Like `getAppDataDir`, but also creates the directory (recursively) if missing. */

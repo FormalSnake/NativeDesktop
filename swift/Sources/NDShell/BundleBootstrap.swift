@@ -51,19 +51,31 @@ enum NDBundleBootstrap {
         }
     }
 
-    /// A renamed app (`app.previousName`) keeps its Chromium profile: the cache
-    /// root is keyed by executable name, so the old one moves to `dir` once,
-    /// before cef_initialize opens anything there.
-    static func adoptPreviousCache(at dir: String) {
-        guard let previous = manifest()?["previousName"] as? String, !previous.isEmpty else { return }
-        let fm = FileManager.default
-        let old = ((dir as NSString).deletingLastPathComponent as NSString).appendingPathComponent(previous)
-        guard old != dir, !fm.fileExists(atPath: dir), fm.fileExists(atPath: old) else { return }
-        do {
-            try fm.moveItem(atPath: old, toPath: dir)
-        } catch {
-            FileHandle.standardError.write("ND_WARN could not move \(old) to \(dir): \(error)\n".data(using: .utf8)!)
+    /// The app's data directory name, read the way getAppDataDir()
+    /// (packages/react/src/paths.ts) reads it: the bundle's nd-app.json
+    /// `dataName` (or `name`, for bundles packaged before dataName), else an
+    /// nd-app.json found walking up from cwd, else the cwd's package.json
+    /// `name`. Runs before apply() changes directory, so a bundle is read
+    /// from Resources rather than found from cwd.
+    static func dataName() -> String? {
+        func name(in object: [String: Any]?, keys: [String]) -> String? {
+            keys.lazy.compactMap { object?[$0] as? String }.first { !$0.isEmpty }
         }
+        func read(_ path: String) -> [String: Any]? {
+            guard let data = FileManager.default.contents(atPath: path) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        if let bundled = name(in: manifest(), keys: ["dataName", "name"]) { return bundled }
+        let cwd = FileManager.default.currentDirectoryPath
+        var dir = URL(fileURLWithPath: cwd)
+        while true {
+            let path = dir.appendingPathComponent("nd-app.json").path
+            if FileManager.default.fileExists(atPath: path) { return name(in: read(path), keys: ["dataName", "name"]) }
+            let parent = dir.deletingLastPathComponent()
+            if parent.path == dir.path { break }
+            dir = parent
+        }
+        return name(in: read((cwd as NSString).appendingPathComponent("package.json")), keys: ["name"])
     }
 
     static func apply() {

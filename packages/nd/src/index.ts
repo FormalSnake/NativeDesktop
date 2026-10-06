@@ -44,14 +44,7 @@ async function runDev(entry: string, backend?: Backend): Promise<number> {
   const config = await loadConfig();
   const proc = Bun.spawn([hostBinary], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
-      ...(await nativeEnv(config)),
-      ...engineEnv(config),
-      ...(config.app?.previousName ? { ND_APP_PREVIOUS_NAME: config.app.previousName } : {}),
-      ND_DEV: "1",
-      ND_SCRIPT: entry,
-    },
+    env: { ...process.env, ...(await nativeEnv(config)), ...engineEnv(config), ND_DEV: "1", ND_SCRIPT: entry },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

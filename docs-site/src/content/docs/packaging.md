@@ -32,7 +32,6 @@ export default defineConfig({
     id: "com.example.myapp",        // reverse-DNS; required for icons/mime/updates
     name: "MyApp",                  // <Name>.app, usr/bin/<slug>. Default: package.json name
     displayName: "My App",          // CFBundleDisplayName / .desktop Name
-    previousName: "OldApp",         // after a rename: move the old data dir and mac Chromium profile once
     version: "1.0.0",               // default: package.json version, then "0.0.0"
     icon: { source: "assets/icon.png" },   // or a string, or { macos, linux, layered }
     categories: ["Utility"],        // .desktop Categories=
