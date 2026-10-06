@@ -11,7 +11,7 @@ a `v<version>` tag publishes them all via `.github/workflows/release.yml`.
 3. Create a granular access token at npmjs.com/settings/~/tokens: type
    **Automation** (bypasses 2FA-on-publish, which otherwise fails
    non-interactively in CI), read and write, scoped to the `@nativedesktop`
-   packages and `babel-plugin-nativedesktop`, 1-year expiry.
+   packages, 1-year expiry.
 4. `gh secret set NPM_TOKEN --repo FormalSnake/NativeDesktop` and paste the
    token.
 5. After the first publish: `npm access ls-packages @nativedesktop` to confirm

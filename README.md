@@ -1,46 +1,47 @@
 # NativeDesktop
 
-Write React 19 in TypeScript, get real native desktop widgets: GTK4 and libadwaita on Linux, AppKit
+Write Solid in TypeScript, get real native desktop widgets: GTK4 and libadwaita on Linux, AppKit
 on macOS. No DOM, no Electron, no browser on the UI path.
 
 The widgets your JSX describes are the platform's own classes (`GtkBox`, `AdwHeaderBar`, `NSButton`,
-`NSSplitView`), so one React tree renders in each platform's current design language rather than a
+`NSSplitView`), so one component tree renders in each platform's current design language rather than a
 lookalike layer approximating both.
 
 Every app is two processes. A native host owns `main()`, the OS event loop, and the authoritative
-widget tree; a Bun child runs your React code. The reconciler ships each commit over a local socket
+widget tree; a Bun child runs your Solid code. The renderer ships each change over a local socket
 and events come back the same way, so a JS crash or hang leaves the window standing and the host
 restarts the child. The child is a full Bun runtime (`node:fs`, `bun:sqlite`, subprocesses, network
 access), so app logic lives in the same process as the UI with no IPC bridge.
 
 ```bash
-bun add @nativedesktop/cli @nativedesktop/react react
+bun add @nativedesktop/cli @nativedesktop/solid solid-js@2.0.0-rc.13
 bunx nd dev src/main.tsx
 ```
 
 ```tsx
 // src/main.tsx
-import { render, useState } from "@nativedesktop/react";
+import { render } from "@nativedesktop/solid";
+import { createSignal } from "solid-js";
 
 function App() {
-  const [clicks, setClicks] = useState(0);
+  const [clicks, setClicks] = createSignal(0);
 
   return (
     <window title="Counter" defaultWidth={480} defaultHeight={320}>
       <box orientation="vertical" spacing={8}>
-        <label text={`Clicks: ${clicks}`} />
+        <label text={`Clicks: ${clicks()}`} />
         <button label="Increment" onClick={() => setClicks((c) => c + 1)} />
       </box>
     </window>
   );
 }
 
-await render(<App />);
+await render(() => <App />);
 ```
 
-Hooks are imported from `@nativedesktop/react`, not from `react`: hot reload re-evaluates the whole
-module graph, and a bare `react` import would resolve to a fresh instance with no attached
-dispatcher. Shared-logic packages still write against `react`; the build rewrites the import. See
+Updates are fine-grained: a signal change re-runs only the props that read it, with no virtual DOM
+diff, so a busy window stays cheap on low-end hardware. `nd dev` hot-reloads an edited component in
+place and keeps the window and the rest of the app's state. See
 [State & Hot Reload](docs-site/src/content/docs/core-concepts/state-hot-reload.md).
 
 Host binaries ship prebuilt for macOS on Apple silicon and x86_64 Linux, pulled in as
@@ -76,7 +77,7 @@ cd ../my-app && bun install && bun run dev
   `<commandpalette>`, a `<terminal>` backed by libghostty-vt, and a `<webview>` (WKWebView,
   WebKitGTK) with navigation events, downloads, popup handling, and `executeJavaScript`.
   Reference: [docs/widgets.md](docs/widgets.md).
-- **Multiple windows and native tabs.** Several `<window>` roots in one React process share state
+- **Multiple windows and native tabs.** Several `<window>` roots in one Bun process share state
   with no IPC; `tabGroup` joins them into the platform's own tab system, and a `<webview>` tab
   dragged to another window survives without reloading. See
   [Native Tabs](docs-site/src/content/docs/native-platform/tabs.md).
@@ -84,12 +85,12 @@ cd ../my-app && bun install && bun run dev
   documents, Keychain and libsecret credentials, audio playback with a spectrum feed, and app
   events like `onOpenUrl` and `onFileDrop`. See
   [System Capabilities](docs-site/src/content/docs/native-platform/system-capabilities.md).
-- **Packages**: `@nativedesktop/react` (the renderer), `data` (SQLite in a Bun `Worker` so queries
+- **Packages**: `@nativedesktop/solid` (the renderer), `core` (the renderer-agnostic session and system APIs), `data` (SQLite in a Bun `Worker` so queries
   never block the commit loop, ORM-agnostic), `rpc` (typed client with reconnect backoff over
   socket or WebSocket), `panes` (splittable pane-tree state and component), `test` (automation
   harness), `native` (app-owned GTK/AppKit plugin widgets, no framework rebuild).
-- **The `nd` CLI**: `nd dev` (hot reload plus crash overlay), `nd build` (Babel with a React
-  Compiler pass), `nd package mac|linux` (signed `.app`, AppImage), `nd doctor` (packaging and
+- **The `nd` CLI**: `nd dev` (hot reload plus crash overlay), `nd build` (the Solid universal
+  JSX transform), `nd package mac|linux` (signed `.app`, AppImage), `nd doctor` (packaging and
   toolchain readiness checks).
 - **Built for coding agents.** With `NATIVE_AUTOMATION=1` the host serves a JSON-RPC socket:
   `getTree` returns an accessibility tree with roles and live values, and on macOS `pointer`,
