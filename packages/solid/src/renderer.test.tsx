@@ -17,6 +17,7 @@ beforeAll(() => {
       const ops = batch.drain();
       if (ops.length) commits.push(ops);
     },
+    flush() {},
   });
 });
 

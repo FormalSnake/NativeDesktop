@@ -6,6 +6,7 @@ import { getSession, isHot } from "./session.ts";
 function dispatchWidgetCommand(caller: string, node: NdNodeRef, command: string, arg: unknown): void {
   const session = getSession();
   if (!session) throw new Error(`${caller}() before render(): no NDP connection yet`);
+  session.flush();
   session.ndp.sendWidgetCommand(node.id, command, arg ?? null);
 }
 

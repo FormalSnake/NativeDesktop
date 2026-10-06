@@ -89,13 +89,19 @@ function commitNow(): void {
   // land in this CommitBatch rather than the next.
   flush();
   scheduled = false;
+  shipBatch();
+  for (const w of commitWaiters.splice(0)) w();
+}
+
+/// Sends the ops emitted so far, without draining Solid's queue: this also
+/// runs from inside Solid's flush (a command sent from a ref or onSettled).
+function shipBatch(): void {
   for (const n of touched) {
     n.pendingCreate = null;
     n.pendingUpdate = null;
   }
   touched.length = 0;
   session!.commit();
-  for (const w of commitWaiters.splice(0)) w();
 }
 
 /// Resolves once the next CommitBatch has been handed to NDP.
@@ -417,6 +423,7 @@ function mountRoot(code: () => SolidElement): void {
 export async function render(code: () => SolidElement): Promise<void> {
   installErrorHandlers();
   session = await connect();
+  session.flush = shipBatch;
   const mounted = globalThis.__nd_solid_mounted;
   if (mounted && globalThis.__nd_solid_hot) {
     mounted.code = code;

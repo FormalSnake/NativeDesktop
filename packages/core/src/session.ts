@@ -15,6 +15,13 @@ export interface Session {
   batch: Batch;
   /** Drains the batch into one CommitBatch frame; a no-op when it is empty. */
   commit(): void;
+  /** Ships whatever the renderer has batched so far. A widget command goes
+   *  out on its own frame, so it calls this first: a command sent in the same
+   *  tick its target was created (Solid runs refs and onSettled before its
+   *  batch commits) would otherwise reach the host before the create. A
+   *  renderer that tracks per-batch state replaces it; the default is
+   *  `commit`. */
+  flush(): void;
 }
 
 export interface ConnectOptions {
@@ -66,6 +73,9 @@ export async function connect(options: ConnectOptions = {}): Promise<Session> {
     commit() {
       const ops = batch.drain();
       if (ops.length) ndp.sendCommit({ commitId: commitId++, generation: currentGeneration(), ops });
+    },
+    flush() {
+      session.commit();
     },
   };
   const { beforeEvent } = options;
