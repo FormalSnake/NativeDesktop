@@ -528,7 +528,16 @@ band around the threshold).
   for an app whose `dependencies` list `@nativedesktop/solid`
   (`packages/host/src/preload.ts`; packaged launches read `preload` from
   nd-app.json), so a Solid app is a single `.tsx` entry. Bun's BUN_OPTIONS
-  has no reliable quoting, hence the bare specifier rather than a path),
+  has no reliable quoting, hence the bare specifier rather than a path.
+  Solid HMR under `nd dev`: register.ts runs `@solidjs/compiler`'s
+  `transformRefresh` (Vite mode, `solid-js/refresh` runtime, dev builds
+  swapped in by path) and stands in for `import.meta.hot`, and pins
+  solid-js, `@solidjs/signals`, `@solidjs/universal` and this package
+  across `bun --hot`'s whole-graph re-eval, so an edit remounts only the
+  changed components and the window plus other components' state stay;
+  an unpatchable edit remounts the tree. Solid's `render()` resolves
+  instead of parking: Bun watches a plugin-compiled module only once its
+  evaluation finishes. Gate: `scripts/counter-solid-hmr-drive.ts`),
   `packages/nd`
   (`@nativedesktop/cli`: the `nd` bin + packaging pipeline), `packages/host`
   (+ `host-darwin-arm64`/`host-linux-x64` prebuilt binaries), `packages/data`

@@ -2,7 +2,6 @@ import { createRenderer } from "@solidjs/universal";
 import { flush, onCleanup, type Element as SolidElement } from "solid-js";
 import {
   connect,
-  getSession,
   installErrorHandlers,
   nextNodeId,
   intrinsicToName,
@@ -383,20 +382,46 @@ export function Portal(props: { pool?: Pool; children?: SolidElement }): SolidEl
   return undefined;
 }
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __nd_solid_dispose: (() => void) | undefined;
+interface Mounted {
+  code: () => SolidElement;
+  dispose: () => void;
 }
 
-/// Connects to the host and mounts `code`'s tree. Never resolves on first
-/// boot: it parks the process so the event stream keeps running. There is no
-/// Solid HMR yet: a hot re-eval disposes the previous tree and mounts afresh.
+declare global {
+  // eslint-disable-next-line no-var
+  var __nd_solid_mounted: Mounted | undefined;
+  /** Set by register.ts under `nd dev`: the per-module hot context the refresh runtime drives. */
+  // eslint-disable-next-line no-var
+  var __nd_solid_hot: ((id: string) => unknown) | undefined;
+  // eslint-disable-next-line no-var
+  var __nd_solid_remount: (() => void) | undefined;
+}
+
+function mountRoot(code: () => SolidElement): void {
+  globalThis.__nd_solid_mounted?.dispose();
+  const root = makeNode("#root");
+  globalThis.__nd_solid_mounted = { code, dispose: renderer.render(code as () => SolidNode, root) };
+}
+
+/// Connects to the host and mounts `code`'s tree; the open host socket keeps
+/// the process alive. It resolves rather than parking the entry the way the
+/// React renderer does: Bun adds a module a plugin compiled to `--hot`'s
+/// watch set only once its evaluation finishes, so a parked .tsx entry would
+/// never reload.
+///
+/// A `bun --hot` re-eval calls this again. Under `nd dev` the refresh runtime
+/// (see register.ts) patches the live tree's components in place, so the
+/// mounted tree, its native windows and the state of every unedited
+/// component stay; only an edit the runtime cannot patch remounts from the
+/// newest `code`. Without the refresh runtime a re-eval disposes and remounts.
 export async function render(code: () => SolidElement): Promise<void> {
   installErrorHandlers();
-  const firstBoot = !getSession();
   session = await connect();
-  globalThis.__nd_solid_dispose?.();
-  const root = makeNode("#root");
-  globalThis.__nd_solid_dispose = renderer.render(code as () => SolidNode, root);
-  if (firstBoot) await new Promise<void>(() => {});
+  const mounted = globalThis.__nd_solid_mounted;
+  if (mounted && globalThis.__nd_solid_hot) {
+    mounted.code = code;
+  } else {
+    mountRoot(code);
+  }
+  globalThis.__nd_solid_remount = () => mountRoot(globalThis.__nd_solid_mounted!.code);
 }

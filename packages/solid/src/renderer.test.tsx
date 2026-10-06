@@ -25,8 +25,8 @@ const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 /// Mounts `code` in place of the previous test's tree and answers the ops
 /// of the mount alone.
 async function mount(code: () => unknown): Promise<Op[]> {
-  globalThis.__nd_solid_dispose?.();
-  globalThis.__nd_solid_dispose = undefined;
+  globalThis.__nd_solid_mounted?.dispose();
+  globalThis.__nd_solid_mounted = undefined;
   await settle();
   commits.length = 0;
   const done = nextCommit();

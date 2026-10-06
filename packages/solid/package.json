@@ -29,6 +29,7 @@
     "@babel/core": "7.29.7",
     "@babel/preset-typescript": "7.29.7",
     "@nativedesktop/core": "workspace:*",
+    "@solidjs/compiler": "2.0.0-rc.13",
     "@solidjs/universal": "2.0.0-rc.13",
     "babel-preset-solid": "2.0.0-rc.2"
   },
